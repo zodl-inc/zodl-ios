@@ -124,20 +124,9 @@ public extension SwapAndPayForm {
                 isAddressFocused = false
             }
             .applyScreenBackground()
-            .zashiBack(true, hidden: true)
             .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
                 store.send(.willEnterForeground)
             }
-            .navigationBarItems(
-                trailing:
-                    Button {
-                        store.send(.helpSheetRequested(store.selectedOperationChip))
-                    } label: {
-                        Asset.Assets.Icons.help.image
-                            .zImage(size: 24, style: Design.Text.primary)
-                            .padding(8)
-                    }
-            )
             .popover(isPresented: $store.assetSelectBinding) {
                 assetContent(colorScheme)
                     .padding(.horizontal, 4)
@@ -233,28 +222,18 @@ public extension SwapAndPayForm {
             }
             .zashiSheet(isPresented: $store.isQuotePresented) {
                 quoteContent(colorScheme)
-                    .screenHorizontalPadding()
-                    .applyScreenBackground()
             }
             .zashiSheet(isPresented: $store.isQuoteToZecPresented) {
                 quoteToZecContent(colorScheme)
-                    .screenHorizontalPadding()
-                    .applyScreenBackground()
             }
             .zashiSheet(isPresented: $store.isQuoteUnavailablePresented) {
                 quoteUnavailableContent(colorScheme)
-                    .screenHorizontalPadding()
-                    .applyScreenBackground()
             }
             .zashiSheet(isPresented: $store.isCancelSheetVisible) {
                 cancelSheetContent(colorScheme)
-                    .screenHorizontalPadding()
-                    .applyScreenBackground()
             }
             .zashiSheet(isPresented: $store.isRefundAddressExplainerEnabled) {
                 refundAddressSheetContent(colorScheme)
-                    .screenHorizontalPadding()
-                    .applyScreenBackground()
             }
         }
         .onAppear {
@@ -283,7 +262,9 @@ public extension SwapAndPayForm {
                     if !store.isSwapToZecExperienceEnabled {
                         HStack(spacing: 0) {
                             Text(
-                                store.spendability == .nothing
+                                (store.isSensitiveContentHidden && store.spendability != .nothing)
+                                ? L10n.SwapAndPay.max(L10n.General.hideBalancesMost)
+                                : store.spendability == .nothing
                                 ? L10n.SwapAndPay.max("")
                                 : L10n.SwapAndPay.max(store.maxLabel)
                             )

@@ -168,6 +168,8 @@ public struct ReceiveView: View {
                         .padding(.horizontal, 48)
                 }
                 .applyScreenBackground()
+                .screenTitle(L10n.Tabs.receiveZec)
+                .zashiBack() { store.send(.backToHomeTapped) }
             } destination: { store in
                 switch store.case {
                 case let .addressDetails(store):
@@ -183,14 +185,10 @@ public struct ReceiveView: View {
             .navigationBarHidden(!store.path.isEmpty)
             .zashiSheet(isPresented: $explainer) {
                 explainerContent()
-                    .screenHorizontalPadding()
-                    .applyScreenBackground()
             }
         }
         .padding(.horizontal, 4)
         .applyScreenBackground()
-        .screenTitle(L10n.Tabs.receiveZec)
-        .zashiBack()
     }
     
     @ViewBuilder private func explainerContent() -> some View {
@@ -236,7 +234,7 @@ public struct ReceiveView: View {
                 store.send(.infoTapped(true))
                 explainer = false
             }
-            .padding(.bottom, 24)
+            .padding(.bottom, Design.Spacing.sheetBottomSpace)
         }
     }
     
@@ -273,7 +271,7 @@ public struct ReceiveView: View {
                 store.send(.infoTapped(false))
                 explainer = false
             }
-            .padding(.bottom, 24)
+            .padding(.bottom, Design.Spacing.sheetBottomSpace)
         }
     }
     

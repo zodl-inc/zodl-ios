@@ -117,144 +117,175 @@ private extension RootView {
                     }
 
                 case .home:
-                    NavigationView {
-                        HomeView(
-                            store: store.scope(
-                                state: \.homeState,
-                                action: \.home
-                            ),
-                            tokenName: tokenName
-                        )
-                        .navigationLinkEmpty(isActive: store.bindingFor(.settings)) {
-                            SettingsView(
-                                store:
-                                    store.scope(
-                                        state: \.settingsState,
-                                        action: \.settings)
-                            )
-                        }
-                        .navigationLinkEmpty(isActive: store.bindingFor(.receive)) {
-                            ReceiveView(
-                                store:
-                                    store.scope(
-                                        state: \.receiveState,
-                                        action: \.receive),
-                                networkType: networkType,
+                    ZStack {
+                        // Home view
+                        NavigationStack {
+                            HomeView(
+                                store: store.scope(
+                                    state: \.homeState,
+                                    action: \.home
+                                ),
                                 tokenName: tokenName
                             )
                         }
-                        .navigationLinkEmpty(isActive: store.bindingFor(.requestZecCoordFlow)) {
-                            RequestZecCoordFlowView(
-                                store:
-                                    store.scope(
-                                        state: \.requestZecCoordFlowState,
-                                        action: \.requestZecCoordFlow),
-                                tokenName: tokenName
-                            )
-                        }
-                        .navigationLinkEmpty(isActive: store.bindingFor(.sendCoordFlow)) {
-                            SendCoordFlowView(
-                                store:
-                                    store.scope(
-                                        state: \.sendCoordFlowState,
-                                        action: \.sendCoordFlow),
-                                tokenName: tokenName
-                            )
-                        }
-                        .navigationLinkEmpty(isActive: store.bindingFor(.scanCoordFlow)) {
-                            ScanCoordFlowView(
-                                store:
-                                    store.scope(
-                                        state: \.scanCoordFlowState,
-                                        action: \.scanCoordFlow),
-                                tokenName: tokenName
-                            )
-                        }
-                        .navigationLinkEmpty(isActive: store.bindingFor(.addKeystoneHWWalletCoordFlow)) {
-                            AddKeystoneHWWalletCoordFlowView(
-                                store:
-                                    store.scope(
-                                        state: \.addKeystoneHWWalletCoordFlowState,
-                                        action: \.addKeystoneHWWalletCoordFlow),
-                                tokenName: tokenName
-                            )
-                        }
-                        .navigationLinkEmpty(isActive: store.bindingFor(.transactionsCoordFlow)) {
-                            TransactionsCoordFlowView(
-                                store:
-                                    store.scope(
-                                        state: \.transactionsCoordFlowState,
-                                        action: \.transactionsCoordFlow),
-                                tokenName: tokenName
-                            )
-                        }
-                        .navigationLinkEmpty(isActive: store.bindingFor(.walletBackup)) {
-                            WalletBackupCoordFlowView(
-                                store:
-                                    store.scope(
-                                        state: \.walletBackupCoordFlowState,
-                                        action: \.walletBackupCoordFlow)
-                            )
-                        }
-                        .navigationLinkEmpty(isActive: store.bindingFor(.currencyConversionSetup)) {
-                            CurrencyConversionSetupView(
-                                store:
-                                    store.scope(
-                                        state: \.currencyConversionSetupState,
-                                        action: \.currencyConversionSetup)
-                            )
-                        }
-                        .navigationLinkEmpty(isActive: store.bindingFor(.torSetup)) {
-                            TorSetupView(
-                                store:
-                                    store.scope(
-                                        state: \.torSetupState,
-                                        action: \.torSetup)
-                            )
-                        }
-                        .navigationLinkEmpty(isActive: store.bindingFor(.serverSwitch)) {
-                            ServerSetupView(
-                                store:
-                                    store.scope(
-                                        state: \.serverSetupState,
-                                        action: \.serverSetup
-                                    )
-                            )
-                        }
-                        .navigationLinkEmpty(isActive: store.bindingFor(.swapAndPayCoordFlow)) {
-                            SwapAndPayCoordFlowView(
-                                store:
-                                    store.scope(
-                                        state: \.swapAndPayCoordFlowState,
-                                        action: \.swapAndPayCoordFlow),
-                                tokenName: tokenName
-                            )
-                        }
-                        .popover(isPresented: $store.signWithKeystoneCoordFlowBinding) {
-                            SignWithKeystoneCoordFlowView(
-                                store:
-                                    store.scope(
-                                        state: \.signWithKeystoneCoordFlowState,
-                                        action: \.signWithKeystoneCoordFlow),
-                                tokenName: tokenName
-                            )
+                        .offset(x: store.path == nil ? 0 : -200)
+                        
+                        // Paths
+                        if let path = store.path {
+                            if path == .settings {
+                                SettingsView(
+                                    store:
+                                        store.scope(
+                                            state: \.settingsState,
+                                            action: \.settings)
+                                )
+                                .transition(.move(edge: .trailing))
+                                .zIndex(1)
+                            } else if path == .receive {
+                                ReceiveView(
+                                    store:
+                                        store.scope(
+                                            state: \.receiveState,
+                                            action: \.receive),
+                                    networkType: networkType,
+                                    tokenName: tokenName
+                                )
+                                .transition(.move(edge: .trailing))
+                                .zIndex(1)
+                            } else if path == .requestZecCoordFlow {
+                                // FIXME: missing back button
+                                // TODO: this is no longer connected in the UI, it was in `get some ZEC` button
+                                RequestZecCoordFlowView(
+                                    store:
+                                        store.scope(
+                                            state: \.requestZecCoordFlowState,
+                                            action: \.requestZecCoordFlow),
+                                    tokenName: tokenName
+                                )
+                                .transition(.move(edge: .trailing))
+                                .zIndex(1)
+                            } else if path == .sendCoordFlow {
+                                SendCoordFlowView(
+                                    store:
+                                        store.scope(
+                                            state: \.sendCoordFlowState,
+                                            action: \.sendCoordFlow),
+                                    tokenName: tokenName
+                                )
+                                .transition(.move(edge: .trailing))
+                                .zIndex(1)
+                            } else if path == .scanCoordFlow {
+                                // FIXME: missing back button
+                                // TODO: this is no longer connected in the UI, it was under `scan` button
+                                ScanCoordFlowView(
+                                    store:
+                                        store.scope(
+                                            state: \.scanCoordFlowState,
+                                            action: \.scanCoordFlow),
+                                    tokenName: tokenName
+                                )
+                                .transition(.move(edge: .trailing))
+                                .zIndex(1)
+                            } else if path == .addKeystoneHWWalletCoordFlow {
+                                // FIXME: missing back button
+                                AddKeystoneHWWalletCoordFlowView(
+                                    store:
+                                        store.scope(
+                                            state: \.addKeystoneHWWalletCoordFlowState,
+                                            action: \.addKeystoneHWWalletCoordFlow),
+                                    tokenName: tokenName
+                                )
+                                .transition(.move(edge: .trailing))
+                                .zIndex(1)
+                            } else if path == .transactionsCoordFlow {
+                                // FIXME: missing back button
+                                // TODO: this flow looks to be connected, tested
+                                TransactionsCoordFlowView(
+                                    store:
+                                        store.scope(
+                                            state: \.transactionsCoordFlowState,
+                                            action: \.transactionsCoordFlow),
+                                    tokenName: tokenName
+                                )
+                                .transition(.move(edge: .trailing))
+                                .zIndex(1)
+                            } else if path == .walletBackup {
+                                // FIXME: missing back button
+                                WalletBackupCoordFlowView(
+                                    store:
+                                        store.scope(
+                                            state: \.walletBackupCoordFlowState,
+                                            action: \.walletBackupCoordFlow)
+                                )
+                                .transition(.move(edge: .trailing))
+                                .zIndex(1)
+                            } else if path == .currencyConversionSetup {
+                                // FIXME: missing back button
+                                CurrencyConversionSetupView(
+                                    store:
+                                        store.scope(
+                                            state: \.currencyConversionSetupState,
+                                            action: \.currencyConversionSetup)
+                                )
+                                .transition(.move(edge: .trailing))
+                                .zIndex(1)
+                            } else if path == .torSetup {
+                                // FIXME: missing back button
+                                TorSetupView(
+                                    store:
+                                        store.scope(
+                                            state: \.torSetupState,
+                                            action: \.torSetup)
+                                )
+                                .transition(.move(edge: .trailing))
+                                .zIndex(1)
+                            } else if path == .serverSwitch {
+                                // FIXME: missing back button
+                                ServerSetupView(
+                                    store:
+                                        store.scope(
+                                            state: \.serverSetupState,
+                                            action: \.serverSetup
+                                        )
+                                )
+                                .transition(.move(edge: .trailing))
+                                .zIndex(1)
+                            } else if path == .swapAndPayCoordFlow {
+                                // FIXME: missing back button
+                                SwapAndPayCoordFlowView(
+                                    store:
+                                        store.scope(
+                                            state: \.swapAndPayCoordFlowState,
+                                            action: \.swapAndPayCoordFlow),
+                                    tokenName: tokenName
+                                )
+                                .transition(.move(edge: .trailing))
+                                .zIndex(1)
+                            }
                         }
                     }
-                    .navigationViewStyle(.stack)
+                    .popover(isPresented: $store.signWithKeystoneCoordFlowBinding) {
+                        // FIXME: missing back button?
+                        SignWithKeystoneCoordFlowView(
+                            store:
+                                store.scope(
+                                    state: \.signWithKeystoneCoordFlowState,
+                                    action: \.signWithKeystoneCoordFlow),
+                            tokenName: tokenName
+                        )
+                    }
+                    .animation(.easeInOut(duration: 0.3), value: store.path)
                     .overlayedWithSplash(store.splashAppeared) {
                         store.send(.splashRemovalRequested)
                     }
 
                 case .onboarding:
-                    NavigationView {
-                        PlainOnboardingView(
-                            store: store.scope(
-                                state: \.onboardingState,
-                                action: \.onboarding
-                            )
+                    RestoreWalletCoordFlowView(
+                        store: store.scope(
+                            state: \.onboardingState,
+                            action: \.onboarding
                         )
-                    }
-                    .navigationViewStyle(.stack)
+                    )
                     .overlayedWithSplash(store.splashAppeared) {
                         store.send(.splashRemovalRequested)
                     }

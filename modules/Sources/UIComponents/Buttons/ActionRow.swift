@@ -20,6 +20,7 @@ public struct ActionRow<AccessoryContent>: View where AccessoryContent: View {
     @ViewBuilder let accessoryView: AccessoryContent?
     let divider: Bool
     let horizontalPadding: CGFloat
+    let glassBackground: Bool
     let action: () -> Void
     
     public init(
@@ -30,6 +31,7 @@ public struct ActionRow<AccessoryContent>: View where AccessoryContent: View {
         accessoryView: AccessoryContent? = EmptyView(),
         divider: Bool = true,
         horizontalPadding: CGFloat = 20,
+        glassBackground: Bool = false,
         action: @escaping () -> Void
     ) {
         self.icon = icon
@@ -39,6 +41,7 @@ public struct ActionRow<AccessoryContent>: View where AccessoryContent: View {
         self.accessoryView = accessoryView
         self.divider = divider
         self.horizontalPadding = horizontalPadding
+        self.glassBackground = glassBackground
         self.action = action
     }
     
@@ -127,6 +130,6 @@ public struct ActionRow<AccessoryContent>: View where AccessoryContent: View {
             }
         }
         .padding(.top, 12)
-        .background(Asset.Colors.background.color)
+        //.background(Asset.Colors.background.color)
     }
 }

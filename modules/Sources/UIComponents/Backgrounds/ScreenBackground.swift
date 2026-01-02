@@ -150,6 +150,22 @@ extension View {
         )
     }
     
+    public func applySheetBackground() -> some View {
+        if #available(iOS 26.0, *) {
+            modifier(
+                ScreenBackgroundModifier(
+                    color: .clear
+                )
+            )
+        } else {
+            modifier(
+                ScreenBackgroundModifier(
+                    color: Asset.Colors.background.color
+                )
+            )
+        }
+    }
+    
     public func applyErredScreenBackground() -> some View {
         modifier(
             ScreenGradientBackgroundModifier(mode: .erred)

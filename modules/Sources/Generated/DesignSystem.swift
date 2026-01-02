@@ -13,7 +13,7 @@ public protocol Colorable {
 }
 
 public enum Design: Colorable {
-
+    
     case screenBackground
     
     // MARK: Color Variables
@@ -47,7 +47,7 @@ public enum Design: Colorable {
         case opposite
         case oppositeSupport
     }
-
+    
     public enum Btns {
         public enum Primary: Colorable {
             case bg
@@ -56,7 +56,7 @@ public enum Design: Colorable {
             case bgDisabled
             case fgDisabled
         }
-
+        
         public enum Secondary: Colorable {
             case bg
             case bgHover
@@ -68,7 +68,7 @@ public enum Design: Colorable {
             case fgDisabled
             case disabledStroke
         }
-
+        
         public enum Tertiary: Colorable {
             case bg
             case bgHover
@@ -77,7 +77,7 @@ public enum Design: Colorable {
             case bgDisabled
             case fgDisabled
         }
-
+        
         public enum Quaternary: Colorable {
             case bg
             case bgHover
@@ -86,7 +86,7 @@ public enum Design: Colorable {
             case bgDisabled
             case fgDisabled
         }
-
+        
         public enum Destructive1: Colorable {
             case bg
             case bgHover
@@ -105,7 +105,7 @@ public enum Design: Colorable {
             case bgDisabled
             case fgDisabled
         }
-
+        
         public enum Brand: Colorable {
             case bg
             case bgHover
@@ -114,7 +114,7 @@ public enum Design: Colorable {
             case bgDisabled
             case fgDisabled
         }
-
+        
         public enum Ghost: Colorable {
             case bg
             case bgHover
@@ -123,7 +123,7 @@ public enum Design: Colorable {
             case fgDisabled
         }
     }
-
+    
     public enum Tags: Colorable {
         case tcDefaultFg
         case tcHoverBg
@@ -159,7 +159,7 @@ public enum Design: Colorable {
             case iconMain
             case required
         }
-
+        
         public enum ErrorFilled: Colorable {
             case bg
             case bgAlt
@@ -174,7 +174,7 @@ public enum Design: Colorable {
             case dropdown
         }
     }
-
+    
     public enum Avatars: Colorable {
         case profileBorder
         case bg
@@ -184,7 +184,7 @@ public enum Design: Colorable {
         case badgeBg
         case badgeFg
     }
-
+    
     public enum Switcher: Colorable {
         case defaultText
         case selectedBg
@@ -194,7 +194,7 @@ public enum Design: Colorable {
         case selectedStroke
         case surfacePrimary
     }
-
+    
     public enum Checkboxes: Colorable {
         case offBg
         case offStroke
@@ -235,7 +235,7 @@ public enum Design: Colorable {
             case dropdown
             case active
         }
-
+        
         public enum Disabled: Colorable {
             case bg
             case stroke
@@ -257,7 +257,7 @@ public enum Design: Colorable {
             case _900
             case _950
         }
-
+        
         public enum SuccessGreen: Colorable {
             case _50
             case _100
@@ -271,7 +271,7 @@ public enum Design: Colorable {
             case _900
             case _950
         }
-
+        
         public enum ErrorRed: Colorable {
             case _50
             case _100
@@ -285,7 +285,7 @@ public enum Design: Colorable {
             case _900
             case _950
         }
-
+        
         public enum WarningYellow: Colorable {
             case _50
             case _100
@@ -299,7 +299,7 @@ public enum Design: Colorable {
             case _900
             case _950
         }
-
+        
         public enum HyperBlue: Colorable {
             case _50
             case _100
@@ -313,7 +313,7 @@ public enum Design: Colorable {
             case _900
             case _950
         }
-
+        
         public enum Indigo: Colorable {
             case _50
             case _100
@@ -327,7 +327,7 @@ public enum Design: Colorable {
             case _900
             case _950
         }
-
+        
         public enum Purple: Colorable {
             case _50
             case _100
@@ -358,7 +358,7 @@ public enum Design: Colorable {
     }
     
     // MARK: - Corner Radius Constants
-
+    
     public enum Radius {
         public static let _none: CGFloat = 0
         public static let _xxs: CGFloat = 2
@@ -375,7 +375,7 @@ public enum Design: Colorable {
     }
     
     // MARK: - Spacing Constants
-
+    
     public enum Spacing {
         public static let _none: CGFloat = 0
         public static let _xxs: CGFloat = 2
@@ -394,6 +394,30 @@ public enum Design: Colorable {
         public static let _9xl: CGFloat = 96
         public static let _10xl: CGFloat = 128
         public static let _11xl: CGFloat = 160
+        
+        public static var sheetBottomSpace: CGFloat {
+            if #available(iOS 26, *) {
+                return 0
+            } else {
+                return 24
+            }
+        }
+
+        public static var edgeToEdgeSpacing: CGFloat {
+            if #available(iOS 26, *) {
+                return 12
+            } else {
+                return 0
+            }
+        }
+        
+        public static var navBarButtonPadding: CGFloat {
+            if #available(iOS 26, *) {
+                return 0
+            } else {
+                return 8
+            }
+        }
     }
 }
 

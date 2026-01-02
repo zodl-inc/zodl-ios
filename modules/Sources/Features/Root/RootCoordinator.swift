@@ -13,6 +13,22 @@ extension Root {
         Reduce { state, action in
             switch action {
                 
+                // MARK: - Returns to Home
+                
+//            case addKeystoneHWWalletCoordFlow
+//            case currencyConversionSetup
+//            case serverSwitch
+//            case swapAndPayCoordFlow
+//            case torSetup
+//            case transactionsCoordFlow
+//            case walletBackup
+
+            case .settings(.backToHomeTapped),
+                .receive(.backToHomeTapped),
+                .sendCoordFlow(.sendForm(.dismissRequired)):
+                state.path = nil
+                return .none
+                
                 // MARK: - Accounts
 
             case .home(.walletAccountTapped(let walletAccount)):
@@ -183,9 +199,9 @@ extension Root {
 
                 // MARK: - Restore Wallet Coord Flow from Onboarding
 
-            case .onboarding(.restoreWalletCoordFlow(.path(.element(id: _, action: .restoreInfo(.gotItTapped))))):
+            case .onboarding(.path(.element(id: _, action: .restoreInfo(.gotItTapped)))):
                 var leavesScreenOpen = false
-                for element in state.onboardingState.restoreWalletCoordFlowState.path {
+                for element in state.onboardingState.path {
                     if case .restoreInfo(let restoreInfoState) = element {
                         leavesScreenOpen = restoreInfoState.isAcknowledged
                     }
@@ -248,10 +264,6 @@ extension Root {
                 return .none
 
             case .sendCoordFlow(.path(.element(id: _, action: .transactionDetails(.closeDetailTapped)))):
-                state.path = nil
-                return .none
-
-            case .sendCoordFlow(.dismissRequired):
                 state.path = nil
                 return .none
 

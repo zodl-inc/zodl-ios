@@ -56,7 +56,6 @@ public struct SwapAndPay {
         public var isInputInUsd = false
         public var isInsufficientBalance = false
         public var isNotAddressInAddressBook = false
-        public var isPopToRootBack = false
         public var isQuoteRequestInFlight = false
         public var isQuotePresented = false
         public var isQuoteToZecPresented = false
@@ -82,6 +81,7 @@ public struct SwapAndPay {
         public var slippageInSheet: Decimal = 1.0
         public var selectedSlippageChip = 0
         @Shared(.inMemory(.selectedWalletAccount)) public var selectedWalletAccount: WalletAccount? = nil
+        @Shared(.appStorage(.sensitiveContent)) var isSensitiveContentHidden = false
         @Shared(.inMemory(.swapAPIAccess)) var swapAPIAccess: WalletStorage.SwapAPIAccess = .direct
         @Shared(.inMemory(.swapAssets)) public var swapAssets: IdentifiedArrayOf<SwapAsset> = []
         public var swapAssetFailedCounter = 0

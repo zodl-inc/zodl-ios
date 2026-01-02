@@ -70,13 +70,8 @@ public struct BalancesView: View {
                 ZashiButton(L10n.Balances.dismiss) {
                     store.send(.dismissTapped)
                 }
-                .padding(.bottom, 24)
+                .padding(.bottom, Design.Spacing.sheetBottomSpace)
             }
-            .heightChangePreference { value in
-                store.send(.sheetHeightUpdated(value))
-            }
-            .screenHorizontalPadding()
-            .applyScreenBackground()
             .onAppear { store.send(.onAppear) }
             .onDisappear { store.send(.onDisappear) }
         }

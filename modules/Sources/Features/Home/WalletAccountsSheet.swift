@@ -12,28 +12,7 @@ import UIComponents
 
 extension HomeView {
     @ViewBuilder func accountSwitchContent() -> some View {
-        WithPerceptionTracking {
-            if #available(iOS 16.4, *) {
-                mainBody()
-                    .presentationDetents([.height(accountSwitchSheetHeight)])
-                    .presentationDragIndicator(.visible)
-                    .presentationCornerRadius(Design.Radius._4xl)
-            } else if #available(iOS 16.0, *) {
-                mainBody()
-                    .presentationDetents([.height(accountSwitchSheetHeight)])
-                    .presentationDragIndicator(.visible)
-            } else {
-                mainBody(stickToBottom: true)
-            }
-        }
-    }
-    
-    @ViewBuilder func mainBody(stickToBottom: Bool = false) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            if stickToBottom {
-               Spacer()
-            }
-            
             Text(L10n.Keystone.Drawer.title)
                 .zFont(.semiBold, size: 20, style: Design.Text.primary)
                 .padding(.top, 32)
@@ -66,7 +45,7 @@ extension HomeView {
                 }
                 .padding(.top, 32)
                 .padding(.horizontal, 20)
-                .padding(.bottom, 24)
+                .padding(.bottom, Design.Spacing.sheetBottomSpace)
             } else {
                 Color.clear
                     .frame(height: 1)
@@ -74,14 +53,6 @@ extension HomeView {
             }
         }
         .padding(.horizontal, 4)
-        .background {
-            GeometryReader { proxy in
-                Color.clear
-                    .task {
-                        accountSwitchSheetHeight = proxy.size.height
-                    }
-            }
-        }
     }
     
     @ViewBuilder func walletAccountView(

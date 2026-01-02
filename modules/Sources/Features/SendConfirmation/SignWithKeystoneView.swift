@@ -25,7 +25,6 @@ public struct SignWithKeystoneView: View {
     @Perception.Bindable var store: StoreOf<SendConfirmation>
 
     @Dependency(\.sdkSynchronizer) var sdkSynchronizer
-    @State var accountSwitchSheetHeight: CGFloat = .zero
 
     @State private var previousBrightness: CGFloat = UIScreen.main.brightness
     @State private var isPresented = false
@@ -162,9 +161,8 @@ public struct SignWithKeystoneView: View {
 
                 shareView()
             }
-            .sheet(isPresented: $store.rejectSendRequest) {
-                rejectSendContent(colorScheme)
-                    .applyScreenBackground()
+            .zashiSheet(isPresented: $store.rejectSendRequest) {
+                rejectSendContent(colorScheme: colorScheme)
             }
             .onAppear {
                 store.send(.onAppear)

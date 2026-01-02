@@ -133,7 +133,7 @@ public struct SwapToZecSummaryView: View {
                     } label: {
                         Asset.Assets.infoCircle.image
                             .zImage(size: 24, style: Design.Text.primary)
-                            .padding(8)
+                            .padding(Design.Spacing.navBarButtonPadding)
                     }
             )
             .zashiBack()

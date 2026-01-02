@@ -12,16 +12,16 @@ extension View {
         )
     }
 
-    public func navigationLinkEmpty<Destination: View>(
-        isActive: Binding<Bool>,
-        destination: @escaping () -> Destination
-    ) -> some View {
-        return self.overlay(
-            NavigationLink<EmptyView, Destination>(
-                isActive: isActive,
-                destination: destination,
-                label: { EmptyView() }
-            )
-        )
-    }
+//    public func navigationLinkEmpty<Destination: View>(
+//        isActive: Binding<Bool>,
+//        destination: @escaping () -> Destination
+//    ) -> some View {
+//        return self.overlay(
+//            NavigationLink<EmptyView, Destination>(
+//                isActive: isActive,
+//                destination: destination,
+//                label: { EmptyView() }
+//            )
+//        )
+//    }
 }

@@ -42,9 +42,8 @@ public struct InsufficientFundsSheetModifier: ViewModifier {
                     ZashiButton(L10n.General.ok.uppercased()) {
                         isPresented = false
                     }
-                    .padding(.bottom, 24)
+                    .padding(.bottom, Design.Spacing.sheetBottomSpace)
                 }
-                .screenHorizontalPadding()
             }
     }
 }

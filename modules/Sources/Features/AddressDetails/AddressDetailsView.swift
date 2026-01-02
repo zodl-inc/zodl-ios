@@ -104,7 +104,7 @@ public struct AddressDetailsView: View {
         }
         .screenHorizontalPadding()
         .applyScreenBackground()
-        .zashiBackV2()
+        .zashiBack()
     }
 }
 

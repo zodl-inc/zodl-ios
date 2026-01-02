@@ -49,7 +49,6 @@ public struct TransactionDetailsView: View {
 
     @Environment(\.colorScheme) var colorScheme
 
-    @State var filtersSheetHeight: CGFloat = .zero
     @FocusState var isAnnotationFocused
 
     @Perception.Bindable var store: StoreOf<TransactionDetails>
@@ -197,9 +196,8 @@ public struct TransactionDetailsView: View {
             )
             .onAppear { store.send(.onAppear) }
             .onDisappear { store.send(.onDisappear) }
-            .sheet(isPresented: $store.annotationRequest) {
+            .zashiSheet(isPresented: $store.annotationRequest) {
                 annotationContent(store.isEditMode)
-                    .applyScreenBackground()
             }
         }
         .navigationBarTitleDisplayMode(.inline)

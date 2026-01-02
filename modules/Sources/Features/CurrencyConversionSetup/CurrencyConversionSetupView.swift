@@ -43,8 +43,6 @@ public struct CurrencyConversionSetupView: View {
             .zashiBack()
             .zashiSheet(isPresented: $store.isTorSheetPresented) {
                 torSheetContent()
-                    .screenHorizontalPadding()
-                    .applyScreenBackground()
             }
         }
         .navigationBarTitleDisplayMode(.inline)
@@ -89,7 +87,7 @@ public struct CurrencyConversionSetupView: View {
             ZashiButton(L10n.TorSetup.CcSheet.enable) {
                 store.send(.enableTorTapped)
             }
-            .padding(.bottom, 24)
+            .padding(.bottom, Design.Spacing.sheetBottomSpace)
         }
     }
     

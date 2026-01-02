@@ -48,7 +48,6 @@ public struct SendForm {
         public var isInsufficientBalance = false
         public var isLatestInputFiat = false
         public var isNotAddressInAddressBook = false
-        public var isPopToRootBack = false
         public var isSheetTexAddressVisible = false
         public var isValidAddress = false
         public var isValidTransparentAddress = false

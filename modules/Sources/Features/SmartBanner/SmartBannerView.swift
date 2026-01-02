@@ -73,13 +73,9 @@ public struct SmartBannerView: View {
             }
             .zashiSheet(isPresented: $store.isSmartBannerSheetPresented) {
                 helpSheetContent()
-                    .screenHorizontalPadding()
-                    .applyScreenBackground()
             }
             .zashiSheet(isPresented: $store.isSyncTimedOutSheetPresented) {
                 syncTimedSheetContent()
-                    .screenHorizontalPadding()
-                    .applyScreenBackground()
             }
             .onAppear { store.send(.onAppear) }
             .onDisappear { store.send(.onDisappear) }
@@ -180,7 +176,7 @@ extension SmartBannerView {
             ZashiButton(L10n.ErrorPage.Action.contactSupport) {
                 store.send(.reportTapped)
             }
-            .padding(.bottom, 24)
+            .padding(.bottom, Design.Spacing.sheetBottomSpace)
         }
     }
 }

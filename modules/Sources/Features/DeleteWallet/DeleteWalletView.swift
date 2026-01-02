@@ -86,8 +86,6 @@ public struct DeleteWalletView: View {
             .zashiBack(store.isProcessing)
             .zashiSheet(isPresented: $store.isSheetUp) {
                 helpSheetContent()
-                    .screenHorizontalPadding()
-                    .applyScreenBackground()
             }
         }
         .navigationBarTitleDisplayMode(.inline)
@@ -130,7 +128,7 @@ public struct DeleteWalletView: View {
             ZashiButton(L10n.General.cancel) {
                 store.send(.dismissSheet)
             }
-            .padding(.bottom, 24)
+            .padding(.bottom, Design.Spacing.sheetBottomSpace)
         }
     }
 }

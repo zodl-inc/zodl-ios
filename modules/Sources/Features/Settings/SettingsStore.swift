@@ -83,6 +83,7 @@ public struct Settings {
         case addressBookAccessCheck
         case addressBookTapped
         case advancedSettingsTapped
+        case backToHomeTapped
         case binding(BindingAction<Settings.State>)
         case checkFundsForAddress(String)
         case currencyConversionTapped
@@ -118,6 +119,9 @@ public struct Settings {
                 if let torOnFlag = walletStorage.exportTorSetupFlag() {
                     state.isTorOn = torOnFlag
                 }
+                return .none
+            
+            case .backToHomeTapped:
                 return .none
                 
             case .binding:

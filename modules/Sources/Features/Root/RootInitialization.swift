@@ -556,22 +556,28 @@ extension Root {
                 } catch {
                     return .send(.resetZashiKeychainFailedWithCorruptedData(error.localizedDescription))
                 }
-                if state.appInitializationState == .keysMissing && state.onboardingState.destination == .importExistingWallet {
-                    state.appInitializationState = .uninitialized
-                    return .cancel(id: SynchronizerCancelId)
-                } else if state.appInitializationState == .keysMissing && state.onboardingState.destination == .createNewWallet {
-                    state.appInitializationState = .uninitialized
-                    return .concatenate(
-                        .cancel(id: SynchronizerCancelId),
-                        .send(.onboarding(.createNewWalletRequested))
-                    )
-                } else {
-                    return .concatenate(
-                        .cancel(id: SynchronizerCancelId),
-                        .send(.initialization(.checkWalletInitialization))
-                    )
-                }
                 
+                // FIXME: this needs to be recreated
+//                if state.appInitializationState == .keysMissing && state.onboardingState.destination == .importExistingWallet {
+//                    state.appInitializationState = .uninitialized
+//                    return .cancel(id: SynchronizerCancelId)
+//                } else if state.appInitializationState == .keysMissing && state.onboardingState.destination == .createNewWallet {
+//                    state.appInitializationState = .uninitialized
+//                    return .concatenate(
+//                        .cancel(id: SynchronizerCancelId),
+//                        .send(.onboarding(.createNewWalletRequested))
+//                    )
+//                } else {
+//                    return .concatenate(
+//                        .cancel(id: SynchronizerCancelId),
+//                        .send(.initialization(.checkWalletInitialization))
+//                    )
+//                }
+                return .concatenate(
+                    .cancel(id: SynchronizerCancelId),
+                    .send(.initialization(.checkWalletInitialization))
+                )
+
             case .resetZashiKeychainFailedWithCorruptedData(let errMsg):
                 for element in state.settingsState.path {
                     if case .resetZashi(var resetZashiState) = element {
@@ -632,10 +638,10 @@ extension Root {
                 } else {
                     return .send(.onboarding(.createNewWalletRequested))
                 }
-                
+
             case .initialization(.restoreExistingWallet):
                 return .run { send in
-                    await send(.onboarding(.updateDestination(nil)))
+                    await send(.onboarding(.dismissDestination))
                     try await mainQueue.sleep(for: .seconds(1))
                     await send(.onboarding(.importExistingWallet))
                 }
@@ -648,7 +654,6 @@ extension Root {
 
             case .updateStateAfterConfigUpdate(let walletConfig):
                 state.walletConfig = walletConfig
-                state.onboardingState.walletConfig = walletConfig
                 return .none
 
             case .initialization(.initializationFailed(let error)):

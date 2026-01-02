@@ -102,7 +102,7 @@ public struct Root {
         public var messageToBeShared = ""
         public var messageShareBinding: String?
         public var notEnoughFreeSpaceState: NotEnoughFreeSpace.State
-        public var onboardingState: OnboardingFlow.State
+        public var onboardingState: RestoreWalletCoordFlow.State
         public var osStatusErrorState: OSStatusError.State
         public var path: Path? = nil
         public var phraseDisplayState: RecoveryPhraseDisplay.State
@@ -153,7 +153,7 @@ public struct Root {
             isLockedInKeychainUnavailableState: Bool = false,
             isRestoringWallet: Bool = false,
             notEnoughFreeSpaceState: NotEnoughFreeSpace.State = .initial,
-            onboardingState: OnboardingFlow.State,
+            onboardingState: RestoreWalletCoordFlow.State,
             osStatusErrorState: OSStatusError.State = .initial,
             phraseDisplayState: RecoveryPhraseDisplay.State,
             serverSetupState: ServerSetup.State = .initial,
@@ -204,7 +204,7 @@ public struct Root {
         case resetZashiKeychainRequest
         case resetZashiSDKFailed
         case resetZashiSDKSucceeded
-        case onboarding(OnboardingFlow.Action)
+        case onboarding(RestoreWalletCoordFlow.Action)
         case osStatusError(OSStatusError.Action)
         case phraseDisplay(RecoveryPhraseDisplay.Action)
         case serverSetup(ServerSetup.Action)
@@ -329,7 +329,7 @@ public struct Root {
         }
 
         Scope(state: \.onboardingState, action: \.onboarding) {
-            OnboardingFlow()
+            RestoreWalletCoordFlow()
         }
 
         Scope(state: \.welcomeState, action: \.welcome) {

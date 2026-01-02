@@ -11,29 +11,8 @@ import Generated
 import UIComponents
 
 extension SignWithKeystoneView {
-    @ViewBuilder func rejectSendContent(_ colorScheme: ColorScheme) -> some View {
-        WithPerceptionTracking {
-            if #available(iOS 16.4, *) {
-                mainBody(colorScheme: colorScheme)
-                    .presentationDetents([.height(accountSwitchSheetHeight)])
-                    .presentationDragIndicator(.visible)
-                    .presentationCornerRadius(Design.Radius._4xl)
-            } else if #available(iOS 16.0, *) {
-                mainBody(colorScheme: colorScheme)
-                    .presentationDetents([.height(accountSwitchSheetHeight)])
-                    .presentationDragIndicator(.visible)
-            } else {
-                mainBody(stickToBottom: true, colorScheme: colorScheme)
-            }
-        }
-    }
-    
-    @ViewBuilder func mainBody(stickToBottom: Bool = false, colorScheme: ColorScheme) -> some View {
+    @ViewBuilder func rejectSendContent(colorScheme: ColorScheme) -> some View {
         VStack(spacing: 0) {
-            if stickToBottom {
-               Spacer()
-            }
-
             Asset.Assets.Icons.arrowUp.image
                 .zImage(size: 20, style: Design.Utility.ErrorRed._500)
                 .background {
@@ -65,16 +44,7 @@ extension SignWithKeystoneView {
             ) {
                 store.send(.rejectTapped)
             }
-            .padding(.bottom, 24)
-        }
-        .screenHorizontalPadding()
-        .background {
-            GeometryReader { proxy in
-                Color.clear
-                    .task {
-                        accountSwitchSheetHeight = proxy.size.height
-                    }
-            }
+            .padding(.bottom, Design.Spacing.sheetBottomSpace)
         }
     }
 }

@@ -66,6 +66,7 @@ public struct Receive {
 
     public enum Action {
         case addressDetailsRequest(RedactableString, Bool)
+        case backToHomeTapped
         case copyToPastboard(RedactableString)
         case infoTapped(Bool)
         case path(StackActionOf<Path>)
@@ -82,6 +83,9 @@ public struct Receive {
         
         Reduce { state, action in
             switch action {
+            case .backToHomeTapped:
+                return .none
+                
             case .addressDetailsRequest:
                 return .none
 

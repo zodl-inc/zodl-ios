@@ -104,6 +104,8 @@ public struct SettingsView: View {
                 }
                 .listStyle(.plain)
                 .applyScreenBackground()
+                .zashiBack() { store.send(.backToHomeTapped) }
+                .screenTitle(L10n.Settings.title)
             } destination: { store in
                 switch store.case {
                 case let .about(store):
@@ -141,19 +143,11 @@ public struct SettingsView: View {
                 }
             }
             .applyScreenBackground()
-            .navigationBarTitleDisplayMode(.inline)
-            .zashiBack()
-            .navigationBarHidden(!store.path.isEmpty)
-            .screenTitle(L10n.HomeScreen.more)
             .zashiSheet(isPresented: $store.isInRecoverFundsMode) {
                 recoverFundsSheetContent()
-                    .screenHorizontalPadding()
-                    .applyScreenBackground()
             }
             .zashiSheet(isPresented: $store.isInEnhanceTransactionMode) {
                 enhanceTransactionSheetContent()
-                    .screenHorizontalPadding()
-                    .applyScreenBackground()
             }
         }
     }
@@ -195,7 +189,7 @@ public struct SettingsView: View {
                 store.send(.checkFundsForAddress(store.addressToRecoverFunds))
             }
             .disabled(store.addressToRecoverFunds.isEmpty || !store.isTorOn)
-            .padding(.bottom, 24)
+            .padding(.bottom, Design.Spacing.sheetBottomSpace)
         }
     }
     
@@ -223,7 +217,7 @@ public struct SettingsView: View {
                 store.send(.fetchDataForTxid(store.txidToEnhance))
             }
             .disabled(store.txidToEnhance.isEmpty)
-            .padding(.bottom, 24)
+            .padding(.bottom, Design.Spacing.sheetBottomSpace)
         }
     }
 }
