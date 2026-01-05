@@ -44,9 +44,7 @@ extension HomeView {
     @ViewBuilder func walletAccountSwitcher() -> some View {
         if !store.walletAccounts.isEmpty {
             Button {
-                if store.walletAccounts.count >= 2 {
-                    store.send(.accountSwitchTapped)
-                }
+                store.send(.accountSwitchTapped)
             } label: {
                 HStack(spacing: 0) {
                     if let selectedWalletAccount = store.selectedWalletAccount {
@@ -63,16 +61,13 @@ extension HomeView {
                             .zFont(.semiBold, size: 24, style: Design.Text.primary)
                             .padding(.leading, 8)
                     }
-                    
-                    if store.walletAccounts.count >= 2 {
-                        Asset.Assets.chevronDown.image
-                            .zImage(size: 24, style: Design.Text.primary)
-                            .padding(.leading, 8)
-                    }
+
+                    Asset.Assets.chevronDown.image
+                        .zImage(size: 24, style: Design.Text.primary)
+                        .padding(.leading, 8)
                 }
                 .padding(.horizontal, 4)
             }
-            .disabled(store.walletAccounts.count <= 1)
         }
     }
 }

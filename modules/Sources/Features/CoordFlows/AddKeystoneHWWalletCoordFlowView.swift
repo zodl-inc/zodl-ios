@@ -36,7 +36,7 @@ public struct AddKeystoneHWWalletCoordFlowView: View {
                             action: \.addKeystoneHWWallet
                         )
                 )
-                .navigationBarHidden(true)
+//                .navigationBarHidden(true)
             } destination: { store in
                 switch store.case {
                 case let .accountHWWalletSelection(store):
@@ -45,7 +45,7 @@ public struct AddKeystoneHWWalletCoordFlowView: View {
                     ScanView(store: store)
                 }
             }
-            .navigationBarHidden(!store.path.isEmpty)
+//            .navigationBarHidden(!store.path.isEmpty)
         }
         .applyScreenBackground()
         .zashiBack()

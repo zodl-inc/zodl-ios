@@ -55,6 +55,7 @@ public struct AddKeystoneHWWallet {
         case accountImportFailed
         case accountImportSucceeded
         case accountTapped
+        case backToHomeTapped
         case binding(BindingAction<AddKeystoneHWWallet.State>)
         case forgetThisDeviceTapped
         case loadedWalletAccounts([WalletAccount], AccountUUID)
@@ -79,6 +80,9 @@ public struct AddKeystoneHWWallet {
                 state.zcashAccounts = nil
                 return .none
             
+            case .backToHomeTapped:
+                return .none
+                
             case .binding:
                 return .none
                 

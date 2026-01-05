@@ -62,6 +62,10 @@ extension Root {
                     .send(.loadUserMetadata),
                     .send(.fetchTransactionsForTheSelectedAccount)
                 )
+                
+            case .addKeystoneHWWalletCoordFlow(.addKeystoneHWWallet(.backToHomeTapped)):
+                state.path = nil
+                return .none
 
                 // MARK: - Add Keystone HW Wallet from Settings
 
