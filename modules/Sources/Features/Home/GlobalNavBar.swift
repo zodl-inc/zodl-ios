@@ -50,15 +50,15 @@ extension HomeView {
                     if let selectedWalletAccount = store.selectedWalletAccount {
                         selectedWalletAccount.vendor.icon()
                             .resizable()
-                            .frame(width: 16, height: 16)
+                            .frame(width: 22, height: 22)
                             .background {
                                 Circle()
                                     .fill(Design.Surfaces.bgAlt.color(colorScheme))
-                                    .frame(width: 24, height: 24)
+                                    .frame(width: 30, height: 30)
                             }
                         
                         Text(selectedWalletAccount.vendor.name())
-                            .zFont(.semiBold, size: 24, style: Design.Text.primary)
+                            .zFont(.semiBold, fontFamily: .michroma, size: 24, style: Design.Text.primary)
                             .padding(.leading, 8)
                     }
 

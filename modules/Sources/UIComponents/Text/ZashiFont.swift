@@ -10,6 +10,12 @@ import SwiftUI
 import Generated
 
 public struct ZashiFontModifier: ViewModifier {
+    public enum InternalFontFamily {
+        case inter
+        case michroma
+        case robotoMono
+    }
+    
     public enum FontWeight: Equatable {
         case black
         case blackItalic
@@ -32,7 +38,7 @@ public struct ZashiFontModifier: ViewModifier {
     }
     
     let weight: FontWeight
-    let addressFont: Bool
+    let fontFamily: ZashiFontModifier.InternalFontFamily
     let size: CGFloat
     let color: Color?
     let style: Colorable?
@@ -40,28 +46,26 @@ public struct ZashiFontModifier: ViewModifier {
     public func body(content: Content) -> some View {
         if let color {
             content
-                .font(.custom(fontName(weight, addressFont: addressFont), size: size))
-            //.zForegroundColor(style)
+                .font(.custom(fontName(weight, fontFamily: fontFamily), size: size))
                 .foregroundColor(color)
         } else if let style {
             content
-                .font(.custom(fontName(weight, addressFont: addressFont), size: size))
+                .font(.custom(fontName(weight, fontFamily: fontFamily), size: size))
                 .zForegroundColor(style)
-            //            .foregroundColor(color)
         } else {
             EmptyView()
         }
     }
     
-    private func fontName(_ weight: FontWeight, addressFont: Bool = false) -> String {
-        if addressFont {
+    private func fontName(_ weight: FontWeight, fontFamily: ZashiFontModifier.InternalFontFamily = .inter) -> String {
+        if fontFamily == .robotoMono {
             switch weight {
             case .bold: return FontFamily.RobotoMono.bold.name
             case .medium: return FontFamily.RobotoMono.medium.name
             case .semiBold: return FontFamily.RobotoMono.semiBold.name
             default: return FontFamily.RobotoMono.regular.name
             }
-        } else {
+        } else if fontFamily == .inter {
             switch weight {
             case .black: return FontFamily.Inter.black.name
             case .blackItalic: return FontFamily.Inter.blackItalic.name
@@ -82,6 +86,11 @@ public struct ZashiFontModifier: ViewModifier {
             case .thin: return FontFamily.Inter.thin.name
             case .thinItalic: return FontFamily.Inter.thinItalic.name
             }
+        } else {
+            switch weight {
+            case .regular: return FontFamily.Michroma.regular.name
+            default: return FontFamily.Michroma.regular.name
+            }
         }
     }
 }
@@ -89,25 +98,23 @@ public struct ZashiFontModifier: ViewModifier {
 public extension View {
     func zFont(
         _ weight: ZashiFontModifier.FontWeight = .regular,
-        addressFont: Bool = false,
+        fontFamily: ZashiFontModifier.InternalFontFamily = .inter,
         size: CGFloat,
         style: Colorable
     ) -> some View {
-//        zFont(weight, addressFont: addressFont, size: size, color: style.color(.light))
-        
         self.modifier(
-            ZashiFontModifier(weight: weight, addressFont: addressFont, size: size, color: nil, style: style)
+            ZashiFontModifier(weight: weight, fontFamily: fontFamily, size: size, color: nil, style: style)
         )
     }
     
     func zFont(
         _ weight: ZashiFontModifier.FontWeight = .regular,
-        addressFont: Bool = false,
+        fontFamily: ZashiFontModifier.InternalFontFamily = .inter,
         size: CGFloat,
         color: Color
     ) -> some View {
         self.modifier(
-            ZashiFontModifier(weight: weight, addressFont: addressFont, size: size, color: color, style: nil)
+            ZashiFontModifier(weight: weight, fontFamily: fontFamily, size: size, color: color, style: nil)
         )
     }
 }

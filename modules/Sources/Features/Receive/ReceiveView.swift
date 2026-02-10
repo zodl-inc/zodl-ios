@@ -338,7 +338,7 @@ public struct ReceiveView: View {
                         .padding(.bottom, 4)
                     
                     Text(address.truncateMiddle10)
-                        .zFont(addressFont: true, size: 14, style: Design.Text.tertiary)
+                        .zFont(fontFamily: .robotoMono, size: 14, style: Design.Text.tertiary)
                         .padding(.bottom, expanded ? 10 : 0)
                 }
                 .lineLimit(1)

@@ -1262,14 +1262,14 @@ public enum L10n {
     public static let feedback = L10n.tr("Localizable", "settings.feedback", fallback: "Send Us Feedback")
     /// Pay with Flexa
     public static let flexa = L10n.tr("Localizable", "settings.flexa", fallback: "Pay with Flexa")
-    /// Pay with Flexa payment clips and explore a new way of spending Zcash.
-    public static let flexaDesc = L10n.tr("Localizable", "settings.flexaDesc", fallback: "Pay with Flexa payment clips and explore a new way of spending Zcash.")
+    /// Spend ZEC at thousands of retail locations.
+    public static let flexaDesc = L10n.tr("Localizable", "settings.flexaDesc", fallback: "Spend ZEC at thousands of retail locations.")
     /// Integrations
     public static let integrations = L10n.tr("Localizable", "settings.integrations", fallback: "Integrations")
     /// Connect Keystone
     public static let keystone = L10n.tr("Localizable", "settings.keystone", fallback: "Connect Keystone")
-    /// Pair your Keystone hardware wallet with Zodl to sign transactions.
-    public static let keystoneDesc = L10n.tr("Localizable", "settings.keystoneDesc", fallback: "Pair your Keystone hardware wallet with Zodl to sign transactions.")
+    /// Connect airgapped hardware wallet to store shielded ZEC.
+    public static let keystoneDesc = L10n.tr("Localizable", "settings.keystoneDesc", fallback: "Connect airgapped hardware wallet to store shielded ZEC.")
     /// Beta: Tor Protection
     public static let `private` = L10n.tr("Localizable", "settings.private", fallback: "Beta: Tor Protection")
     /// Zodl Recovery Phrase

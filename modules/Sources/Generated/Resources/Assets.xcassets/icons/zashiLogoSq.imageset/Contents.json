@@ -1,7 +1,7 @@
 {
   "images" : [
     {
-      "filename" : "logoTransLight.png",
+      "filename" : "logosqlight.png",
       "idiom" : "universal"
     },
     {
@@ -11,7 +11,7 @@
           "value" : "dark"
         }
       ],
-      "filename" : "logoTransDark.png",
+      "filename" : "logosq.png",
       "idiom" : "universal"
     }
   ],

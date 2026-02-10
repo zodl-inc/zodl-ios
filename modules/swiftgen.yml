@@ -17,6 +17,7 @@ fonts:
     - Fonts/Zboto.otf
     - Fonts/Inter
     - Fonts/RobotoMono
+    - Fonts/Michroma
   outputs:
       templatePath: Templates/fonts/fonts_swift5_swiftui.stencil
       params:

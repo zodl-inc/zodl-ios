@@ -201,7 +201,7 @@
 "settings.buyZecCB" = "Buy ZEC with Coinbase";
 "settings.coinbaseDesc" = "A hassle-free way to buy ZEC and get it directly into your Zodl wallet.";
 "settings.flexa" = "Pay with Flexa";
-"settings.flexaDesc" = "Pay with Flexa payment clips and explore a new way of spending Zcash.";
+"settings.flexaDesc" = "Spend ZEC at thousands of retail locations."; // trans
 "settings.restoreWarning" = "During the Restore process, it is not possible to use payment integrations.";
 "settings.deleteZashi" = "Reset Zodl";
 "settings.deleteZashiWarning" = "You will be asked to confirm on the next screen";
@@ -505,7 +505,7 @@
 "filter.at" = "at"; // example: Nov 29 at 4:15pm
 "filter.daysAgo" = "%@ days ago";
 "settings.keystone" = "Connect Keystone";
-"settings.keystoneDesc" = "Pair your Keystone hardware wallet with Zodl to sign transactions.";
+"settings.keystoneDesc" = "Connect airgapped hardware wallet to store shielded ZEC."; // trans
 
 // More actions
 "more.options" = "More Options";

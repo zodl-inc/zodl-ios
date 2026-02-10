@@ -57,7 +57,7 @@ public struct SignWithKeystoneView: View {
                                     .zFont(.semiBold, size: 16, style: Design.Text.primary)
                                 
                                 Text(store.selectedWalletAccount?.unifiedAddress?.zip316 ?? "")
-                                    .zFont(addressFont: true, size: 12, style: Design.Text.tertiary)
+                                    .zFont(fontFamily: .robotoMono, size: 12, style: Design.Text.tertiary)
                             }
                             
                             Spacer()

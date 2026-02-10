@@ -46,7 +46,7 @@ public struct SuccessView: View {
 
                 if !store.isShielding && store.type == .regular {
                     Text(store.address.zip316)
-                        .zFont(addressFont: true, size: 14, style: Design.Text.primary)
+                        .zFont(fontFamily: .robotoMono, size: 14, style: Design.Text.primary)
                         .padding(.top, 4)
                 }
 
