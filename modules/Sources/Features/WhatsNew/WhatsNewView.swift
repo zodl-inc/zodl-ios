@@ -101,6 +101,10 @@ public struct WhatsNewView: View {
 
             Spacer()
             
+            Asset.Assets.zashiLogo.image
+                .zImage(width: 41, height: 41, color: Asset.Colors.primary.color)
+                .padding(.bottom, 7)
+
             Asset.Assets.zashiTitle.image
                 .zImage(width: 73, height: 20, color: Asset.Colors.primary.color)
                 .padding(.bottom, 16)

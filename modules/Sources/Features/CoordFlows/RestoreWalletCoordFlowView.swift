@@ -30,8 +30,13 @@ public struct RestoreWalletCoordFlowView: View {
                 VStack {
                     Spacer()
 
-                    Asset.Assets.welcomeScreenLogo.image
-                        .zImage(width: 169, height: 160, color: Asset.Colors.primary.color)
+                    Asset.Assets.zashiLogo.image
+                        .zImage(width: 105, height: 105, color: Asset.Colors.primary.color)
+                        .padding(.bottom, 14)
+
+                    Asset.Assets.zashiTitle.image
+                        .zImage(width: 203, height: 51, color: Asset.Colors.primary.color)
+                        .padding(.bottom, 16)
 
                     Text(L10n.PlainOnboarding.title)
                         .zFont(size: 20, style: Design.Text.secondary)

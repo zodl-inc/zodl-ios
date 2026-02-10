@@ -57,7 +57,7 @@ extension HomeView {
                                     .frame(width: 24, height: 24)
                             }
                         
-                        Text(selectedWalletAccount.vendor.name().lowercased())
+                        Text(selectedWalletAccount.vendor.name())
                             .zFont(.semiBold, size: 24, style: Design.Text.primary)
                             .padding(.leading, 8)
                     }

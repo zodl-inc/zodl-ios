@@ -1,5 +1,5 @@
 // MARK: - Plain Onboarding Flow
-"plainOnboarding.title" = "A Zcash (ZEC) wallet built for private payments";
+"plainOnboarding.title" = "Zcash-powered mobile wallet built for financial sovereignty."; // trans
 "plainOnboarding.button.createNewWallet" = "Create new wallet";
 "plainOnboarding.button.restoreWallet" = "Restore existing wallet";
 
@@ -13,14 +13,14 @@
 "proposalPartial.transactionIds" = "Transaction Ids";
 "proposalPartial.copyIds" = "Copy transaction IDs";
 "proposalPartial.mailSubject" = "TEX Transaction Error";
-"proposalPartial.mailPart1" = "Hi Zashi Team,";
+"proposalPartial.mailPart1" = "Hi Zodl Team,";
 "proposalPartial.mailPart2" = "While sending a transaction to a TEX address, I encountered an error state. I'm reaching out to get guidance on how to recover my funds.";
 "proposalPartial.mailPart3" = "Thank you.";
 "proposalPartial.transactionStatuses" = "Transaction statuses:";
 
 // MARK: OSStatusError
 "osStatusError.title" = "It’s not you, it’s us.";
-"osStatusError.message" = "Your funds are safe but something happened while we were trying to retrieve the Keychain data. Close the Zashi app, and give it a fresh launch, we will try again.";
+"osStatusError.message" = "Your funds are safe but something happened while we were trying to retrieve the Keychain data. Close the Zodl app, and give it a fresh launch, we will try again.";
 "osStatusError.error" = "Error code: %@";
 
 // MARK: - Import Wallet Screen
@@ -36,13 +36,13 @@
 "importWallet.enterPlaceholder" = "privacy dignity freedom ...";
 
 // MARK: - Restore Info
-"restoreInfo.title" = "Keep Zashi open!";
+"restoreInfo.title" = "Keep Zodl open!";
 "restoreInfo.subTitle" = "Your wallet is being restored.";
-"restoreInfo.tips" = "Zashi is scanning the blockchain to retrieve your transactions. Older wallets can take hours to restore. Follow these steps to prevent interruption:";
-"restoreInfo.tip1" = "Keep the Zashi app open on an active phone screen.";
+"restoreInfo.tips" = "Zodl is scanning the blockchain to retrieve your transactions. Older wallets can take hours to restore. Follow these steps to prevent interruption:";
+"restoreInfo.tip1" = "Keep the Zodl app open on an active phone screen.";
 "restoreInfo.tip2" = "To prevent your phone screen from going dark, turn off power-saving mode and keep your phone plugged in.";
 "restoreInfo.note" = "Note: ";
-"restoreInfo.noteInfo" = "Your funds cannot be spent with Zashi until your wallet is fully restored.";
+"restoreInfo.noteInfo" = "Your funds cannot be spent with Zodl until your wallet is fully restored.";
 "restoreInfo.gotIt" = "Got it!";
 
 // MARK: - Tabs
@@ -56,7 +56,7 @@
 "home.migratingDatabases" = "Upgrading databases…";
 
 // MARK: - Address Details
-"addressDetails.shareTitle" = "My Zashi ZEC Address";
+"addressDetails.shareTitle" = "My Zodl ZEC Address";
 "addressDetails.shareDesc" = "Hi, scan this QR code to send me a ZEC payment!";
 "addressDetails.shareQR" = "Share QR Code";
 "addressDetails.copyAddress" = "Copy Address";
@@ -66,7 +66,7 @@
 "requestZec.whatFor" = "What’s this for?";
 "requestZec.summary.shareQR" = "Share QR Code";
 "requestZec.summary.shareTitle" = "Request ZEC";
-"requestZec.summary.shareDesc" = "Hi, I have generated a ZEC payment request for you using the Zashi app!";
+"requestZec.summary.shareDesc" = "Hi, I have generated a ZEC payment request for you using the Zodl app!";
 "requestZec.summary.shareMsg" = "(download link: https://apps.apple.com/app/zashi-zcash-wallet/id1672392439)";
 
 // MARK: - Receive
@@ -104,8 +104,8 @@
 "balances.shieldingInProgress" = "Shielding";
 "balances.synced" = "Synced";
 "balances.syncing" = "Syncing";
-"balances.syncingError" = "Zashi encountered an error while syncing, attempting to resolve...";
-"balances.hintBox.message" = "Zashi uses the latest network upgrade and does not support sending transparent (unshielded) ZEC. Use the Shield and Consolidate button to shield your funds, which will add to your available balance and make your ZEC spendable.";
+"balances.syncingError" = "Zodl encountered an error while syncing, attempting to resolve...";
+"balances.hintBox.message" = "Zodl uses the latest network upgrade and does not support sending transparent (unshielded) ZEC. Use the Shield and Consolidate button to shield your funds, which will add to your available balance and make your ZEC spendable.";
 "balances.hintBox.dismiss" = "I got it!";
 "balances.restoringWalletWarning" = "The restore process can take several hours on lower-powered devices, and even on powerful devices is likely to take more than an hour.";
 
@@ -113,7 +113,7 @@
 "scan.invalidQR" = "This QR code doesn't hold a valid Zcash address.";
 "scan.invalidImage" = "This image doesn't hold a valid Zcash address.";
 "scan.severalCodesFound" = "This image holds several valid Zcash addresses.";
-"scan.cameraSettings" = "The camera is not authorized. Please go to the system settings of Zashi and turn it on.";
+"scan.cameraSettings" = "The camera is not authorized. Please go to the system settings of Zodl and turn it on.";
 "scan.openSettings" = "Open settings";
 
 // MARK: - Send
@@ -148,7 +148,7 @@
 "send.successInfo" = "Your coins were successfully sent to";
 "send.failure" = "Unable to send";
 "send.failureInfo" = "There was an error attempting to send coins. Try it again, please.";
-"send.resubmissionInfo" = "Zashi encountered connection issues when submitting the transaction. It will retry in the next few minutes.";
+"send.resubmissionInfo" = "Zodl encountered connection issues when submitting the transaction. It will retry in the next few minutes.";
 "send.report" = "Report";
 "send.shielding" = "Shielding";
 "send.shieldingInfo" = "Your coins are getting shielded";
@@ -166,24 +166,24 @@
 "zecKeyboard.invalid" = "This transaction amount is invalid.";
 
 // MARK: - Delete Wallet
-"deleteWallet.title" = "Reset Zashi";
+"deleteWallet.title" = "Reset Zodl";
 "deleteWallet.message1" = "Resetting your app can lead to complete loss of access to your funds! ⚠️";
 "deleteWallet.message2" = "Make sure you have both your secret recovery phrase and wallet birthday height saved before you proceed.";
-"deleteWallet.message3" = "Resetting the Zashi app will delete the app database and cached app data, and disconnect all connected hardware wallets.";
-"deleteWallet.message4" = "Once you Reset Zashi, the only way to access your funds is through a wallet restore process that requires your Zashi Recovery Phrase and Wallet Birthday Height.";
+"deleteWallet.message3" = "Resetting the Zodl app will delete the app database and cached app data, and disconnect all connected hardware wallets.";
+"deleteWallet.message4" = "Once you Reset Zodl, the only way to access your funds is through a wallet restore process that requires your Zodl Recovery Phrase and Wallet Birthday Height.";
 "deleteWallet.iUnderstand" = "I understand";
-"deleteWallet.actionButtonTitle" = "Reset Zashi";
+"deleteWallet.actionButtonTitle" = "Reset Zodl";
 "deleteWallet.screenTitle" = "Reset";
 
 // MARK: - Not Enogh Free Space
 "notEnoughFreeSpace.title" = "Not enough free space";
-"notEnoughFreeSpace.messagePre" = "Zashi requires %@ GB of space to synchronize the Zcash blockchain but there is only ";
+"notEnoughFreeSpace.messagePre" = "Zodl requires %@ GB of space to synchronize the Zcash blockchain but there is only ";
 "notEnoughFreeSpace.dataAvailable" = "%@ MB available. ";
 "notEnoughFreeSpace.messagePost" = "Syncing will stay paused until more space is available.";
 "notEnoughFreeSpace.requiredSpace" = "~%@ MB of additional space required to continue";
 
 // MARK: - What's new
-"whatsNew.version" = "Zashi Version %@";
+"whatsNew.version" = "Zodl Version %@";
 
 // MARK: - Settings
 "settings.title" = "Settings";
@@ -192,18 +192,18 @@
 "settings.about" = "About";
 "settings.feedback" = "Send Us Feedback";
 "settings.integrations" = "Integrations";
-"settings.recoveryPhrase" = "Zashi Recovery Phrase";
+"settings.recoveryPhrase" = "Zodl Recovery Phrase";
 "settings.exportPrivateData" = "Export Private Data";
 "settings.exportLogsOnly" = "Export logs only";
 "settings.chooseServer" = "Choose a Server";
 "settings.currencyConversion" = "Currency Conversion";
 "settings.whatsNew" = "What's new";
 "settings.buyZecCB" = "Buy ZEC with Coinbase";
-"settings.coinbaseDesc" = "A hassle-free way to buy ZEC and get it directly into your Zashi wallet.";
+"settings.coinbaseDesc" = "A hassle-free way to buy ZEC and get it directly into your Zodl wallet.";
 "settings.flexa" = "Pay with Flexa";
 "settings.flexaDesc" = "Pay with Flexa payment clips and explore a new way of spending Zcash.";
 "settings.restoreWarning" = "During the Restore process, it is not possible to use payment integrations.";
-"settings.deleteZashi" = "Reset Zashi";
+"settings.deleteZashi" = "Reset Zodl";
 "settings.deleteZashiWarning" = "You will be asked to confirm on the next screen";
 "settings.version" = "Version %@ (%@)";
 "settings.alert.cantSendEmail.title" = "Oh, no!";
@@ -211,26 +211,26 @@
 "settings.alert.cantSendEmail.copyEmail" = "Copy %@";
 
 // MARK: - Integrations
-"integrations.info" = "Zashi integrations provide access to third party services. Features and information shared with them are outside of our control and subject to their privacy policies.";
+"integrations.info" = "Zodl integrations provide access to third party services. Features and information shared with them are outside of our control and subject to their privacy policies.";
 
 // MARK: - Send Feedback
 "sendFeedback.title" = "Send Us Feedback";
 "sendFeedback.screenTitle" = "Support";
 "sendFeedback.desc" = "Please let us know about any problems you have had, or features you want to see in the future.";
-"sendFeedback.ratingQuestion" = "How is your Zashi experience?";
+"sendFeedback.ratingQuestion" = "How is your Zodl experience?";
 "sendFeedback.howCanWeHelp" = "How can we help you?";
 "sendFeedback.hcwhPlaceholder" = "I would like to ask about...";
 "sendFeedback.share.title" = "Support message";
-"sendFeedback.share.desc" = "Zashi";
+"sendFeedback.share.desc" = "Zodl";
 "sendFeedback.share.notAppleMailInfo" = "Your device doesn’t have an Apple email set up, so we prepared this message for you to send using your preferred email client. Please send this message to:";
 
 // MARK: - Private Data Consent
 "privateDataConsent.title" = "Consent for Exporting Private Data";
 "privateDataConsent.message1" = "By clicking \"I Agree\" below, you give your consent to export all of your wallets’ private data such as the entire history of your wallet(s), including any connected hardware wallets. All private information, memos, amounts, and recipient addresses, even for your shielded activity will be exported.*";
-"privateDataConsent.message2" = "The private data also gives the ability to see certain future actions you take with Zashi.";
+"privateDataConsent.message2" = "The private data also gives the ability to see certain future actions you take with Zodl.";
 "privateDataConsent.message3" = "Sharing this private data is irrevocable - once you have shared this private data with someone, there is no way to revoke their access.";
 "privateDataConsent.message4" = "*Note that this private data does not give them the ability to spend your funds, only the ability to see what you do with your funds.";
-"privateDataConsent.confirmation" = "I agree to Zashi's Export Private Data Policies and Privacy Policy";
+"privateDataConsent.confirmation" = "I agree to Zodl's Export Private Data Policies and Privacy Policy";
 "privateDataConsent.screenTitle" = "Data Export";
 
 // MARK: - Sync message
@@ -352,10 +352,10 @@
 "root.debug.alert.rewind.cantStartSync.message" = "Error: %@";
 
 "root.seedPhrase.differentSeed.tryAgain" = "Try Again";
-"root.seedPhrase.differentSeed.message" = "This recovery phrase doesn't match the Zashi database backup saved on this device. If you proceed, you will lose access to this database backup and if you try to restore later, some information may be lost.";
+"root.seedPhrase.differentSeed.message" = "This recovery phrase doesn't match the Zodl database backup saved on this device. If you proceed, you will lose access to this database backup and if you try to restore later, some information may be lost.";
 
 "root.existingWallet.restore" = "Restore";
-"root.existingWallet.Message" = "We identified a Zashi database backup on this device. If you create a new wallet, you will lose access to this database backup and if you try to restore later, some information may be lost.";
+"root.existingWallet.Message" = "We identified a Zodl database backup on this device. If you create a new wallet, you will lose access to this database backup and if you try to restore later, some information may be lost.";
 
 "root.serviceUnavailable.switchServer" = "Switch server";
 "root.serviceUnavailable.Message" = "Your current server is experiencing difficulties. Check your device connection, and/or navigate to Advanced Settings to choose a different server.";
@@ -385,12 +385,12 @@
 
 // MARK: - Deeplink Warning
 "deeplinkWarning.title" = "Looks like you used a third-party app to scan for payment.";
-"deeplinkWarning.desc" = "For better safety and security, rescan the QR code with Zashi.";
-"deeplinkWarning.cta" = "Rescan in Zashi";
+"deeplinkWarning.desc" = "For better safety and security, rescan the QR code with Zodl.";
+"deeplinkWarning.cta" = "Rescan in Zodl";
 "deeplinkWarning.screenTitle" = "Hello!";
 
 // MARK: - Splash Screen
-"splash.authTitle" = "Your Zashi account is secured.";
+"splash.authTitle" = "Your Zodl account is secured.";
 "splash.authFaceID" = "Tap the face icon to use Face ID and unlock it.";
 "splash.authTouchID" = "Tap the print icon to use Touch ID and unlock it.";
 "splash.authPasscode" = "Tap the key icon to enter your passcode and unlock it.";
@@ -413,7 +413,7 @@
 "keystone.drawer.title" = "Wallets & Hardware";
 "keystone.connect" = "Connect Hardware Wallet";
 "keystone.drawer.banner.title" = "Keystone Hardware Wallet";
-"keystone.drawer.banner.desc" = "Get 5%% off airgapped hardware wallet. Promo code \"Zashi\".";
+"keystone.drawer.banner.desc" = "Get 5%% off airgapped hardware wallet. Promo code \"Zodl\".";
 "keystone.addHWWallet.title" = "Confirm Account to Access";
 "keystone.addHWWallet.desc" = "Select the wallet you'd like to connect to proceed. Once connected, you’ll be able to wirelessly sign transactions with your hardware wallet.";
 "keystone.addHWWallet.connect" = "Connect";
@@ -424,7 +424,7 @@
 "keystone.addHWWallet.step1" = "Unlock your Keystone";
 "keystone.addHWWallet.step2" = "Tap the menu icon";
 "keystone.addHWWallet.step3" = "Tap on Connect Software Wallet";
-"keystone.addHWWallet.step4" = "Select Zashi app and scan QR code";
+"keystone.addHWWallet.step4" = "Select Zodl app and scan QR code";
 "keystone.addHWWallet.readyToScan" = "Ready to Scan";
 "keystone.confirm" = "Confirm with Keystone";
 "keystone.signWith.hardware" = "Hardware";
@@ -435,12 +435,12 @@
 "keystone.signWith.signTransaction" = "Sign Transaction";
 "keystone.scanInfo" = "Scan Keystone wallet QR code";
 "keystone.scanInfoTransaction" = "Scan Keystone QR code to sign the transaction";
-"keystone.settings" = "Switch from Keystone to Zashi to use Integrations.";
+"keystone.settings" = "Switch from Keystone to Zodl to use Integrations.";
 "accounts.sendingFrom" = "Send from";
 "accounts.addressBook.your" = "Your Wallets";
 "accounts.addressBook.contacts" = "Address Book Contacts";
 "accounts.keystone" = "Keystone";
-"accounts.zashi" = "Zashi";
+"accounts.zashi" = "Zodl";
 "accounts.zashi.shieldedAddress" = "Zcash Shielded Address";
 "accounts.zashi.transparentAddress" = "Zcash Transparent Address";
 "accounts.keystone.shieldedAddress" = "Zcash Shielded Address";
@@ -505,7 +505,7 @@
 "filter.at" = "at"; // example: Nov 29 at 4:15pm
 "filter.daysAgo" = "%@ days ago";
 "settings.keystone" = "Connect Keystone";
-"settings.keystoneDesc" = "Pair your Keystone hardware wallet with Zashi to sign transactions.";
+"settings.keystoneDesc" = "Pair your Keystone hardware wallet with Zodl to sign transactions.";
 
 // More actions
 "more.options" = "More Options";
@@ -514,14 +514,14 @@
 "homeScreen.scan" = "Scan";
 "homeScreen.more" = "More";
 "homeScreen.buy" = "Buy";
-"homeScreen.moreWarning" = "Information shared with Zashi integrations is subject to their privacy policies.";
+"homeScreen.moreWarning" = "Information you share with Zodl integration partners is subject to their privacy policies."; // trans
 
 // Onboarding: Restore Wallet
 "restoreWallet.title" = "Secret Recovery Phrase";
 "restoreWallet.info" = "Please type in your 24-word secret recovery phrase in the correct order.";
 "restoreWallet.help.title" = "Need to know more?";
-"restoreWallet.help.phrase" = "^[The Secret Recovery Phrase](style: 'boldPrimary') is a unique set of 24 words, appearing in a precise order. It can be used to gain full control of your funds from any device via any Zcash wallet app. Think of it as the master key to your wallet. It is stored in Zashi’s Advanced Settings.";
-"restoreWallet.help.birthday" = "^[The Wallet Birthday Height](style: 'boldPrimary') is the block height (block # in the blockchain) at which your wallet was created. If you ever lose access to your Zashi app and need to recover your funds, providing the block height along with your recovery phrase can significantly speed up the process.";
+"restoreWallet.help.phrase" = "^[The Secret Recovery Phrase](style: 'boldPrimary') is a unique set of 24 words, appearing in a precise order. It can be used to gain full control of your funds from any device via any Zcash wallet app. Think of it as the master key to your wallet. It is stored in Zodl’s Advanced Settings.";
+"restoreWallet.help.birthday" = "^[The Wallet Birthday Height](style: 'boldPrimary') is the block height (block # in the blockchain) at which your wallet was created. If you ever lose access to your Zodl app and need to recover your funds, providing the block height along with your recovery phrase can significantly speed up the process.";
 "restoreWallet.birthday.placeholder" = "Enter number";
 "restoreWallet.birthday.title" = "Block Height";
 "restoreWallet.birthday.info" = "Entering your Wallet Birthday Height helps speed up the restore process.";
@@ -531,24 +531,24 @@
 "restoreWallet.birthday.estimateDate.info" = "Entering the block height at which your wallet was created reduces the number of blocks that need to be scanned to recover your wallet.";
 "restoreWallet.birthday.estimateDate.warning" = "If you’re not sure, choose an earlier date.";
 "restoreWallet.birthday.estimated.title" = "Estimated Block Height";
-"restoreWallet.birthday.estimated.info" = "Zashi will scan and recover all transactions made after the following block number.";
+"restoreWallet.birthday.estimated.info" = "Zodl will scan and recover all transactions made after the following block number.";
 "restoreInfo.checkbox" = "Keep screen on while restoring";
 "restoreWallet.dateTip" = "If you’re not sure, choose an earlier date.";
 
 // Smart Banner
 "smartBanner.help.diconnected.title" = "Wallet Disconnected";
-"smartBanner.help.diconnected.info" = "You appear to be offline. Please restore your internet connection to use Zashi wallet.";
+"smartBanner.help.diconnected.info" = "You appear to be offline. Please restore your internet connection to use Zodl wallet.";
 
 "smartBanner.help.syncError.title" = "Syncing Error";
 
 "smartBanner.help.restore.title" = "Wallet Restore in Progress";
-"smartBanner.help.restore.info" = "Zashi is scanning the blockchain to retrieve your transactions. Older wallets can take hours to restore. Follow these steps to prevent interruption:";
-"smartBanner.help.restore.point1" = "Keep the Zashi app open on an active phone screen.";
+"smartBanner.help.restore.info" = "Zodl is scanning the blockchain to retrieve your transactions. Older wallets can take hours to restore. Follow these steps to prevent interruption:";
+"smartBanner.help.restore.point1" = "Keep the Zodl app open on an active phone screen.";
 "smartBanner.help.restore.point2" = "To prevent your phone screen from going dark, turn off power-saving mode and keep your phone plugged in.";
 "smartBanner.help.restore.warning" = "Funds cannot be spent until your wallet is restored.";
 
 "smartBanner.help.sync.title" = "Wallet Sync in Progress";
-"smartBanner.help.sync.info" = "Zashi is scanning the blockchain for your latest transactions to make sure your balances are displayed correctly. Keep the Zashi app open on an active phone screen to avoid interruptions.";
+"smartBanner.help.sync.info" = "Zodl is scanning the blockchain for your latest transactions to make sure your balances are displayed correctly. Keep the Zodl app open on an active phone screen to avoid interruptions.";
 
 "smartBanner.help.updatingBalance.title" = "Updating Balance";
 "smartBanner.help.updatingBalance.info" = "Your last transaction is getting mined and confirmed.";
@@ -563,7 +563,7 @@
 "smartBanner.help.backup.acknowledge" = "I read and understand the risks of not backing up my wallet.";
 
 "smartBanner.help.shield.title" = "Always Shield Transparent Funds";
-"smartBanner.help.shield.info1" = "To protect user privacy, Zashi doesn't support spending transparent ZEC. Tap the \"Shield\" button below to make your transparent funds spendable and your total Zashi balance private. ";
+"smartBanner.help.shield.info1" = "To protect user privacy, Zodl doesn't support spending transparent ZEC. Tap the \"Shield\" button below to make your transparent funds spendable and your total Zodl balance private. ";
 "smartBanner.help.shield.info2" = "This will create a shielding in-wallet transaction, consolidating your transparent and shielded funds. (Typical fee: %@)";
 "smartBanner.help.shield.transparent" = "Transparent";
 
@@ -575,13 +575,13 @@
 "smartBanner.help.remindMePhase3" = "Remind me next month";
 
 "smartBanner.content.disconnected.title" = "Wallet Disconnected";
-"smartBanner.content.disconnected.info" = "Check your connection and reload Zashi";
+"smartBanner.content.disconnected.info" = "Check your connection and reload Zodl";
 
 "smartBanner.content.syncingError.title" = "Error encountered while syncing";
 "smartBanner.content.syncingError.info" = "Attempting to resolve";
 
 "smartBanner.content.restore.title" = "Restoring Wallet • %@ Complete";
-"smartBanner.content.restore.info" = "Keep Zashi open on active phone screen";
+"smartBanner.content.restore.info" = "Keep Zodl open on active phone screen";
 "smartBanner.content.restore.infoSpendable" = "Your funds are ready to be used now";
 
 "smartBanner.content.sync.title" = "Syncing • %@ Complete";
@@ -615,7 +615,7 @@
 "balances.dismiss" = "Dismiss";
 "balances.spendableBalance.title" = "Spendable Balance";
 "balances.spendableBalance" = "Shielded (Spendable)";
-"balances.infoSyncing" = "Zashi is scanning the blockchain to make sure your balances are displayed correctly.";
+"balances.infoSyncing" = "Zodl is scanning the blockchain to make sure your balances are displayed correctly.";
 "balances.infoShielding" = "Shield your transparent ZEC to make it spendable and private. Doing so will create a shielding in-wallet transaction, consolidating your transparent and shielded funds. (Typical fee: %@)";
 "balances.everythingDone" = "All your funds are shielded and spendable.";
 
@@ -694,7 +694,7 @@
 "receive.help.transparent.title" = "Zcash Transparent Address (Static)";
 "receive.help.transparent.desc1" = "This addresses type works just like Bitcoin addresses and offers NO PRIVACY. The details of transactions sent to this address will be public and visible on the blockchain.";
 "receive.help.transparent.desc2" = "We don\'t recommend using this address type unless the wallet or exchange from which ZEC is being sent doesn’t support sending funds to shielded Zcash addresses.";
-"receive.help.transparent.desc3" = "To protect your privacy, Zashi will guide you to shield any transparent ZEC you receive with just one click.";
+"receive.help.transparent.desc3" = "To protect your privacy, Zodl will guide you to shield any transparent ZEC you receive with just one click.";
 "receive.help.transparent.desc4" = "You won\'t be able to spend your transparent ZEC until you shield it.";
 "receive.ua.rotateInfo" = "Rotates every time you use it";
 
@@ -711,7 +711,7 @@
 "swapAndPay.slippage" = "Slippage";
 "swapAndPay.slippageTolerance" = "Slippage tolerance";
 "swapAndPay.youPay" = "You pay";
-"swapAndPay.slippageDesc" = "This setting determines the maximum allowable difference between the expected price of a swap and the actual price you pay, which is outside of Zashi's control.";
+"swapAndPay.slippageDesc" = "This setting determines the maximum allowable difference between the expected price of a swap and the actual price you pay, which is outside of Zodl's control.";
 "swapAndPay.quoteUnavailable" = "Quote Unavailable";
 "swapAndPay.cancelPayment" = "Cancel payment";
 "swapAndPay.editPayment" = "Edit payment";
@@ -752,7 +752,7 @@
 "swapAndPay.help.swapDesc2" = "If swapping FROM ZEC, you must provide a valid address for the asset you are swapping to.";
 "swapAndPay.help.payDesc1" = "Make cross-chain payments in any NEAR-supported coin or token.";
 "swapAndPay.help.payDesc2" = "If the actual slippage and network conditions result in your recipient receiving less than the promised amount, your transaction will be reversed. You will receive a full refund minus network fees.";
-"swapAndPay.quote.zashi" = "Zashi";
+"swapAndPay.quote.zashi" = "Zodl";
 "swapAndPay.sendingInfo" = "Your coins are being sent to the deposit address...";
 "swapAndPay.successSwapInfo" = "You successfully initiated a swap. Follow its status on the transaction screen.";
 "swapAndPay.successPayInfo" = "You successfully initiated a cross-chain payment. Follow its status on the transaction screen.";
@@ -764,7 +764,7 @@
 "swapAndPay.status.pending" = "Pending";
 "swapAndPay.status.success" = "Completed";
 "swapAndPay.status.refunded" = "Refunded";
-"swapAndPay.zashiFee" = "Zashi fee";
+"swapAndPay.zashiFee" = "Zodl fee";
 "swapAndPay.emptyAssets.title" = "No results";
 "swapAndPay.emptyAssets.subtitle" = "We tried but couldn’t find anything.";
 "swapAndPay.swapQuoteSlippageWarn" = "You could receive up to %@ less based on the %@ slippage you set.";
@@ -775,13 +775,13 @@
 "swapAndPay.editSwap" = "Edit swap";
 "swapAndPay.cancelDont" = "Don’t cancel";
 "swapAndPay.optIn.title" = "Swap or Pay with";
-"swapAndPay.optIn.desc" = "This feature is powered by a third-party NEAR API. Zashi needs to make networking calls to fetch rates, quotes, execute transactions and check their status in the transaction history which can leak your IP address. We recommend you to allow Tor connection to protect your IP address at all times.";
+"swapAndPay.optIn.desc" = "This feature is powered by a third-party NEAR API. Zodl needs to make networking calls to fetch rates, quotes, execute transactions and check their status in the transaction history which can leak your IP address. We recommend you to allow Tor connection to protect your IP address at all times.";
 "swapAndPay.optIn.optionOneTitle" = "Allow Third-Party Requests";
 "swapAndPay.optIn.optionOneSubtitle" = "Enable API calls to the NEAR API.";
 "swapAndPay.optIn.optionTwoTitle" = "Turn on IP Address Protection";
 "swapAndPay.optIn.optionTwoSubtitle" = "Protect IP address with Tor connection.";
 "swapAndPay.optIn.warn" = "Note for the super privacy-conscious: Transactions executed via the NEAR API are transparent which means all transaction information is public.";
-"swapAndPay.forcedOptIn.optionOne" = "I understand that Zashi makes API requests to the NEAR API every time I interact with a Swap/Pay transaction.";
+"swapAndPay.forcedOptIn.optionOne" = "I understand that Zodl makes API requests to the NEAR API every time I interact with a Swap/Pay transaction.";
 "swapAndPay.forcedOptIn.optionTwo" = "I understand that by not enabling Tor, my IP address will be leaked by the NEAR API.";
 "swapAndPay.refundTitle" = "Transaction Refunded";
 "swapAndPay.refundInfo" = "Your deposit transaction was sent but the swap was unsuccessful. The transaction amount has been refunded, minus transaction fees.";
@@ -829,9 +829,9 @@
 "send.resubmission" = "Connection Issue";
 
 // MARK: - About
-"about.info" = "Zashi is a Zcash-powered mobile wallet, built for unstoppable private payments. It’s optimized for storage and real-world use of shielded $ZEC—the truly private cryptocurrency.";
-"about.additionalInfo" = "Developed by the team that continues to set the industry standard for blockchain privacy, the original developers of the Zcash protocol at Electric Coin Company.";
-"about.title" = "Introducing Zashi";
+"about.info" = "Zodl is a Zcash-powered mobile wallet, built for unstoppable private payments. It’s optimized for storage and real-world use of shielded $ZEC—the truly private cryptocurrency.";
+"about.additionalInfo" = "Developed by the original developers of the Zcash protocol, the team that set the industry standard for onchain privacy."; // trans
+"about.title" = "Introducing Zodl";
 "about.privacyPolicy" = "Privacy Policy";
 "about.termsOfUse" = "Terms of Use";
 
@@ -861,7 +861,7 @@
 "swapAndPay.status.expired" = "Expired";
 
 "swapToZec.share.title" = "Swap Deposit Address";
-"swapToZec.share.msg" = "Deposit address for %@ %@ on Near swap to ZEC in Zashi.";
+"swapToZec.share.msg" = "Deposit address for %@ %@ on Near swap to ZEC in Zodl.";
 "swap.quoteUnavailable" = "We tried but couldn’t get a quote for a payment with your parameters. You can try to adjust the slippage or try again later.";
 "swap.quoteUnavailableSwap" = "We tried but couldn’t get a quote for a swap with your parameters. You can try to adjust the slippage or try again later.";
 
@@ -896,7 +896,7 @@
 "deleteWallet.sheet.msg" = "Resetting the app cannot be undone. You will need to restore your wallet using your secret recovery phrase.";
 
 "recoverFunds.title" = "Discover Funds";
-"recoverFunds.msg" = "If you confirm, Zashi will scan the transparent address you provide and discover its funds. This may take a few minutes.";
+"recoverFunds.msg" = "If you confirm, Zodl will scan the transparent address you provide and discover its funds. This may take a few minutes.";
 "recoverFunds.fieldTitle" = "Transparent Address";
 "recoverFunds.placeholder" = "Enter or paste...";
 "recoverFunds.btn" = "Scan address";
@@ -911,16 +911,16 @@
 "texKeystone.warn2" = "Please use the steps below to complete your transaction.";
 "texKeystone.workaround" = "Workaround Steps";
 "texKeystone.step" = "Step %@";
-"texKeystone.step1.title" = "Send to Zashi first";
-"texKeystone.step1.desc" = "Transfer ZEC to your Zashi shielded address";
-"texKeystone.step2.title" = "Send from Zashi to TEX address";
-"texKeystone.step2.desc" = "Once received in Zashi, send the tokens to your final TEX destination address";
+"texKeystone.step1.title" = "Send to Zodl first";
+"texKeystone.step1.desc" = "Transfer ZEC to your Zodl shielded address";
+"texKeystone.step2.title" = "Send from Zodl to TEX address";
+"texKeystone.step2.desc" = "Once received in Zodl, send the tokens to your final TEX destination address";
 "texKeystone.gotIt" = "Got it";
 
 "homeScreen.moreDotted" = "More...";
 
 "enhanceTransaction.title" = "Refresh Transaction Data";
-"enhanceTransaction.msg" = "If you confirm, Zashi will fetch transaction data for a transaction ID you provide.";
+"enhanceTransaction.msg" = "If you confirm, Zodl will fetch transaction data for a transaction ID you provide.";
 "enhanceTransaction.fieldTitle" = "Transaction ID";
 "enhanceTransaction.placeholder" = "Enter or paste...";
 "enhanceTransaction.btn" = "Fetch data";
@@ -946,7 +946,7 @@
 "currencyConversion.note" = "Note for the super privacy-conscious: Because we pull the conversion rate from exchanges, an exchange might be able to see that the exchange rate was queried before a transaction occurred.";
 "currencyConversion.saveBtn" = "Save changes";
 "currencyConversion.ipTitle" = "IP Address Protection";
-"currencyConversion.ipDesc" = "If Tor Protection is enabled (Advanced Settings), Zashi protects your IP address.";
+"currencyConversion.ipDesc" = "If Tor Protection is enabled (Advanced Settings), Zodl protects your IP address.";
 "currencyConversion.refresh" = "Rate Refresh";
 "currencyConversion.refreshDesc" = "The rate is refreshed automatically and can also be refreshed manually.";
 "currencyConversion.skipBtn" = "Skip for now";

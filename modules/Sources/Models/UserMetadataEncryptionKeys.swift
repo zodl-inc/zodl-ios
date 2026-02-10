@@ -39,7 +39,7 @@ public struct UserMetadataEncryptionKeys: Codable, Equatable {
 
         // FIXME: is the seed fingerprint matches account's seed fingerprint
         
-        // FIXME: this will break when there are 2+ onloine seeds
+        // FIXME: this will break when there are 2+ online seeds
         let privateMetadataKeys = try metadataKey.derivePrivateUseMetadataKey(
             ufvk: account.name?.lowercased() == "zashi" ? nil : account.ufvk,
             privateUseSubject: [UInt8](info)
