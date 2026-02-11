@@ -266,11 +266,10 @@ public struct SwapAndPayForm: View {
                     }
                 }
                 .scaleEffect(0.8)
-
-            Text(tokenName.uppercased())
-                .zFont(.semiBold, size: 14, style: Design.Text.primary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
+//            Text(tokenName.uppercased())
+//                .zFont(.semiBold, size: 14, style: Design.Text.primary)
+//                .lineLimit(1)
+//                .minimumScaleFactor(0.8)
         }
     }
     
@@ -389,11 +388,10 @@ extension View {
                         }
                     }
                     .scaleEffect(0.8)
-
-                Text(asset.token.uppercased())
-                    .zFont(.semiBold, size: 14, style: Design.Text.primary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
+//                Text(asset.token.uppercased())
+//                    .zFont(.semiBold, size: 14, style: Design.Text.primary)
+//                    .lineLimit(1)
+//                    .minimumScaleFactor(0.8)
             }
         }
     }

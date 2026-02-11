@@ -798,7 +798,7 @@ public struct SwapAndPay {
                     }
 
                     if state.selectedAsset == nil {
-                        state.selectedAsset = swapAssets.first { $0.token.lowercased() == "usdc" && $0.chain.lowercased() == L10n.Swap.nearProvider }
+                        state.selectedAsset = swapAssets.first { $0.token.lowercased() == "btc" && $0.chain.lowercased() == "btc" }
                     }
                 }
 

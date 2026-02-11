@@ -58,13 +58,15 @@ extension HomeView {
                             }
                         
                         Text(selectedWalletAccount.vendor.name())
-                            .zFont(.semiBold, fontFamily: .michroma, size: 24, style: Design.Text.primary)
-                            .padding(.leading, 8)
+                            .zFont(.semiBold, fontFamily: .michroma, size: 19, style: Design.Text.primary)
+                            .padding(.leading, 14)
+                            .padding(.bottom, 2)
                     }
 
                     Asset.Assets.chevronDown.image
                         .zImage(size: 24, style: Design.Text.primary)
-                        .padding(.leading, 8)
+                        .padding(.leading, 6)
+                        .padding(.top, 4)
                 }
                 .padding(.horizontal, 4)
             }

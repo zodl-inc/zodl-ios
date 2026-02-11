@@ -105,6 +105,7 @@ public struct WalletBalances {
         Reduce { state, action in
             switch action {
             case .onAppear:
+                print("__LD on appear called")
                 state.autoShieldingThreshold = zcashSDKEnvironment.shieldingThreshold
                 if let exchangeRate = userStoredPreferences.exchangeRate(), exchangeRate.automatic {
                     state.isExchangeRateFeatureOn = true
