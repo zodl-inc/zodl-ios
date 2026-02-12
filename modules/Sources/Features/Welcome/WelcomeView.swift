@@ -36,39 +36,16 @@ public struct WelcomeView: View {
 
     public var body: some View {
         GeometryReader { proxy in
-//        VStack {
             WithPerceptionTracking {
                 Asset.Assets.welcomeScreenLogo.image
-                    .zImage(width: 161, height: 60, color: Asset.Colors.primary.color)
+                    .zImage(height: 60, color: Asset.Colors.primary.color)
                     .position(
                         x: proxy.frame(in: .local).midX,
                         y: proxy.frame(in: .local).midY
                     )
-
-//                Asset.Assets.zashiLogo.image
-//                    .zImage(width: 249, height: 321, color: .white)
-//                    .scaleEffect(0.35)
-//                    .position(
-//                        x: proxy.frame(in: .local).midX,
-//                        y: proxy.frame(in: .local).midY * 0.5
-//                    )
-//                
-//                Asset.Assets.splashHi.image
-//                    .resizable()
-//                    .renderingMode(.template)
-//                    .aspectRatio(contentMode: .fit)
-//                    .frame(height: 213)
-//                    .foregroundColor(.white)
-//                    .scaleEffect(hiHeight)
-//                    .position(
-//                        x: proxy.frame(in: .local).midX,
-//                        y: proxy.frame(in: .local).midY * 0.8
-//                    )
-//#if !SECANT_DISTRIB
-//                    .accessDebugMenuWithHiddenGesture {
-//                        store.send(.debugMenuStartup)
-//                    }
-//#endif
+                    .accessDebugMenuWithHiddenGesture {
+                        store.send(.debugMenuStartup)
+                    }
             }
         }
         .background(Asset.Colors.splash.color)

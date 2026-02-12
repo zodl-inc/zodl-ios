@@ -13,10 +13,29 @@
       ],
       "filename" : "welcomeLogoLight.png",
       "idiom" : "universal"
+    },
+    {
+      "filename" : "holaLogoBlk.png",
+      "idiom" : "universal",
+      "locale" : "es"
+    },
+    {
+      "appearances" : [
+        {
+          "appearance" : "luminosity",
+          "value" : "dark"
+        }
+      ],
+      "filename" : "holaLogo.png",
+      "idiom" : "universal",
+      "locale" : "es"
     }
   ],
   "info" : {
     "author" : "xcode",
     "version" : 1
+  },
+  "properties" : {
+    "localizable" : true
   }
 }

@@ -413,7 +413,7 @@
 "keystone.drawer.title" = "Wallets & Hardware";
 "keystone.connect" = "Connect Hardware Wallet";
 "keystone.drawer.banner.title" = "Keystone Hardware Wallet";
-"keystone.drawer.banner.desc" = "Get 5%% off airgapped hardware wallet. Promo code \"Zashi\".";
+"keystone.drawer.banner.desc" = "Get 5%% off airgapped hardware wallet. Promo code \"Zashi\"."; // trans
 "keystone.addHWWallet.title" = "Confirm Account to Access";
 "keystone.addHWWallet.desc" = "Select the wallet you'd like to connect to proceed. Once connected, you’ll be able to wirelessly sign transactions with your hardware wallet.";
 "keystone.addHWWallet.connect" = "Connect";
@@ -424,7 +424,7 @@
 "keystone.addHWWallet.step1" = "Unlock your Keystone";
 "keystone.addHWWallet.step2" = "Tap the menu icon";
 "keystone.addHWWallet.step3" = "Tap on Connect Software Wallet";
-"keystone.addHWWallet.step4" = "Select Zashi app and scan QR code";
+"keystone.addHWWallet.step4" = "Select Zashi app and scan QR code"; // trans
 "keystone.addHWWallet.readyToScan" = "Ready to Scan";
 "keystone.confirm" = "Confirm with Keystone";
 "keystone.signWith.hardware" = "Hardware";

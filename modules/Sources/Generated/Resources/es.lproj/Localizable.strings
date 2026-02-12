@@ -413,7 +413,7 @@
 "keystone.drawer.title" = "Billeteras y Hardware";
 "keystone.connect" = "Conectar Billetera de Hardware";
 "keystone.drawer.banner.title" = "Billetera de Hardware Keystone";
-"keystone.drawer.banner.desc" = "Obtén un 5%% de descuento en una billetera de hardware aislada. Código promocional: 'Zodl'.";
+"keystone.drawer.banner.desc" = "Obtén un 5%% de descuento en una billetera de hardware aislada. Código promocional: 'Zashi'.";
 "keystone.addHWWallet.title" = "Confirma tu Cuenta para Acceder";
 "keystone.addHWWallet.desc" = "Selecciona la billetera que deseas conectar para continuar. Una vez conectada, podrás firmar transacciones de manera inalámbrica con tu billetera de hardware.";
 "keystone.addHWWallet.connect" = "Conectar";
@@ -424,7 +424,7 @@
 "keystone.addHWWallet.step1" = "Desbloquea tu Keystone";
 "keystone.addHWWallet.step2" = "Toca el ícono del menú";
 "keystone.addHWWallet.step3" = "Selecciona 'Conectar Billetera de Software'";
-"keystone.addHWWallet.step4" = "Selecciona la app Zodl y escanea el código QR";
+"keystone.addHWWallet.step4" = "Selecciona la app Zashi y escanea el código QR";
 "keystone.addHWWallet.readyToScan" = "Listo para Escanear";
 "keystone.confirm" = "Confirma con Keystone";
 "keystone.signWith.hardware" = "Hardware";
