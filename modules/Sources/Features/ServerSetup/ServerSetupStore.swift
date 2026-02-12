@@ -90,6 +90,7 @@ public struct ServerSetup {
         Reduce { state, action in
             switch action {
             case .onAppear:
+                // __LD TESTED
                 state.network = zcashSDKEnvironment.network.networkType
                 
                 if !state.topKServers.isEmpty {
@@ -114,6 +115,8 @@ public struct ServerSetup {
                 return state.topKServers.isEmpty ? .send(.evaluateServers) : .none
 
             case .onDisappear:
+                // __LD2 TESTing
+                print("__LD ServerSetup.onDisappear")
                 state.selectedServer = nil
                 return .none
 

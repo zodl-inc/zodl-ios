@@ -92,6 +92,7 @@ public struct ScanCoordFlow {
         Reduce { state, action in
             switch action {
             case .onAppear:
+                // __LD TESTED
                 state.scanState.checkers = [.zcashAddressScanChecker, .requestZecScanChecker]
                 return .none
 

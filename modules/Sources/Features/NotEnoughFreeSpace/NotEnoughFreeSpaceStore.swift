@@ -49,6 +49,7 @@ public struct NotEnoughFreeSpace {
         Reduce { state, action in
             switch action {
             case .onAppear:
+                // __LD TESTED
                 let fsrts = Double(diskSpaceChecker.freeSpaceRequiredForSync())
                 let fSpace = Double(diskSpaceChecker.freeSpace())
                 // We show the value in GB so any required value is divided by 1_073_741_824 bytes

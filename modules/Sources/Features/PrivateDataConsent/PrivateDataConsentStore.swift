@@ -82,6 +82,7 @@ public struct PrivateDataConsent {
         Reduce { state, action in
             switch action {
             case .onAppear:
+                // __LD TESTED
                 state.dataDbURL = [databaseFiles.dataDbURLFor(zcashSDKEnvironment.network)]
                 return .none
 

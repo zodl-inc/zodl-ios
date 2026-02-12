@@ -129,6 +129,13 @@ private extension RootView {
                             )
                         }
                         .offset(x: store.path == nil ? 0 : -200)
+                        .onChange(of: store.path) { value in
+                            if value == nil {
+                                store.send(.home(.onAppear))
+                            } else {
+                                store.send(.home(.onDisappear))
+                            }
+                        }
                         
                         // Paths
                         if let path = store.path {

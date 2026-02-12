@@ -76,6 +76,7 @@ public struct AddKeystoneHWWallet {
         Reduce { state, action in
             switch action {
             case .onAppear:
+                // __LD TESTED
                 state.isKSAccountSelected = false
                 state.zcashAccounts = nil
                 return .none

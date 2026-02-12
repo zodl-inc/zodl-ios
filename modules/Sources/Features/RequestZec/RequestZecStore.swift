@@ -62,12 +62,15 @@ public struct RequestZec {
         Reduce { state, action in
             switch action {
             case .onAppear:
+                // __LD TESTED
                 state.memoState.charLimit = zcashSDKEnvironment.memoCharLimit
                 state.isQRCodeAppreanceFlipped = false
                 state.encryptedOutput = nil
                 return .none
 
             case .onDisappear:
+                // __LD2 TESTing
+                print("__LD ServerSetup.onDisappear")
                 return .cancel(id: state.cancelId)
 
             case .cancelRequestTapped:

@@ -117,6 +117,7 @@ public struct Balances {
         Reduce { state, action in
             switch action {
             case .onAppear:
+                // __LD TESTED
                 state.autoShieldingThreshold = zcashSDKEnvironment.shieldingThreshold
                 return .merge(
                     .publisher {
@@ -135,6 +136,7 @@ public struct Balances {
                 )
                 
             case .onDisappear:
+                // __LD2 TESTED
                 return .merge(
                     .cancel(id: state.stateStreamCancelId),
                     .cancel(id: state.shieldingProcessorCancelId)

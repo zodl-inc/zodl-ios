@@ -258,6 +258,7 @@ public struct SendForm {
         Reduce { state, action in
             switch action {
             case .onAppear:
+                // __LD TESTED
                 state.memoState.charLimit = zcashSDKEnvironment.memoCharLimit
                 return .send(.exchangeRateSetupChanged)
 

@@ -53,6 +53,7 @@ public struct SendFeedback {
         Reduce { state, action in
             switch action {
             case .onAppear:
+                // __LD TESTED
                 state.memoState.text = ""
                 state.selectedRating = nil
                 state.canSendMail = MFMailComposeViewController.canSendMail()

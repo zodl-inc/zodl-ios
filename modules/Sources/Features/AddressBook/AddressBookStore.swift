@@ -156,6 +156,7 @@ public struct AddressBook {
         Reduce { state, action in
             switch action {
             case .onAppear:
+                // __LD TESTED
                 state.isValidForm = false
                 state.deleteIdToConfirm = nil
                 state.nameAlreadyExists = false

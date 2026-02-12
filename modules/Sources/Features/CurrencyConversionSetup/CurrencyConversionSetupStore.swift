@@ -121,6 +121,7 @@ public struct CurrencyConversionSetup {
         Reduce { state, action in
             switch action {
             case .onAppear:
+                // __LD TESTED
                 state.isTorOn = walletStorage.exportTorSetupFlag() ?? false
                 if let automatic = userStoredPreferences.exchangeRate()?.automatic, automatic {
                     state.activeSettingsOption = .optIn

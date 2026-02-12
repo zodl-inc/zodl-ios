@@ -66,11 +66,14 @@ public struct AddressDetails {
                 return .none
 
             case .onAppear:
+                // __LD TESTED
                 state.isAddressExpanded = false
                 state.isQRCodeAppreanceFlipped = false
                 return .none
 
             case .onDisappear:
+                // __LD2 TESTing
+                print("__LD AddressDetails onDisappear")
                 return .cancel(id: state.cancelId)
 
             case .qrCodeTapped:

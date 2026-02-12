@@ -127,6 +127,7 @@ public struct SwapAndPayCoordFlow {
         Reduce { state, action in
             switch action {
             case .onAppear:
+                // __LD TESTED
                 return .none
 
             case .helpSheetRequested,

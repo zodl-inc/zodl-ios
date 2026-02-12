@@ -413,7 +413,7 @@
 "keystone.drawer.title" = "Wallets & Hardware";
 "keystone.connect" = "Connect Hardware Wallet";
 "keystone.drawer.banner.title" = "Keystone Hardware Wallet";
-"keystone.drawer.banner.desc" = "Get 5%% off airgapped hardware wallet. Promo code \"Zodl\".";
+"keystone.drawer.banner.desc" = "Get 5%% off airgapped hardware wallet. Promo code \"Zashi\".";
 "keystone.addHWWallet.title" = "Confirm Account to Access";
 "keystone.addHWWallet.desc" = "Select the wallet you'd like to connect to proceed. Once connected, you’ll be able to wirelessly sign transactions with your hardware wallet.";
 "keystone.addHWWallet.connect" = "Connect";
@@ -424,7 +424,7 @@
 "keystone.addHWWallet.step1" = "Unlock your Keystone";
 "keystone.addHWWallet.step2" = "Tap the menu icon";
 "keystone.addHWWallet.step3" = "Tap on Connect Software Wallet";
-"keystone.addHWWallet.step4" = "Select Zodl app and scan QR code";
+"keystone.addHWWallet.step4" = "Select Zashi app and scan QR code";
 "keystone.addHWWallet.readyToScan" = "Ready to Scan";
 "keystone.confirm" = "Confirm with Keystone";
 "keystone.signWith.hardware" = "Hardware";
@@ -830,7 +830,7 @@
 
 // MARK: - About
 "about.info" = "Zodl is a Zcash-powered mobile wallet, built for unstoppable private payments. It’s optimized for storage and real-world use of shielded $ZEC—the truly private cryptocurrency.";
-"about.additionalInfo" = "Developed by the original developers of the Zcash protocol, the team that set the industry standard for onchain privacy."; // trans
+"about.additionalInfo" = "Developed by the team that set the industry standard for onchain privacy, the original developers of the Zcash protocol."; // trans
 "about.title" = "Introducing Zodl";
 "about.privacyPolicy" = "Privacy Policy";
 "about.termsOfUse" = "Terms of Use";

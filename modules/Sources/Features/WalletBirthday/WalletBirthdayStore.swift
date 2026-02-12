@@ -65,6 +65,7 @@ public struct WalletBirthday {
         Reduce { state, action in
             switch action {
             case .onAppear:
+                // __LD TESTED
                 let currentYear = Calendar.current.component(.year, from: Date())
                 state.years = Array(Constants.startYear...currentYear)
                 state.estimatedHeight = zcashSDKEnvironment.network.constants.saplingActivationHeight

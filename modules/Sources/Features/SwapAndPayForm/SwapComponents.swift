@@ -383,134 +383,57 @@ extension SwapAndPayForm {
                 .padding(.vertical, 24)
 
                 // refactored to showcase UI
-//                ZStack {
-//                    HStack(spacing: 8) {
-//                        VStack(spacing: 0) {
-//                            zecTickerBadge(colorScheme)
-//
-//                            Text(store.zcashNameInQuote)
-//                                .zFont(.semiBold, size: 12, style: Design.Text.tertiary)
-//                                .lineLimit(1)
-//                                .minimumScaleFactor(0.8)
-//                                .padding(.vertical, 6)
-//
-//                            Text(store.zecToBeSpendInQuote)
-//                                .zFont(.semiBold, size: 16, style: Design.Text.primary)
-//                                .lineLimit(1)
-//                                .minimumScaleFactor(0.1)
-//
-//                            Text(store.zecUsdToBeSpendInQuote)
-//                                .zFont(.medium, size: 12, style: Design.Text.tertiary)
-//                        }
-//                        .padding(.horizontal, 20)
-//                        .padding(.vertical, 12)
-//                        .frame(maxWidth: .infinity)
-//                        .frame(height: 122)
-//                        .background {
-//                            RoundedRectangle(cornerRadius: Design.Radius._3xl)
-//                                .fill(Design.Surfaces.bgSecondary.color(colorScheme))
-//                        }
-//                        
-//                        VStack(spacing: 0) {
-//                            tokenTickerSelector(asset: store.selectedAsset, colorScheme)
-//
-//                            Text(store.assetNameInQuote)
-//                                .zFont(.semiBold, size: 12, style: Design.Text.tertiary)
-//                                .lineLimit(1)
-//                                .minimumScaleFactor(0.8)
-//                                .padding(.vertical, 6)
-//
-//                            Text(store.tokenToBeReceivedInQuote)
-//                                .zFont(.semiBold, size: 16, style: Design.Text.primary)
-//                                .lineLimit(1)
-//                                .minimumScaleFactor(0.1)
-//                            
-//                            Text(store.tokenUsdToBeReceivedInQuote)
-//                                .zFont(.medium, size: 12, style: Design.Text.tertiary)
-//                        }
-//                        .padding(.horizontal, 20)
-//                        .padding(.vertical, 12)
-//                        .frame(maxWidth: .infinity)
-//                        .frame(height: 122)
-//                        .background {
-//                            RoundedRectangle(cornerRadius: Design.Radius._3xl)
-//                                .fill(Design.Surfaces.bgSecondary.color(colorScheme))
-//                        }
-//                    }
-//                    
-//                    FloatingArrow()
-//                }
-//                .padding(.bottom, 32)
-                
                 ZStack {
-                    VStack(spacing: 1) {
-                        HStack(spacing: 0) {
+                    HStack(spacing: 8) {
+                        VStack(spacing: 0) {
                             zecTickerBadge(colorScheme)
 
-                            VStack(alignment: .leading, spacing: 0) {
-                                Text(tokenName.uppercased())
-                                    .zFont(.semiBold, size: 14, style: Design.Text.primary)
+                            Text(store.zcashNameInQuote)
+                                .zFont(.semiBold, size: 12, style: Design.Text.tertiary)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.8)
+                                .padding(.vertical, 6)
 
-                                Text(store.zcashNameInQuote)
-                                    .zFont(.semiBold, size: 12, style: Design.Text.tertiary)
-                            }
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.8)
+                            Text(store.zecToBeSpendInQuote)
+                                .zFont(.semiBold, size: 16, style: Design.Text.primary)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.1)
 
-                            Spacer()
-
-                            VStack(alignment: .trailing, spacing: 0) {
-                                Text(store.zecToBeSpendInQuote)
-                                    .zFont(.semiBold, size: 16, style: Design.Text.primary)
-
-                                Text(store.zecUsdToBeSpendInQuote)
-                                    .zFont(.medium, size: 12, style: Design.Text.tertiary)
-                            }
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.1)
+                            Text(store.zecUsdToBeSpendInQuote)
+                                .zFont(.medium, size: 12, style: Design.Text.tertiary)
                         }
                         .padding(.horizontal, 20)
                         .padding(.vertical, 12)
                         .frame(maxWidth: .infinity)
-                        .frame(height: 60)
+                        .frame(height: 122)
                         .background {
-                            CustomRoundedRectangle(corners: [.topLeft, .topRight], radius: Design.Radius._3xl)
+                            RoundedRectangle(cornerRadius: Design.Radius._3xl)
                                 .fill(Design.Surfaces.bgSecondary.color(colorScheme))
                         }
                         
-                        HStack(spacing: 0) {
+                        VStack(spacing: 0) {
                             tokenTickerSelector(asset: store.selectedAsset, colorScheme)
 
-                            VStack(alignment: .leading, spacing: 0) {
-                                if let asset = store.selectedAsset {
-                                    Text(asset.token)
-                                        .zFont(.semiBold, size: 14, style: Design.Text.primary)
-                                }
+                            Text(store.assetNameInQuote)
+                                .zFont(.semiBold, size: 12, style: Design.Text.tertiary)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.8)
+                                .padding(.vertical, 6)
 
-                                Text(store.assetNameInQuote)
-                                    .zFont(.semiBold, size: 12, style: Design.Text.tertiary)
-                            }
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.1)
-
-                            Spacer()
+                            Text(store.tokenToBeReceivedInQuote)
+                                .zFont(.semiBold, size: 16, style: Design.Text.primary)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.1)
                             
-                            VStack(alignment: .trailing, spacing: 0) {
-                                Text(store.tokenToBeReceivedInQuote)
-                                    .zFont(.semiBold, size: 16, style: Design.Text.primary)
-
-                                Text(store.tokenUsdToBeReceivedInQuote)
-                                    .zFont(.medium, size: 12, style: Design.Text.tertiary)
-                            }
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.1)
+                            Text(store.tokenUsdToBeReceivedInQuote)
+                                .zFont(.medium, size: 12, style: Design.Text.tertiary)
                         }
                         .padding(.horizontal, 20)
                         .padding(.vertical, 12)
                         .frame(maxWidth: .infinity)
-                        .frame(height: 60)
+                        .frame(height: 122)
                         .background {
-                            CustomRoundedRectangle(corners: [.bottomLeft, .bottomRight], radius: Design.Radius._3xl)
+                            RoundedRectangle(cornerRadius: Design.Radius._3xl)
                                 .fill(Design.Surfaces.bgSecondary.color(colorScheme))
                         }
                     }
@@ -518,6 +441,83 @@ extension SwapAndPayForm {
                     FloatingArrow()
                 }
                 .padding(.bottom, 32)
+                
+//                ZStack {
+//                    VStack(spacing: 1) {
+//                        HStack(spacing: 0) {
+//                            zecTickerBadge(colorScheme)
+//
+//                            VStack(alignment: .leading, spacing: 0) {
+//                                Text(tokenName.uppercased())
+//                                    .zFont(.semiBold, size: 14, style: Design.Text.primary)
+//
+//                                Text(store.zcashNameInQuote)
+//                                    .zFont(.semiBold, size: 12, style: Design.Text.tertiary)
+//                            }
+//                            .lineLimit(1)
+//                            .minimumScaleFactor(0.8)
+//
+//                            Spacer()
+//
+//                            VStack(alignment: .trailing, spacing: 0) {
+//                                Text(store.zecToBeSpendInQuote)
+//                                    .zFont(.semiBold, size: 16, style: Design.Text.primary)
+//
+//                                Text(store.zecUsdToBeSpendInQuote)
+//                                    .zFont(.medium, size: 12, style: Design.Text.tertiary)
+//                            }
+//                            .lineLimit(1)
+//                            .minimumScaleFactor(0.1)
+//                        }
+//                        .padding(.horizontal, 20)
+//                        .padding(.vertical, 12)
+//                        .frame(maxWidth: .infinity)
+//                        .frame(height: 60)
+//                        .background {
+//                            CustomRoundedRectangle(corners: [.topLeft, .topRight], radius: Design.Radius._3xl)
+//                                .fill(Design.Surfaces.bgSecondary.color(colorScheme))
+//                        }
+//                        
+//                        HStack(spacing: 0) {
+//                            tokenTickerSelector(asset: store.selectedAsset, colorScheme)
+//
+//                            VStack(alignment: .leading, spacing: 0) {
+//                                if let asset = store.selectedAsset {
+//                                    Text(asset.token)
+//                                        .zFont(.semiBold, size: 14, style: Design.Text.primary)
+//                                }
+//
+//                                Text(store.assetNameInQuote)
+//                                    .zFont(.semiBold, size: 12, style: Design.Text.tertiary)
+//                            }
+//                            .lineLimit(1)
+//                            .minimumScaleFactor(0.1)
+//
+//                            Spacer()
+//                            
+//                            VStack(alignment: .trailing, spacing: 0) {
+//                                Text(store.tokenToBeReceivedInQuote)
+//                                    .zFont(.semiBold, size: 16, style: Design.Text.primary)
+//
+//                                Text(store.tokenUsdToBeReceivedInQuote)
+//                                    .zFont(.medium, size: 12, style: Design.Text.tertiary)
+//                            }
+//                            .lineLimit(1)
+//                            .minimumScaleFactor(0.1)
+//                        }
+//                        .padding(.horizontal, 20)
+//                        .padding(.vertical, 12)
+//                        .frame(maxWidth: .infinity)
+//                        .frame(height: 60)
+//                        .background {
+//                            CustomRoundedRectangle(corners: [.bottomLeft, .bottomRight], radius: Design.Radius._3xl)
+//                                .fill(Design.Surfaces.bgSecondary.color(colorScheme))
+//                        }
+//                    }
+//                    
+//                    FloatingArrow()
+//                }
+//                .padding(.bottom, 32)
 
                 quoteLineContent(
                     store.isSwapExperienceEnabled

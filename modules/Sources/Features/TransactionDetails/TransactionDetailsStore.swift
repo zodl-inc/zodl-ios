@@ -168,6 +168,7 @@ public struct TransactionDetails {
         Reduce { state, action in
             switch action {
             case .onAppear:
+                // __LD TESTED
                 state.isSwap = userMetadataProvider.isSwapTransaction(state.transaction.zAddress ?? "")
                 state.umSwapId = userMetadataProvider.swapDetailsForTransaction(state.transaction.zAddress ?? "")
                 state.hasInteractedWithBookmark = false
@@ -196,6 +197,7 @@ public struct TransactionDetails {
                 return .send(.observeTransactionChange)
                 
             case .onDisappear:
+                // __LD2 TESTED
                 if state.hasInteractedWithBookmark {
                     if let account = state.selectedWalletAccount?.account {
                         try? userMetadataProvider.store(account)

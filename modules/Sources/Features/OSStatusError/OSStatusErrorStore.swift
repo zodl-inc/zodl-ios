@@ -46,7 +46,8 @@ public struct OSStatusError {
         Reduce { state, action in
             switch action {
             case .onAppear:
-                state.isExportingData = false
+                // __LD TESTED
+                 state.isExportingData = false
                 return .none
                 
             case .sendSupportMail:

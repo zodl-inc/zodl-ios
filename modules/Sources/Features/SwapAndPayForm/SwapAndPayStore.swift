@@ -310,6 +310,7 @@ public struct SwapAndPay {
         Reduce { state, action in
             switch action {
             case .onAppear:
+                // __LD TESTED
                 state.isQuoteRequestInFlight = false
                 return .merge(
                     .send(.walletBalances(.onAppear)),
@@ -334,6 +335,8 @@ public struct SwapAndPay {
                 return .send(.checkSelectedContact)
 
             case .onDisappear:
+                // __LD2 TESTing
+                print("__LD ServerSetup.onDisappear")
                 return .merge(
                     .cancel(id: state.SwapAssetsCancelId),
                     .cancel(id: state.ABCancelId),

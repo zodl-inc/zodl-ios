@@ -17,8 +17,8 @@ public enum L10n {
   /// on
   public static let tokenOnChain = L10n.tr("Localizable", "tokenOnChain", fallback: "on")
   public enum About {
-    /// Developed by the original developers of the Zcash protocol, the team that set the industry standard for onchain privacy.
-    public static let additionalInfo = L10n.tr("Localizable", "about.additionalInfo", fallback: "Developed by the original developers of the Zcash protocol, the team that set the industry standard for onchain privacy.")
+    /// Developed by the team that set the industry standard for onchain privacy, the original developers of the Zcash protocol.
+    public static let additionalInfo = L10n.tr("Localizable", "about.additionalInfo", fallback: "Developed by the team that set the industry standard for onchain privacy, the original developers of the Zcash protocol.")
     /// Zodl is a Zcash-powered mobile wallet, built for unstoppable private payments. It’s optimized for storage and real-world use of shielded $ZEC—the truly private cryptocurrency.
     public static let info = L10n.tr("Localizable", "about.info", fallback: "Zodl is a Zcash-powered mobile wallet, built for unstoppable private payments. It’s optimized for storage and real-world use of shielded $ZEC—the truly private cryptocurrency.")
     /// Privacy Policy
@@ -545,8 +545,8 @@ public enum L10n {
       public static let step2 = L10n.tr("Localizable", "keystone.addHWWallet.step2", fallback: "Tap the menu icon")
       /// Tap on Connect Software Wallet
       public static let step3 = L10n.tr("Localizable", "keystone.addHWWallet.step3", fallback: "Tap on Connect Software Wallet")
-      /// Select Zodl app and scan QR code
-      public static let step4 = L10n.tr("Localizable", "keystone.addHWWallet.step4", fallback: "Select Zodl app and scan QR code")
+      /// Select Zashi app and scan QR code
+      public static let step4 = L10n.tr("Localizable", "keystone.addHWWallet.step4", fallback: "Select Zashi app and scan QR code")
       /// Confirm Account to Access
       public static let title = L10n.tr("Localizable", "keystone.addHWWallet.title", fallback: "Confirm Account to Access")
       /// View Keystone tutorial
@@ -556,8 +556,8 @@ public enum L10n {
       /// Wallets & Hardware
       public static let title = L10n.tr("Localizable", "keystone.drawer.title", fallback: "Wallets & Hardware")
       public enum Banner {
-        /// Get 5%% off airgapped hardware wallet. Promo code "Zodl".
-        public static let desc = L10n.tr("Localizable", "keystone.drawer.banner.desc", fallback: "Get 5%% off airgapped hardware wallet. Promo code \"Zodl\".")
+        /// Get 5%% off airgapped hardware wallet. Promo code "Zashi".
+        public static let desc = L10n.tr("Localizable", "keystone.drawer.banner.desc", fallback: "Get 5%% off airgapped hardware wallet. Promo code \"Zashi\".")
         /// Keystone Hardware Wallet
         public static let title = L10n.tr("Localizable", "keystone.drawer.banner.title", fallback: "Keystone Hardware Wallet")
       }
