@@ -58,7 +58,7 @@ extension HomeView {
                             }
                         
                         Text(selectedWalletAccount.vendor.name())
-                            .zFont(.semiBold, fontFamily: .michroma, size: 19, style: Design.Text.primary)
+                            .zFont(.semiBold, size: 19, style: Design.Text.primary)
                             .padding(.leading, 14)
                             .padding(.bottom, 2)
                     }

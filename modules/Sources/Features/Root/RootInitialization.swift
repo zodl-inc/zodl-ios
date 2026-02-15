@@ -441,20 +441,29 @@ extension Root {
                 return .none
                 
             case .initialization(.checkBackupPhraseValidation):
+                var destination = Root.DestinationState.Destination.home
                 do {
                     let _ = try walletStorage.exportWallet()
+                    
+                    // Zodl Announcement
+                    let zodlAnnouncementFlag = walletStorage.exportZodlAnnouncementFlag()
+                    
+                    if zodlAnnouncementFlag == nil || zodlAnnouncementFlag == false {
+                        destination = .zodlAnnouncement
+                    }
                 } catch {
                     return .send(.destination(.updateDestination(.osStatusError)))
                 }
 
                 state.appInitializationState = .initialized
                 let isAtDeeplinkWarningScreen = state.destinationState.destination == .deeplinkWarning
+                let finalDestination = destination
                 
                 return .run { send in
                     // Delay the splash overlay dismissal
                     try await mainQueue.sleep(for: .seconds(0.5))
                     if !isAtDeeplinkWarningScreen {
-                        await send(.destination(.updateDestination(Root.DestinationState.Destination.home)))
+                        await send(.destination(.updateDestination(finalDestination)))
                     }
                 }
                 .cancellable(id: CancelId, cancelInFlight: true)

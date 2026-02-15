@@ -30,6 +30,10 @@ public struct WalletStorage {
         public static let zcashStoredWalletBackupAcknowledged = "zcashStoredWalletBackupAcknowledged"
         public static let zcashStoredShieldingAcknowledged = "zcashStoredShieldingAcknowledged"
         public static let zcashStoredTorSetupFlag = "zcashStoredTorSetupFlag"
+        
+        // This key shouldn't be removed from Keychain until the time we decide to no longer use the Announcement Zodl screen.
+        // Once we agree to remove such screen, this key will be added to the reset method to clean it up.
+        public static let zcashStoredZodlAnnouncementFlag = "zcashStoredZodlAnnouncementFlag"
 
         /// Versioning of the stored data
         public static let zcashKeychainVersion = 1
@@ -182,6 +186,8 @@ public struct WalletStorage {
         try? deleteData(forKey: Constants.zcashStoredWalletBackupAcknowledged)
         try? deleteData(forKey: Constants.zcashStoredShieldingAcknowledged)
         try? deleteData(forKey: Constants.zcashStoredTorSetupFlag)
+
+        //try? deleteData(forKey: Constants.zcashStoredZodlAnnouncementFlag)
     }
     
     public func importAddressBookEncryptionKeys(_ keys: AddressBookEncryptionKeys) throws {
@@ -404,6 +410,36 @@ public struct WalletStorage {
         
         do {
             reqData = try data(forKey: Constants.zcashStoredTorSetupFlag)
+        } catch {
+            return nil
+        }
+        
+        guard let reqData else {
+            return nil
+        }
+        
+        return try? decode(json: reqData, as: Bool.self)
+    }
+    
+    public func importZodlAnnouncementFlag(_ enabled: Bool) throws {
+        guard let data = try? encode(object: enabled) else {
+            throw KeychainError.encoding
+        }
+
+        do {
+            try setData(data, forKey: Constants.zcashStoredZodlAnnouncementFlag)
+        } catch KeychainError.duplicate {
+            try updateData(data, forKey: Constants.zcashStoredZodlAnnouncementFlag)
+        } catch {
+            throw WalletStorageError.storageError(error)
+        }
+    }
+    
+    public func exportZodlAnnouncementFlag() -> Bool? {
+        let reqData: Data?
+        
+        do {
+            reqData = try data(forKey: Constants.zcashStoredZodlAnnouncementFlag)
         } catch {
             return nil
         }

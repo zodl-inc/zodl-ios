@@ -357,6 +357,11 @@ public enum Design: Colorable {
         }
     }
     
+    public enum Logo: Colorable {
+        case primary
+        case opposite
+    }
+
     // MARK: - Corner Radius Constants
     
     public enum Radius {
@@ -870,6 +875,15 @@ public extension Design.Utility.Brand {
         case ._800: return Design.col(Asset.Colors.ZDesign.brand800.color, Asset.Colors.ZDesign.brand200.color, colorScheme)
         case ._900: return Design.col(Asset.Colors.ZDesign.brand900.color, Asset.Colors.ZDesign.brand100.color, colorScheme)
         case ._950: return Design.col(Asset.Colors.ZDesign.brand900.color, Asset.Colors.ZDesign.brand50.color, colorScheme)
+        }
+    }
+}
+
+public extension Design.Logo {
+    func color(_ colorScheme: ColorScheme) -> Color {
+        switch self {
+        case .primary: return Design.col(.white, .black, colorScheme)
+        case .opposite: return Design.col(.black, .white, colorScheme)
         }
     }
 }

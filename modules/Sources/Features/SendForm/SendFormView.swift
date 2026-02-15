@@ -165,7 +165,7 @@ public struct SendFormView: View {
                                                 .padding(10)
                                                 .background {
                                                     RoundedRectangle(cornerRadius: Design.Radius._md)
-                                                        .fill(Design.Utility.Gray._50.color(colorScheme))
+                                                        .fill(Design.Utility.Gray._100.color(colorScheme))
                                                 }
                                             }
                                         }
@@ -394,7 +394,7 @@ public struct SendFormView: View {
                     .padding(.horizontal, 6)
                     .background(
                         RoundedRectangle(cornerRadius: Design.Radius._sm)
-                            .fill(Design.Utility.Gray._50.color(colorScheme))
+                            .fill(Design.Utility.Gray._100.color(colorScheme))
                             .overlay {
                                 RoundedRectangle(cornerRadius: Design.Radius._sm)
                                     .stroke(Design.Utility.Gray._200.color(colorScheme))

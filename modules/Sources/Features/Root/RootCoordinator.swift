@@ -368,6 +368,11 @@ extension Root {
                     .send(.home(.smartBanner(.closeAndCleanupBanner))),
                     .send(.home(.smartBanner(.closeSheetTapped)))
                 )
+                
+                // MARK: - Zodl Announcement
+                
+            case .zodlAnnouncement(.goToZodlTapped):
+                return .send(.destination(.updateDestination(.home)))
 
             default: return .none
             }

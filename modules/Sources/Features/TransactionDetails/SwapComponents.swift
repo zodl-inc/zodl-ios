@@ -9,6 +9,7 @@ import SwiftUI
 import UIComponents
 import Generated
 import SwapAndPay
+import Models
 
 extension TransactionDetailsView {
     @ViewBuilder func swapRefundInfoView() -> some View {
@@ -37,37 +38,62 @@ extension TransactionDetailsView {
     
     @ViewBuilder func swapAssetsView() -> some View {
         ZStack {
-            HStack(spacing: 8) {
-                VStack(spacing: 4) {
-//                    HStack(spacing: 0) {
-                        if let swapAmountIn = store.swapAmountIn {
-                            if !store.transaction.isSwapToZec {
-                                zecTickerLogo(colorScheme)
-                                    .scaleEffect(0.8)
-                            } else {
-                                if let swapFromAsset = store.swapFromAsset {
-                                    tokenTicker(asset: swapFromAsset, colorScheme)
-                                        .scaleEffect(0.8)
-                                } else {
-                                    unknownTickerLogo(colorScheme)
-                                }
-                            }
-
-                            Text(
-                                store.isSensitiveContentHidden
-                                ? L10n.General.hideBalancesMost
-                                : swapAmountIn
-                            )
-                            .zFont(.semiBold, size: 20, style: Design.Text.primary)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.1)
-                            .frame(height: 18)
+            HStack(spacing: 1) {
+                // Left side
+                VStack(alignment: .leading, spacing: 0) {
+                    if let swapAmountIn = store.swapAmountIn {
+                        if !store.transaction.isSwapToZec {
+                            zecTickerLogo(colorScheme)
+                                .scaleEffect(0.8)
+                                .padding(.bottom, 4)
+                            
+                            Text(tokenName.uppercased())
+                                .zFont(.medium, size: 14, style: Design.Text.primary)
+                            
+                            Text("Zcash")
+                                .zFont(.medium, size: 12, style: Design.Text.tertiary)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.8)
                         } else {
-                            unknownTickerLogo(colorScheme)
+                            if let swapFromAsset = store.swapFromAsset {
+                                tokenTicker(asset: swapFromAsset, colorScheme)
+                                    .scaleEffect(0.8)
+                                    .padding(.bottom, 4)
+                                
+                                Text(swapFromAsset.token)
+                                    .zFont(.medium, size: 14, style: Design.Text.primary)
+                                
+                                Text(swapFromAsset.chainName)
+                                    .zFont(.medium, size: 12, style: Design.Text.tertiary)
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(0.8)
+                            } else {
+                                unknownTickerLogo(colorScheme)
+                                    .padding(.bottom, 4)
+                                
+                                unknownValue()
 
-                            unknownValue()
+                                unknownValue()
+                            }
                         }
-//                    }
+
+                        Color.clear.frame(height: Design.Spacing._md)
+                            .frame(maxWidth: .infinity)
+
+                        Text(
+                            store.isSensitiveContentHidden
+                            ? L10n.General.hideBalancesMost
+                            : swapAmountIn
+                        )
+                        .zFont(.medium, size: 12, style: Design.Text.primary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.1)
+                        .frame(height: 14)
+                    } else {
+                        unknownTickerLogo(colorScheme)
+                        
+                        unknownValue()
+                    }
                     
                     if let swapAmountInUsd = store.swapAmountInUsd {
                         Text(
@@ -75,70 +101,99 @@ extension TransactionDetailsView {
                             ? L10n.General.hideBalancesMost
                             : swapAmountInUsd
                         )
-                        .zFont(.medium, size: 14, style: Design.Text.tertiary)
+                        .zFont(.medium, size: 10, style: Design.Text.tertiary)
                         .lineLimit(1)
                         .minimumScaleFactor(0.1)
-                        .frame(height: 18)
+                        .frame(height: 14)
                     } else {
                         unknownValue()
                     }
                 }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
+                .padding(.leading, Design.Spacing._xl)
+                .padding(.trailing, Design.Spacing._xl + Design.Spacing._xl)
+                .padding(.vertical, Design.Spacing._lg)
                 .frame(maxWidth: .infinity)
+                .frame(height: 124)
                 .background {
-                    RoundedRectangle(cornerRadius: Design.Radius._3xl)
+                    CustomRoundedRectangle(corners: [.bottomLeft, .topLeft], radius: Design.Radius._3xl)
                         .fill(Design.Surfaces.bgSecondary.color(colorScheme))
                 }
                 
-                VStack(spacing: 4) {
+                // Right side
+                VStack(alignment: .leading, spacing: 0) {
                     if store.transaction.isSwapToZec {
                         zecTickerLogo(colorScheme, shield: store.isShielded)
                             .scaleEffect(0.8)
+                            .padding(.bottom, 4)
+                        
+                        Text(tokenName.uppercased())
+                            .zFont(.medium, size: 14, style: Design.Text.primary)
+                        
+                        Text("Zcash")
+                            .zFont(.medium, size: 12, style: Design.Text.tertiary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
                     } else {
                         if let swapToAsset = store.swapToAsset {
                             tokenTicker(asset: swapToAsset, colorScheme)
                                 .scaleEffect(0.8)
+                                .padding(.bottom, 4)
+                            
+                            Text(swapToAsset.token)
+                                .zFont(.medium, size: 14, style: Design.Text.primary)
+                            
+                            Text(swapToAsset.chainName)
+                                .zFont(.medium, size: 12, style: Design.Text.tertiary)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.8)
                         } else {
                             unknownTickerLogo(colorScheme)
+                                .padding(.bottom, 4)
+                            
+                            unknownValue()
+
+                            unknownValue()
                         }
                     }
                     
-//                    HStack(spacing: 2) {
-                        if let swapAmountOut = store.swapAmountOut {
-                            Text(
-                                store.isSensitiveContentHidden
-                                ? L10n.General.hideBalancesMost
-                                : swapAmountOut
-                            )
-                            .zFont(.semiBold, size: 20, style: Design.Text.primary)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.1)
-                            .frame(height: 18)
-                        } else {
-                            unknownValue()
-                        }
-//                    }
-                    
+                    Color.clear.frame(height: Design.Spacing._md)
+                        .frame(maxWidth: .infinity)
+
+                    if let swapAmountOut = store.swapAmountOut {
+                        Text(
+                            store.isSensitiveContentHidden
+                            ? L10n.General.hideBalancesMost
+                            : swapAmountOut
+                        )
+                        .zFont(.medium, size: 12, style: Design.Text.primary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.1)
+                        .frame(height: 14)
+                    } else {
+                        unknownValue()
+                    }
+
                     if let swapAmountOutUsd = store.swapAmountOutUsd {
                         Text(
                             store.isSensitiveContentHidden
                             ? L10n.General.hideBalancesMost
                             : swapAmountOutUsd
                         )
-                        .zFont(.medium, size: 14, style: Design.Text.tertiary)
+                        .zFont(.medium, size: 10, style: Design.Text.tertiary)
                         .lineLimit(1)
                         .minimumScaleFactor(0.1)
-                        .frame(height: 18)
+                        .frame(height: 14)
                     } else {
                         unknownValue()
                     }
                 }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
+                .padding(.leading, Design.Spacing._xl + Design.Spacing._xl)
+                .padding(.trailing, Design.Spacing._xl)
+                .padding(.vertical, Design.Spacing._lg)
                 .frame(maxWidth: .infinity)
+                .frame(height: 124)
                 .background {
-                    RoundedRectangle(cornerRadius: Design.Radius._3xl)
+                    CustomRoundedRectangle(corners: [.bottomRight, .topRight], radius: Design.Radius._3xl)
                         .fill(Design.Surfaces.bgSecondary.color(colorScheme))
                 }
             }

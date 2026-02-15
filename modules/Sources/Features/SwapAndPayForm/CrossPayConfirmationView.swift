@@ -9,6 +9,7 @@ import SwiftUI
 import ComposableArchitecture
 import Generated
 import SwapAndPay
+import Models
 
 import UIComponents
 

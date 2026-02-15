@@ -27,6 +27,7 @@ extension Root {
             case startup
             case home
             case welcome
+            case zodlAnnouncement
         }
         
         public var internalDestination: Destination = .welcome

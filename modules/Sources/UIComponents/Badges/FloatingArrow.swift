@@ -25,7 +25,7 @@ public struct FloatingArrow: View {
 //        } else {
             Asset.Assets.Icons.arrowRight.image
                 .zImage(size: 16, style: Design.Text.tertiary)
-                .rotationEffect(.degrees(90))
+                //.rotationEffect(.degrees(90))
                 .padding(8)
                 .background {
                     Circle()

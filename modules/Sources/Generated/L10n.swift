@@ -606,6 +606,26 @@ public enum L10n {
     /// More Options
     public static let options = L10n.tr("Localizable", "more.options", fallback: "More Options")
   }
+  public enum NewZodl {
+    /// We’ve rebranded, but everything you love stays the same. Zodl is the same app under a new banner.
+    public static let desc = L10n.tr("Localizable", "newZodl.desc", fallback: "We’ve rebranded, but everything you love stays the same. Zodl is the same app under a new banner.")
+    /// Go to Zodl
+    public static let goTo = L10n.tr("Localizable", "newZodl.goTo", fallback: "Go to Zodl")
+    /// Learn more
+    public static let learnMore = L10n.tr("Localizable", "newZodl.learnMore", fallback: "Learn more")
+    /// Everything works just like before:
+    public static let likeBefore = L10n.tr("Localizable", "newZodl.likeBefore", fallback: "Everything works just like before:")
+    /// Your funds and seed phrase remain secure and unchanged.
+    public static let safeFunds = L10n.tr("Localizable", "newZodl.safeFunds", fallback: "Your funds and seed phrase remain secure and unchanged.")
+    /// Same app
+    public static let sameApp = L10n.tr("Localizable", "newZodl.sameApp", fallback: "Same app")
+    /// Same mission
+    public static let sameMission = L10n.tr("Localizable", "newZodl.sameMission", fallback: "Same mission")
+    /// Same development team
+    public static let sameTeam = L10n.tr("Localizable", "newZodl.sameTeam", fallback: "Same development team")
+    /// Zashi is now Zodl
+    public static let title = L10n.tr("Localizable", "newZodl.title", fallback: "Zashi is now Zodl")
+  }
   public enum NotEnoughFreeSpace {
     /// %@ MB available. 
     public static func dataAvailable(_ p1: Any) -> String {

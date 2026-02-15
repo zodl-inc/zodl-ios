@@ -11,6 +11,7 @@ import ComposableArchitecture
 import Generated
 import UIComponents
 import SwapAndPay
+import Models
 
 import BalanceBreakdown
 

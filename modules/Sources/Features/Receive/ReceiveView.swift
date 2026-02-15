@@ -68,7 +68,7 @@ public struct ReceiveView: View {
                                         address: transparentAddress,
                                         iconFg: Design.Text.primary,
                                         iconBg: Design.Surfaces.bgTertiary,
-                                        bcgColor: Design.Utility.Gray._50.color(colorScheme),
+                                        bcgColor: Design.Surfaces.bgSecondary.color(colorScheme),
                                         expanded: store.currentFocus == .tAddress,
                                         copyButton: false
                                     ) {
@@ -110,7 +110,7 @@ public struct ReceiveView: View {
                                     address: store.transparentAddress,
                                     iconFg: Design.Text.primary,
                                     iconBg: Design.Surfaces.bgTertiary,
-                                    bcgColor: Design.Utility.Gray._50.color(colorScheme),
+                                    bcgColor: Design.Surfaces.bgSecondary.color(colorScheme),
                                     expanded: store.currentFocus == .tAddress,
                                     copyButton: false
                                 ) {

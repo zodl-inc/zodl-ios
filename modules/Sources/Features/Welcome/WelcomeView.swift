@@ -38,7 +38,7 @@ public struct WelcomeView: View {
         GeometryReader { proxy in
             WithPerceptionTracking {
                 Asset.Assets.welcomeScreenLogo.image
-                    .zImage(height: 60, color: Asset.Colors.primary.color)
+                    .zImage(height: 60, color: .white)
                     .position(
                         x: proxy.frame(in: .local).midX,
                         y: proxy.frame(in: .local).midY

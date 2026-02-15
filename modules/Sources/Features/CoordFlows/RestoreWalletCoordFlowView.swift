@@ -111,7 +111,7 @@ public struct RestoreWalletCoordFlowView: View {
                 .zImage(size: 20, style: Design.Utility.Gray._500)
                 .background {
                     Circle()
-                        .fill(Design.Utility.Gray._50.color(colorScheme))
+                        .fill(Design.Utility.Gray._100.color(colorScheme))
                         .frame(width: 44, height: 44)
                 }
                 .padding(.top, 48)
