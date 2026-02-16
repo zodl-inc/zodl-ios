@@ -51,6 +51,9 @@ extension WalletStorageClient: DependencyKey {
             exportUserMetadataEncryptionKeys: { account in
                 try walletStorage.exportUserMetadataEncryptionKeys(account: account)
             },
+            clearEncryptionKeys: { account in
+                try walletStorage.clearEncryptionKeys(account)
+            },
             importWalletBackupReminder: { reminedMeTimestamp in
                 try walletStorage.importWalletBackupReminder(reminedMeTimestamp)
             },

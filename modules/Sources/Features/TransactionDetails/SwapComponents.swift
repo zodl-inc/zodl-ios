@@ -70,9 +70,7 @@ extension TransactionDetailsView {
                             } else {
                                 unknownTickerLogo(colorScheme)
                                     .padding(.bottom, 4)
-                                
                                 unknownValue()
-
                                 unknownValue()
                             }
                         }
@@ -91,6 +89,12 @@ extension TransactionDetailsView {
                         .frame(height: 14)
                     } else {
                         unknownTickerLogo(colorScheme)
+                            .padding(.bottom, 4)
+                        unknownValue()
+                        unknownValue()
+                        
+                        Color.clear.frame(height: Design.Spacing._md)
+                            .frame(maxWidth: .infinity)
                         
                         unknownValue()
                     }
@@ -149,9 +153,7 @@ extension TransactionDetailsView {
                         } else {
                             unknownTickerLogo(colorScheme)
                                 .padding(.bottom, 4)
-                            
                             unknownValue()
-
                             unknownValue()
                         }
                     }

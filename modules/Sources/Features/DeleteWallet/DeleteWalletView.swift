@@ -121,7 +121,7 @@ public struct DeleteWalletView: View {
                 L10n.Settings.deleteZashi,
                 type: .destructive2
             ) {
-                store.send(.deleteTapped(store.areMetadataPreserved))
+                store.send(.deleteTappedDelayed(store.areMetadataPreserved))
             }
             .padding(.bottom, 12)
 

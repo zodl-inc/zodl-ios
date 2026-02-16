@@ -164,7 +164,13 @@ public struct UserMetadataKeys: Codable, Equatable, Redactable {
             rawBytes.map { String(format: "%02x", $0) }.joined()
         }
         
-        let prefix = "\(account.name?.lowercased() ?? "")"
+        var prefix = "\(account.name?.lowercased() ?? "")"
+        
+        // Hotfix for the Zashi->Zodl issue
+        // The file needs to stay zashi-xxx named for now but account.name provides "zodl"
+        if prefix == "zodl" {
+            prefix = "zashi"
+        }
         
         // Prepend the prefix to the result
         return "\(prefix)-metadata-\(fileIdentifier)"

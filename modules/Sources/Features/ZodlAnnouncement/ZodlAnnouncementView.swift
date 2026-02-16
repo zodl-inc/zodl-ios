@@ -71,7 +71,7 @@ public struct ZodlAnnouncementView: View {
                 .padding(.bottom, 24)
             }
             .sheet(isPresented: $store.isInAppBrowserOn) {
-                if let url = URL(string: "https://electriccoin.co/zashi-privacy-policy/") {
+                if let url = URL(string: "https://zodl.com/zashi-is-becoming-zodl/") {
                     InAppBrowserView(url: url)
                 }
             }

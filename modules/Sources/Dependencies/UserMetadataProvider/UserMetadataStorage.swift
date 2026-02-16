@@ -70,6 +70,8 @@ public class UserMetadataStorage {
         bookmarked.removeAll()
         annotations.removeAll()
         read.removeAll()
+        swapIds.removeAll()
+        lastUsedAssetHistory.removeAll()
         
         @Dependency(\.userDefaults) var userDefaults
 

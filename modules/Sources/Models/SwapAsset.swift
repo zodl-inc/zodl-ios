@@ -121,12 +121,22 @@ public extension SwapAsset {
         let bsc = template; template.chain = "op"
         let op = template; template.chain = "pol"
         let pol = template; template.chain = "sui"
-        let sui = template; template.chain = "ton"
-        let ltc = template; template.chain = "ltc"
+        let sui = template; template.chain = "ltc"
+        let ltc = template; template.chain = "aleo"
+        let aleo = template; template.chain = "aptos"
+        let aptos = template; template.chain = "bch"
+        let bch = template; template.chain = "cardano"
+        let cardano = template; template.chain = "monad"
+        let monad = template; template.chain = "plasma"
+        let plasma = template; template.chain = "starknet"
+        let starknet = template; template.chain = "stellar"
+        let stellar = template; template.chain = "xlayer"
+        let xlayer = template; template.chain = "ton"
         let ton = template
 
         return [
-            arb, avax, base, bera, bsc, btc, doge, eth, gnosis, near, op, pol, sol, sui, ton, tron, ltc, xrp
+            arb, avax, base, bera, bsc, btc, doge, eth, gnosis, near, op, pol, sol, sui, ton, tron, ltc, xrp,
+            aleo, aptos, bch, cardano, monad, plasma, starknet, stellar, xlayer
         ]
     }
 }

@@ -495,9 +495,6 @@ extension Root {
                 .cancellable(id: SynchronizerCancelId, cancelInFlight: true)
 
             case .resetZashiSDKSucceeded:
-                if state.appInitializationState != .keysMissing {
-                    state = .initial
-                }
                 state.splashAppeared = true
                 state.isRestoringWallet = false
                 userDefaults.remove(Constants.udIsRestoringWallet)
@@ -511,6 +508,9 @@ extension Root {
                         try? addressBook.resetAccount(account.account)
                     }
                 }
+                state.walletAccounts.forEach { account in
+                    try? walletStorage.clearEncryptionKeys(account.account)
+                }
                 state.autoUpdateSwapCandidates.removeAll()
                 try? userMetadataProvider.reset()
                 state.$walletStatus.withLock { $0 = .none }
@@ -521,6 +521,9 @@ extension Root {
                 state.$addressBookContacts.withLock { $0 = .empty }
                 state.$transactions.withLock { $0 = [] }
                 state.path = nil
+                if state.appInitializationState != .keysMissing {
+                    state = .initial
+                }
 
                 return .send(.resetZashiKeychainRequest)
                 

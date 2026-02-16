@@ -1,5 +1,5 @@
 // MARK: - Plain Onboarding Flow
-"plainOnboarding.title" = "Una billetera Zcash (ZEC) diseñada para pagos privados";
+"plainOnboarding.title" = "Billetera móvil impulsada por Zcash, diseñada para la soberanía financiera.";
 "plainOnboarding.button.createNewWallet" = "Crear nueva billetera";
 "plainOnboarding.button.restoreWallet" = "Restaurar billetera existente";
 
@@ -201,7 +201,7 @@
 "settings.buyZecCB" = "Comprar ZEC con Coinbase";
 "settings.coinbaseDesc" = "Una forma sencilla de comprar ZEC y recibirlo directamente en tu billetera Zodl.";
 "settings.flexa" = "Pagar con Flexa";
-"settings.flexaDesc" = "Paga con clips de pago de Flexa y explora una nueva forma de gastar Zcash.";
+"settings.flexaDesc" = "Gasta ZEC en miles de establecimientos comerciales.";
 "settings.restoreWarning" = "Durante el proceso de Restauración, no es posible usar integraciones de pago.";
 "settings.deleteZashi" = "Restablecer Zodl";
 "settings.deleteZashiWarning" = "Se te pedirá que confirmes en la siguiente pantalla";
@@ -505,7 +505,7 @@
 "filter.at" = "a las"; // ejemplo: 29 de nov a las 4:15 p. m.
 "filter.daysAgo" = "Hace %@ días";
 "settings.keystone" = "Conectar Keystone";
-"settings.keystoneDesc" = "Empareja tu billetera de hardware Keystone con Zodl para firmar transacciones.";
+"settings.keystoneDesc" = "Conecta una billetera de hardware aislada (air-gapped) para almacenar ZEC protegidos.";
 
 // More actions
 "more.options" = "Más Opciones";
@@ -514,7 +514,7 @@
 "homeScreen.scan" = "Escanear";
 "homeScreen.more" = "Más";
 "homeScreen.buy" = "Comprar";
-"homeScreen.moreWarning" = "La información compartida con las integraciones de Zodl está sujeta a sus políticas de privacidad.";
+"homeScreen.moreWarning" = "La información que compartas con los socios de integración de Zodl está sujeta a sus políticas de privacidad.";
 
 // Onboarding: Restore Wallet
 "restoreWallet.title" = "Frase de Recuperación Secreta";
@@ -830,7 +830,7 @@
 
 // MARK: - About
 "about.info" = "Zodl es una wallet móvil impulsada por Zcash, creada para pagos privados imparables. Está optimizada para almacenar y usar en el mundo real $ZEC protegido: la criptomoneda verdaderamente privada.";
-"about.additionalInfo" = "Desarrollada por el equipo que continúa marcando el estándar de la industria en privacidad blockchain, los desarrolladores originales del protocolo Zcash en Electric Coin Company.";
+"about.additionalInfo" = "Desarrollada por el equipo que estableció el estándar de la industria en privacidad en cadena (on-chain), los desarrolladores originales del protocolo Zcash.";
 "about.title" = "Presentando Zodl";
 "about.privacyPolicy" = "Política de privacidad";
 "about.termsOfUse" = "Términos de uso";

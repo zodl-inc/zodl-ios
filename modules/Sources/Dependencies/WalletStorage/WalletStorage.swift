@@ -262,6 +262,10 @@ public struct WalletStorage {
         return wallet
     }
     
+    public func clearEncryptionKeys(_ account: Account) throws {
+        try deleteData(forKey: Constants.accountMetadataFilename(account: account))
+    }
+    
     // MARK: - Remind Me
     
     public func importWalletBackupReminder(_ reminder: ReminedMeTimestamp) throws {

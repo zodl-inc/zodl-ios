@@ -1,0 +1,12 @@
+{
+  "images" : [
+    {
+      "filename" : "chain_plasma.png",
+      "idiom" : "universal"
+    }
+  ],
+  "info" : {
+    "author" : "xcode",
+    "version" : 1
+  }
+}
