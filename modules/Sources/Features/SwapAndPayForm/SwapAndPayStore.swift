@@ -48,11 +48,9 @@ public struct SwapAndPay {
         public var balancesBinding = false
         public var balancesState = Balances.State.initial
         public var chain: String?
-        @Shared(.inMemory(.exchangeRate)) public var currencyConversion: CurrencyConversion? = nil
         public var customSlippage = ""
         public var isAddressBookHintVisible = false
         public var isCancelSheetVisible = false
-        public var isCurrencyConversionEnabled = false
         public var isInputInUsd = false
         public var isInsufficientBalance = false
         public var isNotAddressInAddressBook = false
@@ -220,7 +218,7 @@ public struct SwapAndPay {
         case editPaymentTapped
         case enableSwapExperience
         case eraseSearchTermTapped
-        case exchangeRateSetupChanged
+        //case exchangeRateSetupChanged
         case getQuote
         case getQuoteTapped
         case helpSheetRequested(Int)
@@ -318,8 +316,7 @@ public struct SwapAndPay {
                     .concatenate(
                         .send(.updateAssetsAccordingToSearchTerm),
                         .send(.refreshSwapAssets)
-                    ),
-                    .send(.exchangeRateSetupChanged)
+                    )
                 )
 
             case .binding(\.customSlippage):
@@ -357,14 +354,6 @@ public struct SwapAndPay {
                 state.balancesBinding = true
                 return .none
 
-            case .exchangeRateSetupChanged:
-                if let automatic = userStoredPreferences.exchangeRate()?.automatic, automatic {
-                    state.isCurrencyConversionEnabled = true
-                } else {
-                    state.isCurrencyConversionEnabled = false
-                }
-                return .none
-                
             case .balances(.dismissTapped):
                 state.balancesBinding = false
                 return .none
@@ -753,9 +742,6 @@ public struct SwapAndPay {
                 state.proposal = proposal
                 if !state.isCancelSheetVisible {
                     state.isQuotePresented = true
-//                    if !state.isSwapExperienceEnabled {
-//                        return .send(.crossPayConfirmationRequired)
-//                    }
                 }
                 state.isQuoteRequestInFlight = false
                 return .none

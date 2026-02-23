@@ -56,27 +56,23 @@ public extension SwapAndPayForm {
                                     )
                                     .keyboardType(.decimalPad)
                                     .focused($isAmountFocused)
+
+                                    Asset.Assets.Icons.switchHorizontal.image
+                                        .zImage(size: 24, style: Design.Btns.Ghost.fg)
+                                        .padding(8)
+                                        .padding(.top, 24)
                                     
-                                    if store.isCurrencyConversionEnabled {
-                                        Asset.Assets.Icons.switchHorizontal.image
-                                            .zImage(size: 24, style: Design.Btns.Ghost.fg)
-                                            .padding(8)
-                                            .padding(.top, 24)
-                                        
-                                        ZashiTextField(
-                                            text: $store.amountUsdText,
-                                            placeholder: L10n.Send.currencyPlaceholder,
-                                            error: store.isCrossPayInsufficientFunds ? "" : nil,
-                                            prefixView:
-                                                Asset.Assets.Icons.currencyDollar.image
-                                                .zImage(size: 20, style: Design.Inputs.Default.text)
-                                        )
-                                        .keyboardType(.decimalPad)
-                                        .focused($isUsdFocused)
-                                        .padding(.top, 23)
-                                        .disabled(store.currencyConversion == nil)
-                                        .opacity(store.currencyConversion == nil ? 0.5 : 1.0)
-                                    }
+                                    ZashiTextField(
+                                        text: $store.amountUsdText,
+                                        placeholder: L10n.Send.currencyPlaceholder,
+                                        error: store.isCrossPayInsufficientFunds ? "" : nil,
+                                        prefixView:
+                                            Asset.Assets.Icons.currencyDollar.image
+                                            .zImage(size: 20, style: Design.Inputs.Default.text)
+                                    )
+                                    .keyboardType(.decimalPad)
+                                    .focused($isUsdFocused)
+                                    .padding(.top, 23)
                                 }
                             }
                             .disabled(store.isQuoteRequestInFlight)
