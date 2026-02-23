@@ -568,16 +568,17 @@ extension Root {
                 } catch {
                     return .send(.resetZashiKeychainFailedWithCorruptedData(error.localizedDescription))
                 }
-                
+
+                // FIXME: valuidate whether this code makes sense
 //                if state.appInitializationState == .keysMissing && state.onboardingState.isImportingWallet {
 //                    state.appInitializationState = .uninitialized
 //                    return .cancel(id: SynchronizerCancelId)
-                    //                                } else if state.appInitializationState == .keysMissing && state.onboardingState.destination == .createNewWallet {
-                    //                    state.appInitializationState = .uninitialized
-                    //                    return .concatenate(
-                    //                        .cancel(id: SynchronizerCancelId),
-                    //                        .send(.onboarding(.createNewWalletRequested))
-                    //                    )
+//                } else if state.appInitializationState == .keysMissing && state.onboardingState.destination == .createNewWallet {
+//                    state.appInitializationState = .uninitialized
+//                    return .concatenate(
+//                        .cancel(id: SynchronizerCancelId),
+//                        .send(.onboarding(.createNewWalletRequested))
+//                    )
 //                } else {
 //                    return .concatenate(
 //                        .cancel(id: SynchronizerCancelId),

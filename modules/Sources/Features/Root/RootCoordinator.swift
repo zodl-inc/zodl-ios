@@ -14,14 +14,6 @@ extension Root {
             switch action {
                 
                 // MARK: - Returns to Home
-                
-//            case addKeystoneHWWalletCoordFlow
-//            case currencyConversionSetup
-//            case serverSwitch
-//            case swapAndPayCoordFlow
-//            case torSetup
-//            case transactionsCoordFlow
-//            case walletBackup
 
             case .settings(.backToHomeTapped),
                 .receive(.backToHomeTapped),

@@ -46,7 +46,6 @@ let package = Package(
         .library(name: "NetworkMonitor", targets: ["NetworkMonitor"]),
         .library(name: "NotEnoughFreeSpace", targets: ["NotEnoughFreeSpace"]),
         .library(name: "NumberFormatter", targets: ["NumberFormatter"]),
-        .library(name: "OnboardingFlow", targets: ["OnboardingFlow"]),
         .library(name: "OSStatusError", targets: ["OSStatusError"]),
         .library(name: "PartnerKeys", targets: ["PartnerKeys"]),
         .library(name: "Pasteboard", targets: ["Pasteboard"]),
@@ -513,21 +512,6 @@ let package = Package(
             path: "Sources/Dependencies/NumberFormatter"
         ),
         .target(
-            name: "OnboardingFlow",
-            dependencies: [
-                "CoordFlows",
-                "Generated",
-                "MnemonicSwift",
-                "Models",
-                "UIComponents",
-                "WalletStorage",
-                "ZcashSDKEnvironment",
-                .product(name: "ComposableArchitecture", package: "swift-composable-architecture"),
-                .product(name: "ZcashLightClientKit", package: "zcash-swift-wallet-sdk")
-            ],
-            path: "Sources/Features/OnboardingFlow"
-        ),
-        .target(
             name: "OSStatusError",
             dependencies: [
                 "Generated",
@@ -672,7 +656,6 @@ let package = Package(
                 "Models",
                 "NotEnoughFreeSpace",
                 "NumberFormatter",
-                "OnboardingFlow",
                 "OSStatusError",
                 "Pasteboard",
                 "PrivateDataConsent",

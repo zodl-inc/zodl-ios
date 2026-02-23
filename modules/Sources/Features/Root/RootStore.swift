@@ -13,7 +13,6 @@ import Welcome
 import Generated
 import Foundation
 import ExportLogs
-import OnboardingFlow
 import ReadTransactionsStorage
 import BackgroundTasks
 import Utils

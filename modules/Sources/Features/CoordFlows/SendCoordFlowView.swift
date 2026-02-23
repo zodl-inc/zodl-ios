@@ -42,8 +42,6 @@ public struct SendCoordFlowView: View {
                         ),
                     tokenName: tokenName
                 )
-//                .navigationBarHidden(true)
-//                .zashiBack { store.send(.backToHomeTapped) }
                 .screenTitle(L10n.General.send)
                 .navigationBarItems(
                     trailing:
@@ -79,17 +77,8 @@ public struct SendCoordFlowView: View {
                     TransactionDetailsView(store: store, tokenName: tokenName)
                 }
             }
-//            .navigationBarHidden(!store.path.isEmpty)
         }
         .applyScreenBackground()
-//        .zashiBack { store.send(.backToHomeTapped) }
-//        .screenTitle(L10n.General.send)
-//        .navigationBarItems(
-//            trailing:
-//                HStack(spacing: 0) {
-//                    hideBalancesButton()
-//                }
-//        )
     }
     
     private func hideBalancesButton() -> some View {

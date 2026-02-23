@@ -34,6 +34,7 @@ public struct ZodlAnnouncementView: View {
                         .zFont(.semiBold, size: 16, style: Design.Text.primary)
                         .padding(.top, 22)
                         .padding(.bottom, 8)
+                        .multilineTextAlignment(.center)
 
                     Text(L10n.NewZodl.desc)
                         .zFont(size: 14, style: Design.Text.primary)

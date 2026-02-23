@@ -276,7 +276,6 @@ extension TransactionDetailsView {
             asset.tokenIcon
                 .resizable()
                 .frame(width: 24, height: 24)
-                //.padding(.trailing, 8)
                 .overlay {
                     ZStack {
                         Circle()
@@ -296,7 +295,6 @@ extension TransactionDetailsView {
     @ViewBuilder func zecTickerLogo(_ colorScheme: ColorScheme, shield: Bool = true) -> some View {
         Asset.Assets.Brandmarks.brandmarkMax.image
             .zImage(size: 24, style: Design.Text.primary)
-            //.padding(.trailing, 12)
             .overlay {
                 if shield {
                     Asset.Assets.Icons.shieldBcg.image

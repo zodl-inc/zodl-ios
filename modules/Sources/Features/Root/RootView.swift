@@ -6,7 +6,6 @@ import Models
 import NotEnoughFreeSpace
 import Welcome
 import ExportLogs
-import OnboardingFlow
 import ZcashLightClientKit
 import UIComponents
 import DeeplinkWarning

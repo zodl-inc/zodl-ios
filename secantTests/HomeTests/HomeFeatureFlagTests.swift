@@ -1,5 +1,5 @@
 //
-//  OnboardingFlowFeatureFlagTests.swift
+//  HomeFeatureFlagTests.swift
 //  secantTests
 //
 //  Created by Lukáš Korba on 23.02.2023.
