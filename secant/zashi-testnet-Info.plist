@@ -84,6 +84,6 @@
 		<string>UIInterfaceOrientationPortrait</string>
 	</array>
 	<key>UIDesignRequiresCompatibility</key>
-	<true/>
+	<false/>
 </dict>
 </plist>

@@ -84,6 +84,7 @@ public struct SwapAndPay {
         @Shared(.appStorage(.sensitiveContent)) var isSensitiveContentHidden = false
         @Shared(.inMemory(.swapAPIAccess)) var swapAPIAccess: WalletStorage.SwapAPIAccess = .direct
         @Shared(.inMemory(.swapAssets)) public var swapAssets: IdentifiedArrayOf<SwapAsset> = []
+        public var swapAssetsLastLoadTime: TimeInterval = 0.0
         public var swapAssetFailedCounter = 0
         public var swapAssetFailedWithRetry: Bool? = nil
         public var swapAssetsToPresent: IdentifiedArrayOf<SwapAsset> = []
@@ -314,7 +315,10 @@ public struct SwapAndPay {
                 state.isQuoteRequestInFlight = false
                 return .merge(
                     .send(.walletBalances(.onAppear)),
-                    .send(.refreshSwapAssets),
+                    .concatenate(
+                        .send(.updateAssetsAccordingToSearchTerm),
+                        .send(.refreshSwapAssets)
+                    ),
                     .send(.exchangeRateSetupChanged)
                 )
 
@@ -336,7 +340,6 @@ public struct SwapAndPay {
 
             case .onDisappear:
                 // __LD2 TESTing
-                print("__LD ServerSetup.onDisappear")
                 return .merge(
                     .cancel(id: state.SwapAssetsCancelId),
                     .cancel(id: state.ABCancelId),
@@ -415,6 +418,13 @@ public struct SwapAndPay {
                 return .none
 
             case .refreshSwapAssets:
+                let now = Date().timeIntervalSince1970
+                let diff = now - state.swapAssetsLastLoadTime
+                // An hour check
+                if !state.swapAssets.isEmpty && diff < 3600.0 {
+                    return .none
+                }
+                state.swapAssetsLastLoadTime = now
                 return .run { send in
                     do {
                         let swapAssets = try await swapAndPay.swapAssets()
@@ -475,6 +485,9 @@ public struct SwapAndPay {
                 return .none
 
             case .updateAssetsAccordingToSearchTerm:
+                if state.swapAssets.isEmpty {
+                    return .none
+                }
                 // all received assets
                 var swapAssets = state.swapAssets
                 if let chainId = state.selectedContact?.chainId {

@@ -69,12 +69,12 @@ public struct AboutView: View {
             }
             .onAppear { store.send(.onAppear) }
             .sheet(isPresented: $store.isInAppBrowserPolicyOn) {
-                if let url = URL(string: "https://electriccoin.co/zashi-privacy-policy/") {
+                if let url = URL(string: "https://zodl.com/privacy-policy/#policy") {
                     InAppBrowserView(url: url)
                 }
             }
             .sheet(isPresented: $store.isInAppBrowserTermsOn) {
-                if let url = URL(string: "https://electriccoin.co/zashi-terms-of-use") {
+                if let url = URL(string: "https://zodl.com/privacy-policy/") {
                     InAppBrowserView(url: url)
                 }
             }

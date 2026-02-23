@@ -833,7 +833,7 @@
 "about.additionalInfo" = "Desarrollada por el equipo que estableció el estándar de la industria en privacidad en cadena (on-chain), los desarrolladores originales del protocolo Zcash.";
 "about.title" = "Presentando Zodl";
 "about.privacyPolicy" = "Política de privacidad";
-"about.termsOfUse" = "Términos de uso";
+"about.termsOfUse" = "Términos del Servicio";
 
 // MARK: - Swap to ZEC
 "swapToZec.address" = "Dirección %@...";
@@ -963,3 +963,15 @@
 "swapAndPay.pendingPayTitle" = "Pago Pendiente";
 
 "tokenOnChain" = "en";
+
+// MARK: Zashi -> Zodl
+"newZodl.title" = "Zashi ahora es Zodl";
+"newZodl.learnMore" = "Más información";
+"newZodl.goTo" = "Ir a Zodl";
+"newZodl.desc" = "Hemos renovado nuestra marca, pero todo lo que te gusta sigue igual. Zodl es la misma app con una nueva identidad.";
+"newZodl.safeFunds" = "Tus fondos y tu frase semilla permanecen seguros y sin cambios.";
+"newZodl.likeBefore" = "Todo funciona igual que antes:";
+"newZodl.sameTeam" = "El mismo equipo de desarrollo";
+"newZodl.sameMission" = "La misma misión";
+"newZodl.sameApp" = "La misma app";
+"newZodl.allSame" = "Misma billetera, diferente nombre y logotipo.";

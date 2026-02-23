@@ -447,7 +447,7 @@ extension Root {
                     
                     // Zodl Announcement
                     let zodlAnnouncementFlag = walletStorage.exportZodlAnnouncementFlag()
-                    
+
                     if zodlAnnouncementFlag == nil || zodlAnnouncementFlag == false {
                         destination = .zodlAnnouncement
                     }
@@ -569,6 +569,22 @@ extension Root {
                     return .send(.resetZashiKeychainFailedWithCorruptedData(error.localizedDescription))
                 }
                 
+//                if state.appInitializationState == .keysMissing && state.onboardingState.isImportingWallet {
+//                    state.appInitializationState = .uninitialized
+//                    return .cancel(id: SynchronizerCancelId)
+                    //                                } else if state.appInitializationState == .keysMissing && state.onboardingState.destination == .createNewWallet {
+                    //                    state.appInitializationState = .uninitialized
+                    //                    return .concatenate(
+                    //                        .cancel(id: SynchronizerCancelId),
+                    //                        .send(.onboarding(.createNewWalletRequested))
+                    //                    )
+//                } else {
+//                    return .concatenate(
+//                        .cancel(id: SynchronizerCancelId),
+//                        .send(.initialization(.checkWalletInitialization))
+//                    )
+//                }
+
                 // FIXME: this needs to be recreated
 //                if state.appInitializationState == .keysMissing && state.onboardingState.destination == .importExistingWallet {
 //                    state.appInitializationState = .uninitialized

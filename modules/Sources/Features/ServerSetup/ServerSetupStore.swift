@@ -116,7 +116,6 @@ public struct ServerSetup {
 
             case .onDisappear:
                 // __LD2 TESTing
-                print("__LD ServerSetup.onDisappear")
                 state.selectedServer = nil
                 return .none
 

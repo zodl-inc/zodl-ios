@@ -833,7 +833,7 @@
 "about.additionalInfo" = "Developed by the team that set the industry standard for onchain privacy, the original developers of the Zcash protocol."; // trans
 "about.title" = "Introducing Zodl";
 "about.privacyPolicy" = "Privacy Policy";
-"about.termsOfUse" = "Terms of Use";
+"about.termsOfUse" = "Terms of Service"; // trans
 
 // MARK: - Swap to ZEC
 "swapToZec.address" = "%@ address...";
@@ -964,7 +964,7 @@
 
 "tokenOnChain" = "on";
 
-// Zashi -> Zodl
+// MARK: Zashi -> Zodl
 "newZodl.title" = "Zashi is now Zodl";
 "newZodl.learnMore" = "Learn more";
 "newZodl.goTo" = "Go to Zodl";
@@ -974,3 +974,4 @@
 "newZodl.sameTeam" = "Same development team";
 "newZodl.sameMission" = "Same mission";
 "newZodl.sameApp" = "Same app";
+"newZodl.allSame" = "Same wallet, different name and logo.";

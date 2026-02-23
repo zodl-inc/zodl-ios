@@ -534,6 +534,11 @@ public struct WalletStorage {
 
         let status = secItem.delete(query as CFDictionary)
 
+        // If the item is not present, the goal of the function is fulfilled => no error
+        if status == errSecItemNotFound {
+            return
+        }
+
         guard status == noErr else {
             throw KeychainError.unknown(status)
         }

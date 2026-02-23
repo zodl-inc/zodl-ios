@@ -48,6 +48,16 @@ public struct RestoreWalletCoordFlow {
         public var words: [String] = Array(repeating: "", count: 24)
         public var wordsValidity: [Bool] = Array(repeating: true, count: 24)
 
+        public var isImportingWallet: Bool {
+            for element in path {
+                if element.is(\.recoverySeedPhraseEntry) {
+                    return true
+                }
+            }
+            
+            return false
+        }
+        
         public init() { }
     }
 
@@ -66,7 +76,7 @@ public struct RestoreWalletCoordFlow {
         case selectedIndex(Int?)
         case successfullyRecovered
         case suggestedWordTapped(String)
-        case suggestionsRequested(Int)
+        case suggestionsRequested(Int, Bool)
         case updateKeyboardFlag(Bool)
         #if DEBUG
         case debugPasteSeed
@@ -114,7 +124,7 @@ public struct RestoreWalletCoordFlow {
                         return .send(.suggestedWordTapped(state.words[index]))
                     }
                     
-                    return .send(.suggestionsRequested(index))
+                    return .send(.suggestionsRequested(index, false))
                 }
                 
                 return .none
@@ -123,17 +133,22 @@ public struct RestoreWalletCoordFlow {
                 state.selectedIndex = index
                 state.nextIndex = state.selectedIndex
                 if let index {
-                    return .send(.suggestionsRequested(index))
+                    return .send(.suggestionsRequested(index, true))
                 }
                 return .none
                 
-            case .suggestionsRequested(let index):
+            case let .suggestionsRequested(index, hasIndexChanged):
                 let prefix = state.words[index]
                 if prefix.isEmpty {
                     state.suggestedWords = []
                 } else {
                     state.suggestedWords = mnemonic.suggestWords(prefix)
                     state.wordsValidity[index] = !state.suggestedWords.isEmpty
+                }
+                if hasIndexChanged {
+                    if let first = state.suggestedWords.first, first == prefix && !state.isValidSeed && state.suggestedWords.count == 1 {
+                        return .none
+                    }
                 }
                 return .send(.evaluateSeedValidity)
 

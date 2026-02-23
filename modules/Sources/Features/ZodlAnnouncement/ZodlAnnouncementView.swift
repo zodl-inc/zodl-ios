@@ -25,31 +25,26 @@ public struct ZodlAnnouncementView: View {
                 VStack(alignment: .center, spacing: 0) {
                     headerView()
                         .padding(.top, 58)
-                        .padding(.bottom, Design.Spacing._xl)
+                        .padding(.bottom, Design.Spacing._2xl)
                     
                     Text(L10n.NewZodl.title)
                         .zFont(.semiBold, size: 24, style: Design.Text.primary)
 
+                    Text(L10n.NewZodl.allSame)
+                        .zFont(.semiBold, size: 16, style: Design.Text.primary)
+                        .padding(.top, 22)
+                        .padding(.bottom, 8)
+
                     Text(L10n.NewZodl.desc)
-                        .zFont(size: 14, style: Design.Text.tertiary)
-                        .padding(.vertical, 20)
-                        .multilineTextAlignment(.center)
+                        .zFont(size: 14, style: Design.Text.primary)
+                        .padding(.vertical, 24)
+                        .multilineTextAlignment(.leading)
                 }
                 .frame(maxWidth: .infinity)
 
-                Text(L10n.NewZodl.safeFunds)
-                    .zFont(.semiBold, size: 16, style: Design.Utility.SuccessGreen._800)
-                    .padding(Design.Spacing._xl)
-                    .frame(maxWidth: .infinity)
-                    .background {
-                        RoundedRectangle(cornerRadius: Design.Radius._lg)
-                            .fill(Design.Utility.SuccessGreen._100.color(colorScheme))
-                    }
-                    .padding(.bottom, Design.Spacing._5xl)
-
                 Text(L10n.NewZodl.likeBefore)
                     .zFont(.medium, size: 14, style: Design.Text.primary)
-                    .padding(.bottom, Design.Spacing._lg)
+                    .padding(.bottom, Design.Spacing._xl)
 
                 pointView(L10n.NewZodl.sameTeam).padding(.bottom, Design.Spacing._lg)
                 pointView(L10n.NewZodl.sameMission).padding(.bottom, Design.Spacing._lg)

@@ -46,7 +46,7 @@ public struct SwapFromToView: View {
     
     public var body: some View {
         ZStack {
-            HStack(spacing: 1) {
+            HStack(spacing: 0) {
                 VStack(alignment: .leading, spacing: 0) {
                     if reversed {
                         assetContent()
@@ -54,28 +54,22 @@ public struct SwapFromToView: View {
                         zecContent()
                     }
                 }
-                .padding(.leading, Design.Spacing._xl)
-                .padding(.trailing, Design.Spacing._xl + Design.Spacing._xl)
-                .padding(.vertical, Design.Spacing._lg)
-                .frame(maxWidth: .infinity)
-                .frame(height: 124)
+                .padding(.horizontal, Design.Spacing._xl)
+                .frame(height: 128)
                 .background {
                     CustomRoundedRectangle(corners: [.bottomLeft, .topLeft], radius: Design.Radius._3xl)
                         .fill(Design.Surfaces.bgSecondary.color(colorScheme))
                 }
                 
-                VStack(alignment: .leading, spacing: 0) {
+                VStack(alignment: .trailing, spacing: 0) {
                     if reversed {
-                        zecContent()
+                        zecContent(.trailing)
                     } else {
-                        assetContent()
+                        assetContent(.trailing)
                     }
                 }
-                .padding(.leading, Design.Spacing._xl + Design.Spacing._xl)
-                .padding(.trailing, Design.Spacing._xl)
-                .padding(.vertical, Design.Spacing._lg)
-                .frame(maxWidth: .infinity)
-                .frame(height: 124)
+                .padding(.horizontal, Design.Spacing._xl)
+                .frame(height: 128)
                 .background {
                     CustomRoundedRectangle(corners: [.bottomRight, .topRight], radius: Design.Radius._3xl)
                         .fill(Design.Surfaces.bgSecondary.color(colorScheme))
@@ -86,60 +80,141 @@ public struct SwapFromToView: View {
         }
     }
     
-    @ViewBuilder func zecContent() -> some View {
-        zecTickerBadge(colorScheme)
-            .padding(.bottom, 4)
-        
-        Text(tokenName.uppercased())
-            .zFont(.medium, size: 14, style: Design.Text.primary)
-        
-        Text(zcashNameInQuote)
-            .zFont(.medium, size: 12, style: Design.Text.tertiary)
-            .lineLimit(1)
-            .minimumScaleFactor(0.8)
-        
-        Color.clear.frame(height: Design.Spacing._md)
+    @ViewBuilder func zecContent(_ alignment: HorizontalAlignment = .leading) -> some View {
+        HStack(spacing: 0) {
+            // right side
+            if alignment == .trailing {
+                Spacer()
+
+                VStack(alignment: alignment, spacing: 0) {
+                    Text(tokenName.uppercased())
+                        .zFont(.medium, size: 14, style: Design.Text.primary)
+                    
+                    Text(zcashNameInQuote)
+                        .zFont(.medium, size: 10, style: Design.Text.tertiary)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.trailing)
+                }
+                
+                zecTickerBadge(colorScheme)
+                    .scaleEffect(1.25)
+                    .padding(.leading, Design.Spacing._xl)
+            } else {
+                // left side
+                zecTickerBadge(colorScheme)
+                    .scaleEffect(1.25)
+                    .padding(.trailing, Design.Spacing._xl)
+                
+                VStack(alignment: alignment, spacing: 0) {
+                    Text(tokenName.uppercased())
+                        .zFont(.medium, size: 14, style: Design.Text.primary)
+                    
+                    Text(zcashNameInQuote)
+                        .zFont(.medium, size: 10, style: Design.Text.tertiary)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                }
+
+                Spacer()
+            }
+        }
+        .frame(height: 63)
+        .frame(maxWidth: .infinity)
+
+        Design.Surfaces.bgTertiary.color(colorScheme)
+            .frame(height: 1)
+            .padding(alignment == .leading ? .trailing : .leading, Design.Spacing._xl)
+
+        Color.clear.frame(height: 1)
             .frame(maxWidth: .infinity)
         
-        Text(zecToBeSpendInQuote)
-            .zFont(.medium, size: 14, style: Design.Text.primary)
-            .lineLimit(1)
-            .minimumScaleFactor(0.1)
-        
-        Text(zecUsdToBeSpendInQuote)
-            .zFont(.medium, size: 10, style: Design.Text.tertiary)
+        VStack(alignment: alignment, spacing: 0) {
+            Text(zecToBeSpendInQuote)
+                .zFont(.medium, size: 14, style: Design.Text.primary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.1)
+
+            Color.clear.frame(height: 1)
+                .frame(maxWidth: .infinity)
+
+            Text(zecUsdToBeSpendInQuote)
+                .zFont(.medium, size: 10, style: Design.Text.tertiary)
+        }
+        .frame(height: 63)
     }
     
-    @ViewBuilder func assetContent() -> some View {
-        tokenTickerSelector(asset: selectedAsset, colorScheme)
-            .padding(.bottom, 4)
-        
-        if let selectedAsset {
-            Text(selectedAsset.token)
-                .zFont(.medium, size: 14, style: Design.Text.primary)
+    @ViewBuilder func assetContent(_ alignment: HorizontalAlignment = .leading) -> some View {
+        HStack(spacing: 0) {
+            // right side
+            if alignment == .trailing {
+                Spacer()
+
+                VStack(alignment: alignment, spacing: 0) {
+                    if let selectedAsset {
+                        Text(selectedAsset.token)
+                            .zFont(.medium, size: 14, style: Design.Text.primary)
+                    }
+                    
+                    Text(assetNameInQuote)
+                        .zFont(.medium, size: 10, style: Design.Text.tertiary)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.trailing)
+                }
+                
+                tokenTickerSelector(asset: selectedAsset, colorScheme)
+                    .scaleEffect(1.25)
+                    .padding(.leading, Design.Spacing._xl)
+            } else {
+                // left side
+                tokenTickerSelector(asset: selectedAsset, colorScheme)
+                    .scaleEffect(1.25)
+                    .padding(.trailing, Design.Spacing._xl)
+                
+                VStack(alignment: alignment, spacing: 0) {
+                    if let selectedAsset {
+                        Text(selectedAsset.token)
+                            .zFont(.medium, size: 14, style: Design.Text.primary)
+                    }
+                    
+                    Text(assetNameInQuote)
+                        .zFont(.medium, size: 10, style: Design.Text.tertiary)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                }
+
+                Spacer()
+            }
         }
-        
-        Text(assetNameInQuote)
-            .zFont(.medium, size: 12, style: Design.Text.tertiary)
-            .lineLimit(1)
-            .minimumScaleFactor(0.8)
-        
-        Color.clear.frame(height: Design.Spacing._md)
+        .frame(height: 63)
+        .frame(maxWidth: .infinity)
+
+        Design.Surfaces.bgTertiary.color(colorScheme)
+            .frame(height: 1)
+            .padding(alignment == .leading ? .trailing : .leading, Design.Spacing._xl)
+
+        Color.clear.frame(height: 1)
             .frame(maxWidth: .infinity)
         
-        Text(tokenToBeReceivedInQuote)
-            .zFont(.medium, size: 14, style: Design.Text.primary)
-            .lineLimit(1)
-            .minimumScaleFactor(0.1)
-        
-        Text(tokenUsdToBeReceivedInQuote)
-            .zFont(.medium, size: 10, style: Design.Text.tertiary)
+        VStack(alignment: alignment, spacing: 0) {
+            Text(tokenToBeReceivedInQuote)
+                .zFont(.medium, size: 14, style: Design.Text.primary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.1)
+            
+            Color.clear.frame(height: 1)
+                .frame(maxWidth: .infinity)
+
+            Text(tokenUsdToBeReceivedInQuote)
+                .zFont(.medium, size: 10, style: Design.Text.tertiary)
+        }
+        .frame(height: 63)
+        .frame(maxWidth: .infinity)
     }
 
     @ViewBuilder func zecTickerBadge(_ colorScheme: ColorScheme, shield: Bool = true) -> some View {
         Asset.Assets.Brandmarks.brandmarkMax.image
             .zImage(size: 24, style: Design.Text.primary)
-            .padding(.trailing, 6)
+            //.padding(.trailing, 6)
             .overlay {
                 if shield {
                     Asset.Assets.Icons.shieldBcg.image
@@ -165,7 +240,7 @@ public struct SwapFromToView: View {
             asset.tokenIcon
                 .resizable()
                 .frame(width: 24, height: 24)
-                .padding(.trailing, 8)
+                //.padding(.trailing, 8)
                 .overlay {
                     ZStack {
                         Circle()

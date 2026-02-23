@@ -115,7 +115,6 @@ public struct Scan {
 
             case .onDisappear:
                 // __LD2 TESTing
-                print("__LD ServerSetup.onDisappear")
                 return .cancel(id: state.cancelId)
                 
             case .checkCameraPermission:

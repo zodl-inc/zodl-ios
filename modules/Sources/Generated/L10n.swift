@@ -23,8 +23,8 @@ public enum L10n {
     public static let info = L10n.tr("Localizable", "about.info", fallback: "Zodl is a Zcash-powered mobile wallet, built for unstoppable private payments. It’s optimized for storage and real-world use of shielded $ZEC—the truly private cryptocurrency.")
     /// Privacy Policy
     public static let privacyPolicy = L10n.tr("Localizable", "about.privacyPolicy", fallback: "Privacy Policy")
-    /// Terms of Use
-    public static let termsOfUse = L10n.tr("Localizable", "about.termsOfUse", fallback: "Terms of Use")
+    /// Terms of Service
+    public static let termsOfUse = L10n.tr("Localizable", "about.termsOfUse", fallback: "Terms of Service")
     /// Introducing Zodl
     public static let title = L10n.tr("Localizable", "about.title", fallback: "Introducing Zodl")
   }
@@ -607,6 +607,8 @@ public enum L10n {
     public static let options = L10n.tr("Localizable", "more.options", fallback: "More Options")
   }
   public enum NewZodl {
+    /// Same wallet, different name and logo.
+    public static let allSame = L10n.tr("Localizable", "newZodl.allSame", fallback: "Same wallet, different name and logo.")
     /// We’ve rebranded, but everything you love stays the same. Zodl is the same app under a new banner.
     public static let desc = L10n.tr("Localizable", "newZodl.desc", fallback: "We’ve rebranded, but everything you love stays the same. Zodl is the same app under a new banner.")
     /// Go to Zodl
