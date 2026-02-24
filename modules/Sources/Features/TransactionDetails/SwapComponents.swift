@@ -281,12 +281,12 @@ extension TransactionDetailsView {
                         Circle()
                             .fill(Design.Surfaces.bgPrimary.color(colorScheme))
                             .frame(width: 16, height: 16)
-                            .offset(x: 6, y: 6)
+                            .offset(x: 12, y: 8)
                         
                         asset.chainIcon
                             .resizable()
                             .frame(width: 14, height: 14)
-                            .offset(x: 6, y: 6)
+                            .offset(x: 12, y: 8)
                     }
                 }
         }
@@ -299,17 +299,17 @@ extension TransactionDetailsView {
                 if shield {
                     Asset.Assets.Icons.shieldBcg.image
                         .zImage(size: 15, color: Design.screenBackground.color(colorScheme))
-                        .offset(x: 4, y: 8)
+                        .offset(x: 10, y: 8)
                         .overlay {
                             Asset.Assets.Icons.shieldTickFilled.image
                                 .zImage(size: 13, color: Design.Text.primary.color(colorScheme))
-                                .offset(x: 4, y: 8)
+                                .offset(x: 10, y: 8)
                         }
                 } else {
                     Asset.Assets.Icons.shieldOffSolid.image
                         .resizable()
                         .frame(width: 15, height: 15)
-                        .offset(x: 4, y: 8)
+                        .offset(x: 10, y: 8)
                 }
             }
     }

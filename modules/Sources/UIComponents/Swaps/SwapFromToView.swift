@@ -214,22 +214,21 @@ public struct SwapFromToView: View {
     @ViewBuilder func zecTickerBadge(_ colorScheme: ColorScheme, shield: Bool = true) -> some View {
         Asset.Assets.Brandmarks.brandmarkMax.image
             .zImage(size: 24, style: Design.Text.primary)
-            //.padding(.trailing, 6)
             .overlay {
                 if shield {
                     Asset.Assets.Icons.shieldBcg.image
                         .zImage(size: 15, color: Design.screenBackground.color(colorScheme))
-                        .offset(x: 4, y: 8)
+                        .offset(x: 10, y: 8)
                         .overlay {
                             Asset.Assets.Icons.shieldTickFilled.image
                                 .zImage(size: 13, color: Design.Text.primary.color(colorScheme))
-                                .offset(x: 4, y: 8)
+                                .offset(x: 10, y: 8)
                         }
                 } else {
                     Asset.Assets.Icons.shieldOffSolid.image
                         .resizable()
                         .frame(width: 15, height: 15)
-                        .offset(x: 4, y: 8)
+                        .offset(x: 10, y: 8)
                 }
             }
             .scaleEffect(0.8)
@@ -240,18 +239,17 @@ public struct SwapFromToView: View {
             asset.tokenIcon
                 .resizable()
                 .frame(width: 24, height: 24)
-                //.padding(.trailing, 8)
                 .overlay {
                     ZStack {
                         Circle()
                             .fill(Design.Surfaces.bgPrimary.color(colorScheme))
                             .frame(width: 16, height: 16)
-                            .offset(x: 6, y: 6)
+                            .offset(x: 12, y: 8)
                         
                         asset.chainIcon
                             .resizable()
                             .frame(width: 14, height: 14)
-                            .offset(x: 6, y: 6)
+                            .offset(x: 12, y: 8)
                     }
                 }
                 .scaleEffect(0.8)
