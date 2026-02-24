@@ -569,7 +569,7 @@ extension Root {
                     return .send(.resetZashiKeychainFailedWithCorruptedData(error.localizedDescription))
                 }
 
-                // FIXME: valuidate whether this code makes sense
+                // FIXME: validate whether this code makes sense
 //                if state.appInitializationState == .keysMissing && state.onboardingState.isImportingWallet {
 //                    state.appInitializationState = .uninitialized
 //                    return .cancel(id: SynchronizerCancelId)

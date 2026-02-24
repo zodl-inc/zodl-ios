@@ -115,14 +115,15 @@ public struct ZodlAnnouncementView: View {
 
             // TO Zodl
             Asset.Assets.zashiLogo.image
-                .zImage(size: 20, style: Design.Logo.primary)
-                .padding(14)
+                .zImage(size: 25, style: Design.Logo.primary)
+                .padding(9)
+                .offset(x: -2, y: -2)
                 .background {
                     Circle()
                         .frame(width: 48, height: 48)
                         .foregroundColor(Design.Logo.opposite.color(colorScheme))
                 }
-                .offset(x: -8)
+                .offset(x: -6)
         }
         .offset(x: 4)
     }
