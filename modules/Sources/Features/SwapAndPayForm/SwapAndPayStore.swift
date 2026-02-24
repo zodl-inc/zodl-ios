@@ -82,7 +82,6 @@ public struct SwapAndPay {
         @Shared(.appStorage(.sensitiveContent)) var isSensitiveContentHidden = false
         @Shared(.inMemory(.swapAPIAccess)) var swapAPIAccess: WalletStorage.SwapAPIAccess = .direct
         @Shared(.inMemory(.swapAssets)) public var swapAssets: IdentifiedArrayOf<SwapAsset> = []
-        public var swapAssetsLastLoadTime: TimeInterval = 0.0
         public var swapAssetFailedCounter = 0
         public var swapAssetFailedWithRetry: Bool? = nil
         public var swapAssetsToPresent: IdentifiedArrayOf<SwapAsset> = []
@@ -407,13 +406,9 @@ public struct SwapAndPay {
                 return .none
 
             case .refreshSwapAssets:
-                let now = Date().timeIntervalSince1970
-                let diff = now - state.swapAssetsLastLoadTime
-                // An hour check
-                if !state.swapAssets.isEmpty && diff < 3600.0 {
-                    return .none
+                if !state.swapAssets.isEmpty {
+                    return .send(.swapAssetsLoaded(state.swapAssets))
                 }
-                state.swapAssetsLastLoadTime = now
                 return .run { send in
                     do {
                         let swapAssets = try await swapAndPay.swapAssets()
