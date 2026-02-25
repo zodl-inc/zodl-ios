@@ -569,7 +569,8 @@ extension Root {
                     return .send(.resetZashiKeychainFailedWithCorruptedData(error.localizedDescription))
                 }
 
-                // FIXME: validate whether this code makes sense
+                // TODO: [#1627] validate whether this code makes sense
+                // https://github.com/zodl-inc/zodl-ios/issues/1627
 //                if state.appInitializationState == .keysMissing && state.onboardingState.isImportingWallet {
 //                    state.appInitializationState = .uninitialized
 //                    return .cancel(id: SynchronizerCancelId)
@@ -586,7 +587,8 @@ extension Root {
 //                    )
 //                }
 
-                // FIXME: this needs to be recreated
+                // TODO: [#1627] this might need to be recreated
+                // https://github.com/zodl-inc/zodl-ios/issues/1627
 //                if state.appInitializationState == .keysMissing && state.onboardingState.destination == .importExistingWallet {
 //                    state.appInitializationState = .uninitialized
 //                    return .cancel(id: SynchronizerCancelId)

@@ -50,7 +50,8 @@ extension HomeView {
                     if let selectedWalletAccount = store.selectedWalletAccount {
                         selectedWalletAccount.vendor.icon()
                             .resizable()
-                            .frame(width: 22, height: 22)
+                            .frame(width: 19, height: 19)
+                            .offset(y: -1)
                             .background {
                                 Circle()
                                     .fill(Design.Surfaces.bgAlt.color(colorScheme))
@@ -70,7 +71,7 @@ extension HomeView {
                 }
                 .padding(.leading, {
                     if #available(iOS 26, *) {
-                        return 0
+                        return 2
                     } else {
                         return 12
                     }

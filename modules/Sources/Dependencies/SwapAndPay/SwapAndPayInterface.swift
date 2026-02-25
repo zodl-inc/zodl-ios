@@ -23,7 +23,7 @@ public struct SwapAndPayClient {
     
     public enum Constants {
         /// Affiliate fee in basis points
-        static public let zashiFeeBps = 67
+        static public let zashiFeeBps = 50
         /// Address for the affiliate fees
         static let affiliateFeeDepositAddress = "zodlswaps.near"
         /// Address for the affiliate fees for CrossPay

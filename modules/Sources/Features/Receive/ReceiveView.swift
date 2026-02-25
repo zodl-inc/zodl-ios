@@ -358,7 +358,7 @@ public struct ReceiveView: View {
                                     .fill(Design.Utility.Purple._100.color(colorScheme))
                             } else {
                                 RoundedRectangle(cornerRadius: Design.Radius._md)
-                                    .fill(Design.Utility.Gray._100.color(colorScheme))
+                                    .fill(Design.Utility.Gray._200.color(colorScheme))
                             }
                         }
                 }
