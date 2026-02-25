@@ -58,7 +58,7 @@ public struct AddressDetailsView: View {
                             .padding(.top, 12)
                         
                         Text(store.address.data)
-                            .zFont(addressFont: true, size: 14, style: Design.Text.tertiary)
+                            .zFont(fontFamily: .robotoMono, size: 14, style: Design.Text.tertiary)
                             .lineLimit(store.isAddressExpanded ? nil : 2)
                             .truncationMode(.middle)
                             .padding(.top, 8)
@@ -104,7 +104,7 @@ public struct AddressDetailsView: View {
         }
         .screenHorizontalPadding()
         .applyScreenBackground()
-        .zashiBackV2()
+        .zashiBack()
     }
 }
 

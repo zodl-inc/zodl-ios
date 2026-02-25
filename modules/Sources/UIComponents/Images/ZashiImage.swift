@@ -35,6 +35,18 @@ public extension Image {
     }
     
     func zImage(
+        height: CGFloat,
+        color: Color
+    ) -> some View {
+        self
+            .resizable()
+            .renderingMode(.template)
+            .aspectRatio(contentMode: .fit)
+            .frame(height: height)
+            .foregroundColor(color)
+    }
+    
+    func zImage(
         size: CGFloat,
         style: Colorable
     ) -> some View {

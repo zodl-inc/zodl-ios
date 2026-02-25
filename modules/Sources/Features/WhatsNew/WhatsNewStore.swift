@@ -56,6 +56,7 @@ public struct WhatsNew {
         Reduce { state, action in
             switch action {
             case .onAppear:
+                // __LD TESTED
                 state.appVersion = appVersion.appVersion()
                 state.appBuild = appVersion.appBuild()
                 state.latest = whatsNewProvider.latest()

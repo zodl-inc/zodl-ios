@@ -48,7 +48,7 @@ public struct SendCoordFlow {
     }
 
     public enum Action {
-        case dismissRequired
+        case backToHomeTapped
         case path(StackActionOf<Path>)
         case resolveSendResult(SendConfirmation.State.Result?, SendConfirmation.State)
         case sendForm(SendForm.Action)

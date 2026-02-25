@@ -42,34 +42,50 @@ extension HomeView {
     }
     
     @ViewBuilder func walletAccountSwitcher() -> some View {
-        Button {
-            if store.walletAccounts.count >= 2 {
+        if !store.walletAccounts.isEmpty {
+            Button {
                 store.send(.accountSwitchTapped)
-            }
-        } label: {
-            HStack(spacing: 0) {
-                if let selectedWalletAccount = store.selectedWalletAccount {
-                    selectedWalletAccount.vendor.icon()
-                        .resizable()
-                        .frame(width: 16, height: 16)
-                        .background {
-                            Circle()
-                                .fill(Design.Surfaces.bgAlt.color(colorScheme))
-                                .frame(width: 24, height: 24)
-                        }
-                    
-                    Text(selectedWalletAccount.vendor.name().lowercased())
-                        .zFont(.semiBold, size: 24, style: Design.Text.primary)
-                        .padding(.leading, 8)
-                }
+            } label: {
+                HStack(spacing: 0) {
+                    if let selectedWalletAccount = store.selectedWalletAccount {
+                        selectedWalletAccount.vendor.icon()
+                            .resizable()
+                            .frame(width: 19, height: 19)
+                            .offset(y: -1)
+                            .background {
+                                Circle()
+                                    .fill(Design.Surfaces.bgAlt.color(colorScheme))
+                                    .frame(width: 30, height: 30)
+                            }
+                        
+                        Text(selectedWalletAccount.vendor.name())
+                            .zFont(.semiBold, size: 19, style: Design.Text.primary)
+                            .padding(.leading, 14)
+                            .padding(.bottom, 2)
+                    }
 
-                if store.walletAccounts.count >= 2 {
                     Asset.Assets.chevronDown.image
                         .zImage(size: 24, style: Design.Text.primary)
-                        .padding(8)
+                        .padding(.leading, 6)
+                        .padding(.top, 4)
                 }
+                .padding(.leading, {
+                    if #available(iOS 26, *) {
+                        return 2
+                    } else {
+                        return 12
+                    }
+                }()
+                )
+                .padding(.trailing, {
+                    if #available(iOS 26, *) {
+                        return 0
+                    } else {
+                        return 4
+                    }
+                }()
+                )
             }
         }
-        .disabled(store.walletAccounts.count <= 1)
     }
 }

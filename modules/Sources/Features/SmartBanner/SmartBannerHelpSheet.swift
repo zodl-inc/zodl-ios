@@ -53,7 +53,7 @@ extension SmartBannerView {
             ZashiButton(L10n.General.ok.uppercased()) {
                 store.send(.closeSheetTapped)
             }
-            .padding(.bottom, 32)
+            .padding(.bottom, Design.Spacing.sheetBottomSpace)
         }
     }
 
@@ -80,7 +80,7 @@ extension SmartBannerView {
             ZashiButton(L10n.General.ok.uppercased()) {
                 store.send(.closeSheetTapped)
             }
-            .padding(.bottom, 32)
+            .padding(.bottom, Design.Spacing.sheetBottomSpace)
         }
     }
     
@@ -109,7 +109,7 @@ extension SmartBannerView {
             ZashiButton(L10n.General.ok.uppercased()) {
                 store.send(.closeSheetTapped)
             }
-            .padding(.bottom, 32)
+            .padding(.bottom, Design.Spacing.sheetBottomSpace)
         }
     }
 
@@ -129,7 +129,7 @@ extension SmartBannerView {
             ZashiButton(L10n.General.ok.uppercased()) {
                 store.send(.closeSheetTapped)
             }
-            .padding(.bottom, 32)
+            .padding(.bottom, Design.Spacing.sheetBottomSpace)
         }
     }
 
@@ -159,7 +159,7 @@ extension SmartBannerView {
             ZashiButton(L10n.General.ok.uppercased()) {
                 store.send(.closeSheetTapped)
             }
-            .padding(.bottom, 32)
+            .padding(.bottom, Design.Spacing.sheetBottomSpace)
         }
     }
 
@@ -226,7 +226,7 @@ extension SmartBannerView {
             ZashiButton(L10n.SmartBanner.Content.Backup.button) {
                 store.send(.walletBackupTapped)
             }
-            .padding(.bottom, 32)
+            .padding(.bottom, Design.Spacing.sheetBottomSpace)
         }
     }
 
@@ -307,7 +307,7 @@ extension SmartBannerView {
                 store.send(.shieldFundsTapped)
             }
             .disabled(store.isShielding)
-            .padding(.bottom, 32)
+            .padding(.bottom, Design.Spacing.sheetBottomSpace)
         }
     }
 

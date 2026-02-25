@@ -51,6 +51,9 @@ extension WalletStorageClient: DependencyKey {
             exportUserMetadataEncryptionKeys: { account in
                 try walletStorage.exportUserMetadataEncryptionKeys(account: account)
             },
+            clearEncryptionKeys: { account in
+                try walletStorage.clearEncryptionKeys(account)
+            },
             importWalletBackupReminder: { reminedMeTimestamp in
                 try walletStorage.importWalletBackupReminder(reminedMeTimestamp)
             },
@@ -83,6 +86,12 @@ extension WalletStorageClient: DependencyKey {
             },
             exportTorSetupFlag: {
                 walletStorage.exportTorSetupFlag()
+            },
+            importZodlAnnouncementFlag: { enabled in
+                try walletStorage.importZodlAnnouncementFlag(enabled)
+            },
+            exportZodlAnnouncementFlag: {
+                walletStorage.exportZodlAnnouncementFlag()
             }
         )
     }

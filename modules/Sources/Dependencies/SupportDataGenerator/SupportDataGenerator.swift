@@ -20,7 +20,7 @@ public struct SupportData: Equatable {
 
 public enum SupportDataGenerator {
     public enum Constants {
-        public static let email = "support@electriccoin.co"
+        public static let email = "support@zodl.com"
         public static let subject = L10n.Accounts.zashi
         public static let subjectPPE = L10n.ProposalPartial.mailSubject
     }

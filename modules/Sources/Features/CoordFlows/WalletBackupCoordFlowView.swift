@@ -48,13 +48,11 @@ public struct WalletBackupCoordFlowView: View {
                     } label: {
                         Asset.Assets.Icons.help.image
                             .zImage(size: 24, style: Design.Text.primary)
-                            .padding(8)
+                            .padding(Design.Spacing.navBarButtonPadding)
                     }
             )
             .zashiSheet(isPresented: $store.isHelpSheetPresented) {
                 helpSheetContent()
-                    .screenHorizontalPadding()
-                    .applyScreenBackground()
             }
         }
         .padding(.horizontal, 4)
@@ -79,7 +77,7 @@ public struct WalletBackupCoordFlowView: View {
             ZashiButton(L10n.General.ok.uppercased()) {
                 store.send(.helpSheetRequested)
             }
-            .padding(.bottom, 24)
+            .padding(.bottom, Design.Spacing.sheetBottomSpace)
         }
     }
     

@@ -17,7 +17,7 @@ import Models
 
 struct Near1Click {
     enum Constants {
-        static let referral = "zashi"
+        static let referral = "zodl"
         
         // urls
         static let submitUrl = "https://1click.chaindefuser.com/v0/deposit/submit"

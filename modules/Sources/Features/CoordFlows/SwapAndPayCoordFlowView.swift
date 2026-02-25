@@ -20,8 +20,7 @@ import TransactionDetails
 
 public struct SwapAndPayCoordFlowView: View {
     @Environment(\.colorScheme) var colorScheme
-    
-    @State var moreSheetHeight: CGFloat = .zero
+
     @Shared(.appStorage(.sensitiveContent)) var isSensitiveContentHidden = false
     
     @Perception.Bindable var store: StoreOf<SwapAndPayCoordFlow>
@@ -44,7 +43,40 @@ public struct SwapAndPayCoordFlowView: View {
                             ),
                         tokenName: tokenName
                     )
-                    .navigationBarHidden(true)
+                    .zashiBack {
+                        store.send(.backButtonTapped)
+                    }
+                    .zashiTitle {
+                        Text(
+                            store.isSwapHelpContent
+                            ? L10n.SwapAndPay.swap.uppercased()
+                            : L10n.Crosspay.title.uppercased()
+                        )
+                        .zFont(.semiBold, size: 16, style: Design.Text.primary)
+                    }
+                    .navigationBarItems(
+                        trailing:
+                            HStack(spacing: 4) {
+                                if store.isSensitiveButtonVisible {
+                                    Button {
+                                        $isSensitiveContentHidden.withLock { $0.toggle() }
+                                    } label: {
+                                        let image = isSensitiveContentHidden ? Asset.Assets.eyeOff.image : Asset.Assets.eyeOn.image
+                                        image
+                                            .zImage(size: 24, color: Asset.Colors.primary.color)
+                                            .padding(store.isSensitiveButtonVisible ? 8 : Design.Spacing.navBarButtonPadding)
+                                    }
+                                }
+                                
+                                Button {
+                                    store.send(.helpSheetRequested)
+                                } label: {
+                                    Asset.Assets.infoCircle.image
+                                        .zImage(size: 24, style: Design.Text.primary)
+                                        .padding(store.isSensitiveButtonVisible ? 8 : Design.Spacing.navBarButtonPadding)
+                                }
+                            }
+                    )
                 } destination: { store in
                     switch store.case {
                     case let .addressBook(store):
@@ -77,80 +109,15 @@ public struct SwapAndPayCoordFlowView: View {
                         TransactionDetailsView(store: store, tokenName: tokenName)
                     }
                 }
-                .navigationBarHidden(!store.path.isEmpty)
-                .navigationBarItems(
-                    trailing:
-                        HStack(spacing: 4) {
-                            if store.isSensitiveButtonVisible {
-                                Button {
-                                    $isSensitiveContentHidden.withLock { $0.toggle() }
-                                } label: {
-                                    let image = isSensitiveContentHidden ? Asset.Assets.eyeOff.image : Asset.Assets.eyeOn.image
-                                    image
-                                        .zImage(size: 24, color: Asset.Colors.primary.color)
-                                        .padding(8)
-                                }
-                            }
-                            
-                            Button {
-                                store.send(.helpSheetRequested)
-                            } label: {
-                                Asset.Assets.infoCircle.image
-                                    .zImage(size: 24, style: Design.Text.primary)
-                                    .padding(8)
-                            }
-                        }
-                )
                 .zashiSheet(isPresented: $store.isHelpSheetPresented) {
-                    helpContent()
-                        .screenHorizontalPadding()
-                        .applyScreenBackground()
+                    helpSheetContent()
                 }
                 .onAppear { store.send(.onAppear) }
             }
             .applyScreenBackground()
-            .zashiBack {
-                store.send(.backButtonTapped)
-            }
-            .zashiTitle {
-                HStack(spacing: 0) {
-                    Text(
-                        store.isSwapHelpContent
-                        ? L10n.SwapAndPay.swap.uppercased()
-                        : L10n.Crosspay.title.uppercased()
-                    )
-                    .zFont(.semiBold, size: 16, style: Design.Text.primary)
-//                    .padding(.trailing, store.isSwapExperience ? 10 : 0)
-                    .padding(.leading, store.isSensitiveButtonVisible ? 30 : 0)
-
-//                    if store.isSwapExperience {
-//                        Asset.Assets.Partners.nearLogo.image
-//                            .zImage(width: 65, height: 16, style: Design.Text.primary)
-//                    }
-                }
-                .padding(.trailing, (store.isSwapExperience || store.isSwapToZecExperience) ? 20 : 0)
-                .frame(maxWidth: .infinity)
-            }
         }
     }
 
-    @ViewBuilder func helpContent() -> some View {
-        WithPerceptionTracking {
-            if #available(iOS 16.4, *) {
-                helpSheetContent()
-                    .presentationDetents([.height(moreSheetHeight)])
-                    .presentationDragIndicator(.visible)
-                    .presentationCornerRadius(Design.Radius._4xl)
-            } else if #available(iOS 16.0, *) {
-                helpSheetContent()
-                    .presentationDetents([.height(moreSheetHeight)])
-                    .presentationDragIndicator(.visible)
-            } else {
-                helpSheetContent()
-            }
-        }
-    }
-    
     @ViewBuilder private func helpSheetContent() -> some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 10) {
@@ -187,7 +154,7 @@ public struct SwapAndPayCoordFlowView: View {
             ZashiButton(L10n.General.ok.uppercased()) {
                 store.send(.helpSheetRequested)
             }
-            .padding(.bottom, 24)
+            .padding(.bottom, Design.Spacing.sheetBottomSpace)
         }
     }
     

@@ -62,6 +62,7 @@ public struct ZecKeyboard {
         Reduce { state, action in
             switch action {
             case .onAppear:
+                // __LD TESTED
                 if let decimalSeparator = Locale.current.decimalSeparator {
                     state.decimalSeparator = decimalSeparator
                     state.keys = ["1", "2", "3", "4", "5", "6", "7", "8", "9", decimalSeparator, "0", "x"]

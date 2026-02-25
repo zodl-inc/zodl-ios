@@ -68,7 +68,7 @@ public struct WalletBirthdayView: View {
                 } label: {
                     Asset.Assets.Icons.help.image
                         .zImage(size: 24, style: Design.Text.primary)
-                        .padding(8)
+                        .padding(Design.Spacing.navBarButtonPadding)
                 }
         )
         .screenHorizontalPadding()

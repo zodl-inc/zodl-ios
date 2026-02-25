@@ -54,7 +54,11 @@ public struct AboutView: View {
                 }
 
                 Spacer()
-                
+
+                Asset.Assets.zashiLogo.image
+                    .zImage(width: 41, height: 41, color: Asset.Colors.primary.color)
+                    .padding(.bottom, 7)
+
                 Asset.Assets.zashiTitle.image
                     .zImage(width: 73, height: 20, color: Asset.Colors.primary.color)
                     .padding(.bottom, 16)
@@ -65,12 +69,12 @@ public struct AboutView: View {
             }
             .onAppear { store.send(.onAppear) }
             .sheet(isPresented: $store.isInAppBrowserPolicyOn) {
-                if let url = URL(string: "https://electriccoin.co/zashi-privacy-policy/") {
+                if let url = URL(string: "https://zodl.com/privacy-policy/#policy") {
                     InAppBrowserView(url: url)
                 }
             }
             .sheet(isPresented: $store.isInAppBrowserTermsOn) {
-                if let url = URL(string: "https://electriccoin.co/zashi-terms-of-use") {
+                if let url = URL(string: "https://zodl.com/privacy-policy/") {
                     InAppBrowserView(url: url)
                 }
             }

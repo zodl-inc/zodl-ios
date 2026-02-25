@@ -173,6 +173,7 @@ public struct SmartBanner {
         Reduce { state, action in
             switch action {
             case .onAppear:
+                // __LD TESTED
                 state.tokenName = zcashSDKEnvironment.tokenName
                 state.isWalletBackupAcknowledgedAtKeychain = walletStorage.exportWalletBackupAcknowledged()
                 state.isWalletBackupAcknowledged = state.isWalletBackupAcknowledgedAtKeychain
@@ -204,6 +205,7 @@ public struct SmartBanner {
                 )
                 
             case .onDisappear:
+                // __LD2 TESTED
                 return .merge(
                     .cancel(id: state.CancelNetworkMonitorId),
                     .cancel(id: state.CancelStateStreamId),

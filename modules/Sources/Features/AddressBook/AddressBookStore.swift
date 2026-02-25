@@ -52,6 +52,7 @@ public struct AddressBook {
         public var nameAlreadyExists = false
         public var originalAddress = ""
         public var originalName = ""
+        public var originalChainId = ""
         @Shared(.inMemory(.selectedWalletAccount)) public var selectedWalletAccount: WalletAccount? = nil
         @Shared(.inMemory(.swapAssets)) public var swapAssets: IdentifiedArrayOf<SwapAsset> = []
         @Shared(.inMemory(.walletAccounts)) public var walletAccounts: [WalletAccount] = []
@@ -70,7 +71,7 @@ public struct AddressBook {
         }
         
         public var isEditChange: Bool {
-            (address != originalAddress || name != originalName)
+            (address != originalAddress || name != originalName || selectedChain?.chain != originalChainId)
             && (isValidForm || (context != .send && selectedChain != nil && !isValidZcashAddress))
         }
         
@@ -156,6 +157,7 @@ public struct AddressBook {
         Reduce { state, action in
             switch action {
             case .onAppear:
+                // __LD TESTED
                 state.isValidForm = false
                 state.deleteIdToConfirm = nil
                 state.nameAlreadyExists = false
@@ -246,10 +248,12 @@ public struct AddressBook {
                         if result.remoteStoreResult == .failure {
                             // TODO: [#1408] error handling https://github.com/Electric-Coin-Company/zashi-ios/issues/1408
                         }
-                        return .concatenate(
-                            .send(.fetchedABContacts(abContacts, false)),
-                            .send(.dismissDeleteContactRequired)
-                        )
+                        return .run { send in
+                            await send(.fetchedABContacts(abContacts, false))
+                            
+                            try? await Task.sleep(for: .milliseconds(150))
+                            await send(.dismissDeleteContactRequired)
+                        }
                     } catch {
                         // TODO: [#1408] error handling https://github.com/Electric-Coin-Company/zashi-ios/issues/1408
                     }
@@ -273,6 +277,7 @@ public struct AddressBook {
                 state.name = record.name
                 state.originalAddress = state.address
                 state.originalName = state.name
+                state.originalChainId = record.chainId ?? "zcash"
                 state.isValidForm = true
                 state.isNameFocused = true
                 state.isValidZcashAddress = derivationTool.isZcashAddress(state.address, zcashSDKEnvironment.network.networkType)
@@ -290,7 +295,7 @@ public struct AddressBook {
                         Contact(
                             address: state.originalAddress,
                             name: state.originalName,
-                            chainId: state.selectedChain?.chain
+                            chainId: state.originalChainId
                         )
                     )
                     let result = try addressBook.storeContact(

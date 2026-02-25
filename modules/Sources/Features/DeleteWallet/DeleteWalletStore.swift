@@ -33,6 +33,7 @@ public struct DeleteWallet {
         case binding(BindingAction<DeleteWallet.State>)
         case deleteRequested
         case deleteTapped(Bool)
+        case deleteTappedDelayed(Bool)
         case deleteCanceled
         case dismissSheet
     }
@@ -61,8 +62,15 @@ public struct DeleteWallet {
                 state.isSheetUp = false
                 return .none
 
-            case .deleteTapped:
+            case .deleteTappedDelayed(let areMetadataPreserved):
                 state.isProcessing = true
+                state.isSheetUp = false
+                return .run { send in
+                    try? await Task.sleep(for: .seconds(0.3))
+                    await send(.deleteTapped(areMetadataPreserved))
+                }
+
+            case .deleteTapped:
                 return .none
             }
         }

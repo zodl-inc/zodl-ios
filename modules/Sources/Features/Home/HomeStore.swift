@@ -18,7 +18,6 @@ import SwapAndPay
 
 @Reducer
 public struct Home {
-    private let CancelStateId = UUID()
     private let CancelEventId = UUID()
 
     @ObservableState
@@ -34,7 +33,6 @@ public struct Home {
         public var migratingDatabase = true
         public var moreRequest = false
         public var payRequest = false
-        public var sendRequest = false
         public var smartBannerState = SmartBanner.State.initial
         public var walletConfig: WalletConfig
         @Shared(.inMemory(.selectedWalletAccount)) public var selectedWalletAccount: WalletAccount? = nil
@@ -104,7 +102,6 @@ public struct Home {
         case reviewRequestFinished
         case scanTapped
         case seeAllTransactionsTapped
-        case sendRequestTapped
         case sendTapped
         case settingsTapped
         case showSynchronizerErrorAlert(ZcashError)
@@ -150,26 +147,34 @@ public struct Home {
         Reduce { state, action in
             switch action {
             case .onAppear:
+                // __LD TESTED
                 state.appId = PartnerKeys.cbProjectId
                 state.walletBalancesState.migratingDatabase = state.migratingDatabase
                 state.migratingDatabase = false
                 state.isRateEducationEnabled = userStoredPreferences.exchangeRate() == nil
-                return .publisher {
-                    sdkSynchronizer.eventStream()
-                        .throttle(for: .seconds(0.2), scheduler: mainQueue, latest: true)
-                        .compactMap {
-                            if case SynchronizerEvent.foundTransactions = $0 {
-                                return Home.Action.foundTransactions
+                return .merge(
+                    .publisher {
+                        sdkSynchronizer.eventStream()
+                            .throttle(for: .seconds(0.2), scheduler: mainQueue, latest: true)
+                            .compactMap {
+                                if case SynchronizerEvent.foundTransactions = $0 {
+                                    return Home.Action.foundTransactions
+                                }
+                                return nil
                             }
-                            return nil
-                        }
-                }
-                .cancellable(id: CancelEventId, cancelInFlight: true)
+                    }
+                    .cancellable(id: CancelEventId, cancelInFlight: true),
+                    .send(.smartBanner(.onAppear)),
+                    .send(.transactionList(.onAppear)),
+                    .send(.walletBalances(.onAppear))
+                )
                 
             case .onDisappear:
-                return .concatenate(
-                    .cancel(id: CancelStateId),
-                    .cancel(id: CancelEventId)
+                // __LD2 TESTED
+                return .merge(
+                    .cancel(id: CancelEventId),
+                    .send(.smartBanner(.onDisappear)),
+                    .send(.walletBalances(.onDisappear))
                 )
 
             case .receiveScreenRequested:
@@ -191,11 +196,6 @@ public struct Home {
                 return .none
 
             case .sendTapped:
-                state.sendRequest = false
-                return .none
-                
-            case .sendRequestTapped:
-                state.sendRequest = true
                 return .none
 
             case .swapWithNearTapped:
@@ -204,7 +204,6 @@ public struct Home {
 
             case .payWithNearTapped:
                 state.moreRequest = false
-                state.sendRequest = false
                 state.payRequest = false
                 return .none
 

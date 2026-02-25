@@ -39,7 +39,7 @@ public struct UserMetadataEncryptionKeys: Codable, Equatable {
 
         // FIXME: is the seed fingerprint matches account's seed fingerprint
         
-        // FIXME: this will break when there are 2+ onloine seeds
+        // FIXME: this will break when there are 2+ online seeds
         let privateMetadataKeys = try metadataKey.derivePrivateUseMetadataKey(
             ufvk: account.name?.lowercased() == "zashi" ? nil : account.ufvk,
             privateUseSubject: [UInt8](info)
@@ -164,7 +164,13 @@ public struct UserMetadataKeys: Codable, Equatable, Redactable {
             rawBytes.map { String(format: "%02x", $0) }.joined()
         }
         
-        let prefix = "\(account.name?.lowercased() ?? "")"
+        var prefix = "\(account.name?.lowercased() ?? "")"
+        
+        // Hotfix for the Zashi->Zodl issue
+        // The file needs to stay zashi-xxx named for now but account.name provides "zodl"
+        if prefix == "zodl" {
+            prefix = "zashi"
+        }
         
         // Prepend the prefix to the result
         return "\(prefix)-metadata-\(fileIdentifier)"

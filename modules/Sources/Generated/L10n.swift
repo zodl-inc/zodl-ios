@@ -17,24 +17,24 @@ public enum L10n {
   /// on
   public static let tokenOnChain = L10n.tr("Localizable", "tokenOnChain", fallback: "on")
   public enum About {
-    /// Developed by the team that continues to set the industry standard for blockchain privacy, the original developers of the Zcash protocol at Electric Coin Company.
-    public static let additionalInfo = L10n.tr("Localizable", "about.additionalInfo", fallback: "Developed by the team that continues to set the industry standard for blockchain privacy, the original developers of the Zcash protocol at Electric Coin Company.")
-    /// Zashi is a Zcash-powered mobile wallet, built for unstoppable private payments. It’s optimized for storage and real-world use of shielded $ZEC—the truly private cryptocurrency.
-    public static let info = L10n.tr("Localizable", "about.info", fallback: "Zashi is a Zcash-powered mobile wallet, built for unstoppable private payments. It’s optimized for storage and real-world use of shielded $ZEC—the truly private cryptocurrency.")
+    /// Developed by the team that set the industry standard for onchain privacy, the original developers of the Zcash protocol.
+    public static let additionalInfo = L10n.tr("Localizable", "about.additionalInfo", fallback: "Developed by the team that set the industry standard for onchain privacy, the original developers of the Zcash protocol.")
+    /// Zodl is a Zcash-powered mobile wallet, built for unstoppable private payments. It’s optimized for storage and real-world use of shielded $ZEC—the truly private cryptocurrency.
+    public static let info = L10n.tr("Localizable", "about.info", fallback: "Zodl is a Zcash-powered mobile wallet, built for unstoppable private payments. It’s optimized for storage and real-world use of shielded $ZEC—the truly private cryptocurrency.")
     /// Privacy Policy
     public static let privacyPolicy = L10n.tr("Localizable", "about.privacyPolicy", fallback: "Privacy Policy")
-    /// Terms of Use
-    public static let termsOfUse = L10n.tr("Localizable", "about.termsOfUse", fallback: "Terms of Use")
-    /// Introducing Zashi
-    public static let title = L10n.tr("Localizable", "about.title", fallback: "Introducing Zashi")
+    /// Terms of Service
+    public static let termsOfUse = L10n.tr("Localizable", "about.termsOfUse", fallback: "Terms of Service")
+    /// Introducing Zodl
+    public static let title = L10n.tr("Localizable", "about.title", fallback: "Introducing Zodl")
   }
   public enum Accounts {
     /// Keystone
     public static let keystone = L10n.tr("Localizable", "accounts.keystone", fallback: "Keystone")
     /// Send from
     public static let sendingFrom = L10n.tr("Localizable", "accounts.sendingFrom", fallback: "Send from")
-    /// Zashi
-    public static let zashi = L10n.tr("Localizable", "accounts.zashi", fallback: "Zashi")
+    /// Zodl
+    public static let zashi = L10n.tr("Localizable", "accounts.zashi", fallback: "Zodl")
     public enum AddressBook {
       /// Address Book Contacts
       public static let contacts = L10n.tr("Localizable", "accounts.addressBook.contacts", fallback: "Address Book Contacts")
@@ -105,8 +105,8 @@ public enum L10n {
     public static let shareDesc = L10n.tr("Localizable", "addressDetails.shareDesc", fallback: "Hi, scan this QR code to send me a ZEC payment!")
     /// Share QR Code
     public static let shareQR = L10n.tr("Localizable", "addressDetails.shareQR", fallback: "Share QR Code")
-    /// My Zashi ZEC Address
-    public static let shareTitle = L10n.tr("Localizable", "addressDetails.shareTitle", fallback: "My Zashi ZEC Address")
+    /// My Zodl ZEC Address
+    public static let shareTitle = L10n.tr("Localizable", "addressDetails.shareTitle", fallback: "My Zodl ZEC Address")
   }
   public enum Annotation {
     /// Add note
@@ -143,8 +143,8 @@ public enum L10n {
     public static func infoShielding(_ p1: Any) -> String {
       return L10n.tr("Localizable", "balances.infoShielding", String(describing: p1), fallback: "Shield your transparent ZEC to make it spendable and private. Doing so will create a shielding in-wallet transaction, consolidating your transparent and shielded funds. (Typical fee: %@)")
     }
-    /// Zashi is scanning the blockchain to make sure your balances are displayed correctly.
-    public static let infoSyncing = L10n.tr("Localizable", "balances.infoSyncing", fallback: "Zashi is scanning the blockchain to make sure your balances are displayed correctly.")
+    /// Zodl is scanning the blockchain to make sure your balances are displayed correctly.
+    public static let infoSyncing = L10n.tr("Localizable", "balances.infoSyncing", fallback: "Zodl is scanning the blockchain to make sure your balances are displayed correctly.")
     /// Pending
     public static let pending = L10n.tr("Localizable", "balances.pending", fallback: "Pending")
     /// The restore process can take several hours on lower-powered devices, and even on powerful devices is likely to take more than an hour.
@@ -159,15 +159,15 @@ public enum L10n {
     public static let synced = L10n.tr("Localizable", "balances.synced", fallback: "Synced")
     /// Syncing
     public static let syncing = L10n.tr("Localizable", "balances.syncing", fallback: "Syncing")
-    /// Zashi encountered an error while syncing, attempting to resolve...
-    public static let syncingError = L10n.tr("Localizable", "balances.syncingError", fallback: "Zashi encountered an error while syncing, attempting to resolve...")
+    /// Zodl encountered an error while syncing, attempting to resolve...
+    public static let syncingError = L10n.tr("Localizable", "balances.syncingError", fallback: "Zodl encountered an error while syncing, attempting to resolve...")
     /// Transparent balance
     public static let transparentBalance = L10n.tr("Localizable", "balances.transparentBalance", fallback: "Transparent balance")
     public enum HintBox {
       /// I got it!
       public static let dismiss = L10n.tr("Localizable", "balances.hintBox.dismiss", fallback: "I got it!")
-      /// Zashi uses the latest network upgrade and does not support sending transparent (unshielded) ZEC. Use the Shield and Consolidate button to shield your funds, which will add to your available balance and make your ZEC spendable.
-      public static let message = L10n.tr("Localizable", "balances.hintBox.message", fallback: "Zashi uses the latest network upgrade and does not support sending transparent (unshielded) ZEC. Use the Shield and Consolidate button to shield your funds, which will add to your available balance and make your ZEC spendable.")
+      /// Zodl uses the latest network upgrade and does not support sending transparent (unshielded) ZEC. Use the Shield and Consolidate button to shield your funds, which will add to your available balance and make your ZEC spendable.
+      public static let message = L10n.tr("Localizable", "balances.hintBox.message", fallback: "Zodl uses the latest network upgrade and does not support sending transparent (unshielded) ZEC. Use the Shield and Consolidate button to shield your funds, which will add to your available balance and make your ZEC spendable.")
     }
     public enum SpendableBalance {
       /// Spendable Balance
@@ -229,8 +229,8 @@ public enum L10n {
     public static let cardTitle = L10n.tr("Localizable", "currencyConversion.cardTitle", fallback: "New Feature")
     /// Enable
     public static let enable = L10n.tr("Localizable", "currencyConversion.enable", fallback: "Enable")
-    /// If Tor Protection is enabled (Advanced Settings), Zashi protects your IP address.
-    public static let ipDesc = L10n.tr("Localizable", "currencyConversion.ipDesc", fallback: "If Tor Protection is enabled (Advanced Settings), Zashi protects your IP address.")
+    /// If Tor Protection is enabled (Advanced Settings), Zodl protects your IP address.
+    public static let ipDesc = L10n.tr("Localizable", "currencyConversion.ipDesc", fallback: "If Tor Protection is enabled (Advanced Settings), Zodl protects your IP address.")
     /// IP Address Protection
     public static let ipTitle = L10n.tr("Localizable", "currencyConversion.ipTitle", fallback: "IP Address Protection")
     /// Display your balance and payment amounts in USD. You can manage this feature in Advanced Settings.
@@ -261,36 +261,36 @@ public enum L10n {
     public static let torOnInfo = L10n.tr("Localizable", "currencyConversion.torOnInfo", fallback: "Disabling Tor Protection will also disable the Currency Conversion feature until re-enabled.")
   }
   public enum DeeplinkWarning {
-    /// Rescan in Zashi
-    public static let cta = L10n.tr("Localizable", "deeplinkWarning.cta", fallback: "Rescan in Zashi")
-    /// For better safety and security, rescan the QR code with Zashi.
-    public static let desc = L10n.tr("Localizable", "deeplinkWarning.desc", fallback: "For better safety and security, rescan the QR code with Zashi.")
+    /// Rescan in Zodl
+    public static let cta = L10n.tr("Localizable", "deeplinkWarning.cta", fallback: "Rescan in Zodl")
+    /// For better safety and security, rescan the QR code with Zodl.
+    public static let desc = L10n.tr("Localizable", "deeplinkWarning.desc", fallback: "For better safety and security, rescan the QR code with Zodl.")
     /// Hello!
     public static let screenTitle = L10n.tr("Localizable", "deeplinkWarning.screenTitle", fallback: "Hello!")
     /// Looks like you used a third-party app to scan for payment.
     public static let title = L10n.tr("Localizable", "deeplinkWarning.title", fallback: "Looks like you used a third-party app to scan for payment.")
   }
   public enum DeleteWallet {
-    /// Reset Zashi
-    public static let actionButtonTitle = L10n.tr("Localizable", "deleteWallet.actionButtonTitle", fallback: "Reset Zashi")
+    /// Reset Zodl
+    public static let actionButtonTitle = L10n.tr("Localizable", "deleteWallet.actionButtonTitle", fallback: "Reset Zodl")
     /// I understand
     public static let iUnderstand = L10n.tr("Localizable", "deleteWallet.iUnderstand", fallback: "I understand")
     /// Resetting your app can lead to complete loss of access to your funds! ⚠️
     public static let message1 = L10n.tr("Localizable", "deleteWallet.message1", fallback: "Resetting your app can lead to complete loss of access to your funds! ⚠️")
     /// Make sure you have both your secret recovery phrase and wallet birthday height saved before you proceed.
     public static let message2 = L10n.tr("Localizable", "deleteWallet.message2", fallback: "Make sure you have both your secret recovery phrase and wallet birthday height saved before you proceed.")
-    /// Resetting the Zashi app will delete the app database and cached app data, and disconnect all connected hardware wallets.
-    public static let message3 = L10n.tr("Localizable", "deleteWallet.message3", fallback: "Resetting the Zashi app will delete the app database and cached app data, and disconnect all connected hardware wallets.")
-    /// Once you Reset Zashi, the only way to access your funds is through a wallet restore process that requires your Zashi Recovery Phrase and Wallet Birthday Height.
-    public static let message4 = L10n.tr("Localizable", "deleteWallet.message4", fallback: "Once you Reset Zashi, the only way to access your funds is through a wallet restore process that requires your Zashi Recovery Phrase and Wallet Birthday Height.")
+    /// Resetting the Zodl app will delete the app database and cached app data, and disconnect all connected hardware wallets.
+    public static let message3 = L10n.tr("Localizable", "deleteWallet.message3", fallback: "Resetting the Zodl app will delete the app database and cached app data, and disconnect all connected hardware wallets.")
+    /// Once you Reset Zodl, the only way to access your funds is through a wallet restore process that requires your Zodl Recovery Phrase and Wallet Birthday Height.
+    public static let message4 = L10n.tr("Localizable", "deleteWallet.message4", fallback: "Once you Reset Zodl, the only way to access your funds is through a wallet restore process that requires your Zodl Recovery Phrase and Wallet Birthday Height.")
     /// Keep encrypted metadata backup - which includes contacts, notes, bookmarks, and swap/payment details.
     public static let metadataWarn1 = L10n.tr("Localizable", "deleteWallet.metadataWarn1", fallback: "Keep encrypted metadata backup - which includes contacts, notes, bookmarks, and swap/payment details.")
     /// This data cannot be recovered during Restore.
     public static let metadataWarn2 = L10n.tr("Localizable", "deleteWallet.metadataWarn2", fallback: "This data cannot be recovered during Restore.")
     /// Reset
     public static let screenTitle = L10n.tr("Localizable", "deleteWallet.screenTitle", fallback: "Reset")
-    /// Reset Zashi
-    public static let title = L10n.tr("Localizable", "deleteWallet.title", fallback: "Reset Zashi")
+    /// Reset Zodl
+    public static let title = L10n.tr("Localizable", "deleteWallet.title", fallback: "Reset Zodl")
     public enum Sheet {
       /// Resetting the app cannot be undone. You will need to restore your wallet using your secret recovery phrase.
       public static let msg = L10n.tr("Localizable", "deleteWallet.sheet.msg", fallback: "Resetting the app cannot be undone. You will need to restore your wallet using your secret recovery phrase.")
@@ -303,8 +303,8 @@ public enum L10n {
     public static let btn = L10n.tr("Localizable", "enhanceTransaction.btn", fallback: "Fetch data")
     /// Transaction ID
     public static let fieldTitle = L10n.tr("Localizable", "enhanceTransaction.fieldTitle", fallback: "Transaction ID")
-    /// If you confirm, Zashi will fetch transaction data for a transaction ID you provide.
-    public static let msg = L10n.tr("Localizable", "enhanceTransaction.msg", fallback: "If you confirm, Zashi will fetch transaction data for a transaction ID you provide.")
+    /// If you confirm, Zodl will fetch transaction data for a transaction ID you provide.
+    public static let msg = L10n.tr("Localizable", "enhanceTransaction.msg", fallback: "If you confirm, Zodl will fetch transaction data for a transaction ID you provide.")
     /// Enter or paste...
     public static let placeholder = L10n.tr("Localizable", "enhanceTransaction.placeholder", fallback: "Enter or paste...")
     /// Refresh Transaction Data
@@ -463,8 +463,8 @@ public enum L10n {
     public static let more = L10n.tr("Localizable", "homeScreen.more", fallback: "More")
     /// More...
     public static let moreDotted = L10n.tr("Localizable", "homeScreen.moreDotted", fallback: "More...")
-    /// Information shared with Zashi integrations is subject to their privacy policies.
-    public static let moreWarning = L10n.tr("Localizable", "homeScreen.moreWarning", fallback: "Information shared with Zashi integrations is subject to their privacy policies.")
+    /// Information you share with Zodl integration partners is subject to their privacy policies.
+    public static let moreWarning = L10n.tr("Localizable", "homeScreen.moreWarning", fallback: "Information you share with Zodl integration partners is subject to their privacy policies.")
     /// Scan
     public static let scan = L10n.tr("Localizable", "homeScreen.scan", fallback: "Scan")
   }
@@ -506,8 +506,8 @@ public enum L10n {
     }
   }
   public enum Integrations {
-    /// Zashi integrations provide access to third party services. Features and information shared with them are outside of our control and subject to their privacy policies.
-    public static let info = L10n.tr("Localizable", "integrations.info", fallback: "Zashi integrations provide access to third party services. Features and information shared with them are outside of our control and subject to their privacy policies.")
+    /// Zodl integrations provide access to third party services. Features and information shared with them are outside of our control and subject to their privacy policies.
+    public static let info = L10n.tr("Localizable", "integrations.info", fallback: "Zodl integrations provide access to third party services. Features and information shared with them are outside of our control and subject to their privacy policies.")
   }
   public enum Keystone {
     /// Confirm with Keystone
@@ -522,8 +522,8 @@ public enum L10n {
     public static let scanInfo = L10n.tr("Localizable", "keystone.scanInfo", fallback: "Scan Keystone wallet QR code")
     /// Scan Keystone QR code to sign the transaction
     public static let scanInfoTransaction = L10n.tr("Localizable", "keystone.scanInfoTransaction", fallback: "Scan Keystone QR code to sign the transaction")
-    /// Switch from Keystone to Zashi to use Integrations.
-    public static let settings = L10n.tr("Localizable", "keystone.settings", fallback: "Switch from Keystone to Zashi to use Integrations.")
+    /// Switch from Keystone to Zodl to use Integrations.
+    public static let settings = L10n.tr("Localizable", "keystone.settings", fallback: "Switch from Keystone to Zodl to use Integrations.")
     /// Keystone Wallet
     public static let wallet = L10n.tr("Localizable", "keystone.wallet", fallback: "Keystone Wallet")
     public enum AddHWWallet {
@@ -606,6 +606,28 @@ public enum L10n {
     /// More Options
     public static let options = L10n.tr("Localizable", "more.options", fallback: "More Options")
   }
+  public enum NewZodl {
+    /// Same wallet, different name and logo.
+    public static let allSame = L10n.tr("Localizable", "newZodl.allSame", fallback: "Same wallet, different name and logo.")
+    /// We’ve rebranded, but everything you love stays the same. Zodl is the same app under a new banner.
+    public static let desc = L10n.tr("Localizable", "newZodl.desc", fallback: "We’ve rebranded, but everything you love stays the same. Zodl is the same app under a new banner.")
+    /// Go to Zodl
+    public static let goTo = L10n.tr("Localizable", "newZodl.goTo", fallback: "Go to Zodl")
+    /// Learn more
+    public static let learnMore = L10n.tr("Localizable", "newZodl.learnMore", fallback: "Learn more")
+    /// Everything works just like before:
+    public static let likeBefore = L10n.tr("Localizable", "newZodl.likeBefore", fallback: "Everything works just like before:")
+    /// Your funds and seed phrase remain secure and unchanged.
+    public static let safeFunds = L10n.tr("Localizable", "newZodl.safeFunds", fallback: "Your funds and seed phrase remain secure and unchanged.")
+    /// Same app
+    public static let sameApp = L10n.tr("Localizable", "newZodl.sameApp", fallback: "Same app")
+    /// Same mission
+    public static let sameMission = L10n.tr("Localizable", "newZodl.sameMission", fallback: "Same mission")
+    /// Same development team
+    public static let sameTeam = L10n.tr("Localizable", "newZodl.sameTeam", fallback: "Same development team")
+    /// Zashi is now Zodl
+    public static let title = L10n.tr("Localizable", "newZodl.title", fallback: "Zashi is now Zodl")
+  }
   public enum NotEnoughFreeSpace {
     /// %@ MB available. 
     public static func dataAvailable(_ p1: Any) -> String {
@@ -613,9 +635,9 @@ public enum L10n {
     }
     /// Syncing will stay paused until more space is available.
     public static let messagePost = L10n.tr("Localizable", "notEnoughFreeSpace.messagePost", fallback: "Syncing will stay paused until more space is available.")
-    /// Zashi requires %@ GB of space to synchronize the Zcash blockchain but there is only 
+    /// Zodl requires %@ GB of space to synchronize the Zcash blockchain but there is only 
     public static func messagePre(_ p1: Any) -> String {
-      return L10n.tr("Localizable", "notEnoughFreeSpace.messagePre", String(describing: p1), fallback: "Zashi requires %@ GB of space to synchronize the Zcash blockchain but there is only ")
+      return L10n.tr("Localizable", "notEnoughFreeSpace.messagePre", String(describing: p1), fallback: "Zodl requires %@ GB of space to synchronize the Zcash blockchain but there is only ")
     }
     /// ~%@ MB of additional space required to continue
     public static func requiredSpace(_ p1: Any) -> String {
@@ -629,8 +651,8 @@ public enum L10n {
     public static func error(_ p1: Any) -> String {
       return L10n.tr("Localizable", "osStatusError.error", String(describing: p1), fallback: "Error code: %@")
     }
-    /// Your funds are safe but something happened while we were trying to retrieve the Keychain data. Close the Zashi app, and give it a fresh launch, we will try again.
-    public static let message = L10n.tr("Localizable", "osStatusError.message", fallback: "Your funds are safe but something happened while we were trying to retrieve the Keychain data. Close the Zashi app, and give it a fresh launch, we will try again.")
+    /// Your funds are safe but something happened while we were trying to retrieve the Keychain data. Close the Zodl app, and give it a fresh launch, we will try again.
+    public static let message = L10n.tr("Localizable", "osStatusError.message", fallback: "Your funds are safe but something happened while we were trying to retrieve the Keychain data. Close the Zodl app, and give it a fresh launch, we will try again.")
     /// It’s not you, it’s us.
     public static let title = L10n.tr("Localizable", "osStatusError.title", fallback: "It’s not you, it’s us.")
   }
@@ -647,8 +669,8 @@ public enum L10n {
     }
   }
   public enum PlainOnboarding {
-    /// A Zcash (ZEC) wallet built for private payments
-    public static let title = L10n.tr("Localizable", "plainOnboarding.title", fallback: "A Zcash (ZEC) wallet built for private payments")
+    /// Zcash-powered mobile wallet built for financial sovereignty.
+    public static let title = L10n.tr("Localizable", "plainOnboarding.title", fallback: "Zcash-powered mobile wallet built for financial sovereignty.")
     public enum Button {
       /// Create new wallet
       public static let createNewWallet = L10n.tr("Localizable", "plainOnboarding.button.createNewWallet", fallback: "Create new wallet")
@@ -657,12 +679,12 @@ public enum L10n {
     }
   }
   public enum PrivateDataConsent {
-    /// I agree to Zashi's Export Private Data Policies and Privacy Policy
-    public static let confirmation = L10n.tr("Localizable", "privateDataConsent.confirmation", fallback: "I agree to Zashi's Export Private Data Policies and Privacy Policy")
+    /// I agree to Zodl's Export Private Data Policies and Privacy Policy
+    public static let confirmation = L10n.tr("Localizable", "privateDataConsent.confirmation", fallback: "I agree to Zodl's Export Private Data Policies and Privacy Policy")
     /// By clicking "I Agree" below, you give your consent to export all of your wallets’ private data such as the entire history of your wallet(s), including any connected hardware wallets. All private information, memos, amounts, and recipient addresses, even for your shielded activity will be exported.*
     public static let message1 = L10n.tr("Localizable", "privateDataConsent.message1", fallback: "By clicking \"I Agree\" below, you give your consent to export all of your wallets’ private data such as the entire history of your wallet(s), including any connected hardware wallets. All private information, memos, amounts, and recipient addresses, even for your shielded activity will be exported.*")
-    /// The private data also gives the ability to see certain future actions you take with Zashi.
-    public static let message2 = L10n.tr("Localizable", "privateDataConsent.message2", fallback: "The private data also gives the ability to see certain future actions you take with Zashi.")
+    /// The private data also gives the ability to see certain future actions you take with Zodl.
+    public static let message2 = L10n.tr("Localizable", "privateDataConsent.message2", fallback: "The private data also gives the ability to see certain future actions you take with Zodl.")
     /// Sharing this private data is irrevocable - once you have shared this private data with someone, there is no way to revoke their access.
     public static let message3 = L10n.tr("Localizable", "privateDataConsent.message3", fallback: "Sharing this private data is irrevocable - once you have shared this private data with someone, there is no way to revoke their access.")
     /// *Note that this private data does not give them the ability to spend your funds, only the ability to see what you do with your funds.
@@ -675,8 +697,8 @@ public enum L10n {
   public enum ProposalPartial {
     /// Copy transaction IDs
     public static let copyIds = L10n.tr("Localizable", "proposalPartial.copyIds", fallback: "Copy transaction IDs")
-    /// Hi Zashi Team,
-    public static let mailPart1 = L10n.tr("Localizable", "proposalPartial.mailPart1", fallback: "Hi Zashi Team,")
+    /// Hi Zodl Team,
+    public static let mailPart1 = L10n.tr("Localizable", "proposalPartial.mailPart1", fallback: "Hi Zodl Team,")
     /// While sending a transaction to a TEX address, I encountered an error state. I'm reaching out to get guidance on how to recover my funds.
     public static let mailPart2 = L10n.tr("Localizable", "proposalPartial.mailPart2", fallback: "While sending a transaction to a TEX address, I encountered an error state. I'm reaching out to get guidance on how to recover my funds.")
     /// Thank you.
@@ -737,8 +759,8 @@ public enum L10n {
         public static let desc1 = L10n.tr("Localizable", "receive.help.transparent.desc1", fallback: "This addresses type works just like Bitcoin addresses and offers NO PRIVACY. The details of transactions sent to this address will be public and visible on the blockchain.")
         /// We don't recommend using this address type unless the wallet or exchange from which ZEC is being sent doesn’t support sending funds to shielded Zcash addresses.
         public static let desc2 = L10n.tr("Localizable", "receive.help.transparent.desc2", fallback: "We don't recommend using this address type unless the wallet or exchange from which ZEC is being sent doesn’t support sending funds to shielded Zcash addresses.")
-        /// To protect your privacy, Zashi will guide you to shield any transparent ZEC you receive with just one click.
-        public static let desc3 = L10n.tr("Localizable", "receive.help.transparent.desc3", fallback: "To protect your privacy, Zashi will guide you to shield any transparent ZEC you receive with just one click.")
+        /// To protect your privacy, Zodl will guide you to shield any transparent ZEC you receive with just one click.
+        public static let desc3 = L10n.tr("Localizable", "receive.help.transparent.desc3", fallback: "To protect your privacy, Zodl will guide you to shield any transparent ZEC you receive with just one click.")
         /// You won't be able to spend your transparent ZEC until you shield it.
         public static let desc4 = L10n.tr("Localizable", "receive.help.transparent.desc4", fallback: "You won't be able to spend your transparent ZEC until you shield it.")
         /// Zcash Transparent Address (Static)
@@ -755,8 +777,8 @@ public enum L10n {
     public static let btn = L10n.tr("Localizable", "recoverFunds.btn", fallback: "Scan address")
     /// Transparent Address
     public static let fieldTitle = L10n.tr("Localizable", "recoverFunds.fieldTitle", fallback: "Transparent Address")
-    /// If you confirm, Zashi will scan the transparent address you provide and discover its funds. This may take a few minutes.
-    public static let msg = L10n.tr("Localizable", "recoverFunds.msg", fallback: "If you confirm, Zashi will scan the transparent address you provide and discover its funds. This may take a few minutes.")
+    /// If you confirm, Zodl will scan the transparent address you provide and discover its funds. This may take a few minutes.
+    public static let msg = L10n.tr("Localizable", "recoverFunds.msg", fallback: "If you confirm, Zodl will scan the transparent address you provide and discover its funds. This may take a few minutes.")
     /// Enter or paste...
     public static let placeholder = L10n.tr("Localizable", "recoverFunds.placeholder", fallback: "Enter or paste...")
     /// Discover Funds
@@ -832,8 +854,8 @@ public enum L10n {
     /// What’s this for?
     public static let whatFor = L10n.tr("Localizable", "requestZec.whatFor", fallback: "What’s this for?")
     public enum Summary {
-      /// Hi, I have generated a ZEC payment request for you using the Zashi app!
-      public static let shareDesc = L10n.tr("Localizable", "requestZec.summary.shareDesc", fallback: "Hi, I have generated a ZEC payment request for you using the Zashi app!")
+      /// Hi, I have generated a ZEC payment request for you using the Zodl app!
+      public static let shareDesc = L10n.tr("Localizable", "requestZec.summary.shareDesc", fallback: "Hi, I have generated a ZEC payment request for you using the Zodl app!")
       /// (download link: https://apps.apple.com/app/zashi-zcash-wallet/id1672392439)
       public static let shareMsg = L10n.tr("Localizable", "requestZec.summary.shareMsg", fallback: "(download link: https://apps.apple.com/app/zashi-zcash-wallet/id1672392439)")
       /// Share QR Code
@@ -849,18 +871,18 @@ public enum L10n {
     public static let gotIt = L10n.tr("Localizable", "restoreInfo.gotIt", fallback: "Got it!")
     /// Note: 
     public static let note = L10n.tr("Localizable", "restoreInfo.note", fallback: "Note: ")
-    /// Your funds cannot be spent with Zashi until your wallet is fully restored.
-    public static let noteInfo = L10n.tr("Localizable", "restoreInfo.noteInfo", fallback: "Your funds cannot be spent with Zashi until your wallet is fully restored.")
+    /// Your funds cannot be spent with Zodl until your wallet is fully restored.
+    public static let noteInfo = L10n.tr("Localizable", "restoreInfo.noteInfo", fallback: "Your funds cannot be spent with Zodl until your wallet is fully restored.")
     /// Your wallet is being restored.
     public static let subTitle = L10n.tr("Localizable", "restoreInfo.subTitle", fallback: "Your wallet is being restored.")
-    /// Keep the Zashi app open on an active phone screen.
-    public static let tip1 = L10n.tr("Localizable", "restoreInfo.tip1", fallback: "Keep the Zashi app open on an active phone screen.")
+    /// Keep the Zodl app open on an active phone screen.
+    public static let tip1 = L10n.tr("Localizable", "restoreInfo.tip1", fallback: "Keep the Zodl app open on an active phone screen.")
     /// To prevent your phone screen from going dark, turn off power-saving mode and keep your phone plugged in.
     public static let tip2 = L10n.tr("Localizable", "restoreInfo.tip2", fallback: "To prevent your phone screen from going dark, turn off power-saving mode and keep your phone plugged in.")
-    /// Zashi is scanning the blockchain to retrieve your transactions. Older wallets can take hours to restore. Follow these steps to prevent interruption:
-    public static let tips = L10n.tr("Localizable", "restoreInfo.tips", fallback: "Zashi is scanning the blockchain to retrieve your transactions. Older wallets can take hours to restore. Follow these steps to prevent interruption:")
-    /// Keep Zashi open!
-    public static let title = L10n.tr("Localizable", "restoreInfo.title", fallback: "Keep Zashi open!")
+    /// Zodl is scanning the blockchain to retrieve your transactions. Older wallets can take hours to restore. Follow these steps to prevent interruption:
+    public static let tips = L10n.tr("Localizable", "restoreInfo.tips", fallback: "Zodl is scanning the blockchain to retrieve your transactions. Older wallets can take hours to restore. Follow these steps to prevent interruption:")
+    /// Keep Zodl open!
+    public static let title = L10n.tr("Localizable", "restoreInfo.title", fallback: "Keep Zodl open!")
   }
   public enum RestoreWallet {
     /// If you’re not sure, choose an earlier date.
@@ -889,17 +911,17 @@ public enum L10n {
         public static let warning = L10n.tr("Localizable", "restoreWallet.birthday.estimateDate.warning", fallback: "If you’re not sure, choose an earlier date.")
       }
       public enum Estimated {
-        /// Zashi will scan and recover all transactions made after the following block number.
-        public static let info = L10n.tr("Localizable", "restoreWallet.birthday.estimated.info", fallback: "Zashi will scan and recover all transactions made after the following block number.")
+        /// Zodl will scan and recover all transactions made after the following block number.
+        public static let info = L10n.tr("Localizable", "restoreWallet.birthday.estimated.info", fallback: "Zodl will scan and recover all transactions made after the following block number.")
         /// Estimated Block Height
         public static let title = L10n.tr("Localizable", "restoreWallet.birthday.estimated.title", fallback: "Estimated Block Height")
       }
     }
     public enum Help {
-      /// ^[The Wallet Birthday Height](style: 'boldPrimary') is the block height (block # in the blockchain) at which your wallet was created. If you ever lose access to your Zashi app and need to recover your funds, providing the block height along with your recovery phrase can significantly speed up the process.
-      public static let birthday = L10n.tr("Localizable", "restoreWallet.help.birthday", fallback: "^[The Wallet Birthday Height](style: 'boldPrimary') is the block height (block # in the blockchain) at which your wallet was created. If you ever lose access to your Zashi app and need to recover your funds, providing the block height along with your recovery phrase can significantly speed up the process.")
-      /// ^[The Secret Recovery Phrase](style: 'boldPrimary') is a unique set of 24 words, appearing in a precise order. It can be used to gain full control of your funds from any device via any Zcash wallet app. Think of it as the master key to your wallet. It is stored in Zashi’s Advanced Settings.
-      public static let phrase = L10n.tr("Localizable", "restoreWallet.help.phrase", fallback: "^[The Secret Recovery Phrase](style: 'boldPrimary') is a unique set of 24 words, appearing in a precise order. It can be used to gain full control of your funds from any device via any Zcash wallet app. Think of it as the master key to your wallet. It is stored in Zashi’s Advanced Settings.")
+      /// ^[The Wallet Birthday Height](style: 'boldPrimary') is the block height (block # in the blockchain) at which your wallet was created. If you ever lose access to your Zodl app and need to recover your funds, providing the block height along with your recovery phrase can significantly speed up the process.
+      public static let birthday = L10n.tr("Localizable", "restoreWallet.help.birthday", fallback: "^[The Wallet Birthday Height](style: 'boldPrimary') is the block height (block # in the blockchain) at which your wallet was created. If you ever lose access to your Zodl app and need to recover your funds, providing the block height along with your recovery phrase can significantly speed up the process.")
+      /// ^[The Secret Recovery Phrase](style: 'boldPrimary') is a unique set of 24 words, appearing in a precise order. It can be used to gain full control of your funds from any device via any Zcash wallet app. Think of it as the master key to your wallet. It is stored in Zodl’s Advanced Settings.
+      public static let phrase = L10n.tr("Localizable", "restoreWallet.help.phrase", fallback: "^[The Secret Recovery Phrase](style: 'boldPrimary') is a unique set of 24 words, appearing in a precise order. It can be used to gain full control of your funds from any device via any Zcash wallet app. Think of it as the master key to your wallet. It is stored in Zodl’s Advanced Settings.")
       /// Need to know more?
       public static let title = L10n.tr("Localizable", "restoreWallet.help.title", fallback: "Need to know more?")
     }
@@ -971,8 +993,8 @@ public enum L10n {
       }
     }
     public enum ExistingWallet {
-      /// We identified a Zashi database backup on this device. If you create a new wallet, you will lose access to this database backup and if you try to restore later, some information may be lost.
-      public static let message = L10n.tr("Localizable", "root.existingWallet.Message", fallback: "We identified a Zashi database backup on this device. If you create a new wallet, you will lose access to this database backup and if you try to restore later, some information may be lost.")
+      /// We identified a Zodl database backup on this device. If you create a new wallet, you will lose access to this database backup and if you try to restore later, some information may be lost.
+      public static let message = L10n.tr("Localizable", "root.existingWallet.Message", fallback: "We identified a Zodl database backup on this device. If you create a new wallet, you will lose access to this database backup and if you try to restore later, some information may be lost.")
       /// Restore
       public static let restore = L10n.tr("Localizable", "root.existingWallet.restore", fallback: "Restore")
     }
@@ -1030,8 +1052,8 @@ public enum L10n {
     }
     public enum SeedPhrase {
       public enum DifferentSeed {
-        /// This recovery phrase doesn't match the Zashi database backup saved on this device. If you proceed, you will lose access to this database backup and if you try to restore later, some information may be lost.
-        public static let message = L10n.tr("Localizable", "root.seedPhrase.differentSeed.message", fallback: "This recovery phrase doesn't match the Zashi database backup saved on this device. If you proceed, you will lose access to this database backup and if you try to restore later, some information may be lost.")
+        /// This recovery phrase doesn't match the Zodl database backup saved on this device. If you proceed, you will lose access to this database backup and if you try to restore later, some information may be lost.
+        public static let message = L10n.tr("Localizable", "root.seedPhrase.differentSeed.message", fallback: "This recovery phrase doesn't match the Zodl database backup saved on this device. If you proceed, you will lose access to this database backup and if you try to restore later, some information may be lost.")
         /// Try Again
         public static let tryAgain = L10n.tr("Localizable", "root.seedPhrase.differentSeed.tryAgain", fallback: "Try Again")
       }
@@ -1044,8 +1066,8 @@ public enum L10n {
     }
   }
   public enum Scan {
-    /// The camera is not authorized. Please go to the system settings of Zashi and turn it on.
-    public static let cameraSettings = L10n.tr("Localizable", "scan.cameraSettings", fallback: "The camera is not authorized. Please go to the system settings of Zashi and turn it on.")
+    /// The camera is not authorized. Please go to the system settings of Zodl and turn it on.
+    public static let cameraSettings = L10n.tr("Localizable", "scan.cameraSettings", fallback: "The camera is not authorized. Please go to the system settings of Zodl and turn it on.")
     /// This image doesn't hold a valid Zcash address.
     public static let invalidImage = L10n.tr("Localizable", "scan.invalidImage", fallback: "This image doesn't hold a valid Zcash address.")
     /// This QR code doesn't hold a valid Zcash address.
@@ -1096,8 +1118,8 @@ public enum L10n {
     public static let report = L10n.tr("Localizable", "send.report", fallback: "Report")
     /// Connection Issue
     public static let resubmission = L10n.tr("Localizable", "send.resubmission", fallback: "Connection Issue")
-    /// Zashi encountered connection issues when submitting the transaction. It will retry in the next few minutes.
-    public static let resubmissionInfo = L10n.tr("Localizable", "send.resubmissionInfo", fallback: "Zashi encountered connection issues when submitting the transaction. It will retry in the next few minutes.")
+    /// Zodl encountered connection issues when submitting the transaction. It will retry in the next few minutes.
+    public static let resubmissionInfo = L10n.tr("Localizable", "send.resubmissionInfo", fallback: "Zodl encountered connection issues when submitting the transaction. It will retry in the next few minutes.")
     /// Review
     public static let review = L10n.tr("Localizable", "send.review", fallback: "Review")
     /// Sending...
@@ -1162,15 +1184,15 @@ public enum L10n {
     public static let hcwhPlaceholder = L10n.tr("Localizable", "sendFeedback.hcwhPlaceholder", fallback: "I would like to ask about...")
     /// How can we help you?
     public static let howCanWeHelp = L10n.tr("Localizable", "sendFeedback.howCanWeHelp", fallback: "How can we help you?")
-    /// How is your Zashi experience?
-    public static let ratingQuestion = L10n.tr("Localizable", "sendFeedback.ratingQuestion", fallback: "How is your Zashi experience?")
+    /// How is your Zodl experience?
+    public static let ratingQuestion = L10n.tr("Localizable", "sendFeedback.ratingQuestion", fallback: "How is your Zodl experience?")
     /// Support
     public static let screenTitle = L10n.tr("Localizable", "sendFeedback.screenTitle", fallback: "Support")
     /// Send Us Feedback
     public static let title = L10n.tr("Localizable", "sendFeedback.title", fallback: "Send Us Feedback")
     public enum Share {
-      /// Zashi
-      public static let desc = L10n.tr("Localizable", "sendFeedback.share.desc", fallback: "Zashi")
+      /// Zodl
+      public static let desc = L10n.tr("Localizable", "sendFeedback.share.desc", fallback: "Zodl")
       /// Your device doesn’t have an Apple email set up, so we prepared this message for you to send using your preferred email client. Please send this message to:
       public static let notAppleMailInfo = L10n.tr("Localizable", "sendFeedback.share.notAppleMailInfo", fallback: "Your device doesn’t have an Apple email set up, so we prepared this message for you to send using your preferred email client. Please send this message to:")
       /// Support message
@@ -1246,12 +1268,12 @@ public enum L10n {
     public static let buyZecCB = L10n.tr("Localizable", "settings.buyZecCB", fallback: "Buy ZEC with Coinbase")
     /// Choose a Server
     public static let chooseServer = L10n.tr("Localizable", "settings.chooseServer", fallback: "Choose a Server")
-    /// A hassle-free way to buy ZEC and get it directly into your Zashi wallet.
-    public static let coinbaseDesc = L10n.tr("Localizable", "settings.coinbaseDesc", fallback: "A hassle-free way to buy ZEC and get it directly into your Zashi wallet.")
+    /// A hassle-free way to buy ZEC and get it directly into your Zodl wallet.
+    public static let coinbaseDesc = L10n.tr("Localizable", "settings.coinbaseDesc", fallback: "A hassle-free way to buy ZEC and get it directly into your Zodl wallet.")
     /// Currency Conversion
     public static let currencyConversion = L10n.tr("Localizable", "settings.currencyConversion", fallback: "Currency Conversion")
-    /// Reset Zashi
-    public static let deleteZashi = L10n.tr("Localizable", "settings.deleteZashi", fallback: "Reset Zashi")
+    /// Reset Zodl
+    public static let deleteZashi = L10n.tr("Localizable", "settings.deleteZashi", fallback: "Reset Zodl")
     /// You will be asked to confirm on the next screen
     public static let deleteZashiWarning = L10n.tr("Localizable", "settings.deleteZashiWarning", fallback: "You will be asked to confirm on the next screen")
     /// Export logs only
@@ -1262,18 +1284,18 @@ public enum L10n {
     public static let feedback = L10n.tr("Localizable", "settings.feedback", fallback: "Send Us Feedback")
     /// Pay with Flexa
     public static let flexa = L10n.tr("Localizable", "settings.flexa", fallback: "Pay with Flexa")
-    /// Pay with Flexa payment clips and explore a new way of spending Zcash.
-    public static let flexaDesc = L10n.tr("Localizable", "settings.flexaDesc", fallback: "Pay with Flexa payment clips and explore a new way of spending Zcash.")
+    /// Spend ZEC at thousands of retail locations.
+    public static let flexaDesc = L10n.tr("Localizable", "settings.flexaDesc", fallback: "Spend ZEC at thousands of retail locations.")
     /// Integrations
     public static let integrations = L10n.tr("Localizable", "settings.integrations", fallback: "Integrations")
     /// Connect Keystone
     public static let keystone = L10n.tr("Localizable", "settings.keystone", fallback: "Connect Keystone")
-    /// Pair your Keystone hardware wallet with Zashi to sign transactions.
-    public static let keystoneDesc = L10n.tr("Localizable", "settings.keystoneDesc", fallback: "Pair your Keystone hardware wallet with Zashi to sign transactions.")
+    /// Connect airgapped hardware wallet to store shielded ZEC.
+    public static let keystoneDesc = L10n.tr("Localizable", "settings.keystoneDesc", fallback: "Connect airgapped hardware wallet to store shielded ZEC.")
     /// Beta: Tor Protection
     public static let `private` = L10n.tr("Localizable", "settings.private", fallback: "Beta: Tor Protection")
-    /// Zashi Recovery Phrase
-    public static let recoveryPhrase = L10n.tr("Localizable", "settings.recoveryPhrase", fallback: "Zashi Recovery Phrase")
+    /// Zodl Recovery Phrase
+    public static let recoveryPhrase = L10n.tr("Localizable", "settings.recoveryPhrase", fallback: "Zodl Recovery Phrase")
     /// During the Restore process, it is not possible to use payment integrations.
     public static let restoreWarning = L10n.tr("Localizable", "settings.restoreWarning", fallback: "During the Restore process, it is not possible to use payment integrations.")
     /// Settings
@@ -1360,14 +1382,14 @@ public enum L10n {
         public static let title = L10n.tr("Localizable", "smartBanner.content.currencyConversion.title", fallback: "Currency Conversion")
       }
       public enum Disconnected {
-        /// Check your connection and reload Zashi
-        public static let info = L10n.tr("Localizable", "smartBanner.content.disconnected.info", fallback: "Check your connection and reload Zashi")
+        /// Check your connection and reload Zodl
+        public static let info = L10n.tr("Localizable", "smartBanner.content.disconnected.info", fallback: "Check your connection and reload Zodl")
         /// Wallet Disconnected
         public static let title = L10n.tr("Localizable", "smartBanner.content.disconnected.title", fallback: "Wallet Disconnected")
       }
       public enum Restore {
-        /// Keep Zashi open on active phone screen
-        public static let info = L10n.tr("Localizable", "smartBanner.content.restore.info", fallback: "Keep Zashi open on active phone screen")
+        /// Keep Zodl open on active phone screen
+        public static let info = L10n.tr("Localizable", "smartBanner.content.restore.info", fallback: "Keep Zodl open on active phone screen")
         /// Your funds are ready to be used now
         public static let infoSpendable = L10n.tr("Localizable", "smartBanner.content.restore.infoSpendable", fallback: "Your funds are ready to be used now")
         /// Restoring Wallet • %@ Complete
@@ -1438,16 +1460,16 @@ public enum L10n {
         public static let title = L10n.tr("Localizable", "smartBanner.help.backup.title", fallback: "Backup Required")
       }
       public enum Diconnected {
-        /// You appear to be offline. Please restore your internet connection to use Zashi wallet.
-        public static let info = L10n.tr("Localizable", "smartBanner.help.diconnected.info", fallback: "You appear to be offline. Please restore your internet connection to use Zashi wallet.")
+        /// You appear to be offline. Please restore your internet connection to use Zodl wallet.
+        public static let info = L10n.tr("Localizable", "smartBanner.help.diconnected.info", fallback: "You appear to be offline. Please restore your internet connection to use Zodl wallet.")
         /// Wallet Disconnected
         public static let title = L10n.tr("Localizable", "smartBanner.help.diconnected.title", fallback: "Wallet Disconnected")
       }
       public enum Restore {
-        /// Zashi is scanning the blockchain to retrieve your transactions. Older wallets can take hours to restore. Follow these steps to prevent interruption:
-        public static let info = L10n.tr("Localizable", "smartBanner.help.restore.info", fallback: "Zashi is scanning the blockchain to retrieve your transactions. Older wallets can take hours to restore. Follow these steps to prevent interruption:")
-        /// Keep the Zashi app open on an active phone screen.
-        public static let point1 = L10n.tr("Localizable", "smartBanner.help.restore.point1", fallback: "Keep the Zashi app open on an active phone screen.")
+        /// Zodl is scanning the blockchain to retrieve your transactions. Older wallets can take hours to restore. Follow these steps to prevent interruption:
+        public static let info = L10n.tr("Localizable", "smartBanner.help.restore.info", fallback: "Zodl is scanning the blockchain to retrieve your transactions. Older wallets can take hours to restore. Follow these steps to prevent interruption:")
+        /// Keep the Zodl app open on an active phone screen.
+        public static let point1 = L10n.tr("Localizable", "smartBanner.help.restore.point1", fallback: "Keep the Zodl app open on an active phone screen.")
         /// To prevent your phone screen from going dark, turn off power-saving mode and keep your phone plugged in.
         public static let point2 = L10n.tr("Localizable", "smartBanner.help.restore.point2", fallback: "To prevent your phone screen from going dark, turn off power-saving mode and keep your phone plugged in.")
         /// Wallet Restore in Progress
@@ -1458,8 +1480,8 @@ public enum L10n {
       public enum Shield {
         /// Do not show this message again
         public static let doNotShowAgain = L10n.tr("Localizable", "smartBanner.help.shield.doNotShowAgain", fallback: "Do not show this message again")
-        /// To protect user privacy, Zashi doesn't support spending transparent ZEC. Tap the "Shield" button below to make your transparent funds spendable and your total Zashi balance private. 
-        public static let info1 = L10n.tr("Localizable", "smartBanner.help.shield.info1", fallback: "To protect user privacy, Zashi doesn't support spending transparent ZEC. Tap the \"Shield\" button below to make your transparent funds spendable and your total Zashi balance private. ")
+        /// To protect user privacy, Zodl doesn't support spending transparent ZEC. Tap the "Shield" button below to make your transparent funds spendable and your total Zodl balance private. 
+        public static let info1 = L10n.tr("Localizable", "smartBanner.help.shield.info1", fallback: "To protect user privacy, Zodl doesn't support spending transparent ZEC. Tap the \"Shield\" button below to make your transparent funds spendable and your total Zodl balance private. ")
         /// This will create a shielding in-wallet transaction, consolidating your transparent and shielded funds. (Typical fee: %@)
         public static func info2(_ p1: Any) -> String {
           return L10n.tr("Localizable", "smartBanner.help.shield.info2", String(describing: p1), fallback: "This will create a shielding in-wallet transaction, consolidating your transparent and shielded funds. (Typical fee: %@)")
@@ -1472,8 +1494,8 @@ public enum L10n {
         public static let transparent = L10n.tr("Localizable", "smartBanner.help.shield.transparent", fallback: "Transparent")
       }
       public enum Sync {
-        /// Zashi is scanning the blockchain for your latest transactions to make sure your balances are displayed correctly. Keep the Zashi app open on an active phone screen to avoid interruptions.
-        public static let info = L10n.tr("Localizable", "smartBanner.help.sync.info", fallback: "Zashi is scanning the blockchain for your latest transactions to make sure your balances are displayed correctly. Keep the Zashi app open on an active phone screen to avoid interruptions.")
+        /// Zodl is scanning the blockchain for your latest transactions to make sure your balances are displayed correctly. Keep the Zodl app open on an active phone screen to avoid interruptions.
+        public static let info = L10n.tr("Localizable", "smartBanner.help.sync.info", fallback: "Zodl is scanning the blockchain for your latest transactions to make sure your balances are displayed correctly. Keep the Zodl app open on an active phone screen to avoid interruptions.")
         /// Wallet Sync in Progress
         public static let title = L10n.tr("Localizable", "smartBanner.help.sync.title", fallback: "Wallet Sync in Progress")
       }
@@ -1494,8 +1516,8 @@ public enum L10n {
     public static let authFaceID = L10n.tr("Localizable", "splash.authFaceID", fallback: "Tap the face icon to use Face ID and unlock it.")
     /// Tap the key icon to enter your passcode and unlock it.
     public static let authPasscode = L10n.tr("Localizable", "splash.authPasscode", fallback: "Tap the key icon to enter your passcode and unlock it.")
-    /// Your Zashi account is secured.
-    public static let authTitle = L10n.tr("Localizable", "splash.authTitle", fallback: "Your Zashi account is secured.")
+    /// Your Zodl account is secured.
+    public static let authTitle = L10n.tr("Localizable", "splash.authTitle", fallback: "Your Zodl account is secured.")
     /// Tap the print icon to use Touch ID and unlock it.
     public static let authTouchID = L10n.tr("Localizable", "splash.authTouchID", fallback: "Tap the print icon to use Touch ID and unlock it.")
   }
@@ -1654,8 +1676,8 @@ public enum L10n {
     public static let sendingInfo = L10n.tr("Localizable", "swapAndPay.sendingInfo", fallback: "Your coins are being sent to the deposit address...")
     /// Slippage
     public static let slippage = L10n.tr("Localizable", "swapAndPay.slippage", fallback: "Slippage")
-    /// This setting determines the maximum allowable difference between the expected price of a swap and the actual price you pay, which is outside of Zashi's control.
-    public static let slippageDesc = L10n.tr("Localizable", "swapAndPay.slippageDesc", fallback: "This setting determines the maximum allowable difference between the expected price of a swap and the actual price you pay, which is outside of Zashi's control.")
+    /// This setting determines the maximum allowable difference between the expected price of a swap and the actual price you pay, which is outside of Zodl's control.
+    public static let slippageDesc = L10n.tr("Localizable", "swapAndPay.slippageDesc", fallback: "This setting determines the maximum allowable difference between the expected price of a swap and the actual price you pay, which is outside of Zodl's control.")
     /// You may receive up to 
     public static let slippageSet1 = L10n.tr("Localizable", "swapAndPay.slippageSet1", fallback: "You may receive up to ")
     /// %@% (%@)
@@ -1700,8 +1722,8 @@ public enum L10n {
     public static let totalFees = L10n.tr("Localizable", "swapAndPay.totalFees", fallback: "Total fees")
     /// You pay
     public static let youPay = L10n.tr("Localizable", "swapAndPay.youPay", fallback: "You pay")
-    /// Zashi fee
-    public static let zashiFee = L10n.tr("Localizable", "swapAndPay.zashiFee", fallback: "Zashi fee")
+    /// Zodl fee
+    public static let zashiFee = L10n.tr("Localizable", "swapAndPay.zashiFee", fallback: "Zodl fee")
     public enum EmptyAssets {
       /// We tried but couldn’t find anything.
       public static let subtitle = L10n.tr("Localizable", "swapAndPay.emptyAssets.subtitle", fallback: "We tried but couldn’t find anything.")
@@ -1725,8 +1747,8 @@ public enum L10n {
       public static let wrongDesc = L10n.tr("Localizable", "swapAndPay.failure.wrongDesc", fallback: "We couldn’t load the assets. Please check your connection and try again.")
     }
     public enum ForcedOptIn {
-      /// I understand that Zashi makes API requests to the NEAR API every time I interact with a Swap/Pay transaction.
-      public static let optionOne = L10n.tr("Localizable", "swapAndPay.forcedOptIn.optionOne", fallback: "I understand that Zashi makes API requests to the NEAR API every time I interact with a Swap/Pay transaction.")
+      /// I understand that Zodl makes API requests to the NEAR API every time I interact with a Swap/Pay transaction.
+      public static let optionOne = L10n.tr("Localizable", "swapAndPay.forcedOptIn.optionOne", fallback: "I understand that Zodl makes API requests to the NEAR API every time I interact with a Swap/Pay transaction.")
       /// I understand that by not enabling Tor, my IP address will be leaked by the NEAR API.
       public static let optionTwo = L10n.tr("Localizable", "swapAndPay.forcedOptIn.optionTwo", fallback: "I understand that by not enabling Tor, my IP address will be leaked by the NEAR API.")
     }
@@ -1751,8 +1773,8 @@ public enum L10n {
       public static let swapWithNear = L10n.tr("Localizable", "swapAndPay.help.swapWithNear", fallback: "Swap with NEAR")
     }
     public enum OptIn {
-      /// This feature is powered by a third-party NEAR API. Zashi needs to make networking calls to fetch rates, quotes, execute transactions and check their status in the transaction history which can leak your IP address. We recommend you to allow Tor connection to protect your IP address at all times.
-      public static let desc = L10n.tr("Localizable", "swapAndPay.optIn.desc", fallback: "This feature is powered by a third-party NEAR API. Zashi needs to make networking calls to fetch rates, quotes, execute transactions and check their status in the transaction history which can leak your IP address. We recommend you to allow Tor connection to protect your IP address at all times.")
+      /// This feature is powered by a third-party NEAR API. Zodl needs to make networking calls to fetch rates, quotes, execute transactions and check their status in the transaction history which can leak your IP address. We recommend you to allow Tor connection to protect your IP address at all times.
+      public static let desc = L10n.tr("Localizable", "swapAndPay.optIn.desc", fallback: "This feature is powered by a third-party NEAR API. Zodl needs to make networking calls to fetch rates, quotes, execute transactions and check their status in the transaction history which can leak your IP address. We recommend you to allow Tor connection to protect your IP address at all times.")
       /// Enable API calls to the NEAR API.
       public static let optionOneSubtitle = L10n.tr("Localizable", "swapAndPay.optIn.optionOneSubtitle", fallback: "Enable API calls to the NEAR API.")
       /// Allow Third-Party Requests
@@ -1767,8 +1789,8 @@ public enum L10n {
       public static let warn = L10n.tr("Localizable", "swapAndPay.optIn.warn", fallback: "Note for the super privacy-conscious: Transactions executed via the NEAR API are transparent which means all transaction information is public.")
     }
     public enum Quote {
-      /// Zashi
-      public static let zashi = L10n.tr("Localizable", "swapAndPay.quote.zashi", fallback: "Zashi")
+      /// Zodl
+      public static let zashi = L10n.tr("Localizable", "swapAndPay.quote.zashi", fallback: "Zodl")
     }
     public enum Status {
       /// Expired
@@ -1857,9 +1879,9 @@ public enum L10n {
       public static let title = L10n.tr("Localizable", "swapToZec.refundAddress.title", fallback: "Refund Address")
     }
     public enum Share {
-      /// Deposit address for %@ %@ on Near swap to ZEC in Zashi.
+      /// Deposit address for %@ %@ on Near swap to ZEC in Zodl.
       public static func msg(_ p1: Any, _ p2: Any) -> String {
-        return L10n.tr("Localizable", "swapToZec.share.msg", String(describing: p1), String(describing: p2), fallback: "Deposit address for %@ %@ on Near swap to ZEC in Zashi.")
+        return L10n.tr("Localizable", "swapToZec.share.msg", String(describing: p1), String(describing: p2), fallback: "Deposit address for %@ %@ on Near swap to ZEC in Zodl.")
       }
       /// Swap Deposit Address
       public static let title = L10n.tr("Localizable", "swapToZec.share.title", fallback: "Swap Deposit Address")
@@ -1935,16 +1957,16 @@ public enum L10n {
     /// Workaround Steps
     public static let workaround = L10n.tr("Localizable", "texKeystone.workaround", fallback: "Workaround Steps")
     public enum Step1 {
-      /// Transfer ZEC to your Zashi shielded address
-      public static let desc = L10n.tr("Localizable", "texKeystone.step1.desc", fallback: "Transfer ZEC to your Zashi shielded address")
-      /// Send to Zashi first
-      public static let title = L10n.tr("Localizable", "texKeystone.step1.title", fallback: "Send to Zashi first")
+      /// Transfer ZEC to your Zodl shielded address
+      public static let desc = L10n.tr("Localizable", "texKeystone.step1.desc", fallback: "Transfer ZEC to your Zodl shielded address")
+      /// Send to Zodl first
+      public static let title = L10n.tr("Localizable", "texKeystone.step1.title", fallback: "Send to Zodl first")
     }
     public enum Step2 {
-      /// Once received in Zashi, send the tokens to your final TEX destination address
-      public static let desc = L10n.tr("Localizable", "texKeystone.step2.desc", fallback: "Once received in Zashi, send the tokens to your final TEX destination address")
-      /// Send from Zashi to TEX address
-      public static let title = L10n.tr("Localizable", "texKeystone.step2.title", fallback: "Send from Zashi to TEX address")
+      /// Once received in Zodl, send the tokens to your final TEX destination address
+      public static let desc = L10n.tr("Localizable", "texKeystone.step2.desc", fallback: "Once received in Zodl, send the tokens to your final TEX destination address")
+      /// Send from Zodl to TEX address
+      public static let title = L10n.tr("Localizable", "texKeystone.step2.title", fallback: "Send from Zodl to TEX address")
     }
   }
   public enum Tooltip {
@@ -2114,9 +2136,9 @@ public enum L10n {
     public static let restoringWallet = L10n.tr("Localizable", "walletStatus.restoringWallet", fallback: "RESTORING YOUR WALLET…")
   }
   public enum WhatsNew {
-    /// Zashi Version %@
+    /// Zodl Version %@
     public static func version(_ p1: Any) -> String {
-      return L10n.tr("Localizable", "whatsNew.version", String(describing: p1), fallback: "Zashi Version %@")
+      return L10n.tr("Localizable", "whatsNew.version", String(describing: p1), fallback: "Zodl Version %@")
     }
   }
   public enum ZecKeyboard {

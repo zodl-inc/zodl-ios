@@ -42,7 +42,13 @@ public struct SendCoordFlowView: View {
                         ),
                     tokenName: tokenName
                 )
-                .navigationBarHidden(true)
+                .screenTitle(L10n.General.send)
+                .navigationBarItems(
+                    trailing:
+                        HStack(spacing: 0) {
+                            hideBalancesButton()
+                        }
+                )
             } destination: { store in
                 switch store.case {
                 case let .addressBook(store):
@@ -71,17 +77,8 @@ public struct SendCoordFlowView: View {
                     TransactionDetailsView(store: store, tokenName: tokenName)
                 }
             }
-            .navigationBarHidden(!store.path.isEmpty)
         }
         .applyScreenBackground()
-        .zashiBack { store.send(.dismissRequired) }
-        .screenTitle(L10n.General.send)
-        .navigationBarItems(
-            trailing:
-                HStack(spacing: 0) {
-                    hideBalancesButton()
-                }
-        )
     }
     
     private func hideBalancesButton() -> some View {
@@ -91,7 +88,7 @@ public struct SendCoordFlowView: View {
             let image = isSensitiveContentHidden ? Asset.Assets.eyeOff.image : Asset.Assets.eyeOn.image
             image
                 .zImage(size: 24, color: Asset.Colors.primary.color)
-                .padding(8)
+                .padding(Design.Spacing.navBarButtonPadding)
         }
     }
 }

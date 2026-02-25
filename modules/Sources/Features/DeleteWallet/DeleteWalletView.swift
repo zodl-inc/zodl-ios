@@ -86,8 +86,6 @@ public struct DeleteWalletView: View {
             .zashiBack(store.isProcessing)
             .zashiSheet(isPresented: $store.isSheetUp) {
                 helpSheetContent()
-                    .screenHorizontalPadding()
-                    .applyScreenBackground()
             }
         }
         .navigationBarTitleDisplayMode(.inline)
@@ -123,14 +121,14 @@ public struct DeleteWalletView: View {
                 L10n.Settings.deleteZashi,
                 type: .destructive2
             ) {
-                store.send(.deleteTapped(store.areMetadataPreserved))
+                store.send(.deleteTappedDelayed(store.areMetadataPreserved))
             }
             .padding(.bottom, 12)
 
             ZashiButton(L10n.General.cancel) {
                 store.send(.dismissSheet)
             }
-            .padding(.bottom, 24)
+            .padding(.bottom, Design.Spacing.sheetBottomSpace)
         }
     }
 }

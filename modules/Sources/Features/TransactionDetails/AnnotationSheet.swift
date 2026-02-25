@@ -12,28 +12,7 @@ import UIComponents
 
 extension TransactionDetailsView {
     @ViewBuilder func annotationContent(_ isEditMode: Bool) -> some View {
-        WithPerceptionTracking {
-            if #available(iOS 16.4, *) {
-                mainBodyUM(isEditMode: isEditMode)
-                    .presentationDetents([.height(filtersSheetHeight)])
-                    .presentationDragIndicator(.visible)
-                    .presentationCornerRadius(Design.Radius._4xl)
-            } else if #available(iOS 16.0, *) {
-                mainBodyUM(isEditMode: isEditMode)
-                    .presentationDetents([.height(filtersSheetHeight)])
-                    .presentationDragIndicator(.visible)
-            } else {
-                mainBodyUM(isEditMode: isEditMode, stickToBottom: true)
-            }
-        }
-    }
-
-    @ViewBuilder func mainBodyUM(isEditMode: Bool, stickToBottom: Bool = false) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            if stickToBottom {
-                Spacer()
-            }
-            
             Text(isEditMode
                  ? L10n.Annotation.edit
                  : L10n.Annotation.addArticle
@@ -92,22 +71,13 @@ extension TransactionDetailsView {
                     }
                     .disabled(!store.isAnnotationModified)
                 }
-                .padding(.bottom, 24)
+                .padding(.bottom, Design.Spacing.sheetBottomSpace)
             } else {
                 ZashiButton(L10n.Annotation.add) {
                     store.send(.addNoteTapped)
                 }
                 .disabled(store.annotationToInput.isEmpty)
-                .padding(.bottom, 24)
-            }
-        }
-        .screenHorizontalPadding()
-        .background {
-            GeometryReader { proxy in
-                Color.clear
-                    .task {
-                        filtersSheetHeight = proxy.size.height
-                    }
+                .padding(.bottom, Design.Spacing.sheetBottomSpace)
             }
         }
     }

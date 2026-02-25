@@ -103,6 +103,6 @@ class SettingsTests: XCTestCase {
     func testSupportDataGeneratorEmail() async throws {
         let generator = SupportDataGenerator.generate()
         
-        XCTAssertEqual(generator.toAddress, "support@electriccoin.co")
+        XCTAssertEqual(generator.toAddress, "support@zodl.com")
     }
 }

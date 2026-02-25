@@ -165,7 +165,7 @@ public struct SendFormView: View {
                                                 .padding(10)
                                                 .background {
                                                     RoundedRectangle(cornerRadius: Design.Radius._md)
-                                                        .fill(Design.Utility.Gray._50.color(colorScheme))
+                                                        .fill(Design.Utility.Gray._100.color(colorScheme))
                                                 }
                                             }
                                         }
@@ -208,31 +208,17 @@ public struct SendFormView: View {
             }
             .padding(.vertical, 1)
             .applyScreenBackground()
-            .zashiBack(hidden: store.isPopToRootBack) { store.send(.dismissRequired) }
-            .zashiBackV2(hidden: !store.isPopToRootBack) { store.send(.dismissRequired) }
+            .zashiBack() { store.send(.dismissRequired) }
             .zashiSheet(isPresented: $store.isSheetTexAddressVisible) {
                 helpSheetContent()
-                    .screenHorizontalPadding()
-                    .applyScreenBackground()
             }
             .insufficientFundsSheet(isPresented: $store.isInsufficientBalance)
             .alert(store: store.scope(
                 state: \.$alert,
                 action: \.alert
             ))
-            .sheet(isPresented: $store.balancesBinding) {
-                if #available(iOS 16.4, *) {
-                    balancesContent()
-                        .applyScreenBackground()
-                        .presentationDetents([.height(store.sheetHeight)])
-                        .presentationDragIndicator(.visible)
-                        .presentationCornerRadius(Design.Radius._4xl)
-                } else {
-                    balancesContent()
-                        .applyScreenBackground()
-                        .presentationDetents([.height(store.sheetHeight)])
-                        .presentationDragIndicator(.visible)
-                }
+            .zashiSheet(isPresented: $store.balancesBinding) {
+                balancesContent()
             }
             .overlayPreferenceValue(UnknownAddressPreferenceKey.self) { preferences in
                 if isAddressFocused && store.isAddressBookHintVisible {
@@ -366,7 +352,7 @@ public struct SendFormView: View {
                 store.send(.gotTexSupportTapped)
             }
             .padding(.top, 32)
-            .padding(.bottom, 24)
+            .padding(.bottom, Design.Spacing.sheetBottomSpace)
         }
     }
     
@@ -408,7 +394,7 @@ public struct SendFormView: View {
                     .padding(.horizontal, 6)
                     .background(
                         RoundedRectangle(cornerRadius: Design.Radius._sm)
-                            .fill(Design.Utility.Gray._50.color(colorScheme))
+                            .fill(Design.Utility.Gray._100.color(colorScheme))
                             .overlay {
                                 RoundedRectangle(cornerRadius: Design.Radius._sm)
                                     .stroke(Design.Utility.Gray._200.color(colorScheme))

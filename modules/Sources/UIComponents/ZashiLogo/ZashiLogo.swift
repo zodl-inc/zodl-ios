@@ -13,7 +13,7 @@ public struct ZashiIcon: View {
     
     public var body: some View {
         Asset.Assets.zashiLogo.image
-            .zImage(width: 33, height: 43, color: Asset.Colors.primary.color)
+            .zImage(width: 43, height: 43, color: Asset.Colors.primary.color)
             .padding(.bottom, 30)
     }
 }

@@ -48,15 +48,12 @@ public struct SwapAndPay {
         public var balancesBinding = false
         public var balancesState = Balances.State.initial
         public var chain: String?
-        @Shared(.inMemory(.exchangeRate)) public var currencyConversion: CurrencyConversion? = nil
         public var customSlippage = ""
         public var isAddressBookHintVisible = false
         public var isCancelSheetVisible = false
-        public var isCurrencyConversionEnabled = false
         public var isInputInUsd = false
         public var isInsufficientBalance = false
         public var isNotAddressInAddressBook = false
-        public var isPopToRootBack = false
         public var isQuoteRequestInFlight = false
         public var isQuotePresented = false
         public var isQuoteToZecPresented = false
@@ -82,6 +79,7 @@ public struct SwapAndPay {
         public var slippageInSheet: Decimal = 1.0
         public var selectedSlippageChip = 0
         @Shared(.inMemory(.selectedWalletAccount)) public var selectedWalletAccount: WalletAccount? = nil
+        @Shared(.appStorage(.sensitiveContent)) var isSensitiveContentHidden = false
         @Shared(.inMemory(.swapAPIAccess)) var swapAPIAccess: WalletStorage.SwapAPIAccess = .direct
         @Shared(.inMemory(.swapAssets)) public var swapAssets: IdentifiedArrayOf<SwapAsset> = []
         public var swapAssetFailedCounter = 0
@@ -219,7 +217,7 @@ public struct SwapAndPay {
         case editPaymentTapped
         case enableSwapExperience
         case eraseSearchTermTapped
-        case exchangeRateSetupChanged
+        //case exchangeRateSetupChanged
         case getQuote
         case getQuoteTapped
         case helpSheetRequested(Int)
@@ -310,11 +308,14 @@ public struct SwapAndPay {
         Reduce { state, action in
             switch action {
             case .onAppear:
+                // __LD TESTED
                 state.isQuoteRequestInFlight = false
                 return .merge(
                     .send(.walletBalances(.onAppear)),
-                    .send(.refreshSwapAssets),
-                    .send(.exchangeRateSetupChanged)
+                    .concatenate(
+                        .send(.updateAssetsAccordingToSearchTerm),
+                        .send(.refreshSwapAssets)
+                    )
                 )
 
             case .binding(\.customSlippage):
@@ -334,6 +335,7 @@ public struct SwapAndPay {
                 return .send(.checkSelectedContact)
 
             case .onDisappear:
+                // __LD2 TESTing
                 return .merge(
                     .cancel(id: state.SwapAssetsCancelId),
                     .cancel(id: state.ABCancelId),
@@ -351,14 +353,6 @@ public struct SwapAndPay {
                 state.balancesBinding = true
                 return .none
 
-            case .exchangeRateSetupChanged:
-                if let automatic = userStoredPreferences.exchangeRate()?.automatic, automatic {
-                    state.isCurrencyConversionEnabled = true
-                } else {
-                    state.isCurrencyConversionEnabled = false
-                }
-                return .none
-                
             case .balances(.dismissTapped):
                 state.balancesBinding = false
                 return .none
@@ -412,6 +406,9 @@ public struct SwapAndPay {
                 return .none
 
             case .refreshSwapAssets:
+                if !state.swapAssets.isEmpty {
+                    return .send(.swapAssetsLoaded(state.swapAssets))
+                }
                 return .run { send in
                     do {
                         let swapAssets = try await swapAndPay.swapAssets()
@@ -472,6 +469,9 @@ public struct SwapAndPay {
                 return .none
 
             case .updateAssetsAccordingToSearchTerm:
+                if state.swapAssets.isEmpty {
+                    return .none
+                }
                 // all received assets
                 var swapAssets = state.swapAssets
                 if let chainId = state.selectedContact?.chainId {
@@ -737,9 +737,6 @@ public struct SwapAndPay {
                 state.proposal = proposal
                 if !state.isCancelSheetVisible {
                     state.isQuotePresented = true
-//                    if !state.isSwapExperienceEnabled {
-//                        return .send(.crossPayConfirmationRequired)
-//                    }
                 }
                 state.isQuoteRequestInFlight = false
                 return .none
@@ -798,7 +795,7 @@ public struct SwapAndPay {
                     }
 
                     if state.selectedAsset == nil {
-                        state.selectedAsset = swapAssets.first { $0.token.lowercased() == "usdc" && $0.chain.lowercased() == L10n.Swap.nearProvider }
+                        state.selectedAsset = swapAssets.first { $0.token.lowercased() == "btc" && $0.chain.lowercased() == "btc" }
                     }
                 }
 

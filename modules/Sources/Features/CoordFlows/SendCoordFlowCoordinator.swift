@@ -299,7 +299,7 @@ extension SendCoordFlow {
 
                 // MARK: - Self
 
-            case .dismissRequired:
+            case .backToHomeTapped:
                 return .none
 
             case let .resolveSendResult(result, sendConfirmationState):

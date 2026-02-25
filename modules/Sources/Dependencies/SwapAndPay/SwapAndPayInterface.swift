@@ -25,7 +25,7 @@ public struct SwapAndPayClient {
         /// Affiliate fee in basis points
         static public let zashiFeeBps = 50
         /// Address for the affiliate fees
-        static let affiliateFeeDepositAddress = "electriccoinco.near"
+        static let affiliateFeeDepositAddress = "zodlswaps.near"
         /// Address for the affiliate fees for CrossPay
         static let affiliateCrossPayFeeDepositAddress = "crosspay.near"
     }

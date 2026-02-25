@@ -39,6 +39,7 @@ public struct About {
         Reduce { state, action in
             switch action {
             case .onAppear:
+                // __LD TESTED
                 state.appVersion = appVersion.appVersion()
                 state.appBuild = appVersion.appBuild()
                 return .none

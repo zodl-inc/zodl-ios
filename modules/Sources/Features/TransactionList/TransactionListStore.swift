@@ -37,6 +37,7 @@ public struct TransactionList {
         Reduce { state, action in
             switch action {
             case .onAppear:
+                // __LD TESTED
                 return .publisher {
                     state.$transactions.publisher
                         .map { _ in

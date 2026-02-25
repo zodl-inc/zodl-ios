@@ -1,7 +1,7 @@
 {
   "images" : [
     {
-      "filename" : "zashiBoldStroke3.png",
+      "filename" : "logosqlight.png",
       "idiom" : "universal"
     },
     {
@@ -11,7 +11,7 @@
           "value" : "dark"
         }
       ],
-      "filename" : "zashiBoldStroke3Dark.png",
+      "filename" : "logosq.png",
       "idiom" : "universal"
     }
   ],

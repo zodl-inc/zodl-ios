@@ -1,6 +1,21 @@
 {
     "releases": [
         {
+            "version": "3.0.0",
+            "date": "25-02-2026",
+            "timestamp": 1772007905,
+            "sections": [
+                {
+                    "title": "Changed:",
+                    "bulletpoints": [
+                        "Zashi -> Zodl branding update - we rebranded Zashi to Zodl, without impacting the user experience. It’s a new brand for a new chapter, but everything else stays the same: the wallet, the team behind it, and our commitment to Zcash.",
+                        "This update comes with iOS 26 upgrade and liquid glass support.",
+                        "We improved Swap/Pay UI details."
+                    ]
+                }
+            ]
+        },
+        {
             "version": "2.4.12",
             "date": "28-01-2026",
             "timestamp": 1769605663,

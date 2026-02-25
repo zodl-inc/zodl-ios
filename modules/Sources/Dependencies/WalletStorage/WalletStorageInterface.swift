@@ -80,6 +80,7 @@ public struct WalletStorageClient {
     
     public var importUserMetadataEncryptionKeys: (UserMetadataEncryptionKeys, Account) throws -> Void
     public var exportUserMetadataEncryptionKeys: (Account) throws -> UserMetadataEncryptionKeys
+    public var clearEncryptionKeys: (Account) throws -> Void
     
     /// Wallet backup reminder set/get
     public var importWalletBackupReminder: (ReminedMeTimestamp) throws -> Void
@@ -103,4 +104,8 @@ public struct WalletStorageClient {
     /// Tor setup flag
     public var importTorSetupFlag: (Bool) throws -> Void
     public var exportTorSetupFlag: () -> Bool? = { nil }
+    
+    /// Zodl Announcement flag
+    public var importZodlAnnouncementFlag: (Bool) throws -> Void
+    public var exportZodlAnnouncementFlag: () -> Bool? = { nil }
 }

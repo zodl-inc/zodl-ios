@@ -83,6 +83,7 @@ public struct Settings {
         case addressBookAccessCheck
         case addressBookTapped
         case advancedSettingsTapped
+        case backToHomeTapped
         case binding(BindingAction<Settings.State>)
         case checkFundsForAddress(String)
         case currencyConversionTapped
@@ -112,12 +113,16 @@ public struct Settings {
         Reduce { state, action in
             switch action {
             case .onAppear:
+                // __LD TESTED
                 state.appVersion = appVersion.appVersion()
                 state.appBuild = appVersion.appBuild()
                 state.path.removeAll()
                 if let torOnFlag = walletStorage.exportTorSetupFlag() {
                     state.isTorOn = torOnFlag
                 }
+                return .none
+            
+            case .backToHomeTapped:
                 return .none
                 
             case .binding:

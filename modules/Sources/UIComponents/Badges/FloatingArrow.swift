@@ -19,7 +19,7 @@ public struct FloatingArrow: View {
             .zImage(size: 16, style: Design.Text.tertiary)
             .padding(8)
             .background {
-                Circle()
+                RoundedRectangle(cornerRadius: Design.Spacing._md)
                     .fill(Design.Surfaces.bgPrimary.color(colorScheme))
                     .frame(width: 32, height: 32)
             }

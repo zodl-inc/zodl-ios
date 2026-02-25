@@ -15,7 +15,6 @@ import AddressBook
 
 public struct TransactionsManagerView: View {
     @Environment(\.colorScheme) private var colorScheme
-    @State var filtersSheetHeight: CGFloat = .zero
 
     @Perception.Bindable var store: StoreOf<TransactionsManager>
     let tokenName: String
@@ -154,9 +153,8 @@ public struct TransactionsManagerView: View {
             .listStyle(.plain)
             .onAppear { store.send(.onAppear) }
             .navigationBarItems(trailing: hideBalancesButton())
-            .sheet(isPresented: $store.filtersRequest) {
+            .zashiSheet(isPresented: $store.filtersRequest) {
                 filtersContent()
-                    .applyScreenBackground()
             }
         }
         .navigationBarTitleDisplayMode(.inline)
@@ -173,7 +171,7 @@ public struct TransactionsManagerView: View {
             let image = isSensitiveContentHidden ? Asset.Assets.eyeOff.image : Asset.Assets.eyeOn.image
             image
                 .zImage(size: 24, color: Asset.Colors.primary.color)
-                .padding(8)
+                .padding(Design.Spacing.navBarButtonPadding)
         }
     }
     

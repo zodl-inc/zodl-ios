@@ -48,7 +48,6 @@ public struct SendForm {
         public var isInsufficientBalance = false
         public var isLatestInputFiat = false
         public var isNotAddressInAddressBook = false
-        public var isPopToRootBack = false
         public var isSheetTexAddressVisible = false
         public var isValidAddress = false
         public var isValidTransparentAddress = false
@@ -259,6 +258,7 @@ public struct SendForm {
         Reduce { state, action in
             switch action {
             case .onAppear:
+                // __LD TESTED
                 state.memoState.charLimit = zcashSDKEnvironment.memoCharLimit
                 return .send(.exchangeRateSetupChanged)
 

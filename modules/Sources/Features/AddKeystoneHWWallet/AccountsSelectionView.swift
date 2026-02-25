@@ -77,7 +77,7 @@ public struct AccountsSelectionView: View {
                             .zFont(.semiBold, size: 14, style: Design.Text.primary)
                         
                         Text(store.keystoneAddress.zip316)
-                            .zFont(addressFont: true, size: 12, style: Design.Text.tertiary)
+                            .zFont(fontFamily: .robotoMono, size: 12, style: Design.Text.tertiary)
                     }
                     
                     Spacer()

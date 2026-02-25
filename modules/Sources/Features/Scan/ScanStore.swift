@@ -99,6 +99,7 @@ public struct Scan {
         Reduce { state, action in
             switch action {
             case .onAppear:
+                // __LD TESTED
                 // reset the values
                 state.isAnythingFound = false
                 state.reportedPart = -1
@@ -113,6 +114,7 @@ public struct Scan {
                 return .send(.checkCameraPermission)
 
             case .onDisappear:
+                // __LD2 TESTing
                 return .cancel(id: state.cancelId)
                 
             case .checkCameraPermission:
@@ -199,7 +201,7 @@ public struct Scan {
                     state.info = ""
                 }
                 return .concatenate(
-                    Effect.cancel(id: state.cancelId),
+                    .cancel(id: state.cancelId),
                     .run { send in
                         try await mainQueue.sleep(for: .seconds(1))
                         await send(.clearInfo)

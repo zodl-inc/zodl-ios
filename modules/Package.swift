@@ -46,7 +46,6 @@ let package = Package(
         .library(name: "NetworkMonitor", targets: ["NetworkMonitor"]),
         .library(name: "NotEnoughFreeSpace", targets: ["NotEnoughFreeSpace"]),
         .library(name: "NumberFormatter", targets: ["NumberFormatter"]),
-        .library(name: "OnboardingFlow", targets: ["OnboardingFlow"]),
         .library(name: "OSStatusError", targets: ["OSStatusError"]),
         .library(name: "PartnerKeys", targets: ["PartnerKeys"]),
         .library(name: "Pasteboard", targets: ["Pasteboard"]),
@@ -93,14 +92,15 @@ let package = Package(
         .library(name: "WhatsNew", targets: ["WhatsNew"]),
         .library(name: "WhatsNewProvider", targets: ["WhatsNewProvider"]),
         .library(name: "ZcashSDKEnvironment", targets: ["ZcashSDKEnvironment"]),
-        .library(name: "ZecKeyboard", targets: ["ZecKeyboard"])
+        .library(name: "ZecKeyboard", targets: ["ZecKeyboard"]),
+        .library(name: "ZodlAnnouncement", targets: ["ZodlAnnouncement"])
     ],
     dependencies: [
         .package(url: "https://github.com/pointfreeco/swift-composable-architecture", from: "1.23.1"),
         .package(url: "https://github.com/pointfreeco/swift-case-paths", from: "1.7.2"),
         .package(url: "https://github.com/pointfreeco/swift-url-routing", from: "0.6.2"),
         .package(url: "https://github.com/zcash-hackworks/MnemonicSwift", from: "2.2.5"),
-        .package(url: "https://github.com/Electric-Coin-Company/zcash-swift-wallet-sdk", from: "2.4.3"),
+        .package(url: "https://github.com/zcash/zcash-swift-wallet-sdk", from: "2.4.4"),
         .package(url: "https://github.com/flexa/flexa-ios.git", exact: "1.1.4"),
         .package(url: "https://github.com/pacu/zcash-swift-payment-uri", from: "1.0.1"),
         .package(url: "https://github.com/airbnb/lottie-spm.git", from: "4.5.2"),
@@ -512,21 +512,6 @@ let package = Package(
             path: "Sources/Dependencies/NumberFormatter"
         ),
         .target(
-            name: "OnboardingFlow",
-            dependencies: [
-                "CoordFlows",
-                "Generated",
-                "MnemonicSwift",
-                "Models",
-                "UIComponents",
-                "WalletStorage",
-                "ZcashSDKEnvironment",
-                .product(name: "ComposableArchitecture", package: "swift-composable-architecture"),
-                .product(name: "ZcashLightClientKit", package: "zcash-swift-wallet-sdk")
-            ],
-            path: "Sources/Features/OnboardingFlow"
-        ),
-        .target(
             name: "OSStatusError",
             dependencies: [
                 "Generated",
@@ -671,7 +656,6 @@ let package = Package(
                 "Models",
                 "NotEnoughFreeSpace",
                 "NumberFormatter",
-                "OnboardingFlow",
                 "OSStatusError",
                 "Pasteboard",
                 "PrivateDataConsent",
@@ -704,6 +688,7 @@ let package = Package(
                 "WhatsNew",
                 "ZcashSDKEnvironment",
                 "ZecKeyboard",
+                "ZodlAnnouncement",
                 .product(name: "ComposableArchitecture", package: "swift-composable-architecture"),
                 .product(name: "ZcashLightClientKit", package: "zcash-swift-wallet-sdk")
             ],
@@ -1210,6 +1195,18 @@ let package = Package(
                 .product(name: "ComposableArchitecture", package: "swift-composable-architecture")
             ],
             path: "Sources/Features/ZecKeyboard"
+        ),
+        .target(
+            name: "ZodlAnnouncement",
+            dependencies: [
+                "Generated",
+                "Models",
+                "UIComponents",
+                "Utils",
+                "WalletStorage",
+                .product(name: "ComposableArchitecture", package: "swift-composable-architecture")
+            ],
+            path: "Sources/Features/ZodlAnnouncement"
         )
     ]
 )

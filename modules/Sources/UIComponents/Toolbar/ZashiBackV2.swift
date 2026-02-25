@@ -34,24 +34,34 @@ struct ZashiBackV2Modifier: ViewModifier {
                                 dismiss()
                             }
                         } label: {
-                            if invertedColors {
-                                Asset.Assets.buttonCloseX.image
-                                    .zImage(size: 24, color: Asset.Colors.ZDesign.shark100.color)
-                                    .padding(8)
-                                    .background {
-                                        RoundedRectangle(cornerRadius: Design.Radius._xl)
-                                            .fill(Asset.Colors.ZDesign.shark900.color)
-                                    }
+                            if #available(iOS 26.0, *) {
+                                if invertedColors {
+                                    Asset.Assets.buttonCloseX.image
+                                        .zImage(size: 24, color: Asset.Colors.ZDesign.shark100.color)
+                                } else {
+                                    Asset.Assets.buttonCloseX.image
+                                        .zImage(size: 24, style: Design.Btns.Tertiary.fg)
+                                }
                             } else {
-                                Asset.Assets.buttonCloseX.image
-                                    .zImage(size: 24, style: Design.Btns.Tertiary.fg)
-                                    .padding(8)
-                                    .background {
-                                        if background {
+                                if invertedColors {
+                                    Asset.Assets.buttonCloseX.image
+                                        .zImage(size: 24, color: Asset.Colors.ZDesign.shark100.color)
+                                        .padding(8)
+                                        .background {
                                             RoundedRectangle(cornerRadius: Design.Radius._xl)
-                                                .fill(Design.Btns.Tertiary.bg.color(colorScheme))
+                                                .fill(Asset.Colors.ZDesign.shark900.color)
                                         }
-                                    }
+                                } else {
+                                    Asset.Assets.buttonCloseX.image
+                                        .zImage(size: 24, style: Design.Btns.Tertiary.fg)
+                                        .padding(8)
+                                        .background {
+                                            if background {
+                                                RoundedRectangle(cornerRadius: Design.Radius._xl)
+                                                    .fill(Design.Btns.Tertiary.bg.color(colorScheme))
+                                            }
+                                        }
+                                }
                             }
                         }
                         .disabled(disabled)

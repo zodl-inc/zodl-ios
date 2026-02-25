@@ -38,14 +38,22 @@ public struct Toast: ViewModifier {
                         Spacer()
                     }
                     
-                    Text(message)
-                        .zFont(size: 14, style: Design.Btns.Primary.fg)
-                        .padding(.horizontal, 20)
-                        .padding(.vertical, 12)
-                        .background {
-                            RoundedRectangle(cornerRadius: Design.Radius._xl)
-                                .fill(Design.Btns.Primary.bg.color(colorScheme))
-                        }
+                    if #available(iOS 26.0, *) {
+                        Text(message)
+                            .zFont(size: 14, style: Design.Btns.Primary.bg)
+                            .padding(.horizontal, 20)
+                            .padding(.vertical, 12)
+                            .glassEffect()
+                    } else {
+                        Text(message)
+                            .zFont(size: 14, style: Design.Btns.Primary.fg)
+                            .padding(.horizontal, 20)
+                            .padding(.vertical, 12)
+                            .background {
+                                RoundedRectangle(cornerRadius: Design.Radius._xl)
+                                    .fill(Design.Btns.Primary.bg.color(colorScheme))
+                            }
+                    }
                     
                     if top {
                         Spacer()

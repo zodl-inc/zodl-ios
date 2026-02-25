@@ -32,18 +32,26 @@ struct ZashiBackModifier: ViewModifier {
                                 dismiss()
                             }
                         } label: {
-                            HStack {
-                                Asset.Assets.Icons.arrowNarrowLeft.image
-                                    .zImage(size: 24, 
-                                            color: invertedColors ? Asset.Colors.secondary.color : Asset.Colors.primary.color
-                                    )
+                            if #available(iOS 26.0, *) {
+                                backIcon()
+                            } else {
+                                backIcon()
+                                    .padding(.trailing, 24)
+                                    .padding(8)
                             }
-                            .padding(.trailing, 24)
-                            .padding(8)
                         }
                         .disabled(disabled)
                     }
                 }
+        }
+    }
+    
+    @ViewBuilder private func backIcon() -> some View {
+        HStack {
+            Asset.Assets.Icons.arrowNarrowLeft.image
+                .zImage(size: 24,
+                        color: invertedColors ? Asset.Colors.secondary.color : Asset.Colors.primary.color
+                )
         }
     }
 }

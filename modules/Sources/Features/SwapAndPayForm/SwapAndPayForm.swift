@@ -9,6 +9,7 @@ import SwiftUI
 import ComposableArchitecture
 import Generated
 import SwapAndPay
+import Models
 
 import UIComponents
 
@@ -266,17 +267,12 @@ public struct SwapAndPayForm: View {
                     }
                 }
                 .scaleEffect(0.8)
-
-            Text(tokenName.uppercased())
-                .zFont(.semiBold, size: 14, style: Design.Text.primary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
         }
     }
     
     public func slippageWarnBcgColor(_ colorScheme: ColorScheme) -> Color {
         if store.slippageInSheet <= 1.0 {
-            return Design.Utility.Gray._50.color(colorScheme)
+            return Design.Utility.Gray._100.color(colorScheme)
         } else if store.slippageInSheet > 1.0 && store.slippageInSheet <= 2.0 {
             return Design.Utility.WarningYellow._50.color(colorScheme)
         } else {
@@ -389,11 +385,6 @@ extension View {
                         }
                     }
                     .scaleEffect(0.8)
-
-                Text(asset.token.uppercased())
-                    .zFont(.semiBold, size: 14, style: Design.Text.primary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
             }
         }
     }

@@ -9,6 +9,7 @@ import SwiftUI
 import ComposableArchitecture
 import Generated
 import SwapAndPay
+import Models
 
 import UIComponents
 
@@ -89,7 +90,7 @@ public struct CrossPayConfirmationView: View {
                         }
                         
                         Text(store.address)
-                            .zFont(addressFont: true, size: 12, style: Design.Text.primary)
+                            .zFont(fontFamily: .robotoMono, size: 12, style: Design.Text.primary)
                     }
                     
                     Spacer()

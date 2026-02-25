@@ -13,6 +13,14 @@ extension Root {
         Reduce { state, action in
             switch action {
                 
+                // MARK: - Returns to Home
+
+            case .settings(.backToHomeTapped),
+                .receive(.backToHomeTapped),
+                .sendCoordFlow(.sendForm(.dismissRequired)):
+                state.path = nil
+                return .none
+                
                 // MARK: - Accounts
 
             case .home(.walletAccountTapped(let walletAccount)):
@@ -46,6 +54,10 @@ extension Root {
                     .send(.loadUserMetadata),
                     .send(.fetchTransactionsForTheSelectedAccount)
                 )
+                
+            case .addKeystoneHWWalletCoordFlow(.addKeystoneHWWallet(.backToHomeTapped)):
+                state.path = nil
+                return .none
 
                 // MARK: - Add Keystone HW Wallet from Settings
 
@@ -183,9 +195,9 @@ extension Root {
 
                 // MARK: - Restore Wallet Coord Flow from Onboarding
 
-            case .onboarding(.restoreWalletCoordFlow(.path(.element(id: _, action: .restoreInfo(.gotItTapped))))):
+            case .onboarding(.path(.element(id: _, action: .restoreInfo(.gotItTapped)))):
                 var leavesScreenOpen = false
-                for element in state.onboardingState.restoreWalletCoordFlowState.path {
+                for element in state.onboardingState.path {
                     if case .restoreInfo(let restoreInfoState) = element {
                         leavesScreenOpen = restoreInfoState.isAcknowledged
                     }
@@ -248,10 +260,6 @@ extension Root {
                 return .none
 
             case .sendCoordFlow(.path(.element(id: _, action: .transactionDetails(.closeDetailTapped)))):
-                state.path = nil
-                return .none
-
-            case .sendCoordFlow(.dismissRequired):
                 state.path = nil
                 return .none
 
@@ -352,6 +360,11 @@ extension Root {
                     .send(.home(.smartBanner(.closeAndCleanupBanner))),
                     .send(.home(.smartBanner(.closeSheetTapped)))
                 )
+                
+                // MARK: - Zodl Announcement
+                
+            case .zodlAnnouncement(.goToZodlTapped):
+                return .send(.destination(.updateDestination(.home)))
 
             default: return .none
             }

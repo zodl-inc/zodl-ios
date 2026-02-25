@@ -213,6 +213,7 @@ public struct SendConfirmation {
         Reduce { state, action in
             switch action {
             case .onAppear:
+                // __LD TESTED
                 state.pcztForUI = nil
                 state.rejectSendRequest = false
                 state.txIdToExpand = nil

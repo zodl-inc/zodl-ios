@@ -1,6 +1,21 @@
 {
     "releases": [
         {
+            "version": "3.0.0",
+            "date": "25-02-2026",
+            "timestamp": 1772007905,
+            "sections": [
+                {
+                    "title": "Cambiado:",
+                    "bulletpoints": [
+                        "Zashi -> Actualización de la marca Zodl: cambiamos la marca de Zashi a Zodl, sin afectar la experiencia del usuario. Es una nueva marca para un nuevo capítulo, pero todo lo demás se mantiene igual: la billetera, el equipo que la respalda y nuestro compromiso con Zcash.",
+                        "Esta actualización incluye la actualización a iOS 26 y compatibilidad con Liquid Glass.",
+                        "Mejoramos los detalles de la interfaz de usuario de Swap/Pago."
+                    ]
+                }
+            ]
+        },
+        {
             "version": "2.4.12",
             "date": "28-01-2026",
             "timestamp": 1769605663,

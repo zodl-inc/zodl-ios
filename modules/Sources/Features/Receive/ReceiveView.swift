@@ -68,7 +68,7 @@ public struct ReceiveView: View {
                                         address: transparentAddress,
                                         iconFg: Design.Text.primary,
                                         iconBg: Design.Surfaces.bgTertiary,
-                                        bcgColor: Design.Utility.Gray._50.color(colorScheme),
+                                        bcgColor: Design.Surfaces.bgSecondary.color(colorScheme),
                                         expanded: store.currentFocus == .tAddress,
                                         copyButton: false
                                     ) {
@@ -110,7 +110,7 @@ public struct ReceiveView: View {
                                     address: store.transparentAddress,
                                     iconFg: Design.Text.primary,
                                     iconBg: Design.Surfaces.bgTertiary,
-                                    bcgColor: Design.Utility.Gray._50.color(colorScheme),
+                                    bcgColor: Design.Surfaces.bgSecondary.color(colorScheme),
                                     expanded: store.currentFocus == .tAddress,
                                     copyButton: false
                                 ) {
@@ -168,6 +168,8 @@ public struct ReceiveView: View {
                         .padding(.horizontal, 48)
                 }
                 .applyScreenBackground()
+                .screenTitle(L10n.Tabs.receiveZec)
+                .zashiBack() { store.send(.backToHomeTapped) }
             } destination: { store in
                 switch store.case {
                 case let .addressDetails(store):
@@ -183,14 +185,10 @@ public struct ReceiveView: View {
             .navigationBarHidden(!store.path.isEmpty)
             .zashiSheet(isPresented: $explainer) {
                 explainerContent()
-                    .screenHorizontalPadding()
-                    .applyScreenBackground()
             }
         }
         .padding(.horizontal, 4)
         .applyScreenBackground()
-        .screenTitle(L10n.Tabs.receiveZec)
-        .zashiBack()
     }
     
     @ViewBuilder private func explainerContent() -> some View {
@@ -236,7 +234,7 @@ public struct ReceiveView: View {
                 store.send(.infoTapped(true))
                 explainer = false
             }
-            .padding(.bottom, 24)
+            .padding(.bottom, Design.Spacing.sheetBottomSpace)
         }
     }
     
@@ -273,7 +271,7 @@ public struct ReceiveView: View {
                 store.send(.infoTapped(false))
                 explainer = false
             }
-            .padding(.bottom, 24)
+            .padding(.bottom, Design.Spacing.sheetBottomSpace)
         }
     }
     
@@ -340,7 +338,7 @@ public struct ReceiveView: View {
                         .padding(.bottom, 4)
                     
                     Text(address.truncateMiddle10)
-                        .zFont(addressFont: true, size: 14, style: Design.Text.tertiary)
+                        .zFont(fontFamily: .robotoMono, size: 14, style: Design.Text.tertiary)
                         .padding(.bottom, expanded ? 10 : 0)
                 }
                 .lineLimit(1)
@@ -360,7 +358,7 @@ public struct ReceiveView: View {
                                     .fill(Design.Utility.Purple._100.color(colorScheme))
                             } else {
                                 RoundedRectangle(cornerRadius: Design.Radius._md)
-                                    .fill(Design.Utility.Gray._100.color(colorScheme))
+                                    .fill(Design.Utility.Gray._200.color(colorScheme))
                             }
                         }
                 }

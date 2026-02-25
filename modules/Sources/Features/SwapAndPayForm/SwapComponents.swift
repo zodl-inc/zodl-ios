@@ -11,6 +11,7 @@ import ComposableArchitecture
 import Generated
 import UIComponents
 import SwapAndPay
+import Models
 
 import BalanceBreakdown
 
@@ -290,7 +291,7 @@ extension SwapAndPayForm {
                 ZashiButton(L10n.General.confirm) {
                     store.send(.slippageSetConfirmTapped)
                 }
-                .padding(.bottom, keyboardVisible ? 74 : 36)
+                .padding(.bottom, keyboardVisible ? 74 : Design.Spacing.sheetBottomSpace)
                 .disabled(store.slippageInSheet > 30.0)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -366,7 +367,7 @@ extension SwapAndPayForm {
                 ) {
                     store.send(.editPaymentTapped)
                 }
-                .padding(.bottom, 24)
+                .padding(.bottom, Design.Spacing.sheetBottomSpace)
             }
         }
     }
@@ -382,63 +383,16 @@ extension SwapAndPayForm {
                 .zFont(.semiBold, size: 24, style: Design.Text.primary)
                 .padding(.vertical, 24)
 
-                ZStack {
-                    HStack(spacing: 8) {
-                        VStack(spacing: 0) {
-                            zecTickerBadge(colorScheme)
-
-                            Text(store.zcashNameInQuote)
-                                .zFont(.semiBold, size: 12, style: Design.Text.tertiary)
-                                .lineLimit(1)
-                                .minimumScaleFactor(0.8)
-                                .padding(.vertical, 6)
-
-                            Text(store.zecToBeSpendInQuote)
-                                .zFont(.semiBold, size: 16, style: Design.Text.primary)
-                                .lineLimit(1)
-                                .minimumScaleFactor(0.1)
-
-                            Text(store.zecUsdToBeSpendInQuote)
-                                .zFont(.medium, size: 12, style: Design.Text.tertiary)
-                        }
-                        .padding(.horizontal, 20)
-                        .padding(.vertical, 12)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 122)
-                        .background {
-                            RoundedRectangle(cornerRadius: Design.Radius._3xl)
-                                .fill(Design.Surfaces.bgSecondary.color(colorScheme))
-                        }
-                        
-                        VStack(spacing: 0) {
-                            tokenTickerSelector(asset: store.selectedAsset, colorScheme)
-
-                            Text(store.assetNameInQuote)
-                                .zFont(.semiBold, size: 12, style: Design.Text.tertiary)
-                                .lineLimit(1)
-                                .minimumScaleFactor(0.8)
-                                .padding(.vertical, 6)
-
-                            Text(store.tokenToBeReceivedInQuote)
-                                .zFont(.semiBold, size: 16, style: Design.Text.primary)
-                                .lineLimit(1)
-                                .minimumScaleFactor(0.1)
-                            
-                            Text(store.tokenUsdToBeReceivedInQuote)
-                                .zFont(.medium, size: 12, style: Design.Text.tertiary)
-                        }
-                        .padding(.horizontal, 20)
-                        .padding(.vertical, 12)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 122)
-                        .background {
-                            RoundedRectangle(cornerRadius: Design.Radius._3xl)
-                                .fill(Design.Surfaces.bgSecondary.color(colorScheme))
-                        }
-                    }
-                    
-                    FloatingArrow()
-                }
+                SwapFromToView(
+                    tokenName: tokenName,
+                    zcashNameInQuote: store.zcashNameInQuote,
+                    zecToBeSpendInQuote: store.zecToBeSpendInQuote,
+                    zecUsdToBeSpendInQuote: store.zecUsdToBeSpendInQuote,
+                    selectedAsset: store.selectedAsset,
+                    assetNameInQuote: store.assetNameInQuote,
+                    tokenToBeReceivedInQuote: store.tokenToBeReceivedInQuote,
+                    tokenUsdToBeReceivedInQuote: store.tokenUsdToBeReceivedInQuote
+                )
                 .padding(.bottom, 32)
 
                 quoteLineContent(
@@ -524,12 +478,12 @@ extension SwapAndPayForm {
                     ZashiButton(L10n.Keystone.confirmSwap) {
                         store.send(.confirmWithKeystoneTapped)
                     }
-                    .padding(.bottom, 24)
+                    .padding(.bottom, Design.Spacing.sheetBottomSpace)
                 } else {
                     ZashiButton(L10n.General.confirm) {
                         store.send(.confirmButtonTapped)
                     }
-                    .padding(.bottom, 24)
+                    .padding(.bottom, Design.Spacing.sheetBottomSpace)
                 }
             }
         }
@@ -542,63 +496,17 @@ extension SwapAndPayForm {
                 .zFont(.semiBold, size: 24, style: Design.Text.primary)
                 .padding(.vertical, 24)
 
-                ZStack {
-                    HStack(spacing: 8) {
-                        VStack(spacing: 0) {
-                            tokenTickerSelector(asset: store.selectedAsset, colorScheme)
-
-                            Text(store.assetNameInQuote)
-                                .zFont(.semiBold, size: 12, style: Design.Text.tertiary)
-                                .lineLimit(1)
-                                .minimumScaleFactor(0.8)
-                                .padding(.vertical, 6)
-
-                            Text(store.swapToZecAmountInQuote)
-                                .zFont(.semiBold, size: 16, style: Design.Text.primary)
-                                .lineLimit(1)
-                                .minimumScaleFactor(0.1)
-                            
-                            Text(store.zecUsdToBeSpendInQuote)
-                                .zFont(.medium, size: 12, style: Design.Text.tertiary)
-                        }
-                        .padding(.horizontal, 20)
-                        .padding(.vertical, 12)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 122)
-                        .background {
-                            RoundedRectangle(cornerRadius: Design.Radius._3xl)
-                                .fill(Design.Surfaces.bgSecondary.color(colorScheme))
-                        }
-                        
-                        VStack(spacing: 0) {
-                            zecTickerBadge(colorScheme)
-
-                            Text(store.zcashNameInQuote)
-                                .zFont(.semiBold, size: 12, style: Design.Text.tertiary)
-                                .lineLimit(1)
-                                .minimumScaleFactor(0.8)
-                                .padding(.vertical, 6)
-
-                            Text(store.tokenToBeReceivedInQuote)
-                                .zFont(.semiBold, size: 16, style: Design.Text.primary)
-                                .lineLimit(1)
-                                .minimumScaleFactor(0.1)
-
-                            Text(store.tokenUsdToBeReceivedInQuote)
-                                .zFont(.medium, size: 12, style: Design.Text.tertiary)
-                        }
-                        .padding(.horizontal, 20)
-                        .padding(.vertical, 12)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 122)
-                        .background {
-                            RoundedRectangle(cornerRadius: Design.Radius._3xl)
-                                .fill(Design.Surfaces.bgSecondary.color(colorScheme))
-                        }
-                    }
-                    
-                    FloatingArrow()
-                }
+                SwapFromToView(
+                    reversed: true,
+                    tokenName: tokenName,
+                    zcashNameInQuote: store.zcashNameInQuote,
+                    zecToBeSpendInQuote: store.tokenToBeReceivedInQuote,
+                    zecUsdToBeSpendInQuote: store.tokenUsdToBeReceivedInQuote,
+                    selectedAsset: store.selectedAsset,
+                    assetNameInQuote: store.assetNameInQuote,
+                    tokenToBeReceivedInQuote: store.swapToZecAmountInQuote,
+                    tokenUsdToBeReceivedInQuote: store.zecUsdToBeSpendInQuote
+                )
                 .padding(.bottom, 32)
 
                 quoteLineContent(L10n.SwapAndPay.totalFees, "\(store.swapToZecTotalFees) \(store.selectedAsset?.tokenName ?? "")")
@@ -640,7 +548,7 @@ extension SwapAndPayForm {
                 ZashiButton(L10n.General.confirm) {
                     store.send(.confirmToZecButtonTapped)
                 }
-                .padding(.bottom, 24)
+                .padding(.bottom, Design.Spacing.sheetBottomSpace)
             }
         }
     }
@@ -693,7 +601,7 @@ extension SwapAndPayForm {
             ZashiButton(L10n.SwapAndPay.cancelDont) {
                 store.send(.dontCancelTapped)
             }
-            .padding(.bottom, 24)
+            .padding(.bottom, Design.Spacing.sheetBottomSpace)
         }
     }
     
@@ -718,7 +626,7 @@ extension SwapAndPayForm {
             ZashiButton(L10n.General.ok) {
                 store.send(.refundAddressCloseTapped)
             }
-            .padding(.bottom, 24)
+            .padding(.bottom, Design.Spacing.sheetBottomSpace)
         }
     }
 }

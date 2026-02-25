@@ -98,6 +98,7 @@ public enum Asset {
       public static let bookmark = ImageAsset(name: "bookmark")
       public static let bookmarkCheck = ImageAsset(name: "bookmarkCheck")
       public static let calendar = ImageAsset(name: "calendar")
+      public static let checkSolid = ImageAsset(name: "checkSolid")
       public static let coinsHand = ImageAsset(name: "coinsHand")
       public static let coinsSwap = ImageAsset(name: "coinsSwap")
       public static let connectWallet = ImageAsset(name: "connectWallet")
@@ -167,6 +168,7 @@ public enum Asset {
     }
     public static let infoCircle = ImageAsset(name: "infoCircle")
     public static let infoOutline = ImageAsset(name: "infoOutline")
+    public static let prevZashiLogo = ImageAsset(name: "prevZashiLogo")
     public static let qrcodeScannerErr = ImageAsset(name: "qrcodeScannerErr")
     public static let rateIcons = ImageAsset(name: "rateIcons")
     public static let refreshCCW = ImageAsset(name: "refreshCCW")

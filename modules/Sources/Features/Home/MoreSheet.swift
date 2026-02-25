@@ -61,41 +61,13 @@ extension HomeView {
                     .zFont(size: 12, style: Design.Text.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            .padding(.bottom, 24)
+            .padding(.bottom, Design.Spacing.sheetBottomSpace)
             .padding(.top, 16)
             .screenHorizontalPadding()
         }
         .padding(.horizontal, 4)
     }
-    
-    @ViewBuilder func sendRequestContent() -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            ActionRow(
-                icon: Asset.Assets.Brandmarks.brandmarkMaxBranded.image,
-                title: L10n.Crosspay.sendZec,
-                desc: L10n.Crosspay.sendZecDesc,
-                customIcon: true,
-                divider: false
-            ) {
-                store.send(.sendTapped)
-            }
-            .padding(.top, 32)
-            .padding(.bottom, 16)
 
-            ActionRow(
-                icon: Asset.Assets.Tickers.near.image,
-                title: L10n.Crosspay.title,
-                desc: L10n.Crosspay.sendPayDesc,
-                customIcon: true,
-                divider: false
-            ) {
-                store.send(.payWithNearTapped)
-            }
-            .padding(.bottom, 48)
-        }
-        .padding(.horizontal, 4)
-    }
-    
     @ViewBuilder func payRequestContent() -> some View {
         VStack(alignment: .leading, spacing: 0) {
             ActionRow(
@@ -138,7 +110,7 @@ extension HomeView {
                     .zFont(size: 12, style: Design.Text.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            .padding(.bottom, 32)
+            .padding(.bottom, Design.Spacing.sheetBottomSpace)
             .padding(.top, 16)
             .screenHorizontalPadding()
         }

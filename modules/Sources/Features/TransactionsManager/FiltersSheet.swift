@@ -65,28 +65,7 @@ public struct FilterView: View {
 
 extension TransactionsManagerView {
     @ViewBuilder func filtersContent() -> some View {
-        WithPerceptionTracking {
-            if #available(iOS 16.4, *) {
-                mainBody()
-                    .presentationDetents([.height(filtersSheetHeight)])
-                    .presentationDragIndicator(.visible)
-                    .presentationCornerRadius(Design.Radius._4xl)
-            } else if #available(iOS 16.0, *) {
-                mainBody()
-                    .presentationDetents([.height(filtersSheetHeight)])
-                    .presentationDragIndicator(.visible)
-            } else {
-                mainBody(stickToBottom: true)
-            }
-        }
-    }
-    
-    @ViewBuilder func mainBody(stickToBottom: Bool = false) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            if stickToBottom {
-                Spacer()
-            }
-            
             Text(L10n.Filter.title)
                 .zFont(.semiBold, size: 20, style: Design.Text.primary)
                 .padding(.top, 32)
@@ -104,11 +83,6 @@ extension TransactionsManagerView {
                     FilterView(title: L10n.Filter.bookmarked, active: store.isBookmarkedFilterActive) { store.send(.toggleFilter(.bookmarked)) }
                     FilterView(title: L10n.Filter.swap, active: store.isSwapFilterActive) { store.send(.toggleFilter(.swap)) }
                 }
-
-                // Hidden for now but possibly released in the near future
-//                HStack(spacing: 8) {
-//                    FilterView(title: L10n.Filter.contact, active: store.isContactFilterActive) { store.send(.toggleFilter(.contact)) }
-//                }
             }
             .padding(.bottom, 32)
             
@@ -124,16 +98,7 @@ extension TransactionsManagerView {
                     store.send(.applyFiltersTapped)
                 }
             }
-            .padding(.bottom, 24)
-        }
-        .screenHorizontalPadding()
-        .background {
-            GeometryReader { proxy in
-                Color.clear
-                    .task {
-                        filtersSheetHeight = proxy.size.height
-                    }
-            }
+            .padding(.bottom, Design.Spacing.sheetBottomSpace)
         }
     }
 }

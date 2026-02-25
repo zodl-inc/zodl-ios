@@ -91,7 +91,9 @@ public struct AddKeystoneHWWalletView: View {
             }
             .screenHorizontalPadding()
             .onAppear { store.send(.onAppear) }
-            .zashiBackV2(background: false)
+            .zashiBack() {
+                store.send(.backToHomeTapped)
+            }
             .sheet(isPresented: $store.isInAppBrowserOn) {
                 if let url = URL(string: store.inAppBrowserURL) {
                     InAppBrowserView(url: url)

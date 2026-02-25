@@ -102,8 +102,6 @@ public struct RecoveryPhraseDisplayView: View {
             .zashiBack()
             .zashiSheet(isPresented: $store.isHelpSheetPresented) {
                 helpSheetContent()
-                    .screenHorizontalPadding()
-                    .applyScreenBackground()
             }
             .navigationBarItems(
                 trailing:
@@ -118,11 +116,11 @@ public struct RecoveryPhraseDisplayView: View {
                         if store.isRecoveryPhraseHidden || !store.isWalletBackup {
                             Asset.Assets.Icons.help.image
                                 .zImage(size: 24, style: Design.Text.primary)
-                                .padding(8)
+                                .padding(Design.Spacing.navBarButtonPadding)
                         } else {
                             Asset.Assets.eyeOff.image
                                 .zImage(size: 24, style: Design.Text.primary)
-                                .padding(8)
+                                .padding(Design.Spacing.navBarButtonPadding)
                         }
                     }
             )
@@ -251,7 +249,7 @@ public struct RecoveryPhraseDisplayView: View {
             ZashiButton(L10n.General.ok.uppercased()) {
                 store.send(.helpSheetRequested)
             }
-            .padding(.bottom, 24)
+            .padding(.bottom, Design.Spacing.sheetBottomSpace)
         }
     }
     

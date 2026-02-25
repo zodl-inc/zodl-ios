@@ -59,7 +59,7 @@ public struct SendConfirmationView: View {
                             }
                             
                             Text(store.address)
-                                .zFont(addressFont: true, size: 12, style: Design.Text.primary)
+                                .zFont(fontFamily: .robotoMono, size: 12, style: Design.Text.primary)
                         }
                         
                         Spacer()

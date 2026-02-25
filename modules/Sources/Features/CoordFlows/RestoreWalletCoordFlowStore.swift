@@ -8,11 +8,13 @@
 import SwiftUI
 import ComposableArchitecture
 import ZcashLightClientKit
+import ZcashSDKEnvironment
 
 import MnemonicSwift
 import Pasteboard
 import WalletStorage
 import SDKSynchronizer
+import Generated
 
 // Path
 import RestoreInfo
@@ -24,12 +26,14 @@ public struct RestoreWalletCoordFlow {
     public enum Path {
         case estimateBirthdaysDate(WalletBirthday)
         case estimatedBirthday(WalletBirthday)
+        case recoverySeedPhraseEntry(RestoreWalletCoordFlow)
         case restoreInfo(RestoreInfo)
         case walletBirthday(WalletBirthday)
     }
     
     @ObservableState
     public struct State {
+        @Presents public var alert: AlertState<Action>?
         public var birthday: BlockHeight? = nil
         public var isHelpSheetPresented = false
         public var isKeyboardVisible = false
@@ -44,10 +48,21 @@ public struct RestoreWalletCoordFlow {
         public var words: [String] = Array(repeating: "", count: 24)
         public var wordsValidity: [Bool] = Array(repeating: true, count: 24)
 
+        public var isImportingWallet: Bool {
+            for element in path {
+                if element.is(\.recoverySeedPhraseEntry) {
+                    return true
+                }
+            }
+            
+            return false
+        }
+        
         public init() { }
     }
 
     public enum Action: BindableAction {
+        case alert(PresentationAction<Action>)
         case binding(BindingAction<RestoreWalletCoordFlow.State>)
         case evaluateSeedValidity
         case failedToRecover(ZcashError)
@@ -61,17 +76,25 @@ public struct RestoreWalletCoordFlow {
         case selectedIndex(Int?)
         case successfullyRecovered
         case suggestedWordTapped(String)
-        case suggestionsRequested(Int)
+        case suggestionsRequested(Int, Bool)
         case updateKeyboardFlag(Bool)
         #if DEBUG
         case debugPasteSeed
         #endif
+        
+        // Onboarding
+        case createNewWalletTapped
+        case createNewWalletRequested
+        case dismissDestination
+        case importExistingWallet
+        case newWalletSuccessfulyCreated
     }
 
     @Dependency(\.mnemonic) var mnemonic
     @Dependency(\.pasteboard) var pasteboard
     @Dependency(\.sdkSynchronizer) var sdkSynchronizer
     @Dependency(\.walletStorage) var walletStorage
+    @Dependency(\.zcashSDKEnvironment) var zcashSDKEnvironment
 
     public init() { }
 
@@ -82,6 +105,13 @@ public struct RestoreWalletCoordFlow {
 
         Reduce { state, action in
             switch action {
+            case .alert(.presented(let action)):
+                return .send(action)
+                
+            case .alert(.dismiss):
+                state.alert = nil
+                return .none
+
             case .binding(\.words):
                 let changedIndices = state.words.indices.filter { state.words[$0] != state.prevWords[$0] }
                 state.prevWords = state.words
@@ -94,7 +124,7 @@ public struct RestoreWalletCoordFlow {
                         return .send(.suggestedWordTapped(state.words[index]))
                     }
                     
-                    return .send(.suggestionsRequested(index))
+                    return .send(.suggestionsRequested(index, false))
                 }
                 
                 return .none
@@ -103,17 +133,22 @@ public struct RestoreWalletCoordFlow {
                 state.selectedIndex = index
                 state.nextIndex = state.selectedIndex
                 if let index {
-                    return .send(.suggestionsRequested(index))
+                    return .send(.suggestionsRequested(index, true))
                 }
                 return .none
                 
-            case .suggestionsRequested(let index):
+            case let .suggestionsRequested(index, hasIndexChanged):
                 let prefix = state.words[index]
                 if prefix.isEmpty {
                     state.suggestedWords = []
                 } else {
                     state.suggestedWords = mnemonic.suggestWords(prefix)
                     state.wordsValidity[index] = !state.suggestedWords.isEmpty
+                }
+                if hasIndexChanged {
+                    if let first = state.suggestedWords.first, first == prefix && !state.isValidSeed && state.suggestedWords.count == 1 {
+                        return .none
+                    }
                 }
                 return .send(.evaluateSeedValidity)
 
@@ -171,5 +206,17 @@ public struct RestoreWalletCoordFlow {
             }
         }
         .forEach(\.path, action: \.path)
+    }
+}
+
+// MARK: Alerts
+
+extension AlertState where Action == RestoreWalletCoordFlow.Action {
+    public static func cantCreateNewWallet(_ error: ZcashError) -> AlertState {
+        AlertState {
+            TextState(L10n.Root.Initialization.Alert.Failed.title)
+        } message: {
+            TextState(L10n.Root.Initialization.Alert.CantCreateNewWallet.message(error.detailedMessage))
+        }
     }
 }

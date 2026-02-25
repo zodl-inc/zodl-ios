@@ -20,6 +20,7 @@ extension WalletStorageClient: TestDependencyKey {
         exportAddressBookEncryptionKeys: unimplemented("\(Self.self).exportAddressBookEncryptionKeys", placeholder: .empty),
         importUserMetadataEncryptionKeys: unimplemented("\(Self.self).importUserMetadataEncryptionKeys", placeholder: {}()),
         exportUserMetadataEncryptionKeys: unimplemented("\(Self.self).exportUserMetadataEncryptionKeys", placeholder: .empty),
+        clearEncryptionKeys: unimplemented("\(Self.self).clearEncryptionKeys"),
         importWalletBackupReminder: unimplemented("\(Self.self).importWalletBackupReminder"),
         exportWalletBackupReminder: unimplemented("\(Self.self).exportWalletBackupReminder", placeholder: nil),
         importShieldingReminder: unimplemented("\(Self.self).importShieldingReminder"),
@@ -30,7 +31,9 @@ extension WalletStorageClient: TestDependencyKey {
         importShieldingAcknowledged: unimplemented("\(Self.self).importShieldingAcknowledged"),
         exportShieldingAcknowledged: unimplemented("\(Self.self).exportShieldingAcknowledged", placeholder: false),
         importTorSetupFlag: unimplemented("\(Self.self).importTorSetupFlag"),
-        exportTorSetupFlag: unimplemented("\(Self.self).exportTorSetupFlag", placeholder: nil)
+        exportTorSetupFlag: unimplemented("\(Self.self).exportTorSetupFlag", placeholder: nil),
+        importZodlAnnouncementFlag: unimplemented("\(Self.self).importZodlAnnouncementFlag"),
+        exportZodlAnnouncementFlag: unimplemented("\(Self.self).exportZodlAnnouncementFlag", placeholder: nil)
     )
 }
 
@@ -46,6 +49,7 @@ extension WalletStorageClient {
         exportAddressBookEncryptionKeys: { .empty },
         importUserMetadataEncryptionKeys: { _, _ in },
         exportUserMetadataEncryptionKeys: { _ in .empty },
+        clearEncryptionKeys: { _ in },
         importWalletBackupReminder: { _ in },
         exportWalletBackupReminder: { nil },
         importShieldingReminder: { _, _ in },
@@ -56,6 +60,8 @@ extension WalletStorageClient {
         importShieldingAcknowledged: { _ in },
         exportShieldingAcknowledged: { false },
         importTorSetupFlag: { _ in },
-        exportTorSetupFlag: { false }
+        exportTorSetupFlag: { false },
+        importZodlAnnouncementFlag: { _ in },
+        exportZodlAnnouncementFlag: { false }
     )
 }

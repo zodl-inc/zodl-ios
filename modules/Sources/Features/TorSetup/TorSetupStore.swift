@@ -117,6 +117,7 @@ public struct TorSetup {
         Reduce { state, action in
             switch action {
             case .onAppear:
+                // __LD TESTED
                 if let torEnabled = walletStorage.exportTorSetupFlag(), torEnabled {
                     state.activeSettingsOption = .optIn
                     state.currentSettingsOption = .optIn

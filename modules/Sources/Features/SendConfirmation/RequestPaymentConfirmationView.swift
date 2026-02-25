@@ -53,7 +53,7 @@ public struct RequestPaymentConfirmationView: View {
                             }
                             
                             Text(store.addressToShow)
-                                .zFont(addressFont: true, size: 12, style: Design.Text.primary)
+                                .zFont(fontFamily: .robotoMono, size: 12, style: Design.Text.primary)
                         }
                         
                         Spacer()

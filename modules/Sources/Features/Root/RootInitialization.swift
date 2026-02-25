@@ -441,20 +441,29 @@ extension Root {
                 return .none
                 
             case .initialization(.checkBackupPhraseValidation):
+                var destination = Root.DestinationState.Destination.home
                 do {
                     let _ = try walletStorage.exportWallet()
+                    
+                    // Zodl Announcement
+                    let zodlAnnouncementFlag = walletStorage.exportZodlAnnouncementFlag()
+
+                    if zodlAnnouncementFlag == nil || zodlAnnouncementFlag == false {
+                        destination = .zodlAnnouncement
+                    }
                 } catch {
                     return .send(.destination(.updateDestination(.osStatusError)))
                 }
 
                 state.appInitializationState = .initialized
                 let isAtDeeplinkWarningScreen = state.destinationState.destination == .deeplinkWarning
+                let finalDestination = destination
                 
                 return .run { send in
                     // Delay the splash overlay dismissal
                     try await mainQueue.sleep(for: .seconds(0.5))
                     if !isAtDeeplinkWarningScreen {
-                        await send(.destination(.updateDestination(Root.DestinationState.Destination.home)))
+                        await send(.destination(.updateDestination(finalDestination)))
                     }
                 }
                 .cancellable(id: CancelId, cancelInFlight: true)
@@ -486,9 +495,6 @@ extension Root {
                 .cancellable(id: SynchronizerCancelId, cancelInFlight: true)
 
             case .resetZashiSDKSucceeded:
-                if state.appInitializationState != .keysMissing {
-                    state = .initial
-                }
                 state.splashAppeared = true
                 state.isRestoringWallet = false
                 userDefaults.remove(Constants.udIsRestoringWallet)
@@ -502,6 +508,9 @@ extension Root {
                         try? addressBook.resetAccount(account.account)
                     }
                 }
+                state.walletAccounts.forEach { account in
+                    try? walletStorage.clearEncryptionKeys(account.account)
+                }
                 state.autoUpdateSwapCandidates.removeAll()
                 try? userMetadataProvider.reset()
                 state.$walletStatus.withLock { $0 = .none }
@@ -512,6 +521,9 @@ extension Root {
                 state.$addressBookContacts.withLock { $0 = .empty }
                 state.$transactions.withLock { $0 = [] }
                 state.path = nil
+                if state.appInitializationState != .keysMissing {
+                    state = .initial
+                }
 
                 return .send(.resetZashiKeychainRequest)
                 
@@ -556,22 +568,47 @@ extension Root {
                 } catch {
                     return .send(.resetZashiKeychainFailedWithCorruptedData(error.localizedDescription))
                 }
-                if state.appInitializationState == .keysMissing && state.onboardingState.destination == .importExistingWallet {
-                    state.appInitializationState = .uninitialized
-                    return .cancel(id: SynchronizerCancelId)
-                } else if state.appInitializationState == .keysMissing && state.onboardingState.destination == .createNewWallet {
-                    state.appInitializationState = .uninitialized
-                    return .concatenate(
-                        .cancel(id: SynchronizerCancelId),
-                        .send(.onboarding(.createNewWalletRequested))
-                    )
-                } else {
-                    return .concatenate(
-                        .cancel(id: SynchronizerCancelId),
-                        .send(.initialization(.checkWalletInitialization))
-                    )
-                }
-                
+
+                // TODO: [#1627] validate whether this code makes sense
+                // https://github.com/zodl-inc/zodl-ios/issues/1627
+//                if state.appInitializationState == .keysMissing && state.onboardingState.isImportingWallet {
+//                    state.appInitializationState = .uninitialized
+//                    return .cancel(id: SynchronizerCancelId)
+//                } else if state.appInitializationState == .keysMissing && state.onboardingState.destination == .createNewWallet {
+//                    state.appInitializationState = .uninitialized
+//                    return .concatenate(
+//                        .cancel(id: SynchronizerCancelId),
+//                        .send(.onboarding(.createNewWalletRequested))
+//                    )
+//                } else {
+//                    return .concatenate(
+//                        .cancel(id: SynchronizerCancelId),
+//                        .send(.initialization(.checkWalletInitialization))
+//                    )
+//                }
+
+                // TODO: [#1627] this might need to be recreated
+                // https://github.com/zodl-inc/zodl-ios/issues/1627
+//                if state.appInitializationState == .keysMissing && state.onboardingState.destination == .importExistingWallet {
+//                    state.appInitializationState = .uninitialized
+//                    return .cancel(id: SynchronizerCancelId)
+//                } else if state.appInitializationState == .keysMissing && state.onboardingState.destination == .createNewWallet {
+//                    state.appInitializationState = .uninitialized
+//                    return .concatenate(
+//                        .cancel(id: SynchronizerCancelId),
+//                        .send(.onboarding(.createNewWalletRequested))
+//                    )
+//                } else {
+//                    return .concatenate(
+//                        .cancel(id: SynchronizerCancelId),
+//                        .send(.initialization(.checkWalletInitialization))
+//                    )
+//                }
+                return .concatenate(
+                    .cancel(id: SynchronizerCancelId),
+                    .send(.initialization(.checkWalletInitialization))
+                )
+
             case .resetZashiKeychainFailedWithCorruptedData(let errMsg):
                 for element in state.settingsState.path {
                     if case .resetZashi(var resetZashiState) = element {
@@ -632,10 +669,10 @@ extension Root {
                 } else {
                     return .send(.onboarding(.createNewWalletRequested))
                 }
-                
+
             case .initialization(.restoreExistingWallet):
                 return .run { send in
-                    await send(.onboarding(.updateDestination(nil)))
+                    await send(.onboarding(.dismissDestination))
                     try await mainQueue.sleep(for: .seconds(1))
                     await send(.onboarding(.importExistingWallet))
                 }
@@ -648,7 +685,6 @@ extension Root {
 
             case .updateStateAfterConfigUpdate(let walletConfig):
                 state.walletConfig = walletConfig
-                state.onboardingState.walletConfig = walletConfig
                 return .none
 
             case .initialization(.initializationFailed(let error)):

@@ -16,8 +16,6 @@ public struct HomeView: View {
     
     @Perception.Bindable var store: StoreOf<Home>
     let tokenName: String
-    
-    @State var accountSwitchSheetHeight: CGFloat = .zero
 
     @Shared(.appStorage(.sensitiveContent)) var isSensitiveContentHidden = false
     @Shared(.inMemory(.walletStatus)) public var walletStatus: WalletStatus = .none
@@ -113,21 +111,15 @@ public struct HomeView: View {
                     InAppBrowserView(url: url)
                 }
             }
-            .sheet(isPresented: $store.accountSwitchRequest) {
+            .zashiSheet(isPresented: $store.accountSwitchRequest, horizontalPadding: Design.Spacing.edgeToEdgeSpacing) {
                 accountSwitchContent()
-                    .applyScreenBackground()
             }
-            .zashiSheet(isPresented: $store.moreRequest) {
+            .zashiSheet(isPresented: $store.moreRequest, horizontalPadding: 0) {
                 moreContent()
-                    .applyScreenBackground()
             }
-            .zashiSheet(isPresented: $store.sendRequest) {
-                sendRequestContent()
-                    .applyScreenBackground()
-            }
-            .zashiSheet(isPresented: $store.payRequest) {
+            .zashiSheet(isPresented: $store.payRequest, horizontalPadding: 0) {
+                // FIXME: delete this
                 payRequestContent()
-                    .applyScreenBackground()
             }
             .navigationBarItems(
                 leading:

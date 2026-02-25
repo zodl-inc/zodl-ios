@@ -56,27 +56,23 @@ public extension SwapAndPayForm {
                                     )
                                     .keyboardType(.decimalPad)
                                     .focused($isAmountFocused)
+
+                                    Asset.Assets.Icons.switchHorizontal.image
+                                        .zImage(size: 24, style: Design.Btns.Ghost.fg)
+                                        .padding(8)
+                                        .padding(.top, 24)
                                     
-                                    if store.isCurrencyConversionEnabled {
-                                        Asset.Assets.Icons.switchHorizontal.image
-                                            .zImage(size: 24, style: Design.Btns.Ghost.fg)
-                                            .padding(8)
-                                            .padding(.top, 24)
-                                        
-                                        ZashiTextField(
-                                            text: $store.amountUsdText,
-                                            placeholder: L10n.Send.currencyPlaceholder,
-                                            error: store.isCrossPayInsufficientFunds ? "" : nil,
-                                            prefixView:
-                                                Asset.Assets.Icons.currencyDollar.image
-                                                .zImage(size: 20, style: Design.Inputs.Default.text)
-                                        )
-                                        .keyboardType(.decimalPad)
-                                        .focused($isUsdFocused)
-                                        .padding(.top, 23)
-                                        .disabled(store.currencyConversion == nil)
-                                        .opacity(store.currencyConversion == nil ? 0.5 : 1.0)
-                                    }
+                                    ZashiTextField(
+                                        text: $store.amountUsdText,
+                                        placeholder: L10n.Send.currencyPlaceholder,
+                                        error: store.isCrossPayInsufficientFunds ? "" : nil,
+                                        prefixView:
+                                            Asset.Assets.Icons.currencyDollar.image
+                                            .zImage(size: 20, style: Design.Inputs.Default.text)
+                                    )
+                                    .keyboardType(.decimalPad)
+                                    .focused($isUsdFocused)
+                                    .padding(.top, 23)
                                 }
                             }
                             .disabled(store.isQuoteRequestInFlight)
@@ -166,7 +162,6 @@ public extension SwapAndPayForm {
                 isAddressFocused = false
             }
             .applyScreenBackground()
-            .zashiBack(true, hidden: true)
             .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
                 store.send(.willEnterForeground)
             }
@@ -177,18 +172,12 @@ public extension SwapAndPayForm {
             }
             .zashiSheet(isPresented: $store.isQuotePresented) {
                 quoteContent(colorScheme)
-                    .screenHorizontalPadding()
-                    .applyScreenBackground()
             }
             .zashiSheet(isPresented: $store.isQuoteUnavailablePresented) {
                 quoteUnavailableContent(colorScheme)
-                    .screenHorizontalPadding()
-                    .applyScreenBackground()
             }
             .zashiSheet(isPresented: $store.isCancelSheetVisible) {
                 cancelSheetContent(colorScheme)
-                    .screenHorizontalPadding()
-                    .applyScreenBackground()
             }
             .sheet(isPresented: $store.isSlippagePresented) {
                 slippageContent(colorScheme)
@@ -222,36 +211,16 @@ public extension SwapAndPayForm {
                         }
                     )
             }
-            .sheet(isPresented: $store.balancesBinding) {
-                if #available(iOS 16.4, *) {
-                    WithPerceptionTracking {
-                        BalancesView(
-                            store:
-                                store.scope(
-                                    state: \.balancesState,
-                                    action: \.balances
-                                ),
-                            tokenName: tokenName
-                        )
-                    }
-                    .applyScreenBackground()
-                    .presentationDetents([.height(store.sheetHeight)])
-                    .presentationDragIndicator(.visible)
-                    .presentationCornerRadius(Design.Radius._4xl)
-                } else {
-                    WithPerceptionTracking {
-                        BalancesView(
-                            store:
-                                store.scope(
-                                    state: \.balancesState,
-                                    action: \.balances
-                                ),
-                            tokenName: tokenName
-                        )
-                    }
-                    .applyScreenBackground()
-                    .presentationDetents([.height(store.sheetHeight)])
-                    .presentationDragIndicator(.visible)
+            .zashiSheet(isPresented: $store.balancesBinding) {
+                WithPerceptionTracking {
+                    BalancesView(
+                        store:
+                            store.scope(
+                                state: \.balancesState,
+                                action: \.balances
+                            ),
+                        tokenName: tokenName
+                    )
                 }
             }
             .overlayPreferenceValue(UnknownAddressPreferenceKey.self) { preferences in

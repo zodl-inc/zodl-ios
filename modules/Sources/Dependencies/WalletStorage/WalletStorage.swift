@@ -30,6 +30,10 @@ public struct WalletStorage {
         public static let zcashStoredWalletBackupAcknowledged = "zcashStoredWalletBackupAcknowledged"
         public static let zcashStoredShieldingAcknowledged = "zcashStoredShieldingAcknowledged"
         public static let zcashStoredTorSetupFlag = "zcashStoredTorSetupFlag"
+        
+        // This key shouldn't be removed from Keychain until the time we decide to no longer use the Announcement Zodl screen.
+        // Once we agree to remove such screen, this key will be added to the reset method to clean it up.
+        public static let zcashStoredZodlAnnouncementFlag = "zcashStoredZodlAnnouncementFlag"
 
         /// Versioning of the stored data
         public static let zcashKeychainVersion = 1
@@ -256,6 +260,10 @@ public struct WalletStorage {
         return wallet
     }
     
+    public func clearEncryptionKeys(_ account: Account) throws {
+        try deleteData(forKey: Constants.accountMetadataFilename(account: account))
+    }
+    
     // MARK: - Remind Me
     
     public func importWalletBackupReminder(_ reminder: ReminedMeTimestamp) throws {
@@ -414,6 +422,36 @@ public struct WalletStorage {
         
         return try? decode(json: reqData, as: Bool.self)
     }
+    
+    public func importZodlAnnouncementFlag(_ enabled: Bool) throws {
+        guard let data = try? encode(object: enabled) else {
+            throw KeychainError.encoding
+        }
+
+        do {
+            try setData(data, forKey: Constants.zcashStoredZodlAnnouncementFlag)
+        } catch KeychainError.duplicate {
+            try updateData(data, forKey: Constants.zcashStoredZodlAnnouncementFlag)
+        } catch {
+            throw WalletStorageError.storageError(error)
+        }
+    }
+    
+    public func exportZodlAnnouncementFlag() -> Bool? {
+        let reqData: Data?
+        
+        do {
+            reqData = try data(forKey: Constants.zcashStoredZodlAnnouncementFlag)
+        } catch {
+            return nil
+        }
+        
+        guard let reqData else {
+            return nil
+        }
+        
+        return try? decode(json: reqData, as: Bool.self)
+    }
 
     // MARK: - Wallet Storage Codable & Query helpers
     
@@ -493,6 +531,11 @@ public struct WalletStorage {
         let query = baseQuery(forAccount: account, andKey: forKey)
 
         let status = secItem.delete(query as CFDictionary)
+
+        // If the item is not present, the goal of the function is fulfilled => no error
+        if status == errSecItemNotFound {
+            return
+        }
 
         guard status == noErr else {
             throw KeychainError.unknown(status)

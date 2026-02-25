@@ -66,7 +66,7 @@ public struct AdvancedSettingsView: View {
                         }
                     }
                     .listRowInsets(EdgeInsets())
-                    .listRowBackground(Asset.Colors.shade97.color)
+                    .listRowBackground(Asset.Colors.background.color)
                     .listRowSeparator(.hidden)
                 }
                 .padding(.top, 24)
