@@ -6,6 +6,12 @@ directly impact users rather than highlighting other crucial architectural updat
 
 ## [Unreleased]
 
+## 3.0.0 build 2 (2026-02-26)
+
+### Changed
+- Zashi->Zodl rebrand
+- Fixes
+
 ## 2.4.12 build 3 (2026-01-29)
 
 ### Changed
