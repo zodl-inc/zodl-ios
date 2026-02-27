@@ -95,6 +95,7 @@ public struct TorSetup {
     
     public enum Action: BindableAction, Equatable {
         case binding(BindingAction<TorSetup.State>)
+        case backToHomeTapped
         case disableTapped
         case enableTapped
         case onAppear
@@ -125,6 +126,9 @@ public struct TorSetup {
                     state.activeSettingsOption = .optOut
                     state.currentSettingsOption = .optOut
                 }
+                return .none
+                
+            case .backToHomeTapped:
                 return .none
                 
             case .binding:

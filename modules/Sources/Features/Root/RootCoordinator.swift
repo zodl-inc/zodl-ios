@@ -17,6 +17,10 @@ extension Root {
 
             case .settings(.backToHomeTapped),
                 .receive(.backToHomeTapped),
+                .walletBackupCoordFlow(.backToHomeTapped),
+                .torSetup(.backToHomeTapped),
+                .currencyConversionSetup(.backToHomeTapped),
+                .backToHomeFromServerSwitchTapped,
                 .sendCoordFlow(.sendForm(.dismissRequired)):
                 state.path = nil
                 return .none

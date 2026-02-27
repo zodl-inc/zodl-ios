@@ -100,6 +100,10 @@ extension Settings {
                 
                 // MARK: - Currency Conversion
             
+            case .path(.element(id: _, action: .currencyConversionSetup(.backToHomeTapped))):
+                let _ = state.path.popLast()
+                return .none
+
             case .path(.element(id: _, action: .currencyConversionSetup(.delayedDismisalRequested))):
                 let _ = state.path.popLast()
                 return .none
@@ -181,6 +185,13 @@ extension Settings {
                 var currencyConversionSetupState = CurrencyConversionSetup.State.initial
                 currencyConversionSetupState.isSettingsView = true
                 state.path.append(.currencyConversionSetup(currencyConversionSetupState))
+                return .none
+
+                
+                // MARK: - Tor Setup
+
+            case .path(.element(id: _, action: .torSetup(.backToHomeTapped))):
+                let _ = state.path.popLast()
                 return .none
 
             default: return .none

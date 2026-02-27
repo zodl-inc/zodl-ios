@@ -94,6 +94,7 @@ public struct CurrencyConversionSetup {
     
     public enum Action: BindableAction, Equatable {
         case binding(BindingAction<CurrencyConversionSetup.State>)
+        case backToHomeTapped
         case delayedDismisalRequested
         case enableTapped
         case enableTorTapped
@@ -130,6 +131,9 @@ public struct CurrencyConversionSetup {
                     state.activeSettingsOption = .optOut
                     state.currentSettingsOption = .optOut
                 }
+                return .none
+                
+            case .backToHomeTapped:
                 return .none
                 
             case .binding:
