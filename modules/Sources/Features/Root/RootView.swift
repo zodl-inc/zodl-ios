@@ -194,7 +194,6 @@ private extension RootView {
                                 .transition(.move(edge: .trailing))
                                 .zIndex(1)
                             } else if path == .addKeystoneHWWalletCoordFlow {
-                                // FIXME: missing back button
                                 AddKeystoneHWWalletCoordFlowView(
                                     store:
                                         store.scope(
@@ -205,8 +204,6 @@ private extension RootView {
                                 .transition(.move(edge: .trailing))
                                 .zIndex(1)
                             } else if path == .transactionsCoordFlow {
-                                // FIXME: missing back button
-                                // TODO: this flow looks to be connected, tested
                                 TransactionsCoordFlowView(
                                     store:
                                         store.scope(
@@ -217,7 +214,6 @@ private extension RootView {
                                 .transition(.move(edge: .trailing))
                                 .zIndex(1)
                             } else if path == .walletBackup {
-                                // FIXME: missing back button
                                 WalletBackupCoordFlowView(
                                     store:
                                         store.scope(
@@ -227,38 +223,42 @@ private extension RootView {
                                 .transition(.move(edge: .trailing))
                                 .zIndex(1)
                             } else if path == .currencyConversionSetup {
-                                // FIXME: missing back button
-                                CurrencyConversionSetupView(
-                                    store:
-                                        store.scope(
-                                            state: \.currencyConversionSetupState,
-                                            action: \.currencyConversionSetup)
-                                )
+                                NavigationStack {
+                                    CurrencyConversionSetupView(
+                                        store:
+                                            store.scope(
+                                                state: \.currencyConversionSetupState,
+                                                action: \.currencyConversionSetup)
+                                    )
+                                }
                                 .transition(.move(edge: .trailing))
                                 .zIndex(1)
                             } else if path == .torSetup {
-                                // FIXME: missing back button
-                                TorSetupView(
-                                    store:
-                                        store.scope(
-                                            state: \.torSetupState,
-                                            action: \.torSetup)
-                                )
+                                NavigationStack {
+                                    TorSetupView(
+                                        store:
+                                            store.scope(
+                                                state: \.torSetupState,
+                                                action: \.torSetup)
+                                    )
+                                }
                                 .transition(.move(edge: .trailing))
                                 .zIndex(1)
                             } else if path == .serverSwitch {
-                                // FIXME: missing back button
-                                ServerSetupView(
-                                    store:
-                                        store.scope(
-                                            state: \.serverSetupState,
-                                            action: \.serverSetup
-                                        )
-                                )
+                                NavigationStack {
+                                    ServerSetupView(
+                                        store:
+                                            store.scope(
+                                                state: \.serverSetupState,
+                                                action: \.serverSetup
+                                            )
+                                    ) {
+                                        store.send(.backToHomeFromServerSwitchTapped)
+                                    }
+                                }
                                 .transition(.move(edge: .trailing))
                                 .zIndex(1)
                             } else if path == .swapAndPayCoordFlow {
-                                // FIXME: missing back button
                                 SwapAndPayCoordFlowView(
                                     store:
                                         store.scope(

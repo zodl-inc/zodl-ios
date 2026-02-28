@@ -492,7 +492,7 @@ public struct SmartBanner {
                             await send(.triggerPriority(.priority7))
                         }
                     } else {
-                        await send(.evaluatePriority8)
+                        await send(.evaluatePriority75)
                     }
                 }
                 

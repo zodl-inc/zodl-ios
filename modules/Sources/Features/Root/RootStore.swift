@@ -234,6 +234,7 @@ public struct Root {
         case transactionsCoordFlow(TransactionsCoordFlow.Action)
         case walletBackupCoordFlow(WalletBackupCoordFlow.Action)
         case torSetup(TorSetup.Action)
+        case backToHomeFromServerSwitchTapped
 
         // Transactions
         case observeTransactions

@@ -31,6 +31,7 @@ public struct WalletBackupCoordFlow {
 
     public enum Action: BindableAction {
         case binding(BindingAction<WalletBackupCoordFlow.State>)
+        case backToHomeTapped
         case helpSheetRequested
         case path(StackActionOf<Path>)
         case recoveryPhraseDisplay(RecoveryPhraseDisplay.Action)
@@ -52,7 +53,7 @@ public struct WalletBackupCoordFlow {
             case .helpSheetRequested:
                 state.isHelpSheetPresented.toggle()
                 return .none
-                
+
             default: return .none
             }
         }

@@ -118,6 +118,7 @@ extension Root {
                     state.$transactions.withLock {
                         $0 = identifiedArray
                     }
+                    return .send(.home(.smartBanner(.evaluatePriority6)))
                 }
                 return .none
 

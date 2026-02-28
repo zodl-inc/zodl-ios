@@ -39,8 +39,7 @@ public struct TorSetupView: View {
                 }
             }
             .onAppear { store.send(.onAppear) }
-            .navigationBarBackButtonHidden(!store.isSettingsView)
-            .zashiBack()
+            .zashiBack() { store.send(.backToHomeTapped) }
         }
         .navigationBarTitleDisplayMode(.inline)
         .applyScreenBackground()
@@ -201,8 +200,9 @@ extension TorSetupView {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
                 icons()
-                    .padding(.vertical, 24)
-                
+                    .padding(.bottom, 24)
+                    .padding(.top, 12)
+
                 Spacer()
             }
             
