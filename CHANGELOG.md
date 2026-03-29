@@ -6,6 +6,12 @@ directly impact users rather than highlighting other crucial architectural updat
 
 ## [Unreleased]
 
+### Added
+- Deep link support for the Receive screen (`zcash:///home/receive`), enabling external apps and webpages to open Zodl directly to the receive flow.
+
+### Fixed
+- Non-ZIP321 deep links (`zcash:///home`, `zcash:///home/send?...`) were silently ignored instead of being processed.
+
 ## 3.2.0 build 5 (2026-03-09)
 
 ### Changed

@@ -75,6 +75,39 @@ class DeeplinkTests: XCTestCase {
         await store.finish()
     }
 
+    func testActionDeeplinkReceive() async throws {
+        var appState = Root.State.initial
+        appState.destinationState.destination = .welcome
+
+        let store = TestStore(
+            initialState: appState
+        ) {
+            Root()
+        }
+
+        await store.send(.destination(.deeplinkReceive)) { state in
+            state.receiveState = .initial
+            state.path = .receive
+        }
+
+        await store.finish()
+    }
+
+    func testActionDeeplinkReceive_BlockedByDeeplinkWarning() async throws {
+        var appState = Root.State.initial
+        appState.destinationState.destination = .deeplinkWarning
+
+        let store = TestStore(
+            initialState: appState
+        ) {
+            Root()
+        }
+
+        await store.send(.destination(.deeplinkReceive))
+
+        await store.finish()
+    }
+
     func testHomeURLParsing() throws {
         guard let url = URL(string: "zcash:///home") else {
             return XCTFail("Deeplink: 'testDeeplinkRequest_homeURL' URL is expected to be valid.")
@@ -119,6 +152,63 @@ class DeeplinkTests: XCTestCase {
         }
         
         await store.finish()
+    }
+
+    func testReceiveURLParsing() throws {
+        guard let url = URL(string: "zcash:///home/receive") else {
+            return XCTFail("Deeplink: 'testReceiveURLParsing' URL is expected to be valid.")
+        }
+
+        let result = try Deeplink().resolveDeeplinkURL(url, networkType: .testnet, isValidZcashAddress: { _, _ in false })
+
+        XCTAssertEqual(result, Deeplink.Destination.receive)
+    }
+
+    func testDeeplinkRequest_Received_Receive() async throws {
+        var appState = Root.State.initial
+        appState.destinationState.destination = .welcome
+        appState.appInitializationState = .initialized
+
+        let store = TestStore(
+            initialState: appState
+        ) {
+            Root()
+        }
+
+        store.dependencies.deeplink = DeeplinkClient(
+            resolveDeeplinkURL: { _, _, _ in Deeplink.Destination.receive }
+        )
+        store.dependencies.sdkSynchronizer = SDKSynchronizerClient.mocked(
+            latestState: {
+                var state = SynchronizerState.zero
+                state.syncStatus = .upToDate
+                return state
+            }
+        )
+        store.dependencies.walletConfigProvider = .noOp
+
+        guard let url = URL(string: "zcash:///home/receive") else {
+            return XCTFail("Deeplink: 'testDeeplinkRequest_Received_Receive' URL is expected to be valid.")
+        }
+
+        await store.send(.destination(.deeplink(url)))
+
+        await store.receive(.destination(.deeplinkReceive)) { state in
+            state.receiveState = .initial
+            state.path = .receive
+        }
+
+        await store.finish()
+    }
+
+    func testInvalidReceiveURLParsing() throws {
+        guard let url = URL(string: "zcash:///home/receive/extra") else {
+            return XCTFail("Deeplink: 'testInvalidReceiveURLParsing' URL is expected to be valid.")
+        }
+
+        XCTAssertThrowsError(
+            try Deeplink().resolveDeeplinkURL(url, networkType: .testnet, isValidZcashAddress: { _, _ in false })
+        )
     }
 
     func testsendURLParsing() throws {
