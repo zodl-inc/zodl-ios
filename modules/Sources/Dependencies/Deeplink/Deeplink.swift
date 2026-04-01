@@ -13,6 +13,7 @@ import ZcashLightClientKit
 public struct Deeplink {
     public enum Destination: Equatable {
         case home
+        case receive
         case send(amount: Int, address: String, memo: String)
     }
     
@@ -39,6 +40,11 @@ public struct Deeplink {
                 Path { "home" }
             }
 
+            // GET /home/receive
+            Route(.case(Destination.receive)) {
+                Path { "home"; "receive" }
+            }
+
             // GET /home/send?amount=:amount&address=:address&memo=:memo
             Route(.case(Destination.send(amount:address:memo:))) {
                 Path { "home"; "send" }
@@ -53,6 +59,9 @@ public struct Deeplink {
         switch try appRouter.match(url: url) {
         case .home:
             return .home
+
+        case .receive:
+            return .receive
 
         case let .send(amount, address, memo):
             return .send(amount: amount, address: address, memo: memo)
