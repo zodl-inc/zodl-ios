@@ -90,7 +90,7 @@ public struct SDKSynchronizerClient {
     public var exchangeRateEnabled: (Bool) async throws -> Void
     public var isTorSuccessfullyInitialized: () async -> Bool?
     public var httpRequestOverTor: (URLRequest) async throws -> (Data, HTTPURLResponse)
-    
+
     public var debugDatabaseSql: (String) -> String = { _ in "" }
     
     public var getSingleUseTransparentAddress: (AccountUUID) async throws -> SingleUseTransparentAddress = { _ in
@@ -100,5 +100,8 @@ public struct SDKSynchronizerClient {
     public var updateTransparentAddressTransactions: (String) async throws -> TransparentAddressCheckResult = { _ in .notFound }
     public var fetchUTXOsByAddress: (String, AccountUUID) async throws -> TransparentAddressCheckResult = { _, _ in .notFound }
     public var enhanceTransactionBy: (String) async throws -> Void
+
+    public var checkWalletSpendability: @Sendable (String, SpendabilityProgressHandler?) async throws -> SpendabilityResult
+    public var getPIRPendingSpends: @Sendable () async throws -> PIRPendingSpends
 }
 

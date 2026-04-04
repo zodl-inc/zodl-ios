@@ -52,7 +52,8 @@ public struct TransactionState: Equatable, Identifiable {
     public var totalReceived: Zatoshi?
 
     public var rawID: Data? = nil
-    
+    public var isPIRDetectedSpend = false
+
     // Swaps
     public var swapToZecAmount: String? = nil
     public var swapStatus = UMSwapId.SwapStatus.pending
@@ -116,6 +117,9 @@ public struct TransactionState: Equatable, Identifiable {
     }
     
     public func title(_ detailScreen: Bool = false) -> String {
+        if isPIRDetectedSpend {
+            return L10n.Transaction.pirDetected
+        }
         if type == .zcash {
             switch status {
             case .failed:
@@ -203,7 +207,7 @@ public struct TransactionState: Equatable, Identifiable {
     }
 
     public var daysAgo: String {
-        guard let timestamp else { return "" }
+        guard let timestamp, !isPIRDetectedSpend else { return "" }
         
         let transactionDate = Date(timeIntervalSince1970: timestamp)
         
@@ -344,6 +348,20 @@ public struct TransactionState: Equatable, Identifiable {
         self.memoCount = 0
         self.isShieldingTransaction = false
         self.isTransparentRecipient = false
+    }
+
+    /// Synthetic placeholder for PIR-detected spends, visible until scanning catches up.
+    public init(pirDetectedSpentValue: Int64) {
+        self.id = "pir-detected-spend"
+        self.status = .paid
+        self.zecAmount = Zatoshi(-pirDetectedSpentValue)
+        self.isPIRDetectedSpend = true
+        self.isSentTransaction = true
+        self.fee = nil
+        self.memoCount = 0
+        self.isShieldingTransaction = false
+        self.isTransparentRecipient = false
+        self.timestamp = nil
     }
 
     public func confirmationsWith(_ latestMinedHeight: BlockHeight?) -> BlockHeight {

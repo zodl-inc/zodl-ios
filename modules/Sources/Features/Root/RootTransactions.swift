@@ -37,7 +37,7 @@ extension Root {
                             .throttle(for: .seconds(0.2), scheduler: mainQueue, latest: true)
                             .map {
                                 if $0.syncStatus == .upToDate {
-                                    return Root.Action.fetchTransactionsForTheSelectedAccount
+                                    return Root.Action.syncReachedUpToDate
                                 }
                                 return Root.Action.noChangeInTransactions
                             }
@@ -49,8 +49,11 @@ extension Root {
             case .noChangeInTransactions:
                 return .none
                 
-            case .foundTransactions:
-                return .send(.fetchTransactionsForTheSelectedAccount)
+            case .foundTransactions, .syncReachedUpToDate:
+                return .merge(
+                    .send(.fetchTransactionsForTheSelectedAccount),
+                    .send(.initialization(.checkSpendabilityPIR))
+                )
                 
             case .minedTransaction:
                 return .send(.fetchTransactionsForTheSelectedAccount)
@@ -60,12 +63,16 @@ extension Root {
                     return .none
                 }
                 return .run { send in
-                    if let transactions = try? await sdkSynchronizer.getAllTransactions(accountUUID) {
-                        await send(.fetchedTransactions(transactions))
+                    async let txTask = sdkSynchronizer.getAllTransactions(accountUUID)
+                    async let pirTask: PIRPendingSpends? = try? await sdkSynchronizer.getPIRPendingSpends()
+
+                    if let transactions = try? await txTask {
+                        let pirPending = await pirTask
+                        await send(.fetchedTransactions(transactions, pirPending))
                     }
                 }
                 
-            case .fetchedTransactions(var transactions):
+            case .fetchedTransactions(var transactions, let pirPendingSpends):
                 let mempoolHeight = sdkSynchronizer.latestState().latestBlockHeight + 1
 
                 // Resolve Swaps
@@ -97,6 +104,15 @@ extension Root {
                             timestamp: TimeInterval(swap.lastUpdated / 1000),
                             zecAmount: swap.amountOutFormatted.localeString ?? swap.amountOutFormatted,
                             swapStatus: swap.swapStatus
+                        )
+                    )
+                }
+
+                // PIR placeholder -- DB-backed, auto-reconciles with scanning
+                if let pirPending = pirPendingSpends, !pirPending.notes.isEmpty {
+                    mixedTransactions.append(
+                        TransactionState(
+                            pirDetectedSpentValue: Int64(pirPending.totalValue)
                         )
                     )
                 }

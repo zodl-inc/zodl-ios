@@ -29,6 +29,8 @@ extension Root {
         case checkRestoreWalletFlag(SyncStatus)
         case checkWalletInitialization
         case checkWalletConfig
+        case checkSpendabilityPIR
+        case checkSpendabilityPIRResult(SpendabilityResult?)
         case initializeSDK(WalletInitMode)
         case initialSetups
         case initializationFailed(ZcashError)
@@ -208,9 +210,30 @@ extension Root {
                 } else {
                     return .merge(
                         stateStreamEffect,
-                        .send(.home(.smartBanner(.evaluatePriority1)))
+                        .send(.home(.smartBanner(.evaluatePriority1))),
+                        .send(.initialization(.checkSpendabilityPIR))
                     )
                 }
+
+            case .initialization(.checkSpendabilityPIR):
+                let pirUrl = SpendabilityPIRConfig.default.serverUrl
+                return .run { send in
+                    do {
+                        let result = try await sdkSynchronizer.checkWalletSpendability(pirUrl, nil)
+                        await send(.initialization(.checkSpendabilityPIRResult(result)))
+                    } catch {
+                        LoggerProxy.event("PIR spendability check failed: \(error)")
+                        await send(.initialization(.checkSpendabilityPIRResult(nil)))
+                    }
+                }
+                .cancellable(id: PIRCheckCancelId, cancelInFlight: true)
+
+            case .initialization(.checkSpendabilityPIRResult(let result)):
+                state.$pirSpendabilityResult.withLock { $0 = result }
+                return .merge(
+                    .send(.fetchTransactionsForTheSelectedAccount),
+                    .send(.home(.walletBalances(.updateBalances)))
+                )
 
             case .initialization(.checkWalletConfig):
                 return .publisher {

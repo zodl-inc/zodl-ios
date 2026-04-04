@@ -2132,6 +2132,10 @@ public enum L10n {
     public static let failedSend = L10n.tr("Localizable", "transaction.failedSend", fallback: "Send failed")
     /// Shielding Failed
     public static let failedShieldedFunds = L10n.tr("Localizable", "transaction.failedShieldedFunds", fallback: "Shielding Failed")
+    /// Spend detected
+    public static let pirDetected = L10n.tr("Localizable", "transaction.pirDetected", fallback: "Spend detected")
+    /// Syncing for details…
+    public static let pirDetectedSubtitle = L10n.tr("Localizable", "transaction.pirDetectedSubtitle", fallback: "Syncing for details…")
     /// Received
     public static let received = L10n.tr("Localizable", "transaction.received", fallback: "Received")
     /// Receiving

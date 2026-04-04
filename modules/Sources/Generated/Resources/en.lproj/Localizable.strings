@@ -297,6 +297,8 @@
 "transaction.failedReceive" = "Receive failed";
 "transaction.shieldingFunds" = "Shielding";
 "transaction.failedShieldedFunds" = "Shielding Failed";
+"transaction.pirDetected" = "Spend detected";
+"transaction.pirDetectedSubtitle" = "Syncing for details…";
 "transaction.saveAddress" = "Save address";
 "transaction.selectText" = "Select text";
 "transaction.shieldedFunds" = "Shielded";

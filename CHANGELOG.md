@@ -6,6 +6,9 @@ directly impact users rather than highlighting other crucial architectural updat
 
 ## [Unreleased]
 
+### Added
+- Detect spent orchard notes early via PIR (Private Information Retrieval) before the scanner catches up. A "Detected spend" placeholder appears in the activity feed and the balance updates immediately.
+
 ## 3.2.0 build 5 (2026-03-09)
 
 ### Changed

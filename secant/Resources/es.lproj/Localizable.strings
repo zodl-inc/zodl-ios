@@ -297,6 +297,8 @@
 "transaction.failedReceive" = "Recepción fallida";
 "transaction.shieldingFunds" = "Protegiendo";
 "transaction.failedShieldedFunds" = "Fondos Protegidos Fallidos";
+"transaction.pirDetected" = "Gasto detectado";
+"transaction.pirDetectedSubtitle" = "Sincronizando detalles…";
 "transaction.saveAddress" = "Guardar dirección";
 "transaction.selectText" = "Seleccionar texto";
 "transaction.shieldedFunds" = "Protegidos";
