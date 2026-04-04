@@ -124,6 +124,7 @@ public struct TransactionsManagerView: View {
                                                             }
                                                         }
                                                     }
+                                                    .disabled(transaction.isPIRDetectedSpend)
                                                     .listRowInsets(EdgeInsets())
                                                 }
                                             }

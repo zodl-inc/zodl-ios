@@ -39,6 +39,9 @@ extension TransactionsCoordFlow {
                 
             case .transactionsManager(.transactionTapped(let txId)):
                 if let index = state.transactions.index(id: txId) {
+                    if state.transactions[index].isPIRDetectedSpend {
+                        return .none
+                    }
                     var transactionDetailsState = TransactionDetails.State.initial
                     transactionDetailsState.transaction = state.transactions[index]
                     state.path.append(.transactionDetails(transactionDetailsState))

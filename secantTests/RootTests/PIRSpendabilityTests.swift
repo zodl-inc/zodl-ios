@@ -16,6 +16,14 @@ import Models
 @MainActor
 class PIRSpendabilityTests: XCTestCase {
 
+    private func stateWithPirEnabled() -> Root.State {
+        var state = Root.State.initial
+        var flags = state.walletConfig.flags
+        flags[.pirSpendability] = true
+        state.walletConfig = WalletConfig(flags: flags)
+        return state
+    }
+
     // MARK: - checkSpendabilityPIR
 
     func testCheckSpendabilityPIR_Success() async throws {
@@ -27,7 +35,7 @@ class PIRSpendabilityTests: XCTestCase {
         )
 
         let store = TestStore(
-            initialState: .initial
+            initialState: stateWithPirEnabled()
         ) {
             Root()
         }
@@ -47,7 +55,7 @@ class PIRSpendabilityTests: XCTestCase {
         struct PIRError: Error {}
 
         let store = TestStore(
-            initialState: .initial
+            initialState: stateWithPirEnabled()
         ) {
             Root()
         }
@@ -59,6 +67,19 @@ class PIRSpendabilityTests: XCTestCase {
         await store.send(.initialization(.checkSpendabilityPIR))
 
         await store.receive(.initialization(.checkSpendabilityPIRResult(nil)))
+    }
+
+    func testCheckSpendabilityPIR_NoOpWhenFlagOff() async throws {
+        let store = TestStore(
+            initialState: .initial
+        ) {
+            Root()
+        }
+        store.exhaustivity = .off
+
+        store.dependencies.sdkSynchronizer = .noOp
+
+        await store.send(.initialization(.checkSpendabilityPIR))
     }
 
     func testCheckSpendabilityPIRResult_TriggersTransactionRefresh() async throws {
@@ -90,7 +111,7 @@ class PIRSpendabilityTests: XCTestCase {
 
     func testFoundTransactions_TriggersPIRCheck() async throws {
         let store = TestStore(
-            initialState: .initial
+            initialState: stateWithPirEnabled()
         ) {
             Root()
         }
@@ -106,7 +127,7 @@ class PIRSpendabilityTests: XCTestCase {
 
     func testSyncReachedUpToDate_TriggersPIRCheck() async throws {
         let store = TestStore(
-            initialState: .initial
+            initialState: stateWithPirEnabled()
         ) {
             Root()
         }
@@ -120,6 +141,21 @@ class PIRSpendabilityTests: XCTestCase {
         await store.receive(.initialization(.checkSpendabilityPIR))
     }
 
+    func testFoundTransactions_DoesNotTriggerPIRCheckWhenFlagOff() async throws {
+        let store = TestStore(
+            initialState: .initial
+        ) {
+            Root()
+        }
+        store.exhaustivity = .off
+
+        store.dependencies.sdkSynchronizer = .noOp
+
+        await store.send(.foundTransactions([]))
+
+        await store.receive(.fetchTransactionsForTheSelectedAccount)
+    }
+
     // MARK: - fetchedTransactions with PIR placeholder
 
     func testFetchedTransactions_WithPIRPendingSpends_IncludesPlaceholder() async throws {
@@ -129,7 +165,7 @@ class PIRSpendabilityTests: XCTestCase {
         )
 
         let store = TestStore(
-            initialState: .initial
+            initialState: stateWithPirEnabled()
         ) {
             Root()
         }

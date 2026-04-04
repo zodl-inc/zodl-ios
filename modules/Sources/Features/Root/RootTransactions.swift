@@ -50,10 +50,13 @@ extension Root {
                 return .none
                 
             case .foundTransactions, .syncReachedUpToDate:
-                return .merge(
-                    .send(.fetchTransactionsForTheSelectedAccount),
-                    .send(.initialization(.checkSpendabilityPIR))
-                )
+                if state.walletConfig.isEnabled(.pirSpendability) {
+                    return .merge(
+                        .send(.fetchTransactionsForTheSelectedAccount),
+                        .send(.initialization(.checkSpendabilityPIR))
+                    )
+                }
+                return .send(.fetchTransactionsForTheSelectedAccount)
                 
             case .minedTransaction:
                 return .send(.fetchTransactionsForTheSelectedAccount)
@@ -62,12 +65,17 @@ extension Root {
                 guard let accountUUID = state.selectedWalletAccount?.id else {
                     return .none
                 }
+                let pirEnabled = state.walletConfig.isEnabled(.pirSpendability)
                 return .run { send in
                     async let txTask = sdkSynchronizer.getAllTransactions(accountUUID)
-                    async let pirTask: PIRPendingSpends? = try? await sdkSynchronizer.getPIRPendingSpends()
+                    let pirPending: PIRPendingSpends?
+                    if pirEnabled {
+                        pirPending = try? await sdkSynchronizer.getPIRPendingSpends()
+                    } else {
+                        pirPending = nil
+                    }
 
                     if let transactions = try? await txTask {
-                        let pirPending = await pirTask
                         await send(.fetchedTransactions(transactions, pirPending))
                     }
                 }
@@ -109,7 +117,8 @@ extension Root {
                 }
 
                 // PIR placeholder -- DB-backed, auto-reconciles with scanning
-                if let pirPending = pirPendingSpends, !pirPending.notes.isEmpty {
+                if state.walletConfig.isEnabled(.pirSpendability),
+                   let pirPending = pirPendingSpends, !pirPending.notes.isEmpty {
                     mixedTransactions.append(
                         TransactionState(
                             pirDetectedSpentValue: Int64(pirPending.totalValue)

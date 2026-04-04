@@ -207,15 +207,23 @@ extension Root {
                 .cancellable(id: CancelStateId, cancelInFlight: true)
                 if state.bgTask != nil {
                     return stateStreamEffect
-                } else {
+                } else if state.walletConfig.isEnabled(.pirSpendability) {
                     return .merge(
                         stateStreamEffect,
                         .send(.home(.smartBanner(.evaluatePriority1))),
                         .send(.initialization(.checkSpendabilityPIR))
                     )
+                } else {
+                    return .merge(
+                        stateStreamEffect,
+                        .send(.home(.smartBanner(.evaluatePriority1)))
+                    )
                 }
 
             case .initialization(.checkSpendabilityPIR):
+                guard state.walletConfig.isEnabled(.pirSpendability) else {
+                    return .none
+                }
                 let pirUrl = SpendabilityPIRConfig.default.serverUrl
                 return .run { send in
                     do {
