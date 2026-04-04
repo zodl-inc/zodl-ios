@@ -127,6 +127,7 @@ public struct TransactionRowView: View {
                         ProgressView()
                             .scaleEffect(0.7)
                             .frame(width: 14, height: 14)
+                            .padding(.trailing, 6)
                     } else {
                         Text("- ")
                     }

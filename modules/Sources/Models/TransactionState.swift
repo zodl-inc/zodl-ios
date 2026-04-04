@@ -361,7 +361,7 @@ public struct TransactionState: Equatable, Identifiable {
         self.memoCount = 0
         self.isShieldingTransaction = false
         self.isTransparentRecipient = false
-        self.timestamp = nil
+        self.timestamp = Date().timeIntervalSince1970
     }
 
     public func confirmationsWith(_ latestMinedHeight: BlockHeight?) -> BlockHeight {
