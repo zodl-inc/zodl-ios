@@ -23,63 +23,6 @@ extension HTTPURLResponse {
     }
 }
 
-extension SDKSynchronizerClient: TestDependencyKey {
-    static let testValue = Self(
-        stateStream: unimplemented("\(Self.self).stateStream", placeholder: Empty().eraseToAnyPublisher()),
-        eventStream: unimplemented("\(Self.self).eventStream", placeholder: Empty().eraseToAnyPublisher()),
-        exchangeRateUSDStream: unimplemented("\(Self.self).exchangeRateUSDStream", placeholder: Empty().eraseToAnyPublisher()),
-        latestState: unimplemented("\(Self.self).latestState", placeholder: .zero),
-        prepareWith: unimplemented("\(Self.self).prepareWith"),
-        start: unimplemented("\(Self.self).start"),
-        stop: unimplemented("\(Self.self).stop", placeholder: {}()),
-        isSyncing: unimplemented("\(Self.self).isSyncing", placeholder: false),
-        isInitialized: unimplemented("\(Self.self).isInitialized", placeholder: false),
-        importAccount: unimplemented("\(Self.self).importAccount", placeholder: nil),
-        deleteAccount: unimplemented("\(Self.self).deleteAccount"),
-        rescanFrom: unimplemented("\(Self.self).rescanFrom"),
-        rewind: unimplemented("\(Self.self).rewind", placeholder: Fail(error: "Error").eraseToAnyPublisher()),
-        getAllTransactions: unimplemented("\(Self.self).getAllTransactions", placeholder: []),
-        transactionStatesFromZcashTransactions: unimplemented("\(Self.self).transactionStatesFromZcashTransactions", placeholder: []),
-        getMemos: unimplemented("\(Self.self).getMemos", placeholder: []),
-        txIdExists: unimplemented("\(Self.self).txIdExists", placeholder: false),
-        getUnifiedAddress: unimplemented("\(Self.self).getUnifiedAddress", placeholder: nil),
-        getTransparentAddress: unimplemented("\(Self.self).getTransparentAddress", placeholder: nil),
-        getSaplingAddress: unimplemented("\(Self.self).getSaplingAddress", placeholder: nil),
-        getAccountsBalances: unimplemented("\(Self.self).getAccountsBalances", placeholder: [:]),
-        wipe: unimplemented("\(Self.self).wipe", placeholder: nil),
-        switchToEndpoint: unimplemented("\(Self.self).switchToEndpoint"),
-        proposeTransfer: unimplemented("\(Self.self).proposeTransfer", placeholder: .testOnlyFakeProposal(totalFee: 0)),
-        createProposedTransactions: unimplemented("\(Self.self).createProposedTransactions", placeholder: .success(txIds: [])),
-        proposeShielding: unimplemented("\(Self.self).proposeShielding", placeholder: nil),
-        isSeedRelevantToAnyDerivedAccount: unimplemented("\(Self.self).isSeedRelevantToAnyDerivedAccount"),
-        refreshExchangeRateUSD: unimplemented("\(Self.self).refreshExchangeRateUSD", placeholder: {}()),
-        evaluateBestOf: { _, _, _, _, _, _ in fatalError("evaluateBestOf not implemented") },
-        walletAccounts: unimplemented("\(Self.self).walletAccounts", placeholder: []),
-        estimateBirthdayHeight: unimplemented("\(Self.self).estimateBirthdayHeight", placeholder: BlockHeight(0)),
-        estimateTimestamp: unimplemented("\(Self.self).estimateTimestamp", placeholder: nil),
-        createPCZTFromProposal: unimplemented("\(Self.self).createPCZTFromProposal", placeholder: Pczt()),
-        addProofsToPCZT: unimplemented("\(Self.self).addProofsToPCZT", placeholder: Pczt()),
-        createTransactionFromPCZT: unimplemented("\(Self.self).createTransactionFromPCZT", placeholder: .success(txIds: [])),
-        urEncoderForPCZT: unimplemented("\(Self.self).urEncoderForPCZT", placeholder: nil),
-        redactPCZTForSigner: unimplemented("\(Self.self).redactPCZTForSigner", placeholder: Pczt()),
-        fetchTxidsWithMemoContaining: unimplemented("\(Self.self).fetchTxidsWithMemoContaining", placeholder: []),
-        getCustomUnifiedAddress: unimplemented("\(Self.self).getCustomUnifiedAddress", placeholder: nil),
-        torEnabled: unimplemented("\(Self.self).torEnabled"),
-        exchangeRateEnabled: unimplemented("\(Self.self).exchangeRateEnabled"),
-        isTorSuccessfullyInitialized: unimplemented("\(Self.self).isTorSuccessfullyInitialized", placeholder: nil),
-        httpRequestOverTor: unimplemented("\(Self.self).httpRequestOverTor", placeholder: (Data(), HTTPURLResponse.mockResponse)),
-        debugDatabaseSql: unimplemented("\(Self.self).debugDatabaseSql", placeholder: ""),
-        getSingleUseTransparentAddress: unimplemented(
-            "\(Self.self).getSingleUseTransparentAddress",
-            placeholder: SingleUseTransparentAddress(address: "", gapPosition: 0, gapLimit: 0)
-        ),
-        checkSingleUseTransparentAddresses: unimplemented("\(Self.self).checkSingleUseTransparentAddresses", placeholder: .notFound),
-        updateTransparentAddressTransactions: unimplemented("\(Self.self).updateTransparentAddressTransactions", placeholder: .notFound),
-        fetchUTXOsByAddress: unimplemented("\(Self.self).fetchUTXOsByAddress", placeholder: .notFound),
-        enhanceTransactionBy: unimplemented("\(Self.self).enhanceTransactionBy")
-    )
-}
-
 extension SDKSynchronizerClient {
     static let noOp = Self(
         stateStream: { Empty().eraseToAnyPublisher() },
@@ -140,21 +83,21 @@ extension SDKSynchronizerClient {
 
 extension SDKSynchronizerClient {
     static func mocked(
-        stateStream: @escaping () -> AnyPublisher<SynchronizerState, Never> = { Just(.zero).eraseToAnyPublisher() },
-        eventStream: @escaping () -> AnyPublisher<SynchronizerEvent, Never> = { Empty().eraseToAnyPublisher() },
-        exchangeRateUSDStream: @escaping () -> AnyPublisher<FiatCurrencyResult?, Never> = { Empty().eraseToAnyPublisher() },
-        latestState: @escaping () -> SynchronizerState = { .zero },
-        latestScannedHeight: @escaping () -> BlockHeight = { 0 },
-        prepareWith: @escaping ([UInt8], BlockHeight, WalletInitMode, String, String?) throws -> Void = { _, _, _, _, _ in },
-        start: @escaping (_ retry: Bool) throws -> Void = { _ in },
-        stop: @escaping () -> Void = { },
-        isSyncing: @escaping () -> Bool = { false },
-        isInitialized: @escaping () -> Bool = { false },
-    importAccount: @escaping (String, [UInt8]?, Zip32AccountIndex?, AccountPurpose, String, String?, BlockHeight?) async throws -> AccountUUID? = { _, _, _, _, _, _, _ in nil },
-        deleteAccount: @escaping (AccountUUID) async throws -> Void = { _ in },
-        rescanFrom: @escaping (BlockHeight) async throws -> Void = { _ in },
-        rewind: @escaping (RewindPolicy) -> AnyPublisher<Void, Error> = { _ in return Empty<Void, Error>().eraseToAnyPublisher() },
-        getAllTransactions: @escaping (AccountUUID?) -> IdentifiedArrayOf<TransactionState> = { _ in
+        stateStream: @escaping @Sendable () -> AnyPublisher<SynchronizerState, Never> = { Just(.zero).eraseToAnyPublisher() },
+        eventStream: @escaping @Sendable () -> AnyPublisher<SynchronizerEvent, Never> = { Empty().eraseToAnyPublisher() },
+        exchangeRateUSDStream: @escaping @Sendable () -> AnyPublisher<FiatCurrencyResult?, Never> = { Empty().eraseToAnyPublisher() },
+        latestState: @escaping @Sendable () -> SynchronizerState = { .zero },
+        latestScannedHeight: @escaping @Sendable () -> BlockHeight = { 0 },
+        prepareWith: @escaping @Sendable ([UInt8], BlockHeight, WalletInitMode, String, String?) throws -> Void = { _, _, _, _, _ in },
+        start: @escaping @Sendable (_ retry: Bool) throws -> Void = { _ in },
+        stop: @escaping @Sendable () -> Void = { },
+        isSyncing: @escaping @Sendable () -> Bool = { false },
+        isInitialized: @escaping @Sendable () -> Bool = { false },
+    importAccount: @escaping @Sendable (String, [UInt8]?, Zip32AccountIndex?, AccountPurpose, String, String?, BlockHeight?) async throws -> AccountUUID? = { _, _, _, _, _, _, _ in nil },
+        deleteAccount: @escaping @Sendable (AccountUUID) async throws -> Void = { _ in },
+        rescanFrom: @escaping @Sendable (BlockHeight) async throws -> Void = { _ in },
+        rewind: @escaping @Sendable (RewindPolicy) -> AnyPublisher<Void, Error> = { _ in return Empty<Void, Error>().eraseToAnyPublisher() },
+        getAllTransactions: @escaping @Sendable (AccountUUID?) -> IdentifiedArrayOf<TransactionState> = { _ in
             let mockedCleared: [TransactionStateMockHelper] = [
                 TransactionStateMockHelper(date: 1651039202, amount: Zatoshi(1), status: .paid, uuid: "aa11"),
                 TransactionStateMockHelper(date: 1651039101, amount: Zatoshi(2), uuid: "bb22"),
@@ -205,10 +148,10 @@ extension SDKSynchronizerClient {
 
             return IdentifiedArrayOf<TransactionState>(uniqueElements: clearedTransactions)
         },
-        transactionStatesFromZcashTransactions: @escaping (AccountUUID?, [ZcashTransaction.Overview]) async throws -> IdentifiedArrayOf<TransactionState> = { _, _ in IdentifiedArrayOf<TransactionState>(uniqueElements: []) },
-        getMemos: @escaping (_ rawID: Data) -> [Memo] = { _ in [] },
-        txIdExists: @escaping (String?) -> Bool = { _ in false },
-        getUnifiedAddress: @escaping (_ account: AccountUUID) -> UnifiedAddress? = { _ in
+        transactionStatesFromZcashTransactions: @escaping @Sendable (AccountUUID?, [ZcashTransaction.Overview]) async throws -> IdentifiedArrayOf<TransactionState> = { _, _ in IdentifiedArrayOf<TransactionState>(uniqueElements: []) },
+        getMemos: @escaping @Sendable (_ rawID: Data) -> [Memo] = { _ in [] },
+        txIdExists: @escaping @Sendable (String?) -> Bool = { _ in false },
+        getUnifiedAddress: @escaping @Sendable (_ account: AccountUUID) -> UnifiedAddress? = { _ in
             // swiftlint:disable force_try
             try! UnifiedAddress(
                 encoding: """
@@ -218,48 +161,45 @@ extension SDKSynchronizerClient {
                 network: .testnet
             )
         },
-        getTransparentAddress: @escaping (_ account: AccountUUID) -> TransparentAddress? = { _ in return nil },
-        getSaplingAddress: @escaping (_ account: AccountUUID) async -> SaplingAddress? = { _ in
+        getTransparentAddress: @escaping @Sendable (_ account: AccountUUID) -> TransparentAddress? = { _ in return nil },
+        getSaplingAddress: @escaping @Sendable (_ account: AccountUUID) async -> SaplingAddress? = { _ in
             // swiftlint:disable:next force_try
             try! SaplingAddress(
                 encoding: "ztestsapling1edm52k336nk70gxqxedd89slrrf5xwnnp5rt6gqnk0tgw4mynv6fcx42ym6x27yac5amvfvwypz",
                 network: .testnet
             )
         },
-        getAccountsBalances: @escaping () async -> [AccountUUID: AccountBalance] = { [:] },
-        wipe: @escaping () -> AnyPublisher<Void, Error>? = { Fail(error: "Error").eraseToAnyPublisher() },
-        switchToEndpoint: @escaping (LightWalletEndpoint) async throws -> Void = { _ in },
-        proposeTransfer:
-        @escaping (AccountUUID, Recipient, Zatoshi, Memo?) async throws -> Proposal = { _, _, _, _ in .testOnlyFakeProposal(totalFee: 0) },
-        createProposedTransactions:
-        @escaping (Proposal, UnifiedSpendingKey) async throws -> CreateProposedTransactionsResult = { _, _ in .success(txIds: []) },
-        proposeShielding:
-        @escaping (AccountUUID, Zatoshi, Memo, TransparentAddress?) async throws -> Proposal? = { _, _, _, _ in nil },
-        isSeedRelevantToAnyDerivedAccount: @escaping ([UInt8]) async throws -> Bool = { _ in false },
-        refreshExchangeRateUSD: @escaping () -> Void = { },
-        evaluateBestOf: @escaping ([LightWalletEndpoint], Double, Double, UInt64, Int, NetworkType) async -> [LightWalletEndpoint] = { _, _, _, _, _, _ in [] },
-        walletAccounts: @escaping () async throws -> [WalletAccount] = { [] },
-        estimateBirthdayHeight: @escaping (Date) -> BlockHeight = { _ in BlockHeight(0) },
-        estimateTimestamp: @escaping (BlockHeight) -> TimeInterval? = { _ in nil },
-        createPCZTFromProposal: @escaping (AccountUUID, Proposal) async throws -> Pczt = { _, _ in Pczt() },
-        addProofsToPCZT: @escaping (Data) async throws -> Pczt = { _ in Pczt() },
-        createTransactionFromPCZT: @escaping (Pczt, Pczt) async throws -> CreateProposedTransactionsResult = { _, _ in .success(txIds: []) },
-        urEncoderForPCZT: @escaping (Pczt) -> UREncoder? = { _ in nil },
-        redactPCZTForSigner: @escaping (Pczt) async throws -> Pczt = { _ in Pczt() },
-        fetchTxidsWithMemoContaining: @escaping (String) async throws -> [Data] = { _ in [] },
-        getCustomUnifiedAddress: @escaping (AccountUUID, Set<ReceiverType>) async throws -> UnifiedAddress? = { _, _ in nil },
-        torEnabled: @escaping (Bool) async throws -> Void = { _ in },
-        exchangeRateEnabled: @escaping (Bool) async throws -> Void = { _ in },
-        isTorSuccessfullyInitialized: @escaping () async -> Bool? = { nil },
-        httpRequestOverTor: @escaping (URLRequest) async throws -> (Data, HTTPURLResponse) = { _ in (Data(), HTTPURLResponse.mockResponse) },
-        debugDatabaseSql: @escaping (String) -> String = { _ in "" },
-        getSingleUseTransparentAddress: @escaping (AccountUUID) async throws -> SingleUseTransparentAddress = { _ in
+        getAccountsBalances: @escaping @Sendable () async -> [AccountUUID: AccountBalance] = { [:] },
+        wipe: @escaping @Sendable () -> AnyPublisher<Void, Error>? = { Fail(error: "Error").eraseToAnyPublisher() },
+        switchToEndpoint: @escaping @Sendable (LightWalletEndpoint) async throws -> Void = { _ in },
+        proposeTransfer: @escaping @Sendable (AccountUUID, Recipient, Zatoshi, Memo?) async throws -> Proposal = { _, _, _, _ in .testOnlyFakeProposal(totalFee: 0) },
+        createProposedTransactions: @escaping @Sendable (Proposal, UnifiedSpendingKey) async throws -> CreateProposedTransactionsResult = { _, _ in .success(txIds: []) },
+        proposeShielding: @escaping @Sendable (AccountUUID, Zatoshi, Memo, TransparentAddress?) async throws -> Proposal? = { _, _, _, _ in nil },
+        isSeedRelevantToAnyDerivedAccount: @escaping @Sendable ([UInt8]) async throws -> Bool = { _ in false },
+        refreshExchangeRateUSD: @escaping @Sendable () -> Void = { },
+        evaluateBestOf: @escaping @Sendable ([LightWalletEndpoint], Double, Double, UInt64, Int, NetworkType) async -> [LightWalletEndpoint] = { _, _, _, _, _, _ in [] },
+        walletAccounts: @escaping @Sendable () async throws -> [WalletAccount] = { [] },
+        estimateBirthdayHeight: @escaping @Sendable (Date) -> BlockHeight = { _ in BlockHeight(0) },
+        estimateTimestamp: @escaping @Sendable (BlockHeight) -> TimeInterval? = { _ in nil },
+        createPCZTFromProposal: @escaping @Sendable (AccountUUID, Proposal) async throws -> Pczt = { _, _ in Pczt() },
+        addProofsToPCZT: @escaping @Sendable (Data) async throws -> Pczt = { _ in Pczt() },
+        createTransactionFromPCZT: @escaping @Sendable (Pczt, Pczt) async throws -> CreateProposedTransactionsResult = { _, _ in .success(txIds: []) },
+        urEncoderForPCZT: @escaping @Sendable (Pczt) -> UREncoder? = { _ in nil },
+        redactPCZTForSigner: @escaping @Sendable (Pczt) async throws -> Pczt = { _ in Pczt() },
+        fetchTxidsWithMemoContaining: @escaping @Sendable (String) async throws -> [Data] = { _ in [] },
+        getCustomUnifiedAddress: @escaping @Sendable (AccountUUID, Set<ReceiverType>) async throws -> UnifiedAddress? = { _, _ in nil },
+        torEnabled: @escaping @Sendable (Bool) async throws -> Void = { _ in },
+        exchangeRateEnabled: @escaping @Sendable (Bool) async throws -> Void = { _ in },
+        isTorSuccessfullyInitialized: @escaping @Sendable () async -> Bool? = { nil },
+        httpRequestOverTor: @escaping @Sendable (URLRequest) async throws -> (Data, HTTPURLResponse) = { _ in (Data(), HTTPURLResponse.mockResponse) },
+        debugDatabaseSql: @escaping @Sendable (String) -> String = { _ in "" },
+        getSingleUseTransparentAddress: @escaping @Sendable (AccountUUID) async throws -> SingleUseTransparentAddress = { _ in
             SingleUseTransparentAddress(address: "", gapPosition: 0, gapLimit: 0)
         },
-        checkSingleUseTransparentAddresses: @escaping (AccountUUID) async throws -> TransparentAddressCheckResult = { _ in .notFound },
-        updateTransparentAddressTransactions: @escaping (String) async throws -> TransparentAddressCheckResult = { _ in .notFound },
-        fetchUTXOsByAddress: @escaping (String, AccountUUID) async throws -> TransparentAddressCheckResult = { _, _ in .notFound },
-        enhanceTransactionBy: @escaping (String) async throws -> Void = { _ in }
+        checkSingleUseTransparentAddresses: @escaping @Sendable (AccountUUID) async throws -> TransparentAddressCheckResult = { _ in .notFound },
+        updateTransparentAddressTransactions: @escaping @Sendable (String) async throws -> TransparentAddressCheckResult = { _ in .notFound },
+        fetchUTXOsByAddress: @escaping @Sendable (String, AccountUUID) async throws -> TransparentAddressCheckResult = { _, _ in .notFound },
+        enhanceTransactionBy: @escaping @Sendable (String) async throws -> Void = { _ in }
     ) -> SDKSynchronizerClient {
         SDKSynchronizerClient(
             stateStream: stateStream,

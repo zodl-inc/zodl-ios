@@ -27,82 +27,82 @@ struct SDKSynchronizerClient {
         case success(txIds: [String])
     }
     
-    let stateStream: () -> AnyPublisher<SynchronizerState, Never>
-    let eventStream: () -> AnyPublisher<SynchronizerEvent, Never>
-    let exchangeRateUSDStream: () -> AnyPublisher<FiatCurrencyResult?, Never>
-    let latestState: () -> SynchronizerState
-    
-    let prepareWith: ([UInt8], BlockHeight, WalletInitMode, String, String?) async throws -> Void
-    let start: (_ retry: Bool) async throws -> Void
-    let stop: () -> Void
-    let isSyncing: () -> Bool
-    let isInitialized: () -> Bool
+    var stateStream: @Sendable () -> AnyPublisher<SynchronizerState, Never> = { Empty().eraseToAnyPublisher() }
+    var eventStream: @Sendable () -> AnyPublisher<SynchronizerEvent, Never> = { Empty().eraseToAnyPublisher() }
+    var exchangeRateUSDStream: @Sendable () -> AnyPublisher<FiatCurrencyResult?, Never> = { Empty().eraseToAnyPublisher() }
+    var latestState: @Sendable () -> SynchronizerState = { .zero }
 
-    let importAccount: (String, [UInt8]?, Zip32AccountIndex?, AccountPurpose, String, String?, BlockHeight?) async throws -> AccountUUID?
-    var deleteAccount: (AccountUUID) async throws -> Void
+    var prepareWith: @Sendable ([UInt8], BlockHeight, WalletInitMode, String, String?) async throws -> Void
+    var start: @Sendable (_ retry: Bool) async throws -> Void
+    var stop: @Sendable () -> Void
+    var isSyncing: @Sendable () -> Bool = { false }
+    var isInitialized: @Sendable () -> Bool = { false }
 
-    let rescanFrom: (BlockHeight) async throws -> Void
+    var importAccount: @Sendable (String, [UInt8]?, Zip32AccountIndex?, AccountPurpose, String, String?, BlockHeight?) async throws -> AccountUUID?
+    var deleteAccount: @Sendable (AccountUUID) async throws -> Void
 
-    let rewind: (RewindPolicy) -> AnyPublisher<Void, Error>
-    
-    var getAllTransactions: (AccountUUID?) async throws -> IdentifiedArrayOf<TransactionState>
-    var transactionStatesFromZcashTransactions: (AccountUUID?, [ZcashTransaction.Overview]) async throws -> IdentifiedArrayOf<TransactionState>
-    var getMemos: (Data) async throws -> [Memo]
-    var txIdExists: (String?) async throws -> Bool
-    
-    let getUnifiedAddress: (_ account: AccountUUID) async throws -> UnifiedAddress?
-    let getTransparentAddress: (_ account: AccountUUID) async throws -> TransparentAddress?
-    let getSaplingAddress: (_ account: AccountUUID) async throws -> SaplingAddress?
-    
-    let getAccountsBalances: () async throws -> [AccountUUID: AccountBalance]
-    
-    var wipe: () -> AnyPublisher<Void, Error>?
-    
-    var switchToEndpoint: (LightWalletEndpoint) async throws -> Void
-    
+    var rescanFrom: @Sendable (BlockHeight) async throws -> Void
+
+    var rewind: @Sendable (RewindPolicy) -> AnyPublisher<Void, Error> = { _ in Empty().eraseToAnyPublisher() }
+
+    var getAllTransactions: @Sendable (AccountUUID?) async throws -> IdentifiedArrayOf<TransactionState>
+    var transactionStatesFromZcashTransactions: @Sendable (AccountUUID?, [ZcashTransaction.Overview]) async throws -> IdentifiedArrayOf<TransactionState>
+    var getMemos: @Sendable (Data) async throws -> [Memo]
+    var txIdExists: @Sendable (String?) async throws -> Bool
+
+    var getUnifiedAddress: @Sendable (_ account: AccountUUID) async throws -> UnifiedAddress?
+    var getTransparentAddress: @Sendable (_ account: AccountUUID) async throws -> TransparentAddress?
+    var getSaplingAddress: @Sendable (_ account: AccountUUID) async throws -> SaplingAddress?
+
+    var getAccountsBalances: @Sendable () async throws -> [AccountUUID: AccountBalance]
+
+    var wipe: @Sendable () -> AnyPublisher<Void, Error>?
+
+    var switchToEndpoint: @Sendable (LightWalletEndpoint) async throws -> Void
+
     // Proposals
-    var proposeTransfer: (AccountUUID, Recipient, Zatoshi, Memo?) async throws -> Proposal
-    var createProposedTransactions: (Proposal, UnifiedSpendingKey) async throws -> CreateProposedTransactionsResult
-    var proposeShielding: (AccountUUID, Zatoshi, Memo, TransparentAddress?) async throws -> Proposal?
-    
-    var isSeedRelevantToAnyDerivedAccount: ([UInt8]) async throws -> Bool
-    
-    var refreshExchangeRateUSD: () -> Void
-    
-    var evaluateBestOf: ([LightWalletEndpoint], Double, Double, UInt64, Int, NetworkType) async -> [LightWalletEndpoint] = { _,_,_,_,_,_ in [] }
-    
-    var walletAccounts: () async throws -> [WalletAccount] = { [] }
-    
-    var estimateBirthdayHeight: (Date) -> BlockHeight = { _ in BlockHeight(0) }
-    var estimateTimestamp: (BlockHeight) -> TimeInterval? = { _ in nil }
+    var proposeTransfer: @Sendable (AccountUUID, Recipient, Zatoshi, Memo?) async throws -> Proposal
+    var createProposedTransactions: @Sendable (Proposal, UnifiedSpendingKey) async throws -> CreateProposedTransactionsResult
+    var proposeShielding: @Sendable (AccountUUID, Zatoshi, Memo, TransparentAddress?) async throws -> Proposal?
+
+    var isSeedRelevantToAnyDerivedAccount: @Sendable ([UInt8]) async throws -> Bool
+
+    var refreshExchangeRateUSD: @Sendable () -> Void
+
+    var evaluateBestOf: @Sendable ([LightWalletEndpoint], Double, Double, UInt64, Int, NetworkType) async -> [LightWalletEndpoint] = { _,_,_,_,_,_ in [] }
+
+    var walletAccounts: @Sendable () async throws -> [WalletAccount] = { [] }
+
+    var estimateBirthdayHeight: @Sendable (Date) -> BlockHeight = { _ in BlockHeight(0) }
+    var estimateTimestamp: @Sendable (BlockHeight) -> TimeInterval? = { _ in nil }
 
     // PCZT
-    var createPCZTFromProposal: (AccountUUID, Proposal) async throws -> Pczt
-    var addProofsToPCZT: (Pczt) async throws -> Pczt
-    var createTransactionFromPCZT: (Pczt, Pczt) async throws -> CreateProposedTransactionsResult
-    var urEncoderForPCZT: (Pczt) -> UREncoder?
-    var redactPCZTForSigner: (Pczt) async throws  -> Pczt
-    
+    var createPCZTFromProposal: @Sendable (AccountUUID, Proposal) async throws -> Pczt
+    var addProofsToPCZT: @Sendable (Pczt) async throws -> Pczt
+    var createTransactionFromPCZT: @Sendable (Pczt, Pczt) async throws -> CreateProposedTransactionsResult
+    var urEncoderForPCZT: @Sendable (Pczt) -> UREncoder?
+    var redactPCZTForSigner: @Sendable (Pczt) async throws -> Pczt
+
     // Search
-    var fetchTxidsWithMemoContaining: (String) async throws -> [Data]
-    
+    var fetchTxidsWithMemoContaining: @Sendable (String) async throws -> [Data]
+
     // UA with custom receivers
-    var getCustomUnifiedAddress: (AccountUUID, Set<ReceiverType>) async throws -> UnifiedAddress?
-    
+    var getCustomUnifiedAddress: @Sendable (AccountUUID, Set<ReceiverType>) async throws -> UnifiedAddress?
+
     // Tor
-    var torEnabled: (Bool) async throws -> Void
-    var exchangeRateEnabled: (Bool) async throws -> Void
-    var isTorSuccessfullyInitialized: () async -> Bool?
-    var httpRequestOverTor: (URLRequest) async throws -> (Data, HTTPURLResponse)
-    
-    var debugDatabaseSql: (String) -> String = { _ in "" }
-    
-    var getSingleUseTransparentAddress: (AccountUUID) async throws -> SingleUseTransparentAddress = { _ in
+    var torEnabled: @Sendable (Bool) async throws -> Void
+    var exchangeRateEnabled: @Sendable (Bool) async throws -> Void
+    var isTorSuccessfullyInitialized: @Sendable () async -> Bool?
+    var httpRequestOverTor: @Sendable (URLRequest) async throws -> (Data, HTTPURLResponse)
+
+    var debugDatabaseSql: @Sendable (String) -> String = { _ in "" }
+
+    var getSingleUseTransparentAddress: @Sendable (AccountUUID) async throws -> SingleUseTransparentAddress = { _ in
         SingleUseTransparentAddress(address: "", gapPosition: 0, gapLimit: 0)
     }
-    var checkSingleUseTransparentAddresses: (AccountUUID) async throws -> TransparentAddressCheckResult = { _ in .notFound }
-    var updateTransparentAddressTransactions: (String) async throws -> TransparentAddressCheckResult = { _ in .notFound }
-    var fetchUTXOsByAddress: (String, AccountUUID) async throws -> TransparentAddressCheckResult = { _, _ in .notFound }
-    var enhanceTransactionBy: (String) async throws -> Void
+    var checkSingleUseTransparentAddresses: @Sendable (AccountUUID) async throws -> TransparentAddressCheckResult = { _ in .notFound }
+    var updateTransparentAddressTransactions: @Sendable (String) async throws -> TransparentAddressCheckResult = { _ in .notFound }
+    var fetchUTXOsByAddress: @Sendable (String, AccountUUID) async throws -> TransparentAddressCheckResult = { _, _ in .notFound }
+    var enhanceTransactionBy: @Sendable (String) async throws -> Void
 }
 
