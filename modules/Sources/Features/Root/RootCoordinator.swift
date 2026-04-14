@@ -106,7 +106,8 @@ extension Root {
                 state.path = .settings
                 return .none
                 
-            case .home(.receiveTapped):
+            case .home(.receiveTapped),
+                .destination(.deeplinkReceive):
                 state.receiveState = .initial
                 state.path = .receive
                 return .none

@@ -6,6 +6,9 @@ directly impact users rather than highlighting other crucial architectural updat
 
 ## [Unreleased]
 
+### Added
+- Deep link support for the Receive screen via `zcash:///home/receive`.
+
 ## 3.2.0 build 5 (2026-03-09)
 
 ### Changed

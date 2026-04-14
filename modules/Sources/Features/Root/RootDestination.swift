@@ -44,6 +44,7 @@ extension Root {
     public enum DestinationAction {
         case deeplink(URL)
         case deeplinkHome
+        case deeplinkReceive
         case deeplinkSend(Zatoshi, String, String)
         case deeplinkFailed(URL, ZcashError)
         case updateDestination(Root.DestinationState.Destination)
@@ -71,6 +72,9 @@ extension Root {
 
             case .destination(.deeplinkHome):
                 return .none
+
+            case .destination(.deeplinkReceive):
+                return .send(.destination(.updateDestination(.home)))
 
             case .destination(.deeplinkSend):
                 return .none
@@ -156,6 +160,8 @@ private extension Root {
         switch deeplink {
         case .home:
             return .destination(.deeplinkHome)
+        case .receive:
+            return .destination(.deeplinkReceive)
         case let .send(amount, address, memo):
             return .destination(.deeplinkSend(Zatoshi(Int64(amount)), address, memo))
         }
