@@ -8,6 +8,7 @@
 import ComposableArchitecture
 import Combine
 
+import Models
 import ZcashLightClientKit
 
 extension DependencyValues {
@@ -32,4 +33,5 @@ public struct ExchangeRateClient {
 
     public let exchangeRateEventStream: () -> AnyPublisher<EchangeRateEvent, Never>
     public var refreshExchangeRateUSD: () -> Void
+    public var selectedCurrency: () -> CurrencyISO4217 = { .usd }
 }

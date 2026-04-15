@@ -21,7 +21,7 @@ import Models
 
 class ExchangeRateProvider {
     enum Constants {
-        static let cmcRateURL = "https://pro-api.coinmarketcap.com/v1/cryptocurrency/quotes/latest?symbol=ZEC&convert=USD"
+        static let cmcRateBaseURL = "https://pro-api.coinmarketcap.com/v1/cryptocurrency/quotes/latest?symbol=ZEC&convert="
         static let zecKey = "ZEC"
     }
     
@@ -32,18 +32,26 @@ class ExchangeRateProvider {
     var staleTimer: Timer? = nil
     var isStale = false
     var nilValuesCounter = 0
+    var cachedCurrency: CurrencyISO4217 = .usd
 
     init() {
         if !_XCTIsTesting {
             @Dependency(\.sdkSynchronizer) var sdkSynchronizer
-            
+
             cancellable = sdkSynchronizer.exchangeRateUSDStream().sink { [weak self] result in
                 self?.resolveResult(result)
             }
         }
     }
+
+    func selectedCurrency() -> CurrencyISO4217 {
+        @Dependency(\.userStoredPreferences) var userStoredPreferences
+        let currency = userStoredPreferences.exchangeRate()?.currency ?? .usd
+        cachedCurrency = currency
+        return currency
+    }
     
-    func getCMCRate() async throws -> Double {
+    func getCMCRate(for currency: CurrencyISO4217 = .usd) async throws -> Double {
         guard let cmcKey = PartnerKeys.cmcKey else {
             throw "CMC API Key missing"
         }
@@ -51,10 +59,10 @@ class ExchangeRateProvider {
         @Dependency(\.sdkSynchronizer) var sdkSynchronizer
         @Shared(.inMemory(.swapAPIAccess)) var swapAPIAccess: WalletStorage.SwapAPIAccess = .direct
 
-        guard let url = URL(string: Constants.cmcRateURL) else {
+        guard let url = URL(string: Constants.cmcRateBaseURL + currency.code) else {
             throw URLError(.badURL)
         }
-        
+
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.setValue("application/json", forHTTPHeaderField: "Accept")
@@ -63,19 +71,20 @@ class ExchangeRateProvider {
         let (data, response) = swapAPIAccess == .direct
         ? try await URLSession.shared.data(for: request)
         : try await sdkSynchronizer.httpRequestOverTor(request)
-        
+
         guard let http = response as? HTTPURLResponse,
               (200..<300).contains(http.statusCode) else {
             let code = (response as? HTTPURLResponse)?.statusCode ?? -1
             throw "httpStatus \(code)"
         }
-        
+
         if let result = try? JSONDecoder().decode(CMCPrice.self, from: data) {
-            if let zec = result.data[Constants.zecKey] {
-                return zec.quote.USD.price
+            if let zec = result.data[Constants.zecKey],
+               let quote = zec.quote[currency.code] {
+                return quote.price
             }
         }
-        
+
         throw "Decode CMCPrice.self failed"
     }
 
@@ -92,48 +101,64 @@ class ExchangeRateProvider {
                 return
             }
 
+            let currency = exchangeRate.currency
+            cachedCurrency = currency
+
             if rateSource == .coinMarketCap {
                 Task(priority: .low) {
                     do {
-                        let price = try await getCMCRate()
-                        
+                        let price = try await getCMCRate(for: currency)
+
                         let fiat = FiatCurrencyResult(
                             date: Date(),
                             rate: NSDecimalNumber(value: price),
                             state: .success
                         )
-                        
+
                         eventStream.send(.value(fiat))
                     } catch {
-                        await coinMarketCapRateFailed()
+                        await coinMarketCapRateFailed(currency: currency)
                     }
                 }
             } else if rateSource == .sdk {
-                @Dependency(\.sdkSynchronizer) var sdkSynchronizer
-                
-                sdkSynchronizer.refreshExchangeRateUSD()
+                // SDK fallback only provides USD rates
+                if currency == .usd {
+                    @Dependency(\.sdkSynchronizer) var sdkSynchronizer
+                    sdkSynchronizer.refreshExchangeRateUSD()
+                } else {
+                    eventStream.send(.stale(latestRate))
+                }
             }
         }
     }
-    
-    func coinMarketCapRateFailed() async {
-        refreshExchangeRateUSD(.sdk)
+
+    func coinMarketCapRateFailed(currency: CurrencyISO4217 = .usd) async {
+        if currency == .usd {
+            refreshExchangeRateUSD(.sdk)
+        } else {
+            eventStream.send(.stale(latestRate))
+        }
     }
     
     func resolveResult(_ result: FiatCurrencyResult?) {
+        // SDK stream only provides USD — ignore when a different currency is selected
+        if cachedCurrency != .usd {
+            return
+        }
+
         // retry logic for nil value
         guard let result else {
             nilValuesCounter += 1
-            
+
             if nilValuesCounter == 2 {
                 refreshExchangeRateUSD(.coinMarketCap)
             } else if nilValuesCounter > 2 {
                 eventStream.send(.stale(latestRate))
             }
-            
+
             return
         }
-        
+
         latestRate = result
 
         @Dependency(\.zcashSDKEnvironment) var zcashSDKEnvironment
@@ -194,11 +219,14 @@ extension ExchangeRateClient: DependencyKey {
     
     public static func live() -> Self {
         let exchangeRateProvider = ExchangeRateProvider()
-        
+
         return ExchangeRateClient(
             exchangeRateEventStream: { exchangeRateProvider.eventStream.eraseToAnyPublisher() },
             refreshExchangeRateUSD: {
                 exchangeRateProvider.refreshExchangeRateUSD()
+            },
+            selectedCurrency: {
+                exchangeRateProvider.selectedCurrency()
             }
         )
     }

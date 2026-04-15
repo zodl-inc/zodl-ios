@@ -23,6 +23,7 @@ import UserPreferencesStorage
 import AddressBookClient
 import ZcashPaymentURI
 import BalanceBreakdown
+import ExchangeRate
 
 @Reducer
 public struct SendForm {
@@ -233,6 +234,7 @@ public struct SendForm {
     @Dependency(\.addressBook) var addressBook
     @Dependency(\.audioServices) var audioServices
     @Dependency(\.derivationTool) var derivationTool
+    @Dependency(\.exchangeRate) var exchangeRate
     @Dependency(\.numberFormatter) var numberFormatter
     @Dependency(\.sdkSynchronizer) var sdkSynchronizer
     @Dependency(\.userStoredPreferences) var userStoredPreferences
@@ -309,7 +311,8 @@ public struct SendForm {
                 switch result {
                 case .value(let rate), .refreshEnable(let rate):
                     if let rate {
-                        state.$currencyConversion.withLock { $0 = CurrencyConversion(.usd, ratio: rate.rate.doubleValue, timestamp: rate.date.timeIntervalSince1970) }
+                        let currency = exchangeRate.selectedCurrency()
+                        state.$currencyConversion.withLock { $0 = CurrencyConversion(currency, ratio: rate.rate.doubleValue, timestamp: rate.date.timeIntervalSince1970) }
                         return .send(.syncAmounts(true))
                     }
                 case .stale:

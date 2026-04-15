@@ -12,13 +12,9 @@ public struct CMCPrice: Codable {
 }
 
 public struct CMCAsset: Codable {
-    public let quote: CMCQuote
+    public let quote: [String: CMCCurrencyQuote]
 }
 
-public struct CMCQuote: Codable {
-    public let USD: CMCUSDQuote
-}
-
-public struct CMCUSDQuote: Codable {
+public struct CMCCurrencyQuote: Codable {
     public let price: Double
 }

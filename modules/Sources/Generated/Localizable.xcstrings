@@ -1144,6 +1144,23 @@
         }
       }
     },
+    "currencyConversion.currencyLabel" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Currency"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Moneda"
+          }
+        }
+      }
+    },
     "currencyConversion.enable" : {
       "extractionState" : "manual",
       "localizations" : {

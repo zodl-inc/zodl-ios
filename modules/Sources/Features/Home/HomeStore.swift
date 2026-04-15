@@ -277,7 +277,10 @@ public struct Home {
 
             case .currencyConversionCloseTapped:
                 state.isRateEducationEnabled = false
-                try? userStoredPreferences.setExchangeRate(UserPreferencesStorage.ExchangeRate(manual: true, automatic: false))
+                let existingCurrency = userStoredPreferences.exchangeRate()?.currency ?? .usd
+                try? userStoredPreferences.setExchangeRate(
+                    UserPreferencesStorage.ExchangeRate(manual: true, automatic: false, currency: existingCurrency)
+                )
                 return .none
 
             case .rateTooltipTapped:

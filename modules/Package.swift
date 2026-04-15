@@ -800,6 +800,7 @@ let package = Package(
                 "BalanceBreakdown",
                 "BalanceFormatter",
                 "DerivationTool",
+                "ExchangeRate",
                 "Generated",
                 "Models",
                 "Scan",
@@ -1089,6 +1090,7 @@ let package = Package(
         .target(
             name: "UserPreferencesStorage",
             dependencies: [
+                "Models",
                 "UserDefaults",
                 .product(name: "ComposableArchitecture", package: "swift-composable-architecture"),
                 .product(name: "ZcashLightClientKit", package: "zcash-swift-wallet-sdk")

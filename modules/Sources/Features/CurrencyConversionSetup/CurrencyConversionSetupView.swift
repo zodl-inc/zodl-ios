@@ -8,6 +8,7 @@
 import SwiftUI
 import ComposableArchitecture
 import Generated
+import Models
 import UIComponents
 
 public struct CurrencyConversionSetupView: View {
@@ -135,10 +136,48 @@ public struct CurrencyConversionSetupView: View {
                 }
             }
             .padding(.bottom, 12)
+
+            if store.currentSettingsOption == .optIn {
+                currencyPickerSection()
+            }
         }
         .padding(.horizontal, 8)
     }
-    
+
+    private func currencyPickerSection() -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(String(localizable: .currencyConversionCurrencyLabel))
+                .zFont(.semiBold, size: 14, style: Design.Text.primary)
+
+            Menu {
+                ForEach(CurrencyISO4217.allCases, id: \.self) { currency in
+                    Button {
+                        store.send(.currencyChanged(currency))
+                    } label: {
+                        Text("\(currency.code) - \(currency.displayName)")
+                    }
+                }
+            } label: {
+                HStack {
+                    Text("\(store.selectedCurrency.code) - \(store.selectedCurrency.displayName)")
+                        .zFont(size: 14, style: Design.Text.primary)
+
+                    Spacer()
+
+                    Image(systemName: "chevron.up.chevron.down")
+                        .zFont(size: 12, style: Design.Text.tertiary)
+                }
+                .padding(16)
+                .background {
+                    RoundedRectangle(cornerRadius: Design.Radius._xl)
+                        .stroke(Design.Surfaces.strokeSecondary.color(colorScheme))
+                }
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.bottom, 12)
+    }
+
     private func learnMoreLayout() -> some View {
         VStack(alignment: .leading, spacing: 0) {
             header(String(localizable: .currencyConversionLearnMoreDesc))

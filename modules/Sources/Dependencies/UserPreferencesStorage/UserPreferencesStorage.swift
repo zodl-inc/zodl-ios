@@ -8,6 +8,7 @@
 import Foundation
 import UserDefaults
 import ZcashLightClientKit
+import Models
 
 /// Live implementation of the `UserPreferences` using User Defaults
 /// according to https://developer.apple.com/documentation/foundation/userdefaults
@@ -112,10 +113,19 @@ public extension UserPreferencesStorage {
     struct ExchangeRate: Equatable, Codable {
         public let manual: Bool
         public let automatic: Bool
+        public let currency: CurrencyISO4217
 
-        public init(manual: Bool, automatic: Bool) {
+        public init(manual: Bool, automatic: Bool, currency: CurrencyISO4217 = .usd) {
             self.manual = manual
             self.automatic = automatic
+            self.currency = currency
+        }
+
+        public init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            manual = try container.decode(Bool.self, forKey: .manual)
+            automatic = try container.decode(Bool.self, forKey: .automatic)
+            currency = try container.decodeIfPresent(CurrencyISO4217.self, forKey: .currency) ?? .usd
         }
     }
 }

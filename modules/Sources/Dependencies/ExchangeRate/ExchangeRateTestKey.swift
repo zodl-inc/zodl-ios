@@ -6,10 +6,12 @@
 //
 
 import Combine
+import Models
 
 extension ExchangeRateClient {
     public static let noOp = Self(
         exchangeRateEventStream: { Empty().eraseToAnyPublisher() },
-        refreshExchangeRateUSD: { }
+        refreshExchangeRateUSD: { },
+        selectedCurrency: { .usd }
     )
 }

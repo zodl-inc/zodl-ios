@@ -73,28 +73,34 @@ public struct CurrencyConversionSetup {
         public var activeSettingsOption: SettingsOptions?
         @Shared(.inMemory(.exchangeRate)) public var currencyConversion: CurrencyConversion? = nil
         public var currentSettingsOption = SettingsOptions.optOut
+        public var initialCurrency: CurrencyISO4217 = .usd
         public var isSettingsView: Bool = false
         public var isTorOn = false
         public var isTorSheetPresented = false
+        public var selectedCurrency: CurrencyISO4217 = .usd
 
         public var isSaveButtonDisabled: Bool {
-            currentSettingsOption == activeSettingsOption
+            currentSettingsOption == activeSettingsOption && selectedCurrency == initialCurrency
         }
-        
+
         public init(
             activeSettingsOption: SettingsOptions? = nil,
             currentSettingsOption: SettingsOptions = .optOut,
-            isSettingsView: Bool = false
+            isSettingsView: Bool = false,
+            selectedCurrency: CurrencyISO4217 = .usd
         ) {
             self.activeSettingsOption = activeSettingsOption
             self.currentSettingsOption = currentSettingsOption
             self.isSettingsView = isSettingsView
+            self.selectedCurrency = selectedCurrency
+            self.initialCurrency = selectedCurrency
         }
     }
     
     public enum Action: BindableAction, Equatable {
         case binding(BindingAction<CurrencyConversionSetup.State>)
         case backToHomeTapped
+        case currencyChanged(CurrencyISO4217)
         case delayedDismisalRequested
         case enableTapped
         case enableTorTapped
@@ -124,23 +130,31 @@ public struct CurrencyConversionSetup {
             case .onAppear:
                 // __LD TESTED
                 state.isTorOn = walletStorage.exportTorSetupFlag() ?? false
-                if let automatic = userStoredPreferences.exchangeRate()?.automatic, automatic {
+                let savedExchangeRate = userStoredPreferences.exchangeRate()
+                if let automatic = savedExchangeRate?.automatic, automatic {
                     state.activeSettingsOption = .optIn
                     state.currentSettingsOption = .optIn
                 } else {
                     state.activeSettingsOption = .optOut
                     state.currentSettingsOption = .optOut
                 }
+                let currency = savedExchangeRate?.currency ?? .usd
+                state.selectedCurrency = currency
+                state.initialCurrency = currency
                 return .none
                 
             case .backToHomeTapped:
                 return .none
-                
+
             case .binding:
                 return .none
-                
+
+            case .currencyChanged(let currency):
+                state.selectedCurrency = currency
+                return .none
+
             case .enableTapped:
-                try? userStoredPreferences.setExchangeRate(.init(manual: true, automatic: true))
+                try? userStoredPreferences.setExchangeRate(.init(manual: true, automatic: true, currency: state.selectedCurrency))
                 return .run { send in
                     do {
                         try await sdkSynchronizer.exchangeRateEnabled(true)
@@ -161,8 +175,11 @@ public struct CurrencyConversionSetup {
                 return .none
                 
             case .saveChangesTapped:
-                try? userStoredPreferences.setExchangeRate(UserPreferencesStorage.ExchangeRate(manual: true, automatic: state.currentSettingsOption == .optIn))
+                try? userStoredPreferences.setExchangeRate(
+                    UserPreferencesStorage.ExchangeRate(manual: true, automatic: state.currentSettingsOption == .optIn, currency: state.selectedCurrency)
+                )
                 state.activeSettingsOption = state.currentSettingsOption
+                state.initialCurrency = state.selectedCurrency
                 let option = state.currentSettingsOption
                 let enabled = state.currentSettingsOption == .optIn
                 return .run { send in
@@ -181,7 +198,7 @@ public struct CurrencyConversionSetup {
                 }
 
             case .skipTapped:
-                try? userStoredPreferences.setExchangeRate(.init(manual: false, automatic: false))
+                try? userStoredPreferences.setExchangeRate(.init(manual: false, automatic: false, currency: state.selectedCurrency))
                 return .none
                 
             case .enableTorTapped:
