@@ -106,10 +106,24 @@ extension Root {
                 state.path = .settings
                 return .none
                 
-            case .home(.receiveTapped),
-                .destination(.deeplinkReceive):
+            case .home(.receiveTapped):
                 state.receiveState = .initial
                 state.path = .receive
+                return .none
+
+            case .destination(.deeplinkReceive):
+                guard state.destinationState.destination != .deeplinkWarning else {
+                    return .none
+                }
+                state.receiveState = .initial
+                state.path = .receive
+                let isKeystone = state.selectedWalletAccount?.vendor == .keystone
+                if let uuid = state.selectedWalletAccount?.id {
+                    return .run { send in
+                        let privateUA = try? await sdkSynchronizer.getCustomUnifiedAddress(uuid, isKeystone ? [.orchard] : [.sapling, .orchard])
+                        await send(.home(.updatePrivateUA(privateUA)))
+                    }
+                }
                 return .none
 
             case .home(.sendTapped):
