@@ -6,6 +6,12 @@ directly impact users rather than highlighting other crucial architectural updat
 
 ## [Unreleased]
 
+### Added
+- Deep link support for the Receive screen via `zcash:///home/receive`. Fetches Keystone custom unified address before navigating, matching the in-app receive flow.
+
+### Fixed
+- Deep links for `zcash:///home`, `zcash:///home/send`, and `zcash:///home/receive` were silently ignored after the ZIP-321 check — the existing `process()` pipeline was never connected to the `.deeplink(url)` handler.
+
 ## 3.3.0 build 2 (2026-04-07)
 
 ### Added

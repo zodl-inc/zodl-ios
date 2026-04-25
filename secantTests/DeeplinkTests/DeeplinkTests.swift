@@ -66,12 +66,112 @@ class DeeplinkTests: XCTestCase {
         
         await store.send(.destination(.deeplinkSend(amount, address, memo))) { state in
             state.destinationState.destination = .home
-//            state.tabsState.selectedTab = .send
-//            state.tabsState.sendState.amount = amount
-//            state.tabsState.sendState.address = address.redacted
-//            state.tabsState.sendState.memoState.text = memo
+            state.path = .sendCoordFlow
+            state.sendCoordFlowState.sendFormState.memoState.text = memo
         }
         
+        await store.finish()
+    }
+
+    func testReceiveURLParsing() throws {
+        guard let url = URL(string: "zcash:///home/receive") else {
+            return XCTFail("Deeplink: 'testReceiveURLParsing' URL is expected to be valid.")
+        }
+
+        let result = try Deeplink().resolveDeeplinkURL(url, networkType: .testnet, isValidZcashAddress: { _, _ in false })
+
+        XCTAssertEqual(result, Deeplink.Destination.receive)
+    }
+
+    func testActionDeeplinkReceive() async throws {
+        var appState = Root.State.initial
+        appState.destinationState.destination = .welcome
+
+        let store = TestStore(
+            initialState: appState
+        ) {
+            Root()
+        }
+
+        await store.send(.destination(.deeplinkReceive)) { state in
+            state.destinationState.destination = .home
+            state.path = .receive
+        }
+
+        await store.finish()
+    }
+
+    func testDeeplinkRequest_Received_Receive() async throws {
+        var appState = Root.State.initial
+        appState.destinationState.destination = .welcome
+        appState.appInitializationState = .initialized
+
+        let store = TestStore(
+            initialState: appState
+        ) {
+            Root()
+        }
+
+        store.dependencies.deeplink = DeeplinkClient(
+            resolveDeeplinkURL: { _, _, _ in Deeplink.Destination.receive }
+        )
+        store.dependencies.sdkSynchronizer = SDKSynchronizerClient.mocked(
+            latestState: {
+                var state = SynchronizerState.zero
+                state.syncStatus = .upToDate
+                return state
+            }
+        )
+        store.dependencies.walletConfigProvider = .noOp
+
+        guard let url = URL(string: "zcash:///home/receive") else {
+            return XCTFail("Deeplink: 'testDeeplinkRequest_Received_Receive' URL is expected to be valid.")
+        }
+
+        await store.send(.destination(.deeplink(url)))
+
+        await store.receive(.destination(.deeplinkReceive)) { state in
+            state.destinationState.destination = .home
+            state.path = .receive
+        }
+
+        await store.finish()
+    }
+
+    func testReceiveURLParsing_ExtraPathComponent_DoesNotMatch() throws {
+        guard let url = URL(string: "zcash:///home/receive/extra") else {
+            return XCTFail("Deeplink: 'testReceiveURLParsing_ExtraPathComponent_DoesNotMatch' URL is expected to be valid.")
+        }
+
+        XCTAssertThrowsError(
+            try Deeplink().resolveDeeplinkURL(url, networkType: .testnet, isValidZcashAddress: { _, _ in false }),
+            "zcash:///home/receive/extra should not match any route"
+        )
+    }
+
+    func testSendURLParsing_ExtraPathComponent_DoesNotMatch() throws {
+        guard let url = URL(string: "zcash:///home/send/extra") else {
+            return XCTFail("Deeplink: 'testSendURLParsing_ExtraPathComponent_DoesNotMatch' URL is expected to be valid.")
+        }
+
+        XCTAssertThrowsError(
+            try Deeplink().resolveDeeplinkURL(url, networkType: .testnet, isValidZcashAddress: { _, _ in false }),
+            "zcash:///home/send/extra should not match any route"
+        )
+    }
+
+    func testActionDeeplinkReceive_GuardedByDeeplinkWarning() async throws {
+        var appState = Root.State.initial
+        appState.destinationState.destination = .deeplinkWarning
+
+        let store = TestStore(
+            initialState: appState
+        ) {
+            Root()
+        }
+
+        await store.send(.destination(.deeplinkReceive))
+
         await store.finish()
     }
 
@@ -165,10 +265,8 @@ class DeeplinkTests: XCTestCase {
 
         await store.receive(.destination(.deeplinkSend(amount, address, memo))) { state in
             state.destinationState.destination = .home
-//            state.tabsState.selectedTab = .send
-//            state.tabsState.sendState.amount = amount
-//            state.tabsState.sendState.address = address.redacted
-//            state.tabsState.sendState.memoState.text = memo
+            state.path = .sendCoordFlow
+            state.sendCoordFlowState.sendFormState.memoState.text = memo
         }
         
         await store.finish()

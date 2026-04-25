@@ -44,6 +44,7 @@ extension Root {
     public enum DestinationAction {
         case deeplink(URL)
         case deeplinkHome
+        case deeplinkReceive
         case deeplinkSend(Zatoshi, String, String)
         case deeplinkFailed(URL, ZcashError)
         case updateDestination(Root.DestinationState.Destination)
@@ -67,10 +68,20 @@ extension Root {
                     // The deeplink is some zip321, we ignore it and let users know in a warning screen
                     return .send(.destination(.updateDestination(.deeplinkWarning)))
                 }
-                return .none
+                return .run { send in
+                    do {
+                        let action = try await process(url: url, deeplink: deeplink, derivationTool: derivationTool)
+                        await send(action)
+                    } catch {
+                        await send(.destination(.deeplinkFailed(url, error.toZcashError())))
+                    }
+                }
 
             case .destination(.deeplinkHome):
                 return .none
+
+            case .destination(.deeplinkReceive):
+                return .send(.destination(.updateDestination(.home)))
 
             case .destination(.deeplinkSend):
                 return .none
@@ -156,6 +167,8 @@ private extension Root {
         switch deeplink {
         case .home:
             return .destination(.deeplinkHome)
+        case .receive:
+            return .destination(.deeplinkReceive)
         case let .send(amount, address, memo):
             return .destination(.deeplinkSend(Zatoshi(Int64(amount)), address, memo))
         }

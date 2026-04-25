@@ -111,11 +111,42 @@ extension Root {
                 state.path = .receive
                 return .none
 
+            case .destination(.deeplinkReceive):
+                guard state.destinationState.destination != .deeplinkWarning else {
+                    return .none
+                }
+                state.receiveState = .initial
+                state.path = .receive
+                let isKeystone = state.selectedWalletAccount?.vendor == .keystone
+                if let uuid = state.selectedWalletAccount?.id {
+                    return .run { send in
+                        let privateUA = try? await sdkSynchronizer.getCustomUnifiedAddress(uuid, isKeystone ? [.orchard] : [.sapling, .orchard])
+                        await send(.home(.updatePrivateUA(privateUA)))
+                    }
+                }
+                return .none
+
             case .home(.sendTapped):
                 state.sendCoordFlowState = .initial
                 state.path = .sendCoordFlow
                 exchangeRate.refreshExchangeRateUSD()
                 return .none
+
+            case .destination(.deeplinkSend(let amount, let address, let memo)):
+                state.sendCoordFlowState = .initial
+                state.path = .sendCoordFlow
+                exchangeRate.refreshExchangeRateUSD()
+                if !memo.isEmpty {
+                    state.sendCoordFlowState.sendFormState.memoState.text = memo
+                }
+                var effects: [Effect<Root.Action>] = []
+                if amount.amount > 0 {
+                    effects.append(.send(.sendCoordFlow(.sendForm(.zecAmountUpdated(amount.decimalString().redacted)))))
+                }
+                if !address.isEmpty {
+                    effects.append(.send(.sendCoordFlow(.sendForm(.addressUpdated(address.redacted)))))
+                }
+                return effects.isEmpty ? .none : .merge(effects)
 
             case .home(.scanTapped):
                 state.scanCoordFlowState = .initial
