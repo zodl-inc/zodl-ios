@@ -45,6 +45,21 @@
 		<string>fetch</string>
 		<string>processing</string>
 	</array>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>None</string>
+			<key>CFBundleURLName</key>
+			<string>co.electriccoin.secant-mainnet</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>zcash</string>
+			</array>
+		</dict>
+	</array>
+	<key>UIDesignRequiresCompatibility</key>
+	<true/>
 	<key>UILaunchScreen</key>
 	<dict/>
 	<key>UILaunchStoryboardName</key>
@@ -57,7 +72,5 @@
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
 	</array>
-	<key>UIDesignRequiresCompatibility</key>
-	<true/>
 </dict>
 </plist>
