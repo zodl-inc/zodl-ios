@@ -68,7 +68,14 @@ extension Root {
                     // The deeplink is some zip321, we ignore it and let users know in a warning screen
                     return .send(.destination(.updateDestination(.deeplinkWarning)))
                 }
-                return .none
+                return .run { send in
+                    do {
+                        let action = try await process(url: url, deeplink: deeplink, derivationTool: derivationTool)
+                        await send(action)
+                    } catch {
+                        await send(.destination(.deeplinkFailed(url, error as! ZcashError)))
+                    }
+                }
 
             case .destination(.deeplinkHome):
                 return .none

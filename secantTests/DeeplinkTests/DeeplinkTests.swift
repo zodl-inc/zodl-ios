@@ -66,10 +66,8 @@ class DeeplinkTests: XCTestCase {
         
         await store.send(.destination(.deeplinkSend(amount, address, memo))) { state in
             state.destinationState.destination = .home
-//            state.tabsState.selectedTab = .send
-//            state.tabsState.sendState.amount = amount
-//            state.tabsState.sendState.address = address.redacted
-//            state.tabsState.sendState.memoState.text = memo
+            state.path = .sendCoordFlow
+            state.sendCoordFlowState.sendFormState.memoState.text = memo
         }
         
         await store.finish()
@@ -230,10 +228,8 @@ class DeeplinkTests: XCTestCase {
 
         await store.receive(.destination(.deeplinkSend(amount, address, memo))) { state in
             state.destinationState.destination = .home
-//            state.tabsState.selectedTab = .send
-//            state.tabsState.sendState.amount = amount
-//            state.tabsState.sendState.address = address.redacted
-//            state.tabsState.sendState.memoState.text = memo
+            state.path = .sendCoordFlow
+            state.sendCoordFlowState.sendFormState.memoState.text = memo
         }
         
         await store.finish()
