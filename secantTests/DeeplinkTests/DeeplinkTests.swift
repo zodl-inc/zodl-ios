@@ -138,6 +138,43 @@ class DeeplinkTests: XCTestCase {
         await store.finish()
     }
 
+    func testReceiveURLParsing_ExtraPathComponent_DoesNotMatch() throws {
+        guard let url = URL(string: "zcash:///home/receive/extra") else {
+            return XCTFail("Deeplink: 'testReceiveURLParsing_ExtraPathComponent_DoesNotMatch' URL is expected to be valid.")
+        }
+
+        XCTAssertThrowsError(
+            try Deeplink().resolveDeeplinkURL(url, networkType: .testnet, isValidZcashAddress: { _, _ in false }),
+            "zcash:///home/receive/extra should not match any route"
+        )
+    }
+
+    func testSendURLParsing_ExtraPathComponent_DoesNotMatch() throws {
+        guard let url = URL(string: "zcash:///home/send/extra") else {
+            return XCTFail("Deeplink: 'testSendURLParsing_ExtraPathComponent_DoesNotMatch' URL is expected to be valid.")
+        }
+
+        XCTAssertThrowsError(
+            try Deeplink().resolveDeeplinkURL(url, networkType: .testnet, isValidZcashAddress: { _, _ in false }),
+            "zcash:///home/send/extra should not match any route"
+        )
+    }
+
+    func testActionDeeplinkReceive_GuardedByDeeplinkWarning() async throws {
+        var appState = Root.State.initial
+        appState.destinationState.destination = .deeplinkWarning
+
+        let store = TestStore(
+            initialState: appState
+        ) {
+            Root()
+        }
+
+        await store.send(.destination(.deeplinkReceive))
+
+        await store.finish()
+    }
+
     func testHomeURLParsing() throws {
         guard let url = URL(string: "zcash:///home") else {
             return XCTFail("Deeplink: 'testDeeplinkRequest_homeURL' URL is expected to be valid.")
