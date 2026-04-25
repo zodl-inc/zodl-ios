@@ -73,7 +73,7 @@ extension Root {
                         let action = try await process(url: url, deeplink: deeplink, derivationTool: derivationTool)
                         await send(action)
                     } catch {
-                        await send(.destination(.deeplinkFailed(url, error as! ZcashError)))
+                        await send(.destination(.deeplinkFailed(url, error.toZcashError())))
                     }
                 }
 
