@@ -673,6 +673,27 @@ private func authenticatedVotingSessions(from rounds: [[String: Any]]) async thr
     return authenticated
 }
 
+/// Return a copy containing only round entries with at least one trusted signature.
+///
+/// Round authentication is intentionally per-round: one broken historical
+/// signature must hide only that round, while still allowing other active
+/// or finalized rounds to render.
+func serviceConfigRetainingRoundsWithValidSignatures(
+    _ config: VotingServiceConfig,
+    trustedKeys: [StaticVotingConfig.TrustedKey]
+) -> VotingServiceConfig {
+    let authenticatedRounds = config.rounds.filter { _, entry in
+        RoundAuthenticator.verifyEntrySignatures(entry: entry, trustedKeys: trustedKeys)
+    }
+    return VotingServiceConfig(
+        configVersion: config.configVersion,
+        voteServers: config.voteServers,
+        pirEndpoints: config.pirEndpoints,
+        supportedVersions: config.supportedVersions,
+        rounds: authenticatedRounds
+    )
+}
+
 // MARK: - Live Implementation
 
 extension VotingAPIClient: DependencyKey {
@@ -712,9 +733,22 @@ extension VotingAPIClient: DependencyKey {
                     throw VotingConfigError.decodeFailed("CDN decode failed: \(error.localizedDescription)")
                 }
                 try config.validate()
-                await SvAPIConfigStore.shared.setConfiguration(staticConfig: staticConfig, serviceConfig: config)
-                logger.info("Loaded config from CDN: \(config.voteServers.count) vote servers")
-                return config
+                let authenticatedConfig = serviceConfigRetainingRoundsWithValidSignatures(
+                    config,
+                    trustedKeys: staticConfig.trustedKeys
+                )
+                let droppedRounds = config.rounds.count - authenticatedConfig.rounds.count
+                await SvAPIConfigStore.shared.setConfiguration(
+                    staticConfig: staticConfig,
+                    serviceConfig: authenticatedConfig
+                )
+                logger.info(
+                    """
+                    Loaded config from CDN: \(authenticatedConfig.voteServers.count) vote servers, \
+                    \(authenticatedConfig.rounds.count) authenticated rounds, \(droppedRounds) dropped rounds
+                    """
+                )
+                return authenticatedConfig
             },
             configureURLs: { config in
                 await SvAPIConfigStore.shared.configure(from: config)

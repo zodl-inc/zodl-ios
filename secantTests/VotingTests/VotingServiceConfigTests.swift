@@ -335,6 +335,29 @@ final class RoundAuthenticatorTests: XCTestCase {
         XCTAssertTrue(RoundAuthenticator.verifyEntrySignatures(entry: entry, trustedKeys: [makeTrustedKey()]))
     }
 
+    func testServiceConfigDropsOnlyRoundsWithoutValidSignatures() {
+        var badSignature = adminSignature
+        badSignature[0] ^= 0xFF
+        let invalidRoundId = String(repeating: "b", count: 64)
+        let config = VotingServiceConfig(
+            configVersion: 1,
+            voteServers: [.init(url: "https://vote.example.com", label: "vote")],
+            pirEndpoints: [.init(url: "https://pir.example.com", label: "pir")],
+            supportedVersions: .init(pir: ["v0"], voteProtocol: "v0", tally: "v0", voteServer: "v1"),
+            rounds: [
+                roundId: makeEntry(),
+                invalidRoundId: makeEntry(signature: badSignature)
+            ]
+        )
+
+        let filtered = serviceConfigRetainingRoundsWithValidSignatures(
+            config,
+            trustedKeys: [makeTrustedKey()]
+        )
+
+        XCTAssertEqual(Set(filtered.rounds.keys), [roundId])
+    }
+
     private func makeEntry(
         authVersion: Int = 1,
         eaPK: Data? = nil,
