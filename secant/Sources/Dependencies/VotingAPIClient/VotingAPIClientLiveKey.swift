@@ -11,27 +11,38 @@ private let logger = Logger(subsystem: "co.zodl.voting", category: "VotingAPICli
 actor SvAPIConfigStore {
     static let shared = SvAPIConfigStore()
 
-    /// Primary vote server URL (serves both chain API and helper endpoints).
-    var baseURL = "https://vote-chain-primary.valargroup.org"
-    /// All vote server URLs from CDN config (used for share distribution).
-    var voteServerURLs: [String] = ["https://vote-chain-primary.valargroup.org"]
-    /// Primary PIR server URL.
-    var pirServerURL = "https://pir.valargroup.org"
+    private var voteServerURLs: [String] = []
+    private var pirServerURLs: [String] = []
+    private var staticConfig: StaticVotingConfig?
+    private var serviceConfig: VotingServiceConfig?
 
     func configure(from config: VotingServiceConfig) {
-        if let first = config.voteServers.first {
-            baseURL = first.url
-        }
         voteServerURLs = config.voteServers.map(\.url)
-        if let first = config.pirEndpoints.first {
-            pirServerURL = first.url
-        }
+        pirServerURLs = config.pirEndpoints.map(\.url)
     }
+
+    func setConfiguration(staticConfig: StaticVotingConfig, serviceConfig: VotingServiceConfig) {
+        self.staticConfig = staticConfig
+        self.serviceConfig = serviceConfig
+    }
+
+    func getConfiguration() -> (staticConfig: StaticVotingConfig, serviceConfig: VotingServiceConfig)? {
+        guard let staticConfig, let serviceConfig else { return nil }
+        return (staticConfig, serviceConfig)
+    }
+
+    func configuredVoteServerURLs() throws -> [String] {
+        guard !voteServerURLs.isEmpty else {
+            throw SvAPIError.invalidResponse("vote server URLs unavailable before dynamic config is loaded")
+        }
+        return voteServerURLs
+    }
+
 }
 
 // MARK: - Errors
 
-private enum SvAPIError: LocalizedError {
+enum SvAPIError: LocalizedError {
     case httpError(statusCode: Int, message: String)
     case invalidResponse(String)
     case noActiveVotingSession
@@ -182,9 +193,39 @@ private let fastHttpSession: URLSession = {
     return URLSession(configuration: config)
 }()
 
-private func getJSON(_ path: String, baseURL: String? = nil) async throws -> [String: Any] {
-    let resolvedDefault = await SvAPIConfigStore.shared.baseURL
-    let base = baseURL ?? resolvedDefault
+private func shouldTryNextVoteServer(after error: Error) -> Bool {
+    if error is URLError { return true }
+    if let error = error as? SvAPIError,
+       case SvAPIError.httpError(let statusCode, _) = error {
+        return statusCode >= 400
+    }
+    if let error = error as? SvAPIError,
+       case SvAPIError.invalidResponse = error {
+        return true
+    }
+    return false
+}
+
+private func getJSON(_ path: String) async throws -> [String: Any] {
+    let serverURLs = try await SvAPIConfigStore.shared.configuredVoteServerURLs()
+    var lastError: Error?
+
+    for base in serverURLs {
+        do {
+            return try await getJSON(path, baseURL: base)
+        } catch {
+            lastError = error
+            guard shouldTryNextVoteServer(after: error) else {
+                throw error
+            }
+            logger.warning("GET \(path, privacy: .public) failed on \(base, privacy: .public); trying next vote server")
+        }
+    }
+
+    throw lastError ?? SvAPIError.invalidResponse("no vote servers configured")
+}
+
+private func getJSON(_ path: String, baseURL base: String) async throws -> [String: Any] {
     guard let url = URL(string: "\(base)\(path)") else {
         throw SvAPIError.invalidResponse("invalid URL: \(base)\(path)")
     }
@@ -201,9 +242,26 @@ private func getJSON(_ path: String, baseURL: String? = nil) async throws -> [St
     return try SvAPIResponseParser.parseJSONObject(data, response: http, context: "GET \(path)")
 }
 
-private func postJSON(_ path: String, body: [String: Any], baseURL: String? = nil) async throws -> [String: Any] {
-    let resolvedDefault = await SvAPIConfigStore.shared.baseURL
-    let base = baseURL ?? resolvedDefault
+private func postJSON(_ path: String, body: [String: Any]) async throws -> [String: Any] {
+    let serverURLs = try await SvAPIConfigStore.shared.configuredVoteServerURLs()
+    var lastError: Error?
+
+    for base in serverURLs {
+        do {
+            return try await postJSON(path, body: body, baseURL: base)
+        } catch {
+            lastError = error
+            guard shouldTryNextVoteServer(after: error) else {
+                throw error
+            }
+            logger.warning("POST \(path, privacy: .public) failed on \(base, privacy: .public); trying next vote server")
+        }
+    }
+
+    throw lastError ?? SvAPIError.invalidResponse("no vote servers configured")
+}
+
+private func postJSON(_ path: String, body: [String: Any], baseURL base: String) async throws -> [String: Any] {
     guard let url = URL(string: "\(base)\(path)") else {
         throw SvAPIError.invalidResponse("invalid URL: \(base)\(path)")
     }
@@ -478,10 +536,42 @@ private func dataFromHex(_ hex: String) -> Data {
     return data
 }
 
+private func hexString(from data: Data) -> String {
+    data.map { String(format: "%02x", $0) }.joined()
+}
+
 // MARK: - Response Parsers
 
+private func validateProposals(_ proposals: [VotingProposal]) throws {
+    guard (1...15).contains(proposals.count) else {
+        throw SvAPIError.invalidResponse("proposals must contain between 1 and 15 entries")
+    }
+
+    var proposalIds = Set<UInt32>()
+    for proposal in proposals {
+        guard (1...15).contains(proposal.id) else {
+            throw SvAPIError.invalidResponse("proposal id must be in the range 1 to 15")
+        }
+        guard proposalIds.insert(proposal.id).inserted else {
+            throw SvAPIError.invalidResponse("proposal ids must be unique")
+        }
+        guard (2...8).contains(proposal.options.count) else {
+            throw SvAPIError.invalidResponse("proposal options must contain between 2 and 8 entries")
+        }
+
+        let optionIndices = proposal.options.map(\.index)
+        guard Set(optionIndices).count == optionIndices.count else {
+            throw SvAPIError.invalidResponse("option index values within a proposal must be unique")
+        }
+        let expectedIndices = Array(UInt32(0)..<UInt32(proposal.options.count))
+        guard optionIndices.sorted() == expectedIndices else {
+            throw SvAPIError.invalidResponse("option index values within a proposal must be 0-indexed contiguous")
+        }
+    }
+}
+
 /// Parse a VotingSession from the "round" JSON object returned by GET /shielded-vote/v1/round/{id}.
-private func parseVotingSession(from round: [String: Any]) throws -> VotingSession {
+func parseVotingSession(from round: [String: Any]) throws -> VotingSession {
     let voteEndTimeUnix = parseUInt64(round["vote_end_time"])
     let voteEndTime = Date(timeIntervalSince1970: TimeInterval(voteEndTimeUnix))
     let ceremonyStartUnix = parseUInt64(round["ceremony_phase_start"])
@@ -514,6 +604,7 @@ private func parseVotingSession(from round: [String: Any]) throws -> VotingSessi
             forumURL: forumURLString.flatMap { URL(string: $0) }
         )
     }
+    try validateProposals(proposals)
 
     let discussionURLString = round["discussion_url"] as? String
     return VotingSession(
@@ -539,40 +630,60 @@ private func parseVotingSession(from round: [String: Any]) throws -> VotingSessi
     )
 }
 
+/// Authenticate a chain-sourced round before the wallet treats it as usable.
+///
+/// Vote servers are endpoint-discovery targets from the dynamic config, not
+/// trust anchors. The wallet trusts the bundled static config's admin keys,
+/// verifies the dynamic config's signed `ea_pk` for this round id, then checks
+/// that the chain response is bound to the same `ea_pk`.
+private func authenticateVotingSession(_ session: VotingSession) async throws -> VotingSession {
+    guard let configuration = await SvAPIConfigStore.shared.getConfiguration() else {
+        logger.error("Round auth failed: trust material unavailable")
+        throw SvAPIError.noActiveVotingSession
+    }
+
+    let roundIdHex = hexString(from: session.voteRoundId)
+    let status = RoundAuthenticator.authenticate(
+        chainEaPK: session.eaPK,
+        roundIdHex: roundIdHex,
+        rounds: configuration.serviceConfig.rounds,
+        trustedKeys: configuration.staticConfig.trustedKeys
+    )
+    guard status == .authenticated else {
+        logger.error(
+            "Round auth failed: status=\(String(describing: status), privacy: .public) round=\(roundIdHex, privacy: .public)"
+        )
+        // Per current UX, unauthenticated rounds are hidden behind the same
+        // surface as "no active round" rather than shown as a separate warning.
+        throw SvAPIError.noActiveVotingSession
+    }
+    return session
+}
+
+private func authenticatedVotingSessions(from rounds: [[String: Any]]) async throws -> [VotingSession] {
+    var authenticated: [VotingSession] = []
+    for round in rounds {
+        let session = try parseVotingSession(from: round)
+        do {
+            authenticated.append(try await authenticateVotingSession(session))
+        } catch SvAPIError.noActiveVotingSession {
+            logger.error("Skipping unauthenticated round \(hexString(from: session.voteRoundId), privacy: .public)")
+        }
+    }
+    return authenticated
+}
+
 // MARK: - Live Implementation
 
 extension VotingAPIClient: DependencyKey {
     static var liveValue: Self {
         Self(
             fetchServiceConfig: {
-                // 1. Check for local override in app bundle (debug builds only).
-                //    A malformed override is a developer error — propagate the decode error.
-                #if DEBUG
-                if let localURL = Bundle.main.url(
-                    forResource: "voting-config-local",
-                    withExtension: "json"
-                ) {
-                    let data: Data
-                    do {
-                        data = try Data(contentsOf: localURL)
-                    } catch {
-                        throw VotingConfigError.decodeFailed("local override unreadable: \(error.localizedDescription)")
-                    }
-                    let config: VotingServiceConfig
-                    do {
-                        config = try JSONDecoder().decode(VotingServiceConfig.self, from: data)
-                    } catch {
-                        throw VotingConfigError.decodeFailed("local override: \(error.localizedDescription)")
-                    }
-                    try config.validate()
-                    logger.info("Using local override config: \(config.voteServers.count) vote servers")
-                    return config
-                }
-                #endif
+                let staticConfig = try StaticVotingConfig.loadFromBundle()
 
-                // 2. Fetch and decode the CDN config. Any failure (transport, HTTP, decode,
-                //    or version-validation) surfaces as a VotingConfigError — no silent fallback.
-                let configURL = VotingServiceConfig.configURL
+                // Fetch and decode the CDN config. Any failure (transport, HTTP, decode,
+                // or version-validation) surfaces as a VotingConfigError — no silent fallback.
+                let configURL = staticConfig.dynamicConfigURL
                 let data: Data
                 let response: URLResponse
                 do {
@@ -600,6 +711,7 @@ extension VotingAPIClient: DependencyKey {
                     throw VotingConfigError.decodeFailed("CDN decode failed: \(error.localizedDescription)")
                 }
                 try config.validate()
+                await SvAPIConfigStore.shared.setConfiguration(staticConfig: staticConfig, serviceConfig: config)
                 logger.info("Loaded config from CDN: \(config.voteServers.count) vote servers")
                 return config
             },
@@ -608,12 +720,13 @@ extension VotingAPIClient: DependencyKey {
                 await ServerHealthTracker.shared.initialize(
                     serverURLs: config.voteServers.map(\.url)
                 )
-                let base = await SvAPIConfigStore.shared.baseURL
-                let pir = await SvAPIConfigStore.shared.pirServerURL
+                let base = config.voteServers.first?.url
+                let pir = config.pirEndpoints.first?.url
                 logger.info(
                     """
-                    URLs configured: base=\(base, privacy: .public), \
-                    servers=\(config.voteServers.count), pir=\(pir, privacy: .public)
+                    URLs configured: base=\(base ?? "<none>", privacy: .public), \
+                    voteServers=\(config.voteServers.count), pir=\(pir ?? "<none>", privacy: .public), \
+                    pirEndpoints=\(config.pirEndpoints.count)
                     """
                 )
             },
@@ -630,7 +743,7 @@ extension VotingAPIClient: DependencyKey {
                 guard let round = json["round"] as? [String: Any] else {
                     throw SvAPIError.invalidResponse("missing 'round' in response")
                 }
-                return try parseVotingSession(from: round)
+                return try await authenticateVotingSession(try parseVotingSession(from: round))
             },
             fetchAllRounds: {
                 let json = try await getJSON("/shielded-vote/v1/rounds")
@@ -638,14 +751,14 @@ extension VotingAPIClient: DependencyKey {
                     // No rounds — return empty
                     return []
                 }
-                return try roundsArray.map { try parseVotingSession(from: $0) }
+                return try await authenticatedVotingSessions(from: roundsArray)
             },
             fetchRoundById: { roundIdHex in
                 let json = try await getJSON("/shielded-vote/v1/round/\(roundIdHex)")
                 guard let round = json["round"] as? [String: Any] else {
                     throw SvAPIError.invalidResponse("missing 'round' in response")
                 }
-                return try parseVotingSession(from: round)
+                return try await authenticateVotingSession(try parseVotingSession(from: round))
             },
             fetchTallyResults: { roundIdHex in
                 let json = try await getJSON("/shielded-vote/v1/tally-results/\(roundIdHex)")
@@ -753,7 +866,7 @@ extension VotingAPIClient: DependencyKey {
                 }
             },
             resubmitShare: { payload, roundIdHex, excludeURLs in
-                let configuredServerURLs = await SvAPIConfigStore.shared.voteServerURLs
+                let configuredServerURLs = try await SvAPIConfigStore.shared.configuredVoteServerURLs()
                 let tracker = ServerHealthTracker.shared
                 return await resubmitSharePayload(
                     payload,
@@ -789,74 +902,90 @@ extension VotingAPIClient: DependencyKey {
                 return TallyResult(entries: entries)
             },
             fetchTxConfirmation: { txHash in
-                let base = await SvAPIConfigStore.shared.baseURL
-                let urlString = "\(base)/shielded-vote/v1/tx/\(txHash)"
-                guard let url = URL(string: urlString) else {
-                    logger.error("fetchTxConfirmation: invalid URL: \(urlString)")
-                    return nil
-                }
-
-                let data: Data
-                let response: URLResponse
+                let serverURLs: [String]
                 do {
-                    (data, response) = try await httpSession.data(from: url)
+                    serverURLs = try await SvAPIConfigStore.shared.configuredVoteServerURLs()
                 } catch {
-                    logger.debug("fetchTxConfirmation: network error: \(error.localizedDescription)")
+                    logger.error("fetchTxConfirmation: vote server URLs unavailable: \(error.localizedDescription, privacy: .public)")
                     return nil
                 }
 
-                guard let http = response as? HTTPURLResponse else {
-                    logger.error("fetchTxConfirmation: not an HTTP response")
-                    return nil
-                }
-
-                // 404 = TX not yet in a block (normal during polling)
-                if http.statusCode == 404 {
-                    logger.debug("fetchTxConfirmation: 404 (not yet in block) for \(txHash)")
-                    return nil
-                }
-
-                // 422 = TX included but execution failed (non-zero code).
-                // Parse the response to extract the error code/log.
-                guard http.statusCode == 200 || http.statusCode == 422 else {
-                    let body = String(data: data.prefix(512), encoding: .utf8) ?? "<non-utf8>"
-                    logger.debug("fetchTxConfirmation: HTTP \(http.statusCode) for \(txHash) — \(body)")
-                    return nil
-                }
-
-                guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                    let snippet = String(data: data.prefix(512), encoding: .utf8) ?? "<non-utf8>"
-                    logger.error("fetchTxConfirmation: JSON parse failed — \(snippet)")
-                    return nil
-                }
-
-                let height = parseUInt64(json["height"])
-                let code = parseUInt32(json["code"])
-                let log = json["log"] as? String ?? ""
-
-                var parsedEvents: [TxEvent] = []
-                if let events = json["events"] as? [[String: Any]] {
-                    for event in events {
-                        guard let evType = event["type"] as? String,
-                              let attrs = event["attributes"] as? [[String: Any]]
-                        else { continue }
-                        let parsed = attrs.compactMap { attr -> TxEventAttribute? in
-                            guard let key = attr["key"] as? String,
-                                  let value = attr["value"] as? String
-                            else { return nil }
-                            return TxEventAttribute(key: key, value: value)
-                        }
-                        parsedEvents.append(TxEvent(type: evType, attributes: parsed))
+                for base in serverURLs {
+                    let urlString = "\(base)/shielded-vote/v1/tx/\(txHash)"
+                    guard let url = URL(string: urlString) else {
+                        logger.error("fetchTxConfirmation: invalid URL: \(urlString)")
+                        continue
                     }
+
+                    let data: Data
+                    let response: URLResponse
+                    do {
+                        (data, response) = try await httpSession.data(from: url)
+                    } catch {
+                        logger.debug(
+                            "fetchTxConfirmation: network error on \(base, privacy: .public): \(error.localizedDescription, privacy: .public)"
+                        )
+                        continue
+                    }
+
+                    guard let http = response as? HTTPURLResponse else {
+                        logger.error("fetchTxConfirmation: not an HTTP response from \(base, privacy: .public)")
+                        continue
+                    }
+
+                    // 404 = TX not yet in a block (normal during polling).
+                    // Try the remaining configured servers before reporting pending.
+                    if http.statusCode == 404 {
+                        logger.debug("fetchTxConfirmation: 404 (not yet in block) on \(base, privacy: .public) for \(txHash)")
+                        continue
+                    }
+
+                    // 422 = TX included but execution failed (non-zero code).
+                    // Parse the response to extract the error code/log.
+                    guard http.statusCode == 200 || http.statusCode == 422 else {
+                        let body = String(data: data.prefix(512), encoding: .utf8) ?? "<non-utf8>"
+                        logger.debug(
+                            "fetchTxConfirmation: HTTP \(http.statusCode) on \(base, privacy: .public) for \(txHash) — \(body, privacy: .public)"
+                        )
+                        continue
+                    }
+
+                    guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                        let snippet = String(data: data.prefix(512), encoding: .utf8) ?? "<non-utf8>"
+                        logger.error("fetchTxConfirmation: JSON parse failed on \(base, privacy: .public) — \(snippet, privacy: .public)")
+                        continue
+                    }
+
+                    let height = parseUInt64(json["height"])
+                    let code = parseUInt32(json["code"])
+                    let log = json["log"] as? String ?? ""
+
+                    var parsedEvents: [TxEvent] = []
+                    if let events = json["events"] as? [[String: Any]] {
+                        for event in events {
+                            guard let evType = event["type"] as? String,
+                                  let attrs = event["attributes"] as? [[String: Any]]
+                            else { continue }
+                            let parsed = attrs.compactMap { attr -> TxEventAttribute? in
+                                guard let key = attr["key"] as? String,
+                                      let value = attr["value"] as? String
+                                else { return nil }
+                                return TxEventAttribute(key: key, value: value)
+                            }
+                            parsedEvents.append(TxEvent(type: evType, attributes: parsed))
+                        }
+                    }
+
+                    let eventSummary = parsedEvents.map { ev in
+                        let keys = ev.attributes.map(\.key).joined(separator: ",")
+                        return "\(ev.type)[\(keys)]"
+                    }.joined(separator: "; ")
+                    logger.debug("fetchTxConfirmation: height=\(height) code=\(code) events=\(eventSummary)")
+
+                    return TxConfirmation(height: height, code: code, log: log, events: parsedEvents)
                 }
 
-                let eventSummary = parsedEvents.map { ev in
-                    let keys = ev.attributes.map(\.key).joined(separator: ",")
-                    return "\(ev.type)[\(keys)]"
-                }.joined(separator: "; ")
-                logger.debug("fetchTxConfirmation: height=\(height) code=\(code) events=\(eventSummary)")
-
-                return TxConfirmation(height: height, code: code, log: log, events: parsedEvents)
+                return nil
             }
         )
     }

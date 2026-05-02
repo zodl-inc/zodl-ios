@@ -2234,6 +2234,8 @@
 		37CEBEAB2F8E939D002DA90E /* VotingCryptoClientInterface.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37CEBE962F8E939D002DA90E /* VotingCryptoClientInterface.swift */; };
 		37CEBEAC2F8E939D002DA90E /* VotingCryptoClientLiveKey.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37CEBE972F8E939D002DA90E /* VotingCryptoClientLiveKey.swift */; };
 		37CEBEAD2F8E939D002DA90E /* VotingServiceConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37CEBE9E2F8E939D002DA90E /* VotingServiceConfig.swift */; };
+		37D0F0000000000000000010 /* StaticVotingConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37D0F0000000000000000001 /* StaticVotingConfig.swift */; };
+		37D0F0000000000000000020 /* RoundAuthenticator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37D0F0000000000000000002 /* RoundAuthenticator.swift */; };
 		37CEBEAE2F8E939D002DA90E /* VotingAPIClientInterface.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37CEBE922F8E939D002DA90E /* VotingAPIClientInterface.swift */; };
 		37CEBEAF2F8E939D002DA90E /* VotingStorageClientInterface.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37CEBEA12F8E939D002DA90E /* VotingStorageClientInterface.swift */; };
 		37CEBEB02F8E939D002DA90E /* VotingSessionState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37CEBE9F2F8E939D002DA90E /* VotingSessionState.swift */; };
@@ -2250,6 +2252,8 @@
 		37CEBEBB2F8E939D002DA90E /* VotingCryptoClientInterface.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37CEBE962F8E939D002DA90E /* VotingCryptoClientInterface.swift */; };
 		37CEBEBC2F8E939D002DA90E /* VotingCryptoClientLiveKey.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37CEBE972F8E939D002DA90E /* VotingCryptoClientLiveKey.swift */; };
 		37CEBEBD2F8E939D002DA90E /* VotingServiceConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37CEBE9E2F8E939D002DA90E /* VotingServiceConfig.swift */; };
+		37D0F0000000000000000011 /* StaticVotingConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37D0F0000000000000000001 /* StaticVotingConfig.swift */; };
+		37D0F0000000000000000021 /* RoundAuthenticator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37D0F0000000000000000002 /* RoundAuthenticator.swift */; };
 		37CEBEBE2F8E939D002DA90E /* VotingAPIClientInterface.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37CEBE922F8E939D002DA90E /* VotingAPIClientInterface.swift */; };
 		37CEBEBF2F8E939D002DA90E /* VotingStorageClientInterface.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37CEBEA12F8E939D002DA90E /* VotingStorageClientInterface.swift */; };
 		37CEBEC02F8E939D002DA90E /* VotingSessionState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37CEBE9F2F8E939D002DA90E /* VotingSessionState.swift */; };
@@ -2266,6 +2270,8 @@
 		37CEBECB2F8E939D002DA90E /* VotingCryptoClientInterface.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37CEBE962F8E939D002DA90E /* VotingCryptoClientInterface.swift */; };
 		37CEBECC2F8E939D002DA90E /* VotingCryptoClientLiveKey.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37CEBE972F8E939D002DA90E /* VotingCryptoClientLiveKey.swift */; };
 		37CEBECD2F8E939D002DA90E /* VotingServiceConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37CEBE9E2F8E939D002DA90E /* VotingServiceConfig.swift */; };
+		37D0F0000000000000000012 /* StaticVotingConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37D0F0000000000000000001 /* StaticVotingConfig.swift */; };
+		37D0F0000000000000000022 /* RoundAuthenticator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37D0F0000000000000000002 /* RoundAuthenticator.swift */; };
 		37CEBECE2F8E939D002DA90E /* VotingAPIClientInterface.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37CEBE922F8E939D002DA90E /* VotingAPIClientInterface.swift */; };
 		37CEBECF2F8E939D002DA90E /* VotingStorageClientInterface.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37CEBEA12F8E939D002DA90E /* VotingStorageClientInterface.swift */; };
 		37CEBED02F8E939D002DA90E /* VotingSessionState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37CEBE9F2F8E939D002DA90E /* VotingSessionState.swift */; };
@@ -2282,6 +2288,8 @@
 		37CEBEDB2F8E939D002DA90E /* VotingCryptoClientInterface.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37CEBE962F8E939D002DA90E /* VotingCryptoClientInterface.swift */; };
 		37CEBEDC2F8E939D002DA90E /* VotingCryptoClientLiveKey.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37CEBE972F8E939D002DA90E /* VotingCryptoClientLiveKey.swift */; };
 		37CEBEDD2F8E939D002DA90E /* VotingServiceConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37CEBE9E2F8E939D002DA90E /* VotingServiceConfig.swift */; };
+		37D0F0000000000000000013 /* StaticVotingConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37D0F0000000000000000001 /* StaticVotingConfig.swift */; };
+		37D0F0000000000000000023 /* RoundAuthenticator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37D0F0000000000000000002 /* RoundAuthenticator.swift */; };
 		37CEBEDE2F8E939D002DA90E /* VotingAPIClientInterface.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37CEBE922F8E939D002DA90E /* VotingAPIClientInterface.swift */; };
 		37CEBEDF2F8E939D002DA90E /* VotingStorageClientInterface.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37CEBEA12F8E939D002DA90E /* VotingStorageClientInterface.swift */; };
 		37CEBEE02F8E939D002DA90E /* VotingSessionState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37CEBE9F2F8E939D002DA90E /* VotingSessionState.swift */; };
@@ -2298,6 +2306,8 @@
 		37CEBEEB2F8E939D002DA90E /* VotingCryptoClientInterface.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37CEBE962F8E939D002DA90E /* VotingCryptoClientInterface.swift */; };
 		37CEBEEC2F8E939D002DA90E /* VotingCryptoClientLiveKey.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37CEBE972F8E939D002DA90E /* VotingCryptoClientLiveKey.swift */; };
 		37CEBEED2F8E939D002DA90E /* VotingServiceConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37CEBE9E2F8E939D002DA90E /* VotingServiceConfig.swift */; };
+		37D0F0000000000000000014 /* StaticVotingConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37D0F0000000000000000001 /* StaticVotingConfig.swift */; };
+		37D0F0000000000000000024 /* RoundAuthenticator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37D0F0000000000000000002 /* RoundAuthenticator.swift */; };
 		37CEBEEE2F8E939D002DA90E /* VotingAPIClientInterface.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37CEBE922F8E939D002DA90E /* VotingAPIClientInterface.swift */; };
 		37CEBEEF2F8E939D002DA90E /* VotingStorageClientInterface.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37CEBEA12F8E939D002DA90E /* VotingStorageClientInterface.swift */; };
 		37CEBEF02F8E939D002DA90E /* VotingSessionState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37CEBE9F2F8E939D002DA90E /* VotingSessionState.swift */; };
@@ -2470,6 +2480,7 @@
 		9E46919A2AD5735E0082D7DF /* TabsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E4691992AD5735E0082D7DF /* TabsTests.swift */; };
 		9E4841532F869F5F00D0649B /* ZcashLightClientKit in Frameworks */ = {isa = PBXBuildFile; productRef = 9E4841522F869F5F00D0649B /* ZcashLightClientKit */; };
 		9E4841542F869F5F00D0649B /* ZcashLightClientKit in Frameworks */ = {isa = PBXBuildFile; productRef = 9E4841522F869F5F00D0649B /* ZcashLightClientKit */; };
+		9E4841552F869F5F00D0649B /* ZcashLightClientKit in Frameworks */ = {isa = PBXBuildFile; productRef = 9E4841522F869F5F00D0649B /* ZcashLightClientKit */; };
 		9E48423E2F87C40400D0649B /* ResyncWalletStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E48423D2F87C40400D0649B /* ResyncWalletStore.swift */; };
 		9E48423F2F87C40400D0649B /* ResyncWalletStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E48423D2F87C40400D0649B /* ResyncWalletStore.swift */; };
 		9E4842402F87C40400D0649B /* ResyncWalletStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E48423D2F87C40400D0649B /* ResyncWalletStore.swift */; };
@@ -2494,6 +2505,11 @@
 		9E599F322C3EEEF3000E4997 /* PartnerKeys.plist in Resources */ = {isa = PBXBuildFile; fileRef = 9E599F312C3EEEF3000E4997 /* PartnerKeys.plist */; };
 		9E599F332C3EEEF3000E4997 /* PartnerKeys.plist in Resources */ = {isa = PBXBuildFile; fileRef = 9E599F312C3EEEF3000E4997 /* PartnerKeys.plist */; };
 		9E599F342C3EEEF3000E4997 /* PartnerKeys.plist in Resources */ = {isa = PBXBuildFile; fileRef = 9E599F312C3EEEF3000E4997 /* PartnerKeys.plist */; };
+		37D0F0000000000000000030 /* static-voting-config.json in Resources */ = {isa = PBXBuildFile; fileRef = 37D0F0000000000000000003 /* static-voting-config.json */; };
+		37D0F0000000000000000031 /* static-voting-config.json in Resources */ = {isa = PBXBuildFile; fileRef = 37D0F0000000000000000003 /* static-voting-config.json */; };
+		37D0F0000000000000000032 /* static-voting-config.json in Resources */ = {isa = PBXBuildFile; fileRef = 37D0F0000000000000000003 /* static-voting-config.json */; };
+		37D0F0000000000000000033 /* static-voting-config.json in Resources */ = {isa = PBXBuildFile; fileRef = 37D0F0000000000000000003 /* static-voting-config.json */; };
+		37D0F0000000000000000034 /* static-voting-config.json in Resources */ = {isa = PBXBuildFile; fileRef = 37D0F0000000000000000003 /* static-voting-config.json */; };
 		9E5AAEC02A67CEC4003F283D /* Colors.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 9E5AAEBF2A67CEC4003F283D /* Colors.xcassets */; };
 		9E5AAEC12A67CEC4003F283D /* Colors.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 9E5AAEBF2A67CEC4003F283D /* Colors.xcassets */; };
 		9E5AB46F2C94777800065483 /* ReadTransactionsStorageModel.xcdatamodeld in Sources */ = {isa = PBXBuildFile; fileRef = 9E2706652AFF99F5000DA6EC /* ReadTransactionsStorageModel.xcdatamodeld */; };
@@ -3002,6 +3018,7 @@
 		37CEBE912F8E939D002DA90E /* ServerHealthTracker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerHealthTracker.swift; sourceTree = "<group>"; };
 		37CEBE922F8E939D002DA90E /* VotingAPIClientInterface.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VotingAPIClientInterface.swift; sourceTree = "<group>"; };
 		37CEBE932F8E939D002DA90E /* VotingAPIClientLiveKey.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VotingAPIClientLiveKey.swift; sourceTree = "<group>"; };
+		37D0F0000000000000000002 /* RoundAuthenticator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoundAuthenticator.swift; sourceTree = "<group>"; };
 		37CEBE942F8E939D002DA90E /* VotingAPIClientTestKey.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VotingAPIClientTestKey.swift; sourceTree = "<group>"; };
 		37CEBE962F8E939D002DA90E /* VotingCryptoClientInterface.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VotingCryptoClientInterface.swift; sourceTree = "<group>"; };
 		37CEBE972F8E939D002DA90E /* VotingCryptoClientLiveKey.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VotingCryptoClientLiveKey.swift; sourceTree = "<group>"; };
@@ -3011,6 +3028,7 @@
 		37CEBE9C2F8E939D002DA90E /* VotingModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VotingModels.swift; sourceTree = "<group>"; };
 		37CEBE9D2F8E939D002DA90E /* VotingRound.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VotingRound.swift; sourceTree = "<group>"; };
 		37CEBE9E2F8E939D002DA90E /* VotingServiceConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VotingServiceConfig.swift; sourceTree = "<group>"; };
+		37D0F0000000000000000001 /* StaticVotingConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StaticVotingConfig.swift; sourceTree = "<group>"; };
 		37CEBE9F2F8E939D002DA90E /* VotingSessionState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VotingSessionState.swift; sourceTree = "<group>"; };
 		37CEBEA12F8E939D002DA90E /* VotingStorageClientInterface.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VotingStorageClientInterface.swift; sourceTree = "<group>"; };
 		37CEBEA22F8E939D002DA90E /* VotingStorageClientLiveKey.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VotingStorageClientLiveKey.swift; sourceTree = "<group>"; };
@@ -3063,6 +3081,7 @@
 		9E4AB2B72BA1BEE900F5D6DB /* secant-distrib.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "secant-distrib.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		9E4AB2B82BA1BEE900F5D6DB /* secant-distrib-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; name = "secant-distrib-Info.plist"; path = "/Users/lukaskorba/Dev/Xcode/GitHub/LukasKorba/secant-ios-wallet/secant-distrib-Info.plist"; sourceTree = "<absolute>"; };
 		9E599F312C3EEEF3000E4997 /* PartnerKeys.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; path = PartnerKeys.plist; sourceTree = "<group>"; };
+		37D0F0000000000000000003 /* static-voting-config.json */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.json; path = "static-voting-config.json"; sourceTree = "<group>"; };
 		9E5AAEBF2A67CEC4003F283D /* Colors.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Colors.xcassets; sourceTree = "<group>"; };
 		9E5AB4822C94777800065483 /* zashi-internal.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "zashi-internal.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		9E5AB4832C94777800065483 /* zashi-internal-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; name = "zashi-internal-Info.plist"; path = "/Users/lukaskorba/Dev/Xcode/GitHub/LukasKorba/secant-ios-wallet/zashi-internal-Info.plist"; sourceTree = "<absolute>"; };
@@ -3114,6 +3133,7 @@
 				34AA777D2F8582DD00D244E2 /* ZcashPaymentURI in Frameworks */,
 				34AA77452F85813300D244E2 /* URLRouting in Frameworks */,
 				34B967632F8CC48000823B20 /* Atomics in Frameworks */,
+				9E4841552F869F5F00D0649B /* ZcashLightClientKit in Frameworks */,
 				34AA77252F857E2900D244E2 /* XCTestDynamicOverlay in Frameworks */,
 				34AA77162F857DAE00D244E2 /* ComposableArchitecture in Frameworks */,
 				34AA77882F85832500D244E2 /* Lottie in Frameworks */,
@@ -4863,6 +4883,7 @@
 				37CEBE912F8E939D002DA90E /* ServerHealthTracker.swift */,
 				37CEBE922F8E939D002DA90E /* VotingAPIClientInterface.swift */,
 				37CEBE932F8E939D002DA90E /* VotingAPIClientLiveKey.swift */,
+				37D0F0000000000000000002 /* RoundAuthenticator.swift */,
 				37CEBE942F8E939D002DA90E /* VotingAPIClientTestKey.swift */,
 			);
 			path = VotingAPIClient;
@@ -4885,6 +4906,7 @@
 				37CEBE9B2F8E939D002DA90E /* VoteChoice.swift */,
 				37CEBE9C2F8E939D002DA90E /* VotingModels.swift */,
 				37CEBE9D2F8E939D002DA90E /* VotingRound.swift */,
+				37D0F0000000000000000001 /* StaticVotingConfig.swift */,
 				37CEBE9E2F8E939D002DA90E /* VotingServiceConfig.swift */,
 				37CEBE9F2F8E939D002DA90E /* VotingSessionState.swift */,
 			);
@@ -5125,6 +5147,7 @@
 			isa = PBXGroup;
 			children = (
 				9E599F312C3EEEF3000E4997 /* PartnerKeys.plist */,
+				37D0F0000000000000000003 /* static-voting-config.json */,
 				9E90751D2A269BE300269308 /* Assets.xcassets */,
 				9E5AAEBF2A67CEC4003F283D /* Colors.xcassets */,
 				9EDDAF6C2BA2D71700A69A07 /* PrivacyInfo.xcprivacy */,
@@ -5255,7 +5278,6 @@
 			buildConfigurationList = 0D26AF91299E8196005260EE /* Build configuration list for PBXNativeTarget "secant-mainnet" */;
 			buildPhases = (
 				9E599F2F2C3EEE5A000E4997 /* Generate PartnerKeys.plist */,
-				37VOTE0001000000CONFIG01 /* Copy Voting Config */,
 				34968BEE2ABDC6FA0027F495 /* Swiftgen */,
 				0D26AE99299E8196005260EE /* SwiftLint */,
 				0D26AE9A299E8196005260EE /* Sources */,
@@ -5282,6 +5304,7 @@
 				34AA779D2F8583B400D244E2 /* BigDecimal */,
 				34AA77B92F85861300D244E2 /* UInt128 */,
 				34B967622F8CC48000823B20 /* Atomics */,
+				9E4841522F869F5F00D0649B /* ZcashLightClientKit */,
 			);
 			productName = secant;
 			productReference = 0D26AF94299E8196005260EE /* secant-mainnet.app */;
@@ -5292,7 +5315,6 @@
 			buildConfigurationList = 0D4E7A2A26B364180058B01E /* Build configuration list for PBXNativeTarget "secant-testnet" */;
 			buildPhases = (
 				9E599F2E2C3EEE25000E4997 /* Generate PartnerKeys.plist */,
-				37VOTE0001000000CONFIG01 /* Copy Voting Config */,
 				34968BED2ABDC6310027F495 /* Swiftgen */,
 				6696BA8726F0B1D200D5C875 /* SwiftLint */,
 				0D4E7A0126B364170058B01E /* Sources */,
@@ -5368,7 +5390,6 @@
 			buildConfigurationList = 9E41FFB72CB2814500783CFD /* Build configuration list for PBXNativeTarget "zashi-testnet" */;
 			buildPhases = (
 				9E41FFA12CB2814500783CFD /* Generate PartnerKeys.plist */,
-				37VOTE0001000000CONFIG01 /* Copy Voting Config */,
 				9E41FFA32CB2814500783CFD /* Swiftgen */,
 				9E41FFA42CB2814500783CFD /* SwiftLint */,
 				9E41FFA52CB2814500783CFD /* Sources */,
@@ -5405,7 +5426,6 @@
 			buildConfigurationList = 9E4AB2B42BA1BEE900F5D6DB /* Build configuration list for PBXNativeTarget "secant-distrib" */;
 			buildPhases = (
 				9E599F302C3EEE83000E4997 /* Generate PartnerKeys.plist */,
-				37VOTE0001000000CONFIG01 /* Copy Voting Config */,
 				9E4AB29F2BA1BEE900F5D6DB /* Swiftgen */,
 				9E4AB2A02BA1BEE900F5D6DB /* SwiftLint */,
 				9E4AB2A12BA1BEE900F5D6DB /* Sources */,
@@ -5442,7 +5462,6 @@
 			buildConfigurationList = 9E5AB47E2C94777800065483 /* Build configuration list for PBXNativeTarget "zashi-internal" */;
 			buildPhases = (
 				9E5AB4682C94777800065483 /* Generate PartnerKeys.plist */,
-				37VOTE0001000000CONFIG01 /* Copy Voting Config */,
 				9E5AB46A2C94777800065483 /* Swiftgen */,
 				9E5AB46B2C94777800065483 /* SwiftLint */,
 				9E5AB46C2C94777800065483 /* Sources */,
@@ -5582,6 +5601,7 @@
 				9E5CFD182CE6215500C95713 /* sending-dark.json in Resources */,
 				9EDDAF6E2BA2D71700A69A07 /* PrivacyInfo.xcprivacy in Resources */,
 				9E5AAEC12A67CEC4003F283D /* Colors.xcassets in Resources */,
+				37D0F0000000000000000030 /* static-voting-config.json in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -5627,6 +5647,7 @@
 				9E5CFD162CE6215500C95713 /* sending-dark.json in Resources */,
 				9EDDAF6D2BA2D71700A69A07 /* PrivacyInfo.xcprivacy in Resources */,
 				9E5AAEC02A67CEC4003F283D /* Colors.xcassets in Resources */,
+				37D0F0000000000000000031 /* static-voting-config.json in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -5686,6 +5707,7 @@
 				9E5CFD152CE6215500C95713 /* sending-dark.json in Resources */,
 				9E41FFB52CB2814500783CFD /* PrivacyInfo.xcprivacy in Resources */,
 				9E41FFB62CB2814500783CFD /* Colors.xcassets in Resources */,
+				37D0F0000000000000000032 /* static-voting-config.json in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -5731,6 +5753,7 @@
 				9E5CFD192CE6215500C95713 /* sending-dark.json in Resources */,
 				9EDDAF6F2BA2D71700A69A07 /* PrivacyInfo.xcprivacy in Resources */,
 				9E4AB2B32BA1BEE900F5D6DB /* Colors.xcassets in Resources */,
+				37D0F0000000000000000033 /* static-voting-config.json in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -5776,6 +5799,7 @@
 				9E5CFD172CE6215500C95713 /* sending-dark.json in Resources */,
 				9E5AB47C2C94777800065483 /* PrivacyInfo.xcprivacy in Resources */,
 				9E5AB47D2C94777800065483 /* Colors.xcassets in Resources */,
+				37D0F0000000000000000034 /* static-voting-config.json in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -5838,25 +5862,6 @@
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/zsh;
 			shellScript = "swiftgen_version=\"SwiftGen v6.6.2 (Stencil v0.15.1, StencilSwiftKit v2.10.1, SwiftGenKit v6.6.2)\"\n\nif which swiftgen >/dev/null; then\n  if [[ $(swiftgen --version) != $swiftgen_version ]]; then\n    echo \"warning: Compatible SwiftGen version not installed, download version $swiftgen_version. Currently installed version is $(swiftgen --version)\"\n  fi\n  \n  echo \"Running swiftgen\" \n  swiftgen config run --config secant/swiftgen.yml\nelse\n  echo \"warning: swiftgen not installed\"\nfi\n";
-		};
-		37VOTE0001000000CONFIG01 /* Copy Voting Config */ = {
-			isa = PBXShellScriptBuildPhase;
-			alwaysOutOfDate = 1;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			inputFileListPaths = (
-			);
-			inputPaths = (
-			);
-			name = "Copy Voting Config";
-			outputFileListPaths = (
-			);
-			outputPaths = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-			shellPath = /bin/zsh;
-			shellScript = "if [[ \"$CONFIGURATION\" != \"Debug\" ]]; then\n    echo \"Skipping voting-config-local.json copy (non-Debug build)\"\n    exit 0\nfi\n\nVC_FILE=\"${SRCROOT}/secant/Resources/voting-config-local.json\"\nif [[ -f \"$VC_FILE\" ]]; then\n    echo \"Copying voting-config-local.json into bundle\"\n    cp \"$VC_FILE\" \"${BUILT_PRODUCTS_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/\"\nelse\n    echo \"No voting-config-local.json found, skipping\"\nfi\n";
 		};
 		6696BA8726F0B1D200D5C875 /* SwiftLint */ = {
 			isa = PBXShellScriptBuildPhase;
@@ -6547,6 +6552,8 @@
 				34AA749E2F85774F00D244E2 /* ReviewRequestTestKey.swift in Sources */,
 				34AA749F2F85774F00D244E2 /* LogsHandlerInterface.swift in Sources */,
 				9E2706682AFF99F5000DA6EC /* ReadTransactionsStorageModel.xcdatamodeld in Sources */,
+				37D0F0000000000000000010 /* StaticVotingConfig.swift in Sources */,
+				37D0F0000000000000000020 /* RoundAuthenticator.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -6998,6 +7005,8 @@
 				34AA713A2F85774F00D244E2 /* ReviewRequestTestKey.swift in Sources */,
 				34AA713B2F85774F00D244E2 /* LogsHandlerInterface.swift in Sources */,
 				9E2706672AFF99F5000DA6EC /* ReadTransactionsStorageModel.xcdatamodeld in Sources */,
+				37D0F0000000000000000011 /* StaticVotingConfig.swift in Sources */,
+				37D0F0000000000000000021 /* RoundAuthenticator.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -7512,6 +7521,8 @@
 				34AA76342F85774F00D244E2 /* ReviewRequestTestKey.swift in Sources */,
 				34AA76352F85774F00D244E2 /* LogsHandlerInterface.swift in Sources */,
 				9E41FFA82CB2814500783CFD /* ReadTransactionsStorageModel.xcdatamodeld in Sources */,
+				37D0F0000000000000000012 /* StaticVotingConfig.swift in Sources */,
+				37D0F0000000000000000022 /* RoundAuthenticator.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -7963,6 +7974,8 @@
 				34AA72D02F85774F00D244E2 /* ReviewRequestTestKey.swift in Sources */,
 				34AA72D12F85774F00D244E2 /* LogsHandlerInterface.swift in Sources */,
 				9E4AB2A42BA1BEE900F5D6DB /* ReadTransactionsStorageModel.xcdatamodeld in Sources */,
+				37D0F0000000000000000013 /* StaticVotingConfig.swift in Sources */,
+				37D0F0000000000000000023 /* RoundAuthenticator.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -8414,6 +8427,8 @@
 				34AA6F6C2F85774F00D244E2 /* ReviewRequestTestKey.swift in Sources */,
 				34AA6F6D2F85774F00D244E2 /* LogsHandlerInterface.swift in Sources */,
 				9E5AB46F2C94777800065483 /* ReadTransactionsStorageModel.xcdatamodeld in Sources */,
+				37D0F0000000000000000014 /* StaticVotingConfig.swift in Sources */,
+				37D0F0000000000000000024 /* RoundAuthenticator.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

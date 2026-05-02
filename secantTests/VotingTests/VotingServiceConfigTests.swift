@@ -22,7 +22,8 @@ final class VotingServiceConfigTests: XCTestCase {
             "vote_protocol": "v0",
             "tally": "v0",
             "vote_server": "v1"
-          }
+          },
+          "rounds": {}
         }
         """
         let data = Data(json.utf8)
@@ -41,7 +42,8 @@ final class VotingServiceConfigTests: XCTestCase {
           "config_version": 1,
           "vote_servers": [{"url": "https://x", "label": "a"}],
           "pir_endpoints": [{"url": "https://y", "label": "b"}],
-          "supported_versions": {"pir": ["v0"], "vote_protocol": "v0", "tally": "v0", "vote_server": "v1"}
+          "supported_versions": {"pir": ["v0"], "vote_protocol": "v0", "tally": "v0", "vote_server": "v1"},
+          "rounds": {}
         }
         """
         XCTAssertNoThrow(try JSONDecoder().decode(VotingServiceConfig.self, from: Data(json.utf8)))
@@ -54,8 +56,58 @@ final class VotingServiceConfigTests: XCTestCase {
             configVersion: 1,
             voteServers: [.init(url: "https://x", label: "a")],
             pirEndpoints: [.init(url: "https://y", label: "b")],
-            supportedVersions: supportedVersions
+            supportedVersions: supportedVersions,
+            rounds: [:]
         )
+    }
+
+    func testDecodeAcceptsEmptyRoundsRegistry() throws {
+        let config = try JSONDecoder().decode(VotingServiceConfig.self, from: Data("""
+        {
+          "config_version": 1,
+          "vote_servers": [{"url": "https://x", "label": "a"}],
+          "pir_endpoints": [{"url": "https://y", "label": "b"}],
+          "supported_versions": {"pir": ["v0"], "vote_protocol": "v0", "tally": "v0", "vote_server": "v1"},
+          "rounds": {}
+        }
+        """.utf8))
+
+        XCTAssertTrue(config.rounds.isEmpty)
+        XCTAssertNoThrow(try config.validate())
+    }
+
+    func testValidateRejectsNonHexRoundId() {
+        let config = VotingServiceConfig(
+            configVersion: 1,
+            voteServers: [.init(url: "https://x", label: "a")],
+            pirEndpoints: [.init(url: "https://y", label: "b")],
+            supportedVersions: .init(pir: ["v0"], voteProtocol: "v0", tally: "v0", voteServer: "v1"),
+            rounds: [
+                String(repeating: "z", count: 64): .init(
+                    authVersion: 1,
+                    eaPk: Data(repeating: 0x01, count: 32),
+                    signatures: []
+                )
+            ]
+        )
+
+        XCTAssertThrowsError(try config.validate())
+    }
+
+    func testStaticConfigValidationRejectsShortTrustedKey() {
+        let config = StaticVotingConfig(
+            staticConfigVersion: 1,
+            dynamicConfigURL: URL(string: "https://example.com/dynamic-voting-config.json")!,
+            trustedKeys: [
+                .init(keyId: "short", alg: "ed25519", pubkey: Data(repeating: 0x01, count: 31), notes: nil)
+            ]
+        )
+
+        XCTAssertThrowsError(try config.validate())
+    }
+
+    func testStaticConfigLoadFromBundleRejectsMissingResource() {
+        XCTAssertThrowsError(try StaticVotingConfig.loadFromBundle(Bundle(for: Self.self)))
     }
 
     func testValidateAcceptsCurrentWalletCapabilities() throws {
@@ -119,6 +171,236 @@ final class VotingServiceConfigTests: XCTestCase {
             }
             XCTAssertEqual(component, "tally")
         }
+    }
+}
+
+final class RoundAuthenticatorTests: XCTestCase {
+    private let roundId = "58d9319ac86933b81769a7c0972444fa39212ad3790646398de6ce6534de2225"
+    private let eaPK = Data(base64Encoded: "N72oXeIF96QwWBtChaCwde3tjTt75ZfAs455V4usYwM=")!
+    private let adminPubkey = Data(base64Encoded: "rKDbmhkoW9ja7dMiCV+1uTao7wXWV6xN/57erkrOuiQ=")!
+    private let adminSignature = Data(base64Encoded: "rnll+KsHIFt73GpyNoWrX57dlcX8hTi8GU5X/xpwg3vcE+jCARUXpD7LsK+OLw6R5q1kU/zccwNgzsmclt4WAg==")!
+
+    func testAuthenticateAcceptsFixtureFromDynamicConfig() {
+        XCTAssertEqual(
+            RoundAuthenticator.authenticate(
+                chainEaPK: eaPK,
+                roundIdHex: roundId,
+                rounds: [roundId: makeEntry()],
+                trustedKeys: [makeTrustedKey()]
+            ),
+            .authenticated
+        )
+    }
+
+    func testAuthenticateReportsMissingRound() {
+        XCTAssertEqual(
+            RoundAuthenticator.authenticate(
+                chainEaPK: eaPK,
+                roundIdHex: roundId,
+                rounds: [:],
+                trustedKeys: [makeTrustedKey()]
+            ),
+            .missingRound
+        )
+    }
+
+    func testAuthenticateReportsUnknownAuthVersion() {
+        XCTAssertEqual(
+            RoundAuthenticator.authenticate(
+                chainEaPK: eaPK,
+                roundIdHex: roundId,
+                rounds: [roundId: makeEntry(authVersion: 2)],
+                trustedKeys: [makeTrustedKey()]
+            ),
+            .unknownAuthVersion
+        )
+    }
+
+    func testAuthenticateReportsInvalidSignatures() {
+        var badSig = adminSignature
+        badSig[0] ^= 0xFF
+
+        XCTAssertEqual(
+            RoundAuthenticator.authenticate(
+                chainEaPK: eaPK,
+                roundIdHex: roundId,
+                rounds: [roundId: makeEntry(signature: badSig)],
+                trustedKeys: [makeTrustedKey()]
+            ),
+            .invalidSignatures
+        )
+    }
+
+    func testAuthenticateReportsEaPKMismatch() {
+        var chainEaPK = eaPK
+        chainEaPK[0] ^= 0xFF
+
+        XCTAssertEqual(
+            RoundAuthenticator.authenticate(
+                chainEaPK: chainEaPK,
+                roundIdHex: roundId,
+                rounds: [roundId: makeEntry()],
+                trustedKeys: [makeTrustedKey()]
+            ),
+            .eaPKMismatch
+        )
+    }
+
+    func testAuthenticateReportsInvalidSignaturesWhenEntryEaPKIsShort() {
+        XCTAssertEqual(
+            RoundAuthenticator.authenticate(
+                chainEaPK: eaPK,
+                roundIdHex: roundId,
+                rounds: [roundId: makeEntry(eaPK: Data(repeating: 0x01, count: 31))],
+                trustedKeys: [makeTrustedKey()]
+            ),
+            .invalidSignatures
+        )
+    }
+
+    func testVerifyEntrySignaturesRejectsUnknownKeyId() {
+        let entry = makeEntry(keyId: "unknown-key")
+
+        XCTAssertFalse(RoundAuthenticator.verifyEntrySignatures(entry: entry, trustedKeys: [makeTrustedKey()]))
+    }
+
+    func testVerifyEntrySignaturesRejectsSignatureAlgMismatch() {
+        let entry = makeEntry(signatureAlg: "ed448")
+
+        XCTAssertFalse(RoundAuthenticator.verifyEntrySignatures(entry: entry, trustedKeys: [makeTrustedKey()]))
+    }
+
+    func testVerifyEntrySignaturesRejectsTrustedKeyAlgMismatch() {
+        let trustedKey = StaticVotingConfig.TrustedKey(
+            keyId: "valar-test",
+            alg: "ed448",
+            pubkey: adminPubkey,
+            notes: nil
+        )
+
+        XCTAssertFalse(RoundAuthenticator.verifyEntrySignatures(entry: makeEntry(), trustedKeys: [trustedKey]))
+    }
+
+    func testVerifyEntrySignaturesRejectsShortSignature() {
+        let entry = makeEntry(signature: Data(repeating: 0x01, count: 63))
+
+        XCTAssertFalse(RoundAuthenticator.verifyEntrySignatures(entry: entry, trustedKeys: [makeTrustedKey()]))
+    }
+
+    func testVerifyEntrySignaturesAcceptsWhenAnySignatureIsValid() {
+        let entry = VotingServiceConfig.RoundEntry(
+            authVersion: 1,
+            eaPk: eaPK,
+            signatures: [
+                .init(keyId: "valar-test", alg: "ed25519", sig: Data(repeating: 0x01, count: 64)),
+                .init(keyId: "valar-test", alg: "ed25519", sig: adminSignature)
+            ]
+        )
+
+        XCTAssertTrue(RoundAuthenticator.verifyEntrySignatures(entry: entry, trustedKeys: [makeTrustedKey()]))
+    }
+
+    private func makeEntry(
+        authVersion: Int = 1,
+        eaPK: Data? = nil,
+        keyId: String = "valar-test",
+        signatureAlg: String = "ed25519",
+        signature: Data? = nil
+    ) -> VotingServiceConfig.RoundEntry {
+        .init(
+            authVersion: authVersion,
+            eaPk: eaPK ?? self.eaPK,
+            signatures: [
+                .init(keyId: keyId, alg: signatureAlg, sig: signature ?? adminSignature)
+            ]
+        )
+    }
+
+    private func makeTrustedKey() -> StaticVotingConfig.TrustedKey {
+        .init(keyId: "valar-test", alg: "ed25519", pubkey: adminPubkey, notes: nil)
+    }
+}
+
+final class VotingSessionParsingTests: XCTestCase {
+    func testParseVotingSessionAcceptsValidProposalBounds() throws {
+        XCTAssertNoThrow(try parseVotingSession(from: makeRound()))
+    }
+
+    func testParseVotingSessionRejectsEmptyProposals() {
+        XCTAssertThrowsError(try parseVotingSession(from: makeRound(proposals: [])))
+    }
+
+    func testParseVotingSessionRejectsTooManyProposals() {
+        XCTAssertThrowsError(try parseVotingSession(from: makeRound(proposals: (1...16).map { makeProposal(id: $0) })))
+    }
+
+    func testParseVotingSessionRejectsProposalIdOutsideRange() {
+        XCTAssertThrowsError(try parseVotingSession(from: makeRound(proposals: [makeProposal(id: 16)])))
+    }
+
+    func testParseVotingSessionRejectsDuplicateProposalIds() {
+        XCTAssertThrowsError(try parseVotingSession(from: makeRound(proposals: [makeProposal(id: 1), makeProposal(id: 1)])))
+    }
+
+    func testParseVotingSessionRejectsTooFewOptions() {
+        XCTAssertThrowsError(try parseVotingSession(from: makeRound(proposals: [makeProposal(id: 1, options: [makeOption(index: 0)])])))
+    }
+
+    func testParseVotingSessionRejectsTooManyOptions() {
+        XCTAssertThrowsError(try parseVotingSession(from: makeRound(proposals: [makeProposal(
+            id: 1,
+            options: (0...8).map { makeOption(index: $0) }
+        )])))
+    }
+
+    func testParseVotingSessionRejectsDuplicateOptionIndices() {
+        XCTAssertThrowsError(try parseVotingSession(from: makeRound(proposals: [makeProposal(
+            id: 1,
+            options: [makeOption(index: 0), makeOption(index: 0)]
+        )])))
+    }
+
+    func testParseVotingSessionRejectsNonContiguousOptionIndices() {
+        XCTAssertThrowsError(try parseVotingSession(from: makeRound(proposals: [makeProposal(
+            id: 1,
+            options: [makeOption(index: 0), makeOption(index: 2)]
+        )])))
+    }
+
+    private func makeRound(proposals: [[String: Any]]? = nil) -> [String: Any] {
+        [
+            "vote_round_id": Data(repeating: 0xAA, count: 32).base64EncodedString(),
+            "snapshot_height": 1,
+            "snapshot_blockhash": Data(repeating: 0x01, count: 32).base64EncodedString(),
+            "proposals_hash": Data(repeating: 0x02, count: 32).base64EncodedString(),
+            "vote_end_time": 3,
+            "ceremony_phase_start": 2,
+            "ea_pk": Data(repeating: 0x03, count: 32).base64EncodedString(),
+            "vk_zkp1": Data(repeating: 0x04, count: 32).base64EncodedString(),
+            "vk_zkp2": Data(repeating: 0x05, count: 32).base64EncodedString(),
+            "vk_zkp3": Data(repeating: 0x06, count: 32).base64EncodedString(),
+            "nc_root": Data(repeating: 0x07, count: 32).base64EncodedString(),
+            "nullifier_imt_root": Data(repeating: 0x08, count: 32).base64EncodedString(),
+            "creator": "creator",
+            "description": "description",
+            "proposals": proposals ?? [makeProposal(id: 1)],
+            "status": SessionStatus.active.rawValue,
+            "created_at_height": 1,
+            "title": "Round"
+        ]
+    }
+
+    private func makeProposal(id: Int, options: [[String: Any]]? = nil) -> [String: Any] {
+        [
+            "id": id,
+            "title": "Proposal \(id)",
+            "description": "Proposal description",
+            "options": options ?? [makeOption(index: 0), makeOption(index: 1)]
+        ]
+    }
+
+    private func makeOption(index: Int) -> [String: Any] {
+        ["index": index, "label": "Option \(index)"]
     }
 }
 
@@ -1000,15 +1282,13 @@ final class VotingSubmissionPostFallbackTests: XCTestCase {
     private static func makeServiceConfig() -> VotingServiceConfig {
         VotingServiceConfig(
             configVersion: 1,
-            voteRoundId: String(repeating: "a", count: 64),
             voteServers: [
                 .init(url: "https://offline.example.com", label: "offline"),
                 .init(url: "https://online.example.com", label: "online")
             ],
             pirEndpoints: [.init(url: "https://pir.example.com", label: "pir")],
-            snapshotHeight: 1,
-            voteEndTime: 3,
-            supportedVersions: .init(pir: ["v0"], voteProtocol: "v0", tally: "v0", voteServer: "v1")
+            supportedVersions: .init(pir: ["v0"], voteProtocol: "v0", tally: "v0", voteServer: "v1"),
+            rounds: [:]
         )
     }
 }

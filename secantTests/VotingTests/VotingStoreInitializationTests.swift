@@ -62,7 +62,8 @@ final class VotingStoreInitializationTests: XCTestCase {
                 voteProtocol: "v0",
                 tally: "v0",
                 voteServer: "v1"
-            )
+            ),
+            rounds: [:]
         )
     }
 

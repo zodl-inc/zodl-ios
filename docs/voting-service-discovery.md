@@ -4,10 +4,10 @@ How zodl-ios discovers vote servers and PIR endpoints at runtime. The wallet imp
 
 ## Resolution order
 
-1. **Local override** — `voting-config-local.json` bundled in the app's main bundle (DEBUG builds only). Intended for local development against a local chain.
-2. **CDN** — [`https://valargroup.github.io/token-holder-voting-config/voting-config.json`](https://valargroup.github.io/token-holder-voting-config/voting-config.json), served via GitHub Pages from [`valargroup/token-holder-voting-config`](https://github.com/valargroup/token-holder-voting-config).
+1. **Static config** — `static-voting-config.json` bundled in the signed app binary. It carries the `dynamic_config_url` and trusted voting admin keys.
+2. **Dynamic config** — fetched from the bundled static config's `dynamic_config_url`, currently [`https://valargroup.github.io/token-holder-voting-config/dynamic-voting-config.json`](https://valargroup.github.io/token-holder-voting-config/dynamic-voting-config.json), served via GitHub Pages from [`valargroup/token-holder-voting-config`](https://github.com/valargroup/token-holder-voting-config).
 
-There is no silent fallback. If the local override is malformed, or the CDN is unreachable, returns non-200, decodes to an unsupported shape, or advertises a version the wallet doesn't speak, the wallet routes to the `.configError` screen (`VotingConfigErrorView`) and voting is blocked for the session.
+There is no silent fallback. If the bundled static config is malformed, or the dynamic config is unreachable, returns non-200, decodes to an unsupported shape, or advertises a version the wallet doesn't speak, the wallet routes to the `.configError` screen (`VotingConfigErrorView`) and voting is blocked for the session.
 
 Implementation lives in [`VotingAPIClientLiveKey.swift`](../secant/Sources/Dependencies/VotingAPIClient/VotingAPIClientLiveKey.swift) (`fetchServiceConfig`).
 

@@ -1,14 +1,14 @@
 import Foundation
 
-/// CDN-hosted voting service configuration as specified in ZIP 1244 §"Vote Configuration Format".
+/// CDN-hosted voting service configuration as specified in ZIP 1244 §"Vote Discovery".
 ///
-/// A JSON document for service discovery; fetched at startup from `configURL`.
-/// A debug-only local override (`localOverrideFilename` in the app bundle) takes priority for testing.
+/// A JSON document for service discovery; fetched at startup from the bundled static config's dynamic_config_url.
 struct VotingServiceConfig: Codable, Equatable, Sendable {
     let configVersion: Int
     let voteServers: [ServiceEndpoint]
     let pirEndpoints: [ServiceEndpoint]
     let supportedVersions: SupportedVersions
+    let rounds: [String: RoundEntry]
 
     struct ServiceEndpoint: Codable, Equatable, Sendable {
         let url: String
@@ -41,16 +41,42 @@ struct VotingServiceConfig: Codable, Equatable, Sendable {
         }
     }
 
+    struct RoundEntry: Codable, Equatable, Sendable {
+        let authVersion: Int
+        let eaPk: Data
+        let signatures: [Signature]
+
+        enum CodingKeys: String, CodingKey {
+            case authVersion = "auth_version"
+            case eaPk = "ea_pk"
+            case signatures
+        }
+    }
+
+    struct Signature: Codable, Equatable, Sendable {
+        let keyId: String
+        let alg: String
+        let sig: Data
+
+        enum CodingKeys: String, CodingKey {
+            case keyId = "key_id"
+            case alg
+            case sig
+        }
+    }
+
     init(
         configVersion: Int,
         voteServers: [ServiceEndpoint],
         pirEndpoints: [ServiceEndpoint],
-        supportedVersions: SupportedVersions
+        supportedVersions: SupportedVersions,
+        rounds: [String: RoundEntry]
     ) {
         self.configVersion = configVersion
         self.voteServers = voteServers
         self.pirEndpoints = pirEndpoints
         self.supportedVersions = supportedVersions
+        self.rounds = rounds
     }
 
     enum CodingKeys: String, CodingKey {
@@ -58,29 +84,9 @@ struct VotingServiceConfig: Codable, Equatable, Sendable {
         case voteServers = "vote_servers"
         case pirEndpoints = "pir_endpoints"
         case supportedVersions = "supported_versions"
+        case rounds
     }
 
-    /// Config URL served via GitHub Pages CDN.
-    public static let configURL = URL(string: "https://valargroup.github.io/token-holder-voting-config/voting-config.json")!
-
-    /// Filename for a local override bundled in the app (debug-only).
-    static let localOverrideFilename = "voting-config-local.json"
-
-    #if DEBUG
-    /// Debug-only config used by previews and tests. Not used on the live path —
-    /// a CDN fetch or decode failure surfaces as a `VotingConfigError` instead.
-    static let debugFallback = VotingServiceConfig(
-        configVersion: 1,
-        voteServers: [ServiceEndpoint(url: "https://vote-chain-primary.valargroup.org", label: "Primary")],
-        pirEndpoints: [ServiceEndpoint(url: "https://pir.valargroup.org", label: "PIR Server")],
-        supportedVersions: SupportedVersions(
-            pir: ["v0"],
-            voteProtocol: "v0",
-            tally: "v0",
-            voteServer: "v1"
-        )
-    )
-    #endif
 }
 
 // MARK: - Wallet capabilities
@@ -116,6 +122,18 @@ enum VotingConfigError: Error, Equatable, LocalizedError {
 extension VotingServiceConfig {
     /// Throws `VotingConfigError.unsupportedVersion` on the first component the wallet doesn't support.
     func validate() throws {
+        guard configVersion == 1 else {
+            throw VotingConfigError.decodeFailed("unsupported config_version \(configVersion)")
+        }
+        guard !voteServers.isEmpty else {
+            throw VotingConfigError.decodeFailed("vote_servers must contain at least one entry")
+        }
+        guard !pirEndpoints.isEmpty else {
+            throw VotingConfigError.decodeFailed("pir_endpoints must contain at least one entry")
+        }
+        for roundId in rounds.keys where !Self.isLowercaseHexRoundId(roundId) {
+            throw VotingConfigError.decodeFailed("rounds key must be 64 lowercase hex characters: \(roundId)")
+        }
         if !WalletCapabilities.voteServer.contains(supportedVersions.voteServer) {
             throw VotingConfigError.unsupportedVersion(
                 component: "vote_server",
@@ -140,5 +158,20 @@ extension VotingServiceConfig {
                 advertised: supportedVersions.pir.joined(separator: ",")
             )
         }
+    }
+
+    static func isLowercaseHexRoundId(_ value: String) -> Bool {
+        guard value.count == 64 else { return false }
+        return value.utf8.allSatisfy { byte in
+            (byte >= CharacterCode.zero && byte <= CharacterCode.nine) ||
+            (byte >= CharacterCode.lowercaseA && byte <= CharacterCode.lowercaseF)
+        }
+    }
+
+    private enum CharacterCode {
+        static let zero = UInt8(ascii: "0")
+        static let nine = UInt8(ascii: "9")
+        static let lowercaseA = UInt8(ascii: "a")
+        static let lowercaseF = UInt8(ascii: "f")
     }
 }
