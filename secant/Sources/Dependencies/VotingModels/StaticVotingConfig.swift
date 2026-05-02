@@ -1,11 +1,12 @@
+import CryptoKit
 import Foundation
 
 /// Wallet-bundled voting trust anchor.
 ///
 /// This file is shipped inside the signed app bundle, so changing it requires a
 /// wallet release. It intentionally contains only slow-moving trust material and
-/// the URL for the dynamic config; vote/PIR endpoints and rounds live in the
-/// fetched dynamic config.
+/// the URL for the dynamic config, plus an optional whole-file hash pin.
+/// Vote/PIR endpoints and rounds live in the fetched dynamic config.
 struct StaticVotingConfig: Codable, Equatable, Sendable {
     static let bundleResourceName = "static-voting-config"
     static let supportedVersion = 1
@@ -13,7 +14,20 @@ struct StaticVotingConfig: Codable, Equatable, Sendable {
 
     let staticConfigVersion: Int
     let dynamicConfigURL: URL
+    let dynamicConfigSHA256: String?
     let trustedKeys: [TrustedKey]
+
+    init(
+        staticConfigVersion: Int,
+        dynamicConfigURL: URL,
+        dynamicConfigSHA256: String? = nil,
+        trustedKeys: [TrustedKey]
+    ) {
+        self.staticConfigVersion = staticConfigVersion
+        self.dynamicConfigURL = dynamicConfigURL
+        self.dynamicConfigSHA256 = dynamicConfigSHA256
+        self.trustedKeys = trustedKeys
+    }
 
     /// Admin key trusted to sign per-round dynamic config entries.
     ///
@@ -37,6 +51,7 @@ struct StaticVotingConfig: Codable, Equatable, Sendable {
     enum CodingKeys: String, CodingKey {
         case staticConfigVersion = "static_config_version"
         case dynamicConfigURL = "dynamic_config_url"
+        case dynamicConfigSHA256 = "dynamic_config_sha256"
         case trustedKeys = "trusted_keys"
     }
 
@@ -79,6 +94,9 @@ struct StaticVotingConfig: Codable, Equatable, Sendable {
         guard !trustedKeys.isEmpty else {
             throw VotingConfigError.decodeFailed("trusted_keys must contain at least one entry")
         }
+        if let dynamicConfigSHA256, !Self.isLowercaseHexSHA256(dynamicConfigSHA256) {
+            throw VotingConfigError.decodeFailed("dynamic_config_sha256 must be 64 lowercase hex characters")
+        }
 
         for key in trustedKeys {
             guard key.alg == Self.algEd25519 else {
@@ -88,5 +106,36 @@ struct StaticVotingConfig: Codable, Equatable, Sendable {
                 throw VotingConfigError.decodeFailed("trusted_keys[\(key.keyId)].pubkey must decode to 32 bytes")
             }
         }
+    }
+
+    /// Validate the fetched dynamic config bytes against the optional static pin.
+    func validateDynamicConfigPin(for data: Data) throws {
+        guard let dynamicConfigSHA256 else { return }
+
+        let actual = Self.sha256Hex(of: data)
+        guard actual == dynamicConfigSHA256 else {
+            throw VotingConfigError.decodeFailed("dynamic_config_sha256 mismatch")
+        }
+    }
+
+    static func sha256Hex(of data: Data) -> String {
+        SHA256.hash(data: data)
+            .map { String(format: "%02x", $0) }
+            .joined()
+    }
+
+    private static func isLowercaseHexSHA256(_ value: String) -> Bool {
+        guard value.count == 64 else { return false }
+        return value.utf8.allSatisfy { byte in
+            (byte >= CharacterCode.zero && byte <= CharacterCode.nine) ||
+            (byte >= CharacterCode.lowercaseA && byte <= CharacterCode.lowercaseF)
+        }
+    }
+
+    private enum CharacterCode {
+        static let zero = UInt8(ascii: "0")
+        static let nine = UInt8(ascii: "9")
+        static let lowercaseA = UInt8(ascii: "a")
+        static let lowercaseF = UInt8(ascii: "f")
     }
 }

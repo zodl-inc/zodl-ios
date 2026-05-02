@@ -137,6 +137,7 @@ extension Voting {
             // from the chain round queries below.
             guard state.currentScreen != .howToVote else { return .none }
             guard !state.isSubmittingVote else { return .none }
+            state.prepareForServiceConfigRefresh()
             return .run { [votingAPI] send in
                 // 1. Fetch service config (local override -> CDN). Decode or version failures
                 //    surface as VotingConfigError and block the voting feature entirely;
@@ -150,6 +151,7 @@ extension Voting {
             }
 
         case .configUnsupported(let message):
+            state.clearLoadedVotingConfigState()
             state.screenStack = [.configError(message)]
             return .none
 
@@ -555,5 +557,65 @@ extension Voting {
         default:
             return .none
         }
+    }
+}
+
+extension Voting.State {
+    mutating func prepareForServiceConfigRefresh() {
+        clearLoadedVotingConfigState()
+        screenStack = [.loading]
+    }
+
+    mutating func clearLoadedVotingConfigState() {
+        serviceConfig = nil
+        activeSession = nil
+        allRounds = []
+        voteRecords = [:]
+        voteRecord = nil
+        roundId = ""
+        votingRound = VotingRound(
+            id: "",
+            title: "",
+            description: "",
+            snapshotHeight: 0,
+            snapshotDate: Date(timeIntervalSince1970: 0),
+            votingStart: Date(timeIntervalSince1970: 0),
+            votingEnd: Date(timeIntervalSince1970: 0),
+            proposals: []
+        )
+        votes = [:]
+        votingWeight = 0
+        walletNotes = []
+        bundleCount = 0
+        hotkeyAddress = nil
+        tallyResults = [:]
+        isLoadingTallyResults = false
+        pollsLoadError = false
+        resultsLoadError = false
+        showPollClosedSheet = false
+        shareTrackingStatus = .idle
+        shareDelegations = []
+        showShareInfoSheet = false
+        shareInfoProposalId = nil
+        noteWitnessResults = []
+        witnessStatus = .notStarted
+        cachedWitnesses = []
+        witnessTiming = nil
+        delegationProofStatus = .notStarted
+        isDelegationProofInFlight = false
+        pendingBatchSubmission = false
+        currentKeystoneBundleIndex = 0
+        keystoneBundleSignatures = []
+        pendingVotingPczt = nil
+        pendingUnsignedDelegationPczt = nil
+        keystoneSigningStatus = .idle
+        isSubmittingVote = false
+        voteSubmissionStep = nil
+        currentVoteBundleIndex = nil
+        submittingProposalId = nil
+        selectedProposalId = nil
+        editingFromReview = nil
+        batchSubmissionStatus = .idle
+        batchVoteErrors = [:]
     }
 }

@@ -31,7 +31,19 @@ final class VotingStoreInitializationTests: XCTestCase {
         store.dependencies.votingCrypto.openDatabase = { _ in }
         store.dependencies.votingCrypto.setWalletId = { _ in }
 
-        await store.send(.initialize)
+        await store.send(.initialize) {
+            $0.votingRound = VotingRound(
+                id: "",
+                title: "",
+                description: "",
+                snapshotHeight: 0,
+                snapshotDate: Date(timeIntervalSince1970: 0),
+                votingStart: Date(timeIntervalSince1970: 0),
+                votingEnd: Date(timeIntervalSince1970: 0),
+                proposals: []
+            )
+            $0.screenStack = [.loading]
+        }
         await store.receive(.serviceConfigLoaded(config)) {
             $0.serviceConfig = config
         }
@@ -43,13 +55,102 @@ final class VotingStoreInitializationTests: XCTestCase {
             $0.voteRecords = [:]
         }
 
-        await store.send(.initialize)
-        await store.receive(.serviceConfigLoaded(config))
-        await store.receive(.allRoundsLoaded([session]))
+        await store.send(.initialize) {
+            $0.serviceConfig = nil
+            $0.activeSession = nil
+            $0.allRounds = []
+            $0.voteRecords = [:]
+            $0.voteRecord = nil
+            $0.roundId = ""
+            $0.votingRound = VotingRound(
+                id: "",
+                title: "",
+                description: "",
+                snapshotHeight: 0,
+                snapshotDate: Date(timeIntervalSince1970: 0),
+                votingStart: Date(timeIntervalSince1970: 0),
+                votingEnd: Date(timeIntervalSince1970: 0),
+                proposals: []
+            )
+            $0.votes = [:]
+            $0.screenStack = [.loading]
+        }
+        await store.receive(.serviceConfigLoaded(config)) {
+            $0.serviceConfig = config
+        }
+        await store.receive(.allRoundsLoaded([session])) {
+            $0.allRounds = [
+                Voting.State.RoundListItem(roundNumber: 1, session: session)
+            ]
+            $0.screenStack = [.pollsList]
+            $0.voteRecords = [:]
+        }
 
         XCTAssertEqual(await callCounter.configFetches, 2)
         XCTAssertEqual(await callCounter.urlConfigurations, 2)
         XCTAssertEqual(await callCounter.roundFetches, 2)
+    }
+
+    func testInitializeClearsStaleRoundsAndShowsConfigErrorWhenConfigFails() async {
+        let session = makeSession()
+        let staleRound = Voting.State.RoundListItem(roundNumber: 1, session: session)
+        var initialState = Voting.State()
+        initialState.screenStack = [.pollsList]
+        initialState.serviceConfig = makeConfig()
+        initialState.allRounds = [staleRound]
+        initialState.activeSession = session
+        initialState.roundId = session.voteRoundId.hexString
+        initialState.votingRound = VotingRound(
+            id: session.voteRoundId.hexString,
+            title: session.title,
+            description: session.description,
+            snapshotHeight: session.snapshotHeight,
+            snapshotDate: .now,
+            votingStart: .now,
+            votingEnd: session.voteEndTime,
+            proposals: session.proposals
+        )
+        initialState.votes = [1: .option(0)]
+        initialState.voteRecords = [
+            staleRound.id: VoteRecord(
+                votedAt: Date(timeIntervalSince1970: 1),
+                votingWeight: 1,
+                proposalCount: 1
+            )
+        ]
+
+        let store = TestStore(
+            initialState: initialState
+        ) {
+            Voting()
+        }
+        store.dependencies.votingAPI.fetchServiceConfig = {
+            throw TestConfigError()
+        }
+
+        await store.send(.initialize) {
+            $0.serviceConfig = nil
+            $0.activeSession = nil
+            $0.allRounds = []
+            $0.voteRecords = [:]
+            $0.voteRecord = nil
+            $0.roundId = ""
+            $0.votingRound = VotingRound(
+                id: "",
+                title: "",
+                description: "",
+                snapshotHeight: 0,
+                snapshotDate: Date(timeIntervalSince1970: 0),
+                votingStart: Date(timeIntervalSince1970: 0),
+                votingEnd: Date(timeIntervalSince1970: 0),
+                proposals: []
+            )
+            $0.votes = [:]
+            $0.screenStack = [.loading]
+        }
+        await store.receive(.configUnsupported("Pinned config failed")) {
+            $0.screenStack = [.configError("Pinned config failed")]
+        }
     }
 
     private func makeConfig() -> VotingServiceConfig {
@@ -97,6 +198,12 @@ final class VotingStoreInitializationTests: XCTestCase {
             createdAtHeight: 1,
             title: "Round"
         )
+    }
+}
+
+private struct TestConfigError: LocalizedError {
+    var errorDescription: String? {
+        "Pinned config failed"
     }
 }
 

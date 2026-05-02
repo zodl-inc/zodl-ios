@@ -1,6 +1,7 @@
 {
   "static_config_version": 1,
   "dynamic_config_url": "https://valargroup.github.io/token-holder-voting-config/dynamic-voting-config.json",
+  "dynamic_config_sha256": "165cc6ef74e5891720c5db34912c1973f9e907f862665031807c07d4b1988027",
   "trusted_keys": [
     {
       "key_id": "valar-test",
