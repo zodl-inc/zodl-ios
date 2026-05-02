@@ -197,7 +197,7 @@ private final class VotingStore: Sendable {
 }
 
 private extension VotingStore {
-    func persistentState(_ mutable: inout MutableState) throws -> PersistentState {
+    private func persistentState(_ mutable: inout MutableState) throws -> PersistentState {
         if let persistentState = mutable.persistentState {
             return persistentState
         }

@@ -966,6 +966,101 @@ final class VotingSubmissionPostFallbackTests: XCTestCase {
         XCTAssertTrue(store.state.isDelegationProofInFlight)
     }
 
+    func testDelegationPipelineRecoversConfirmedCachedTxBeforeSkippingBundle() async throws {
+        let recorder = RecoveryOrderRecorder()
+        var votingCrypto = VotingCryptoClient()
+        votingCrypto.getDelegationTxHash = { _, _ in .present("cached-tx") }
+        votingCrypto.storeVanPosition = { _, bundleIndex, position in
+            await recorder.record("van:\(bundleIndex):\(position)")
+        }
+
+        var votingAPI = VotingAPIClient()
+        votingAPI.fetchTxConfirmation = { txHash in
+            await recorder.record("fetch:\(txHash)")
+            return Self.makeDelegationConfirmation(position: 42)
+        }
+        votingAPI.submitDelegation = { _ in
+            await recorder.record("submit")
+            return TxResult(txHash: "new-tx", code: 0)
+        }
+
+        try await Voting.runDelegationPipeline(
+            roundId: "aabb",
+            cachedNotes: [Self.makeDelegationNote()],
+            senderSeed: [],
+            hotkeySeed: [],
+            networkId: 1,
+            accountIndex: 0,
+            roundName: "Round",
+            pirEndpoints: ["https://pir.example.com"],
+            expectedSnapshotHeight: 1,
+            votingCrypto: votingCrypto,
+            votingAPI: votingAPI,
+            send: Send<Voting.Action>(send: { _ in }),
+            delegationConfirmationTimeout: 0,
+            delegationConfirmationRetryDelay: .zero
+        )
+
+        let events = await recorder.events()
+        XCTAssertEqual(events, ["fetch:cached-tx", "van:0:42"])
+    }
+
+    func testDelegationPipelineDoesNotSkipCachedTxWithoutConfirmedVanPosition() async throws {
+        let recorder = RecoveryOrderRecorder()
+        var votingCrypto = VotingCryptoClient()
+        votingCrypto.getDelegationTxHash = { _, _ in .present("cached-tx") }
+        votingCrypto.getDelegationSubmission = { _, _, _, _, _ in
+            await recorder.record("registration")
+            return Self.makeDelegationRegistration()
+        }
+        votingCrypto.storeDelegationTxHash = { _, _, txHash in
+            await recorder.record("store-tx:\(txHash)")
+        }
+        votingCrypto.storeVanPosition = { _, bundleIndex, position in
+            await recorder.record("van:\(bundleIndex):\(position)")
+        }
+
+        var votingAPI = VotingAPIClient()
+        votingAPI.fetchTxConfirmation = { txHash in
+            await recorder.record("fetch:\(txHash)")
+            if txHash == "cached-tx" {
+                return nil
+            }
+            return Self.makeDelegationConfirmation(position: 9)
+        }
+        votingAPI.submitDelegation = { _ in
+            await recorder.record("submit")
+            return TxResult(txHash: "new-tx", code: 0)
+        }
+
+        try await Voting.runDelegationPipeline(
+            roundId: "aabb",
+            cachedNotes: [Self.makeDelegationNote()],
+            senderSeed: [],
+            hotkeySeed: [],
+            networkId: 1,
+            accountIndex: 0,
+            roundName: "Round",
+            pirEndpoints: ["https://pir.example.com"],
+            expectedSnapshotHeight: 1,
+            votingCrypto: votingCrypto,
+            votingAPI: votingAPI,
+            send: Send<Voting.Action>(send: { _ in }),
+            delegationConfirmationTimeout: 0,
+            delegationConfirmationRetryDelay: .zero
+        )
+
+        let events = await recorder.events()
+        XCTAssertEqual(events, [
+            "fetch:cached-tx",
+            "registration",
+            "submit",
+            "store-tx:new-tx",
+            "fetch:new-tx",
+            "van:0:9"
+        ])
+    }
+
     func testDelegateSharesWithFallbackRetriesReachabilityExhaustion() async throws {
         let attempts = AttemptCounter()
         var votingAPI = VotingAPIClient()
@@ -1238,6 +1333,47 @@ final class VotingSubmissionPostFallbackTests: XCTestCase {
         state.bundleCount = 1
         state.delegationProofStatus = .complete
         return state
+    }
+
+    private static func makeDelegationNote() -> NoteInfo {
+        NoteInfo(
+            commitment: Data(repeating: 0x01, count: 32),
+            nullifier: Data(repeating: 0x02, count: 32),
+            value: ballotDivisor,
+            position: 0,
+            diversifier: Data(repeating: 0x03, count: 11),
+            rho: Data(repeating: 0x04, count: 32),
+            rseed: Data(repeating: 0x05, count: 32),
+            scope: 0,
+            ufvkStr: "ufvk"
+        )
+    }
+
+    private static func makeDelegationRegistration() -> DelegationRegistration {
+        DelegationRegistration(
+            rk: Data(repeating: 0x01, count: 32),
+            spendAuthSig: Data(repeating: 0x02, count: 64),
+            signedNoteNullifier: Data(repeating: 0x03, count: 32),
+            cmxNew: Data(repeating: 0x04, count: 32),
+            vanCmx: Data(repeating: 0x05, count: 32),
+            govNullifiers: [Data(repeating: 0x06, count: 32)],
+            proof: Data(repeating: 0x07, count: 32),
+            voteRoundId: Data([0xAA, 0xBB]),
+            sighash: Data(repeating: 0x08, count: 32)
+        )
+    }
+
+    private static func makeDelegationConfirmation(position: UInt32) -> TxConfirmation {
+        TxConfirmation(
+            height: 1,
+            code: 0,
+            events: [
+                TxEvent(
+                    type: "delegate_vote",
+                    attributes: [.init(key: "leaf_index", value: "\(position)")]
+                )
+            ]
+        )
     }
 
     private static func makeVotingRound(proposalCount: Int = 1) -> VotingRound {

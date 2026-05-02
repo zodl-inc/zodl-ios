@@ -22,6 +22,12 @@ func votingAccountIndex(for account: WalletAccount?) -> UInt32 {
 /// and never touches the seed. Pass this at those call sites instead of a bare `[]`.
 let emptySenderSeed: [UInt8] = []
 
+private enum DelegationTxConfirmationStatus: Sendable {
+    case confirmed(vanPosition: UInt32)
+    case failed(code: UInt32, log: String)
+    case notFound
+}
+
 extension Voting {
     func reduceDelegation(_ state: inout State, _ action: Action) -> Effect<Action> {
         switch action {
@@ -62,11 +68,15 @@ extension Voting {
                 if !recoveredDelegationHashes.isEmpty {
                     var recoveredPositions: [UInt32: UInt32] = [:]
                     for (bundleIndex, txHash) in recoveredDelegationHashes {
-                        if let confirmation = try? await votingAPI.fetchTxConfirmation(txHash),
-                           confirmation.code == 0,
-                           let leafValue = confirmation.event(ofType: "delegate_vote")?.attribute(forKey: "leaf_index"),
-                           let vanPosition = UInt32(leafValue) {
-                            try? await votingCrypto.storeVanPosition(roundId, bundleIndex, vanPosition)
+                        if let vanPosition = try? await Self.recoverDelegationVanPosition(
+                            roundId: roundId,
+                            bundleIndex: bundleIndex,
+                            txHash: txHash,
+                            votingCrypto: votingCrypto,
+                            votingAPI: votingAPI,
+                            confirmationTimeout: 0,
+                            retryDelay: .zero
+                        ) {
                             recoveredPositions[bundleIndex] = vanPosition
                         }
                     }
@@ -744,7 +754,13 @@ extension Voting {
                     let noteChunks = cachedNotes.smartBundles().bundles
                     var completedBundles = Set<UInt32>()
                     for idx: UInt32 in 0..<UInt32(signedCount) {
-                        if case .present? = try? await votingCrypto.getDelegationTxHash(roundId, idx) {
+                        if let vanPosition = try await Self.recoverDelegationVanPosition(
+                            roundId: roundId,
+                            bundleIndex: idx,
+                            votingCrypto: votingCrypto,
+                            votingAPI: votingAPI
+                        ) {
+                            votingLogger.debug("Recovered Keystone delegation bundle \(idx) VAN position: \(vanPosition)")
                             completedBundles.insert(idx)
                         }
                     }
@@ -804,23 +820,10 @@ extension Voting {
                         // Persist TX hash for crash recovery
                         try await votingCrypto.storeDelegationTxHash(roundId, bundleIdx, delegTxResult.txHash)
 
-                        let delegDeadline = Date().addingTimeInterval(90)
-                        var delegConfirmation: TxConfirmation?
-                        repeat {
-                            delegConfirmation = try? await votingAPI.fetchTxConfirmation(delegTxResult.txHash)
-                            if delegConfirmation != nil { break }
-                            try await Task.sleep(for: .seconds(2))
-                        } while Date() < delegDeadline
-
-                        guard let delegConfirmation, delegConfirmation.code == 0,
-                              let leafValue = delegConfirmation.event(ofType: "delegate_vote")?.attribute(forKey: "leaf_index"),
-                              let vanPosition = UInt32(leafValue)
-                        else {
-                            throw VotingFlowError.delegationTxFailed(
-                                code: delegConfirmation?.code ?? 0,
-                                log: delegConfirmation?.log ?? ""
-                            )
-                        }
+                        let vanPosition = try await Self.requireDelegationVanPosition(
+                            txHash: delegTxResult.txHash,
+                            votingAPI: votingAPI
+                        )
                         try await votingCrypto.storeVanPosition(roundId, bundleIdx, vanPosition)
                         votingLogger.debug("VAN position stored for bundle \(bundleIdx): \(vanPosition)")
                     }
@@ -1000,13 +1003,23 @@ extension Voting {
         seedFingerprint: Data? = nil,
         votingCrypto: VotingCryptoClient,
         votingAPI: VotingAPIClient,
-        send: Send<Action>
+        send: Send<Action>,
+        delegationConfirmationTimeout: TimeInterval = 90,
+        delegationConfirmationRetryDelay: Duration = .seconds(2)
     ) async throws {
         let noteChunks = cachedNotes.smartBundles().bundles
         let bundleCount = UInt32(noteChunks.count)
         var completedBundles = Set<UInt32>()
         for idx: UInt32 in 0..<bundleCount {
-            if case .present? = try? await votingCrypto.getDelegationTxHash(roundId, idx) {
+            if let vanPosition = try await Self.recoverDelegationVanPosition(
+                roundId: roundId,
+                bundleIndex: idx,
+                votingCrypto: votingCrypto,
+                votingAPI: votingAPI,
+                confirmationTimeout: delegationConfirmationTimeout,
+                retryDelay: delegationConfirmationRetryDelay
+            ) {
+                votingLogger.debug("Recovered delegation bundle \(idx) VAN position: \(vanPosition)")
                 completedBundles.insert(idx)
             }
         }
@@ -1063,28 +1076,124 @@ extension Voting {
 
             try await votingCrypto.storeDelegationTxHash(roundId, bundleIndex, delegTxResult.txHash)
 
-            let delegDeadline = Date().addingTimeInterval(90)
-            var delegConfirmation: TxConfirmation?
-            repeat {
-                delegConfirmation = try? await votingAPI.fetchTxConfirmation(delegTxResult.txHash)
-                if delegConfirmation != nil { break }
-                try await Task.sleep(for: .seconds(2))
-            } while Date() < delegDeadline
-
-            guard let delegConfirmation, delegConfirmation.code == 0,
-                  let leafValue = delegConfirmation.event(ofType: "delegate_vote")?.attribute(forKey: "leaf_index"),
-                  let vanPosition = UInt32(leafValue)
-            else {
-                throw VotingFlowError.delegationTxFailed(
-                    code: delegConfirmation?.code ?? 0,
-                    log: delegConfirmation?.log ?? ""
-                )
-            }
+            let vanPosition = try await Self.requireDelegationVanPosition(
+                txHash: delegTxResult.txHash,
+                votingAPI: votingAPI,
+                confirmationTimeout: delegationConfirmationTimeout,
+                retryDelay: delegationConfirmationRetryDelay
+            )
             try await votingCrypto.storeVanPosition(roundId, bundleIndex, vanPosition)
             votingLogger.debug("VAN position stored for bundle \(bundleIndex): \(vanPosition)")
         }
 
         await send(.delegationProofCompleted(roundId: roundId))
+    }
+
+    private static func recoverDelegationVanPosition(
+        roundId: String,
+        bundleIndex: UInt32,
+        votingCrypto: VotingCryptoClient,
+        votingAPI: VotingAPIClient,
+        confirmationTimeout: TimeInterval = 90,
+        retryDelay: Duration = .seconds(2)
+    ) async throws -> UInt32? {
+        guard case let .present(txHash) = try? await votingCrypto.getDelegationTxHash(roundId, bundleIndex) else {
+            return nil
+        }
+
+        return try await recoverDelegationVanPosition(
+            roundId: roundId,
+            bundleIndex: bundleIndex,
+            txHash: txHash,
+            votingCrypto: votingCrypto,
+            votingAPI: votingAPI,
+            confirmationTimeout: confirmationTimeout,
+            retryDelay: retryDelay
+        )
+    }
+
+    private static func recoverDelegationVanPosition(
+        roundId: String,
+        bundleIndex: UInt32,
+        txHash: String,
+        votingCrypto: VotingCryptoClient,
+        votingAPI: VotingAPIClient,
+        confirmationTimeout: TimeInterval = 90,
+        retryDelay: Duration = .seconds(2)
+    ) async throws -> UInt32? {
+        switch try await delegationTxConfirmationStatus(
+            txHash: txHash,
+            votingAPI: votingAPI,
+            confirmationTimeout: confirmationTimeout,
+            retryDelay: retryDelay
+        ) {
+        case let .confirmed(vanPosition):
+            try await votingCrypto.storeVanPosition(roundId, bundleIndex, vanPosition)
+            return vanPosition
+
+        case let .failed(code, log):
+            votingLogger.warning(
+                "Cached delegation TX \(txHash) for bundle \(bundleIndex) is not reusable: code=\(code) log=\(log)"
+            )
+            return nil
+
+        case .notFound:
+            votingLogger.debug("Cached delegation TX \(txHash) for bundle \(bundleIndex) is not confirmed yet")
+            return nil
+        }
+    }
+
+    private static func requireDelegationVanPosition(
+        txHash: String,
+        votingAPI: VotingAPIClient,
+        confirmationTimeout: TimeInterval = 90,
+        retryDelay: Duration = .seconds(2)
+    ) async throws -> UInt32 {
+        switch try await delegationTxConfirmationStatus(
+            txHash: txHash,
+            votingAPI: votingAPI,
+            confirmationTimeout: confirmationTimeout,
+            retryDelay: retryDelay
+        ) {
+        case let .confirmed(vanPosition):
+            return vanPosition
+
+        case let .failed(code, log):
+            throw VotingFlowError.delegationTxFailed(code: code, log: log)
+
+        case .notFound:
+            throw VotingFlowError.delegationTxFailed(code: 0, log: "")
+        }
+    }
+
+    private static func delegationTxConfirmationStatus(
+        txHash: String,
+        votingAPI: VotingAPIClient,
+        confirmationTimeout: TimeInterval = 90,
+        retryDelay: Duration = .seconds(2)
+    ) async throws -> DelegationTxConfirmationStatus {
+        let deadline = Date().addingTimeInterval(confirmationTimeout)
+
+        repeat {
+            if let confirmation = try? await votingAPI.fetchTxConfirmation(txHash) {
+                guard confirmation.code == 0 else {
+                    return .failed(code: confirmation.code, log: confirmation.log)
+                }
+                guard
+                    let leafValue = confirmation.event(ofType: "delegate_vote")?.attribute(forKey: "leaf_index"),
+                    let vanPosition = UInt32(leafValue)
+                else {
+                    return .failed(code: 0, log: "missing delegate_vote leaf_index")
+                }
+                return .confirmed(vanPosition: vanPosition)
+            }
+
+            guard Date() < deadline else {
+                return .notFound
+            }
+
+            try await Task.sleep(for: retryDelay)
+        } while true
     }
 
     /// Delegate shares using the supplied active-submission server candidates.

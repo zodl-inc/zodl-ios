@@ -281,7 +281,8 @@ extension VotingCryptoClient: DependencyKey {
                     bundleIndex: bundleIndex,
                     notes: sdkNotes,
                     pirEndpoints: pirEndpoints,
-                    expectedSnapshotHeight: expectedSnapshotHeight
+                    expectedSnapshotHeight: expectedSnapshotHeight,
+                    networkId: networkId
                 )
                 return DelegationPirPrecomputeResult(
                     cachedCount: result.cachedCount,
