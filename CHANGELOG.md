@@ -7,6 +7,7 @@ directly impact users rather than highlighting other crucial architectural updat
 ## [Unreleased]
 
 ### Added
+- Multi-server transaction submission: transactions are now created locally and broadcast to all user-selected servers in parallel. First successful response wins, eliminating single-server failure as a blocker.
 - Server Setup UI reworked with Automatic/Manual connection mode.
 
 ## 3.4.1 build 1 (2026-05-18)

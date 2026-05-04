@@ -314,20 +314,21 @@ extension SwapAndPayCoordFlow {
                         let network = zcashSDKEnvironment.network().networkType
                         let spendingKey = try derivationTool.deriveSpendingKey(seedBytes, zip32AccountIndex, network)
 
-                        let result = try await sdkSynchronizer.createProposedTransactions(proposal, spendingKey)
+                        let result = try await sdkSynchronizer.createAndSubmitProposedTransactions(proposal, spendingKey)
 
                         switch result {
                         case .grpcFailure(let txIds):
                             await send(.updateTxIdToExpand(txIds.last))
                             let isTxIdPresentInTheDB = try await sdkSynchronizer.txIdExists(txIds.last)
-                            await send(.sendFailed("sdkSynchronizer.createProposedTransactions-grpcFailure".toZcashError(), isTxIdPresentInTheDB))
+                            await send(.sendFailed("sdkSynchronizer.createAndSubmitProposedTransactions-grpcFailure".toZcashError(), isTxIdPresentInTheDB))
                         case let .failure(txIds, code, description):
                             await send(.updateFailedData(code, description, ""))
                             await send(.updateTxIdToExpand(txIds.last))
                             let isTxIdPresentInTheDB = try await sdkSynchronizer.txIdExists(txIds.last)
-                            await send(.sendFailed("sdkSynchronizer.createProposedTransactions-failure \(code) \(description)".toZcashError(), isTxIdPresentInTheDB))
-                        case let .partial(txIds: txIds, _):
+                            await send(.sendFailed("sdkSynchronizer.createAndSubmitProposedTransactions-failure \(code) \(description)".toZcashError(), isTxIdPresentInTheDB))
+                        case let .partial(txIds: txIds, statuses):
                             await send(.updateTxIdToExpand(txIds.last))
+                            await send(.sendFailed("sdkSynchronizer.createAndSubmitProposedTransactions-partial \(statuses.joined(separator: ", "))".toZcashError(), true))
                         case .success(let txIds):
                             await send(.updateTxIdToExpand(txIds.last))
                             await send(.sendDone)

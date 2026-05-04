@@ -183,6 +183,28 @@ extension SDKSynchronizerClient: DependencyKey {
                     return .partial(txIds: txIds, statuses: statuses)
                 }
             },
+            broadcasterCreateProposedTransactions: { proposal, spendingKey in
+                try await synchronizer.broadcaster.createProposedTransactions(
+                    proposal: proposal,
+                    spendingKey: spendingKey
+                )
+            },
+            createAndSubmitProposedTransactions: { proposal, spendingKey in
+                let transactions = try await synchronizer.broadcaster.createProposedTransactions(
+                    proposal: proposal,
+                    spendingKey: spendingKey
+                )
+
+                return await Self.createAndSubmitTransactions(
+                    transactions,
+                    logPrefix: "[MultiSubmit]",
+                    userStoredPreferences: userStoredPreferences,
+                    zcashSDKEnvironment: zcashSDKEnvironment,
+                    submit: { rawTx, endpoint in
+                        try await synchronizer.broadcaster.submit(rawTx, to: endpoint)
+                    }
+                )
+            },
             proposeShielding: { accountUUID, shieldingThreshold, memo, transparentReceiver in
                 try await synchronizer.proposeShielding(
                     accountUUID: accountUUID,
@@ -190,6 +212,9 @@ extension SDKSynchronizerClient: DependencyKey {
                     memo: memo,
                     transparentReceiver: transparentReceiver
                 )
+            },
+            broadcasterSubmit: { rawTx, endpoint in
+                try await synchronizer.broadcaster.submit(rawTx, to: endpoint)
             },
             isSeedRelevantToAnyDerivedAccount: { seed in
                 try await synchronizer.isSeedRelevantToAnyDerivedAccount(seed: seed)
@@ -286,6 +311,28 @@ extension SDKSynchronizerClient: DependencyKey {
                     return .partial(txIds: txIds, statuses: statuses)
                 }
             },
+            broadcasterCreateTransactionFromPCZT: { pcztWithProofs, pcztWithSigs in
+                try await synchronizer.broadcaster.createTransactionFromPCZT(
+                    pcztWithProofs: pcztWithProofs,
+                    pcztWithSigs: pcztWithSigs
+                )
+            },
+            createAndSubmitTransactionFromPCZT: { pcztWithProofs, pcztWithSigs in
+                let transactions = try await synchronizer.broadcaster.createTransactionFromPCZT(
+                    pcztWithProofs: pcztWithProofs,
+                    pcztWithSigs: pcztWithSigs
+                )
+
+                return await Self.createAndSubmitTransactions(
+                    transactions,
+                    logPrefix: "[MultiSubmit/PCZT]",
+                    userStoredPreferences: userStoredPreferences,
+                    zcashSDKEnvironment: zcashSDKEnvironment,
+                    submit: { rawTx, endpoint in
+                        try await synchronizer.broadcaster.submit(rawTx, to: endpoint)
+                    }
+                )
+            },
             urEncoderForPCZT: { pczt in
                 let keystoneSDK = KeystoneZcashSDK()
 
@@ -336,6 +383,180 @@ extension SDKSynchronizerClient: DependencyKey {
                 try await synchronizer.getTreeState(height: height)
             }
         )
+    }
+}
+
+extension SDKSynchronizerClient {
+    private enum MultiServerSubmissionTiming {
+        static let postAcceptanceGraceDelay: Duration = .seconds(5)
+        static let firstResponseTimeout: Duration = .seconds(30)
+    }
+
+    private enum SubmitResult {
+        case server(String?)
+        case graceExpired
+        case timedOut
+    }
+
+    static func createAndSubmitTransactions(
+        _ transactions: [ZcashTransaction.Overview],
+        logPrefix: String,
+        userStoredPreferences: UserPreferencesStorageClient,
+        zcashSDKEnvironment: ZcashSDKEnvironment,
+        graceDelay: Duration = MultiServerSubmissionTiming.postAcceptanceGraceDelay,
+        responseTimeout: Duration = MultiServerSubmissionTiming.firstResponseTimeout,
+        submit: @escaping (Data, LightWalletEndpoint) async throws -> Void
+    ) async -> CreateProposedTransactionsResult {
+        guard !transactions.isEmpty else {
+            return .failure(txIds: [], code: -1, description: "No transactions created")
+        }
+
+        let txIds = transactions.map { $0.rawID.toHexStringTxId() }
+        let endpoints = selectedSubmissionEndpoints(
+            userStoredPreferences: userStoredPreferences,
+            zcashSDKEnvironment: zcashSDKEnvironment
+        )
+
+        LoggerProxy.event("\(logPrefix) Submitting \(transactions.count) transaction(s) to \(endpoints.count) server(s).")
+
+        var acceptedCount = 0
+        var statuses: [String] = []
+
+        for (index, transaction) in transactions.enumerated() {
+            guard let rawTx = transaction.raw else {
+                let status = "Transaction \(index) created but raw bytes unavailable"
+                statuses.append(status)
+                LoggerProxy.error("\(logPrefix) \(status).")
+                return acceptedCount == 0
+                    ? .failure(txIds: txIds, code: -1, description: status)
+                    : .partial(txIds: txIds, statuses: statuses)
+            }
+
+            let accepted = await submitToAllEndpoints(
+                rawTx: rawTx,
+                endpoints: endpoints,
+                logPrefix: logPrefix,
+                graceDelay: graceDelay,
+                responseTimeout: responseTimeout,
+                submit: submit
+            )
+
+            if let winner = accepted {
+                acceptedCount += 1
+                statuses.append("accepted by \(winner)")
+                LoggerProxy.event("\(logPrefix) Transaction \(index) accepted by \(winner).")
+            } else {
+                statuses.append("rejected by all servers")
+                LoggerProxy.error("\(logPrefix) Transaction \(index) rejected by all \(endpoints.count) server(s).")
+                return acceptedCount == 0
+                    ? .grpcFailure(txIds: txIds)
+                    : .partial(txIds: txIds, statuses: statuses)
+            }
+        }
+
+        return acceptedCount == transactions.count
+            ? .success(txIds: txIds)
+            : .partial(txIds: txIds, statuses: statuses)
+    }
+
+    static func selectedSubmissionEndpoints(
+        userStoredPreferences: UserPreferencesStorageClient,
+        zcashSDKEnvironment: ZcashSDKEnvironment
+    ) -> [LightWalletEndpoint] {
+        let streamingTimeout = ZcashSDKEnvironment.ZcashSDKConstants.streamingCallTimeoutInMillis
+        if let config = userStoredPreferences.selectedServers() {
+            switch config.mode {
+            case .automatic:
+                return ZcashSDKEnvironment.endpoints(
+                    for: zcashSDKEnvironment.network().networkType
+                )
+            case .manual:
+                if let server = config.servers.first {
+                    return [server.endpoint(streamingCallTimeoutInMillis: streamingTimeout)]
+                }
+            }
+        }
+
+        return [zcashSDKEnvironment.endpoint()]
+    }
+
+    static func submitToAllEndpoints(
+        rawTx: Data,
+        endpoints: [LightWalletEndpoint],
+        logPrefix: String,
+        graceDelay: Duration = MultiServerSubmissionTiming.postAcceptanceGraceDelay,
+        responseTimeout: Duration = MultiServerSubmissionTiming.firstResponseTimeout,
+        submit: @escaping (Data, LightWalletEndpoint) async throws -> Void
+    ) async -> String? {
+        guard !endpoints.isEmpty else { return nil }
+
+        let serverCount = endpoints.count
+
+        return await withCheckedContinuation { continuation in
+            Task {
+                var hasResumed = false
+
+                await withTaskGroup(of: SubmitResult.self) { group in
+                    for endpoint in endpoints {
+                        let server = "\(endpoint.host):\(endpoint.port)"
+                        group.addTask {
+                            do {
+                                try await submit(rawTx, endpoint)
+                                LoggerProxy.event("\(logPrefix) \(server) SUCCESS.")
+                                return .server(server)
+                            } catch {
+                                LoggerProxy.warn("\(logPrefix) \(server) FAILED: \(error)")
+                                return .server(nil)
+                            }
+                        }
+                    }
+
+                    group.addTask {
+                        do {
+                            try await Task.sleep(for: responseTimeout)
+                            LoggerProxy.error("\(logPrefix) Timed out waiting for any server to respond.")
+                            return .timedOut
+                        } catch {
+                            return .timedOut
+                        }
+                    }
+
+                    var failedCount = 0
+                    for await result in group {
+                        switch result {
+                        case .server(let winner?):
+                            if !hasResumed {
+                                hasResumed = true
+                                continuation.resume(returning: winner)
+                                group.addTask {
+                                    try? await Task.sleep(for: graceDelay)
+                                    return .graceExpired
+                                }
+                            }
+                        case .server(nil):
+                            failedCount += 1
+                            if !hasResumed && failedCount >= serverCount {
+                                hasResumed = true
+                                group.cancelAll()
+                                continuation.resume(returning: nil)
+                                return
+                            }
+                        case .graceExpired, .timedOut:
+                            if !hasResumed {
+                                hasResumed = true
+                                continuation.resume(returning: nil)
+                            }
+                            group.cancelAll()
+                            return
+                        }
+                    }
+
+                    if !hasResumed {
+                        continuation.resume(returning: nil)
+                    }
+                }
+            }
+        }
     }
 }
 

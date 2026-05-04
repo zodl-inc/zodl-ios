@@ -157,7 +157,12 @@ struct SDKSynchronizerClient {
     // Proposals
     var proposeTransfer: (AccountUUID, Recipient, Zatoshi, Memo?) async throws -> Proposal
     var createProposedTransactions: (Proposal, UnifiedSpendingKey) async throws -> CreateProposedTransactionsResult
+    var broadcasterCreateProposedTransactions: (Proposal, UnifiedSpendingKey) async throws -> [ZcashTransaction.Overview]
+    var createAndSubmitProposedTransactions: (Proposal, UnifiedSpendingKey) async throws -> CreateProposedTransactionsResult
     var proposeShielding: (AccountUUID, Zatoshi, Memo, TransparentAddress?) async throws -> Proposal?
+
+    // Multi-server submission
+    var broadcasterSubmit: (Data, LightWalletEndpoint) async throws -> Void
     
     var isSeedRelevantToAnyDerivedAccount: ([UInt8]) async throws -> Bool
     
@@ -174,6 +179,8 @@ struct SDKSynchronizerClient {
     var createPCZTFromProposal: (AccountUUID, Proposal) async throws -> Pczt
     var addProofsToPCZT: (Pczt) async throws -> Pczt
     var createTransactionFromPCZT: (Pczt, Pczt) async throws -> CreateProposedTransactionsResult
+    var broadcasterCreateTransactionFromPCZT: (Pczt, Pczt) async throws -> [ZcashTransaction.Overview]
+    var createAndSubmitTransactionFromPCZT: (Pczt, Pczt) async throws -> CreateProposedTransactionsResult
     var urEncoderForPCZT: (Pczt) -> UREncoder?
     var redactPCZTForSigner: (Pczt) async throws  -> Pczt
     

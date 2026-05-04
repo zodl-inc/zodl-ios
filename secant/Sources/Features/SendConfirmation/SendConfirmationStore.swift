@@ -54,8 +54,6 @@ struct SendConfirmation {
         var isTransparentAddress = false
         var message: String
         var messageToBeShared: String?
-        var partialFailureTxIds: [String] = []
-        var partialFailureStatuses: [String] = []
         var pczt: Pczt?
         var pcztForUI: Pczt?
         var pcztWithProofs: Pczt?
@@ -148,7 +146,6 @@ struct SendConfirmation {
         case sendDone
         case sendFailed(ZcashError?, Bool)
         case sendingScreenOnAppear
-        case sendPartial([String], [String])
         case sendRequested
         case sendSupportMailFinished
         case sendTapped
@@ -288,21 +285,21 @@ struct SendConfirmation {
                         let network = zcashSDKEnvironment.network().networkType
                         let spendingKey = try derivationTool.deriveSpendingKey(seedBytes, zip32AccountIndex, network)
 
-                        let result = try await sdkSynchronizer.createProposedTransactions(proposal, spendingKey)
+                        let result = try await sdkSynchronizer.createAndSubmitProposedTransactions(proposal, spendingKey)
 
                         switch result {
                         case .grpcFailure(let txIds):
                             await send(.updateTxIdToExpand(txIds.last))
                             let isTxIdPresentInTheDB = try await sdkSynchronizer.txIdExists(txIds.last)
-                            await send(.sendFailed("sdkSynchronizer.createProposedTransactions-grpcFailure".toZcashError(), isTxIdPresentInTheDB))
+                            await send(.sendFailed("sdkSynchronizer.createAndSubmitProposedTransactions-grpcFailure".toZcashError(), isTxIdPresentInTheDB))
                         case let .failure(txIds, code, description):
                             await send(.updateFailedData(code, description, ""))
                             await send(.updateTxIdToExpand(txIds.last))
                             let isTxIdPresentInTheDB = try await sdkSynchronizer.txIdExists(txIds.last)
-                            await send(.sendFailed("sdkSynchronizer.createProposedTransactions-failure \(code) \(description)".toZcashError(), isTxIdPresentInTheDB))
+                            await send(.sendFailed("sdkSynchronizer.createAndSubmitProposedTransactions-failure \(code) \(description)".toZcashError(), isTxIdPresentInTheDB))
                         case let .partial(txIds: txIds, statuses: statuses):
                             await send(.updateTxIdToExpand(txIds.last))
-                            await send(.sendPartial(txIds, statuses))
+                            await send(.sendFailed("sdkSynchronizer.createAndSubmitProposedTransactions-partial \(statuses.joined(separator: ", "))".toZcashError(), true))
                         case .success(let txIds):
                             await send(.updateTxIdToExpand(txIds.last))
                             await send(.sendDone)
@@ -330,12 +327,6 @@ struct SendConfirmation {
                     try? await mainQueue.sleep(for: .seconds(waitTimeToPresentScreen))
                     await send(.updateResult(isTxIdPresentInTheDB ? .pending : .failure))
                 }
-
-            case let .sendPartial(txIds, statuses):
-                state.isSending = false
-                state.partialFailureTxIds = txIds
-                state.partialFailureStatuses = statuses
-                return .send(.updateResult(.pending))
 
             case .updateTxIdToExpand(let txId):
                 state.txIdToExpand = txId
@@ -524,10 +515,10 @@ struct SendConfirmation {
 
                 redactedPcztForSigner:
                 \(state.redactedPcztForSigner?.hexEncodedString() ?? "failed to unwrap")
-                
+
                 pcztWithProofs:
                 \(pcztWithProofs.hexEncodedString())
-                
+
                 pcztWithSigs:
                 \(pcztWithSigs.hexEncodedString())
                 """
@@ -536,37 +527,41 @@ struct SendConfirmation {
                 #endif
                 return .run { send in
                     do {
-                        let result = try await sdkSynchronizer.createTransactionFromPCZT(pcztWithProofs, pcztWithSigs)
+                        let result = try await sdkSynchronizer.createAndSubmitTransactionFromPCZT(pcztWithProofs, pcztWithSigs)
 
                         await send(.resetPCZTs)
 
                         switch result {
                         case .grpcFailure(let txIds):
-                            await send(.updateFailedData(-999, "grpcFailure", pcztMessage))
-                            let txId = txIds.last
-                            await send(.updateTxIdToExpand(txId))
-                            let isTxIdPresentInTheDB = try await sdkSynchronizer.txIdExists(txId)
-                            await send(.sendFailed("sdkSynchronizer.createProposedTransactions".toZcashError(), isTxIdPresentInTheDB))
-                        case let .failure(txIds, code, description):
-                            if description.isEmpty {
-                                await send(.updateFailedData(-997, "result.failure \(txIds)", pcztMessage))
-                            } else {
-                                await send(.updateFailedData(code, description, pcztMessage))
-                            }
-                            let txId = txIds.last
-                            await send(.updateTxIdToExpand(txId))
-                            let isTxIdPresentInTheDB = try await sdkSynchronizer.txIdExists(txId)
-                            await send(.sendFailed("sdkSynchronizer.createProposedTransactions".toZcashError(), isTxIdPresentInTheDB))
-                        case let .partial(txIds: txIds, statuses: statuses):
+                            await send(.updateFailedData(-999, "PCZT transaction rejected by all servers", pcztMessage))
                             await send(.updateTxIdToExpand(txIds.last))
-                            await send(.sendPartial(txIds, statuses))
+                            let isTxIdPresentInTheDB = try await sdkSynchronizer.txIdExists(txIds.last)
+                            await send(.sendFailed(
+                                "sdkSynchronizer.createAndSubmitTransactionFromPCZT-grpcFailure".toZcashError(),
+                                isTxIdPresentInTheDB
+                            ))
+                        case let .failure(txIds, code, description):
+                            await send(.updateFailedData(code, description, pcztMessage))
+                            await send(.updateTxIdToExpand(txIds.last))
+                            let isTxIdPresentInTheDB = try await sdkSynchronizer.txIdExists(txIds.last)
+                            await send(.sendFailed(
+                                "sdkSynchronizer.createAndSubmitTransactionFromPCZT-failure \(code) \(description)".toZcashError(),
+                                isTxIdPresentInTheDB
+                            ))
+                        case let .partial(txIds: txIds, statuses: statuses):
+                            await send(.updateFailedData(-999, statuses.joined(separator: ", "), pcztMessage))
+                            await send(.updateTxIdToExpand(txIds.last))
+                            await send(.sendFailed(
+                                "sdkSynchronizer.createAndSubmitTransactionFromPCZT-partial \(statuses.joined(separator: ", "))".toZcashError(),
+                                true
+                            ))
                         case .success(let txIds):
                             await send(.updateTxIdToExpand(txIds.last))
                             await send(.sendDone)
                         }
                     } catch {
                         await send(.resetPCZTs)
-                        await send(.updateFailedData(-998, error.toZcashError().detailedMessage, pcztMessage))
+                        await send(.updateFailedData(-996, error.toZcashError().detailedMessage, pcztMessage))
                         await send(.sendFailed(error.toZcashError(), false))
                     }
                 }
