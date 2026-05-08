@@ -12,6 +12,11 @@ import ComposableArchitecture
 
 @MainActor
 class MultiServerSubmitTests: XCTestCase {
+    private enum SubmitTiming {
+        static let graceDelay: Duration = .milliseconds(1)
+        static let responseTimeout: Duration = .milliseconds(50)
+    }
+
     private let testAccountUUID = AccountUUID(id: [UInt8](repeating: 0, count: 16))
 
     private var testWalletAccount: WalletAccount {
@@ -559,5 +564,214 @@ class MultiServerSubmitTests: XCTestCase {
         XCTAssertNil(store.state.proposal)
         XCTAssertNil(store.state.redactedPcztForSigner)
         XCTAssertEqual(store.state.result, .success)
+    }
+
+    func testSelectedSubmissionEndpointsAutomaticUsesAllKnownMainnetServers() {
+        let environment = makeZcashSDKEnvironment(endpointHost: "fallback.server")
+        var preferences = UserPreferencesStorageClient.testValue
+        preferences.selectedServers = {
+            .init(mode: .automatic, servers: [])
+        }
+
+        let endpoints = SDKSynchronizerClient.selectedSubmissionEndpoints(
+            userStoredPreferences: preferences,
+            zcashSDKEnvironment: environment
+        )
+
+        XCTAssertEqual(
+            endpoints.map { $0.server() },
+            ZcashSDKEnvironment.endpoints(for: .mainnet).map { $0.server() }
+        )
+    }
+
+    func testSelectedSubmissionEndpointsManualUsesSelectedServerOnly() {
+        let selectedServer = UserPreferencesStorage.ServerConfig(
+            host: "manual.server",
+            port: 9067,
+            isCustom: true
+        )
+        let environment = makeZcashSDKEnvironment(endpointHost: "fallback.server")
+        var preferences = UserPreferencesStorageClient.testValue
+        preferences.selectedServers = {
+            .init(mode: .manual, servers: [selectedServer])
+        }
+
+        let endpoints = SDKSynchronizerClient.selectedSubmissionEndpoints(
+            userStoredPreferences: preferences,
+            zcashSDKEnvironment: environment
+        )
+
+        XCTAssertEqual(endpoints.map { $0.server() }, ["manual.server:9067"])
+    }
+
+    func testSelectedSubmissionEndpointsFallsBackToCurrentEnvironmentEndpoint() {
+        let environment = makeZcashSDKEnvironment(endpointHost: "fallback.server")
+        var preferences = UserPreferencesStorageClient.testValue
+        preferences.selectedServers = { nil }
+
+        let endpoints = SDKSynchronizerClient.selectedSubmissionEndpoints(
+            userStoredPreferences: preferences,
+            zcashSDKEnvironment: environment
+        )
+
+        XCTAssertEqual(endpoints.map { $0.server() }, ["fallback.server:443"])
+    }
+
+    func testCreateAndSubmitTransactionsSubmitsEveryCreatedTransaction() async {
+        let tx1 = makeTransaction(raw: Data([0x01, 0x02]), rawID: Data([0xAA]))
+        let tx2 = makeTransaction(raw: Data([0x03, 0x04]), rawID: Data([0xBB]))
+        let submitted = LockIsolated<[(rawTx: Data, server: String)]>([])
+
+        let result = await SDKSynchronizerClient.createAndSubmitTransactions(
+            [tx1, tx2],
+            logPrefix: "[MultiSubmit/Test]",
+            userStoredPreferences: makeUserPreferences(
+                mode: .manual,
+                servers: [.init(host: "manual.server", port: 9067, isCustom: true)]
+            ),
+            zcashSDKEnvironment: makeZcashSDKEnvironment(),
+            graceDelay: SubmitTiming.graceDelay,
+            responseTimeout: SubmitTiming.responseTimeout,
+            submit: { rawTx, endpoint in
+                submitted.withValue { $0.append((rawTx, endpoint.server())) }
+            }
+        )
+
+        XCTAssertEqual(result, .success(txIds: [tx1.rawID.toHexStringTxId(), tx2.rawID.toHexStringTxId()]))
+        submitted.withValue { submissions in
+            XCTAssertEqual(submissions.map(\.rawTx), [Data([0x01, 0x02]), Data([0x03, 0x04])])
+            XCTAssertEqual(submissions.map(\.server), ["manual.server:9067", "manual.server:9067"])
+        }
+    }
+
+    func testCreateAndSubmitTransactionsReturnsGrpcFailureWhenAllServersReject() async {
+        let tx = makeTransaction(raw: Data([0x01, 0x02]), rawID: Data([0xAA]))
+        let attemptedServers = LockIsolated<[String]>([])
+
+        let result = await SDKSynchronizerClient.createAndSubmitTransactions(
+            [tx],
+            logPrefix: "[MultiSubmit/Test]",
+            userStoredPreferences: makeUserPreferences(
+                mode: .manual,
+                servers: [.init(host: "manual.server", port: 9067, isCustom: true)]
+            ),
+            zcashSDKEnvironment: makeZcashSDKEnvironment(),
+            graceDelay: SubmitTiming.graceDelay,
+            responseTimeout: SubmitTiming.responseTimeout,
+            submit: { _, endpoint in
+                attemptedServers.withValue { $0.append(endpoint.server()) }
+                throw ZcashError.synchronizerServerSwitch
+            }
+        )
+
+        XCTAssertEqual(result, .grpcFailure(txIds: [tx.rawID.toHexStringTxId()]))
+        attemptedServers.withValue {
+            XCTAssertEqual($0, ["manual.server:9067"])
+        }
+    }
+
+    func testSubmitToAllEndpointsReturnsFirstSuccessfulServer() async {
+        let successEndpoint = LightWalletEndpoint(address: "success.server", port: 443)
+        let endpoints = [
+            LightWalletEndpoint(address: "failing.server", port: 443),
+            successEndpoint
+        ]
+
+        let winner = await SDKSynchronizerClient.submitToAllEndpoints(
+            rawTx: Data([0x01]),
+            endpoints: endpoints,
+            logPrefix: "[MultiSubmit/Test]",
+            graceDelay: SubmitTiming.graceDelay,
+            responseTimeout: SubmitTiming.responseTimeout,
+            submit: { _, endpoint in
+                if endpoint.server() != successEndpoint.server() {
+                    throw ZcashError.synchronizerServerSwitch
+                }
+            }
+        )
+
+        XCTAssertEqual(winner, successEndpoint.server())
+    }
+
+    func testSubmitToAllEndpointsReturnsNilWhenAllServersReject() async {
+        let endpoints = [
+            LightWalletEndpoint(address: "server1", port: 443),
+            LightWalletEndpoint(address: "server2", port: 443)
+        ]
+        let attemptedServers = LockIsolated<[String]>([])
+
+        let winner = await SDKSynchronizerClient.submitToAllEndpoints(
+            rawTx: Data([0x01]),
+            endpoints: endpoints,
+            logPrefix: "[MultiSubmit/Test]",
+            graceDelay: SubmitTiming.graceDelay,
+            responseTimeout: SubmitTiming.responseTimeout,
+            submit: { _, endpoint in
+                attemptedServers.withValue { $0.append(endpoint.server()) }
+                throw ZcashError.synchronizerServerSwitch
+            }
+        )
+
+        XCTAssertNil(winner)
+        attemptedServers.withValue {
+            XCTAssertEqual(Set($0), Set(endpoints.map { $0.server() }))
+        }
+    }
+
+    private func makeUserPreferences(
+        mode: UserPreferencesStorage.ConnectionMode,
+        servers: [UserPreferencesStorage.ServerConfig]
+    ) -> UserPreferencesStorageClient {
+        var preferences = UserPreferencesStorageClient.testValue
+        preferences.selectedServers = {
+            .init(mode: mode, servers: servers)
+        }
+        return preferences
+    }
+
+    private func makeZcashSDKEnvironment(
+        networkType: NetworkType = .mainnet,
+        endpointHost: String = "test.server",
+        endpointPort: Int = 443
+    ) -> ZcashSDKEnvironment {
+        let network = ZcashNetworkBuilder.network(for: networkType)
+
+        return ZcashSDKEnvironment(
+            latestCheckpoint: BlockHeight(0),
+            endpoint: { LightWalletEndpoint(address: endpointHost, port: endpointPort) },
+            exchangeRateIPRateLimit: 120,
+            exchangeRateStaleLimit: 900,
+            memoCharLimit: 512,
+            mnemonicWordsMaxCount: 24,
+            network: network,
+            requiredTransactionConfirmations: 10,
+            sdkVersion: "test",
+            serverConfig: { .init(host: endpointHost, port: endpointPort, isCustom: false) },
+            servers: [],
+            shieldingThreshold: Zatoshi(100_000),
+            tokenName: "ZEC"
+        )
+    }
+
+    private func makeTransaction(raw: Data?, rawID: Data) -> ZcashTransaction.Overview {
+        ZcashTransaction.Overview(
+            accountUUID: testAccountUUID,
+            blockTime: nil,
+            expiryHeight: nil,
+            fee: nil,
+            index: nil,
+            isShielding: false,
+            hasChange: false,
+            memoCount: 0,
+            minedHeight: nil,
+            raw: raw,
+            rawID: rawID,
+            receivedNoteCount: 0,
+            sentNoteCount: 1,
+            value: Zatoshi(-100_000),
+            isExpiredUmined: nil,
+            totalSpent: nil,
+            totalReceived: nil
+        )
     }
 }
