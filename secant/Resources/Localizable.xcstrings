@@ -3754,13 +3754,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Connecting to a hardware wallet that was previously connected to Zashi will require synchronization to discover your transaction history. We'll guide you through it."
+            "value" : "Connecting to a hardware wallet that was previously connected to Zodl will require synchronization to discover your transaction history. We'll guide you through it."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Conectarse a una billetera de hardware que ya estaba conectada a Zashi requerirá sincronización para descubrir tu historial de transacciones. Te guiaremos en el proceso."
+            "value" : "Conectarse a una billetera de hardware que ya estaba conectada a Zodl requerirá sincronización para descubrir tu historial de transacciones. Te guiaremos en el proceso."
           }
         }
       }
