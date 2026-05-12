@@ -10,6 +10,11 @@ extension DependencyValues {
     }
 }
 
+enum VotingTxHashLookup: Equatable, Sendable {
+    case notFound
+    case present(String)
+}
+
 @DependencyClient
 struct VotingCryptoClient {
     // --- State stream (DB → UI, follows SDKSynchronizer pattern) ---

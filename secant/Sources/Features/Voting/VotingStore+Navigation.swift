@@ -59,7 +59,7 @@ func pollShareStatusesForRecovery(
     var queriedCount = 0
 
     for share in readyShares {
-        let nullifierHex = share.nullifier.map { String(format: "%02x", $0) }.joined()
+        let nullifierHex = share.nullifier
         var confirmed = false
 
         for helperURL in share.sentToURLs {
