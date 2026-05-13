@@ -671,6 +671,39 @@ class MultiServerSubmitTests: XCTestCase {
         }
     }
 
+    func testCreateAndSubmitTransactionsReturnsFailureWhenServerRejectsTransaction() async {
+        let tx = makeTransaction(raw: Data([0x01, 0x02]), rawID: Data([0xAA]))
+        let attemptedServers = LockIsolated<[String]>([])
+
+        let result = await SDKSynchronizerClient.createAndSubmitTransactions(
+            [tx],
+            logPrefix: "[MultiSubmit/Test]",
+            userStoredPreferences: makeUserPreferences(
+                mode: .manual,
+                servers: [.init(host: "manual.server", port: 9067, isCustom: true)]
+            ),
+            zcashSDKEnvironment: makeZcashSDKEnvironment(),
+            graceDelay: SubmitTiming.graceDelay,
+            responseTimeout: SubmitTiming.responseTimeout,
+            submit: { _, endpoint in
+                attemptedServers.withValue { $0.append(endpoint.server()) }
+                throw TransactionEncoderError.submitError(code: -25, message: "bad-txns-inputs-missingorspent")
+            }
+        )
+
+        XCTAssertEqual(
+            result,
+            .failure(
+                txIds: [tx.rawID.toHexStringTxId()],
+                code: -25,
+                description: "bad-txns-inputs-missingorspent"
+            )
+        )
+        attemptedServers.withValue {
+            XCTAssertEqual($0, ["manual.server:9067"])
+        }
+    }
+
     func testSubmitToAllEndpointsReturnsFirstSuccessfulServer() async {
         let successEndpoint = LightWalletEndpoint(address: "success.server", port: 443)
         let endpoints = [

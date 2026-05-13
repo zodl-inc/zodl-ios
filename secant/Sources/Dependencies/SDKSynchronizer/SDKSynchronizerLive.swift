@@ -399,6 +399,28 @@ extension SDKSynchronizerClient {
         case timedOut
     }
 
+    private struct SubmitFailure: Sendable {
+        let server: String
+        let code: Int
+        let description: String
+
+        var status: String {
+            "\(server) code: \(code) desc: \(description)"
+        }
+    }
+
+    private actor SubmitFailureStore {
+        private var failure: SubmitFailure?
+
+        func record(server: String, code: Int, description: String) {
+            failure = SubmitFailure(server: server, code: code, description: description)
+        }
+
+        func recordedFailure() -> SubmitFailure? {
+            failure
+        }
+    }
+
     private actor AcceptedSubmitStore {
         private var server: String?
 
@@ -464,6 +486,7 @@ extension SDKSynchronizerClient {
                     : .partial(txIds: txIds, statuses: statuses)
             }
 
+            let submitFailureStore = SubmitFailureStore()
             let accepted = await submitToAllEndpoints(
                 rawTx: rawTx,
                 endpoints: endpoints,
@@ -471,6 +494,9 @@ extension SDKSynchronizerClient {
                 graceDelay: graceDelay,
                 responseTimeout: responseTimeout,
                 timeoutDrainDelay: timeoutDrainDelay,
+                recordSubmitFailure: { server, code, description in
+                    await submitFailureStore.record(server: server, code: code, description: description)
+                },
                 submit: submit
             )
 
@@ -479,7 +505,19 @@ extension SDKSynchronizerClient {
                 statuses.append("accepted by \(winner)")
                 LoggerProxy.event("\(logPrefix) Transaction \(index) accepted by \(winner).")
             } else {
-                statuses.append("rejected by all servers")
+                if let submitFailure = await submitFailureStore.recordedFailure() {
+                    statuses.append(submitFailure.status)
+                    LoggerProxy.error(
+                        "\(logPrefix) Transaction \(index) rejected by \(submitFailure.server): " +
+                        "\(submitFailure.code) \(submitFailure.description)."
+                    )
+                    return acceptedCount == 0
+                        ? .failure(txIds: txIds, code: submitFailure.code, description: submitFailure.description)
+                        : .partial(txIds: txIds, statuses: statuses)
+                }
+
+                let status = "rejected by all servers"
+                statuses.append(status)
                 LoggerProxy.error("\(logPrefix) Transaction \(index) rejected by all \(endpoints.count) server(s).")
                 return acceptedCount == 0
                     ? .grpcFailure(txIds: txIds)
@@ -520,6 +558,7 @@ extension SDKSynchronizerClient {
         graceDelay: Duration = MultiServerSubmissionTiming.postAcceptanceGraceDelay,
         responseTimeout: Duration = MultiServerSubmissionTiming.firstResponseTimeout,
         timeoutDrainDelay: Duration = MultiServerSubmissionTiming.timeoutDrainDelay,
+        recordSubmitFailure: @escaping @Sendable (String, Int, String) async -> Void = { _, _, _ in },
         submit: @escaping (Data, LightWalletEndpoint) async throws -> Void
     ) async -> String? {
         guard !endpoints.isEmpty else { return nil }
@@ -542,6 +581,10 @@ extension SDKSynchronizerClient {
                                     await acceptedSubmitStore.record(server)
                                     LoggerProxy.event("\(logPrefix) \(server) SUCCESS.")
                                     return .server(server)
+                                } catch TransactionEncoderError.submitError(let code, let message) {
+                                    await recordSubmitFailure(server, code, message)
+                                    LoggerProxy.warn("\(logPrefix) \(server) REJECTED: \(code) \(message)")
+                                    return .server(nil)
                                 } catch {
                                     LoggerProxy.warn("\(logPrefix) \(server) FAILED: \(error)")
                                     return .server(nil)
