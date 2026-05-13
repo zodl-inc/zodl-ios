@@ -15,6 +15,7 @@ class MultiServerSubmitTests: XCTestCase {
     private enum SubmitTiming {
         static let graceDelay: Duration = .milliseconds(1)
         static let responseTimeout: Duration = .milliseconds(50)
+        static let timeoutDrainDelay: Duration = .milliseconds(50)
     }
 
     private let testAccountUUID = AccountUUID(id: [UInt8](repeating: 0, count: 16))
@@ -687,6 +688,24 @@ class MultiServerSubmitTests: XCTestCase {
                 if endpoint.server() != successEndpoint.server() {
                     throw ZcashError.synchronizerServerSwitch
                 }
+            }
+        )
+
+        XCTAssertEqual(winner, successEndpoint.server())
+    }
+
+    func testSubmitToAllEndpointsPreservesSuccessDuringTimeoutDrain() async {
+        let successEndpoint = LightWalletEndpoint(address: "success.server", port: 443)
+
+        let winner = await SDKSynchronizerClient.submitToAllEndpoints(
+            rawTx: Data([0x01]),
+            endpoints: [successEndpoint],
+            logPrefix: "[MultiSubmit/Test]",
+            graceDelay: SubmitTiming.graceDelay,
+            responseTimeout: SubmitTiming.responseTimeout,
+            timeoutDrainDelay: SubmitTiming.timeoutDrainDelay,
+            submit: { _, _ in
+                try await Task.sleep(for: .milliseconds(75))
             }
         )
 

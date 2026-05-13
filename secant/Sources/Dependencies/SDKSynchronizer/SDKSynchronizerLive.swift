@@ -390,6 +390,7 @@ extension SDKSynchronizerClient {
     private enum MultiServerSubmissionTiming {
         static let postAcceptanceGraceDelay: Duration = .seconds(5)
         static let firstResponseTimeout: Duration = .seconds(30)
+        static let timeoutDrainDelay: Duration = .seconds(2)
     }
 
     private enum SubmitResult {
@@ -405,6 +406,7 @@ extension SDKSynchronizerClient {
         zcashSDKEnvironment: ZcashSDKEnvironment,
         graceDelay: Duration = MultiServerSubmissionTiming.postAcceptanceGraceDelay,
         responseTimeout: Duration = MultiServerSubmissionTiming.firstResponseTimeout,
+        timeoutDrainDelay: Duration = MultiServerSubmissionTiming.timeoutDrainDelay,
         submit: @escaping (Data, LightWalletEndpoint) async throws -> Void
     ) async -> CreateProposedTransactionsResult {
         guard !transactions.isEmpty else {
@@ -438,6 +440,7 @@ extension SDKSynchronizerClient {
                 logPrefix: logPrefix,
                 graceDelay: graceDelay,
                 responseTimeout: responseTimeout,
+                timeoutDrainDelay: timeoutDrainDelay,
                 submit: submit
             )
 
@@ -486,6 +489,7 @@ extension SDKSynchronizerClient {
         logPrefix: String,
         graceDelay: Duration = MultiServerSubmissionTiming.postAcceptanceGraceDelay,
         responseTimeout: Duration = MultiServerSubmissionTiming.firstResponseTimeout,
+        timeoutDrainDelay: Duration = MultiServerSubmissionTiming.timeoutDrainDelay,
         submit: @escaping (Data, LightWalletEndpoint) async throws -> Void
     ) async -> String? {
         guard !endpoints.isEmpty else { return nil }
@@ -514,6 +518,7 @@ extension SDKSynchronizerClient {
                     group.addTask {
                         do {
                             try await Task.sleep(for: responseTimeout)
+                            try await Task.sleep(for: timeoutDrainDelay)
                             LoggerProxy.error("\(logPrefix) Timed out waiting for any server to respond.")
                             return .timedOut
                         } catch {
