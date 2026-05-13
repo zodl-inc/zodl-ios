@@ -248,6 +248,165 @@ class MultiServerSubmitTests: XCTestCase {
         XCTAssertNotNil(store.state.result, "Send result must be set after all effects complete")
     }
 
+    func testPartialSubmissionRoutesToFailureSupportState() async throws {
+        let firstTxId = Data([0xAA]).toHexStringTxId()
+        let secondTxId = Data([0xBB]).toHexStringTxId()
+        let statuses = ["accepted by first.server:443", "rejected by all servers"]
+
+        var initialState = SendConfirmation.State(
+            address: "ztestaddr",
+            amount: Zatoshi(100_000),
+            feeRequired: Zatoshi(10_000),
+            message: "",
+            proposal: .testOnlyFakeProposal(totalFee: 10_000)
+        )
+        initialState.$selectedWalletAccount.withLock { $0 = testWalletAccount }
+
+        let store = TestStore(initialState: initialState) {
+            SendConfirmation()
+        }
+        store.exhaustivity = .off
+
+        store.dependencies.audioServices = AudioServicesClient(systemSoundVibrate: { })
+        store.dependencies.derivationTool = .liveValue
+        store.dependencies.mainQueue = .immediate
+        store.dependencies.mnemonic = .liveValue
+        store.dependencies.walletStorage.exportWallet = { .placeholder }
+        store.dependencies.zcashSDKEnvironment = makeZcashSDKEnvironment()
+        store.dependencies.sdkSynchronizer.createAndSubmitProposedTransactions = { _, _ in
+            .partial(txIds: [firstTxId, secondTxId], statuses: statuses)
+        }
+
+        await store.send(.sendTriggered)
+        await store.finish()
+
+        XCTAssertEqual(store.state.result, .failure)
+        XCTAssertEqual(store.state.txIdToExpand, firstTxId)
+        XCTAssertEqual(store.state.partialFailureTxIds, [firstTxId, secondTxId])
+        XCTAssertEqual(store.state.partialFailureStatuses, statuses)
+        XCTAssertEqual(store.state.failedDescription, statuses.joined(separator: ", "))
+    }
+
+    func testSwapAndPayPartialSubmissionRoutesToFailureSupportState() async throws {
+        let firstTxId = Data([0xAA]).toHexStringTxId()
+        let secondTxId = Data([0xBB]).toHexStringTxId()
+        let statuses = ["accepted by first.server:443", "rejected by all servers"]
+
+        var initialState = SwapAndPayCoordFlow.State()
+        initialState.swapAndPayState.address = "ztestaddr"
+        initialState.swapAndPayState.proposal = .testOnlyFakeProposal(totalFee: 10_000)
+        initialState.$selectedWalletAccount.withLock { $0 = testWalletAccount }
+
+        let store = TestStore(initialState: initialState) {
+            SwapAndPayCoordFlow()
+        }
+        store.exhaustivity = .off
+
+        store.dependencies.derivationTool = .liveValue
+        store.dependencies.mainQueue = .immediate
+        store.dependencies.mnemonic = .liveValue
+        store.dependencies.walletStorage.exportWallet = { .placeholder }
+        store.dependencies.zcashSDKEnvironment = makeZcashSDKEnvironment()
+        store.dependencies.sdkSynchronizer.createAndSubmitProposedTransactions = { _, _ in
+            .partial(txIds: [firstTxId, secondTxId], statuses: statuses)
+        }
+
+        await store.send(.swapRequested)
+        await store.finish()
+
+        guard case let .sendResultFailure(resultState) = store.state.path.last else {
+            XCTFail("Expected Swap/Pay partial submission to route to failure")
+            return
+        }
+
+        XCTAssertEqual(store.state.txIdToExpand, firstTxId)
+        XCTAssertEqual(store.state.partialFailureTxIds, [firstTxId, secondTxId])
+        XCTAssertEqual(store.state.partialFailureStatuses, statuses)
+        XCTAssertEqual(store.state.failedDescription, statuses.joined(separator: ", "))
+        XCTAssertEqual(resultState.txIdToExpand, firstTxId)
+        XCTAssertEqual(resultState.partialFailureTxIds, [firstTxId, secondTxId])
+        XCTAssertEqual(resultState.partialFailureStatuses, statuses)
+        XCTAssertEqual(resultState.failedDescription, statuses.joined(separator: ", "))
+    }
+
+    func testSwapAndPayTimeoutSubmissionRoutesToPendingWithTimeoutCopy() async throws {
+        let txId = Data([0xAA]).toHexStringTxId()
+
+        var initialState = SwapAndPayCoordFlow.State()
+        initialState.swapAndPayState.address = "ztestaddr"
+        initialState.swapAndPayState.proposal = .testOnlyFakeProposal(totalFee: 10_000)
+        initialState.$selectedWalletAccount.withLock { $0 = testWalletAccount }
+
+        let store = TestStore(initialState: initialState) {
+            SwapAndPayCoordFlow()
+        }
+        store.exhaustivity = .off
+
+        store.dependencies.derivationTool = .liveValue
+        store.dependencies.mainQueue = .immediate
+        store.dependencies.mnemonic = .liveValue
+        store.dependencies.walletStorage.exportWallet = { .placeholder }
+        store.dependencies.zcashSDKEnvironment = makeZcashSDKEnvironment()
+        store.dependencies.sdkSynchronizer.createAndSubmitProposedTransactions = { _, _ in
+            .grpcFailure(
+                txIds: [txId],
+                description: MultiServerSubmissionTiming.timeoutDescription,
+                reason: .timeout
+            )
+        }
+        store.dependencies.sdkSynchronizer.txIdExists = { _ in true }
+
+        await store.send(.swapRequested)
+        await store.finish()
+
+        guard case let .sendResultPending(resultState) = store.state.path.last else {
+            XCTFail("Expected Swap/Pay timeout submission to route to pending")
+            return
+        }
+
+        XCTAssertEqual(store.state.txIdToExpand, txId)
+        XCTAssertEqual(store.state.pendingDescription, String(localizable: .sendPendingTimeoutInfo))
+        XCTAssertEqual(resultState.txIdToExpand, txId)
+        XCTAssertEqual(resultState.pendingDescription, String(localizable: .sendPendingTimeoutInfo))
+    }
+
+    func testSwapAndPayKeystonePendingKeepsPendingDescription() async throws {
+        let txId = Data([0xAA]).toHexStringTxId()
+        let timeoutDescription = String(localizable: .sendPendingTimeoutInfo)
+
+        var sendConfirmationState = SendConfirmation.State.initial
+        sendConfirmationState.address = "ztestaddr"
+        sendConfirmationState.pendingDescription = timeoutDescription
+        sendConfirmationState.result = .pending
+        sendConfirmationState.txIdToExpand = txId
+
+        var initialState = SwapAndPayCoordFlow.State()
+        initialState.swapAndPayState.address = "ztestaddr"
+        initialState.path.append(.confirmWithKeystone(sendConfirmationState))
+        let keystonePathId = initialState.path.ids.last!
+
+        let store = TestStore(initialState: initialState) {
+            SwapAndPayCoordFlow()
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(
+            id: keystonePathId,
+            action: .confirmWithKeystone(.updateResult(.pending))
+        )))
+        await store.finish()
+
+        guard case let .sendResultPending(resultState) = store.state.path.last else {
+            XCTFail("Expected Swap/Pay Keystone pending result")
+            return
+        }
+
+        XCTAssertEqual(store.state.txIdToExpand, txId)
+        XCTAssertEqual(store.state.pendingDescription, timeoutDescription)
+        XCTAssertEqual(resultState.txIdToExpand, txId)
+        XCTAssertEqual(resultState.pendingDescription, timeoutDescription)
+    }
+
     /// Automatic mode broadcasts to all known servers in parallel.
     /// Verifies that broadcasterSubmit is called once per known endpoint.
     func testAutomaticMode_broadcastsToAllKnownServers() async throws {

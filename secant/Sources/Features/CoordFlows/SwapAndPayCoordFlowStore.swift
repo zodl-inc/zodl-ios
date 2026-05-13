@@ -43,6 +43,9 @@ struct SwapAndPayCoordFlow {
         var isHelpSheetPresented = false
         var isSwapExperience = true
         var isSwapToZecExperience = false
+        var partialFailureTxIds: [String] = []
+        var partialFailureStatuses: [String] = []
+        var pendingDescription: String?
         var path = StackState<Path.State>()
         var sendingScreenOnAppearTimestamp: TimeInterval = 0
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
@@ -76,11 +79,14 @@ struct SwapAndPayCoordFlow {
         case path(StackActionOf<Path>)
         case sendDone
         case sendFailed(ZcashError?, Bool)
+        case sendPartial([String], [String])
         case stopSending
         case storeLastUsedAsset
         case swapAndPay(SwapAndPay.Action)
         case swapRequested
         case updateFailedData(Int?, String, String?)
+        case updatePartialFailureData([String], [String])
+        case updatePendingDescription(String?)
         case updateResult(State.Result?)
         case updateTxIdToExpand(String?)
     }

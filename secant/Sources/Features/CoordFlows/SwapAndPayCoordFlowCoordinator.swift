@@ -122,12 +122,19 @@ extension SwapAndPayCoordFlow {
                                     sendConfirmationState.failedPcztMsg
                                 )
                             )
+                            await send(.updatePartialFailureData(
+                                sendConfirmationState.partialFailureTxIds,
+                                sendConfirmationState.partialFailureStatuses
+                            ))
+                            await send(.updatePendingDescription(sendConfirmationState.pendingDescription))
 
                             switch result {
                             case .success:
                                 await send(.updateResult(.success))
                             case .pending:
                                 await send(.updateResult(.pending))
+                            case .failure:
+                                await send(.updateResult(.failure))
                             default: return
                             }
                         }
@@ -228,6 +235,15 @@ extension SwapAndPayCoordFlow {
                 #endif
                 return .none
 
+            case let .updatePartialFailureData(txIds, statuses):
+                state.partialFailureTxIds = txIds
+                state.partialFailureStatuses = statuses
+                return .none
+
+            case let .updatePendingDescription(description):
+                state.pendingDescription = description
+                return .none
+
             case .swapAndPay(.addressBookTapped),
                     .path(.element(id: _, action: .swapAndPayForm(.addressBookTapped))):
                 var addressBookState = AddressBook.State.initial
@@ -280,6 +296,13 @@ extension SwapAndPayCoordFlow {
                 }
                 
                 // present sending screen
+                state.failedCode = nil
+                state.failedDescription = ""
+                state.failedPcztMsg = nil
+                state.partialFailureTxIds = []
+                state.partialFailureStatuses = []
+                state.pendingDescription = nil
+                state.txIdToExpand = nil
                 var sendConfirmationState = SendConfirmation.State.initial
                 sendConfirmationState.address = state.swapAndPayState.quote?.depositAddress ?? state.swapAndPayState.address
                 sendConfirmationState.proposal = state.swapAndPayState.proposal
@@ -317,7 +340,10 @@ extension SwapAndPayCoordFlow {
                         let result = try await sdkSynchronizer.createAndSubmitProposedTransactions(proposal, spendingKey)
 
                         switch result {
-                        case let .grpcFailure(txIds, _, _):
+                        case let .grpcFailure(txIds, description, reason):
+                            await send(.updatePendingDescription(
+                                reason == .timeout ? String(localizable: .sendPendingTimeoutInfo) : description
+                            ))
                             await send(.updateTxIdToExpand(txIds.last))
                             let isTxIdPresentInTheDB = try await sdkSynchronizer.txIdExists(txIds.last)
                             await send(.sendFailed("sdkSynchronizer.createAndSubmitProposedTransactions-grpcFailure".toZcashError(), isTxIdPresentInTheDB))
@@ -326,9 +352,9 @@ extension SwapAndPayCoordFlow {
                             await send(.updateTxIdToExpand(txIds.last))
                             let isTxIdPresentInTheDB = try await sdkSynchronizer.txIdExists(txIds.last)
                             await send(.sendFailed("sdkSynchronizer.createAndSubmitProposedTransactions-failure \(code) \(description)".toZcashError(), isTxIdPresentInTheDB))
-                        case let .partial(txIds: txIds, statuses):
-                            await send(.updateTxIdToExpand(txIds.last))
-                            await send(.sendFailed("sdkSynchronizer.createAndSubmitProposedTransactions-partial \(statuses.joined(separator: ", "))".toZcashError(), true))
+                        case let .partial(txIds: txIds, statuses: statuses):
+                            await send(.updateTxIdToExpand(txIds.first))
+                            await send(.sendPartial(txIds, statuses))
                         case .success(let txIds):
                             await send(.updateTxIdToExpand(txIds.last))
                             await send(.sendDone)
@@ -358,12 +384,31 @@ extension SwapAndPayCoordFlow {
                     try? await mainQueue.sleep(for: .seconds(waitTimeToPresentScreen))
                     await send(.updateResult(isTxIdPresentInTheDB ? .pending : .failure))
                 }
+
+            case let .sendPartial(txIds, statuses):
+                state.failedCode = -999
+                state.failedDescription = statuses.joined(separator: ", ")
+                state.partialFailureTxIds = txIds
+                state.partialFailureStatuses = statuses
+                let diffTime = Date().timeIntervalSince1970 - state.sendingScreenOnAppearTimestamp
+                let waitTimeToPresentScreen = diffTime > 2.0 ? 0.01 : 2.0 - diffTime
+                return .run { send in
+                    try? await mainQueue.sleep(for: .seconds(waitTimeToPresentScreen))
+                    await send(.updateResult(.failure))
+                }
                 
             case let .updateResult(result):
                 var sendConfirmationState = SendConfirmation.State.initial
                 sendConfirmationState.address = state.swapAndPayState.quote?.depositAddress ?? state.swapAndPayState.address
                 sendConfirmationState.proposal = state.swapAndPayState.proposal
                 sendConfirmationState.type = state.swapAndPayState.isSwapExperienceEnabled ? .swap : .pay
+                sendConfirmationState.failedCode = state.failedCode
+                sendConfirmationState.failedDescription = state.failedDescription
+                sendConfirmationState.failedPcztMsg = state.failedPcztMsg
+                sendConfirmationState.partialFailureTxIds = state.partialFailureTxIds
+                sendConfirmationState.partialFailureStatuses = state.partialFailureStatuses
+                sendConfirmationState.pendingDescription = state.pendingDescription
+                sendConfirmationState.txIdToExpand = state.txIdToExpand
                 switch result {
                 case .failure:
                     state.path.append(.sendResultFailure(sendConfirmationState))

@@ -9537,6 +9537,23 @@
         }
       }
     },
+    "send.partialFailureInfo" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Only some of the transactions were accepted. Please contact support so we can help verify and recover the remaining funds."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Solo se aceptaron algunas de las transacciones. Contacta a soporte para que podamos ayudar a verificar y recuperar los fondos restantes."
+          }
+        }
+      }
+    },
     "send.failureShielding" : {
       "extractionState" : "manual",
       "localizations" : {

@@ -54,6 +54,8 @@ struct SendConfirmation {
         var isTransparentAddress = false
         var message: String
         var messageToBeShared: String?
+        var partialFailureTxIds: [String] = []
+        var partialFailureStatuses: [String] = []
         var pczt: Pczt?
         var pcztForUI: Pczt?
         var pcztWithProofs: Pczt?
@@ -146,6 +148,7 @@ struct SendConfirmation {
         case saveAddressTapped(RedactableString)
         case sendDone
         case sendFailed(ZcashError?, Bool)
+        case sendPartial([String], [String])
         case sendingScreenOnAppear
         case sendRequested
         case sendSupportMailFinished
@@ -199,6 +202,8 @@ struct SendConfirmation {
             case .onAppear:
                 // __LD TESTED
                 state.pcztForUI = nil
+                state.partialFailureTxIds = []
+                state.partialFailureStatuses = []
                 state.pendingDescription = nil
                 state.rejectSendRequest = false
                 state.txIdToExpand = nil
@@ -304,8 +309,8 @@ struct SendConfirmation {
                             let isTxIdPresentInTheDB = try await sdkSynchronizer.txIdExists(txIds.last)
                             await send(.sendFailed("sdkSynchronizer.createAndSubmitProposedTransactions-failure \(code) \(description)".toZcashError(), isTxIdPresentInTheDB))
                         case let .partial(txIds: txIds, statuses: statuses):
-                            await send(.updateTxIdToExpand(txIds.last))
-                            await send(.sendFailed("sdkSynchronizer.createAndSubmitProposedTransactions-partial \(statuses.joined(separator: ", "))".toZcashError(), true))
+                            await send(.updateTxIdToExpand(txIds.first))
+                            await send(.sendPartial(txIds, statuses))
                         case .success(let txIds):
                             await send(.updateTxIdToExpand(txIds.last))
                             await send(.sendDone)
@@ -332,6 +337,19 @@ struct SendConfirmation {
                 return .run { send in
                     try? await mainQueue.sleep(for: .seconds(waitTimeToPresentScreen))
                     await send(.updateResult(isTxIdPresentInTheDB ? .pending : .failure))
+                }
+
+            case let .sendPartial(txIds, statuses):
+                state.failedCode = -999
+                state.failedDescription = statuses.joined(separator: ", ")
+                state.isSending = false
+                state.partialFailureTxIds = txIds
+                state.partialFailureStatuses = statuses
+                let diffTime = Date().timeIntervalSince1970 - state.sendingScreenOnAppearTimestamp
+                let waitTimeToPresentScreen = diffTime > 2.0 ? 0.01 : 2.0 - diffTime
+                return .run { send in
+                    try? await mainQueue.sleep(for: .seconds(waitTimeToPresentScreen))
+                    await send(.updateResult(.failure))
                 }
 
             case .updateTxIdToExpand(let txId):
@@ -369,9 +387,20 @@ struct SendConfirmation {
 
             case .reportTapped:
                 var supportData = SupportDataGenerator.generate()
+                let partialFailureMessage = state.partialFailureTxIds.isEmpty
+                    ? ""
+                    : """
+
+                    Partial transaction IDs:
+                    \(state.partialFailureTxIds.joined(separator: "\n"))
+
+                    Partial transaction statuses:
+                    \(state.partialFailureStatuses.joined(separator: "\n"))
+                    """
                 supportData.message =
                 """
                 \(state.failedCode ?? -1000) \(state.failedDescription ?? "")
+                \(partialFailureMessage)
                 
                 \(supportData.message)
                 
@@ -563,11 +592,8 @@ struct SendConfirmation {
                             ))
                         case let .partial(txIds: txIds, statuses: statuses):
                             await send(.updateFailedData(-999, statuses.joined(separator: ", "), pcztMessage))
-                            await send(.updateTxIdToExpand(txIds.last))
-                            await send(.sendFailed(
-                                "sdkSynchronizer.createAndSubmitTransactionFromPCZT-partial \(statuses.joined(separator: ", "))".toZcashError(),
-                                true
-                            ))
+                            await send(.updateTxIdToExpand(txIds.first))
+                            await send(.sendPartial(txIds, statuses))
                         case .success(let txIds):
                             await send(.updateTxIdToExpand(txIds.last))
                             await send(.sendDone)
@@ -640,7 +666,11 @@ extension SendConfirmation.State {
     }
     
     var failureInfo: String {
-        isShielding
+        if !partialFailureTxIds.isEmpty {
+            return String(localizable: .sendPartialFailureInfo)
+        }
+
+        return isShielding
         ? String(localizable: .sendFailureShieldingInfo)
         : type == .regular
         ? String(localizable: .sendFailureInfo)
