@@ -645,6 +645,73 @@ class MultiServerSubmitTests: XCTestCase {
         }
     }
 
+    func testCreateAndSubmitTransactionsReturnsPartialWhenLaterTransactionGrpcFails() async {
+        let tx1 = makeTransaction(raw: Data([0x01, 0x02]), rawID: Data([0xAA]))
+        let tx2 = makeTransaction(raw: Data([0x03, 0x04]), rawID: Data([0xBB]))
+        let tx3 = makeTransaction(raw: Data([0x05, 0x06]), rawID: Data([0xCC]))
+        let submitted = LockIsolated<[Data]>([])
+
+        let result = await SDKSynchronizerClient.createAndSubmitTransactions(
+            [tx1, tx2, tx3],
+            logPrefix: "[MultiSubmit/Test]",
+            userStoredPreferences: makeUserPreferences(
+                mode: .manual,
+                servers: [.init(host: "manual.server", port: 9067, isCustom: true)]
+            ),
+            zcashSDKEnvironment: makeZcashSDKEnvironment(),
+            graceDelay: SubmitTiming.graceDelay,
+            responseTimeout: SubmitTiming.responseTimeout,
+            submit: { rawTx, _ in
+                submitted.withValue { $0.append(rawTx) }
+                if rawTx == Data([0x03, 0x04]) {
+                    throw ZcashError.synchronizerServerSwitch
+                }
+            }
+        )
+
+        XCTAssertEqual(
+            result,
+            .partial(
+                txIds: [tx1.rawID.toHexStringTxId(), tx2.rawID.toHexStringTxId(), tx3.rawID.toHexStringTxId()],
+                statuses: ["accepted by manual.server:9067", "rejected by all servers"]
+            )
+        )
+        submitted.withValue {
+            XCTAssertEqual($0, [Data([0x01, 0x02]), Data([0x03, 0x04])])
+        }
+    }
+
+    func testCreateAndSubmitTransactionsReturnsFailureWhenNoTransactionsCreated() async {
+        let submitCallCount = LockIsolated<Int>(0)
+
+        let result = await SDKSynchronizerClient.createAndSubmitTransactions(
+            [],
+            logPrefix: "[MultiSubmit/Test]",
+            userStoredPreferences: makeUserPreferences(
+                mode: .manual,
+                servers: [.init(host: "manual.server", port: 9067, isCustom: true)]
+            ),
+            zcashSDKEnvironment: makeZcashSDKEnvironment(),
+            graceDelay: SubmitTiming.graceDelay,
+            responseTimeout: SubmitTiming.responseTimeout,
+            submit: { _, _ in
+                submitCallCount.withValue { $0 += 1 }
+            }
+        )
+
+        XCTAssertEqual(
+            result,
+            .failure(
+                txIds: [],
+                code: -1,
+                description: "No transactions created"
+            )
+        )
+        submitCallCount.withValue {
+            XCTAssertEqual($0, 0)
+        }
+    }
+
     func testCreateAndSubmitTransactionsReturnsGrpcFailureWhenAllServersReject() async {
         let tx = makeTransaction(raw: Data([0x01, 0x02]), rawID: Data([0xAA]))
         let attemptedServers = LockIsolated<[String]>([])
