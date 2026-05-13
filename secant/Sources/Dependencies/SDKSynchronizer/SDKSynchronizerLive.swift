@@ -399,6 +399,18 @@ extension SDKSynchronizerClient {
         case timedOut
     }
 
+    private actor AcceptedSubmitStore {
+        private var server: String?
+
+        func record(_ server: String) {
+            self.server = self.server ?? server
+        }
+
+        func recordedServer() -> String? {
+            server
+        }
+    }
+
     static func createAndSubmitTransactions(
         _ transactions: [ZcashTransaction.Overview],
         logPrefix: String,
@@ -495,6 +507,7 @@ extension SDKSynchronizerClient {
         guard !endpoints.isEmpty else { return nil }
 
         let serverCount = endpoints.count
+        let acceptedSubmitStore = AcceptedSubmitStore()
 
         return await withCheckedContinuation { continuation in
             Task {
@@ -506,6 +519,7 @@ extension SDKSynchronizerClient {
                         group.addTask {
                             do {
                                 try await submit(rawTx, endpoint)
+                                await acceptedSubmitStore.record(server)
                                 LoggerProxy.event("\(logPrefix) \(server) SUCCESS.")
                                 return .server(server)
                             } catch {
@@ -519,6 +533,9 @@ extension SDKSynchronizerClient {
                         do {
                             try await Task.sleep(for: responseTimeout)
                             try await Task.sleep(for: timeoutDrainDelay)
+                            if let server = await acceptedSubmitStore.recordedServer() {
+                                return .server(server)
+                            }
                             LoggerProxy.error("\(logPrefix) Timed out waiting for any server to respond.")
                             return .timedOut
                         } catch {
@@ -546,10 +563,17 @@ extension SDKSynchronizerClient {
                                 continuation.resume(returning: nil)
                                 return
                             }
-                        case .graceExpired, .timedOut:
+                        case .graceExpired:
                             if !hasResumed {
                                 hasResumed = true
                                 continuation.resume(returning: nil)
+                            }
+                            group.cancelAll()
+                            return
+                        case .timedOut:
+                            if !hasResumed {
+                                hasResumed = true
+                                continuation.resume(returning: await acceptedSubmitStore.recordedServer())
                             }
                             group.cancelAll()
                             return
