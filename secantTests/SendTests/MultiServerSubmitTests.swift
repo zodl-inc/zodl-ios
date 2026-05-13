@@ -350,7 +350,6 @@ class MultiServerSubmitTests: XCTestCase {
         store.dependencies.sdkSynchronizer.createAndSubmitProposedTransactions = { _, _ in
             .grpcFailure(
                 txIds: [txId],
-                description: MultiServerSubmissionTiming.timeoutDescription,
                 reason: .timeout
             )
         }
