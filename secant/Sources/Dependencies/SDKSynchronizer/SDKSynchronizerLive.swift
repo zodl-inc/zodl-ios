@@ -411,6 +411,24 @@ extension SDKSynchronizerClient {
         }
     }
 
+    private final class SubmitTaskCancellation: @unchecked Sendable {
+        private let lock = NSLock()
+        private var task: Task<Void, Never>?
+
+        func set(_ task: Task<Void, Never>) {
+            lock.lock()
+            self.task = task
+            lock.unlock()
+        }
+
+        func cancel() {
+            lock.lock()
+            let task = self.task
+            lock.unlock()
+            task?.cancel()
+        }
+    }
+
     static func createAndSubmitTransactions(
         _ transactions: [ZcashTransaction.Overview],
         logPrefix: String,
@@ -508,83 +526,92 @@ extension SDKSynchronizerClient {
 
         let serverCount = endpoints.count
         let acceptedSubmitStore = AcceptedSubmitStore()
+        let submitTaskCancellation = SubmitTaskCancellation()
 
-        return await withCheckedContinuation { continuation in
-            Task {
-                var hasResumed = false
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                let task = Task {
+                    var hasResumed = false
 
-                await withTaskGroup(of: SubmitResult.self) { group in
-                    for endpoint in endpoints {
-                        let server = "\(endpoint.host):\(endpoint.port)"
-                        group.addTask {
-                            do {
-                                try await submit(rawTx, endpoint)
-                                await acceptedSubmitStore.record(server)
-                                LoggerProxy.event("\(logPrefix) \(server) SUCCESS.")
-                                return .server(server)
-                            } catch {
-                                LoggerProxy.warn("\(logPrefix) \(server) FAILED: \(error)")
-                                return .server(nil)
-                            }
-                        }
-                    }
-
-                    group.addTask {
-                        do {
-                            try await Task.sleep(for: responseTimeout)
-                            try await Task.sleep(for: timeoutDrainDelay)
-                            if let server = await acceptedSubmitStore.recordedServer() {
-                                return .server(server)
-                            }
-                            LoggerProxy.error("\(logPrefix) Timed out waiting for any server to respond.")
-                            return .timedOut
-                        } catch {
-                            return .timedOut
-                        }
-                    }
-
-                    var failedCount = 0
-                    for await result in group {
-                        switch result {
-                        case .server(let winner?):
-                            if !hasResumed {
-                                hasResumed = true
-                                continuation.resume(returning: winner)
-                                group.addTask {
-                                    try? await Task.sleep(for: graceDelay)
-                                    return .graceExpired
+                    await withTaskGroup(of: SubmitResult.self) { group in
+                        for endpoint in endpoints {
+                            let server = "\(endpoint.host):\(endpoint.port)"
+                            group.addTask {
+                                do {
+                                    try await submit(rawTx, endpoint)
+                                    await acceptedSubmitStore.record(server)
+                                    LoggerProxy.event("\(logPrefix) \(server) SUCCESS.")
+                                    return .server(server)
+                                } catch {
+                                    LoggerProxy.warn("\(logPrefix) \(server) FAILED: \(error)")
+                                    return .server(nil)
                                 }
                             }
-                        case .server(nil):
-                            failedCount += 1
-                            if !hasResumed && failedCount >= serverCount {
-                                hasResumed = true
+                        }
+
+                        group.addTask {
+                            do {
+                                try await Task.sleep(for: responseTimeout)
+                                try await Task.sleep(for: timeoutDrainDelay)
+                                if let server = await acceptedSubmitStore.recordedServer() {
+                                    return .server(server)
+                                }
+                                LoggerProxy.error("\(logPrefix) Timed out waiting for any server to respond.")
+                                return .timedOut
+                            } catch {
+                                return .timedOut
+                            }
+                        }
+
+                        var failedCount = 0
+                        for await result in group {
+                            switch result {
+                            case .server(let winner?):
+                                if !hasResumed {
+                                    hasResumed = true
+                                    continuation.resume(returning: winner)
+                                    group.addTask {
+                                        try? await Task.sleep(for: graceDelay)
+                                        return .graceExpired
+                                    }
+                                }
+                            case .server(nil):
+                                failedCount += 1
+                                if !hasResumed && failedCount >= serverCount {
+                                    hasResumed = true
+                                    group.cancelAll()
+                                    continuation.resume(returning: nil)
+                                    return
+                                }
+                            case .graceExpired:
+                                if !hasResumed {
+                                    hasResumed = true
+                                    continuation.resume(returning: nil)
+                                }
                                 group.cancelAll()
-                                continuation.resume(returning: nil)
+                                return
+                            case .timedOut:
+                                if !hasResumed {
+                                    hasResumed = true
+                                    continuation.resume(returning: await acceptedSubmitStore.recordedServer())
+                                }
+                                group.cancelAll()
                                 return
                             }
-                        case .graceExpired:
-                            if !hasResumed {
-                                hasResumed = true
-                                continuation.resume(returning: nil)
-                            }
-                            group.cancelAll()
-                            return
-                        case .timedOut:
-                            if !hasResumed {
-                                hasResumed = true
-                                continuation.resume(returning: await acceptedSubmitStore.recordedServer())
-                            }
-                            group.cancelAll()
-                            return
+                        }
+
+                        if !hasResumed {
+                            continuation.resume(returning: nil)
                         }
                     }
-
-                    if !hasResumed {
-                        continuation.resume(returning: nil)
-                    }
+                }
+                submitTaskCancellation.set(task)
+                if Task.isCancelled {
+                    task.cancel()
                 }
             }
+        } onCancel: {
+            submitTaskCancellation.cancel()
         }
     }
 }

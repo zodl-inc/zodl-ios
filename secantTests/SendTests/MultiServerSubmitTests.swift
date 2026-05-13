@@ -737,6 +737,54 @@ class MultiServerSubmitTests: XCTestCase {
         }
     }
 
+    func testSubmitToAllEndpointsCancelsEndpointSubmissions() async {
+        let endpoints = [
+            LightWalletEndpoint(address: "server1", port: 443),
+            LightWalletEndpoint(address: "server2", port: 443)
+        ]
+        let startedCount = LockIsolated<Int>(0)
+        let cancelledCount = LockIsolated<Int>(0)
+
+        let task = Task {
+            await SDKSynchronizerClient.submitToAllEndpoints(
+                rawTx: Data([0x01]),
+                endpoints: endpoints,
+                logPrefix: "[MultiSubmit/Test]",
+                graceDelay: SubmitTiming.graceDelay,
+                responseTimeout: .seconds(5),
+                timeoutDrainDelay: .seconds(5),
+                submit: { _, _ in
+                    startedCount.withValue { $0 += 1 }
+                    do {
+                        try await Task.sleep(for: .seconds(5))
+                    } catch {
+                        cancelledCount.withValue { $0 += 1 }
+                        throw error
+                    }
+                }
+            )
+        }
+
+        for _ in 0..<100 {
+            if startedCount.withValue({ $0 }) == endpoints.count {
+                break
+            }
+            try? await Task.sleep(for: .milliseconds(1))
+        }
+        XCTAssertEqual(startedCount.withValue { $0 }, endpoints.count)
+
+        task.cancel()
+        _ = await task.value
+
+        for _ in 0..<100 {
+            if cancelledCount.withValue({ $0 }) == endpoints.count {
+                break
+            }
+            try? await Task.sleep(for: .milliseconds(1))
+        }
+        XCTAssertEqual(cancelledCount.withValue { $0 }, endpoints.count)
+    }
+
     private func makeUserPreferences(
         mode: UserPreferencesStorage.ConnectionMode,
         servers: [UserPreferencesStorage.ServerConfig]
