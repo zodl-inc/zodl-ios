@@ -704,6 +704,39 @@ class MultiServerSubmitTests: XCTestCase {
         }
     }
 
+    func testCreateAndSubmitTransactionsKeepsFirstRecordedServerRejection() async {
+        let tx = makeTransaction(raw: Data([0x01, 0x02]), rawID: Data([0xAA]))
+        let firstServer = "us.zec.stardust.rest:443"
+
+        let result = await SDKSynchronizerClient.createAndSubmitTransactions(
+            [tx],
+            logPrefix: "[MultiSubmit/Test]",
+            userStoredPreferences: makeUserPreferences(mode: .automatic, servers: []),
+            zcashSDKEnvironment: makeZcashSDKEnvironment(),
+            graceDelay: SubmitTiming.graceDelay,
+            responseTimeout: SubmitTiming.responseTimeout,
+            submit: { _, endpoint in
+                if endpoint.server() != firstServer {
+                    try await Task.sleep(for: .milliseconds(50))
+                }
+
+                throw TransactionEncoderError.submitError(
+                    code: endpoint.server() == firstServer ? -25 : -26,
+                    message: endpoint.server() == firstServer ? "first rejection" : "later rejection"
+                )
+            }
+        )
+
+        XCTAssertEqual(
+            result,
+            .failure(
+                txIds: [tx.rawID.toHexStringTxId()],
+                code: -25,
+                description: "first rejection"
+            )
+        )
+    }
+
     func testSubmitToAllEndpointsReturnsFirstSuccessfulServer() async {
         let successEndpoint = LightWalletEndpoint(address: "success.server", port: 443)
         let endpoints = [

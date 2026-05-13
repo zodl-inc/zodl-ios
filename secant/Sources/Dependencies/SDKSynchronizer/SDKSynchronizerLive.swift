@@ -413,6 +413,7 @@ extension SDKSynchronizerClient {
         private var failure: SubmitFailure?
 
         func record(server: String, code: Int, description: String) {
+            guard failure == nil else { return }
             failure = SubmitFailure(server: server, code: code, description: description)
         }
 
