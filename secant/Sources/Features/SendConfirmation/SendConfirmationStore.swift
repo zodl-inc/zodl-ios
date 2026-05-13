@@ -387,12 +387,9 @@ struct SendConfirmation {
 
             case .reportTapped:
                 var supportData = SupportDataGenerator.generate()
-                let partialFailureMessage = state.partialFailureTxIds.isEmpty
+                let partialFailureMessage = state.partialFailureStatuses.isEmpty
                     ? ""
                     : """
-
-                    Partial transaction IDs:
-                    \(state.partialFailureTxIds.joined(separator: "\n"))
 
                     Partial transaction statuses:
                     \(state.partialFailureStatuses.joined(separator: "\n"))
