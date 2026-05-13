@@ -832,7 +832,7 @@ class MultiServerSubmitTests: XCTestCase {
             result,
             .partial(
                 txIds: [tx1.rawID.toHexStringTxId(), tx2.rawID.toHexStringTxId(), tx3.rawID.toHexStringTxId()],
-                statuses: ["accepted by manual.server:9067", "rejected by all servers"]
+                statuses: ["accepted by manual.server:9067", "rejected by all servers", "notAttempted"]
             )
         )
         submitted.withValue {
