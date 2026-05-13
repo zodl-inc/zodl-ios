@@ -9656,6 +9656,23 @@
         }
       }
     },
+    "send.pendingTimeoutInfo" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Timed out waiting for a server response. Your transaction may still have been broadcast."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Se agotó el tiempo de espera de la respuesta del servidor. Es posible que tu transacción aún se haya transmitido."
+          }
+        }
+      }
+    },
     "send.pendingShieldingInfo" : {
       "extractionState" : "manual",
       "localizations" : {

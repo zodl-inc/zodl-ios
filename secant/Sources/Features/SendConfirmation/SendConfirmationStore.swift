@@ -58,6 +58,7 @@ struct SendConfirmation {
         var pcztForUI: Pczt?
         var pcztWithProofs: Pczt?
         var pcztWithSigs: Pczt?
+        var pendingDescription: String?
         var proposal: Proposal?
         var randomSuccessIconIndex = 0
         var randomFailureIconIndex = 0
@@ -154,6 +155,7 @@ struct SendConfirmation {
         case showHideButtonTapped
         case stopSending
         case updateFailedData(Int, String, String)
+        case updatePendingDescription(String?)
         case updateResult(State.Result?)
         case updateTxIdToExpand(String?)
         case viewTransactionTapped
@@ -197,6 +199,7 @@ struct SendConfirmation {
             case .onAppear:
                 // __LD TESTED
                 state.pcztForUI = nil
+                state.pendingDescription = nil
                 state.rejectSendRequest = false
                 state.txIdToExpand = nil
                 state.randomSuccessIconIndex = Int.random(in: 1...2)
@@ -288,7 +291,10 @@ struct SendConfirmation {
                         let result = try await sdkSynchronizer.createAndSubmitProposedTransactions(proposal, spendingKey)
 
                         switch result {
-                        case .grpcFailure(let txIds):
+                        case let .grpcFailure(txIds, description, reason):
+                            await send(.updatePendingDescription(
+                                reason == .timeout ? String(localizable: .sendPendingTimeoutInfo) : description
+                            ))
                             await send(.updateTxIdToExpand(txIds.last))
                             let isTxIdPresentInTheDB = try await sdkSynchronizer.txIdExists(txIds.last)
                             await send(.sendFailed("sdkSynchronizer.createAndSubmitProposedTransactions-grpcFailure".toZcashError(), isTxIdPresentInTheDB))
@@ -355,6 +361,10 @@ struct SendConfirmation {
                 #if DEBUG
                 state.failedPcztMsg = pcztMsg
                 #endif
+                return .none
+
+            case let .updatePendingDescription(description):
+                state.pendingDescription = description
                 return .none
 
             case .reportTapped:
@@ -532,7 +542,10 @@ struct SendConfirmation {
                         await send(.resetPCZTs)
 
                         switch result {
-                        case .grpcFailure(let txIds):
+                        case let .grpcFailure(txIds, description, reason):
+                            await send(.updatePendingDescription(
+                                reason == .timeout ? String(localizable: .sendPendingTimeoutInfo) : description
+                            ))
                             await send(.updateFailedData(-999, "PCZT transaction rejected by all servers", pcztMessage))
                             await send(.updateTxIdToExpand(txIds.last))
                             let isTxIdPresentInTheDB = try await sdkSynchronizer.txIdExists(txIds.last)
@@ -606,13 +619,14 @@ extension SendConfirmation.State {
     }
     
     var pendingInfo: String {
-        isShielding
+        pendingDescription
+        ?? (isShielding
         ? String(localizable: .sendPendingShieldingInfo)
         : type == .regular
         ? String(localizable: .sendPendingInfo)
         : type == .swap
         ? String(localizable: .swapAndPayPendingSwapInfo)
-        : String(localizable: .swapAndPayPendingPayInfo)
+        : String(localizable: .swapAndPayPendingPayInfo))
     }
     
     var pendingTitle: String {

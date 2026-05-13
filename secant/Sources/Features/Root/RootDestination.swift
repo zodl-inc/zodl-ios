@@ -118,7 +118,7 @@ extension Root {
                         let result = try await sdkSynchronizer.createAndSubmitProposedTransactions(proposal, spendingKey)
                         
                         switch result {
-                        case .grpcFailure(let txIds):
+                        case let .grpcFailure(txIds, _, _):
                             if let txId = txIds.last, try await sdkSynchronizer.txIdExists(txId) {
                                 flexaHandler.transactionSent(transaction.commerceSessionId, txId)
                             } else {

@@ -391,6 +391,7 @@ extension SDKSynchronizerClient {
         static let postAcceptanceGraceDelay: Duration = .seconds(5)
         static let firstResponseTimeout: Duration = .seconds(30)
         static let timeoutDrainDelay: Duration = .seconds(2)
+        static let timeoutDescription = "Timed out waiting for endpoint response; transaction may still have been broadcast"
     }
 
     private enum SubmitResult {
@@ -419,6 +420,18 @@ extension SDKSynchronizerClient {
 
         func recordedFailure() -> SubmitFailure? {
             failure
+        }
+    }
+
+    private actor SubmitTimeoutStore {
+        private var timedOut = false
+
+        func record() {
+            timedOut = true
+        }
+
+        func didTimeOut() -> Bool {
+            timedOut
         }
     }
 
@@ -488,6 +501,7 @@ extension SDKSynchronizerClient {
             }
 
             let submitFailureStore = SubmitFailureStore()
+            let submitTimeoutStore = SubmitTimeoutStore()
             let accepted = await submitToAllEndpoints(
                 rawTx: rawTx,
                 endpoints: endpoints,
@@ -497,6 +511,9 @@ extension SDKSynchronizerClient {
                 timeoutDrainDelay: timeoutDrainDelay,
                 recordSubmitFailure: { server, code, description in
                     await submitFailureStore.record(server: server, code: code, description: description)
+                },
+                recordTimeout: {
+                    await submitTimeoutStore.record()
                 },
                 submit: submit
             )
@@ -520,9 +537,17 @@ extension SDKSynchronizerClient {
                 let status = "rejected by all servers"
                 statuses.append(status)
                 LoggerProxy.error("\(logPrefix) Transaction \(index) rejected by all \(endpoints.count) server(s).")
-                return acceptedCount == 0
-                    ? .grpcFailure(txIds: txIds)
-                    : .partial(txIds: txIds, statuses: statuses)
+                if acceptedCount > 0 {
+                    return .partial(txIds: txIds, statuses: statuses)
+                }
+
+                return await submitTimeoutStore.didTimeOut()
+                    ? .grpcFailure(
+                        txIds: txIds,
+                        description: MultiServerSubmissionTiming.timeoutDescription,
+                        reason: .timeout
+                    )
+                    : .grpcFailure(txIds: txIds)
             }
         }
 
@@ -560,6 +585,7 @@ extension SDKSynchronizerClient {
         responseTimeout: Duration = MultiServerSubmissionTiming.firstResponseTimeout,
         timeoutDrainDelay: Duration = MultiServerSubmissionTiming.timeoutDrainDelay,
         recordSubmitFailure: @escaping @Sendable (String, Int, String) async -> Void = { _, _, _ in },
+        recordTimeout: @escaping @Sendable () async -> Void = {},
         submit: @escaping (Data, LightWalletEndpoint) async throws -> Void
     ) async -> String? {
         guard !endpoints.isEmpty else { return nil }
@@ -637,7 +663,11 @@ extension SDKSynchronizerClient {
                             case .timedOut:
                                 if !hasResumed {
                                     hasResumed = true
-                                    continuation.resume(returning: await acceptedSubmitStore.recordedServer())
+                                    let recordedServer = await acceptedSubmitStore.recordedServer()
+                                    if recordedServer == nil {
+                                        await recordTimeout()
+                                    }
+                                    continuation.resume(returning: recordedServer)
                                 }
                                 group.cancelAll()
                                 return

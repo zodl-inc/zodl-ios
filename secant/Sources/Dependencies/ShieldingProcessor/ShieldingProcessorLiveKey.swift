@@ -71,7 +71,7 @@ private final class ShieldingProcessorImpl: Sendable {
                     let result = try await sdkSynchronizer.createAndSubmitProposedTransactions(proposal, spendingKey)
 
                     switch result {
-                    case .grpcFailure:
+                    case .grpcFailure(_, _, _):
                         subject.send(.grpc)
                     case let .failure(_, code, description):
                         subject.send(.failed("shieldFunds failed \(code) \(description)".toZcashError()))

@@ -738,6 +738,35 @@ class MultiServerSubmitTests: XCTestCase {
         }
     }
 
+    func testCreateAndSubmitTransactionsReturnsTimeoutGrpcFailureWhenNoServerResponds() async {
+        let tx = makeTransaction(raw: Data([0x01, 0x02]), rawID: Data([0xAA]))
+
+        let result = await SDKSynchronizerClient.createAndSubmitTransactions(
+            [tx],
+            logPrefix: "[MultiSubmit/Test]",
+            userStoredPreferences: makeUserPreferences(
+                mode: .manual,
+                servers: [.init(host: "manual.server", port: 9067, isCustom: true)]
+            ),
+            zcashSDKEnvironment: makeZcashSDKEnvironment(),
+            graceDelay: SubmitTiming.graceDelay,
+            responseTimeout: SubmitTiming.responseTimeout,
+            timeoutDrainDelay: SubmitTiming.timeoutDrainDelay,
+            submit: { _, _ in
+                try await Task.sleep(for: .seconds(5))
+            }
+        )
+
+        XCTAssertEqual(
+            result,
+            .grpcFailure(
+                txIds: [tx.rawID.toHexStringTxId()],
+                description: "Timed out waiting for endpoint response; transaction may still have been broadcast",
+                reason: .timeout
+            )
+        )
+    }
+
     func testCreateAndSubmitTransactionsReturnsFailureWhenServerRejectsTransaction() async {
         let tx = makeTransaction(raw: Data([0x01, 0x02]), rawID: Data([0xAA]))
         let attemptedServers = LockIsolated<[String]>([])

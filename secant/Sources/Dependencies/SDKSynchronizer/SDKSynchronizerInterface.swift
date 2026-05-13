@@ -115,8 +115,12 @@ enum EndpointSwitching {
 @DependencyClient
 struct SDKSynchronizerClient {
     enum CreateProposedTransactionsResult: Equatable {
+        enum GrpcFailureReason: Equatable {
+            case timeout
+        }
+
         case failure(txIds: [String], code: Int, description: String)
-        case grpcFailure(txIds: [String])
+        case grpcFailure(txIds: [String], description: String? = nil, reason: GrpcFailureReason? = nil)
         case partial(txIds: [String], statuses: [String])
         case success(txIds: [String])
     }

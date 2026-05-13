@@ -317,7 +317,7 @@ extension SwapAndPayCoordFlow {
                         let result = try await sdkSynchronizer.createAndSubmitProposedTransactions(proposal, spendingKey)
 
                         switch result {
-                        case .grpcFailure(let txIds):
+                        case let .grpcFailure(txIds, _, _):
                             await send(.updateTxIdToExpand(txIds.last))
                             let isTxIdPresentInTheDB = try await sdkSynchronizer.txIdExists(txIds.last)
                             await send(.sendFailed("sdkSynchronizer.createAndSubmitProposedTransactions-grpcFailure".toZcashError(), isTxIdPresentInTheDB))
