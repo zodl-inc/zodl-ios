@@ -839,6 +839,76 @@ class MultiServerSubmitTests: XCTestCase {
         }
     }
 
+    func testCreateAndSubmitTransactionsReturnsPartialWhenFirstTransactionGrpcFailsBeforeLaterTransactionsAreAttempted() async {
+        let tx1 = makeTransaction(raw: Data([0x01, 0x02]), rawID: Data([0xAA]))
+        let tx2 = makeTransaction(raw: Data([0x03, 0x04]), rawID: Data([0xBB]))
+        let submitted = LockIsolated<[Data]>([])
+
+        let result = await SDKSynchronizerClient.createAndSubmitTransactions(
+            [tx1, tx2],
+            logPrefix: "[MultiSubmit/Test]",
+            userStoredPreferences: makeUserPreferences(
+                mode: .manual,
+                servers: [.init(host: "manual.server", port: 9067, isCustom: true)]
+            ),
+            zcashSDKEnvironment: makeZcashSDKEnvironment(),
+            graceDelay: SubmitTiming.graceDelay,
+            responseTimeout: SubmitTiming.responseTimeout,
+            submit: { rawTx, _ in
+                submitted.withValue { $0.append(rawTx) }
+                throw ZcashError.synchronizerServerSwitch
+            }
+        )
+
+        XCTAssertEqual(
+            result,
+            .partial(
+                txIds: [tx1.rawID.toHexStringTxId(), tx2.rawID.toHexStringTxId()],
+                statuses: ["rejected by all servers", "notAttempted"]
+            )
+        )
+        submitted.withValue {
+            XCTAssertEqual($0, [Data([0x01, 0x02])])
+        }
+    }
+
+    func testCreateAndSubmitTransactionsReturnsPartialWhenFirstTransactionTimesOutBeforeLaterTransactionsAreAttempted() async {
+        let tx1 = makeTransaction(raw: Data([0x01, 0x02]), rawID: Data([0xAA]))
+        let tx2 = makeTransaction(raw: Data([0x03, 0x04]), rawID: Data([0xBB]))
+        let submitted = LockIsolated<[Data]>([])
+
+        let result = await SDKSynchronizerClient.createAndSubmitTransactions(
+            [tx1, tx2],
+            logPrefix: "[MultiSubmit/Test]",
+            userStoredPreferences: makeUserPreferences(
+                mode: .manual,
+                servers: [.init(host: "manual.server", port: 9067, isCustom: true)]
+            ),
+            zcashSDKEnvironment: makeZcashSDKEnvironment(),
+            graceDelay: SubmitTiming.graceDelay,
+            responseTimeout: SubmitTiming.responseTimeout,
+            timeoutDrainDelay: SubmitTiming.timeoutDrainDelay,
+            submit: { rawTx, _ in
+                submitted.withValue { $0.append(rawTx) }
+                try await Task.sleep(for: .seconds(5))
+            }
+        )
+
+        XCTAssertEqual(
+            result,
+            .partial(
+                txIds: [tx1.rawID.toHexStringTxId(), tx2.rawID.toHexStringTxId()],
+                statuses: [
+                    "Timed out waiting for endpoint response; transaction may still have been broadcast",
+                    "notAttempted"
+                ]
+            )
+        )
+        submitted.withValue {
+            XCTAssertEqual($0, [Data([0x01, 0x02])])
+        }
+    }
+
     func testCreateAndSubmitTransactionsReturnsFailureWhenNoTransactionsCreated() async {
         let submitCallCount = LockIsolated<Int>(0)
 

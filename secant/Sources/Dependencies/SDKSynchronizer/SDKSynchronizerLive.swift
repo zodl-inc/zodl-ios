@@ -529,8 +529,9 @@ extension SDKSynchronizerClient {
                 if await submitTimeoutStore.didTimeOut() {
                     statuses.append(MultiServerSubmissionTiming.timeoutDescription)
                     LoggerProxy.error("\(logPrefix) Transaction \(index) timed out waiting for endpoint response.")
-                    if acceptedCount > 0 {
-                        statuses.append(contentsOf: notAttemptedStatuses(after: index, transactionCount: transactions.count))
+                    let notAttempted = notAttemptedStatuses(after: index, transactionCount: transactions.count)
+                    if acceptedCount > 0 || !notAttempted.isEmpty {
+                        statuses.append(contentsOf: notAttempted)
                         return .partial(txIds: txIds, statuses: statuses)
                     }
 
@@ -558,8 +559,9 @@ extension SDKSynchronizerClient {
                 let status = "rejected by all servers"
                 statuses.append(status)
                 LoggerProxy.error("\(logPrefix) Transaction \(index) rejected by all \(endpoints.count) server(s).")
-                if acceptedCount > 0 {
-                    statuses.append(contentsOf: notAttemptedStatuses(after: index, transactionCount: transactions.count))
+                let notAttempted = notAttemptedStatuses(after: index, transactionCount: transactions.count)
+                if acceptedCount > 0 || !notAttempted.isEmpty {
+                    statuses.append(contentsOf: notAttempted)
                     return .partial(txIds: txIds, statuses: statuses)
                 }
 
