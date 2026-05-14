@@ -1,6 +1,6 @@
 import XCTest
 import Foundation
-@testable import secant_testnet
+@testable import VotingModels
 
 final class VotingSessionTests: XCTestCase {
     func testLastMomentBufferUsesFortyPercentForShortRounds() throws {
