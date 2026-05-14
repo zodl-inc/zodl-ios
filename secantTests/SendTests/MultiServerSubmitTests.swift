@@ -925,6 +925,44 @@ class MultiServerSubmitTests: XCTestCase {
         )
     }
 
+    func testCreateAndSubmitTransactionsReturnsTimeoutWhenSomeServersRejectAndOthersDoNotRespond() async {
+        let tx = makeTransaction(raw: Data([0x01, 0x02]), rawID: Data([0xAA]))
+        let endpoints = ZcashSDKEnvironment.endpoints(for: .mainnet)
+        guard let rejectingEndpoint = endpoints.first, endpoints.count > 1 else {
+            XCTFail("Expected multiple mainnet endpoints for automatic submission")
+            return
+        }
+
+        let result = await SDKSynchronizerClient.createAndSubmitTransactions(
+            [tx],
+            logPrefix: "[MultiSubmit/Test]",
+            userStoredPreferences: makeUserPreferences(mode: .automatic, servers: []),
+            zcashSDKEnvironment: makeZcashSDKEnvironment(),
+            graceDelay: SubmitTiming.graceDelay,
+            responseTimeout: SubmitTiming.responseTimeout,
+            timeoutDrainDelay: SubmitTiming.timeoutDrainDelay,
+            submit: { _, endpoint in
+                if endpoint.server() == rejectingEndpoint.server() {
+                    throw TransactionEncoderError.submitError(
+                        code: -25,
+                        message: "bad-txns-inputs-missingorspent"
+                    )
+                }
+
+                try await Task.sleep(for: .seconds(5))
+            }
+        )
+
+        XCTAssertEqual(
+            result,
+            .grpcFailure(
+                txIds: [tx.rawID.toHexStringTxId()],
+                description: "Timed out waiting for endpoint response; transaction may still have been broadcast",
+                reason: .timeout
+            )
+        )
+    }
+
     func testCreateAndSubmitTransactionsReturnsFailureWhenServerRejectsTransaction() async {
         let tx = makeTransaction(raw: Data([0x01, 0x02]), rawID: Data([0xAA]))
         let attemptedServers = LockIsolated<[String]>([])
