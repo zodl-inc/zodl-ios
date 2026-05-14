@@ -251,7 +251,7 @@ class MultiServerSubmitTests: XCTestCase {
     func testPartialSubmissionRoutesToFailureSupportState() async throws {
         let firstTxId = Data([0xAA]).toHexStringTxId()
         let secondTxId = Data([0xBB]).toHexStringTxId()
-        let statuses = ["accepted by first.server:443", "rejected by all servers"]
+        let statuses = ["accepted by endpoint 1", "rejected by all servers"]
 
         var initialState = SendConfirmation.State(
             address: "ztestaddr",
@@ -290,7 +290,7 @@ class MultiServerSubmitTests: XCTestCase {
     func testSwapAndPayPartialSubmissionRoutesToFailureSupportState() async throws {
         let firstTxId = Data([0xAA]).toHexStringTxId()
         let secondTxId = Data([0xBB]).toHexStringTxId()
-        let statuses = ["accepted by first.server:443", "rejected by all servers"]
+        let statuses = ["accepted by endpoint 1", "rejected by all servers"]
 
         var initialState = SwapAndPayCoordFlow.State()
         initialState.swapAndPayState.address = "ztestaddr"
@@ -831,9 +831,54 @@ class MultiServerSubmitTests: XCTestCase {
             result,
             .partial(
                 txIds: [tx1.rawID.toHexStringTxId(), tx2.rawID.toHexStringTxId(), tx3.rawID.toHexStringTxId()],
-                statuses: ["accepted by manual.server:9067", "rejected by all servers", "notAttempted"]
+                statuses: ["accepted by endpoint 1", "rejected by all servers", "notAttempted"]
             )
         )
+        submitted.withValue {
+            XCTAssertEqual($0, [Data([0x01, 0x02]), Data([0x03, 0x04])])
+        }
+    }
+
+    func testCreateAndSubmitTransactionsRedactsEndpointInPartialSubmitFailureStatus() async {
+        let tx1 = makeTransaction(raw: Data([0x01, 0x02]), rawID: Data([0xAA]))
+        let tx2 = makeTransaction(raw: Data([0x03, 0x04]), rawID: Data([0xBB]))
+        let tx3 = makeTransaction(raw: Data([0x05, 0x06]), rawID: Data([0xCC]))
+        let submitted = LockIsolated<[Data]>([])
+
+        let result = await SDKSynchronizerClient.createAndSubmitTransactions(
+            [tx1, tx2, tx3],
+            logPrefix: "[MultiSubmit/Test]",
+            userStoredPreferences: makeUserPreferences(
+                mode: .manual,
+                servers: [.init(host: "private.wallet.node", port: 9067, isCustom: true)]
+            ),
+            zcashSDKEnvironment: makeZcashSDKEnvironment(),
+            graceDelay: SubmitTiming.graceDelay,
+            responseTimeout: SubmitTiming.responseTimeout,
+            submit: { rawTx, _ in
+                submitted.withValue { $0.append(rawTx) }
+                if rawTx == Data([0x03, 0x04]) {
+                    throw TransactionEncoderError.submitError(
+                        code: -25,
+                        message: "bad-txns-inputs-missingorspent"
+                    )
+                }
+            }
+        )
+
+        let expectedStatuses = [
+            "accepted by endpoint 1",
+            "endpoint 1 code: -25",
+            "notAttempted"
+        ]
+        XCTAssertEqual(
+            result,
+            .partial(
+                txIds: [tx1.rawID.toHexStringTxId(), tx2.rawID.toHexStringTxId(), tx3.rawID.toHexStringTxId()],
+                statuses: expectedStatuses
+            )
+        )
+        XCTAssertFalse(expectedStatuses.joined(separator: " ").contains("private.wallet.node"))
         submitted.withValue {
             XCTAssertEqual($0, [Data([0x01, 0x02]), Data([0x03, 0x04])])
         }
@@ -1099,7 +1144,7 @@ class MultiServerSubmitTests: XCTestCase {
         )
     }
 
-    func testSubmitToAllEndpointsReturnsFirstSuccessfulServer() async {
+    func testSubmitToAllEndpointsReturnsFirstSuccessfulEndpointLabel() async {
         let successEndpoint = LightWalletEndpoint(address: "success.server", port: 443)
         let endpoints = [
             LightWalletEndpoint(address: "failing.server", port: 443),
@@ -1119,7 +1164,7 @@ class MultiServerSubmitTests: XCTestCase {
             }
         )
 
-        XCTAssertEqual(winner, successEndpoint.server())
+        XCTAssertEqual(winner, "endpoint 2")
     }
 
     func testSubmitToAllEndpointsPreservesSuccessDuringTimeoutDrain() async {
@@ -1137,7 +1182,7 @@ class MultiServerSubmitTests: XCTestCase {
             }
         )
 
-        XCTAssertEqual(winner, successEndpoint.server())
+        XCTAssertEqual(winner, "endpoint 1")
     }
 
     func testSubmitToAllEndpointsReturnsNilWhenAllServersReject() async {

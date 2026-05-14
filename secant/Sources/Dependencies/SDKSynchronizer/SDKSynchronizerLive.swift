@@ -395,27 +395,27 @@ extension SDKSynchronizerClient {
     }
 
     private enum SubmitResult {
-        case server(String?)
+        case endpoint(String?)
         case graceExpired
         case timedOut
     }
 
     private struct SubmitFailure: Sendable {
-        let server: String
+        let endpointLabel: String
         let code: Int
         let description: String
 
         var status: String {
-            "\(server) code: \(code) desc: \(description)"
+            "\(endpointLabel) code: \(code)"
         }
     }
 
     private actor SubmitFailureStore {
         private var failure: SubmitFailure?
 
-        func record(server: String, code: Int, description: String) {
+        func record(endpointLabel: String, code: Int, description: String) {
             guard failure == nil else { return }
-            failure = SubmitFailure(server: server, code: code, description: description)
+            failure = SubmitFailure(endpointLabel: endpointLabel, code: code, description: description)
         }
 
         func recordedFailure() -> SubmitFailure? {
@@ -436,14 +436,14 @@ extension SDKSynchronizerClient {
     }
 
     private actor AcceptedSubmitStore {
-        private var server: String?
+        private var endpointLabel: String?
 
-        func record(_ server: String) {
-            self.server = self.server ?? server
+        func record(_ endpointLabel: String) {
+            self.endpointLabel = self.endpointLabel ?? endpointLabel
         }
 
-        func recordedServer() -> String? {
-            server
+        func recordedEndpointLabel() -> String? {
+            endpointLabel
         }
     }
 
@@ -512,8 +512,8 @@ extension SDKSynchronizerClient {
                 graceDelay: graceDelay,
                 responseTimeout: responseTimeout,
                 timeoutDrainDelay: timeoutDrainDelay,
-                recordSubmitFailure: { server, code, description in
-                    await submitFailureStore.record(server: server, code: code, description: description)
+                recordSubmitFailure: { endpointLabel, code, description in
+                    await submitFailureStore.record(endpointLabel: endpointLabel, code: code, description: description)
                 },
                 recordTimeout: {
                     await submitTimeoutStore.record()
@@ -545,8 +545,8 @@ extension SDKSynchronizerClient {
                 if let submitFailure = await submitFailureStore.recordedFailure() {
                     statuses.append(submitFailure.status)
                     LoggerProxy.error(
-                        "\(logPrefix) Transaction \(index) rejected by \(submitFailure.server): " +
-                        "\(submitFailure.code) \(submitFailure.description)."
+                        "\(logPrefix) Transaction \(index) rejected by \(submitFailure.endpointLabel): " +
+                        "\(submitFailure.code)."
                     )
                     if acceptedCount > 0 {
                         statuses.append(contentsOf: notAttemptedStatuses(after: index, transactionCount: transactions.count))
@@ -622,21 +622,21 @@ extension SDKSynchronizerClient {
                     var hasResumed = false
 
                     await withTaskGroup(of: SubmitResult.self) { group in
-                        for endpoint in endpoints {
-                            let server = "\(endpoint.host):\(endpoint.port)"
+                        for (offset, endpoint) in endpoints.enumerated() {
+                            let endpointLabel = "endpoint \(offset + 1)"
                             group.addTask {
                                 do {
                                     try await submit(rawTx, endpoint)
-                                    await acceptedSubmitStore.record(server)
-                                    LoggerProxy.event("\(logPrefix) \(server) SUCCESS.")
-                                    return .server(server)
+                                    await acceptedSubmitStore.record(endpointLabel)
+                                    LoggerProxy.event("\(logPrefix) \(endpointLabel) SUCCESS.")
+                                    return .endpoint(endpointLabel)
                                 } catch TransactionEncoderError.submitError(let code, let message) {
-                                    await recordSubmitFailure(server, code, message)
-                                    LoggerProxy.warn("\(logPrefix) \(server) REJECTED: \(code) \(message)")
-                                    return .server(nil)
+                                    await recordSubmitFailure(endpointLabel, code, message)
+                                    LoggerProxy.warn("\(logPrefix) \(endpointLabel) REJECTED: \(code).")
+                                    return .endpoint(nil)
                                 } catch {
-                                    LoggerProxy.warn("\(logPrefix) \(server) FAILED: \(error)")
-                                    return .server(nil)
+                                    LoggerProxy.warn("\(logPrefix) \(endpointLabel) FAILED.")
+                                    return .endpoint(nil)
                                 }
                             }
                         }
@@ -645,8 +645,8 @@ extension SDKSynchronizerClient {
                             do {
                                 try await Task.sleep(for: responseTimeout)
                                 try await Task.sleep(for: timeoutDrainDelay)
-                                if let server = await acceptedSubmitStore.recordedServer() {
-                                    return .server(server)
+                                if let endpointLabel = await acceptedSubmitStore.recordedEndpointLabel() {
+                                    return .endpoint(endpointLabel)
                                 }
                                 LoggerProxy.error("\(logPrefix) Timed out waiting for any server to respond.")
                                 return .timedOut
@@ -658,7 +658,7 @@ extension SDKSynchronizerClient {
                         var failedCount = 0
                         for await result in group {
                             switch result {
-                            case .server(let winner?):
+                            case .endpoint(let winner?):
                                 if !hasResumed {
                                     hasResumed = true
                                     continuation.resume(returning: winner)
@@ -667,7 +667,7 @@ extension SDKSynchronizerClient {
                                         return .graceExpired
                                     }
                                 }
-                            case .server(nil):
+                            case .endpoint(nil):
                                 failedCount += 1
                                 if !hasResumed && failedCount >= serverCount {
                                     hasResumed = true
@@ -685,11 +685,11 @@ extension SDKSynchronizerClient {
                             case .timedOut:
                                 if !hasResumed {
                                     hasResumed = true
-                                    let recordedServer = await acceptedSubmitStore.recordedServer()
-                                    if recordedServer == nil {
+                                    let recordedEndpointLabel = await acceptedSubmitStore.recordedEndpointLabel()
+                                    if recordedEndpointLabel == nil {
                                         await recordTimeout()
                                     }
-                                    continuation.resume(returning: recordedServer)
+                                    continuation.resume(returning: recordedEndpointLabel)
                                 }
                                 group.cancelAll()
                                 return
