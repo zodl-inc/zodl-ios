@@ -7,9 +7,7 @@
 
 import XCTest
 import ComposableArchitecture
-import ZcashLightClientKit
-import Pasteboard
-import Receive
+@preconcurrency import ZcashLightClientKit
 @testable import secant_testnet
 
 @MainActor

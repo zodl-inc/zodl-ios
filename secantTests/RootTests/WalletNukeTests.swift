@@ -6,11 +6,9 @@
 //
 
 import XCTest
-import Combine
+@preconcurrency import Combine
 import ComposableArchitecture
-import Root
-import Utils
-import ZcashLightClientKit
+@preconcurrency import ZcashLightClientKit
 @testable import secant_testnet
 
 @MainActor

@@ -6,8 +6,7 @@
 //
 
 import XCTest
-import ZcashLightClientKit
-import BalanceFormatter
+@preconcurrency import ZcashLightClientKit
 @testable import secant_testnet
 
 final class ZatoshiStringRepresentationCommaTests: XCTestCase {

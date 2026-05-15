@@ -7,7 +7,7 @@
 
 import XCTest
 @testable import secant_testnet
-import ZcashLightClientKit
+@preconcurrency import ZcashLightClientKit
 
 class ZatoshiTests: XCTestCase {
     let usNumberFormatter = NumberFormatter()

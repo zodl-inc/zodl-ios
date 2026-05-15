@@ -7,9 +7,7 @@
 
 import XCTest
 import ComposableArchitecture
-import ZcashLightClientKit
-import Models
-import Home
+@preconcurrency import ZcashLightClientKit
 @testable import secant_testnet
 
 class HomeSnapshotTests: XCTestCase {

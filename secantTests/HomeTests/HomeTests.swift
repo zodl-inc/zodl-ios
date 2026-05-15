@@ -5,15 +5,11 @@
 //  Created by Lukáš Korba on 02.06.2022.
 //
 
-import Combine
+@preconcurrency import Combine
 import XCTest
 import ComposableArchitecture
-import Utils
-import Generated
-import Models
-import Home
 @testable import secant_testnet
-@testable import ZcashLightClientKit
+@testable @preconcurrency import ZcashLightClientKit
 
 class HomeTests: XCTestCase {
     /// The .onAppear action is important to register for the synchronizer state updates.

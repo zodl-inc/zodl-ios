@@ -5,15 +5,11 @@
 //  Created by Lukáš Korba on 10.10.2023.
 //
 
-import Combine
+@preconcurrency import Combine
 import XCTest
 import ComposableArchitecture
-import Tabs
-import Generated
-import Models
-import Utils
 @testable import secant_testnet
-@testable import ZcashLightClientKit
+@testable @preconcurrency import ZcashLightClientKit
 
 @MainActor
 class TabsTests: XCTestCase {

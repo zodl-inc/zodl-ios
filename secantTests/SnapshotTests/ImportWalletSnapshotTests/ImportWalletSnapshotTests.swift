@@ -7,7 +7,6 @@
 
 import XCTest
 import ComposableArchitecture
-import ImportWallet
 @testable import secant_testnet
 
 class ImportWalletSnapshotTests: XCTestCase {

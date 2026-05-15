@@ -5,13 +5,10 @@
 //  Created by Michal Fousek on 23.02.2023.
 //
 
-import Combine
+@preconcurrency import Combine
 import XCTest
 import ComposableArchitecture
-import WalletConfigProvider
-import Models
-import Root
-import ZcashLightClientKit
+@preconcurrency import ZcashLightClientKit
 @testable import secant_testnet
 
 class WalletConfigProviderTests: XCTestCase {

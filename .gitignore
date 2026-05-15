@@ -81,3 +81,7 @@ PartnerKeys.plist
 lib
 *.a
 *.generated.swift
+
+# Claude
+.claude/settings.local.json
+.remember/

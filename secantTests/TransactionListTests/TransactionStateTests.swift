@@ -6,9 +6,7 @@
 //
 
 import XCTest
-import ZcashLightClientKit
-import Models
-import Generated
+@preconcurrency import ZcashLightClientKit
 
 final class TransactionStateTests: XCTestCase {
     // MARK: - Title tests (String & Color)

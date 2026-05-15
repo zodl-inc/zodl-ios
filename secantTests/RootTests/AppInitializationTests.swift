@@ -7,14 +7,7 @@
 
 import XCTest
 import ComposableArchitecture
-import MnemonicClient
-import Models
-import UIComponents
-import Generated
-import RecoveryPhraseDisplay
-import Root
-import ZcashLightClientKit
-import Utils
+@preconcurrency import ZcashLightClientKit
 @testable import secant_testnet
 
 class AppInitializationTests: XCTestCase {

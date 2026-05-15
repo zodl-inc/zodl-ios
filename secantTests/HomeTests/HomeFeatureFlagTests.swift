@@ -6,8 +6,6 @@
 //
 
 import XCTest
-import WalletConfigProvider
-import Models
 @testable import secant_testnet
 
 class HomeFeatureFlagTests: XCTestCase {

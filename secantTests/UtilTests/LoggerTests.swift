@@ -7,8 +7,7 @@
 
 import XCTest
 import OSLog
-import ZcashLightClientKit
-import Utils
+@preconcurrency import ZcashLightClientKit
 @testable import secant_testnet
 
 class LoggerTests: XCTestCase {

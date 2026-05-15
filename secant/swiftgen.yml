@@ -1,0 +1,25 @@
+input_dir: Resources/
+output_dir: Sources/Generated/
+
+xcassets:
+  inputs:
+    - Assets.xcassets
+    - Colors.xcassets
+  outputs:
+      templatePath: Resources/Templates/xcassets/assets_swift5_swiftui.stencil
+      params:
+        forceProvidesNamespaces: true
+        publicAccess: true
+      output: XCAssets+Generated.swift
+      
+fonts:
+  inputs:
+    - Fonts/Zboto.otf
+    - Fonts/Inter
+    - Fonts/RobotoMono
+    - Fonts/Michroma
+  outputs:
+      templatePath: Resources/Templates/fonts/fonts_swift5_swiftui.stencil
+      params:
+        publicAccess: true
+      output: Fonts+Generated.swift

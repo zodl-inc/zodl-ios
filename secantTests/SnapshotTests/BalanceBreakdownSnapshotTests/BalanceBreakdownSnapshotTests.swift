@@ -7,9 +7,8 @@
 
 import XCTest
 import ComposableArchitecture
-import ZcashLightClientKit
+@preconcurrency import ZcashLightClientKit
 import SwiftUI
-import BalanceBreakdown
 @testable import secant_testnet
 
 class BalanceBreakdownSnapshotTests: XCTestCase {

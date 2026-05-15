@@ -7,8 +7,7 @@
 
 import XCTest
 import ComposableArchitecture
-import Root
-import ZcashLightClientKit
+@preconcurrency import ZcashLightClientKit
 @testable import secant_testnet
 
 @MainActor

@@ -7,12 +7,7 @@
 
 import XCTest
 import ComposableArchitecture
-import ZcashLightClientKit
-import FileManager
-import DatabaseFiles
-import ZcashSDKEnvironment
-import WalletStorage
-import Root
+@preconcurrency import ZcashLightClientKit
 @testable import secant_testnet
 
 @MainActor

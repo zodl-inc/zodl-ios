@@ -1,17 +1,7 @@
 {
   "images" : [
     {
-      "filename" : "1024 1.png",
-      "idiom" : "universal"
-    },
-    {
-      "appearances" : [
-        {
-          "appearance" : "luminosity",
-          "value" : "dark"
-        }
-      ],
-      "filename" : "1024.png",
+      "filename" : "logoTransLight.png",
       "idiom" : "universal"
     }
   ],

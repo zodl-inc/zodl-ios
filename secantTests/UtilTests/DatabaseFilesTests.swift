@@ -6,10 +6,7 @@
 //
 
 import XCTest
-import ZcashLightClientKit
-import FileManager
-import Utils
-import DatabaseFiles
+@preconcurrency import ZcashLightClientKit
 @testable import secant_testnet
 
 class DatabaseFilesTests: XCTestCase {

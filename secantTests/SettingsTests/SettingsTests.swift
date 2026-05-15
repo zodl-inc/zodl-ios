@@ -6,16 +6,7 @@
 //
 
 import XCTest
-import Utils
 import ComposableArchitecture
-import LogsHandler
-import Models
-import WalletStorage
-import RecoveryPhraseDisplay
-import Settings
-import ExportLogs
-import SupportDataGenerator
-import Pasteboard
 @testable import secant_testnet
 
 @MainActor

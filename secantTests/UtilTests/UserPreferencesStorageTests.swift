@@ -6,8 +6,6 @@
 //
 
 import XCTest
-import UserDefaults
-import UserPreferencesStorage
 @testable import secant_testnet
 
 class UserPreferencesStorageTests: XCTestCase {

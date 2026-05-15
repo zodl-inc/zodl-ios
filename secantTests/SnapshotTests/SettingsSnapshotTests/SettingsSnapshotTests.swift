@@ -8,8 +8,6 @@
 import XCTest
 import ComposableArchitecture
 import SwiftUI
-import Settings
-import About
 @testable import secant_testnet
 
 class SettingsSnapshotTests: XCTestCase {

@@ -7,9 +7,8 @@
 
 import XCTest
 import ComposableArchitecture
-import ZcashLightClientKit
+@preconcurrency import ZcashLightClientKit
 import SwiftUI
-import Receive
 @testable import secant_testnet
 
 class ReceiveSnapshotTests: XCTestCase {

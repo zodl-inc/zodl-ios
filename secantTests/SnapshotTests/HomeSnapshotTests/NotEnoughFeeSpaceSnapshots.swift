@@ -7,7 +7,6 @@
 
 import XCTest
 import ComposableArchitecture
-import NotEnoughFreeSpace
 @testable import secant_testnet
 
 class NotEnoughFeeSpaceSnapshots: XCTestCase {

@@ -1,6 +1,46 @@
 {
     "releases": [
         {
+            "version": "3.4.0",
+            "date": "07-05-2026",
+            "timestamp": 1778001853,
+            "sections": [
+                {
+                    "title": "Añadido:",
+                    "bulletpoints": [
+                        "Añadimos compatibilidad con la altura de cumpleaños al conectar una billetera Keystone, para que tu historial y tus fondos se restauren correctamente.",
+                        "Añadimos una breve guía sobre billeteras de hardware en la pantalla Conectar."
+                    ]
+                },
+                {
+                    "title": "Cambiado:",
+                    "bulletpoints": [
+                        "Actualizamos los textos y las notas informativas del flujo de Restauración.",
+                        "Ahora mostramos el nombre personalizado de tu Keystone al conectarla."
+                    ]
+                },
+                {
+                    "title": "Corregido:",
+                    "bulletpoints": [
+                        "Corregimos varios detalles de UX/UI, incluida una pantalla de altura de cumpleaños bloqueada y entradas de la libreta de direcciones que no aparecían hasta recargar."
+                    ]
+                }
+            ]
+        },
+        {
+            "version": "3.3.1",
+            "date": "06-05-2026",
+            "timestamp": 1778079990,
+            "sections": [
+                {
+                    "title": "Corregido:",
+                    "bulletpoints": [
+                        "Hemos corregido un fallo en el flujo de Swap/Pago."
+                    ]
+                }
+            ]
+        },
+        {
             "version": "3.3.0",
             "date": "04-04-2026",
             "timestamp": 1775303077,

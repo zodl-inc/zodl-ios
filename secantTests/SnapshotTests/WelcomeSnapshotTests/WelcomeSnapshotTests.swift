@@ -7,7 +7,6 @@
 
 import XCTest
 import ComposableArchitecture
-import Welcome
 @testable import secant_testnet
 
 class WelcomeSnapshotTests: XCTestCase {

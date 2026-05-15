@@ -1,6 +1,46 @@
 {
     "releases": [
         {
+            "version": "3.4.0",
+            "date": "07-05-2026",
+            "timestamp": 1778001853,
+            "sections": [
+                {
+                    "title": "Added:",
+                    "bulletpoints": [
+                        "We added Wallet Birthday Height support to the Connect Keystone hardware wallet flow, so your transaction history and funds can be restored correctly.",
+                        "We added a quick hardware wallet explainer to the Connect screen."
+                    ]
+                },
+                {
+                    "title": "Changed:",
+                    "bulletpoints": [
+                        "We refreshed the copy and info notes throughout the Restore flow.",
+                        "We now display your Keystone's custom wallet name when connecting it."
+                    ]
+                },
+                {
+                    "title": "Fixed:",
+                    "bulletpoints": [
+                        "We fixed a few UX/UI issues, including a stuck Wallet Birthday Height entry screen and Address Book entries not appearing until the panel was reloaded."
+                    ]
+                }
+            ]
+        },
+        {
+            "version": "3.3.1",
+            "date": "06-05-2026",
+            "timestamp": 1778079990,
+            "sections": [
+                {
+                    "title": "Fixed:",
+                    "bulletpoints": [
+                        "We fixed a crash in the Swap/Pay flow."
+                    ]
+                }
+            ]
+        },
+        {
             "version": "3.3.0",
             "date": "04-04-2026",
             "timestamp": 1775303077,

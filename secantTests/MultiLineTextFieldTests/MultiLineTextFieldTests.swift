@@ -7,7 +7,6 @@
 
 import XCTest
 import ComposableArchitecture
-import UIComponents
 @testable import secant_testnet
 
 @MainActor

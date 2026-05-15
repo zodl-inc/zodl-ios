@@ -7,13 +7,7 @@
 
 import XCTest
 import ComposableArchitecture
-import ZcashLightClientKit
-import Date
-import AppVersion
-import UserDefaults
-import ReviewRequest
-import Home
-import Models
+@preconcurrency import ZcashLightClientKit
 @testable import secant_testnet
 
 @MainActor

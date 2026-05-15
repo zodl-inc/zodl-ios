@@ -7,7 +7,6 @@
 
 import XCTest
 import ComposableArchitecture
-import PrivateDataConsent
 @testable import secant_testnet
 
 @MainActor

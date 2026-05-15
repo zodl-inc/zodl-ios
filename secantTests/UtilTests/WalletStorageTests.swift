@@ -6,11 +6,8 @@
 //
 
 import XCTest
-import MnemonicSwift
-import ZcashLightClientKit
-import Utils
-import WalletStorage
-import Models
+@preconcurrency import MnemonicSwift
+@preconcurrency import ZcashLightClientKit
 @testable import secant_testnet
 
 extension WalletStorage.WalletStorageError {

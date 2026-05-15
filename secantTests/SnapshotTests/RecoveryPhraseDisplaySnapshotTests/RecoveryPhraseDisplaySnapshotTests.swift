@@ -7,7 +7,6 @@
 
 import XCTest
 import ComposableArchitecture
-import RecoveryPhraseDisplay
 @testable import secant_testnet
 
 class RecoveryPhraseDisplaySnapshotTests: XCTestCase {
