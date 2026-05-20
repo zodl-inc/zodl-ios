@@ -225,6 +225,8 @@ struct ServerSetupView: View {
                                             .zFont(.medium, size: 14, style: Design.Text.primary)
                                             .frame(height: 40)
                                             .autocapitalization(.none)
+                                            .autocorrectionDisabled()
+                                            .keyboardType(.URL)
                                             .multilineTextAlignment(.leading)
                                             .padding(.leading, 10)
                                             .background {
