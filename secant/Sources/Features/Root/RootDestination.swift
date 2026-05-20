@@ -118,17 +118,15 @@ extension Root {
                         let result = try await sdkSynchronizer.createAndSubmitProposedTransactions(proposal, spendingKey)
                         
                         switch result {
-                        case let .grpcFailure(txIds, _, _):
-                            if let txId = txIds.last, try await sdkSynchronizer.txIdExists(txId) {
-                                flexaHandler.transactionSent(transaction.commerceSessionId, txId)
-                            } else {
-                                await send(.flexaTransactionFailed(String(localizable: .partnersFlexaTransactionFailedMessage)))
-                            }
                         case .failure, .partial:
+                            await send(.flexaTransactionFailed(String(localizable: .partnersFlexaTransactionFailedMessage)))
+                        case .grpcFailure:
                             await send(.flexaTransactionFailed(String(localizable: .partnersFlexaTransactionFailedMessage)))
                         case .success(let txIds):
                             if let txId = txIds.last, try await sdkSynchronizer.txIdExists(txId) {
                                 flexaHandler.transactionSent(transaction.commerceSessionId, txId)
+                            } else {
+                                await send(.flexaTransactionFailed(String(localizable: .partnersFlexaTransactionFailedMessage)))
                             }
                         }
                     } catch {

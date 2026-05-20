@@ -12,6 +12,27 @@ import ComposableArchitecture
 
 @MainActor
 class RootTests: XCTestCase {
+    private enum FlexaTestConstants {
+        static let commerceSessionId = "commerce-session-id"
+        static let txId = "flexa-tx-id"
+        static let recipientAddress = "tmP3uLtGx5GPddkq8a6ddmXhqJJ3vy6tpTE"
+    }
+
+    private let testAccountUUID = AccountUUID(id: [UInt8](repeating: 0, count: 16))
+
+    private var testWalletAccount: WalletAccount {
+        WalletAccount(
+            Account(
+                id: testAccountUUID,
+                name: "Test",
+                keySource: nil,
+                seedFingerprint: nil,
+                hdAccountIndex: Zip32AccountIndex(0),
+                ufvk: nil
+            )
+        )
+    }
+
     func testWalletInitializationState_Uninitialized() throws {
         let walletState = Root.walletInitializationState(
             databaseFiles: .noOp,
@@ -196,5 +217,148 @@ class RootTests: XCTestCase {
         await store.receive(.initialization(.initializationFailed(zcashError)))
 
         await store.finish()
+    }
+
+    func testFlexaGrpcFailureWithoutReasonFailsEvenWhenTxExistsLocally() async throws {
+        let transactionSentCalls = LockIsolated<[(String, String)]>([])
+        let alertCalls = LockIsolated<[(String, String)]>([])
+        let store = makeFlexaStore(
+            result: .grpcFailure(txIds: [FlexaTestConstants.txId]),
+            txIdExists: true,
+            transactionSent: { commerceSessionId, txId in
+                transactionSentCalls.withValue { $0.append((commerceSessionId, txId)) }
+            },
+            flexaAlert: { title, message in
+                alertCalls.withValue { $0.append((title, message)) }
+            }
+        )
+
+        await store.send(.flexaOnTransactionRequest(makeFlexaTransaction()))
+
+        await store.receive(.flexaTransactionFailed(String(localizable: .partnersFlexaTransactionFailedMessage)))
+
+        await store.finish()
+
+        transactionSentCalls.withValue { XCTAssertTrue($0.isEmpty) }
+        alertCalls.withValue { XCTAssertEqual($0.count, 1) }
+    }
+
+    func testFlexaGrpcFailureTimeoutFailsEvenWhenTxExistsLocally() async throws {
+        let transactionSentCalls = LockIsolated<[(String, String)]>([])
+        let alertCalls = LockIsolated<[(String, String)]>([])
+        let store = makeFlexaStore(
+            result: .grpcFailure(
+                txIds: [FlexaTestConstants.txId],
+                description: "Timed out waiting for endpoint response",
+                reason: .timeout
+            ),
+            txIdExists: true,
+            transactionSent: { commerceSessionId, txId in
+                transactionSentCalls.withValue { $0.append((commerceSessionId, txId)) }
+            },
+            flexaAlert: { title, message in
+                alertCalls.withValue { $0.append((title, message)) }
+            }
+        )
+
+        await store.send(.flexaOnTransactionRequest(makeFlexaTransaction()))
+
+        await store.receive(.flexaTransactionFailed(String(localizable: .partnersFlexaTransactionFailedMessage)))
+
+        await store.finish()
+
+        transactionSentCalls.withValue { XCTAssertTrue($0.isEmpty) }
+        alertCalls.withValue { XCTAssertEqual($0.count, 1) }
+    }
+
+    func testFlexaSuccessReportsTransactionSentWhenTxExistsLocally() async throws {
+        let transactionSentCalls = LockIsolated<[(String, String)]>([])
+        let alertCalls = LockIsolated<[(String, String)]>([])
+        let store = makeFlexaStore(
+            result: .success(txIds: [FlexaTestConstants.txId]),
+            txIdExists: true,
+            transactionSent: { commerceSessionId, txId in
+                transactionSentCalls.withValue { $0.append((commerceSessionId, txId)) }
+            },
+            flexaAlert: { title, message in
+                alertCalls.withValue { $0.append((title, message)) }
+            }
+        )
+
+        await store.send(.flexaOnTransactionRequest(makeFlexaTransaction()))
+
+        await store.finish()
+
+        transactionSentCalls.withValue {
+            XCTAssertEqual($0.count, 1)
+            XCTAssertEqual($0.first?.0, FlexaTestConstants.commerceSessionId)
+            XCTAssertEqual($0.first?.1, FlexaTestConstants.txId)
+        }
+        alertCalls.withValue { XCTAssertTrue($0.isEmpty) }
+    }
+
+    func testFlexaSuccessFailsWhenTxIsMissingLocally() async throws {
+        let transactionSentCalls = LockIsolated<[(String, String)]>([])
+        let alertCalls = LockIsolated<[(String, String)]>([])
+        let store = makeFlexaStore(
+            result: .success(txIds: [FlexaTestConstants.txId]),
+            txIdExists: false,
+            transactionSent: { commerceSessionId, txId in
+                transactionSentCalls.withValue { $0.append((commerceSessionId, txId)) }
+            },
+            flexaAlert: { title, message in
+                alertCalls.withValue { $0.append((title, message)) }
+            }
+        )
+
+        await store.send(.flexaOnTransactionRequest(makeFlexaTransaction()))
+
+        await store.receive(.flexaTransactionFailed(String(localizable: .partnersFlexaTransactionFailedMessage)))
+
+        await store.finish()
+
+        transactionSentCalls.withValue { XCTAssertTrue($0.isEmpty) }
+        alertCalls.withValue { XCTAssertEqual($0.count, 1) }
+    }
+
+    private func makeFlexaStore(
+        result: SDKSynchronizerClient.CreateProposedTransactionsResult,
+        txIdExists: Bool,
+        transactionSent: @escaping @Sendable (String, String) -> Void,
+        flexaAlert: @escaping @Sendable (String, String) -> Void
+    ) -> TestStore<Root.State, Root.Action> {
+        var initialState = Root.State.initial
+        initialState.$selectedWalletAccount.withLock { $0 = testWalletAccount }
+
+        let store = TestStore(
+            initialState: initialState
+        ) {
+            Root()
+        }
+
+        store.exhaustivity = .off
+        store.dependencies.derivationTool = .liveValue
+        store.dependencies.flexaHandler = .noOp
+        store.dependencies.flexaHandler.transactionSent = transactionSent
+        store.dependencies.flexaHandler.flexaAlert = flexaAlert
+        store.dependencies.localAuthentication = .mockAuthenticationSucceeded
+        store.dependencies.mnemonic = .mock
+        store.dependencies.sdkSynchronizer = .noOp
+        store.dependencies.sdkSynchronizer.createAndSubmitProposedTransactions = { _, _ in result }
+        store.dependencies.sdkSynchronizer.proposeTransfer = { _, _, _, _ in .testOnlyFakeProposal(totalFee: 0) }
+        store.dependencies.sdkSynchronizer.txIdExists = { _ in txIdExists }
+        store.dependencies.walletStorage = .noOp
+        store.dependencies.walletStorage.exportWallet = { .placeholder }
+        store.dependencies.zcashSDKEnvironment = .testValue
+
+        return store
+    }
+
+    private func makeFlexaTransaction() -> FlexaTransaction {
+        FlexaTransaction(
+            amount: Zatoshi(100_000),
+            address: FlexaTestConstants.recipientAddress,
+            commerceSessionId: FlexaTestConstants.commerceSessionId
+        )
     }
 }
