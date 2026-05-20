@@ -234,6 +234,7 @@ class ServerSetupChangeDetectionTests: XCTestCase {
         connectionMode: UserPreferencesStorage.ConnectionMode = .automatic,
         customServer: String = "",
         isEvaluatingServers: Bool = false,
+        isUpdatingServer: Bool = false,
         serverEvaluationRequestID: Int = 0,
         selectedServer: String? = nil,
         topKServers: [ZcashSDKEnvironment.Server] = [.default]
@@ -243,6 +244,7 @@ class ServerSetupChangeDetectionTests: XCTestCase {
                 connectionMode: connectionMode,
                 customServer: customServer,
                 isEvaluatingServers: isEvaluatingServers,
+                isUpdatingServer: isUpdatingServer,
                 serverEvaluationRequestID: serverEvaluationRequestID,
                 selectedServer: selectedServer,
                 topKServers: topKServers
@@ -358,6 +360,28 @@ class ServerSetupChangeDetectionTests: XCTestCase {
         }
 
         XCTAssertTrue(store.state.hasChanges)
+    }
+
+    func testSetupInteractionsAreIgnoredWhileUpdatingServer() async {
+        let store = makeStore(
+            connectionMode: .manual,
+            customServer: "custom.example.com:9067",
+            isUpdatingServer: true,
+            selectedServer: customLabel
+        )
+
+        store.dependencies.zcashSDKEnvironment = .testValue
+
+        await store.send(.connectionModeChanged(.automatic))
+        XCTAssertEqual(store.state.connectionMode, .manual)
+
+        await store.send(.serverSelected("zec.rocks:443"))
+        XCTAssertEqual(store.state.selectedServer, customLabel)
+
+        await store.send(.refreshServersTapped)
+        await store.send(.evaluateServers)
+        XCTAssertFalse(store.state.isEvaluatingServers)
+        XCTAssertEqual(store.state.serverEvaluationRequestID, 0)
     }
 
     func testManualModePreselectsKnownActiveEndpoint() async {

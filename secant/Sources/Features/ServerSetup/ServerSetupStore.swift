@@ -171,6 +171,10 @@ struct ServerSetup {
                 return .none
 
             case .connectionModeChanged(let mode):
+                guard !state.isUpdatingServer else {
+                    return .none
+                }
+
                 let previousMode = state.connectionMode
                 state.connectionMode = mode
                 if mode == .automatic {
@@ -191,6 +195,10 @@ struct ServerSetup {
                 return .none
 
             case .evaluateServers:
+                guard !state.isUpdatingServer else {
+                    return .none
+                }
+
                 state.isEvaluatingServers = true
                 state.serverEvaluationRequestID += 1
                 let requestID = state.serverEvaluationRequestID
@@ -231,9 +239,17 @@ struct ServerSetup {
                 return .none
 
             case .refreshServersTapped:
+                guard !state.isUpdatingServer else {
+                    return .none
+                }
+
                 return .send(.evaluateServers)
 
             case .serverSelected(let serverString):
+                guard !state.isUpdatingServer else {
+                    return .none
+                }
+
                 state.selectedServer = serverString
                 return .none
 

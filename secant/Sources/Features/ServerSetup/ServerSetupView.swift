@@ -33,6 +33,7 @@ struct ServerSetupView: View {
                         serverListSection()
                     }
                 }
+                .disabled(store.isUpdatingServer)
                 .padding(.vertical, 1)
 
                 // MARK: - Save Button
@@ -164,7 +165,7 @@ struct ServerSetupView: View {
                     }
                     .padding(5)
                 }
-                .disabled(store.isEvaluatingServers)
+                .disabled(store.isEvaluatingServers || store.isUpdatingServer)
             }
             .screenHorizontalPadding()
             .padding(.top, 15)
