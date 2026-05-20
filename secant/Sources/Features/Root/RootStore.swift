@@ -516,6 +516,9 @@ struct Root {
                 try await EndpointSwitching.coordinator.switchToEndpoint(
                     endpoint,
                     previousEndpoint: currentEndpoint,
+                    shouldProceed: {
+                        userStoredPreferences.selectedServers()?.mode == .automatic
+                    },
                     switchToEndpoint: sdkSynchronizer.switchToEndpoint
                 )
 

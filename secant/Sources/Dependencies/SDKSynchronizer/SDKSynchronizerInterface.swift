@@ -19,18 +19,33 @@ extension DependencyValues {
 }
 
 actor EndpointSwitchCoordinator {
+    private struct Waiter {
+        let id: UUID
+        let continuation: CheckedContinuation<Bool, Never>
+    }
+
+    private var isSwitching = false
+    private var waiters: [Waiter] = []
+
     func switchToEndpoint(
         _ endpoint: LightWalletEndpoint,
         previousEndpoint: LightWalletEndpoint? = nil,
+        shouldProceed: @escaping @Sendable () async -> Bool = { true },
         switchToEndpoint: @escaping @Sendable (LightWalletEndpoint) async throws -> Void
     ) async throws {
-        try Task.checkCancellation()
-        try await switchToEndpoint(endpoint)
+        try await acquireSwitchSlot()
+        var didSwitch = false
+        defer { releaseSwitchSlot() }
 
         do {
             try Task.checkCancellation()
+            guard await shouldProceed() else { return }
+            try Task.checkCancellation()
+            try await switchToEndpoint(endpoint)
+            didSwitch = true
+            try Task.checkCancellation()
         } catch {
-            if let previousEndpoint {
+            if didSwitch, let previousEndpoint {
                 do {
                     try await switchToEndpoint(previousEndpoint)
                 } catch {
@@ -39,6 +54,57 @@ actor EndpointSwitchCoordinator {
             }
             throw error
         }
+    }
+
+    private func acquireSwitchSlot() async throws {
+        try Task.checkCancellation()
+
+        guard isSwitching else {
+            isSwitching = true
+            return
+        }
+
+        let id = UUID()
+        let acquired = await withTaskCancellationHandler(operation: {
+            await self.enqueueWaiter(id: id)
+        }, onCancel: {
+            Task { await self.cancelWaiter(id: id) }
+        })
+
+        guard acquired else {
+            throw CancellationError()
+        }
+
+        do {
+            try Task.checkCancellation()
+        } catch {
+            releaseSwitchSlot()
+            throw error
+        }
+    }
+
+    private func enqueueWaiter(id: UUID) async -> Bool {
+        guard !Task.isCancelled else { return false }
+
+        return await withCheckedContinuation { continuation in
+            waiters.append(Waiter(id: id, continuation: continuation))
+        }
+    }
+
+    private func cancelWaiter(id: UUID) {
+        guard let index = waiters.firstIndex(where: { $0.id == id }) else { return }
+        let waiter = waiters.remove(at: index)
+        waiter.continuation.resume(returning: false)
+    }
+
+    private func releaseSwitchSlot() {
+        guard !waiters.isEmpty else {
+            isSwitching = false
+            return
+        }
+
+        let waiter = waiters.removeFirst()
+        waiter.continuation.resume(returning: true)
     }
 }
 

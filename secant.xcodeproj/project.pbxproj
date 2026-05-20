@@ -2547,6 +2547,7 @@
 		9EDDAF6E2BA2D71700A69A07 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 9EDDAF6C2BA2D71700A69A07 /* PrivacyInfo.xcprivacy */; };
 		9EDDAF6F2BA2D71700A69A07 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 9EDDAF6C2BA2D71700A69A07 /* PrivacyInfo.xcprivacy */; };
 		9EEB06C62B344F1E00EEE50F /* SyncProgressTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9EEB06C52B344F1E00EEE50F /* SyncProgressTests.swift */; };
+		AD1750A12F8ED5C300115E41 /* EndpointSwitchCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD1750A02F8ED5C300115E41 /* EndpointSwitchCoordinatorTests.swift */; };
 		A90E42E82F8ED5C300115E41 /* SelectedServersMigrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A90E42E72F8ED5C300115E41 /* SelectedServersMigrationTests.swift */; };
 		A90E42EA2F8ED5C300115E41 /* UncheckedSendableBox.swift in Sources */ = {isa = PBXBuildFile; fileRef = A90E42E92F8ED5C300115E41 /* UncheckedSendableBox.swift */; };
 		A9987CA32F96D90500C9B8BE /* VotingServiceConfigTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9987C9F2F96D90500C9B8BE /* VotingServiceConfigTests.swift */; };
@@ -3123,6 +3124,7 @@
 		9EEB06C52B344F1E00EEE50F /* SyncProgressTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncProgressTests.swift; sourceTree = "<group>"; };
 		9EF8135A27ECC25E0075AF48 /* WalletStorageTests.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = WalletStorageTests.swift; sourceTree = "<group>"; };
 		9EF8135B27ECC25E0075AF48 /* UserPreferencesStorageTests.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = UserPreferencesStorageTests.swift; sourceTree = "<group>"; };
+		AD1750A02F8ED5C300115E41 /* EndpointSwitchCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EndpointSwitchCoordinatorTests.swift; sourceTree = "<group>"; };
 		A90E42E72F8ED5C300115E41 /* SelectedServersMigrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SelectedServersMigrationTests.swift; sourceTree = "<group>"; };
 		A90E42E92F8ED5C300115E41 /* UncheckedSendableBox.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UncheckedSendableBox.swift; sourceTree = "<group>"; };
 		A9987C9F2F96D90500C9B8BE /* VotingServiceConfigTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VotingServiceConfigTests.swift; sourceTree = "<group>"; };
@@ -5257,6 +5259,7 @@
 			isa = PBXGroup;
 			children = (
 				A90E42E92F8ED5C300115E41 /* UncheckedSendableBox.swift */,
+				AD1750A02F8ED5C300115E41 /* EndpointSwitchCoordinatorTests.swift */,
 				A90E42E72F8ED5C300115E41 /* SelectedServersMigrationTests.swift */,
 				9E02B56B27FED475005B809B /* DatabaseFilesTests.swift */,
 				9E0F574A2980260D005304FA /* LoggerTests.swift */,
@@ -7064,6 +7067,7 @@
 				9E34519A29C4A52F00177D16 /* BalanceBreakdownTests.swift in Sources */,
 				9E46919A2AD5735E0082D7DF /* TabsTests.swift in Sources */,
 				A90E42EA2F8ED5C300115E41 /* UncheckedSendableBox.swift in Sources */,
+				AD1750A12F8ED5C300115E41 /* EndpointSwitchCoordinatorTests.swift in Sources */,
 				A90E42E82F8ED5C300115E41 /* SelectedServersMigrationTests.swift in Sources */,
 				9E1FAFBA2AF2C7F20084CA3D /* PrivateDataConsentTests.swift in Sources */,
 				9E3451C329C857DD00177D16 /* SettingsSnapshotTests.swift in Sources */,
