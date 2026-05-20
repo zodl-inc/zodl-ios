@@ -203,7 +203,7 @@ struct Root {
         case backToHomeFromServerSwitchTapped
         case benchmarkSyncEndpoint
         case benchmarkSyncEndpointIfForeground
-        case automaticSyncEndpointEvaluated(LightWalletEndpoint)
+        case automaticEndpointRefreshEvaluated(LightWalletEndpoint)
 
         // Transactions
         case observeTransactions
@@ -414,7 +414,9 @@ struct Root {
                       let best = bestServers.first else {
                     return .none
                 }
-                return .send(.automaticSyncEndpointEvaluated(best))
+                // Reuse Server Setup recommendations for Automatic mode maintenance.
+                // User saves are handled by ServerSetupStore.
+                return .send(.automaticEndpointRefreshEvaluated(best))
 
             case .serverSetup:
                 return .none
@@ -446,7 +448,7 @@ struct Root {
 
             case .benchmarkSyncEndpoint:
                 return .run { send in
-                    // Only benchmark in automatic mode — manual users chose their server explicitly
+                    // Only benchmark in Automatic mode. Manual users chose their server explicitly.
                     guard let config = userStoredPreferences.selectedServers(),
                           config.mode == .automatic else { return }
 
@@ -464,7 +466,7 @@ struct Root {
 
                     guard let best = bestServers.first else { return }
 
-                    await send(.automaticSyncEndpointEvaluated(best))
+                    await send(.automaticEndpointRefreshEvaluated(best))
                 }
                 .cancellable(id: state.serverBenchmarkCancelId, cancelInFlight: true)
 
@@ -475,24 +477,24 @@ struct Root {
                 }
                 return .send(.benchmarkSyncEndpoint)
 
-            case .automaticSyncEndpointEvaluated(let best):
-                guard canApplyAutomaticEndpoint(in: state) else {
+            case .automaticEndpointRefreshEvaluated(let best):
+                guard canApplyAutomaticEndpointRefresh(in: state) else {
                     return .none
                 }
-                return applyAutomaticEndpoint(best, cancelID: state.automaticEndpointApplyCancelId)
+                return applyAutomaticEndpointRefresh(best, cancelID: state.automaticEndpointApplyCancelId)
 
             default: return .none
             }
         }
     }
 
-    private func canApplyAutomaticEndpoint(in state: State) -> Bool {
+    private func canApplyAutomaticEndpointRefresh(in state: State) -> Bool {
         state.bgTask == nil
         && state.appStartState != .backgroundTask
         && state.appStartState != .didEnterBackground
     }
 
-    private func applyAutomaticEndpoint(
+    private func applyAutomaticEndpointRefresh(
         _ endpoint: LightWalletEndpoint,
         cancelID: UUID
     ) -> Effect<Action> {
@@ -509,9 +511,8 @@ struct Root {
                 }
 
                 try Task.checkCancellation()
-                // Re-check immediately before switching. A manual save cancels this
-                // effect, but this also covers saves that complete between result
-                // selection and the endpoint switch.
+                // A manual save cancels this effect. Re-check mode here too in case
+                // persisted intent changed after result selection.
                 guard userStoredPreferences.selectedServers()?.mode == .automatic else { return }
 
                 try await EndpointSwitching.coordinator.switchToEndpoint(
@@ -523,9 +524,8 @@ struct Root {
                     switchToEndpoint: sdkSynchronizer.switchToEndpoint
                 )
 
-                // Re-check after async switch. If the user saved manual mode while
-                // switchToEndpoint was in flight, restore their chosen manual server.
-                // Read from selectedServers because the manual save path writes it first.
+                // This automatic refresh may have become stale while the SDK switch
+                // was running. If a manual save won meanwhile, restore its endpoint.
                 guard userStoredPreferences.selectedServers()?.mode == .automatic else {
                     if let config = userStoredPreferences.selectedServers(),
                        config.mode == .manual,

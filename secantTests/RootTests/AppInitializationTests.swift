@@ -77,7 +77,7 @@ class AppInitializationTests: XCTestCase {
             }
         )
 
-        await store.send(.automaticSyncEndpointEvaluated(bestEndpoint))
+        await store.send(.automaticEndpointRefreshEvaluated(bestEndpoint))
 
         await store.receive(.serverSetup(.automaticEndpointUpdated(bestEndpoint.server()))) { state in
             state.serverSetupState.activeSyncServer = bestEndpoint.server()
@@ -107,7 +107,7 @@ class AppInitializationTests: XCTestCase {
             Root()
         }
 
-        await store.send(.automaticSyncEndpointEvaluated(bestEndpoint))
+        await store.send(.automaticEndpointRefreshEvaluated(bestEndpoint))
 
         await store.finish()
     }
@@ -148,7 +148,7 @@ class AppInitializationTests: XCTestCase {
             }
         )
 
-        await store.send(.automaticSyncEndpointEvaluated(bestEndpoint))
+        await store.send(.automaticEndpointRefreshEvaluated(bestEndpoint))
 
         XCTAssertTrue(switchedEndpoints.value.isEmpty)
         XCTAssertNil(storedServer.value)
