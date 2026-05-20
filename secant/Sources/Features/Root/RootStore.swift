@@ -12,11 +12,12 @@ struct Root {
     }
 
     private enum StartupServerBenchmarkDefaults {
-        // Lightweight automatic-mode refresh used during startup and foregrounding.
+        // Lightweight automatic-mode refresh. Cheap checks rank all endpoints,
+        // then the top candidates get a short block-fetch check.
         static let connectionTimeoutMilliseconds = 300.0
         static let evaluationTimeoutSeconds = 5.0
         static let blocksToDownload: UInt64 = 1
-        static let serverCount = 1
+        static let candidateCount = 3
     }
 
     @ObservableState
@@ -460,7 +461,7 @@ struct Root {
                         StartupServerBenchmarkDefaults.connectionTimeoutMilliseconds,
                         StartupServerBenchmarkDefaults.evaluationTimeoutSeconds,
                         StartupServerBenchmarkDefaults.blocksToDownload,
-                        StartupServerBenchmarkDefaults.serverCount,
+                        StartupServerBenchmarkDefaults.candidateCount,
                         network
                     )
 
