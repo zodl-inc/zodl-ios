@@ -23,7 +23,8 @@ extension LightWalletEndpoint: @retroactive Equatable {
 struct ServerSetup {
     let streamingCallTimeoutInMillis = ZcashSDKEnvironment.ZcashSDKConstants.streamingCallTimeoutInMillis
 
-    private enum ServerEvaluationDefaults {
+    private enum ServerSetupRecommendationDefaults {
+        // User-visible recommendation pass. This can spend longer to rank several servers.
         static let connectionTimeoutMilliseconds = 300.0
         static let evaluationTimeoutSeconds = 60.0
         static let blocksToDownload: UInt64 = 100
@@ -197,10 +198,10 @@ struct ServerSetup {
                 return .run { send in
                     let kBestServers = await sdkSynchronizer.evaluateBestOf(
                         ZcashSDKEnvironment.endpoints(for: network),
-                        ServerEvaluationDefaults.connectionTimeoutMilliseconds,
-                        ServerEvaluationDefaults.evaluationTimeoutSeconds,
-                        ServerEvaluationDefaults.blocksToDownload,
-                        ServerEvaluationDefaults.recommendedServerCount,
+                        ServerSetupRecommendationDefaults.connectionTimeoutMilliseconds,
+                        ServerSetupRecommendationDefaults.evaluationTimeoutSeconds,
+                        ServerSetupRecommendationDefaults.blocksToDownload,
+                        ServerSetupRecommendationDefaults.recommendedServerCount,
                         network
                     )
 
@@ -267,10 +268,10 @@ struct ServerSetup {
                             } else {
                                 let bestServers = await sdkSynchronizer.evaluateBestOf(
                                     ZcashSDKEnvironment.endpoints(for: network),
-                                    ServerEvaluationDefaults.connectionTimeoutMilliseconds,
-                                    ServerEvaluationDefaults.evaluationTimeoutSeconds,
-                                    ServerEvaluationDefaults.blocksToDownload,
-                                    ServerEvaluationDefaults.fallbackServerCount,
+                                    ServerSetupRecommendationDefaults.connectionTimeoutMilliseconds,
+                                    ServerSetupRecommendationDefaults.evaluationTimeoutSeconds,
+                                    ServerSetupRecommendationDefaults.blocksToDownload,
+                                    ServerSetupRecommendationDefaults.fallbackServerCount,
                                     network
                                 )
                                 best = bestServers.first ?? ZcashSDKEnvironment.defaultEndpoint(for: network)
@@ -298,7 +299,7 @@ struct ServerSetup {
                             try userStoredPreferences.setServer(serverConfig)
 
                             let bestServerString = "\(best.host):\(best.port)"
-                            try await mainQueue.sleep(for: ServerEvaluationDefaults.saveCompletionDelay)
+                            try await mainQueue.sleep(for: ServerSetupRecommendationDefaults.saveCompletionDelay)
                             await send(.switchSucceeded(bestServerString))
                         } catch is CancellationError {
                             return
@@ -364,7 +365,7 @@ struct ServerSetup {
                             try userStoredPreferences.setServer(serverConfig)
 
                             let serverStr = "\(endpoint.host):\(endpoint.port)"
-                            try await mainQueue.sleep(for: ServerEvaluationDefaults.saveCompletionDelay)
+                            try await mainQueue.sleep(for: ServerSetupRecommendationDefaults.saveCompletionDelay)
                             await send(.switchSucceeded(serverStr))
                         } catch is CancellationError {
                             return

@@ -12,6 +12,7 @@ struct Root {
     }
 
     private enum StartupServerBenchmarkDefaults {
+        // Lightweight automatic-mode refresh used during startup and foregrounding.
         static let connectionTimeoutMilliseconds = 300.0
         static let evaluationTimeoutSeconds = 5.0
         static let blocksToDownload: UInt64 = 1
