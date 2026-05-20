@@ -120,7 +120,7 @@ class SelectedServersMigrationTests: XCTestCase {
         withDependencies {
             $0.userStoredPreferences.server = { legacyServer }
             $0.userStoredPreferences.selectedServers = {
-                .init(mode: .manual, servers: [manualServer])
+                UserPreferencesStorage.SelectedServersConfig(mode: .manual, servers: [manualServer])
             }
         } operation: {
             let result = ZcashSDKEnvironment.serverConfig(for: .mainnet)
@@ -139,7 +139,7 @@ class SelectedServersMigrationTests: XCTestCase {
         withDependencies {
             $0.userStoredPreferences.server = { legacyServer }
             $0.userStoredPreferences.selectedServers = {
-                .init(mode: .automatic, servers: [])
+                UserPreferencesStorage.SelectedServersConfig(mode: .automatic, servers: [])
             }
         } operation: {
             let result = ZcashSDKEnvironment.serverConfig(for: .mainnet)
@@ -284,7 +284,7 @@ class ServerSetupChangeDetectionTests: XCTestCase {
 
         store.dependencies.zcashSDKEnvironment = .testValue
         store.dependencies.userStoredPreferences.selectedServers = {
-            .init(mode: .manual, servers: [customServer])
+            UserPreferencesStorage.SelectedServersConfig(mode: .manual, servers: [customServer])
         }
 
         let originalValue = customServer.serverString()
@@ -310,7 +310,7 @@ class ServerSetupChangeDetectionTests: XCTestCase {
 
         store.dependencies.zcashSDKEnvironment = .testValue
         store.dependencies.userStoredPreferences.selectedServers = {
-            .init(mode: .manual, servers: [customServer])
+            UserPreferencesStorage.SelectedServersConfig(mode: .manual, servers: [customServer])
         }
 
         let originalValue = customServer.serverString()
@@ -343,7 +343,7 @@ class ServerSetupChangeDetectionTests: XCTestCase {
 
         store.dependencies.zcashSDKEnvironment = .testValue
         store.dependencies.userStoredPreferences.selectedServers = {
-            .init(mode: .automatic, servers: [])
+            UserPreferencesStorage.SelectedServersConfig(mode: .automatic, servers: [])
         }
 
         await store.send(.onAppear) { state in
@@ -409,7 +409,7 @@ class ServerSetupChangeDetectionTests: XCTestCase {
             activeServer.value
         }
         store.dependencies.userStoredPreferences.selectedServers = {
-            .init(mode: .automatic, servers: [])
+            UserPreferencesStorage.SelectedServersConfig(mode: .automatic, servers: [])
         }
 
         await store.send(.onAppear) { state in
@@ -448,7 +448,7 @@ class ServerSetupChangeDetectionTests: XCTestCase {
         store.dependencies.zcashSDKEnvironment = .testValue
         store.dependencies.mainQueue = .immediate
         store.dependencies.userStoredPreferences.selectedServers = {
-            .init(mode: .automatic, servers: [])
+            UserPreferencesStorage.SelectedServersConfig(mode: .automatic, servers: [])
         }
         store.dependencies.userStoredPreferences.setSelectedServers = { config in
             capturedSelectedServers.value = config
@@ -494,7 +494,7 @@ class ServerSetupChangeDetectionTests: XCTestCase {
         store.dependencies.zcashSDKEnvironment = .testValue
         store.dependencies.mainQueue = .immediate
         store.dependencies.userStoredPreferences.selectedServers = {
-            .init(mode: .manual, servers: [manualServer])
+            UserPreferencesStorage.SelectedServersConfig(mode: .manual, servers: [manualServer])
         }
         store.dependencies.userStoredPreferences.setSelectedServers = { _ in
             throw UserPreferencesStorage.UserPreferencesStorageError.selectedServersConfig
@@ -529,7 +529,7 @@ class ServerSetupChangeDetectionTests: XCTestCase {
         let persistenceError = UserPreferencesStorage.UserPreferencesStorageError.serverConfig.toZcashError()
         let activeServer = UncheckedSendableBox(manualServer)
         let storedSelectedServers = UncheckedSendableBox<UserPreferencesStorage.SelectedServersConfig?>(
-            .init(mode: .manual, servers: [manualServer])
+            UserPreferencesStorage.SelectedServersConfig(mode: .manual, servers: [manualServer])
         )
         let switchedEndpoints = UncheckedSendableBox<[String]>([])
         let store = makeStore(connectionMode: .manual)
@@ -587,7 +587,7 @@ class ServerSetupChangeDetectionTests: XCTestCase {
         let automaticServer = automaticEndpoint.serverConfig()
         let activeServer = UncheckedSendableBox(manualServer)
         let storedSelectedServers = UncheckedSendableBox<UserPreferencesStorage.SelectedServersConfig?>(
-            .init(mode: .manual, servers: [manualServer])
+            UserPreferencesStorage.SelectedServersConfig(mode: .manual, servers: [manualServer])
         )
         let storedServer = UncheckedSendableBox<UserPreferencesStorage.ServerConfig?>(manualServer)
         let store = makeStore(connectionMode: .manual)
@@ -657,7 +657,7 @@ class ServerSetupChangeDetectionTests: XCTestCase {
 
         store.dependencies.zcashSDKEnvironment = .testValue
         store.dependencies.userStoredPreferences.selectedServers = {
-            .init(mode: .automatic, servers: [])
+            UserPreferencesStorage.SelectedServersConfig(mode: .automatic, servers: [])
         }
 
         await store.send(.onAppear) { state in

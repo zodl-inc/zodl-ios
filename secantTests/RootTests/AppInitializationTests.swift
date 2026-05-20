@@ -66,7 +66,7 @@ class AppInitializationTests: XCTestCase {
 
         store.dependencies.zcashSDKEnvironment = .testValue
         store.dependencies.userStoredPreferences.selectedServers = {
-            .init(mode: .automatic, servers: [])
+            UserPreferencesStorage.SelectedServersConfig(mode: .automatic, servers: [])
         }
         store.dependencies.userStoredPreferences.setServer = { config in
             storedServer.value = config
@@ -132,7 +132,7 @@ class AppInitializationTests: XCTestCase {
         }
 
         store.dependencies.userStoredPreferences.selectedServers = {
-            .init(
+            UserPreferencesStorage.SelectedServersConfig(
                 mode: .manual,
                 servers: [
                     .init(host: "manual.example.com", port: 9067, isCustom: true)

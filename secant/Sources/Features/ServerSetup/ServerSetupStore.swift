@@ -283,7 +283,9 @@ struct ServerSetup {
                             )
                             // In automatic mode, selectedServers stores only the mode while the
                             // legacy server key caches the active benchmarked endpoint.
-                            try userStoredPreferences.setSelectedServers(.init(mode: .automatic, servers: []))
+                            try userStoredPreferences.setSelectedServers(
+                                UserPreferencesStorage.SelectedServersConfig(mode: .automatic, servers: [])
+                            )
 
                             if best.host != currentEndpoint.host || best.port != currentEndpoint.port {
                                 attemptedEndpointSwitch = true
@@ -340,7 +342,9 @@ struct ServerSetup {
                     let currentEndpoint = zcashSDKEnvironment.endpoint()
                     let previousConfig = userStoredPreferences.selectedServers()
                     do {
-                        try userStoredPreferences.setSelectedServers(.init(mode: .manual, servers: [serverConfig]))
+                        try userStoredPreferences.setSelectedServers(
+                            UserPreferencesStorage.SelectedServersConfig(mode: .manual, servers: [serverConfig])
+                        )
                     } catch {
                         return .send(.switchFailed(error.toZcashError()))
                     }

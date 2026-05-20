@@ -113,7 +113,9 @@ extension ZcashSDKEnvironment {
 
             if shouldPreserveAsManualSelection(normalizedServer, network: network) {
                 do {
-                    try userStoredPreferences.setSelectedServers(.init(mode: .manual, servers: [normalizedServer]))
+                    try userStoredPreferences.setSelectedServers(
+                        UserPreferencesStorage.SelectedServersConfig(mode: .manual, servers: [normalizedServer])
+                    )
                 } catch {
                     LoggerProxy.error("[Migration] Failed to persist manual server selection: \(error)")
                 }
@@ -122,7 +124,9 @@ extension ZcashSDKEnvironment {
         }
 
         do {
-            try userStoredPreferences.setSelectedServers(.init(mode: .automatic, servers: []))
+            try userStoredPreferences.setSelectedServers(
+                UserPreferencesStorage.SelectedServersConfig(mode: .automatic, servers: [])
+            )
         } catch {
             LoggerProxy.error("[Migration] Failed to persist default server selection: \(error)")
         }
