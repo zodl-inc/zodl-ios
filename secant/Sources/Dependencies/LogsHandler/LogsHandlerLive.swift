@@ -10,64 +10,68 @@ import ComposableArchitecture
 import OSLog
 
 extension LogsHandlerClient: DependencyKey {
-    static let liveValue = LogsHandlerClient(
-        exportAndStoreLogs: { sdkLogs, tcaLogs, walletLogs in
-            // create a directory
-            let logsURL = FileManager.default.temporaryDirectory.appendingPathComponent("zashiPrivateData")
-            try FileManager.default.createDirectory(atPath: logsURL.path, withIntermediateDirectories: true)
-            
-            // export the logs
-            async let sdkLogsVerbose = LogsHandlerClient.exportAndStoreLogsFor(
-                key: sdkLogs,
-                atURL: logsURL.appendingPathComponent("sdkLogs_verbose.txt")
-            )
-            async let sdkLogsSync = LogsHandlerClient.exportAndStoreLogsFor(
-                key: sdkLogs,
-                atURL: logsURL.appendingPathComponent("sdkLogs_sync.txt"),
-                level: .info // The info level represents the sync log in the SDK
-            )
-            async let tcaLogs = LogsHandlerClient.exportAndStoreLogsFor(
-                key: tcaLogs,
-                atURL: logsURL.appendingPathComponent("tcaLogs.txt")
-            )
-            async let walletLogs = LogsHandlerClient.exportAndStoreLogsFor(
-                key: walletLogs,
-                atURL: logsURL.appendingPathComponent("walletLogs.txt")
-            )
+    static let liveValue = Self.live()
 
-            let logs = try await [sdkLogsVerbose, sdkLogsSync, tcaLogs, walletLogs]
-            
-            // store the log files into the logs folder
-            try logs.forEach { logsHandler in
-                try logsHandler.result.write(to: logsHandler.dir, atomically: true, encoding: String.Encoding.utf8)
-            }
-            
-            // zip the logs folder
-            let coordinator = NSFileCoordinator()
-            var zipError: NSError?
-            var archiveURL: URL?
-            
-            archiveURL = await withCheckedContinuation { continuation in
-                coordinator.coordinate(readingItemAt: logsURL, options: [.forUploading], error: &zipError) { zipURL in
-                    do {
-                        let tmpURL = try FileManager.default.url(
-                            for: .itemReplacementDirectory,
-                            in: .userDomainMask,
-                            appropriateFor: zipURL,
-                            create: true
-                        )
-                        .appendingPathComponent("zashiPrivateData.zip")
-                        try FileManager.default.moveItem(at: zipURL, to: tmpURL)
-                        continuation.resume(returning: tmpURL)
-                    } catch {
-                        continuation.resume(returning: nil)
+    static func live() -> Self {
+        Self(
+            exportAndStoreLogs: { sdkLogs, tcaLogs, walletLogs in
+                // create a directory
+                let logsURL = FileManager.default.temporaryDirectory.appendingPathComponent("zashiPrivateData")
+                try FileManager.default.createDirectory(atPath: logsURL.path, withIntermediateDirectories: true)
+
+                // export the logs
+                async let sdkLogsVerbose = LogsHandlerClient.exportAndStoreLogsFor(
+                    key: sdkLogs,
+                    atURL: logsURL.appendingPathComponent("sdkLogs_verbose.txt")
+                )
+                async let sdkLogsSync = LogsHandlerClient.exportAndStoreLogsFor(
+                    key: sdkLogs,
+                    atURL: logsURL.appendingPathComponent("sdkLogs_sync.txt"),
+                    level: .info // The info level represents the sync log in the SDK
+                )
+                async let tcaLogs = LogsHandlerClient.exportAndStoreLogsFor(
+                    key: tcaLogs,
+                    atURL: logsURL.appendingPathComponent("tcaLogs.txt")
+                )
+                async let walletLogs = LogsHandlerClient.exportAndStoreLogsFor(
+                    key: walletLogs,
+                    atURL: logsURL.appendingPathComponent("walletLogs.txt")
+                )
+
+                let logs = try await [sdkLogsVerbose, sdkLogsSync, tcaLogs, walletLogs]
+
+                // store the log files into the logs folder
+                try logs.forEach { logsHandler in
+                    try logsHandler.result.write(to: logsHandler.dir, atomically: true, encoding: String.Encoding.utf8)
+                }
+
+                // zip the logs folder
+                let coordinator = NSFileCoordinator()
+                var zipError: NSError?
+                var archiveURL: URL?
+
+                archiveURL = await withCheckedContinuation { continuation in
+                    coordinator.coordinate(readingItemAt: logsURL, options: [.forUploading], error: &zipError) { zipURL in
+                        do {
+                            let tmpURL = try FileManager.default.url(
+                                for: .itemReplacementDirectory,
+                                in: .userDomainMask,
+                                appropriateFor: zipURL,
+                                create: true
+                            )
+                            .appendingPathComponent("zashiPrivateData.zip")
+                            try FileManager.default.moveItem(at: zipURL, to: tmpURL)
+                            continuation.resume(returning: tmpURL)
+                        } catch {
+                            continuation.resume(returning: nil)
+                        }
                     }
                 }
+
+                return archiveURL
             }
-            
-            return archiveURL
-        }
-    )
+        )
+    }
 }
 
 private extension LogsHandlerClient {

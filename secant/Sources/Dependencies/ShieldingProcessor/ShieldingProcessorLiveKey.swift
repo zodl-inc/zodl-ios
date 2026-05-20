@@ -49,7 +49,7 @@ private final class ShieldingProcessorImpl: Sendable {
         if account.vendor == .keystone {
             Task { [subject, sdkSynchronizer, zcashSDKEnvironment] in
                 do {
-                    let proposal = try await sdkSynchronizer.proposeShielding(account.id, zcashSDKEnvironment.shieldingThreshold, .empty, nil)
+                    let proposal = try await sdkSynchronizer.proposeShielding(account.id, zcashSDKEnvironment.shieldingThreshold(), .empty, nil)
 
                     guard let proposal else { throw "shieldFunds with Keystone: nil proposal" }
                     subject.send(.proposal(proposal))
@@ -62,9 +62,9 @@ private final class ShieldingProcessorImpl: Sendable {
                 do {
                     let storedWallet = try walletStorage.exportWallet()
                     let seedBytes = try mnemonic.toSeed(storedWallet.seedPhrase.value())
-                    let spendingKey = try derivationTool.deriveSpendingKey(seedBytes, zip32AccountIndex, zcashSDKEnvironment.network.networkType)
+                    let spendingKey = try derivationTool.deriveSpendingKey(seedBytes, zip32AccountIndex, zcashSDKEnvironment.network().networkType)
 
-                    let proposal = try await sdkSynchronizer.proposeShielding(account.id, zcashSDKEnvironment.shieldingThreshold, .empty, nil)
+                    let proposal = try await sdkSynchronizer.proposeShielding(account.id, zcashSDKEnvironment.shieldingThreshold(), .empty, nil)
 
                     guard let proposal else { throw "shieldFunds nil proposal" }
 

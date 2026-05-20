@@ -8,12 +8,6 @@ import SwiftUI
 struct VotingSheetContent: View {
     @Environment(\.colorScheme) var colorScheme
 
-    private static let unverifiedWarningSheetBackground = Color(
-        red: 245.0 / 255.0,
-        green: 245.0 / 255.0,
-        blue: 245.0 / 255.0
-    ).opacity(0.96)
-
     enum ButtonStyle {
         case primary
         case secondary
@@ -22,6 +16,15 @@ struct VotingSheetContent: View {
     enum VisualStyle {
         case standard
         case unverifiedWarning
+
+        var horizontalPadding: CGFloat {
+            switch self {
+            case .standard:
+                return Design.Spacing._3xl
+            case .unverifiedWarning:
+                return 0
+            }
+        }
     }
 
     struct ButtonConfig {
@@ -86,6 +89,7 @@ struct VotingSheetContent: View {
             .padding(.bottom, buttonBottomPadding)
         }
         .frame(maxWidth: .infinity)
+        .padding(.horizontal, contentHorizontalPadding)
         .background(sheetBackgroundColor)
     }
 
@@ -104,9 +108,9 @@ struct VotingSheetContent: View {
         case .unverifiedWarning:
             ZStack {
                 Circle()
-                    .fill(Design.Surfaces.bgPrimary.color(colorScheme))
+                    .fill(Design.Surfaces.bgSecondary.color(colorScheme))
                     .frame(width: 44, height: 44)
-                Asset.Assets.Icons.alertCircle.image
+                Asset.Assets.Icons.alertOutline.image
                     .zImage(size: 20, style: Design.Utility.ErrorRed._500)
             }
         }
@@ -211,12 +215,21 @@ struct VotingSheetContent: View {
         }
     }
 
+    private var contentHorizontalPadding: CGFloat {
+        switch visualStyle {
+        case .standard:
+            return 0
+        case .unverifiedWarning:
+            return 24
+        }
+    }
+
     private var sheetBackgroundColor: Color {
         switch visualStyle {
         case .standard:
             return .clear
         case .unverifiedWarning:
-            return Self.unverifiedWarningSheetBackground
+            return Design.Surfaces.bgPrimary.color(colorScheme).opacity(0.96)
         }
     }
 
@@ -245,7 +258,11 @@ extension View {
         visualStyle: VotingSheetContent.VisualStyle = .standard,
         onDismiss: (() -> Void)? = nil
     ) -> some View {
-        zashiSheet(isPresented: isPresented, onDismiss: onDismiss) {
+        zashiSheet(
+            isPresented: isPresented,
+            horizontalPadding: visualStyle.horizontalPadding,
+            onDismiss: onDismiss
+        ) {
             VotingSheetContent(
                 iconSystemName: iconSystemName,
                 iconStyle: iconStyle,
@@ -261,6 +278,7 @@ extension View {
 
 private struct VotingBlockingSheetModifier<SheetContent: View>: ViewModifier {
     let isActive: () -> Bool
+    let visualStyle: VotingSheetContent.VisualStyle
     let onExit: () -> Void
     let sheetContent: (_ dismissAndExit: @escaping () -> Void) -> SheetContent
 
@@ -269,7 +287,11 @@ private struct VotingBlockingSheetModifier<SheetContent: View>: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .zashiSheet(isPresented: sheetBinding, onDismiss: exitIfNeeded) {
+            .zashiSheet(
+                isPresented: sheetBinding,
+                horizontalPadding: visualStyle.horizontalPadding,
+                onDismiss: exitIfNeeded
+            ) {
                 sheetContent(dismissSheetAndExit)
             }
     }
@@ -303,12 +325,14 @@ extension View {
     /// the sheet dismiss animation finishes.
     func votingBlockingSheet<SheetContent: View>(
         isActive: @escaping () -> Bool,
+        visualStyle: VotingSheetContent.VisualStyle = .standard,
         onExit: @escaping () -> Void,
         @ViewBuilder content: @escaping (_ dismissAndExit: @escaping () -> Void) -> SheetContent
     ) -> some View {
         modifier(
             VotingBlockingSheetModifier(
                 isActive: isActive,
+                visualStyle: visualStyle,
                 onExit: onExit,
                 sheetContent: content
             )

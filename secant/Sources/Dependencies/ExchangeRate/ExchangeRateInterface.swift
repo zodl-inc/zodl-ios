@@ -30,6 +30,6 @@ struct ExchangeRateClient {
         case sdk
     }
 
-    let exchangeRateEventStream: () -> AnyPublisher<EchangeRateEvent, Never>
-    var refreshExchangeRateUSD: () -> Void
+    var exchangeRateEventStream: @Sendable () -> AnyPublisher<EchangeRateEvent, Never> = { Empty().eraseToAnyPublisher() }
+    var refreshExchangeRateUSD: @Sendable () -> Void = { }
 }

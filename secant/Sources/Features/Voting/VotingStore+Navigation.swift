@@ -100,6 +100,7 @@ extension Voting {
 
         case .dismissFlow:
             state.screenStack = [.loading]
+            state.configSettings = nil
             return .merge(
                 .cancel(id: cancelStateStreamId),
                 .cancel(id: cancelStatusPollingId),
@@ -111,6 +112,13 @@ extension Voting {
             )
 
         case .goBack:
+            if state.currentScreen == .configSettings {
+                dismissConfigSettings(&state)
+                guard !state.isSubmittingVote else {
+                    return .none
+                }
+                return .send(.initialize)
+            }
             if state.screenStack.count > 1 {
                 state.screenStack.removeLast()
             }
@@ -127,14 +135,19 @@ extension Voting {
 
         case .openConfigSettings:
             state.configSettings = .init()
+            if state.currentScreen != .configSettings {
+                state.screenStack.append(.configSettings)
+            }
             return .none
 
-        case .configSettings(.dismiss):
-            // Always re-fetch service config + rounds after the sheet closes.
+        case .configSettings(.delegate(.dismiss)),
+            .configSettings(.delegate(.saved)):
+            dismissConfigSettings(&state)
+            // Always re-fetch service config + rounds after the data source page closes.
             // Equality on `votingConfigOverrideURL` alone is unreliable: the
             // child's `@Shared(.appStorage(.votingConfigOverrideURL))` write can
             // land before the parent's `State` field observes the new value when
-            // this dismiss runs, so we'd skip `.initialize` and stay on stale
+            // this runs, so we'd skip `.initialize` and stay on stale
             // endpoints / default-unverified behavior until another trigger.
             guard !state.isSubmittingVote else {
                 return .none
@@ -528,9 +541,9 @@ extension Voting {
 
             if isLast {
                 if state.allDrafted {
-                    // All answered -> review
+                    // All answered -> final confirmation.
                     state.screenStack.removeLast()
-                    state.screenStack.append(.reviewVotes)
+                    state.screenStack.append(.confirmSubmission)
                 }
                 // If unanswered -> .none; view handles sheet display
             } else {
@@ -541,17 +554,13 @@ extension Voting {
             }
             return .none
 
-        case .navigateToReview:
-            state.screenStack.append(.reviewVotes)
-            return .none
-
         case .navigateToConfirmation:
             state.screenStack.append(.confirmSubmission)
             return .none
 
         case .confirmUnanswered:
             guard state.voteRecord == nil else { return .none }
-            // Auto-draft Abstain for every unanswered proposal, then go to review.
+            // Auto-draft Abstain for every unanswered proposal, then go to final confirmation.
             for proposal in state.votingRound.proposals
                 where state.draftVotes[proposal.id] == nil && state.votes[proposal.id] == nil {
                 let abstainIndex: UInt32
@@ -566,7 +575,7 @@ extension Voting {
             }
             Self.persistDrafts(state.draftVotes, walletId: state.walletId, roundId: state.roundId)
             state.screenStack.removeLast()
-            state.screenStack.append(.reviewVotes)
+            state.screenStack.append(.confirmSubmission)
             return .none
 
         case .dismissUnanswered:
@@ -586,6 +595,15 @@ extension Voting {
 
         default:
             return .none
+        }
+    }
+
+    private func dismissConfigSettings(_ state: inout State) {
+        state.configSettings = nil
+        if state.screenStack.last == .configSettings {
+            state.screenStack.removeLast()
+        } else {
+            state.screenStack.removeAll { $0 == .configSettings }
         }
     }
 }

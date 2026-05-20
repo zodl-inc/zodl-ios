@@ -17,8 +17,13 @@ struct DelegationSigningView: View {
                         keystoneDeviceCard()
                             .padding(.top, 40)
 
+                        if isMultiBundleSigning {
+                            multiBundleProgressCard()
+                                .padding(.top, 24)
+                        }
+
                         qrCodeSection()
-                            .padding(.top, 32)
+                            .padding(.top, isMultiBundleSigning ? 24 : 32)
 
                         instructionText()
                             .padding(.top, 32)
@@ -105,8 +110,9 @@ struct DelegationSigningView: View {
             VStack {
                 ProgressView()
                     .padding(.bottom, 8)
-                Text(localizable: .coinVoteDelegationSigningBuildingRequest)
+                Text(buildingRequestText)
                     .zFont(.medium, size: 13, style: Design.Text.tertiary)
+                    .multilineTextAlignment(.center)
             }
             .frame(width: 216, height: 216)
             .padding(24)
@@ -177,24 +183,19 @@ struct DelegationSigningView: View {
     @ViewBuilder
     private func instructionText() -> some View {
         VStack(spacing: 4) {
-            if store.bundleCount > 1 {
-                Text(
-                    localizable: .coinVoteDelegationSigningBundleProgress(
-                        String(store.currentKeystoneBundleIndex + 1),
-                        String(store.bundleCount)
-                    )
-                )
-                    .zFont(.semiBold, size: 14, style: Design.Text.primary)
-                    .padding(.bottom, 4)
-            }
-
-            Text(localizable: .keystoneSignWithTitle)
+            Text(instructionTitle)
                 .zFont(.medium, size: 16, style: Design.Text.primary)
 
-            Text(localizable: .coinVoteDelegationSigningInstruction)
+            Text(instructionDescription)
                 .zFont(size: 14, style: Design.Text.tertiary)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
+
+            if let bundleWeight = store.currentBundleZECString {
+                Text(localizable: .coinVoteDelegationSigningCurrentBundleWeight(bundleWeight))
+                    .zFont(size: 13, style: Design.Text.tertiary)
+                    .padding(.top, 8)
+            }
         }
     }
 
@@ -205,18 +206,18 @@ struct DelegationSigningView: View {
         VStack(spacing: 8) {
             switch store.keystoneSigningStatus {
             case .idle, .preparingRequest:
-                ZashiButton(String(localizable: .coinVoteCommonCancel), type: .ghost) {
-                    store.send(.delegationRejected)
+                if !isMultiBundleSigning {
+                    cancelButton()
                 }
-                ZashiButton(String(localizable: .coinVoteDelegationSigningScanSignature)) { }
+                ZashiButton(scanSignatureButtonTitle) { }
                     .disabled(true)
                     .opacity(0.5)
 
             case .awaitingSignature:
-                ZashiButton(String(localizable: .coinVoteCommonCancel), type: .ghost) {
-                    store.send(.delegationRejected)
+                if !isMultiBundleSigning {
+                    cancelButton()
                 }
-                ZashiButton(String(localizable: .coinVoteDelegationSigningScanSignature)) {
+                ZashiButton(scanSignatureButtonTitle) {
                     store.send(.openKeystoneSignatureScan)
                 }
 
@@ -226,37 +227,184 @@ struct DelegationSigningView: View {
                     .opacity(0.5)
 
             case .failed:
-                ZashiButton(String(localizable: .coinVoteCommonCancel), type: .ghost) {
-                    store.send(.delegationRejected)
+                if !isMultiBundleSigning {
+                    cancelButton()
                 }
                 ZashiButton(String(localizable: .coinVoteCommonRetry)) {
                     store.send(.retryKeystoneSigning)
                 }
             }
 
-            // Skip remaining bundles — only shown after at least one bundle is signed
-            if !store.keystoneBundleSignatures.isEmpty && store.bundleCount > 1 {
-                skipRemainingBundlesButton()
-            }
         }
+    }
+
+    private func cancelButton() -> some View {
+        ZashiButton(String(localizable: .coinVoteCommonCancel), type: .ghost) {
+            store.send(.delegationRejected)
+        }
+    }
+
+    private var isMultiBundleSigning: Bool {
+        store.bundleCount > 1
+    }
+
+    private var totalBundleCount: Int {
+        max(Int(store.bundleCount), 1)
+    }
+
+    private var signedBundleCount: Int {
+        min(store.keystoneBundleSignatures.count, totalBundleCount)
+    }
+
+    private var currentBundleNumber: Int {
+        min(Int(store.currentKeystoneBundleIndex) + 1, totalBundleCount)
+    }
+
+    private var buildingRequestText: String {
+        guard isMultiBundleSigning else {
+            return String(localizable: .coinVoteDelegationSigningBuildingRequest)
+        }
+
+        if signedBundleCount > 0 {
+            return String(
+                localizable: .coinVoteDelegationSigningPreparingNextBundle(
+                    String(signedBundleCount),
+                    String(currentBundleNumber),
+                    String(totalBundleCount)
+                )
+            )
+        }
+
+        return String(
+            localizable: .coinVoteDelegationSigningBuildingBundleRequest(
+                String(currentBundleNumber),
+                String(totalBundleCount)
+            )
+        )
+    }
+
+    private var instructionTitle: String {
+        guard isMultiBundleSigning else {
+            return String(localizable: .keystoneSignWithTitle)
+        }
+
+        return String(
+            localizable: .coinVoteDelegationSigningBundleProgress(
+                String(currentBundleNumber),
+                String(totalBundleCount)
+            )
+        )
+    }
+
+    private var instructionDescription: String {
+        guard isMultiBundleSigning else {
+            return String(localizable: .coinVoteDelegationSigningInstruction)
+        }
+
+        return String(localizable: .coinVoteDelegationSigningMultiBundleInstruction(String(totalBundleCount)))
+    }
+
+    private var scanSignatureButtonTitle: String {
+        guard isMultiBundleSigning else {
+            return String(localizable: .coinVoteDelegationSigningScanSignature)
+        }
+
+        return String(localizable: .coinVoteDelegationSigningScanSignedBundle(String(currentBundleNumber)))
     }
 }
 
-// MARK: - Skip Remaining Bundles
+// MARK: - Multi-Bundle Progress
 
 extension DelegationSigningView {
     @ViewBuilder
-    func skipRemainingBundlesButton() -> some View {
-        let signed = store.keystoneBundleSignatures.count
-        let remaining = Int(store.bundleCount) - signed
+    func multiBundleProgressCard() -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .center, spacing: 12) {
+                Text(
+                    localizable: .coinVoteDelegationSigningCurrentBundleProgress(
+                        String(currentBundleNumber),
+                        String(totalBundleCount)
+                    )
+                )
+                .zFont(.semiBold, size: 20, style: Design.Text.primary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
+                .id(currentBundleNumber)
+                .transition(.opacity.combined(with: .move(edge: .top)))
+                .frame(maxWidth: .infinity, alignment: .leading)
 
-        ZashiButton(
-            remaining == 1
-                ? String(localizable: .coinVoteDelegationSigningSkipRemainingBundle(String(remaining)))
-                : String(localizable: .coinVoteDelegationSigningSkipRemainingBundles(String(remaining))),
-            type: .ghost
-        ) {
-            store.send(.skipRemainingKeystoneBundles)
+                Text(
+                    localizable: .coinVoteDelegationSigningSignedProgress(
+                        String(signedBundleCount),
+                        String(totalBundleCount)
+                    )
+                )
+                .zFont(.medium, size: 12, style: Design.Utility.HyperBlue._700)
+                .lineLimit(1)
+                .padding(.vertical, 5)
+                .padding(.horizontal, 10)
+                .background {
+                    Capsule()
+                        .fill(Design.Utility.HyperBlue._50.color(colorScheme))
+                }
+                .overlay {
+                    Capsule()
+                        .stroke(Design.Utility.HyperBlue._200.color(colorScheme), lineWidth: 1)
+                }
+            }
+
+            ProgressView(value: Double(signedBundleCount), total: Double(totalBundleCount))
+                .tint(Design.Utility.HyperBlue._500.color(colorScheme))
+
+            Text(
+                localizable: .coinVoteDelegationSigningSignedWeightSummary(
+                    store.signedBundlesZECString,
+                    store.skippedBundlesZECString
+                )
+            )
+            .zFont(size: 13, style: Design.Text.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+
+            if signedBundleCount > 0 && signedBundleCount < totalBundleCount {
+                Divider()
+                    .overlay(Design.Surfaces.strokeSecondary.color(colorScheme))
+
+                Button {
+                    store.send(.skipRemainingKeystoneBundles)
+                } label: {
+                    HStack(spacing: 12) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(localizable: .coinVoteDelegationSigningUseSignedBundlesOnly)
+                                .zFont(.medium, size: 14, style: Design.Text.primary)
+
+                            Text(
+                                localizable: .coinVoteDelegationSigningUseSignedBundlesOnlySubtitle(
+                                    store.skippedBundlesZECString
+                                )
+                            )
+                            .zFont(size: 12, style: Design.Text.tertiary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        }
+
+                        Spacer()
+
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(Design.Text.tertiary.color(colorScheme))
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
         }
+        .padding(16)
+        .background(Design.Surfaces.bgSecondary.color(colorScheme))
+        .clipShape(RoundedRectangle(cornerRadius: Design.Radius._2xl))
+        .overlay {
+            RoundedRectangle(cornerRadius: Design.Radius._2xl)
+                .stroke(Design.Surfaces.strokeSecondary.color(colorScheme), lineWidth: 1)
+        }
+        .animation(.easeInOut(duration: 0.2), value: currentBundleNumber)
+        .animation(.easeInOut(duration: 0.2), value: signedBundleCount)
     }
 }

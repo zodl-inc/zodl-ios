@@ -43,7 +43,9 @@ struct FlexaTransaction: Equatable {
 }
 
 extension FlexaHandlerClient: DependencyKey {
-    static var liveValue: Self {
+    static let liveValue = Self.live()
+
+    static func live() -> Self {
         let onTransactionRequest = CurrentValueSubject<Result<FXTransaction, any Error>?, Never>(nil)
         let latestSpendableBalance = CurrentValueSubject<Decimal, Never>(0)
         let latestSpendableAvailableBalance = CurrentValueSubject<Decimal?, Never>(nil)

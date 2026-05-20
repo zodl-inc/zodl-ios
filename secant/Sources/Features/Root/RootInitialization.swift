@@ -266,7 +266,7 @@ extension Root {
                 let walletState = Root.walletInitializationState(
                     databaseFiles: databaseFiles,
                     walletStorage: walletStorage,
-                    zcashNetwork: zcashSDKEnvironment.network
+                    zcashNetwork: zcashSDKEnvironment.network()
                 )
                 return .send(.initialization(.respondToWalletInitializationState(walletState)))
 
@@ -331,7 +331,7 @@ extension Root {
                     } catch {
                         return .send(.destination(.updateDestination(.osStatusError)))
                     }
-                    let birthday = storedWallet.birthday?.value() ?? zcashSDKEnvironment.latestCheckpoint
+                    let birthday = storedWallet.birthday?.value() ?? zcashSDKEnvironment.latestCheckpoint()
                     try mnemonic.isValid(storedWallet.seedPhrase.value())
                     let seedBytes = try mnemonic.toSeed(storedWallet.seedPhrase.value())
                     
@@ -376,7 +376,7 @@ extension Root {
                                         try keys.cacheFor(
                                             seed: seedBytes,
                                             account: account.account,
-                                            network: zcashSDKEnvironment.network.networkType
+                                            network: zcashSDKEnvironment.network().networkType
                                         )
                                         try walletStorage.importAddressBookEncryptionKeys(keys)
                                     } catch {
@@ -401,10 +401,10 @@ extension Root {
                     .send(.initialization(.registerForSynchronizersUpdate)),
                     .publisher {
                         autolockHandler.batteryStatePublisher()
-                            .map(Root.Action.batteryStateChanged)
+                            .map { _ in Root.Action.batteryStateChanged }
                     }
                     .cancellable(id: state.CancelBatteryStateId, cancelInFlight: true),
-                    .send(.batteryStateChanged(nil)),
+                    .send(.batteryStateChanged),
                     .send(.observeTransactions),
                     .send(.observeShieldingProcessor),
                     .send(.observeTorInit),
@@ -450,7 +450,7 @@ extension Root {
                                         try keys.cacheFor(
                                             seed: seedBytes,
                                             account: account.account,
-                                            network: zcashSDKEnvironment.network.networkType
+                                            network: zcashSDKEnvironment.network().networkType
                                         )
                                         try walletStorage.importUserMetadataEncryptionKeys(keys, account.account)
                                         await send(.loadUserMetadata)

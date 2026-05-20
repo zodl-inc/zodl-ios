@@ -175,9 +175,9 @@ extension VotingCryptoClient: DependencyKey {
                 )
                 return try VotingRustBackend.verifyWitness(sdkWitness)
             },
-            generateHotkey: { roundId, seed in
+            generateHotkey: { _, seed in
                 let backend = try await dbActor.backend()
-                let hotkey = try backend.generateHotkey(roundId: roundId, seed: seed)
+                let hotkey = try backend.generateHotkey(seed: seed)
                 return VotingHotkey(
                     secretKey: Data(hotkey.secretKey),
                     publicKey: Data(hotkey.publicKey),
@@ -187,7 +187,7 @@ extension VotingCryptoClient: DependencyKey {
             // swiftlint:disable:next line_length
             buildVotingPczt: { roundId, bundleIndex, notes, senderSeed, hotkeySeed, networkId, accountIndex, roundName, orchardFvkOverride, keystoneSeedFingerprintOverride in
                 let backend = try await dbActor.backend()
-                _ = try backend.generateHotkey(roundId: roundId, seed: hotkeySeed)
+                _ = try backend.generateHotkey(seed: hotkeySeed)
                 let inputs: VotingDelegationInputs
                 let actualFvkBytes: [UInt8]
                 if let orchardFvkOverride {

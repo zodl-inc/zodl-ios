@@ -8,7 +8,9 @@
 import ComposableArchitecture
 
 extension UserMetadataProviderClient: DependencyKey {
-    static var liveValue: UserMetadataProviderClient = {
+    static let liveValue = Self.live()
+
+    static func live() -> Self {
         let ums = UserMetadataStorage.live
 
         return UserMetadataProviderClient(
@@ -43,7 +45,7 @@ extension UserMetadataProviderClient: DependencyKey {
             lastUsedAssetHistory: { ums.lastUsedAssetHistory },
             addLastUsedSwapAsset: { ums.addLastUsedSwap(asset: $0) }
         )
-    }()
+    }
 }
 
 extension UserMetadataStorage {

@@ -1001,6 +1001,49 @@ final class VotingSubmissionPostFallbackTests: XCTestCase {
         XCTAssertTrue(store.state.isDelegationProofInFlight)
     }
 
+    func testDelegationFailureDuringBatchAuthorizationShowsAuthorizationFailure() async {
+        let round = Self.makeVotingRound()
+        var initialState = Self.makeReadySubmissionState(round: round)
+        initialState.isKeystoneUser = true
+        initialState.delegationProofStatus = .generating(progress: 0.5)
+        initialState.isDelegationProofInFlight = true
+        initialState.pendingBatchSubmission = true
+        initialState.batchSubmissionStatus = .authorizing
+        initialState.isSubmittingVote = true
+        initialState.submittingProposalId = 1
+        initialState.voteSubmissionStep = .authorizingVote
+        initialState.currentVoteBundleIndex = 0
+        initialState.currentKeystoneBundleIndex = 1
+        initialState.keystoneBundleSignatures = [
+            .init(sig: Data([0x01]), sighash: Data([0x02]), rk: Data([0x03]))
+        ]
+
+        let store = TestStore(initialState: initialState) {
+            Voting()
+        }
+        store.exhaustivity = .off
+
+        await store.send(.delegationProofFailed(
+            roundId: initialState.roundId,
+            error: "nullifier already spent"
+        ))
+
+        let expectedMessage = String(localizable: .coinVoteStoreUserErrorNullifierAlreadySpent)
+        XCTAssertEqual(store.state.delegationProofStatus, .failed(expectedMessage))
+        XCTAssertFalse(store.state.isDelegationProofInFlight)
+        XCTAssertFalse(store.state.pendingBatchSubmission)
+        XCTAssertFalse(store.state.isSubmittingVote)
+        XCTAssertNil(store.state.submittingProposalId)
+        XCTAssertNil(store.state.voteSubmissionStep)
+        XCTAssertNil(store.state.currentVoteBundleIndex)
+        XCTAssertEqual(store.state.currentKeystoneBundleIndex, 0)
+        XCTAssertEqual(store.state.keystoneBundleSignatures, [])
+        guard case .authorizationFailed(let error) = store.state.batchSubmissionStatus else {
+            return XCTFail("Expected authorization failure status")
+        }
+        XCTAssertEqual(error, expectedMessage)
+    }
+
     func testDelegationPipelineRecoversConfirmedCachedTxBeforeSkippingBundle() async throws {
         let recorder = RecoveryOrderRecorder()
         var votingCrypto = VotingCryptoClient()

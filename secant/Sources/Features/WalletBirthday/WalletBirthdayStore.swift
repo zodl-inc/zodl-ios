@@ -77,13 +77,14 @@ struct WalletBirthday {
                 // __LD TESTED
                 let currentYear = Calendar.current.component(.year, from: Date())
                 state.years = Array(Constants.startYear...currentYear)
-                if state.estimatedHeight < zcashSDKEnvironment.network.constants.saplingActivationHeight {
-                    state.estimatedHeight = zcashSDKEnvironment.network.constants.saplingActivationHeight
+
+                if state.estimatedHeight < zcashSDKEnvironment.network().constants.saplingActivationHeight {
+                    state.estimatedHeight = zcashSDKEnvironment.network().constants.saplingActivationHeight
                 }
                 return .send(.updateMonths)
-            
+
             case .binding(\.birthday):
-                let saplingActivation = zcashSDKEnvironment.network.constants.saplingActivationHeight
+                let saplingActivation = zcashSDKEnvironment.network().constants.saplingActivationHeight
 
                 if let birthdayHeight = BlockHeight(state.birthday), birthdayHeight >= saplingActivation {
                     state.estimatedHeight = birthdayHeight

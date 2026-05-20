@@ -73,7 +73,7 @@ extension Voting {
             state.batchVoteErrors = [:]
 
             let roundId = state.roundId
-            let network = zcashSDKEnvironment.network
+            let network = zcashSDKEnvironment.network()
             let networkId: UInt32 = network.networkType.votingRustNetworkId
             let accountIndex = votingAccountIndex(for: state.selectedWalletAccount)
             let seedFingerprint = votingSeedFingerprint(for: state.selectedWalletAccount)

@@ -1,5 +1,5 @@
 {
-  "originHash" : "fe48f8df70f66fa69512ad5420005ced2ca32a018884e8aed49d6c31f4b0067f",
+  "originHash" : "4c7373c5f3adfdcdcd7de6ca0dbccee8a5285b0fea671ef4c1ad7b8ee13a0c03",
   "pins" : [
     {
       "identity" : "base32",
@@ -240,8 +240,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/pointfreeco/swift-dependencies",
       "state" : {
-        "revision" : "85f89f5d0ce5a18945f65371d40ca997da85a41a",
-        "version" : "1.6.3"
+        "revision" : "565a7be4c1c9a5e0bf77e5dc21f30f054ced9d06",
+        "version" : "1.6.4"
       }
     },
     {
@@ -492,7 +492,7 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/zcash/zcash-swift-wallet-sdk.git",
       "state" : {
-        "revision" : "b3675ba9ecadd2b777f21d8b770e88cba294d26e"
+        "revision" : "909c7c5743f14a211f9f69f97ed08c05b55c2cd5"
       }
     }
   ],

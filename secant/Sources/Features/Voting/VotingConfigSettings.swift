@@ -34,6 +34,13 @@ struct VotingConfigSettings {
 
         var validationStatus: ValidationStatus = .idle
 
+        enum ValidationField: Equatable {
+            case title
+            case url
+        }
+
+        var validationField: ValidationField?
+
         /// Snapshot URL for the in-flight validation request (stale-result guard).
         var validationRequestURL: String?
 
@@ -77,9 +84,13 @@ struct VotingConfigSettings {
         case validationFailed(String, rawURL: String)
         case validationPassed(PinnedConfigSource, rawURL: String, isDefault: Bool)
         case dismissTapped
-    }
+        case delegate(Delegate)
 
-    @Dependency(\.dismiss) var dismiss
+        enum Delegate: Equatable {
+            case dismiss
+            case saved
+        }
+    }
 
     private enum CancelID {
         case validation
@@ -108,6 +119,7 @@ struct VotingConfigSettings {
             case .onAppear:
                 Self.syncSelectionFromOverride(&state)
                 state.validationStatus = .idle
+                state.validationField = nil
                 state.validationContext = .none
                 state.validationRequestURL = nil
                 state.showAddChainFields = false
@@ -121,6 +133,7 @@ struct VotingConfigSettings {
             case .bundledTapped:
                 state.selection = .bundled
                 state.validationStatus = .idle
+                state.validationField = nil
                 state.validationContext = .none
                 state.validationRequestURL = nil
                 return .cancel(id: CancelID.validation)
@@ -128,6 +141,7 @@ struct VotingConfigSettings {
             case .customChainSelected(let id):
                 state.selection = .custom(id)
                 state.validationStatus = .idle
+                state.validationField = nil
                 state.validationContext = .none
                 state.validationRequestURL = nil
                 return .cancel(id: CancelID.validation)
@@ -154,6 +168,7 @@ struct VotingConfigSettings {
                     state.editChainURL = ""
                 }
                 state.validationStatus = .idle
+                state.validationField = nil
                 state.validationContext = .none
                 state.validationRequestURL = nil
                 return .cancel(id: CancelID.validation)
@@ -168,15 +183,19 @@ struct VotingConfigSettings {
                     state.pendingNewChainURL = ""
                 }
                 state.validationStatus = .idle
+                state.validationField = nil
                 return .cancel(id: CancelID.validation)
 
             case .pendingNewChainNameChanged(let name):
                 state.pendingNewChainName = name
+                state.validationStatus = .idle
+                state.validationField = nil
                 return .none
 
             case .pendingNewChainURLChanged(let url):
                 state.pendingNewChainURL = url
                 state.validationStatus = .idle
+                state.validationField = nil
                 return .cancel(id: CancelID.validation)
 
             case .editChainTapped(let id):
@@ -191,6 +210,7 @@ struct VotingConfigSettings {
                 state.pendingNewChainName = ""
                 state.pendingNewChainURL = ""
                 state.validationStatus = .idle
+                state.validationField = nil
                 return .cancel(id: CancelID.validation)
 
             case .cancelChainEditTapped:
@@ -198,15 +218,19 @@ struct VotingConfigSettings {
                 state.editChainName = ""
                 state.editChainURL = ""
                 state.validationStatus = .idle
+                state.validationField = nil
                 return .cancel(id: CancelID.validation)
 
             case .editChainNameChanged(let name):
                 state.editChainName = name
+                state.validationStatus = .idle
+                state.validationField = nil
                 return .none
 
             case .editChainURLChanged(let url):
                 state.editChainURL = url
                 state.validationStatus = .idle
+                state.validationField = nil
                 return .cancel(id: CancelID.validation)
 
             case .saveTapped:
@@ -216,15 +240,28 @@ struct VotingConfigSettings {
 
                 if state.showAddChainFields {
                     let raw = state.pendingNewChainURL.trimmingCharacters(in: .whitespacesAndNewlines)
-                    guard !raw.isEmpty else {
+                    if let titleError = Self.titleValidationError(state.pendingNewChainName) {
+                        state.validationStatus = .error(titleError)
+                        state.validationField = .title
                         return .none
                     }
-                    if let parsed = try? PinnedConfigSource.parse(raw),
-                       Self.isDuplicatePinnedSource(parsed, chains: Self.decodeChains(state.customChainsJSON), excludingChainId: nil) {
+                    guard !raw.isEmpty else {
+                        state.validationStatus = .error(Self.invalidChainURLErrorMessage)
+                        state.validationField = .url
+                        return .none
+                    }
+                    guard let parsed = try? PinnedConfigSource.parse(raw) else {
+                        state.validationStatus = .error(Self.invalidChainURLErrorMessage)
+                        state.validationField = .url
+                        return .none
+                    }
+                    if Self.isDuplicatePinnedSource(parsed, chains: Self.decodeChains(state.customChainsJSON), excludingChainId: nil) {
                         state.validationStatus = .error(Self.duplicateChainURLErrorMessage)
+                        state.validationField = .url
                         return .none
                     }
                     state.validationStatus = .validating
+                    state.validationField = nil
                     state.validationContext = .addPanelNewChain
                     state.validationRequestURL = raw
                     return Self.validate(raw, cancelID: CancelID.validation)
@@ -234,11 +271,12 @@ struct VotingConfigSettings {
                 case .bundled:
                     state.$override.withLock { $0 = "" }
                     state.validationStatus = .idle
+                    state.validationField = nil
                     state.validationContext = .none
                     state.validationRequestURL = nil
                     return .merge(
                         .cancel(id: CancelID.validation),
-                        .run { _ in await dismiss() }
+                        .send(.delegate(.saved))
                     )
 
                 case .custom(let id):
@@ -251,6 +289,7 @@ struct VotingConfigSettings {
                         return .none
                     }
                     state.validationStatus = .validating
+                    state.validationField = nil
                     state.validationContext = .applySelectedCustom(id)
                     state.validationRequestURL = raw
                     return Self.validate(raw, cancelID: CancelID.validation)
@@ -261,6 +300,7 @@ struct VotingConfigSettings {
                     return .none
                 }
                 state.validationStatus = .error(message)
+                state.validationField = .url
                 state.validationContext = .none
                 state.validationRequestURL = nil
                 return .none
@@ -272,6 +312,7 @@ struct VotingConfigSettings {
 
                 let context = state.validationContext
                 state.validationStatus = .idle
+                state.validationField = nil
                 state.validationRequestURL = nil
                 state.validationContext = .none
 
@@ -283,7 +324,7 @@ struct VotingConfigSettings {
                     state.pendingNewChainURL = ""
                     return .merge(
                         .cancel(id: CancelID.validation),
-                        .run { _ in await dismiss() }
+                        .send(.delegate(.saved))
                     )
                 }
 
@@ -321,14 +362,17 @@ struct VotingConfigSettings {
                 state.$override.withLock { $0 = rawURL }
                 return .merge(
                     .cancel(id: CancelID.validation),
-                    .run { _ in await dismiss() }
+                    .send(.delegate(.saved))
                 )
 
             case .dismissTapped:
                 return .merge(
                     .cancel(id: CancelID.validation),
-                    .run { _ in await dismiss() }
+                    .send(.delegate(.dismiss))
                 )
+
+            case .delegate:
+                return .none
             }
         }
     }
@@ -345,8 +389,21 @@ struct VotingConfigSettings {
         let trimmedURL = state.editChainURL.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedName = state.editChainName.trimmingCharacters(in: .whitespacesAndNewlines)
 
+        if let titleError = Self.titleValidationError(trimmedName) {
+            state.validationStatus = .error(titleError)
+            state.validationField = .title
+            return .none
+        }
+
         guard !trimmedURL.isEmpty else {
-            state.validationStatus = .error(String(localized: "Enter a URL."))
+            state.validationStatus = .error(Self.invalidChainURLErrorMessage)
+            state.validationField = .url
+            return .none
+        }
+
+        guard let parsed = try? PinnedConfigSource.parse(trimmedURL) else {
+            state.validationStatus = .error(Self.invalidChainURLErrorMessage)
+            state.validationField = .url
             return .none
         }
 
@@ -359,19 +416,21 @@ struct VotingConfigSettings {
             state.editChainName = ""
             state.editChainURL = ""
             state.validationStatus = .idle
+            state.validationField = nil
             return .merge(
                 .cancel(id: CancelID.validation),
-                .run { _ in await dismiss() }
+                .send(.delegate(.saved))
             )
         }
 
-        if let parsed = try? PinnedConfigSource.parse(trimmedURL),
-           Self.isDuplicatePinnedSource(parsed, chains: chains, excludingChainId: editId) {
+        if Self.isDuplicatePinnedSource(parsed, chains: chains, excludingChainId: editId) {
             state.validationStatus = .error(Self.duplicateChainURLErrorMessage)
+            state.validationField = .url
             return .none
         }
 
         state.validationStatus = .validating
+        state.validationField = nil
         state.validationContext = .editChain(editId)
         state.validationRequestURL = trimmedURL
         return Self.validate(trimmedURL, cancelID: CancelID.validation)
@@ -418,7 +477,20 @@ struct VotingConfigSettings {
 
     /// User-visible error when adding or switching a chain URL that matches Default or another custom entry.
     private static var duplicateChainURLErrorMessage: String {
-        String(localized: "This chain URL is already added.")
+        String(localized: "This source URL is already added.")
+    }
+
+    private static var invalidChainURLErrorMessage: String {
+        String(localized: "Please enter a valid URL (e.g. https://zodl.com/polls)")
+    }
+
+    private static var titleTooLongErrorMessage: String {
+        String(localized: "Title must be 15 characters or less, including spaces.")
+    }
+
+    private static func titleValidationError(_ title: String) -> String? {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.count > 15 ? titleTooLongErrorMessage : nil
     }
 
     /// True when `source` matches the bundled default pin (same URL and checksum semantics as `PinnedConfigSource`).

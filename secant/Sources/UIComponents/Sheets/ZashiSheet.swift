@@ -53,6 +53,7 @@ struct ContentHeightKey: PreferenceKey {
 struct ZashiSheetModifier<SheetContent: View>: ViewModifier {
     @Binding var isPresented: Bool
     let horizontalPadding: CGFloat
+    let dragIndicatorVisibility: Visibility
     let onDismiss: (() -> Void)?
     @State var sheetHeight: CGFloat = .zero
     var sheetContent: SheetContent
@@ -63,14 +64,14 @@ struct ZashiSheetModifier<SheetContent: View>: ViewModifier {
                 if #available(iOS 26.0, *) {
                     mainBody26()
                         .presentationDetents([.height(sheetHeight)])
-                        .presentationDragIndicator(.visible)
+                        .presentationDragIndicator(dragIndicatorVisibility)
                         .padding(.horizontal, horizontalPadding)
                         .applySheetBackground()
                 } else if #available(iOS 16.4, *) {
                     mainBody()
                         .id(sheetHeight)
                         .presentationDetents([.height(sheetHeight)])
-                        .presentationDragIndicator(.visible)
+                        .presentationDragIndicator(dragIndicatorVisibility)
                         .presentationCornerRadius(Design.Radius._4xl)
                         .padding(.horizontal, horizontalPadding)
                         .applySheetBackground()
@@ -78,7 +79,7 @@ struct ZashiSheetModifier<SheetContent: View>: ViewModifier {
                     mainBody()
                         .id(sheetHeight)
                         .presentationDetents([.height(sheetHeight)])
-                        .presentationDragIndicator(.visible)
+                        .presentationDragIndicator(dragIndicatorVisibility)
                         .padding(.horizontal, horizontalPadding)
                         .applySheetBackground()
                 } else {
@@ -127,6 +128,7 @@ extension View {
     func zashiSheet(
         isPresented: Binding<Bool>,
         horizontalPadding: CGFloat = Design.Spacing._3xl,
+        dragIndicatorVisibility: Visibility = .visible,
         onDismiss: (() -> Void)? = nil,
         content: @escaping () -> some View
     ) -> some View {
@@ -134,6 +136,7 @@ extension View {
             ZashiSheetModifier(
                 isPresented: isPresented,
                 horizontalPadding: horizontalPadding,
+                dragIndicatorVisibility: dragIndicatorVisibility,
                 onDismiss: onDismiss,
                 sheetContent: content()
             )

@@ -741,7 +741,7 @@ struct SwapAndPay {
                 let zecAmount = Zatoshi(NSDecimalNumber(decimal: quote.amountIn).int64Value)
                 return .run { send in
                     do {
-                        let recipient = try Recipient(quote.depositAddress, network: zcashSDKEnvironment.network.networkType)
+                        let recipient = try Recipient(quote.depositAddress, network: zcashSDKEnvironment.network().networkType)
 
                         let proposal = try await sdkSynchronizer.proposeTransfer(account.id, recipient, zecAmount, nil)
                         

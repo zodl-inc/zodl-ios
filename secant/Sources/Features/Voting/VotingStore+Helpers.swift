@@ -10,9 +10,9 @@ extension Voting {
     /// Persisted record of when a round's vote submission fully completed,
     /// the voting weight at that moment, and how many proposals were included.
     /// Survives app termination so the Results screen can render
-    /// "Voted Feb 15 - Voting Power X.XXX ZEC" and the polls list can show the
-    /// "X of Y voted" indicator days after submission, even though the live
-    /// session state is per-session.
+    /// "Voted Feb 15 - Voting Power X.XXX ZEC" and the polls list can show
+    /// the Voted state days after submission, even though the live session
+    /// state is per-session.
     struct VoteRecord: Equatable {
         let votedAt: Date
         let votingWeight: UInt64
@@ -210,7 +210,7 @@ extension AlertState where Action == Voting.Action {
                 TextState(String(localizable: .coinVoteDelegationSigningSkipAlertPrimary))
             }
             ButtonState(role: .cancel, action: .skipBundlesAlert(.dismiss)) {
-                TextState(String(localizable: .coinVoteCommonCancel))
+                TextState(String(localizable: .coinVoteDelegationSigningSkipAlertCancel))
             }
         } message: {
             TextState(String(localizable: .coinVoteDelegationSigningSkipAlertMessage(lockedIn, givingUp)))

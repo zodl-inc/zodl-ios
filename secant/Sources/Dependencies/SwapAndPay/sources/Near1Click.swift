@@ -169,8 +169,11 @@ struct Near1Click {
 }
 
 extension Near1Click {
-    static let liveValue = Self(
-        submitDepositTxId: { txId, depositAddress in
+    static let liveValue = Self.live()
+
+    static func live() -> Self {
+        Self(
+            submitDepositTxId: { txId, depositAddress in
             let requestData = SwapSubmitHash(
                 txHash: txId,
                 depositAddress: depositAddress
@@ -496,5 +499,6 @@ extension Near1Click {
                 depositedAmountFormatted: depositedAmountFormattedDecimal
             )
         }
-    )
+        )
+    }
 }

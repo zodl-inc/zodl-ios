@@ -32,7 +32,7 @@ struct AddKeystoneHWWallet {
 
             if let zcashAccount = zcashAccounts?.accounts.first {
                 do {
-                    return try derivationTool.deriveUnifiedAddressFrom(zcashAccount.ufvk, zcashSDKEnvironment.network.networkType).stringEncoded
+                    return try derivationTool.deriveUnifiedAddressFrom(zcashAccount.ufvk, zcashSDKEnvironment.network().networkType).stringEncoded
                 } catch {
                     return ""
                 }

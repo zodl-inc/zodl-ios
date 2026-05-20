@@ -39,7 +39,8 @@ struct ConfirmSubmissionView: View {
                 },
                 secondary: .init(title: String(localizable: .coinVoteCommonCancel), style: .secondary) {
                     store.send(.dismissBatchResults)
-                }
+                },
+                visualStyle: .unverifiedWarning
             )
             .votingSheet(
                 isPresented: submissionFailedBinding,
@@ -50,7 +51,8 @@ struct ConfirmSubmissionView: View {
                 },
                 secondary: .init(title: String(localizable: .coinVoteCommonCancel), style: .secondary) {
                     store.send(.dismissBatchResults)
-                }
+                },
+                visualStyle: .unverifiedWarning
             )
         }
     }
@@ -152,47 +154,37 @@ struct ConfirmSubmissionView: View {
         VStack(spacing: 0) {
             detailRow(label: String(localizable: .coinVoteConfirmSubmissionDetailPoll), value: store.votingRound.title)
 
-            Divider()
-
             if isIdle {
-                detailRow(
-                    label: String(localizable: .coinVoteConfirmSubmissionDetailAmount),
-                    value: String(localizable: .coinVoteConfirmSubmissionDetailAmountValue)
-                )
-                Divider()
-                detailRow(
-                    label: String(localizable: .coinVoteConfirmSubmissionDetailFee),
-                    value: String(localizable: .coinVoteConfirmSubmissionDetailFeeValue)
-                )
-                Divider()
+                detailsDivider()
+                memoRow()
             } else {
+                detailsDivider()
                 detailRow(
                     label: String(localizable: .coinVoteConfirmSubmissionDetailVotingPower),
                     value: String(localizable: .coinVoteConfirmSubmissionDetailVotingPowerValue(store.votingWeightZECString))
                 )
-                Divider()
-            }
-
-            detailRow(label: String(localizable: .coinVoteConfirmSubmissionDetailVotingHotkey), value: truncatedHotkey)
-
-            if isIdle {
-                Divider()
-                memoRow()
             }
         }
         .background(Design.Surfaces.bgSecondary.color(colorScheme))
-        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .clipShape(RoundedRectangle(cornerRadius: Design.Radius._2xl))
     }
 
     @ViewBuilder
     private func detailRow(label: String, value: String) -> some View {
-        HStack {
+        HStack(alignment: .center, spacing: 8) {
             Text(label)
-                .zFont(size: 14, style: Design.Text.secondary)
-            Spacer()
+                .zFont(size: 14, style: Design.Text.tertiary)
+                .tracking(-0.224)
+                .lineLimit(1)
+
+            Spacer(minLength: 8)
+
             Text(value)
                 .zFont(.medium, size: 14, style: Design.Text.primary)
+                .tracking(-0.224)
                 .lineLimit(1)
+                .truncationMode(.tail)
+                .multilineTextAlignment(.trailing)
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 12)
@@ -202,28 +194,29 @@ struct ConfirmSubmissionView: View {
     private func memoRow() -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(localizable: .coinVoteConfirmSubmissionDetailMemo)
-                .zFont(size: 14, style: Design.Text.secondary)
+                .zFont(size: 14, style: Design.Text.tertiary)
+                .tracking(-0.224)
 
             Text(localizable: .coinVoteConfirmSubmissionMemoMessage(store.votingRound.title, store.votingWeightZECString))
-                .zFont(.medium, size: 14, style: Design.Text.primary)
+                .zFont(.medium, size: 12, style: Design.Text.primary)
+                .tracking(-0.072)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 12)
     }
 
-    private var truncatedHotkey: String {
-        guard let address = store.hotkeyAddress, address.count > 11 else {
-            return store.hotkeyAddress ?? "–"
-        }
-        return "\(address.prefix(6))...\(address.suffix(5))"
+    private func detailsDivider() -> some View {
+        Design.Surfaces.bgPrimary.color(colorScheme)
+            .frame(height: 1)
     }
 
     // MARK: - Progress
 
     // Authorization has its own label; after that, the user-facing progress is
     // proposal count only, regardless of the protocol phase inside each vote.
-    private var submissionProgress: (progress: Double, title: String, caption: String?) {
+    private var submissionProgress: (progress: Double, title: String) {
         let delegationWeight = 0.3
 
         switch status {
@@ -234,7 +227,7 @@ struct ConfirmSubmissionView: View {
             case .complete: p = 1.0
             default: p = 0
             }
-            return (p * delegationWeight, String(localizable: .coinVoteStoreSubmissionAuthorizingVote), nil)
+            return (p * delegationWeight, String(localizable: .coinVoteStoreSubmissionAuthorizingVote))
 
         case let .submitting(currentIndex, totalCount, _):
             let offset = store.delegationProofStatus == .complete ? delegationWeight : 0.0
@@ -247,12 +240,11 @@ struct ConfirmSubmissionView: View {
                         String(currentIndex + 1),
                         String(totalCount)
                     )
-                ),
-                estimatedTimeRemainingCaption(currentIndex: currentIndex, totalCount: totalCount)
+                )
             )
 
         case .authorizationFailed:
-            return (0, String(localizable: .coinVoteStoreSubmissionAuthorizingVote), nil)
+            return (0, String(localizable: .coinVoteStoreSubmissionAuthorizingVote))
 
         case let .submissionFailed(_, submittedCount, totalCount):
             let fraction = Double(submittedCount) / Double(max(totalCount, 1))
@@ -264,24 +256,12 @@ struct ConfirmSubmissionView: View {
                         String(submittedCount),
                         String(totalCount)
                     )
-                ),
-                nil
+                )
             )
 
         default:
-            return (0, "", nil)
+            return (0, "")
         }
-    }
-
-    private func estimatedTimeRemainingCaption(currentIndex: Int, totalCount: Int) -> String {
-        let remainingVotes = max(totalCount - currentIndex - 1, 1)
-        let estimatedSecondsPerVote = 18
-        let minutes = max(1, Int(ceil(Double(remainingVotes * estimatedSecondsPerVote) / 60.0)))
-
-        if minutes == 1 {
-            return String(localizable: .coinVoteConfirmSubmissionProgressTimeRemainingOne)
-        }
-        return String(localizable: .coinVoteConfirmSubmissionProgressTimeRemainingMany(String(minutes)))
     }
 
     // MARK: - Bottom Section
@@ -319,11 +299,6 @@ struct ConfirmSubmissionView: View {
                         }
                     }
                     .frame(height: 8)
-
-                    if let caption = progressInfo.caption {
-                        Text(caption)
-                            .zFont(size: 13, style: Design.Text.secondary)
-                    }
                 }
                 .padding(Design.Spacing._2xl)
                 .background(Design.Surfaces.bgSecondary.color(colorScheme))

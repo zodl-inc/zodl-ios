@@ -1,6 +1,26 @@
 {
     "releases": [
         {
+            "version": "3.4.1",
+            "date": "18-05-2026",
+            "timestamp": 1778606653,
+            "sections": [
+                {
+                    "title": "Cambiado:",
+                    "bulletpoints": [
+                        "Actualizamos el texto del widget de estado de protección."
+                    ]
+                },
+                {
+                    "title": "Corregido:",
+                    "bulletpoints": [
+                        "Corregimos un error que impedía proteger cuando había muchas entradas transparentes pequeñas.",
+                        "Corregimos un problema de navegación en el flujo de Restauración."
+                    ]
+                }
+            ]
+        },
+        {
             "version": "3.4.0",
             "date": "07-05-2026",
             "timestamp": 1778001853,

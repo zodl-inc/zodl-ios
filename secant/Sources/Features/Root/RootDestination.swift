@@ -60,7 +60,7 @@ extension Root {
                 return .none
 
             case .destination(.deeplink(let url)):
-                if let _ = uriParser.checkRP(url.absoluteString, zcashSDKEnvironment.network.networkType) {
+                if let _ = uriParser.checkRP(url.absoluteString, zcashSDKEnvironment.network().networkType) {
                     // The deeplink is some zip321, we ignore it and let users know in a warning screen
                     return .send(.destination(.updateDestination(.deeplinkWarning)))
                 }
@@ -106,15 +106,15 @@ extension Root {
                         }
 
                         // get a proposal
-                        let recipient = try Recipient(transaction.address, network: zcashSDKEnvironment.network.networkType)
+                        let recipient = try Recipient(transaction.address, network: zcashSDKEnvironment.network().networkType)
                         let proposal = try await sdkSynchronizer.proposeTransfer(account.id, recipient, transaction.amount, nil)
 
                         // make the actual send
                         let storedWallet = try walletStorage.exportWallet()
                         let seedBytes = try mnemonic.toSeed(storedWallet.seedPhrase.value())
-                        let network = zcashSDKEnvironment.network.networkType
+                        let network = zcashSDKEnvironment.network().networkType
                         let spendingKey = try derivationTool.deriveSpendingKey(seedBytes, zip32AccountIndex, network)
-                        
+
                         let result = try await sdkSynchronizer.createProposedTransactions(proposal, spendingKey)
                         
                         switch result {
@@ -148,7 +148,7 @@ private extension Root {
         derivationTool: DerivationToolClient
     ) async throws -> Root.Action {
         @Dependency(\.zcashSDKEnvironment) var zcashSDKEnvironment
-        let deeplink = try deeplink.resolveDeeplinkURL(url, zcashSDKEnvironment.network.networkType, derivationTool)
+        let deeplink = try deeplink.resolveDeeplinkURL(url, zcashSDKEnvironment.network().networkType, derivationTool)
         
         switch deeplink {
         case .home:

@@ -165,7 +165,7 @@ struct SmartBanner {
             switch action {
             case .onAppear:
                 // __LD TESTED
-                state.tokenName = zcashSDKEnvironment.tokenName
+                state.tokenName = zcashSDKEnvironment.tokenName()
                 state.isWalletBackupAcknowledgedAtKeychain = walletStorage.exportWalletBackupAcknowledged()
                 state.isWalletBackupAcknowledged = state.isWalletBackupAcknowledgedAtKeychain
                 state.isShieldingAcknowledgedAtKeychain = walletStorage.exportShieldingAcknowledged()
@@ -378,7 +378,7 @@ struct SmartBanner {
                     
                     if let account = state.selectedWalletAccount, let accountBalance = latestState.data.accountsBalances[account.id] {
                         if state.priorityContent == .priority7 {
-                            if accountBalance.unshielded > zcashSDKEnvironment.shieldingThreshold {
+                            if accountBalance.unshielded > zcashSDKEnvironment.shieldingThreshold() {
                                 return .send(.transparentBalanceUpdated(accountBalance.unshielded))
                             } else {
                                 return .merge(
@@ -386,7 +386,7 @@ struct SmartBanner {
                                     .send(.closeSheetTapped)
                                 )
                             }
-                        } else if state.transparentBalance < zcashSDKEnvironment.shieldingThreshold && accountBalance.unshielded > zcashSDKEnvironment.shieldingThreshold {
+                        } else if state.transparentBalance < zcashSDKEnvironment.shieldingThreshold() && accountBalance.unshielded > zcashSDKEnvironment.shieldingThreshold() {
                             return .merge(
                                 .send(.transparentBalanceUpdated(accountBalance.unshielded)),
                                 .send(.triggerPriority(.priority7))
@@ -477,7 +477,7 @@ struct SmartBanner {
                 }
                 return .run { [remindMeShieldedPhaseCounter = state.remindMeShieldedPhaseCounter] send in
                     if let accountBalance = try? await sdkSynchronizer.getAccountsBalances()[account.id],
-                       accountBalance.unshielded >= zcashSDKEnvironment.shieldingThreshold {
+                       accountBalance.unshielded >= zcashSDKEnvironment.shieldingThreshold() {
                         await send(.transparentBalanceUpdated(accountBalance.unshielded))
                         
                         if let shieldedReminder = walletStorage.exportShieldingReminder(account.vendor.name()) {

@@ -9,7 +9,9 @@ import Foundation
 import ComposableArchitecture
 
 extension UserPreferencesStorageClient: TestDependencyKey {
-    static var testValue = {
+    static let testValue = Self.test()
+
+    static func test() -> Self {
         let mock = UserPreferencesStorage.mock
 
         return UserPreferencesStorageClient(
@@ -21,7 +23,7 @@ extension UserPreferencesStorageClient: TestDependencyKey {
             setSelectedServers: { try mock.setSelectedServers($0) },
             removeAll: { mock.removeAll() }
         )
-    }()
+    }
 }
 
 extension UserPreferencesStorage {

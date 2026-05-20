@@ -28,6 +28,7 @@ struct ZashiButton<PrefixContent, AccessoryContent>: View where PrefixContent: V
     let fontSize: CGFloat
     let horizontalPadding: CGFloat
     let verticalPadding: CGFloat
+    let minHeight: CGFloat?
     @ViewBuilder let prefixView: PrefixContent?
     @ViewBuilder let accessoryView: AccessoryContent?
     let action: () -> Void
@@ -39,6 +40,7 @@ struct ZashiButton<PrefixContent, AccessoryContent>: View where PrefixContent: V
         fontSize: CGFloat = 16,
         horizontalPadding: CGFloat = 18,
         verticalPadding: CGFloat = 12,
+        minHeight: CGFloat? = nil,
         prefixView: PrefixContent? = EmptyView(),
         accessoryView: AccessoryContent? = EmptyView(),
         action: @escaping () -> Void
@@ -49,6 +51,7 @@ struct ZashiButton<PrefixContent, AccessoryContent>: View where PrefixContent: V
         self.fontSize = fontSize
         self.horizontalPadding = horizontalPadding
         self.verticalPadding = verticalPadding
+        self.minHeight = minHeight
         self.accessoryView = accessoryView
         self.prefixView = prefixView
         self.action = action
@@ -77,7 +80,7 @@ struct ZashiButton<PrefixContent, AccessoryContent>: View where PrefixContent: V
             .zForegroundColor(fgColor())
             .padding(.horizontal, horizontalPadding)
             .padding(.vertical, verticalPadding)
-            .frame(maxWidth: infinityWidth ? .infinity : nil)
+            .frame(maxWidth: infinityWidth ? .infinity : nil, minHeight: minHeight)
             .background {
                 RoundedRectangle(cornerRadius: Design.Radius._xl)
                     .fill(bgColor().color(colorScheme))

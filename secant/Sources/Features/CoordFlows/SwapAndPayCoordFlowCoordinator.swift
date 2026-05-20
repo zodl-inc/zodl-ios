@@ -311,7 +311,7 @@ extension SwapAndPayCoordFlow {
                     do {
                         let storedWallet = try walletStorage.exportWallet()
                         let seedBytes = try mnemonic.toSeed(storedWallet.seedPhrase.value())
-                        let network = zcashSDKEnvironment.network.networkType
+                        let network = zcashSDKEnvironment.network().networkType
                         let spendingKey = try derivationTool.deriveSpendingKey(seedBytes, zip32AccountIndex, network)
 
                         let result = try await sdkSynchronizer.createProposedTransactions(proposal, spendingKey)

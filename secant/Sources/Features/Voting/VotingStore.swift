@@ -153,6 +153,7 @@ struct Voting {
             case confirmSubmission
             case error(String)
             case configError(String)
+            case configSettings
             case walletSyncing
         }
 
@@ -319,10 +320,9 @@ struct Voting {
 
         /// Per-round persisted vote records keyed by round ID, populated by a
         /// one-time scan of UserDefaults during `allRoundsLoaded`. The polls
-        /// list uses this to render the Voted pill on active-round cards and
-        /// the "X of Y voted" indicator on closed cards without re-querying
-        /// UserDefaults from the view. A record exists only once the round has
-        /// no remaining draft votes to edit or retry.
+        /// list uses this to render the Voted pill on active-round cards
+        /// without re-querying UserDefaults from the view. A record exists only
+        /// once the round has no remaining draft votes to edit or retry.
         var voteRecords: [String: VoteRecord] = [:]
 
         /// Round ids (lowercase hex) endorsed by the on-chain `zodl` endorser.
@@ -434,7 +434,7 @@ struct Voting {
         var pendingVotingPczt: VotingPcztResult?
         /// Unsigned delegation PCZT request shown as QR and used for signature extraction.
         var pendingUnsignedDelegationPczt: Pczt?
-        @Presents var configSettings: VotingConfigSettings.State?
+        var configSettings: VotingConfigSettings.State?
         @Presents var keystoneScan: Scan.State?
         @Presents var skipBundlesAlert: AlertState<Action>?
 
@@ -718,7 +718,7 @@ struct Voting {
         case backToRoundsList
         case howToVoteContinueTapped
         case openConfigSettings
-        case configSettings(PresentationAction<VotingConfigSettings.Action>)
+        case configSettings(VotingConfigSettings.Action)
         case viewMyVotesTapped(roundId: String)
 
         // Rounds list
@@ -800,7 +800,6 @@ struct Voting {
         case backToList
         case nextProposalDetail
         case previousProposalDetail
-        case navigateToReview
         case confirmUnanswered
         case dismissUnanswered
         case navigateToConfirmation
@@ -989,7 +988,6 @@ struct Voting {
                 .backToList,
                 .nextProposalDetail,
                 .previousProposalDetail,
-                .navigateToReview,
                 .confirmUnanswered,
                 .dismissUnanswered,
                 .navigateToConfirmation,
@@ -1013,7 +1011,7 @@ struct Voting {
                 return reduceSubmission(&state, action)
             }
         }
-        .ifLet(\.$configSettings, action: \.configSettings) {
+        .ifLet(\.configSettings, action: \.configSettings) {
             VotingConfigSettings()
         }
         .ifLet(\.$keystoneScan, action: \.keystoneScan) {

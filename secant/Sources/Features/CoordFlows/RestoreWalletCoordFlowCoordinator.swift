@@ -26,7 +26,7 @@ extension RestoreWalletCoordFlow {
                 do {
                     // get the random english mnemonic
                     let newRandomPhrase = try mnemonic.randomMnemonic()
-                    let birthday = zcashSDKEnvironment.latestCheckpoint
+                    let birthday = zcashSDKEnvironment.latestCheckpoint()
                     
                     // store the wallet to the keychain
                     try walletStorage.importWallet(newRandomPhrase, birthday, .english, false)
@@ -73,10 +73,10 @@ extension RestoreWalletCoordFlow {
                 state.isTorSheetPresented = false
                 let isTorOn = state.isTorOn
                 try? walletStorage.importTorSetupFlag(isTorOn)
-                return .run { send in
-                    try? await sdkSynchronizer.torEnabled(isTorOn)
-                    await send(.resolveRestore)
-                }
+                return .merge(
+                    .send(.resolveRestore),
+                    .run { _ in try? await sdkSynchronizer.torEnabled(isTorOn) }
+                )
 
                 // MARK: Recovery Seed Phrase Entry
                 

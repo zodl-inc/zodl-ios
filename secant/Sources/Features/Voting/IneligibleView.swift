@@ -12,7 +12,7 @@ struct IneligibleView: View {
             VotingBlockingBackdrop(store: store)
                 .votingBlockingSheet(
                     isActive: { store.currentScreen == .ineligible },
-                    onExit: { store.send(.dismissFlow) }
+                    onExit: { store.send(.backToRoundsList) }
                 ) { dismiss in
                     sheetContent(dismiss: dismiss)
                 }

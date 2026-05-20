@@ -42,9 +42,8 @@ extension Voting {
             }
 
             // Populate voteRecords from persisted UserDefaults so the polls
-            // list can render the Voted pill and "X of Y voted" indicator
-            // for rounds the user has fully submitted. Per-round, sync
-            // read — fast even for tens of rounds.
+            // list can render the Voted pill for rounds the user has fully
+            // submitted. Per-round, sync read, fast even for tens of rounds.
             let walletId = state.walletId
             var loadedRecords: [String: VoteRecord] = [:]
             for item in state.allRounds {
@@ -69,6 +68,7 @@ extension Voting {
         case .roundTapped(let roundId):
             guard let item = state.allRounds.first(where: { $0.id == roundId }) else { return .none }
             if shouldShowUnverifiedPollSheet(state, roundId: roundId) {
+                state.screenStack = [.pollsList]
                 state.showUnverifiedPollWarning = true
                 state.pendingUnverifiedRoundTapId = roundId
                 return .none
@@ -189,7 +189,7 @@ extension Voting {
 
         case .startActiveRoundPipeline:
             guard let session = state.activeSession, session.status == .active else { return .none }
-            let network = zcashSDKEnvironment.network
+            let network = zcashSDKEnvironment.network()
             let walletDbPath = databaseFiles.dataDbURLFor(network).path
             let networkId: UInt32 = network.networkType.votingRustNetworkId
             let snapshotHeight = session.snapshotHeight
@@ -451,6 +451,7 @@ extension Voting {
             if shouldShowUnverifiedPollSheet(state, roundId: roundIdHex),
                state.allRounds.contains(where: { $0.id == roundIdHex })
             {
+                state.screenStack = [.pollsList]
                 state.showUnverifiedPollWarning = true
                 state.pendingUnverifiedRoundTapId = roundIdHex
                 return .none

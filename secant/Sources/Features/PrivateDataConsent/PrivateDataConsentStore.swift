@@ -76,7 +76,7 @@ struct PrivateDataConsent {
             switch action {
             case .onAppear:
                 // __LD TESTED
-                state.dataDbURL = [databaseFiles.dataDbURLFor(zcashSDKEnvironment.network)]
+                state.dataDbURL = [databaseFiles.dataDbURLFor(zcashSDKEnvironment.network())]
                 return .none
 
             case .exportLogs(.finished):

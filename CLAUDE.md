@@ -24,28 +24,42 @@ Zodl (formerly Zashi) is an iOS Zcash wallet built with SwiftUI and The Composab
 
 ## Architecture
 
-**TCA (The Composable Architecture)** drives all state management. Each feature has:
+**TCA (The Composable Architecture)** drives all state management, using modern macros (`@Reducer`, `@ObservableState`, `@Dependency`). Each feature has:
 - `<Feature>Store.swift` - State, Action, Reducer, dependencies
 - `<Feature>View.swift` - SwiftUI view consuming the store
+- `<Feature>Coordinator.swift` (some features) - Navigation glue between screens
 
 **Source layout** (`secant/Sources/`):
 - `Features/` - Screen-level features (~40), each in its own directory
-- `Dependencies/` - Dependency clients (~43) wrapping SDK, iOS, and custom services
+- `Features/CoordFlows/` - Multi-screen coordinator flows (Send, Restore, Scan, SwapAndPay, AddKeystoneHWWallet, RequestZec, SignWithKeystone, Transactions, WalletBackup). Each flow has `<Name>CoordFlowStore.swift`, `<Name>CoordFlowView.swift`, and `<Name>CoordFlowCoordinator.swift`.
+- `Dependencies/` - Dependency clients (~41) wrapping SDK, iOS, and custom services
 - `UIComponents/` - Reusable UI building blocks (buttons, text fields, badges, etc.)
-- `Models/` - Shared data types (TransactionState, StoredWallet, WalletAccount, etc.)
+- `Models/` - Shared data types (TransactionState, StoredWallet, WalletAccount, SwapAsset, Swaps, WalletStatus, etc.)
 - `Utils/` - Helpers and extensions
 - `Generated/` - SwiftGen output (assets, fonts) - do not edit manually
 - `Resources/` - Assets, fonts (Inter, RobotoMono, Zboto, Michroma), Lottie animations, localizations
 
 **Root feature** (`Features/Root/`) is the app coordinator - handles wallet initialization, navigation, and deep linking across 13 files.
 
-**Dependencies** follow a client pattern: protocol/interface with `live` (real) and `mock`/`noOp`/`throwing` variants for testing. Located in `Dependencies/`.
+**Dependencies** use the `@DependencyClient` macro from `swift-dependencies` on a struct with `@Sendable` closures (Swift 6 concurrency). Layout per client:
+- `<Name>Interface.swift` - `@DependencyClient struct <Name>Client { ... }` plus the `DependencyValues` extension
+- `<Name>LiveKey.swift` - `liveValue` conformance for production
+- `<Name>TestKey.swift` - **only when** the macro-generated default isn't enough; otherwise omit (the macro provides `testValue` automatically). Tests can also override individual closures inline via `withDependencies`.
 
-**Navigation** uses a route pattern:
+Closures must be `@Sendable`. Use `@preconcurrency import ZcashLightClientKit` when an SDK type is not yet `Sendable`.
+
+**Navigation** uses TCA's `StackState` with a `@Reducer enum Path` (coordinator pattern):
 ```swift
-struct FeatureState {
-    enum Route { case routeName }
-    var route: Route?
+@Reducer
+struct SomeCoordFlow {
+    @Reducer
+    enum Path {
+        case scan(Scan)
+        case sendConfirmation(SendConfirmation)
+    }
+    @ObservableState
+    struct State { var path = StackState<Path.State>() }
+    enum Action { case path(StackActionOf<Path>) }
 }
 ```
 

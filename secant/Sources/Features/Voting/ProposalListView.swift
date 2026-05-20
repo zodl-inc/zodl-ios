@@ -150,8 +150,6 @@ struct ProposalListView: View {
                 }
             }
 
-            voteProgressBar()
-
             // Meta line: Ends X · Voting Power Y · N days left
             metaLineView()
                 .padding(.horizontal, -24) // bleed to screen edges
@@ -225,9 +223,11 @@ struct ProposalListView: View {
                         .zFont(size: 15, style: Design.Text.primary)
                         .fixedSize(horizontal: false, vertical: true)
 
-                    // Forum link
-                    forumDiscussionsLink()
-                        .padding(.top, 8)
+                    if store.votingRound.discussionURL != nil {
+                        // Forum link
+                        forumDiscussionsLink()
+                            .padding(.top, 8)
+                    }
                 }
                 .padding(.horizontal, 24)
                 .padding(.bottom, 24)
@@ -261,65 +261,7 @@ struct ProposalListView: View {
 
         if let url = store.votingRound.discussionURL {
             Link(destination: url) { content }
-        } else {
-            content
-                .opacity(0.5)
         }
-    }
-
-    // MARK: - Vote Progress Bar
-
-    @ViewBuilder
-    private func voteProgressBar() -> some View {
-        let total = max(store.totalProposals, 1)
-        // Count proposals with a resolved choice (draft, confirmed, or the
-        // post-submit abstain fallback).
-        let choices = store.effectiveChoices
-        let voted = store.votingRound.proposals.filter { choices[$0.id] != nil }.count
-        let completedSteps = min(voted, max(total - 1, 0))
-
-        GeometryReader { geo in
-            let barHeight: CGFloat = 10
-            let dotDiameter: CGFloat = 4
-            let firstDotX: CGFloat = 20
-            let lastDotX = max(firstDotX, geo.size.width - 24)
-            let dotCount = max(total - 1, 0)
-            let stepWidth = dotCount <= 1 ? 0 : (lastDotX - firstDotX) / CGFloat(dotCount - 1)
-            let progressWidth: CGFloat = {
-                if voted >= total {
-                    return geo.size.width
-                }
-                if completedSteps == 0 {
-                    return barHeight
-                }
-                return min(geo.size.width, firstDotX + stepWidth * CGFloat(completedSteps - 1) + barHeight / 2)
-            }()
-
-            ZStack(alignment: .leading) {
-                // Bar background.
-                Capsule()
-                    .fill(Design.Surfaces.bgQuaternary.color(colorScheme))
-                    .frame(height: barHeight)
-
-                // Filled portion starts as the 10pt marker shown in Figma, then
-                // advances across the evenly spaced proposal dots as votes land.
-                Capsule()
-                    .fill(Design.Text.primary.color(colorScheme))
-                    .frame(width: progressWidth, height: barHeight)
-
-                // Figma shows upcoming proposals as 4pt dots inset from both ends.
-                ForEach(0..<dotCount, id: \.self) { index in
-                    if index >= completedSteps {
-                        Circle()
-                            .fill(Design.Utility.Gray._300.color(colorScheme))
-                            .frame(width: dotDiameter, height: dotDiameter)
-                            .offset(x: firstDotX + stepWidth * CGFloat(index) - dotDiameter / 2)
-                    }
-                }
-            }
-            .frame(maxHeight: .infinity, alignment: .center)
-        }
-        .frame(height: 10)
     }
 
     // MARK: - Meta Line
@@ -435,9 +377,9 @@ extension ProposalListView {
         let choice = store.effectiveChoices[proposal.id]
 
         VStack(alignment: .leading, spacing: 12) {
-            if proposal.zipNumber != nil || choice != nil {
+            if proposal.displayZipNumber != nil || choice != nil {
                 HStack {
-                    if let zipNumber = proposal.zipNumber {
+                    if let zipNumber = proposal.displayZipNumber {
                         ZIPBadge(zipNumber: zipNumber)
                     }
 
@@ -580,8 +522,8 @@ extension ProposalListView {
             }
 
             return CTAButtonSpec(
-                label: String(localizable: .coinVoteProposalListCtaReviewSubmit),
-                action: { store.send(.navigateToReview) },
+                label: String(localizable: .coinVoteProposalListCtaConfirmSubmit),
+                action: { store.send(.navigateToConfirmation) },
                 disabled: false
             )
         }

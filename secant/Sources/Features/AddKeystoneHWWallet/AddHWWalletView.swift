@@ -204,7 +204,7 @@ extension AddKeystoneHWWallet.State {
 }
 
 extension AddKeystoneHWWallet {
-    static let initial = StoreOf<AddKeystoneHWWallet>(
+    @MainActor static let initial = StoreOf<AddKeystoneHWWallet>(
         initialState: .initial
     ) {
         AddKeystoneHWWallet()

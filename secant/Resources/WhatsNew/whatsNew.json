@@ -1,6 +1,26 @@
 {
     "releases": [
         {
+            "version": "3.4.1",
+            "date": "18-05-2026",
+            "timestamp": 1778606653,
+            "sections": [
+                {
+                    "title": "Changed:",
+                    "bulletpoints": [
+                        "We updated the copy on the shielding status widget."
+                    ]
+                },
+                {
+                    "title": "Fixed:",
+                    "bulletpoints": [
+                        "We fixed a bug that prevented shielding when many small transparent inputs were involved.",
+                        "We fixed a navigation issue in the Restore flow."
+                    ]
+                }
+            ]
+        },
+        {
             "version": "3.4.0",
             "date": "07-05-2026",
             "timestamp": 1778001853,

@@ -1,0 +1,47 @@
+name: Pull Request
+
+on:
+  pull_request:
+    paths-ignore:
+      - '.github/ISSUE_TEMPLATE/*'
+      - '.github/pull_request_template.md'
+      - 'LICENSE'
+      - 'README.md'
+      - 'docs/**'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit_tests:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve packages
+        run: |
+          xcodebuild -project secant.xcodeproj \
+            -scheme secant-testnet \
+            -resolvePackageDependencies
+
+      - name: Run unit tests
+        run: |
+          xcodebuild test \
+            -project secant.xcodeproj \
+            -scheme secant-testnet \
+            -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=latest' \
+            -resultBundlePath TestResults.xcresult \
+            -only-testing:secantTests \
+            CODE_SIGNING_ALLOWED=NO | xcpretty --color
+
+      - name: Upload test results
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: TestResults
+          path: TestResults.xcresult

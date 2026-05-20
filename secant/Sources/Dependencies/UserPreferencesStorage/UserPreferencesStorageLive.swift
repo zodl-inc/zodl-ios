@@ -9,7 +9,9 @@ import Foundation
 import ComposableArchitecture
 
 extension UserPreferencesStorageClient: DependencyKey {
-    static var liveValue: UserPreferencesStorageClient = {
+    static let liveValue = Self.live()
+
+    static func live() -> Self {
         let live = UserPreferencesStorage.live
 
         return UserPreferencesStorageClient(
@@ -21,7 +23,7 @@ extension UserPreferencesStorageClient: DependencyKey {
             setSelectedServers: { try live.setSelectedServers($0) },
             removeAll: { live.removeAll() }
         )
-    }()
+    }
 }
 
 extension UserPreferencesStorage {

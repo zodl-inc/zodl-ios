@@ -1573,7 +1573,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "The authorization transaction failed. Check your connection and try again."
+            "value" : "We couldn't authorize your vote.\nCheck your connection and try again."
           }
         }
       }
@@ -1837,7 +1837,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "The vote submission failed. Check your connection and try again."
+            "value" : "Your vote couldn't be submitted\nCheck your connection and try again."
           }
         }
       }
@@ -1886,7 +1886,40 @@
         }
       }
     },
+    "coinVote.delegationSigning.buildingBundleRequest" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Building bundle %@ of %@..."
+          }
+        }
+      }
+    },
     "coinVote.delegationSigning.bundleProgress" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sign bundle %@ of %@"
+          }
+        }
+      }
+    },
+    "coinVote.delegationSigning.currentBundleWeight" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This bundle adds %@ ZEC of voting weight."
+          }
+        }
+      }
+    },
+    "coinVote.delegationSigning.currentBundleProgress" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
@@ -1904,6 +1937,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "After you have signed with Keystone, tap on the Scan Signature button below."
+          }
+        }
+      }
+    },
+    "coinVote.delegationSigning.multiBundleInstruction" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your voting weight is split into %@ Keystone signatures. After each signature, we'll prepare the next one."
           }
         }
       }
@@ -1926,6 +1970,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Processing signature..."
+          }
+        }
+      }
+    },
+    "coinVote.delegationSigning.preparingNextBundle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bundle %@ signed. Preparing bundle %@ of %@..."
           }
         }
       }
@@ -1963,6 +2018,39 @@
         }
       }
     },
+    "coinVote.delegationSigning.scanSignedBundle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Scan Signed Bundle %@"
+          }
+        }
+      }
+    },
+    "coinVote.delegationSigning.signedProgress" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ of %@ signed"
+          }
+        }
+      }
+    },
+    "coinVote.delegationSigning.signedWeightSummary" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ ZEC Authorized - %@ ZEC Pending"
+          }
+        }
+      }
+    },
     "coinVote.delegationSigning.skipAlertMessage" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1974,13 +2062,24 @@
         }
       }
     },
+    "coinVote.delegationSigning.skipAlertCancel" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Keep Signing"
+          }
+        }
+      }
+    },
     "coinVote.delegationSigning.skipAlertPrimary" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Skip"
+            "value" : "Vote with signed bundles only"
           }
         }
       }
@@ -1991,7 +2090,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Skip Remaining Bundles?"
+            "value" : "Use Signed Bundles Only?"
           }
         }
       }
@@ -2014,6 +2113,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Skip Remaining %@ Bundles"
+          }
+        }
+      }
+    },
+    "coinVote.delegationSigning.useSignedBundlesOnly" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Use signed bundles only"
+          }
+        }
+      }
+    },
+    "coinVote.delegationSigning.useSignedBundlesOnlySubtitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Continue without the remaining %@ ZEC."
           }
         }
       }
@@ -2249,17 +2370,6 @@
         }
       }
     },
-    "coinVote.pollsList.dateRange" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%1$@ - %2$@"
-          }
-        }
-      }
-    },
     "coinVote.pollsList.emptyMessage" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2348,17 +2458,6 @@
         }
       }
     },
-    "coinVote.pollsList.votedCount" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%@ of %@ voted"
-          }
-        }
-      }
-    },
     "coinVote.proposalDetail.position" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2432,17 +2531,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Continue Voting"
-          }
-        }
-      }
-    },
-    "coinVote.proposalList.ctaReviewSubmit" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Review & Submit"
           }
         }
       }
@@ -3179,7 +3267,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "The voting period closed. Your responses cannot be submitted."
+            "value" : "The voting period has ended.\nYour vote can no longer be submitted."
           }
         }
       }
@@ -3245,7 +3333,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Your wallet needs to sync past the snapshot block before you can participate in governance voting."
+            "value" : "Your wallet needs to sync to the snapshot block height before you can participate in voting."
           }
         }
       }
@@ -3256,7 +3344,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Wallet Still Syncing"
+            "value" : "Wallet Syncing"
           }
         }
       }
@@ -10541,6 +10629,23 @@
         }
       }
     },
+    "settings.coinholderPolling" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Beta: Coinholder Polling"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Beta: Coinholder Polling"
+          }
+        }
+      }
+    },
     "settings.deleteZashi" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -10735,13 +10840,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Settings"
+            "value" : "More"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Configuración"
+            "value" : "Más"
           }
         }
       }
@@ -10769,7 +10874,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "What's new"
+            "value" : "What’s New"
           }
         },
         "es" : {
@@ -11194,13 +11299,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Transparent Balance Detected"
+            "value" : "Unshielded Balance"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Saldo Transparente Detectado"
+            "value" : "Saldo No Protegido"
           }
         }
       }
@@ -14974,8 +15079,8 @@
         }
       }
     },
-    "This poll hasn't been verified or endorsed. We can't confirm its legitimacy or how results will be used." : {
-      "comment" : "Body of the warning sheet when the user saves a voting chain URL that is not verified or Zodl-endorsed."
+    "This poll hasn't been verified. We can't confirm its legitimacy or how results will be used." : {
+      "comment" : "Body of the warning sheet before entering an unverified poll."
     },
     "Title" : {
       "comment" : "A label for the custom poll source title field.",

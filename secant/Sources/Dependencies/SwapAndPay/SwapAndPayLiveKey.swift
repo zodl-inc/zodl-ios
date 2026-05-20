@@ -11,31 +11,35 @@ import Network
 import ComposableArchitecture
 
 extension SwapAndPayClient: DependencyKey {
-    static let liveValue = Self(
-        submitDepositTxId: { txId, depositAddress in
-            try await Near1Click.liveValue.submitDepositTxId(
-                txId,
-                depositAddress
-            )
-        },
-        swapAssets: {
-            try await Near1Click.liveValue.swapAssets()
-        },
-        quote: { dry, isSwapToZec, exactInput, slippageTolerance, zecAsset, toAsset, refundTo, destination, amount in
-            try await Near1Click.liveValue.quote(
-                dry,
-                isSwapToZec,
-                exactInput,
-                slippageTolerance,
-                zecAsset,
-                toAsset,
-                refundTo,
-                destination,
-                amount
-            )
-        },
-        status: { depositAddress, isSwapToZec in
-            try await Near1Click.liveValue.status(depositAddress, isSwapToZec)
-        }
-    )
+    static let liveValue = Self.live()
+
+    static func live() -> Self {
+        Self(
+            submitDepositTxId: { txId, depositAddress in
+                try await Near1Click.liveValue.submitDepositTxId(
+                    txId,
+                    depositAddress
+                )
+            },
+            swapAssets: {
+                try await Near1Click.liveValue.swapAssets()
+            },
+            quote: { dry, isSwapToZec, exactInput, slippageTolerance, zecAsset, toAsset, refundTo, destination, amount in
+                try await Near1Click.liveValue.quote(
+                    dry,
+                    isSwapToZec,
+                    exactInput,
+                    slippageTolerance,
+                    zecAsset,
+                    toAsset,
+                    refundTo,
+                    destination,
+                    amount
+                )
+            },
+            status: { depositAddress, isSwapToZec in
+                try await Near1Click.liveValue.status(depositAddress, isSwapToZec)
+            }
+        )
+    }
 }

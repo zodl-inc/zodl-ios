@@ -10,14 +10,18 @@ import ComposableArchitecture
 import SwiftUI
 
 extension WhatsNewProviderClient: DependencyKey {
-    static let liveValue = Self(
-        latest: {
-            WhatsNewProviderClient.releases().releases.first ?? .zero
-        },
-        all: {
-            WhatsNewProviderClient.releases()
-        }
-    )
+    static let liveValue = Self.live()
+
+    static func live() -> Self {
+        Self(
+            latest: {
+                WhatsNewProviderClient.releases().releases.first ?? .zero
+            },
+            all: {
+                WhatsNewProviderClient.releases()
+            }
+        )
+    }
 
     private static func checkCountryCodeEligibility(_ code: String) -> Bool {
         switch code {

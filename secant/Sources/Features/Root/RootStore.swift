@@ -152,7 +152,7 @@ struct Root {
         }
 
         case alert(PresentationAction<Action>)
-        case batteryStateChanged(Notification?)
+        case batteryStateChanged
         case binding(BindingAction<Root.State>)
         case cancelAllRunningEffects
         case confirmationDialog(PresentationAction<ConfirmationDialog>)
@@ -449,7 +449,7 @@ struct Root {
                     guard let config = userStoredPreferences.selectedServers(),
                           config.mode == .automatic else { return }
 
-                    let network = zcashSDKEnvironment.network.networkType
+                    let network = zcashSDKEnvironment.network().networkType
                     let endpoints = ZcashSDKEnvironment.endpoints(for: network)
 
                     let bestServers = await sdkSynchronizer.evaluateBestOf(
@@ -495,7 +495,7 @@ struct Root {
         _ endpoint: LightWalletEndpoint,
         cancelID: UUID
     ) -> Effect<Action> {
-        let network = zcashSDKEnvironment.network.networkType
+        let network = zcashSDKEnvironment.network().networkType
 
         return .run { send in
             do {

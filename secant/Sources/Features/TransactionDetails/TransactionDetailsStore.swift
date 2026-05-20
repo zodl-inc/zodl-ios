@@ -154,7 +154,7 @@ struct TransactionDetails {
             @Dependency(\.zcashSDKEnvironment) var zcashSDKEnvironment
             
             let address = swapDetails.addressToCheckShield
-            let network = zcashSDKEnvironment.network.networkType
+            let network = zcashSDKEnvironment.network().networkType
             
             return !derivationTool.isTransparentAddress(address, network)
         }

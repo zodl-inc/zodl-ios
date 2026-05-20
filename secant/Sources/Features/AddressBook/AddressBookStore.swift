@@ -224,7 +224,7 @@ struct AddressBook {
                 return .send(.updateAssetsAccordingToSearchTerm)
 
             case .binding:
-                state.isValidZcashAddress = derivationTool.isZcashAddress(state.address, zcashSDKEnvironment.network.networkType)
+                state.isValidZcashAddress = derivationTool.isZcashAddress(state.address, zcashSDKEnvironment.network().networkType)
                 state.isValidForm = !state.name.isEmpty && (state.isValidZcashAddress || state.context == .swap || state.isEditingContactWithChain)
                 if state.isValidZcashAddress {
                     state.selectedChain = nil
@@ -284,7 +284,7 @@ struct AddressBook {
                 state.originalChainId = record.chainId ?? "zcash"
                 state.isValidForm = true
                 state.isNameFocused = true
-                state.isValidZcashAddress = derivationTool.isZcashAddress(state.address, zcashSDKEnvironment.network.networkType)
+                state.isValidZcashAddress = derivationTool.isZcashAddress(state.address, zcashSDKEnvironment.network().networkType)
                 state.isEditingContactWithChain = record.chainId != nil
                 state.selectedChain = state.chains.first { $0.chain == record.chainId }
                 return .none

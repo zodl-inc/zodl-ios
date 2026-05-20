@@ -245,7 +245,7 @@ struct SendForm {
             switch action {
             case .onAppear:
                 // __LD TESTED
-                state.memoState.charLimit = zcashSDKEnvironment.memoCharLimit
+                state.memoState.charLimit = zcashSDKEnvironment.memoCharLimit()
                 return .send(.exchangeRateSetupChanged)
 
             case .onDisapear:
@@ -314,7 +314,7 @@ struct SendForm {
                 state.amount = state.isLatestInputFiat ? state.amount.roundToAvoidDustSpend() : state.amount
                 return .run { [state, confirmationType] send in
                     do {
-                        let recipient = try Recipient(state.address.data, network: zcashSDKEnvironment.network.networkType)
+                        let recipient = try Recipient(state.address.data, network: zcashSDKEnvironment.network().networkType)
                         
                         let memo: Memo?
                         if state.isValidTransparentAddress || state.isValidTexAddress {
@@ -442,7 +442,7 @@ struct SendForm {
                 return .none
                 
             case .addressUpdated(let newValue):
-                let network = zcashSDKEnvironment.network.networkType
+                let network = zcashSDKEnvironment.network().networkType
                 state.address = newValue
                 state.isValidAddress = derivationTool.isZcashAddress(state.address.data, network)
                 state.isValidTransparentAddress = derivationTool.isTransparentAddress(state.address.data, network)
@@ -488,7 +488,7 @@ struct SendForm {
                 return .send(.syncAmounts(false))
                 
             case .validateAddress:
-                let network = zcashSDKEnvironment.network.networkType
+                let network = zcashSDKEnvironment.network().networkType
                 state.isValidAddress = derivationTool.isZcashAddress(state.address.data, network)
                 state.isValidTransparentAddress = derivationTool.isTransparentAddress(state.address.data, network)
                 state.isValidTexAddress = derivationTool.isTexAddress(state.address.data, network)

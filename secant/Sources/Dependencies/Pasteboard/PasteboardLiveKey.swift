@@ -9,8 +9,12 @@ import ComposableArchitecture
 import UIKit
 
 extension PasteboardClient: DependencyKey {
-    static let liveValue = Self(
-        setString: { UIPasteboard.general.string = $0.data },
-        getString: { UIPasteboard.general.string?.redacted }
-    )
+    static let liveValue = Self.live()
+
+    static func live() -> Self {
+        Self(
+            setString: { UIPasteboard.general.string = $0.data },
+            getString: { UIPasteboard.general.string?.redacted }
+        )
+    }
 }

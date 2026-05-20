@@ -36,13 +36,7 @@ struct PollsListView: View {
                     Button {
                         store.send(.openConfigSettings)
                     } label: {
-                        Asset.Assets.Icons.settings2.image
-                            .zImage(size: 20, style: Design.Btns.Ghost.fg)
-                            .padding(8)
-                            .background {
-                                RoundedRectangle(cornerRadius: Design.Radius._md)
-                                    .fill(Design.Btns.Ghost.bg.color(colorScheme))
-                            }
+                        settingsButtonIcon()
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Voting chain config")
@@ -65,6 +59,23 @@ struct PollsListView: View {
                     store.send(.dismissFlow)
                 }
             )
+        }
+    }
+
+    @ViewBuilder
+    private func settingsButtonIcon() -> some View {
+        let icon = Asset.Assets.Icons.settings2.image
+            .zImage(size: 20, style: Design.Btns.Ghost.fg)
+
+        if #available(iOS 26.0, *) {
+            icon
+        } else {
+            icon
+                .padding(8)
+                .background {
+                    RoundedRectangle(cornerRadius: Design.Radius._md)
+                        .fill(Design.Btns.Ghost.bg.color(colorScheme))
+                }
         }
     }
 
@@ -113,8 +124,6 @@ struct PollsListView: View {
     @ViewBuilder
     private func pollCard(for item: Voting.State.RoundListItem) -> some View {
         let state = cardState(for: item)
-        let totalProposals = item.session.proposals.count
-        let votedCount = votedProposalCount(for: item, totalProposals: totalProposals)
 
         VStack(alignment: .leading, spacing: 16) {
             // Top row: state pill + closes/closed date
@@ -131,13 +140,7 @@ struct PollsListView: View {
                     .zFont(.semiBold, size: 16, style: Design.Text.primary)
                     .tracking(-0.256) // -1.6% × 16pt
                     .fixedSize(horizontal: false, vertical: true)
-
-                if totalProposals > 0 {
-                    votedIndicator(votedCount: votedCount, total: totalProposals)
-                }
             }
-
-            issuerTrustIndicator(for: item)
 
             // "Poll Description" label + description
             if !item.session.description.isEmpty {
@@ -152,6 +155,25 @@ struct PollsListView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
+
+            HStack(alignment: .center, spacing: 12) {
+                issuerTrustIndicator(for: item)
+
+                Spacer(minLength: 12)
+
+                ZashiButton(
+                    cardActionTitle(for: state),
+                    type: cardActionButtonType(for: state),
+                    infinityWidth: false,
+                    fontSize: 14,
+                    horizontalPadding: 14,
+                    verticalPadding: 10,
+                    minHeight: 40
+                ) {
+                    tapPollCard(for: item, state: state)
+                }
+            }
+            .frame(maxWidth: .infinity)
         }
         .padding(Design.Spacing._xl)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -167,18 +189,12 @@ struct PollsListView: View {
         .shadow(color: Self.shadowSm, radius: 12, x: 0, y: 24)
         .shadow(color: Self.shadowSm, radius: 1.5, x: 0, y: 3)
         .shadow(color: Self.shadowSm, radius: 0.5, x: 0, y: 1)
-        .contentShape(Rectangle())
-        .onTapGesture {
-            tapPollCard(for: item, state: state)
-        }
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .contain)
         .accessibilityLabel(
             Text(
                 pollCardAccessibilityLabel(
                     for: item,
-                    state: state,
-                    votedCount: votedCount,
-                    totalProposals: totalProposals
+                    state: state
                 )
             )
         )
@@ -191,83 +207,48 @@ struct PollsListView: View {
     @ViewBuilder
     private func issuerTrustIndicator(for item: Voting.State.RoundListItem) -> some View {
         if store.isOnDefaultConfig, store.zodlEndorsedRoundIds.contains(item.id) {
-            zodlTrustIndicator(fontSize: 14, iconSize: 16)
+            zodlTrustIndicator()
         } else if !store.isOnDefaultConfig {
-            unverifiedIssuerIndicator(fontSize: 12, iconSize: 14)
+            unverifiedIssuerIndicator()
         }
     }
 
-    private func zodlTrustIndicator(fontSize: CGFloat, iconSize: CGFloat) -> some View {
-        let backdropSize = iconSize + 8
-        let zodlTextColor = colorScheme == .light ? Color.black : Design.Text.primary.color(colorScheme)
-
-        return HStack(spacing: 6) {
+    private func zodlTrustIndicator() -> some View {
+        HStack(spacing: 6) {
             ZStack {
                 Circle()
-                    .fill(Color.black)
-                    .frame(width: backdropSize, height: backdropSize)
+                    .fill(Design.Text.primary.color(colorScheme))
+                    .frame(width: 24, height: 24)
 
                 Asset.Assets.zashiLogo.image
-                    .zImage(size: iconSize, color: .white)
+                    .zImage(size: 16, color: Design.Surfaces.bgPrimary.color(colorScheme))
             }
 
-            Text("Zodl")
-                .zFont(.medium, size: fontSize, color: zodlTextColor)
+            Text("Approved by Zodl")
+                .zFont(.medium, size: 14, style: Design.Text.primary)
+                .tracking(-0.224)
+                .lineLimit(1)
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(Text("Verified by Zodl"))
+        .accessibilityLabel(Text("Approved by Zodl"))
     }
 
-    private func unverifiedIssuerIndicator(fontSize: CGFloat, iconSize: CGFloat) -> some View {
-        let foregroundColor = Design.Utility.WarningYellow._700.color(colorScheme)
-        let backgroundColor = Design.Utility.WarningYellow._50.color(colorScheme)
+    private func unverifiedIssuerIndicator() -> some View {
+        let foregroundColor = Design.Text.tertiary.color(colorScheme)
 
-        return HStack(spacing: 4) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: iconSize, weight: .medium))
+        return HStack(spacing: 6) {
+            Image(systemName: "info.circle")
+                .font(.system(size: 20, weight: .regular))
+                .frame(width: 20, height: 20)
 
             Text("Unverified Poll")
-                .zFont(.medium, size: fontSize, color: foregroundColor)
+                .zFont(.medium, size: 14, color: foregroundColor)
+                .tracking(-0.224)
+                .lineLimit(1)
         }
         .foregroundStyle(foregroundColor)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(backgroundColor)
-        .clipShape(Capsule())
         .accessibilityElement(children: .combine)
         .accessibilityLabel(Text("Unverified Poll"))
-    }
-
-    /// Per-round count of proposals the user voted on. Falls back to the total
-    /// proposal count for legacy records (written before proposalCount was
-    /// stored), since the batch flow used to vote on every proposal at once.
-    private func votedProposalCount(for item: Voting.State.RoundListItem, totalProposals: Int) -> Int {
-        guard let record = store.voteRecords[item.id] else { return 0 }
-        return record.proposalCount > 0 ? record.proposalCount : totalProposals
-    }
-
-    // MARK: - Voted Indicator
-
-    @ViewBuilder
-    private func votedIndicator(votedCount: Int, total: Int) -> some View {
-        HStack(spacing: 12) {
-            Text(localizable: .coinVotePollsListVotedCount(String(votedCount), String(total)))
-                .zFont(.medium, size: 14, style: Design.Text.primary)
-
-            Spacer()
-
-            HStack(spacing: 4) {
-                ForEach(0..<total, id: \.self) { index in
-                    Circle()
-                        .fill(
-                            index < votedCount
-                                ? Design.Utility.SuccessGreen._500.color(colorScheme)
-                                : Design.Surfaces.bgTertiary.color(colorScheme)
-                        )
-                        .frame(width: 8, height: 8)
-                }
-            }
-        }
     }
 
     // MARK: - Status Pill
@@ -276,7 +257,7 @@ struct PollsListView: View {
     private func pollStatusPill(_ state: CardState) -> some View {
         let style = pollStatusPillStyle(for: state)
 
-        HStack(spacing: 6) {
+        HStack(spacing: 4) {
             Image(systemName: style.iconSystemName)
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(style.foregroundColor)
@@ -285,9 +266,13 @@ struct PollsListView: View {
                 .zFont(.medium, size: 14, color: style.foregroundColor)
         }
         .padding(.horizontal, 10)
-        .padding(.vertical, 4)
+        .padding(.vertical, 2)
         .background(style.backgroundColor)
         .clipShape(Capsule())
+        .overlay(
+            Capsule()
+                .stroke(style.borderColor, lineWidth: 1)
+        )
     }
 
     private func pollStatusPillStyle(for state: CardState) -> PollStatusPillStyle {
@@ -297,21 +282,24 @@ struct PollsListView: View {
                 iconSystemName: "clock",
                 label: String(localizable: .coinVotePollsListStatusActive),
                 foregroundColor: Design.Utility.SuccessGreen._700.color(colorScheme),
-                backgroundColor: Design.Utility.SuccessGreen._50.color(colorScheme)
+                backgroundColor: Design.Utility.SuccessGreen._50.color(colorScheme),
+                borderColor: Design.Utility.SuccessGreen._200.color(colorScheme)
             )
         case .voted:
             return PollStatusPillStyle(
                 iconSystemName: "checkmark",
                 label: String(localizable: .coinVoteCommonVoted),
                 foregroundColor: Design.Utility.SuccessGreen._700.color(colorScheme),
-                backgroundColor: Design.Utility.SuccessGreen._50.color(colorScheme)
+                backgroundColor: Design.Utility.SuccessGreen._50.color(colorScheme),
+                borderColor: Design.Utility.SuccessGreen._200.color(colorScheme)
             )
         case .closed:
             return PollStatusPillStyle(
                 iconSystemName: "clock",
                 label: String(localizable: .coinVotePollsListStatusClosed),
                 foregroundColor: Design.Utility.ErrorRed._700.color(colorScheme),
-                backgroundColor: Design.Utility.ErrorRed._50.color(colorScheme)
+                backgroundColor: Design.Utility.ErrorRed._50.color(colorScheme),
+                borderColor: Design.Utility.ErrorRed._200.color(colorScheme)
             )
         }
     }
@@ -324,16 +312,6 @@ struct PollsListView: View {
         let session = item.session
         let endFormatted = formatter.string(from: session.voteEndTime)
 
-        // "Feb 16 - Apr 1" range when ceremonyStart is populated.
-        // Falls back to the single-date "Closes/Closed" label when the start
-        // is the sentinel epoch default (older fixtures, missing API field) so
-        // the card still reads sensibly instead of showing "Jan 1 - Apr 1".
-        if session.ceremonyStart.timeIntervalSince1970 > 0,
-           session.ceremonyStart < session.voteEndTime {
-            let startFormatted = formatter.string(from: session.ceremonyStart)
-            return String(localizable: .coinVotePollsListDateRange(startFormatted, endFormatted))
-        }
-
         switch state {
         case .active, .voted:
             return String(localizable: .coinVotePollsListDateCloses(endFormatted))
@@ -343,6 +321,26 @@ struct PollsListView: View {
     }
 
     // MARK: - Card Action
+
+    private func cardActionTitle(for state: CardState) -> String {
+        switch state {
+        case .active:
+            return String(localizable: .coinVotePollsListEnterPoll)
+        case .voted:
+            return String(localized: "Review")
+        case .closed:
+            return String(localized: "View Results")
+        }
+    }
+
+    private func cardActionButtonType(for state: CardState) -> ZashiButton<EmptyView, EmptyView>.`Type` {
+        switch state {
+        case .active:
+            return .primary
+        case .voted, .closed:
+            return .tertiary
+        }
+    }
 
     private func tapPollCard(for item: Voting.State.RoundListItem, state: CardState) {
         switch state {
@@ -357,35 +355,15 @@ struct PollsListView: View {
 
     private func pollCardAccessibilityLabel(
         for item: Voting.State.RoundListItem,
-        state: CardState,
-        votedCount: Int,
-        totalProposals: Int
+        state: CardState
     ) -> String {
         let status = pollStatusPillStyle(for: state).label
         let date = dateLabel(for: state, item: item)
-
-        if totalProposals > 0 {
-            let progress = String(
-                localizable: .coinVotePollsListVotedCount(
-                    String(votedCount),
-                    String(totalProposals)
-                )
-            )
-            return "\(item.title), \(status), \(date), \(progress)"
-        }
-
         return "\(item.title), \(status), \(date)"
     }
 
     private func pollCardAccessibilityHint(for state: CardState) -> String {
-        switch state {
-        case .active:
-            return String(localizable: .coinVotePollsListEnterPoll)
-        case .voted:
-            return String(localizable: .coinVotePollsListViewMyVotes)
-        case .closed:
-            return String(localizable: .coinVoteCommonViewResults)
-        }
+        cardActionTitle(for: state)
     }
 }
 
@@ -419,4 +397,5 @@ private struct PollStatusPillStyle {
     let label: String
     let foregroundColor: Color
     let backgroundColor: Color
+    let borderColor: Color
 }

@@ -9,7 +9,11 @@ import Foundation
 import ComposableArchitecture
 
 extension DateClient: DependencyKey {
-    static let liveValue = Self(
-        now: { Date.now }
-    )
+    static let liveValue = Self.live()
+
+    static func live() -> Self {
+        Self(
+            now: { Date.now }
+        )
+    }
 }

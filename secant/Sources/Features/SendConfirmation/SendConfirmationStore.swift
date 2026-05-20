@@ -205,7 +205,7 @@ struct SendConfirmation {
                 state.randomSuccessIconIndex = Int.random(in: 1...2)
                 state.randomFailureIconIndex = Int.random(in: 1...3)
                 state.randomResubmissionIconIndex = Int.random(in: 1...2)
-                state.isTransparentAddress = derivationTool.isTransparentAddress(state.address, zcashSDKEnvironment.network.networkType)
+                state.isTransparentAddress = derivationTool.isTransparentAddress(state.address, zcashSDKEnvironment.network().networkType)
                 state.canSendMail = MFMailComposeViewController.canSendMail()
                 state.alias = nil
                 for contact in state.addressBookContacts.contacts {
@@ -285,7 +285,7 @@ struct SendConfirmation {
                     do {
                         let storedWallet = try walletStorage.exportWallet()
                         let seedBytes = try mnemonic.toSeed(storedWallet.seedPhrase.value())
-                        let network = zcashSDKEnvironment.network.networkType
+                        let network = zcashSDKEnvironment.network().networkType
                         let spendingKey = try derivationTool.deriveSpendingKey(seedBytes, zip32AccountIndex, network)
 
                         let result = try await sdkSynchronizer.createProposedTransactions(proposal, spendingKey)

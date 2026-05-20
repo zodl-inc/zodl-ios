@@ -34,26 +34,6 @@ private func zodlTrustIndicator(colorScheme: ColorScheme) -> some View {
     .accessibilityLabel(Text("Approved by Zodl"))
 }
 
-private func unverifiedIssuerIndicator(colorScheme: ColorScheme) -> some View {
-    let foregroundColor = Design.Utility.WarningYellow._700.color(colorScheme)
-    let backgroundColor = Design.Utility.WarningYellow._50.color(colorScheme)
-
-    return HStack(spacing: 4) {
-        Image(systemName: "exclamationmark.triangle.fill")
-            .font(.system(size: 18, weight: .medium))
-
-        Text("Unverified Poll")
-            .zFont(.medium, size: 12, color: foregroundColor)
-    }
-    .foregroundStyle(foregroundColor)
-    .padding(.horizontal, 8)
-    .padding(.vertical, 4)
-    .background(backgroundColor)
-    .clipShape(Capsule())
-    .accessibilityElement(children: .combine)
-    .accessibilityLabel(Text("Unverified Poll"))
-}
-
 /// Color for a tally entry. Looks the option up on the proposal so Abstain
 /// stays HyperBlue; falls back to a synthetic VoteOption for entries whose
 /// decision index isn't in `proposal.options` (e.g. legacy Support/Oppose).
@@ -165,8 +145,6 @@ struct ResultsView: View {
 
                 if store.isOnDefaultConfig, store.zodlEndorsedRoundIds.contains(store.roundId) {
                     zodlTrustIndicator(colorScheme: colorScheme)
-                } else if !store.isOnDefaultConfig {
-                    unverifiedIssuerIndicator(colorScheme: colorScheme)
                 }
             }
 
@@ -220,7 +198,9 @@ struct ResultsView: View {
         VStack(alignment: .leading, spacing: 12) {
             // Top row: ZIP pill + Winner pill
             HStack(spacing: 0) {
-                ZIPBadge(zipNumber: proposal.zipNumber ?? String(localizable: .coinVoteCommonZipPlaceholder))
+                if let zipNumber = proposal.displayZipNumber {
+                    ZIPBadge(zipNumber: zipNumber)
+                }
                 Spacer()
                 winnerBadge(winningEntry: winningEntry, isTie: isTie, proposal: proposal)
             }

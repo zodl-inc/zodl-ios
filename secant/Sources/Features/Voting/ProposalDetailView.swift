@@ -10,15 +10,29 @@ struct ProposalDetailView: View {
     let proposal: VotingProposal
 
     private let impactFeedback = UIImpactFeedbackGenerator(style: .light)
+    private static let scrollTopID = "proposal-detail-scroll-top"
 
     var body: some View {
         WithPerceptionTracking {
-            VStack(spacing: 0) {
-                ScrollView {
-                    contentSection()
-                }
+            ScrollViewReader { scrollProxy in
+                VStack(spacing: 0) {
+                    ScrollView {
+                        Color.clear
+                            .frame(height: 0)
+                            .id(Self.scrollTopID)
 
-                bottomSection()
+                        contentSection()
+                    }
+                    .id(proposal.id)
+                    .onAppear {
+                        scrollToTop(scrollProxy)
+                    }
+                    .onChange(of: proposal.id) { _ in
+                        scrollToTop(scrollProxy)
+                    }
+
+                    bottomSection()
+                }
             }
             .applyScreenBackground()
             .navigationBarBackButtonHidden(true)
@@ -55,6 +69,16 @@ struct ProposalDetailView: View {
         }
     }
 
+    private func scrollToTop(_ scrollProxy: ScrollViewProxy) {
+        DispatchQueue.main.async {
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                scrollProxy.scrollTo(Self.scrollTopID, anchor: .top)
+            }
+        }
+    }
+
     private var positionLabel: String {
         if let index = store.detailProposalIndex {
             return String(
@@ -85,7 +109,9 @@ struct ProposalDetailView: View {
                 }
             }
 
-            forumLink()
+            if proposal.forumURL != nil {
+                forumLink()
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 24)
@@ -119,9 +145,6 @@ struct ProposalDetailView: View {
 
         if let url = proposal.forumURL {
             Link(destination: url) { content }
-        } else {
-            content
-                .opacity(0.5)
         }
     }
 
@@ -192,23 +215,27 @@ struct ProposalDetailView: View {
         Button(action: action) {
             HStack {
                 Text(label)
-                    .zFont(.medium, size: 16,
-                           color: isSelected ? Design.Surfaces.bgPrimary.color(colorScheme) : Design.Text.primary.color(colorScheme))
+                    .zFont(.semiBold, size: 16,
+                           color: Design.Text.primary.color(colorScheme))
 
                 Spacer()
 
                 // Checkbox
                 ZStack {
                     if isSelected {
-                        RoundedRectangle(cornerRadius: 4)
-                            .fill(Design.Text.primary.color(colorScheme))
+                        RoundedRectangle(cornerRadius: Design.Radius._sm)
+                            .fill(Design.Checkboxes.onBg.color(colorScheme))
                             .frame(width: 20, height: 20)
                         Image(systemName: "checkmark")
                             .font(.system(size: 13, weight: .bold))
-                            .foregroundStyle(Design.Surfaces.bgPrimary.color(colorScheme))
+                            .foregroundStyle(Design.Checkboxes.onFg.color(colorScheme))
                     } else {
-                        RoundedRectangle(cornerRadius: 4)
-                            .stroke(Design.Surfaces.strokeSecondary.color(colorScheme), lineWidth: 1.5)
+                        RoundedRectangle(cornerRadius: Design.Radius._sm)
+                            .fill(Design.Checkboxes.offBg.color(colorScheme))
+                            .overlay {
+                                RoundedRectangle(cornerRadius: Design.Radius._sm)
+                                    .stroke(Design.Checkboxes.offStroke.color(colorScheme), lineWidth: 1)
+                            }
                             .frame(width: 20, height: 20)
                     }
                 }
@@ -235,7 +262,7 @@ struct ProposalDetailView: View {
                 }
             } else {
                 if let index = store.detailProposalIndex, index > 0 {
-                    ZashiButton(String(localizable: .coinVoteCommonBack), type: .secondary) {
+                    ZashiButton(String(localizable: .coinVoteCommonBack), type: .tertiary) {
                         store.send(.backToList)
                     }
                 }

@@ -119,19 +119,21 @@ extension ZcashSDKEnvironment {
 
 @DependencyClient
 struct ZcashSDKEnvironment {
-    var latestCheckpoint: BlockHeight
-    let endpoint: () -> LightWalletEndpoint
-    let exchangeRateIPRateLimit: TimeInterval
-    let exchangeRateStaleLimit: TimeInterval
-    let memoCharLimit: Int
-    let mnemonicWordsMaxCount: Int
-    let network: ZcashNetwork
-    let requiredTransactionConfirmations: Int
-    let sdkVersion: String
-    let serverConfig: () -> UserPreferencesStorage.ServerConfig
-    let servers: [Server]
-    let shieldingThreshold: Zatoshi
-    let tokenName: String
+    var latestCheckpoint: @Sendable () -> BlockHeight = { 0 }
+    var endpoint: @Sendable () -> LightWalletEndpoint = {
+        LightWalletEndpoint(address: "", port: 0, secure: false, singleCallTimeoutInMillis: 0, streamingCallTimeoutInMillis: 0)
+    }
+    var exchangeRateIPRateLimit: @Sendable () -> TimeInterval = { 0 }
+    var exchangeRateStaleLimit: @Sendable () -> TimeInterval = { 0 }
+    var memoCharLimit: @Sendable () -> Int = { 0 }
+    var mnemonicWordsMaxCount: @Sendable () -> Int = { 0 }
+    var network: @Sendable () -> ZcashNetwork = { ZcashNetworkBuilder.network(for: .testnet) }
+    var requiredTransactionConfirmations: @Sendable () -> Int = { 0 }
+    var sdkVersion: @Sendable () -> String = { "" }
+    var serverConfig: @Sendable () -> UserPreferencesStorage.ServerConfig = { UserPreferencesStorage.ServerConfig(host: "", port: 0, isCustom: false) }
+    var servers: @Sendable () -> [Server] = { [] }
+    var shieldingThreshold: @Sendable () -> Zatoshi = { Zatoshi(0) }
+    var tokenName: @Sendable () -> String = { "" }
 }
 
 extension LightWalletEndpoint {

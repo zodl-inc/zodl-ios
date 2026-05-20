@@ -187,10 +187,9 @@ struct VoteBadgePill: View {
 
     var body: some View {
         Text(info.label)
-            .zFont(.medium, size: 12, style: Design.Text.primary)
-            .tracking(-0.072)
-            .foregroundStyle(info.foreground)
-            .padding(.horizontal, 6)
+            .zFont(.medium, size: 14, color: info.foreground)
+            .tracking(-0.084)
+            .padding(.horizontal, 8)
             .padding(.vertical, 2)
             .background(info.background)
             .clipShape(RoundedRectangle(cornerRadius: Design.Radius._sm))
@@ -260,6 +259,15 @@ struct ZIPBadge: View {
                 RoundedRectangle(cornerRadius: Design.Radius._2xl)
                     .stroke(Design.Utility.Gray._200.color(colorScheme), lineWidth: 1)
             )
+    }
+}
+
+extension VotingProposal {
+    var displayZipNumber: String? {
+        guard let zipNumber = zipNumber?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !zipNumber.isEmpty else { return nil }
+
+        return zipNumber
     }
 }
 

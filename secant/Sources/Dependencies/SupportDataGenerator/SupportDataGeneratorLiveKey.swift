@@ -8,7 +8,11 @@
 import ComposableArchitecture
 
 extension SupportDataGeneratorClient: DependencyKey {
-    static let liveValue = Self(
-        generate: { SupportDataGenerator.generate() }
-    )
+    static let liveValue = Self.live()
+
+    static func live() -> Self {
+        Self(
+            generate: { SupportDataGenerator.generate() }
+        )
+    }
 }

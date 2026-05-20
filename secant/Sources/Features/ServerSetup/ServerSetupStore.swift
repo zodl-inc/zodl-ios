@@ -119,7 +119,8 @@ struct ServerSetup {
         Reduce { state, action in
             switch action {
             case .onAppear:
-                state.network = zcashSDKEnvironment.network.networkType
+                // __LD TESTED
+                state.network = zcashSDKEnvironment.network().networkType
                 let syncConfig = zcashSDKEnvironment.serverConfig()
                 state.activeSyncServer = syncConfig.serverString()
                 state.recommendedSyncServer = nil

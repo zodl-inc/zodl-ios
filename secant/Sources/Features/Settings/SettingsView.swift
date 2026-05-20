@@ -33,8 +33,8 @@ struct SettingsView: View {
                             }
                             
                             ActionRow(
-                                icon: Image(systemName: "checkmark.seal"),
-                                title: "Coinholder Polling"
+                                icon: Asset.Assets.Icons.checkVerified.image,
+                                title: String(localizable: .settingsCoinholderPolling)
                             ) {
                                 store.send(.coinholderPollingTapped)
                             }

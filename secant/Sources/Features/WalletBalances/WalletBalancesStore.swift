@@ -98,7 +98,7 @@ struct WalletBalances {
             switch action {
             case .onAppear:
                 // __LD TESTED
-                 state.autoShieldingThreshold = zcashSDKEnvironment.shieldingThreshold
+                 state.autoShieldingThreshold = zcashSDKEnvironment.shieldingThreshold()
                 if let exchangeRate = userStoredPreferences.exchangeRate(), exchangeRate.automatic {
                     state.isExchangeRateFeatureOn = true
                 } else {
@@ -190,7 +190,7 @@ struct WalletBalances {
                 state.totalBalance = state.shieldedWithPendingBalance + state.transparentBalance + (accountBalance?.awaitingResolution ?? .zero)
                
                 let everythingCondition = state.shieldedBalance.amount > 0 && ((state.shieldedBalance == state.totalBalance)
-                || (state.transparentBalance < zcashSDKEnvironment.shieldingThreshold && state.shieldedBalance == state.totalBalance - state.transparentBalance))
+                || (state.transparentBalance < zcashSDKEnvironment.shieldingThreshold() && state.shieldedBalance == state.totalBalance - state.transparentBalance))
                 || state.totalBalance == .zero
 
                 // spendability

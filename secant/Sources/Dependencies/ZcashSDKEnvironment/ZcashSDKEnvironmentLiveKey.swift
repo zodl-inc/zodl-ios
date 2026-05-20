@@ -14,23 +14,23 @@ extension ZcashSDKEnvironment: DependencyKey {
 
     static func live(network: ZcashNetwork) -> Self {
         Self(
-            latestCheckpoint: BlockHeight.ofLatestCheckpoint(network: network),
+            latestCheckpoint: { BlockHeight.ofLatestCheckpoint(network: network) },
             endpoint: {
                 ZcashSDKEnvironment.serverConfig(
                     for: network.networkType
                 ).endpoint(streamingCallTimeoutInMillis: ZcashSDKConstants.streamingCallTimeoutInMillis)
             },
-            exchangeRateIPRateLimit: 120,
-            exchangeRateStaleLimit: 15 * 60,
-            memoCharLimit: MemoBytes.capacity,
-            mnemonicWordsMaxCount: ZcashSDKConstants.mnemonicWordsMaxCount,
-            network: network,
-            requiredTransactionConfirmations: ZcashSDKConstants.requiredTransactionConfirmations,
-            sdkVersion: "0.18.1-beta",
+            exchangeRateIPRateLimit: { 120 },
+            exchangeRateStaleLimit: { 15 * 60 },
+            memoCharLimit: { MemoBytes.capacity },
+            mnemonicWordsMaxCount: { ZcashSDKConstants.mnemonicWordsMaxCount },
+            network: { network },
+            requiredTransactionConfirmations: { ZcashSDKConstants.requiredTransactionConfirmations },
+            sdkVersion: { "0.18.1-beta" },
             serverConfig: { ZcashSDKEnvironment.serverConfig(for: network.networkType) },
-            servers: ZcashSDKEnvironment.servers(for: network.networkType),
-            shieldingThreshold: Zatoshi(100_000),
-            tokenName: network.networkType == .testnet ? "TAZ" : "ZEC"
+            servers: { ZcashSDKEnvironment.servers(for: network.networkType) },
+            shieldingThreshold: { Zatoshi(100_000) },
+            tokenName: { network.networkType == .testnet ? "TAZ" : "ZEC" }
         )
     }
 }

@@ -30,7 +30,9 @@ final class KeystoneSDKWrapper: Sendable {
 }
 
 extension KeystoneHandlerClient: DependencyKey {
-    static var liveValue: Self {
+    static let liveValue = Self.live()
+
+    static func live() -> Self {
         let wrapper = KeystoneSDKWrapper()
 
         return .init(

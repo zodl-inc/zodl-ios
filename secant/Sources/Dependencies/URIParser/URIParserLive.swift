@@ -8,12 +8,16 @@
 import ComposableArchitecture
 
 extension URIParserClient: DependencyKey {
-    static let liveValue = Self(
-        isValidURI: { uri, network in
-            URIParser().isValidURI(uri, network: network)
-        },
-        checkRP: { data, network in
-            RequestPaymentParser(network: network).checkRP(data)
-        }
-    )
+    static let liveValue = Self.live()
+
+    static func live() -> Self {
+        Self(
+            isValidURI: { uri, network in
+                URIParser().isValidURI(uri, network: network)
+            },
+            checkRP: { data, network in
+                RequestPaymentParser(network: network).checkRP(data)
+            }
+        )
+    }
 }

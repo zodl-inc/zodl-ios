@@ -27,11 +27,6 @@ struct VotingView: View {
         ) { scanStore in
             ScanView(store: scanStore, popoverRatio: 1.075)
         }
-        .sheet(
-            store: store.scope(state: \.$configSettings, action: \.configSettings)
-        ) { configSettingsStore in
-            VotingConfigSettingsView(store: configSettingsStore)
-        }
         .votingSheet(
             isPresented: pollClosedBinding,
             title: String(localizable: .coinVoteVotingViewPollClosedTitle),
@@ -41,14 +36,15 @@ struct VotingView: View {
             },
             secondary: .init(title: String(localizable: .coinVoteCommonClose), style: .secondary) {
                 store.send(.dismissPollClosedSheet)
-            }
+            },
+            visualStyle: .unverifiedWarning
         )
         .votingSheet(
             isPresented: unverifiedPollWarningBinding,
             iconSystemName: "exclamationmark.triangle",
             title: String(localized: "Unverified Poll"),
             message: String(
-                localized: "This poll hasn't been verified or endorsed. We can't confirm its legitimacy or how results will be used."
+                localized: "This poll hasn't been verified. We can't confirm its legitimacy or how results will be used."
             ),
             primary: .init(title: String(localized: "Go back"), style: .primary) {
                 store.send(.unverifiedPollWarningGoBackTapped)
@@ -113,6 +109,7 @@ struct VotingView: View {
         case .confirmSubmission: return "confirmSubmission"
         case .error: return "error"
         case .configError: return "configError"
+        case .configSettings: return "configSettings"
         case .walletSyncing: return "walletSyncing"
         }
     }
@@ -155,6 +152,10 @@ struct VotingView: View {
             VotingErrorView(store: store, errorMessage: message)
         case .configError(let message):
             VotingConfigErrorView(store: store, errorMessage: message)
+        case .configSettings:
+            if let configSettingsStore = store.scope(state: \.configSettings, action: \.configSettings) {
+                VotingConfigSettingsView(store: configSettingsStore)
+            }
         case .walletSyncing:
             WalletSyncingView(store: store)
         }
@@ -189,6 +190,7 @@ struct NoRoundsView: View {
             VotingBlockingBackdrop(store: store)
                 .votingBlockingSheet(
                     isActive: { store.currentScreen == .noRounds },
+                    visualStyle: .unverifiedWarning,
                     onExit: { store.send(.dismissFlow) }
                 ) { dismiss in
                     VotingSheetContent(
@@ -201,7 +203,8 @@ struct NoRoundsView: View {
                         },
                         secondary: .init(title: String(localizable: .coinVoteCommonRefresh), style: .secondary) {
                             store.send(.retryLoadRounds)
-                        }
+                        },
+                        visualStyle: .unverifiedWarning
                     )
                 }
         }
