@@ -96,7 +96,9 @@ class SelectedServersMigrationTests: XCTestCase {
     func testAlreadyMigratedUser_noOp() {
         let existingConfig = UserPreferencesStorage.SelectedServersConfig(
             mode: .manual,
-            servers: [.init(host: "zec.rocks", port: 443, isCustom: false)]
+            servers: [
+                UserPreferencesStorage.ServerConfig(host: "zec.rocks", port: 443, isCustom: false)
+            ]
         )
 
         XCTAssertNil(
@@ -264,7 +266,7 @@ class ServerSetupChangeDetectionTests: XCTestCase {
     }
 
     private func makeManualServer(host: String = "manual.example.com") -> UserPreferencesStorage.ServerConfig {
-        .init(host: host, port: 9067, isCustom: true)
+        UserPreferencesStorage.ServerConfig(host: host, port: 9067, isCustom: true)
     }
 
     private func sendDefaultAutomaticEvaluation(

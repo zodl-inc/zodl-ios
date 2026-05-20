@@ -135,7 +135,7 @@ class AppInitializationTests: XCTestCase {
             UserPreferencesStorage.SelectedServersConfig(
                 mode: .manual,
                 servers: [
-                    .init(host: "manual.example.com", port: 9067, isCustom: true)
+                    UserPreferencesStorage.ServerConfig(host: "manual.example.com", port: 9067, isCustom: true)
                 ]
             )
         }
