@@ -56,6 +56,7 @@ final class EndpointSwitchCoordinatorTests: XCTestCase {
         let probe = SwitchProbe()
         let first = makeEndpoint("first.example.com")
         let queued = makeEndpoint("queued.example.com")
+        let previous = makeEndpoint("previous.example.com")
 
         let firstTask = Task {
             try await coordinator.switchToEndpoint(first) { endpoint in
@@ -65,9 +66,13 @@ final class EndpointSwitchCoordinatorTests: XCTestCase {
         await probe.waitForStarted(first.host)
 
         let queuedTask = Task {
-            try await coordinator.switchToEndpoint(queued) { endpoint in
-                try await probe.switchToEndpoint(endpoint)
-            }
+            try await coordinator.switchToEndpoint(
+                queued,
+                previousEndpoint: { previous },
+                performSwitch: { endpoint in
+                    try await probe.switchToEndpoint(endpoint)
+                }
+            )
         }
 
         try await Task.sleep(nanoseconds: 50_000_000)
@@ -111,7 +116,7 @@ final class EndpointSwitchCoordinatorTests: XCTestCase {
                 shouldProceed: {
                     await proceedFlag.value()
                 },
-                switchToEndpoint: { endpoint in
+                performSwitch: { endpoint in
                     try await probe.switchToEndpoint(endpoint)
                 }
             )
@@ -137,19 +142,24 @@ final class EndpointSwitchCoordinatorTests: XCTestCase {
         let coordinator = EndpointSwitchCoordinator()
         let probe = SwitchProbe()
         let target = makeEndpoint("target.example.com")
+        let stalePrevious = makeEndpoint("stale.example.com")
         let previous = makeEndpoint("previous.example.com")
+        let restoreEndpoint = EndpointBox(stalePrevious)
 
         let switchTask = Task {
             try await coordinator.switchToEndpoint(
                 target,
-                previousEndpoint: previous,
-                switchToEndpoint: { endpoint in
+                previousEndpoint: {
+                    await restoreEndpoint.value()
+                },
+                performSwitch: { endpoint in
                     try await probe.switchToEndpoint(endpoint)
                 }
             )
         }
 
         await probe.waitForStarted(target.host)
+        await restoreEndpoint.setValue(previous)
         switchTask.cancel()
         await probe.finish(target.host)
 
@@ -174,6 +184,30 @@ final class EndpointSwitchCoordinatorTests: XCTestCase {
         XCTAssertEqual(await probe.maximumActiveSwitches(), 1)
     }
 
+    func testFailedSwitchDoesNotRestorePreviousEndpoint() async throws {
+        let coordinator = EndpointSwitchCoordinator()
+        let probe = SwitchProbe()
+        let target = makeEndpoint("target.example.com")
+        let previous = makeEndpoint("previous.example.com")
+
+        do {
+            try await coordinator.switchToEndpoint(
+                target,
+                previousEndpoint: { previous },
+                performSwitch: { endpoint in
+                    if endpoint.host == target.host {
+                        throw SwitchError.failedBeforeMutation
+                    }
+                    try await probe.switchToEndpoint(endpoint)
+                }
+            )
+            XCTFail("Expected switch to throw.")
+        } catch SwitchError.failedBeforeMutation {
+        }
+
+        XCTAssertEqual(await probe.snapshotEvents(), [])
+    }
+
     private func makeEndpoint(_ host: String) -> LightWalletEndpoint {
         LightWalletEndpoint(
             address: host,
@@ -181,6 +215,26 @@ final class EndpointSwitchCoordinatorTests: XCTestCase {
             secure: true,
             streamingCallTimeoutInMillis: ZcashSDKEnvironment.ZcashSDKConstants.streamingCallTimeoutInMillis
         )
+    }
+}
+
+private enum SwitchError: Error {
+    case failedBeforeMutation
+}
+
+private actor EndpointBox {
+    private var storedEndpoint: LightWalletEndpoint
+
+    init(_ endpoint: LightWalletEndpoint) {
+        storedEndpoint = endpoint
+    }
+
+    func value() -> LightWalletEndpoint {
+        storedEndpoint
+    }
+
+    func setValue(_ endpoint: LightWalletEndpoint) {
+        storedEndpoint = endpoint
     }
 }
 

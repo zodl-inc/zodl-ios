@@ -518,11 +518,11 @@ struct Root {
 
                 try await EndpointSwitching.coordinator.switchToEndpoint(
                     endpoint,
-                    previousEndpoint: currentEndpoint,
+                    previousEndpoint: { zcashSDKEnvironment.endpoint() },
                     shouldProceed: {
                         userStoredPreferences.selectedServers()?.mode == .automatic
                     },
-                    switchToEndpoint: sdkSynchronizer.switchToEndpoint
+                    performSwitch: sdkSynchronizer.switchToEndpoint
                 )
 
                 // This automatic refresh may have become stale while the SDK switch
@@ -537,7 +537,7 @@ struct Root {
                         do {
                             try await EndpointSwitching.coordinator.switchToEndpoint(
                                 revert,
-                                switchToEndpoint: sdkSynchronizer.switchToEndpoint
+                                performSwitch: sdkSynchronizer.switchToEndpoint
                             )
                         } catch {
                             LoggerProxy.error("[Benchmark] Failed to restore manual endpoint: \(error)")

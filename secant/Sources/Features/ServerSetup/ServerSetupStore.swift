@@ -308,7 +308,7 @@ struct ServerSetup {
                                 attemptedEndpointSwitch = true
                                 try await EndpointSwitching.coordinator.switchToEndpoint(
                                     best,
-                                    switchToEndpoint: sdkSynchronizer.switchToEndpoint
+                                    performSwitch: sdkSynchronizer.switchToEndpoint
                                 )
                             }
 
@@ -326,7 +326,7 @@ struct ServerSetup {
                             if attemptedEndpointSwitch, let endpointBeforeSwitch {
                                 try? await EndpointSwitching.coordinator.switchToEndpoint(
                                     endpointBeforeSwitch,
-                                    switchToEndpoint: sdkSynchronizer.switchToEndpoint
+                                    performSwitch: sdkSynchronizer.switchToEndpoint
                                 )
                             }
                             await send(.switchFailed(error.toZcashError()))
@@ -373,7 +373,7 @@ struct ServerSetup {
                             if shouldSwitchEndpoint {
                                 try await EndpointSwitching.coordinator.switchToEndpoint(
                                     endpoint,
-                                    switchToEndpoint: sdkSynchronizer.switchToEndpoint
+                                    performSwitch: sdkSynchronizer.switchToEndpoint
                                 )
                             }
 
@@ -393,7 +393,7 @@ struct ServerSetup {
                             if shouldSwitchEndpoint {
                                 try? await EndpointSwitching.coordinator.switchToEndpoint(
                                     currentEndpoint,
-                                    switchToEndpoint: sdkSynchronizer.switchToEndpoint
+                                    performSwitch: sdkSynchronizer.switchToEndpoint
                                 )
                             }
                             await send(.switchFailed(error.toZcashError()))

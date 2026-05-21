@@ -2548,6 +2548,11 @@
 		9EDDAF6F2BA2D71700A69A07 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 9EDDAF6C2BA2D71700A69A07 /* PrivacyInfo.xcprivacy */; };
 		9EEB06C62B344F1E00EEE50F /* SyncProgressTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9EEB06C52B344F1E00EEE50F /* SyncProgressTests.swift */; };
 		AD1750A12F8ED5C300115E41 /* EndpointSwitchCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD1750A02F8ED5C300115E41 /* EndpointSwitchCoordinatorTests.swift */; };
+		AD1750B12F95632100115E41 /* EndpointSwitchCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD1750B02F95632100115E41 /* EndpointSwitchCoordinator.swift */; };
+		AD1750B22F95632100115E41 /* EndpointSwitchCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD1750B02F95632100115E41 /* EndpointSwitchCoordinator.swift */; };
+		AD1750B32F95632100115E41 /* EndpointSwitchCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD1750B02F95632100115E41 /* EndpointSwitchCoordinator.swift */; };
+		AD1750B42F95632100115E41 /* EndpointSwitchCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD1750B02F95632100115E41 /* EndpointSwitchCoordinator.swift */; };
+		AD1750B52F95632100115E41 /* EndpointSwitchCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD1750B02F95632100115E41 /* EndpointSwitchCoordinator.swift */; };
 		A90E42E82F8ED5C300115E41 /* SelectedServersMigrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A90E42E72F8ED5C300115E41 /* SelectedServersMigrationTests.swift */; };
 		A90E42EA2F8ED5C300115E41 /* UncheckedSendableBox.swift in Sources */ = {isa = PBXBuildFile; fileRef = A90E42E92F8ED5C300115E41 /* UncheckedSendableBox.swift */; };
 		A9987CA32F96D90500C9B8BE /* VotingServiceConfigTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9987C9F2F96D90500C9B8BE /* VotingServiceConfigTests.swift */; };
@@ -2672,6 +2677,7 @@
 		34AA6C172F85774F00D244E2 /* SDKSynchronizerInterface.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SDKSynchronizerInterface.swift; sourceTree = "<group>"; };
 		34AA6C182F85774F00D244E2 /* SDKSynchronizerLive.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SDKSynchronizerLive.swift; sourceTree = "<group>"; };
 		34AA6C192F85774F00D244E2 /* SDKSynchronizerTest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SDKSynchronizerTest.swift; sourceTree = "<group>"; };
+		AD1750B02F95632100115E41 /* EndpointSwitchCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EndpointSwitchCoordinator.swift; sourceTree = "<group>"; };
 		34AA6C1B2F85774F00D244E2 /* SecItemInterface.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SecItemInterface.swift; sourceTree = "<group>"; };
 		34AA6C1C2F85774F00D244E2 /* SecItemLive.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SecItemLive.swift; sourceTree = "<group>"; };
 		34AA6C1E2F85774F00D244E2 /* ShieldingProcessorInterface.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShieldingProcessorInterface.swift; sourceTree = "<group>"; };
@@ -3660,6 +3666,7 @@
 		34AA6C1A2F85774F00D244E2 /* SDKSynchronizer */ = {
 			isa = PBXGroup;
 			children = (
+				AD1750B02F95632100115E41 /* EndpointSwitchCoordinator.swift */,
 				34AA6C172F85774F00D244E2 /* SDKSynchronizerInterface.swift */,
 				34AA6C182F85774F00D244E2 /* SDKSynchronizerLive.swift */,
 				34AA6C192F85774F00D244E2 /* SDKSynchronizerTest.swift */,
@@ -6271,6 +6278,7 @@
 				37CEBF5E2F8E940A002DA90E /* HowToVoteView.swift in Sources */,
 				34AA73812F85774F00D244E2 /* SendCoordFlowView.swift in Sources */,
 				34AA73822F85774F00D244E2 /* SwapAndPayLiveKey.swift in Sources */,
+				AD1750B12F95632100115E41 /* EndpointSwitchCoordinator.swift in Sources */,
 				34AA73832F85774F00D244E2 /* SDKSynchronizerInterface.swift in Sources */,
 				34AA73842F85774F00D244E2 /* TCALoggerReducer.swift in Sources */,
 				34AA73852F85774F00D244E2 /* UIShareDialog.swift in Sources */,
@@ -6725,6 +6733,7 @@
 				37CEBF362F8E940A002DA90E /* HowToVoteView.swift in Sources */,
 				34AA701D2F85774F00D244E2 /* SendCoordFlowView.swift in Sources */,
 				34AA701E2F85774F00D244E2 /* SwapAndPayLiveKey.swift in Sources */,
+				AD1750B22F95632100115E41 /* EndpointSwitchCoordinator.swift in Sources */,
 				34AA701F2F85774F00D244E2 /* SDKSynchronizerInterface.swift in Sources */,
 				34AA70202F85774F00D244E2 /* TCALoggerReducer.swift in Sources */,
 				34AA70212F85774F00D244E2 /* UIShareDialog.swift in Sources */,
@@ -7245,6 +7254,7 @@
 				37CEBF722F8E940A002DA90E /* HowToVoteView.swift in Sources */,
 				34AA75172F85774F00D244E2 /* SendCoordFlowView.swift in Sources */,
 				34AA75182F85774F00D244E2 /* SwapAndPayLiveKey.swift in Sources */,
+				AD1750B32F95632100115E41 /* EndpointSwitchCoordinator.swift in Sources */,
 				34AA75192F85774F00D244E2 /* SDKSynchronizerInterface.swift in Sources */,
 				34AA751A2F85774F00D244E2 /* TCALoggerReducer.swift in Sources */,
 				34AA751B2F85774F00D244E2 /* UIShareDialog.swift in Sources */,
@@ -7699,6 +7709,7 @@
 				37CEBF4A2F8E940A002DA90E /* HowToVoteView.swift in Sources */,
 				34AA71B32F85774F00D244E2 /* SendCoordFlowView.swift in Sources */,
 				34AA71B42F85774F00D244E2 /* SwapAndPayLiveKey.swift in Sources */,
+				AD1750B42F95632100115E41 /* EndpointSwitchCoordinator.swift in Sources */,
 				34AA71B52F85774F00D244E2 /* SDKSynchronizerInterface.swift in Sources */,
 				34AA71B62F85774F00D244E2 /* TCALoggerReducer.swift in Sources */,
 				34AA71B72F85774F00D244E2 /* UIShareDialog.swift in Sources */,
@@ -8153,6 +8164,7 @@
 				37CEBF222F8E940A002DA90E /* HowToVoteView.swift in Sources */,
 				34AA6E4F2F85774F00D244E2 /* SendCoordFlowView.swift in Sources */,
 				34AA6E502F85774F00D244E2 /* SwapAndPayLiveKey.swift in Sources */,
+				AD1750B52F95632100115E41 /* EndpointSwitchCoordinator.swift in Sources */,
 				34AA6E512F85774F00D244E2 /* SDKSynchronizerInterface.swift in Sources */,
 				34AA6E522F85774F00D244E2 /* TCALoggerReducer.swift in Sources */,
 				34AA6E532F85774F00D244E2 /* UIShareDialog.swift in Sources */,
