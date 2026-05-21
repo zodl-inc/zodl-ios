@@ -8,7 +8,7 @@
 import XCTest
 import ComposableArchitecture
 import SwiftUI
-@testable import secant_testnet
+@testable import zashi_internal
 
 class SettingsSnapshotTests: XCTestCase {
     func testSettingsSnapshot() throws {

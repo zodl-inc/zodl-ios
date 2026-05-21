@@ -6,7 +6,7 @@
 //
 
 import XCTest
-@testable import secant_testnet
+@testable import zashi_internal
 
 class UserPreferencesStorageTests: XCTestCase {
     // swiftlint:disable:next implicitly_unwrapped_optional

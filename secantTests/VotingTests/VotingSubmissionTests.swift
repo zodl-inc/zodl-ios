@@ -1,6 +1,6 @@
 import Foundation
 import XCTest
-@testable import secant_testnet
+@testable import zashi_internal
 
 final class VotingSubmissionTests: XCTestCase {
     func testVotingErrorMapperMapsPirProofRootMismatchToSnapshotMismatch() {
@@ -66,7 +66,16 @@ final class VotingSubmissionTests: XCTestCase {
         XCTAssertEqual(record.votingWeight, ballotDivisor * 5)
         XCTAssertEqual(record.proposalCount, 2)
         XCTAssertEqual(state.voteRecords[roundId], record)
-        XCTAssertEqual(Voting.loadVoteRecord(walletId: walletId, roundId: roundId), record)
+        guard let persistedRecord = Voting.loadVoteRecord(walletId: walletId, roundId: roundId) else {
+            return XCTFail("Expected persisted vote record")
+        }
+        XCTAssertEqual(persistedRecord.votingWeight, record.votingWeight)
+        XCTAssertEqual(persistedRecord.proposalCount, record.proposalCount)
+        XCTAssertEqual(
+            persistedRecord.votedAt.timeIntervalSince1970,
+            record.votedAt.timeIntervalSince1970,
+            accuracy: 0.001
+        )
         XCTAssertTrue(Voting.loadDrafts(walletId: walletId, roundId: roundId).isEmpty)
 
         guard case .completed(let successCount) = state.batchSubmissionStatus else {

@@ -1,7 +1,7 @@
 import ComposableArchitecture
 import Foundation
 import XCTest
-@testable import secant_testnet
+@testable import zashi_internal
 
 @MainActor
 final class VotingStoreInitializationTests: XCTestCase {

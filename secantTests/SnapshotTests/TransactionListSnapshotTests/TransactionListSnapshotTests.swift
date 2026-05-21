@@ -8,7 +8,7 @@
 import XCTest
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
-@testable import secant_testnet
+@testable import zashi_internal
 
 class TransactionListSnapshotTests: XCTestCase {
     func testFullTransactionListSnapshot() throws {

@@ -2,7 +2,7 @@ import XCTest
 import ComposableArchitecture
 import CryptoKit
 import ZcashLightClientKit
-@testable import secant_testnet
+@testable import zashi_internal
 
 final class VotingServiceConfigTests: XCTestCase {
 
@@ -569,7 +569,7 @@ private func makeShareDelegation(
     confirmed: Bool = false,
     submitAt: UInt64,
     createdAt: UInt64,
-    nullifier: [UInt8] = Array(repeating: 0x0A, count: 32)
+    nullifier: String = String(repeating: "0a", count: 32)
 ) throws -> VotingShareDelegation {
     let object: [String: Any] = [
         "round_id": roundId,
@@ -1158,7 +1158,8 @@ final class VotingSubmissionPostFallbackTests: XCTestCase {
             retryDelay: .zero
         )
 
-        XCTAssertEqual(await attempts.value(), 3)
+        let attemptCount = await attempts.value()
+        XCTAssertEqual(attemptCount, 3)
         XCTAssertEqual(result.remainingServerURLs, ["https://vote.example.com"])
     }
 
@@ -1182,7 +1183,8 @@ final class VotingSubmissionPostFallbackTests: XCTestCase {
         } catch {
             XCTAssertTrue(error is SharePostFailure)
         }
-        XCTAssertEqual(await attempts.value(), 1)
+        let attemptCount = await attempts.value()
+        XCTAssertEqual(attemptCount, 1)
     }
 
     func testFailureInFirstProposalRemovesHelperForSecondProposalInSameSubmission() async {
@@ -1241,8 +1243,32 @@ final class VotingSubmissionPostFallbackTests: XCTestCase {
         )
 
         await store.send(.authenticationSucceeded)
+        await store.receive(.batchSubmissionProgress(currentIndex: 0, totalCount: 2, proposalId: 1))
+        await store.receive(.batchSubmissionProgress(currentIndex: 0, totalCount: 2, proposalId: 1))
+        await store.receive(.voteSubmissionBundleStarted(0))
+        await store.receive(.voteSubmissionStepUpdated(.preparingProof))
+        await store.receive(.voteSubmissionStepUpdated(.confirming))
+        await store.receive(.voteSubmissionStepUpdated(.sendingShares))
+
+        let expectedError = String(localizable: .coinVoteStoreUserErrorNoReachableVoteServers)
+        await store.receive(
+            .batchVoteFailed(proposalId: 1, error: expectedError),
+            timeout: .seconds(6)
+        ) {
+            $0.batchVoteErrors[1] = expectedError
+        }
+        await store.receive(.batchSubmissionCompleted(successCount: 0, failCount: 1)) {
+            $0.isSubmittingVote = false
+            $0.submittingProposalId = nil
+            $0.voteSubmissionStep = nil
+            $0.currentVoteBundleIndex = nil
+            $0.batchSubmissionStatus = .submissionFailed(
+                error: expectedError,
+                submittedCount: 0,
+                totalCount: 1
+            )
+        }
         await store.finish()
-        await store.skipReceivedActions()
 
         let submittedProposals = await submittedRecorder.submittedProposals()
         XCTAssertEqual(submittedProposals, [1])
@@ -1427,7 +1453,7 @@ final class VotingSubmissionPostFallbackTests: XCTestCase {
         )
     }
 
-    private static func makeDelegationRegistration() -> DelegationRegistration {
+    nonisolated private static func makeDelegationRegistration() -> DelegationRegistration {
         DelegationRegistration(
             rk: Data(repeating: 0x01, count: 32),
             spendAuthSig: Data(repeating: 0x02, count: 64),
@@ -1441,7 +1467,7 @@ final class VotingSubmissionPostFallbackTests: XCTestCase {
         )
     }
 
-    private static func makeDelegationConfirmation(position: UInt32) -> TxConfirmation {
+    nonisolated private static func makeDelegationConfirmation(position: UInt32) -> TxConfirmation {
         TxConfirmation(
             height: 1,
             code: 0,

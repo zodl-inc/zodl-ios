@@ -9,7 +9,7 @@ import XCTest
 @preconcurrency import Combine
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
-@testable import secant_testnet
+@testable import zashi_internal
 
 @MainActor
 final class WalletNukeTests: XCTestCase {

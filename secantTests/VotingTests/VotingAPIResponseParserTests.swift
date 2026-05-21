@@ -1,6 +1,6 @@
 import Foundation
 import XCTest
-@testable import secant_testnet
+@testable import zashi_internal
 
 final class VotingAPIResponseParserTests: XCTestCase {
     func testParseJSONObjectAcceptsRegularJSONObject() throws {

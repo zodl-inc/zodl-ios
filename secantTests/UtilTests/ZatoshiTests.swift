@@ -6,7 +6,7 @@
 //
 
 import XCTest
-@testable import secant_testnet
+@testable import zashi_internal
 @preconcurrency import ZcashLightClientKit
 
 class ZatoshiTests: XCTestCase {

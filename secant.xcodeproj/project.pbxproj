@@ -2557,8 +2557,8 @@
 			isa = PBXContainerItemProxy;
 			containerPortal = 0D4E79FD26B364170058B01E /* Project object */;
 			proxyType = 1;
-			remoteGlobalIDString = 0D4E7A0426B364170058B01E;
-			remoteInfo = secant;
+			remoteGlobalIDString = 9E5AB4632C94777800065483;
+			remoteInfo = "zashi-internal";
 		};
 		0D4E7A2226B364180058B01E /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -5512,7 +5512,7 @@
 					};
 					0D4E7A1526B364180058B01E = {
 						CreatedOnToolsVersion = 12.5;
-						TestTargetID = 0D4E7A0426B364170058B01E;
+						TestTargetID = 9E5AB4632C94777800065483;
 					};
 					0D4E7A2026B364180058B01E = {
 						CreatedOnToolsVersion = 12.5;
@@ -7014,54 +7014,9 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				9E139AAF2B07B3A600D104B8 /* ZatoshiStringRepresentationTests.swift in Sources */,
-				9E3451B529C8565500177D16 /* LoggerTests.swift in Sources */,
-				9E3451C229C857DB00177D16 /* TransactionSendingSnapshotTests.swift in Sources */,
-				9E34519E29C849B400177D16 /* WalletConfigProviderTests.swift in Sources */,
-				9E3451C029C857D400177D16 /* RecoveryPhraseDisplaySnapshotTests.swift in Sources */,
-				9E3451B629C8565500177D16 /* ZatoshiTests.swift in Sources */,
-				9E3451B829C856E700177D16 /* TransactionListTests.swift in Sources */,
-				9E34519529C4A4BF00177D16 /* ReceiveTests.swift in Sources */,
-				9E3451B929C857C000177D16 /* ReceiveSnapshotTests.swift in Sources */,
-				9E34519B29C4A90700177D16 /* DeeplinkTests.swift in Sources */,
-				9E3451BD29C857CC00177D16 /* ImportWalletSnapshotTests.swift in Sources */,
-				9E3451B429C8565500177D16 /* WalletStorageTests.swift in Sources */,
-				9E4938D82ACE8E8F003C4C1D /* SecurityWarningSnapshotTests.swift in Sources */,
-				9E3451C429C857DF00177D16 /* View+UIImage.swift in Sources */,
-				9E34519729C4A51100177D16 /* RecoveryPhraseBackupTests.swift in Sources */,
-				9E0C0D702AFB842B00D69A16 /* TransactionStateTests.swift in Sources */,
-				9E5B8E742B46E04E00CA3616 /* RestoreWalletTests.swift in Sources */,
-				9E683E472B0377F0002E7B5D /* WalletNukeTests.swift in Sources */,
-				9E3451BC29C857C800177D16 /* NotEnoughFeeSpaceSnapshots.swift in Sources */,
-				9E3451B229C8565500177D16 /* SecItemClientTests.swift in Sources */,
 				A9987CA32F96D90500C9B8BE /* VotingServiceConfigTests.swift in Sources */,
-				9E3451C629C857E700177D16 /* WelcomeSnapshotTests.swift in Sources */,
 				AD0D00102D00000100000001 /* VotingSessionTests.swift in Sources */,
 				AD0D00112D00000100000001 /* VotingSubmissionTests.swift in Sources */,
-				9E3451C529C857E400177D16 /* TransactionListSnapshotTests.swift in Sources */,
-				9EEB06C62B344F1E00EEE50F /* SyncProgressTests.swift in Sources */,
-				9E34519C29C4A91A00177D16 /* HomeTests.swift in Sources */,
-				9E1FAFB72AF2C6D40084CA3D /* PrivateDataConsentSnapshotTests.swift in Sources */,
-				9E3451BB29C857C800177D16 /* HomeSnapshotTests.swift in Sources */,
-				9E3451AF29C855B200177D16 /* SensitiveDataTests.swift in Sources */,
-				9E3451A729C84E9900177D16 /* AppInitializationTests.swift in Sources */,
-				9E3451B029C855E600177D16 /* SettingsTests.swift in Sources */,
-				9E34519F29C849D300177D16 /* ImportWalletTests.swift in Sources */,
-				9E74CCD029DC0628003D6E32 /* ReviewRequestTests.swift in Sources */,
-				9E3451A029C84A2D00177D16 /* MultiLineTextFieldTests.swift in Sources */,
-				9E3451B729C8565500177D16 /* DatabaseFilesTests.swift in Sources */,
-				9E3451B129C8565500177D16 /* UserPreferencesStorageTests.swift in Sources */,
-				9E3451BA29C857C500177D16 /* BalanceBreakdownSnapshotTests.swift in Sources */,
-				9E3451A629C84B6600177D16 /* RootTests.swift in Sources */,
-				9E3451AE29C84F2800177D16 /* SendTests.swift in Sources */,
-				9EA7ED062B7A591C005979F4 /* ZatoshiStringRepresentationCommaTests.swift in Sources */,
-				9E34519A29C4A52F00177D16 /* BalanceBreakdownTests.swift in Sources */,
-				9E46919A2AD5735E0082D7DF /* TabsTests.swift in Sources */,
-				9E1FAFBA2AF2C7F20084CA3D /* PrivateDataConsentTests.swift in Sources */,
-				9E3451C329C857DD00177D16 /* SettingsSnapshotTests.swift in Sources */,
-				9E34519D29C8484D00177D16 /* HomeFeatureFlagTests.swift in Sources */,
-				9E3451A929C84EC000177D16 /* ScanTests.swift in Sources */,
-				9E3451A829C84EAF00177D16 /* DebugTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -8440,7 +8395,7 @@
 /* Begin PBXTargetDependency section */
 		0D4E7A1826B364180058B01E /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
-			target = 0D4E7A0426B364170058B01E /* secant-testnet */;
+			target = 9E5AB4632C94777800065483 /* zashi-internal */;
 			targetProxy = 0D4E7A1726B364180058B01E /* PBXContainerItemProxy */;
 		};
 		0D4E7A2326B364180058B01E /* PBXTargetDependency */ = {
@@ -8736,7 +8691,7 @@
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG UNREDACTED";
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/secant-testnet.app/secant-testnet";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/zashi-internal.app/zashi-internal";
 			};
 			name = Debug;
 		};
@@ -8758,7 +8713,7 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/secant-testnet.app/secant-testnet";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/zashi-internal.app/zashi-internal";
 			};
 			name = "Release-Testflight";
 		};
@@ -9113,7 +9068,7 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/secant-testnet.app/secant-testnet";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/zashi-internal.app/zashi-internal";
 			};
 			name = "Release-AppStore";
 		};

@@ -8,7 +8,7 @@
 @preconcurrency import Combine
 import XCTest
 import ComposableArchitecture
-@testable import secant_testnet
+@testable import zashi_internal
 @testable @preconcurrency import ZcashLightClientKit
 
 class HomeTests: XCTestCase {

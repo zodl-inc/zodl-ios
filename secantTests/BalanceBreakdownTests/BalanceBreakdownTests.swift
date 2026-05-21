@@ -9,7 +9,7 @@ import XCTest
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
 @preconcurrency import Combine
-@testable import secant_testnet
+@testable import zashi_internal
 
 @MainActor
 class BalanceBreakdownTests: XCTestCase {

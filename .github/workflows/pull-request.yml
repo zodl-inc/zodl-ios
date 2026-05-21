@@ -26,7 +26,7 @@ jobs:
       - name: Resolve packages
         run: |
           xcodebuild -project secant.xcodeproj \
-            -scheme secant-testnet \
+            -scheme zashi-internal \
             -resolvePackageDependencies
 
       - name: Run unit tests
@@ -34,7 +34,7 @@ jobs:
           set -o pipefail
           xcodebuild test \
             -project secant.xcodeproj \
-            -scheme secant-testnet \
+            -scheme zashi-internal \
             -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=latest' \
             -resultBundlePath TestResults.xcresult \
             -only-testing:secantTests \

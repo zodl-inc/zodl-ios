@@ -7,7 +7,7 @@
 
 import XCTest
 import CoreImage
-@testable import secant_testnet
+@testable import zashi_internal
 
 
 class QRCodeGeneratorTests: XCTestCase {

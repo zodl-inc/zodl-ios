@@ -6,7 +6,7 @@
 //
 
 import XCTest
-@testable import secant_testnet
+@testable import zashi_internal
 
 class RecoveryPhraseBackupTests: XCTestCase {
     func testGiven24WordsBIP39ChunkItIntoHalves() throws {

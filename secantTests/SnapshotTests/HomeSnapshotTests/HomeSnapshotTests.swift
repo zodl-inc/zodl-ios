@@ -8,7 +8,7 @@
 import XCTest
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
-@testable import secant_testnet
+@testable import zashi_internal
 
 class HomeSnapshotTests: XCTestCase {
     func testHomeSnapshot() throws {
@@ -35,7 +35,6 @@ class HomeSnapshotTests: XCTestCase {
         
         let store = StoreOf<Home>(
             initialState: .init(
-                syncProgressState: .initial,
                 transactionListState: .init(transactionList: IdentifiedArrayOf(uniqueElements: transactionList)),
                 walletBalancesState: .initial,
                 walletConfig: .initial

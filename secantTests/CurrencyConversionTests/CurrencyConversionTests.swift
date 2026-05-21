@@ -7,7 +7,7 @@
 
 import XCTest
 @preconcurrency import ZcashLightClientKit
-@testable import secant_testnet
+@testable import zashi_internal
 
 
 class CurrencyConversionTests: XCTestCase {

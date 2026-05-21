@@ -8,7 +8,7 @@
 import XCTest
 @preconcurrency import MnemonicSwift
 @preconcurrency import ZcashLightClientKit
-@testable import secant_testnet
+@testable import zashi_internal
 
 class SensitiveDataTests: XCTestCase {
     func testSeedPhraseConformsToUndescribable() throws {

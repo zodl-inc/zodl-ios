@@ -9,7 +9,7 @@ import XCTest
 import ComposableArchitecture
 import SwiftUI
 @preconcurrency import ZcashLightClientKit
-@testable import secant_testnet
+@testable import zashi_internal
 
 class SendSnapshotTests: XCTestCase {
     func testTransactionSendSnapshot() throws {

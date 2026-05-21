@@ -6,7 +6,7 @@
 //
 
 import XCTest
-@testable import secant_testnet
+@testable import zashi_internal
 
 extension WalletStorage.KeychainError {
     var debugValue: String {
@@ -147,9 +147,7 @@ class SecItemClientTests: XCTestCase {
         
         let walletStorage = WalletStorage(secItem: secItemDuplicate)
         
-        let result = walletStorage.deleteData(forKey: "")
-        
-        XCTAssertTrue(result)
+        XCTAssertNoThrow(try walletStorage.deleteData(forKey: ""))
     }
     
     func test_secItemDelete_Failed() throws {
@@ -162,8 +160,18 @@ class SecItemClientTests: XCTestCase {
         
         let walletStorage = WalletStorage(secItem: secItemDuplicate)
         
-        let result = walletStorage.deleteData(forKey: "")
-        
-        XCTAssertFalse(result)
+        XCTAssertThrowsError(try walletStorage.deleteData(forKey: "")) { error in
+            guard let error = error as? WalletStorage.KeychainError else {
+                XCTFail("SecItemClient: the error is expected to be WalletStorage.KeychainError but it's \(error).")
+
+                return
+            }
+
+            XCTAssertEqual(
+                error.debugValue,
+                WalletStorage.KeychainError.unknown(errSecCoreFoundationUnknown).debugValue,
+                "SecItemClient: error must be .unknown but it's \(error)."
+            )
+        }
     }
 }

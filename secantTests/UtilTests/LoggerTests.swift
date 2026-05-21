@@ -8,7 +8,7 @@
 import XCTest
 import OSLog
 @preconcurrency import ZcashLightClientKit
-@testable import secant_testnet
+@testable import zashi_internal
 
 class LoggerTests: XCTestCase {
     let timeToPast: TimeInterval = 0.1

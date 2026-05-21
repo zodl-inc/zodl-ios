@@ -7,7 +7,7 @@
 
 import XCTest
 import ComposableArchitecture
-@testable import secant_testnet
+@testable import zashi_internal
 
 @MainActor
 final class PrivateDataConsentTests: XCTestCase {

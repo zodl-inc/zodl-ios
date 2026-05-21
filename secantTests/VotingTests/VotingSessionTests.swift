@@ -1,6 +1,6 @@
 import XCTest
 import Foundation
-@testable import VotingModels
+@testable import zashi_internal
 
 final class VotingSessionTests: XCTestCase {
     func testLastMomentBufferUsesFortyPercentForShortRounds() throws {
