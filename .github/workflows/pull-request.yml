@@ -31,13 +31,17 @@ jobs:
 
       - name: Run unit tests
         run: |
+          set -o pipefail
           xcodebuild test \
             -project secant.xcodeproj \
             -scheme secant-testnet \
             -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=latest' \
             -resultBundlePath TestResults.xcresult \
             -only-testing:secantTests \
-            CODE_SIGNING_ALLOWED=NO | xcpretty --color
+            -skipPackagePluginValidation \
+            -skipMacroValidation \
+            CODE_SIGNING_ALLOWED=NO \
+            | xcpretty --color
 
       - name: Upload test results
         if: ${{ always() }}
