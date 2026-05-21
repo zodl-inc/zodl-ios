@@ -1169,6 +1169,7 @@ class MultiServerSubmitTests: XCTestCase {
 
     func testSubmitToAllEndpointsPreservesSuccessDuringTimeoutDrain() async {
         let successEndpoint = LightWalletEndpoint(address: "success.server", port: 443)
+        let timeoutRecords = LockIsolated<Int>(0)
 
         let winner = await SDKSynchronizerClient.submitToAllEndpoints(
             rawTx: Data([0x01]),
@@ -1177,12 +1178,38 @@ class MultiServerSubmitTests: XCTestCase {
             graceDelay: SubmitTiming.graceDelay,
             responseTimeout: SubmitTiming.responseTimeout,
             timeoutDrainDelay: SubmitTiming.timeoutDrainDelay,
+            recordTimeout: {
+                timeoutRecords.withValue { $0 += 1 }
+            },
             submit: { _, _ in
                 try await Task.sleep(for: .milliseconds(75))
             }
         )
 
         XCTAssertEqual(winner, "endpoint 1")
+        XCTAssertEqual(timeoutRecords.withValue { $0 }, 0)
+    }
+
+    func testSubmitToAllEndpointsRecordsTimeoutWhenNoServerResponds() async {
+        let timeoutRecords = LockIsolated<Int>(0)
+
+        let winner = await SDKSynchronizerClient.submitToAllEndpoints(
+            rawTx: Data([0x01]),
+            endpoints: [LightWalletEndpoint(address: "server1", port: 443)],
+            logPrefix: "[MultiSubmit/Test]",
+            graceDelay: SubmitTiming.graceDelay,
+            responseTimeout: .milliseconds(1),
+            timeoutDrainDelay: .milliseconds(1),
+            recordTimeout: {
+                timeoutRecords.withValue { $0 += 1 }
+            },
+            submit: { _, _ in
+                try await Task.sleep(for: .seconds(5))
+            }
+        )
+
+        XCTAssertNil(winner)
+        XCTAssertEqual(timeoutRecords.withValue { $0 }, 1)
     }
 
     func testSubmitToAllEndpointsReturnsNilWhenAllServersReject() async {
@@ -1217,6 +1244,7 @@ class MultiServerSubmitTests: XCTestCase {
         ]
         let startedCount = LockIsolated<Int>(0)
         let cancelledCount = LockIsolated<Int>(0)
+        let timeoutRecords = LockIsolated<Int>(0)
 
         let task = Task {
             await SDKSynchronizerClient.submitToAllEndpoints(
@@ -1226,6 +1254,9 @@ class MultiServerSubmitTests: XCTestCase {
                 graceDelay: SubmitTiming.graceDelay,
                 responseTimeout: .seconds(5),
                 timeoutDrainDelay: .seconds(5),
+                recordTimeout: {
+                    timeoutRecords.withValue { $0 += 1 }
+                },
                 submit: { _, _ in
                     startedCount.withValue { $0 += 1 }
                     do {
@@ -1256,6 +1287,7 @@ class MultiServerSubmitTests: XCTestCase {
             try? await Task.sleep(for: .milliseconds(1))
         }
         XCTAssertEqual(cancelledCount.withValue { $0 }, endpoints.count)
+        XCTAssertEqual(timeoutRecords.withValue { $0 }, 0)
     }
 
     private func makeUserPreferences(

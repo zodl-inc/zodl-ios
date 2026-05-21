@@ -10,6 +10,7 @@ import Foundation
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
 @preconcurrency import KeystoneSDK
+import os
 
 extension SDKSynchronizerClient: DependencyKey {
     static let liveValue: SDKSynchronizerClient = Self.live()
@@ -397,6 +398,7 @@ extension SDKSynchronizerClient {
     private enum SubmitResult {
         case endpoint(String?)
         case graceExpired
+        case timerCancelled
         case timedOut
     }
 
@@ -447,24 +449,6 @@ extension SDKSynchronizerClient {
         }
     }
 
-    private final class SubmitTaskCancellation: @unchecked Sendable {
-        private let lock = NSLock()
-        private var task: Task<Void, Never>?
-
-        func set(_ task: Task<Void, Never>) {
-            lock.lock()
-            self.task = task
-            lock.unlock()
-        }
-
-        func cancel() {
-            lock.lock()
-            let task = self.task
-            lock.unlock()
-            task?.cancel()
-        }
-    }
-
     static func createAndSubmitTransactions(
         _ transactions: [ZcashTransaction.Overview],
         logPrefix: String,
@@ -473,7 +457,7 @@ extension SDKSynchronizerClient {
         graceDelay: Duration = MultiServerSubmissionTiming.postAcceptanceGraceDelay,
         responseTimeout: Duration = MultiServerSubmissionTiming.firstResponseTimeout,
         timeoutDrainDelay: Duration = MultiServerSubmissionTiming.timeoutDrainDelay,
-        submit: @escaping (Data, LightWalletEndpoint) async throws -> Void
+        submit: @escaping @Sendable (Data, LightWalletEndpoint) async throws -> Void
     ) async -> CreateProposedTransactionsResult {
         guard !transactions.isEmpty else {
             return .failure(txIds: [], code: -1, description: "No transactions created")
@@ -599,6 +583,8 @@ extension SDKSynchronizerClient {
         return [zcashSDKEnvironment.endpoint()]
     }
 
+    /// Returns the first accepted endpoint immediately, then keeps already-started submissions alive
+    /// through a short grace window before canceling the remaining endpoint work.
     static func submitToAllEndpoints(
         rawTx: Data,
         endpoints: [LightWalletEndpoint],
@@ -608,19 +594,17 @@ extension SDKSynchronizerClient {
         timeoutDrainDelay: Duration = MultiServerSubmissionTiming.timeoutDrainDelay,
         recordSubmitFailure: @escaping @Sendable (String, Int, String) async -> Void = { _, _, _ in },
         recordTimeout: @escaping @Sendable () async -> Void = {},
-        submit: @escaping (Data, LightWalletEndpoint) async throws -> Void
+        submit: @escaping @Sendable (Data, LightWalletEndpoint) async throws -> Void
     ) async -> String? {
         guard !endpoints.isEmpty else { return nil }
 
-        let serverCount = endpoints.count
+        let endpointCount = endpoints.count
         let acceptedSubmitStore = AcceptedSubmitStore()
-        let submitTaskCancellation = SubmitTaskCancellation()
+        let workerTask = OSAllocatedUnfairLock<Task<Void, Never>?>(initialState: nil)
 
         return await withTaskCancellationHandler {
-            await withCheckedContinuation { continuation in
+            await withCheckedContinuation { (continuation: CheckedContinuation<String?, Never>) in
                 let task = Task {
-                    var hasResumed = false
-
                     await withTaskGroup(of: SubmitResult.self) { group in
                         for (offset, endpoint) in endpoints.enumerated() {
                             let endpointLabel = "endpoint \(offset + 1)"
@@ -645,69 +629,62 @@ extension SDKSynchronizerClient {
                             do {
                                 try await Task.sleep(for: responseTimeout)
                                 try await Task.sleep(for: timeoutDrainDelay)
-                                if let endpointLabel = await acceptedSubmitStore.recordedEndpointLabel() {
-                                    return .endpoint(endpointLabel)
-                                }
-                                LoggerProxy.error("\(logPrefix) Timed out waiting for any server to respond.")
                                 return .timedOut
                             } catch {
-                                return .timedOut
+                                return .timerCancelled
                             }
                         }
 
+                        var winner: String?
                         var failedCount = 0
-                        for await result in group {
+                        drain: for await result in group {
                             switch result {
-                            case .endpoint(let winner?):
-                                if !hasResumed {
-                                    hasResumed = true
-                                    continuation.resume(returning: winner)
-                                    group.addTask {
-                                        try? await Task.sleep(for: graceDelay)
-                                        return .graceExpired
-                                    }
+                            case .endpoint(let endpointLabel?):
+                                guard winner == nil else { continue }
+                                winner = endpointLabel
+                                continuation.resume(returning: endpointLabel)
+                                group.addTask {
+                                    try? await Task.sleep(for: graceDelay)
+                                    return .graceExpired
                                 }
                             case .endpoint(nil):
                                 failedCount += 1
-                                if !hasResumed && failedCount >= serverCount {
-                                    hasResumed = true
-                                    group.cancelAll()
+                                guard winner == nil else { continue }
+                                if failedCount >= endpointCount {
                                     continuation.resume(returning: nil)
-                                    return
+                                    break drain
                                 }
                             case .graceExpired:
-                                if !hasResumed {
-                                    hasResumed = true
+                                break drain
+                            case .timerCancelled:
+                                guard winner == nil else { continue }
+                                if Task.isCancelled {
                                     continuation.resume(returning: nil)
+                                    break drain
                                 }
-                                group.cancelAll()
-                                return
                             case .timedOut:
-                                if !hasResumed {
-                                    hasResumed = true
-                                    let recordedEndpointLabel = await acceptedSubmitStore.recordedEndpointLabel()
-                                    if recordedEndpointLabel == nil {
-                                        await recordTimeout()
-                                    }
-                                    continuation.resume(returning: recordedEndpointLabel)
+                                guard winner == nil else { continue }
+                                let recordedEndpointLabel = await acceptedSubmitStore.recordedEndpointLabel()
+                                if recordedEndpointLabel == nil {
+                                    LoggerProxy.error("\(logPrefix) Timed out waiting for any server to respond.")
+                                    await recordTimeout()
                                 }
-                                group.cancelAll()
-                                return
+                                continuation.resume(returning: recordedEndpointLabel)
+                                break drain
                             }
                         }
 
-                        if !hasResumed {
-                            continuation.resume(returning: nil)
-                        }
+                        group.cancelAll()
                     }
                 }
-                submitTaskCancellation.set(task)
+                workerTask.withLock { $0 = task }
                 if Task.isCancelled {
                     task.cancel()
                 }
             }
         } onCancel: {
-            submitTaskCancellation.cancel()
+            let task = workerTask.withLock { $0 }
+            task?.cancel()
         }
     }
 }
