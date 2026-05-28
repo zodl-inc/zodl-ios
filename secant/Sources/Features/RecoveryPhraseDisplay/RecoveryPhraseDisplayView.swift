@@ -95,6 +95,14 @@ struct RecoveryPhraseDisplayView: View {
             .onReceive(NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)) { _ in
                 store.send(.hideEverything)
             }
+            .onReceive(NotificationCenter.default.publisher(for: UIApplication.userDidTakeScreenshotNotification)) { _ in
+                store.send(.hideEverything)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIScreen.capturedDidChangeNotification)) { _ in
+                if UIScreen.main.isCaptured {
+                    store.send(.hideEverything)
+                }
+            }
             .alert($store.scope(state: \.alert, action: \.alert))
             .zashiBack()
             .zashiSheet(isPresented: $store.isHelpSheetPresented) {
