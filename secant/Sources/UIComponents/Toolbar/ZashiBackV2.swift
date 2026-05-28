@@ -24,6 +24,7 @@ struct ZashiBackV2Modifier: ViewModifier {
         } else {
             content
                 .navigationBarBackButtonHidden(true)
+                .enableSwipeBackGesture()
                 .toolbar {
                     ToolbarItem(placement: .navigationBarLeading) {
                         Button {

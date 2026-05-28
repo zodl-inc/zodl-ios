@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import UIKit
 
 struct ZashiBackModifier: ViewModifier {
     @Environment(\.dismiss) private var dismiss
@@ -22,6 +23,7 @@ struct ZashiBackModifier: ViewModifier {
         } else {
             content
                 .navigationBarBackButtonHidden(true)
+                .enableSwipeBackGesture()
                 .toolbar {
                     ToolbarItem(placement: .navigationBarLeading) {
                         Button {
@@ -70,5 +72,61 @@ extension View {
                 customDismiss: customDismiss
             )
         )
+    }
+
+    /// Restores the system edge-swipe-back gesture, which iOS disables when
+    /// `.navigationBarBackButtonHidden(true)` is set. Safe to use on the root of
+    /// a `NavigationStack` — the gesture only fires when the stack has > 1 view.
+    func enableSwipeBackGesture() -> some View {
+        background(
+            EnableSwipeBackGesture()
+                .frame(width: 0, height: 0)
+                .allowsHitTesting(false)
+        )
+    }
+}
+
+private struct EnableSwipeBackGesture: UIViewRepresentable {
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView()
+        view.isUserInteractionEnabled = false
+        DispatchQueue.main.async { [weak view] in
+            view?.attachSwipeBack(coordinator: context.coordinator)
+        }
+        return view
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {
+        DispatchQueue.main.async { [weak uiView] in
+            uiView?.attachSwipeBack(coordinator: context.coordinator)
+        }
+    }
+
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        weak var navigationController: UINavigationController?
+
+        func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+            (navigationController?.viewControllers.count ?? 0) > 1
+        }
+    }
+}
+
+private extension UIView {
+    func attachSwipeBack(coordinator: EnableSwipeBackGesture.Coordinator) {
+        guard let nav = findNavigationController() else { return }
+        coordinator.navigationController = nav
+        nav.interactivePopGestureRecognizer?.delegate = coordinator
+        nav.interactivePopGestureRecognizer?.isEnabled = true
+    }
+
+    func findNavigationController() -> UINavigationController? {
+        var responder: UIResponder? = self
+        while let next = responder?.next {
+            if let nav = next as? UINavigationController { return nav }
+            responder = next
+        }
+        return nil
     }
 }
