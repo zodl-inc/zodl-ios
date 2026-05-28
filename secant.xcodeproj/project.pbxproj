@@ -2330,10 +2330,6 @@
 		37D0F0000000000000000022 /* RoundAuthenticator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37D0F0000000000000000002 /* RoundAuthenticator.swift */; };
 		37D0F0000000000000000023 /* RoundAuthenticator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37D0F0000000000000000002 /* RoundAuthenticator.swift */; };
 		37D0F0000000000000000024 /* RoundAuthenticator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37D0F0000000000000000002 /* RoundAuthenticator.swift */; };
-		9E0C0D702AFB842B00D69A16 /* TransactionStateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E0C0D6F2AFB842B00D69A16 /* TransactionStateTests.swift */; };
-		9E139AAF2B07B3A600D104B8 /* ZatoshiStringRepresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E139AAE2B07B3A600D104B8 /* ZatoshiStringRepresentationTests.swift */; };
-		9E1FAFB72AF2C6D40084CA3D /* PrivateDataConsentSnapshotTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E1FAFB62AF2C6D40084CA3D /* PrivateDataConsentSnapshotTests.swift */; };
-		9E1FAFBA2AF2C7F20084CA3D /* PrivateDataConsentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E1FAFB92AF2C7F20084CA3D /* PrivateDataConsentTests.swift */; };
 		9E2706672AFF99F5000DA6EC /* ReadTransactionsStorageModel.xcdatamodeld in Sources */ = {isa = PBXBuildFile; fileRef = 9E2706652AFF99F5000DA6EC /* ReadTransactionsStorageModel.xcdatamodeld */; };
 		9E2706682AFF99F5000DA6EC /* ReadTransactionsStorageModel.xcdatamodeld in Sources */ = {isa = PBXBuildFile; fileRef = 9E2706652AFF99F5000DA6EC /* ReadTransactionsStorageModel.xcdatamodeld */; };
 		9E27153F2F88FB2000046B74 /* WalletStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E27153E2F88FB1E00046B74 /* WalletStatus.swift */; };
@@ -2342,41 +2338,7 @@
 		9E2715422F88FB2000046B74 /* WalletStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E27153E2F88FB1E00046B74 /* WalletStatus.swift */; };
 		9E2715432F88FB2000046B74 /* WalletStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E27153E2F88FB1E00046B74 /* WalletStatus.swift */; };
 		9E2F1C8C280ED6A7004E65FE /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 9E2F1C8B280ED6A7004E65FE /* LaunchScreen.storyboard */; };
-		9E34519529C4A4BF00177D16 /* ReceiveTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E207C382966EF87003E2C9B /* ReceiveTests.swift */; };
 		9E34519629C4A4D800177D16 /* secantUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D4E7A2526B364180058B01E /* secantUITests.swift */; };
-		9E34519729C4A51100177D16 /* RecoveryPhraseBackupTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0DFE93DE272C6D4B000FCCA5 /* RecoveryPhraseBackupTests.swift */; };
-		9E34519A29C4A52F00177D16 /* BalanceBreakdownTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E94C61F28AA7DEE008256E9 /* BalanceBreakdownTests.swift */; };
-		9E34519B29C4A90700177D16 /* DeeplinkTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9EAB4675285B5C7C002904A0 /* DeeplinkTests.swift */; };
-		9E34519C29C4A91A00177D16 /* HomeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E3911382848AD500073DD9A /* HomeTests.swift */; };
-		9E34519D29C8484D00177D16 /* HomeFeatureFlagTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 341B30BA29B78D1000697081 /* HomeFeatureFlagTests.swift */; };
-		9E34519E29C849B400177D16 /* WalletConfigProviderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34F039B229ABCE8500CF0053 /* WalletConfigProviderTests.swift */; };
-		9E34519F29C849D300177D16 /* ImportWalletTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E391123283E4CAC0073DD9A /* ImportWalletTests.swift */; };
-		9E3451A029C84A2D00177D16 /* MultiLineTextFieldTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E6713F02897F81B00A6796F /* MultiLineTextFieldTests.swift */; };
-		9E3451A629C84B6600177D16 /* RootTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9EAFEB812805793200199FC9 /* RootTests.swift */; };
-		9E3451A729C84E9900177D16 /* AppInitializationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E391131284644580073DD9A /* AppInitializationTests.swift */; };
-		9E3451A829C84EAF00177D16 /* DebugTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E852D6429B0A86300CF4AC1 /* DebugTests.swift */; };
-		9E3451A929C84EC000177D16 /* ScanTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E01F8272833CDA0000EFC57 /* ScanTests.swift */; };
-		9E3451AE29C84F2800177D16 /* SendTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E5BF643281FEC9900BA3F17 /* SendTests.swift */; };
-		9E3451AF29C855B200177D16 /* SensitiveDataTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E612C7829913F3600D09B09 /* SensitiveDataTests.swift */; };
-		9E3451B029C855E600177D16 /* SettingsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E66129D288938A300C75B70 /* SettingsTests.swift */; };
-		9E3451B129C8565500177D16 /* UserPreferencesStorageTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9EF8135B27ECC25E0075AF48 /* UserPreferencesStorageTests.swift */; };
-		9E3451B229C8565500177D16 /* SecItemClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9EAFEB852805A23100199FC9 /* SecItemClientTests.swift */; };
-		9E3451B429C8565500177D16 /* WalletStorageTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9EF8135A27ECC25E0075AF48 /* WalletStorageTests.swift */; };
-		9E3451B529C8565500177D16 /* LoggerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E0F574A2980260D005304FA /* LoggerTests.swift */; };
-		9E3451B629C8565500177D16 /* ZatoshiTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E39112D283F91600073DD9A /* ZatoshiTests.swift */; };
-		9E3451B729C8565500177D16 /* DatabaseFilesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E02B56B27FED475005B809B /* DatabaseFilesTests.swift */; };
-		9E3451B829C856E700177D16 /* TransactionListTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E5BF63E2819542C00BA3F17 /* TransactionListTests.swift */; };
-		9E3451B929C857C000177D16 /* ReceiveSnapshotTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E207C352966EC77003E2C9B /* ReceiveSnapshotTests.swift */; };
-		9E3451BA29C857C500177D16 /* BalanceBreakdownSnapshotTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E94C62228AA7EE0008256E9 /* BalanceBreakdownSnapshotTests.swift */; };
-		9E3451BB29C857C800177D16 /* HomeSnapshotTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E9ECC8C28589E150099D5A2 /* HomeSnapshotTests.swift */; };
-		9E3451BC29C857C800177D16 /* NotEnoughFeeSpaceSnapshots.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3448CB3628E485CB006ADEDB /* NotEnoughFeeSpaceSnapshots.swift */; };
-		9E3451BD29C857CC00177D16 /* ImportWalletSnapshotTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E9ECC9428589E150099D5A2 /* ImportWalletSnapshotTests.swift */; };
-		9E3451C029C857D400177D16 /* RecoveryPhraseDisplaySnapshotTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E9ECC9028589E150099D5A2 /* RecoveryPhraseDisplaySnapshotTests.swift */; };
-		9E3451C229C857DB00177D16 /* TransactionSendingSnapshotTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34429C6D28E703CD00F2B929 /* TransactionSendingSnapshotTests.swift */; };
-		9E3451C329C857DD00177D16 /* SettingsSnapshotTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E7225F02889539300DF7F17 /* SettingsSnapshotTests.swift */; };
-		9E3451C429C857DF00177D16 /* View+UIImage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E92AF0728530EBF007367AD /* View+UIImage.swift */; };
-		9E3451C529C857E400177D16 /* TransactionListSnapshotTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E7CB6112869882D00A02233 /* TransactionListSnapshotTests.swift */; };
-		9E3451C629C857E700177D16 /* WelcomeSnapshotTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E9ECC8E28589E150099D5A2 /* WelcomeSnapshotTests.swift */; };
 		9E41FFA82CB2814500783CFD /* ReadTransactionsStorageModel.xcdatamodeld in Sources */ = {isa = PBXBuildFile; fileRef = 9E2706652AFF99F5000DA6EC /* ReadTransactionsStorageModel.xcdatamodeld */; };
 		9E41FFAF2CB2814500783CFD /* Preview Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 0D4E7A0F26B364180058B01E /* Preview Assets.xcassets */; };
 		9E41FFB02CB2814500783CFD /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 9E2F1C8B280ED6A7004E65FE /* LaunchScreen.storyboard */; };
@@ -2385,7 +2347,6 @@
 		9E41FFB32CB2814500783CFD /* whatsNew.json in Resources */ = {isa = PBXBuildFile; fileRef = 9E6C98472BF4C65F00EACDCB /* whatsNew.json */; };
 		9E41FFB52CB2814500783CFD /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 9EDDAF6C2BA2D71700A69A07 /* PrivacyInfo.xcprivacy */; };
 		9E41FFB62CB2814500783CFD /* Colors.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 9E5AAEBF2A67CEC4003F283D /* Colors.xcassets */; };
-		9E46919A2AD5735E0082D7DF /* TabsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E4691992AD5735E0082D7DF /* TabsTests.swift */; };
 		9E4841532F869F5F00D0649B /* ZcashLightClientKit in Frameworks */ = {isa = PBXBuildFile; productRef = 9E4841522F869F5F00D0649B /* ZcashLightClientKit */; };
 		9E4841542F869F5F00D0649B /* ZcashLightClientKit in Frameworks */ = {isa = PBXBuildFile; productRef = 9E4841522F869F5F00D0649B /* ZcashLightClientKit */; };
 		9E4841552F869F5F00D0649B /* ZcashLightClientKit in Frameworks */ = {isa = PBXBuildFile; productRef = 9E4841522F869F5F00D0649B /* ZcashLightClientKit */; };
@@ -2405,7 +2366,6 @@
 		9E48425D2F8E940A002DA90E /* VotingErrorSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E48425A2F8E940A002DA90E /* VotingErrorSheet.swift */; };
 		9E48425E2F8E940A002DA90E /* VotingErrorSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E48425A2F8E940A002DA90E /* VotingErrorSheet.swift */; };
 		9E48425F2F8E940A002DA90E /* VotingErrorSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E48425A2F8E940A002DA90E /* VotingErrorSheet.swift */; };
-		9E4938D82ACE8E8F003C4C1D /* SecurityWarningSnapshotTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E4938D72ACE8E8F003C4C1D /* SecurityWarningSnapshotTests.swift */; };
 		9E4AB2A42BA1BEE900F5D6DB /* ReadTransactionsStorageModel.xcdatamodeld in Sources */ = {isa = PBXBuildFile; fileRef = 9E2706652AFF99F5000DA6EC /* ReadTransactionsStorageModel.xcdatamodeld */; };
 		9E4AB2AF2BA1BEE900F5D6DB /* Preview Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 0D4E7A0F26B364180058B01E /* Preview Assets.xcassets */; };
 		9E4AB2B02BA1BEE900F5D6DB /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 9E2F1C8B280ED6A7004E65FE /* LaunchScreen.storyboard */; };
@@ -2424,7 +2384,6 @@
 		9E5AB47A2C94777800065483 /* whatsNew.json in Resources */ = {isa = PBXBuildFile; fileRef = 9E6C98472BF4C65F00EACDCB /* whatsNew.json */; };
 		9E5AB47C2C94777800065483 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 9EDDAF6C2BA2D71700A69A07 /* PrivacyInfo.xcprivacy */; };
 		9E5AB47D2C94777800065483 /* Colors.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 9E5AAEBF2A67CEC4003F283D /* Colors.xcassets */; };
-		9E5B8E742B46E04E00CA3616 /* RestoreWalletTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E5B8E732B46E04E00CA3616 /* RestoreWalletTests.swift */; };
 		9E5CFD0F2CE61B7200C95713 /* sending.json in Resources */ = {isa = PBXBuildFile; fileRef = 9E5CFD0E2CE61B7200C95713 /* sending.json */; };
 		9E5CFD102CE61B7200C95713 /* sending.json in Resources */ = {isa = PBXBuildFile; fileRef = 9E5CFD0E2CE61B7200C95713 /* sending.json */; };
 		9E5CFD112CE61B7200C95713 /* sending.json in Resources */ = {isa = PBXBuildFile; fileRef = 9E5CFD0E2CE61B7200C95713 /* sending.json */; };
@@ -2435,11 +2394,9 @@
 		9E5CFD172CE6215500C95713 /* sending-dark.json in Resources */ = {isa = PBXBuildFile; fileRef = 9E5CFD142CE6215500C95713 /* sending-dark.json */; };
 		9E5CFD182CE6215500C95713 /* sending-dark.json in Resources */ = {isa = PBXBuildFile; fileRef = 9E5CFD142CE6215500C95713 /* sending-dark.json */; };
 		9E5CFD192CE6215500C95713 /* sending-dark.json in Resources */ = {isa = PBXBuildFile; fileRef = 9E5CFD142CE6215500C95713 /* sending-dark.json */; };
-		9E683E472B0377F0002E7B5D /* WalletNukeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E683E462B0377F0002E7B5D /* WalletNukeTests.swift */; };
 		9E6C98492BF4C65F00EACDCB /* whatsNew.json in Resources */ = {isa = PBXBuildFile; fileRef = 9E6C98472BF4C65F00EACDCB /* whatsNew.json */; };
 		9E6C984A2BF4C65F00EACDCB /* whatsNew.json in Resources */ = {isa = PBXBuildFile; fileRef = 9E6C98472BF4C65F00EACDCB /* whatsNew.json */; };
 		9E6C984B2BF4C65F00EACDCB /* whatsNew.json in Resources */ = {isa = PBXBuildFile; fileRef = 9E6C98472BF4C65F00EACDCB /* whatsNew.json */; };
-		9E74CCD029DC0628003D6E32 /* ReviewRequestTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E74CCCF29DC0628003D6E32 /* ReviewRequestTests.swift */; };
 		9E89DF702CD27344002E5317 /* whatsNew_es.json in Resources */ = {isa = PBXBuildFile; fileRef = 9E89DF6F2CD27344002E5317 /* whatsNew_es.json */; };
 		9E89DF712CD27344002E5317 /* whatsNew_es.json in Resources */ = {isa = PBXBuildFile; fileRef = 9E89DF6F2CD27344002E5317 /* whatsNew_es.json */; };
 		9E89DF722CD27344002E5317 /* whatsNew_es.json in Resources */ = {isa = PBXBuildFile; fileRef = 9E89DF6F2CD27344002E5317 /* whatsNew_es.json */; };
@@ -2447,11 +2404,9 @@
 		9E89DF742CD27344002E5317 /* whatsNew_es.json in Resources */ = {isa = PBXBuildFile; fileRef = 9E89DF6F2CD27344002E5317 /* whatsNew_es.json */; };
 		9E90751E2A269BE300269308 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 9E90751D2A269BE300269308 /* Assets.xcassets */; };
 		9E90751F2A269BE300269308 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 9E90751D2A269BE300269308 /* Assets.xcassets */; };
-		9EA7ED062B7A591C005979F4 /* ZatoshiStringRepresentationCommaTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9EA7ED052B7A591C005979F4 /* ZatoshiStringRepresentationCommaTests.swift */; };
 		9EDDAF6D2BA2D71700A69A07 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 9EDDAF6C2BA2D71700A69A07 /* PrivacyInfo.xcprivacy */; };
 		9EDDAF6E2BA2D71700A69A07 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 9EDDAF6C2BA2D71700A69A07 /* PrivacyInfo.xcprivacy */; };
 		9EDDAF6F2BA2D71700A69A07 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 9EDDAF6C2BA2D71700A69A07 /* PrivacyInfo.xcprivacy */; };
-		9EEB06C62B344F1E00EEE50F /* SyncProgressTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9EEB06C52B344F1E00EEE50F /* SyncProgressTests.swift */; };
 		9EEBF7752FBB053400DD38DB /* VotingMetadata.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9EEBF7742FBB053400DD38DB /* VotingMetadata.swift */; };
 		9EEBF7762FBB053400DD38DB /* VotingMetadata.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9EEBF7742FBB053400DD38DB /* VotingMetadata.swift */; };
 		9EEBF7772FBB053400DD38DB /* VotingMetadata.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9EEBF7742FBB053400DD38DB /* VotingMetadata.swift */; };
@@ -8689,7 +8644,6 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				INFOPLIST_FILE = "secant/secant-mainnet-Info.plist";
-				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -8719,7 +8673,6 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				INFOPLIST_FILE = "secant/secant-mainnet-Info.plist";
-				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -8871,7 +8824,6 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				INFOPLIST_FILE = "secant/secant-testnet-Info.plist";
-				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -8900,7 +8852,6 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				INFOPLIST_FILE = "secant/secant-testnet-Info.plist";
-				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -8928,7 +8879,6 @@
 					"$(inherited)",
 				);
 				INFOPLIST_FILE = secantTests/Info.plist;
-				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -8951,7 +8901,6 @@
 				DEVELOPMENT_TEAM = RLPRR8CPQG;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				INFOPLIST_FILE = secantTests/Info.plist;
-				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -8972,7 +8921,6 @@
 				DEVELOPMENT_TEAM = RLPRR8CPQG;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				INFOPLIST_FILE = secantUITests/Info.plist;
-				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -8994,7 +8942,6 @@
 				DEVELOPMENT_TEAM = RLPRR8CPQG;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				INFOPLIST_FILE = secantUITests/Info.plist;
-				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -9024,7 +8971,6 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				INFOPLIST_FILE = "secant/zashi-testnet-Info.plist";
-				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -9054,7 +9000,6 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				INFOPLIST_FILE = "secant/zashi-testnet-Info.plist";
-				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -9084,7 +9029,6 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				INFOPLIST_FILE = "secant/zashi-testnet-Info.plist";
-				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -9115,7 +9059,6 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				INFOPLIST_FILE = "secant-distrib-Info.plist";
-				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -9155,7 +9098,6 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				INFOPLIST_FILE = "secant-distrib-Info.plist";
-				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -9252,7 +9194,6 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				INFOPLIST_FILE = "secant/secant-testnet-Info.plist";
-				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -9282,7 +9223,6 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				INFOPLIST_FILE = "secant/secant-mainnet-Info.plist";
-				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -9306,7 +9246,6 @@
 				DEVELOPMENT_TEAM = RLPRR8CPQG;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				INFOPLIST_FILE = secantTests/Info.plist;
-				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -9327,7 +9266,6 @@
 				DEVELOPMENT_TEAM = RLPRR8CPQG;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				INFOPLIST_FILE = secantUITests/Info.plist;
-				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -9356,7 +9294,6 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				INFOPLIST_FILE = "secant-distrib-Info.plist";
-				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -9397,7 +9334,6 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				INFOPLIST_FILE = "zashi-internal-Info.plist";
-				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -9427,7 +9363,6 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				INFOPLIST_FILE = "zashi-internal-Info.plist";
-				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -9457,7 +9392,6 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				INFOPLIST_FILE = "zashi-internal-Info.plist";
-				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -9566,8 +9500,6 @@
 				kind = upToNextMinorVersion;
 				minimumVersion = 1.25.5;
 			};
-			traits = (
-			);
 		};
 		34AA771D2F857DFF00D244E2 /* XCRemoteSwiftPackageReference "xctest-dynamic-overlay" */ = {
 			isa = XCRemoteSwiftPackageReference;
