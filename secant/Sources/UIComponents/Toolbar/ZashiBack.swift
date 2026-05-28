@@ -89,20 +89,11 @@ extension View {
 private struct EnableSwipeBackGesture: UIViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator() }
 
-    func makeUIView(context: Context) -> UIView {
-        let view = UIView()
-        view.isUserInteractionEnabled = false
-        DispatchQueue.main.async { [weak view] in
-            view?.attachSwipeBack(coordinator: context.coordinator)
-        }
-        return view
+    func makeUIView(context: Context) -> SwipeBackProbeView {
+        SwipeBackProbeView(coordinator: context.coordinator)
     }
 
-    func updateUIView(_ uiView: UIView, context: Context) {
-        DispatchQueue.main.async { [weak uiView] in
-            uiView?.attachSwipeBack(coordinator: context.coordinator)
-        }
-    }
+    func updateUIView(_ uiView: SwipeBackProbeView, context: Context) {}
 
     final class Coordinator: NSObject, UIGestureRecognizerDelegate {
         weak var navigationController: UINavigationController?
@@ -113,15 +104,26 @@ private struct EnableSwipeBackGesture: UIViewRepresentable {
     }
 }
 
-private extension UIView {
-    func attachSwipeBack(coordinator: EnableSwipeBackGesture.Coordinator) {
+private final class SwipeBackProbeView: UIView {
+    private let coordinator: EnableSwipeBackGesture.Coordinator
+
+    init(coordinator: EnableSwipeBackGesture.Coordinator) {
+        self.coordinator = coordinator
+        super.init(frame: .zero)
+        isUserInteractionEnabled = false
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
         guard let nav = findNavigationController() else { return }
         coordinator.navigationController = nav
         nav.interactivePopGestureRecognizer?.delegate = coordinator
         nav.interactivePopGestureRecognizer?.isEnabled = true
     }
 
-    func findNavigationController() -> UINavigationController? {
+    private func findNavigationController() -> UINavigationController? {
         var responder: UIResponder? = self
         while let next = responder?.next {
             if let nav = next as? UINavigationController { return nav }
