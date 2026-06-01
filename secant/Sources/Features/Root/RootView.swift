@@ -31,7 +31,7 @@ struct RootView: View {
                 }
             }
             .onChange(of: scenePhase) { value in
-                covered = value == .background
+                covered = value != .active
             }
     }
 }
