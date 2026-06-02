@@ -1,6 +1,20 @@
 {
     "releases": [
         {
+            "version": "3.5.1",
+            "date": "02-06-2026",
+            "timestamp": 1780404420,
+            "sections": [
+                {
+                    "title": "Cambiado:",
+                    "bulletpoints": [
+                        "Actualizamos el ID de la consensus branch. Esta actualización de la aplicación es necesaria.",
+                        "Actualizamos el servidor predeterminado."
+                    ]
+                }
+            ]
+        },
+        {
             "version": "3.5.0",
             "date": "27-05-2026",
             "timestamp": 1779388800,
