@@ -8,7 +8,7 @@
                 {
                     "title": "Cambiado:",
                     "bulletpoints": [
-                        "Actualizamos el ID de la consensus branch. Esta actualización de la aplicación es necesaria.",
+                        "Compatibilidad actualizada con los últimos cambios de la red Zcash. Esta actualización es necesaria para garantizar el correcto funcionamiento de la billetera.",
                         "Actualizamos el servidor predeterminado."
                     ]
                 }

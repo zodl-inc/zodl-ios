@@ -8,7 +8,7 @@
                 {
                     "title": "Changed:",
                     "bulletpoints": [
-                        "We updated the consensus branch ID. This app update is required.",
+                        "Updated compatibility with the latest Zcash network changes. This update is required to ensure continued wallet functionality.",
                         "We updated the default server."
                     ]
                 }
