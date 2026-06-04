@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import UIKit
 
 struct ZashiBackModifier: ViewModifier {
     @Environment(\.dismiss) private var dismiss
@@ -22,6 +23,7 @@ struct ZashiBackModifier: ViewModifier {
         } else {
             content
                 .navigationBarBackButtonHidden(true)
+                .enableSwipeBackGesture()
                 .toolbar {
                     ToolbarItem(placement: .navigationBarLeading) {
                         Button {
@@ -71,5 +73,63 @@ extension View {
                 customDismiss: customDismiss
             )
         )
+    }
+
+    /// Restores the system edge-swipe-back gesture, which iOS disables when
+    /// `.navigationBarBackButtonHidden(true)` is set. Safe to use on the root of
+    /// a `NavigationStack` — the gesture only fires when the stack has > 1 view.
+    func enableSwipeBackGesture() -> some View {
+        background(
+            EnableSwipeBackGesture()
+                .frame(width: 0, height: 0)
+                .allowsHitTesting(false)
+        )
+    }
+}
+
+private struct EnableSwipeBackGesture: UIViewRepresentable {
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeUIView(context: Context) -> SwipeBackProbeView {
+        SwipeBackProbeView(coordinator: context.coordinator)
+    }
+
+    func updateUIView(_ uiView: SwipeBackProbeView, context: Context) {}
+
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        weak var navigationController: UINavigationController?
+
+        func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+            (navigationController?.viewControllers.count ?? 0) > 1
+        }
+    }
+}
+
+private final class SwipeBackProbeView: UIView {
+    private let coordinator: EnableSwipeBackGesture.Coordinator
+
+    init(coordinator: EnableSwipeBackGesture.Coordinator) {
+        self.coordinator = coordinator
+        super.init(frame: .zero)
+        isUserInteractionEnabled = false
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        guard let nav = findNavigationController() else { return }
+        coordinator.navigationController = nav
+        nav.interactivePopGestureRecognizer?.delegate = coordinator
+        nav.interactivePopGestureRecognizer?.isEnabled = true
+    }
+
+    private func findNavigationController() -> UINavigationController? {
+        var responder: UIResponder? = self
+        while let next = responder?.next {
+            if let nav = next as? UINavigationController { return nav }
+            responder = next
+        }
+        return nil
     }
 }
