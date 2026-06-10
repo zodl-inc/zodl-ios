@@ -27,6 +27,15 @@ struct Root {
             case transactionsCoordFlow
             case walletBackup
         }
+
+        struct PendingServerCandidate {
+            let endpoint: LightWalletEndpoint
+            let benchmarkedAt: Date
+
+            func isExpired(now: Date) -> Bool {
+                now.timeIntervalSince(benchmarkedAt) >= AutoServerSelectionConstants.pendingCandidateTTL
+            }
+        }
         
         var CancelEventId = UUID()
         var CancelId = UUID()
@@ -66,6 +75,7 @@ struct Root {
         var onboardingState: RestoreWalletCoordFlow.State
         var osStatusErrorState: OSStatusError.State
         var path: Path? = nil
+        var pendingServerCandidate: PendingServerCandidate?
         var phraseDisplayState: RecoveryPhraseDisplay.State
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
         var serverSetupState: ServerSetup.State
@@ -109,6 +119,27 @@ struct Root {
         var isServerSetupVisible: Bool {
             serverSetupViewBinding
                 || settingsState.path.contains { if case .chooseServerSetup = $0 { return true } else { return false } }
+        }
+
+        /// True while the user is inside a UI flow that may contain an in-progress payment
+        /// or voting sequence. Read live at decision time — never stored anywhere. The
+        /// switch is exhaustive on purpose: a new `Path` case must be classified here
+        /// before the project compiles.
+        var isSensitiveFlowActive: Bool {
+            if signWithKeystoneCoordFlowBinding { return true }
+            guard let path else { return false }
+            switch path {
+            case .sendCoordFlow, .scanCoordFlow, .swapAndPayCoordFlow, .transactionsCoordFlow, .settings:
+                return true
+            case .addKeystoneHWWalletCoordFlow, .currencyConversionSetup, .receive,
+                 .requestZecCoordFlow, .serverSwitch, .torSetup, .walletBackup:
+                return false
+            }
+        }
+
+        /// Gate for applying an automatic server switch.
+        var canApplyAutoServerSwitch: Bool {
+            bgTask == nil && !isServerSetupVisible && !isSensitiveFlowActive
         }
 
         init(

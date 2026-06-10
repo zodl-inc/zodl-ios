@@ -139,3 +139,61 @@ final class AutoServerSelectionClientTests: XCTestCase {
         XCTAssertNil(recorder.persisted)
     }
 }
+
+// MARK: - Root auto-switch gating
+
+final class RootAutoServerGatingTests: XCTestCase {
+    func testNoFlowIsNotSensitive() {
+        let state = Root.State.initial
+        XCTAssertFalse(state.isSensitiveFlowActive)
+        XCTAssertTrue(state.canApplyAutoServerSwitch)
+    }
+
+    func testSensitivePathCases() {
+        var state = Root.State.initial
+        let sensitive: [Root.State.Path] = [
+            .sendCoordFlow, .scanCoordFlow, .swapAndPayCoordFlow, .transactionsCoordFlow, .settings
+        ]
+        for path in sensitive {
+            state.path = path
+            XCTAssertTrue(state.isSensitiveFlowActive, "\(path) must be sensitive")
+            XCTAssertFalse(state.canApplyAutoServerSwitch, "\(path) must defer the auto switch")
+        }
+    }
+
+    func testNonSensitivePathCases() {
+        var state = Root.State.initial
+        let notSensitive: [Root.State.Path] = [
+            .addKeystoneHWWalletCoordFlow, .currencyConversionSetup, .receive,
+            .requestZecCoordFlow, .serverSwitch, .torSetup, .walletBackup
+        ]
+        for path in notSensitive {
+            state.path = path
+            XCTAssertFalse(state.isSensitiveFlowActive, "\(path) must not be sensitive")
+        }
+    }
+
+    func testKeystoneSigningBindingIsSensitive() {
+        var state = Root.State.initial
+        state.signWithKeystoneCoordFlowBinding = true
+        XCTAssertTrue(state.isSensitiveFlowActive)
+        XCTAssertFalse(state.canApplyAutoServerSwitch)
+    }
+
+    func testServerSetupVisibleBlocksApplyButIsNotSensitive() {
+        var state = Root.State.initial
+        state.serverSetupViewBinding = true
+        XCTAssertFalse(state.isSensitiveFlowActive)
+        XCTAssertFalse(state.canApplyAutoServerSwitch)
+    }
+
+    func testPendingCandidateExpiry() {
+        let benchmarkedAt = Date(timeIntervalSince1970: 1_000_000)
+        let candidate = Root.State.PendingServerCandidate(
+            endpoint: LightWalletEndpoint(address: "zec.rocks", port: 443, secure: true, streamingCallTimeoutInMillis: 0),
+            benchmarkedAt: benchmarkedAt
+        )
+        XCTAssertFalse(candidate.isExpired(now: benchmarkedAt.addingTimeInterval(14 * 60)))
+        XCTAssertTrue(candidate.isExpired(now: benchmarkedAt.addingTimeInterval(15 * 60)))
+    }
+}
