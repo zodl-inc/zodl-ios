@@ -22,7 +22,8 @@ struct AutoServerSelectionClient {
     var findBestServer: @Sendable () async -> LightWalletEndpoint? = { nil }
     /// Re-validates (Automatic still on, candidate still differs from current) and applies
     /// the switch under the transaction guard (`switchIfIdle` + timeout), then persists
-    /// the new server. Returns true when the switch ran. Never throws; failures are logged.
+    /// the new server. Returns true when the switch ran and the new server was persisted.
+    /// Never throws; failures are logged.
     var applySwitch: @Sendable (LightWalletEndpoint) async -> Bool = { _ in false }
 }
 

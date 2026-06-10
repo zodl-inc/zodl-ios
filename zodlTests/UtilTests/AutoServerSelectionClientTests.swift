@@ -115,4 +115,27 @@ final class AutoServerSelectionClientTests: XCTestCase {
         XCTAssertNil(r.switchedTo)
         XCTAssertNil(r.persisted)
     }
+
+    func testApplyReturnsFalseWhenSwitchThrows() async {
+        let recorder = Recorder()
+        let didSwitch = await withDependencies {
+            $0.userStoredPreferences.automaticServerSelection = { true }
+            $0.userStoredPreferences.setServer = { recorder.persisted = $0 }
+            $0.zcashSDKEnvironment = .testnet
+            $0.zcashSDKEnvironment.network = { ZcashNetworkBuilder.network(for: .mainnet) }
+            $0.zcashSDKEnvironment.endpoint = { LightWalletEndpoint(address: "zec.rocks", port: 443, secure: true, streamingCallTimeoutInMillis: 0) }
+            $0.sdkSynchronizer.switchToEndpoint = { _ in throw URLError(URLError.Code.timedOut) }
+            $0.transactionGuard = TransactionGuardClient(
+                acquire: {},
+                tryAcquire: { true },
+                release: {}
+            )
+        } operation: {
+            await AutoServerSelectionClient.liveValue.applySwitch(
+                LightWalletEndpoint(address: "na.zec.rocks", port: 443, secure: true, streamingCallTimeoutInMillis: 0)
+            )
+        }
+        XCTAssertFalse(didSwitch)
+        XCTAssertNil(recorder.persisted)
+    }
 }
