@@ -8,13 +8,12 @@ import ComposableArchitecture
 
 extension AutoServerSelectionClient: DependencyKey {
     static let liveValue = AutoServerSelectionClient(
-        refreshIfEnabled: {
+        findBestServer: {
             @Dependency(\.userStoredPreferences) var userStoredPreferences
             @Dependency(\.zcashSDKEnvironment) var zcashSDKEnvironment
             @Dependency(\.sdkSynchronizer) var sdkSynchronizer
-            @Dependency(\.transactionGuard) var transactionGuard
 
-            guard userStoredPreferences.automaticServerSelection() == true else { return }
+            guard userStoredPreferences.automaticServerSelection() == true else { return nil }
 
             let network = zcashSDKEnvironment.network().networkType
             let endpoints = ZcashSDKEnvironment.endpoints(for: network)
@@ -27,25 +26,42 @@ extension AutoServerSelectionClient: DependencyKey {
                 network
             )
 
-            guard let best = ranked.first else { return }
+            guard let best = ranked.first else { return nil }
 
             let current = zcashSDKEnvironment.endpoint()
-            guard best.host != current.host || best.port != current.port else { return }
+            guard best.host != current.host || best.port != current.port else { return nil }
 
-            // The user may have switched to Manual while the benchmark was running.
-            guard userStoredPreferences.automaticServerSelection() == true else { return }
+            return best
+        },
+        applySwitch: { candidate in
+            @Dependency(\.userStoredPreferences) var userStoredPreferences
+            @Dependency(\.zcashSDKEnvironment) var zcashSDKEnvironment
+            @Dependency(\.sdkSynchronizer) var sdkSynchronizer
+            @Dependency(\.transactionGuard) var transactionGuard
+
+            // Re-validate: the user may have switched to Manual, or changed servers
+            // manually, while the benchmark ran or the candidate sat deferred.
+            guard userStoredPreferences.automaticServerSelection() == true else { return false }
+
+            let current = zcashSDKEnvironment.endpoint()
+            guard candidate.host != current.host || candidate.port != current.port else { return false }
 
             do {
                 let didSwitch = try await transactionGuard.switchIfIdle {
                     try await withTimeout(serverSwitchTimeout) {
-                        try await sdkSynchronizer.switchToEndpoint(best)
+                        try await sdkSynchronizer.switchToEndpoint(candidate)
                     }
                 }
-                guard didSwitch else { return }
+                guard didSwitch else {
+                    LoggerProxy.event("[AutoServerSelection] Switch skipped: transaction guard busy")
+                    return false
+                }
 
-                try userStoredPreferences.setServer(best.serverConfig(isCustom: false))
+                try userStoredPreferences.setServer(candidate.serverConfig(isCustom: false))
+                return true
             } catch {
                 LoggerProxy.error("[AutoServerSelection] Failed to switch endpoint: \(error)")
+                return false
             }
         }
     )

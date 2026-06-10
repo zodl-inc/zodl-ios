@@ -5,6 +5,7 @@
 
 import Foundation
 import ComposableArchitecture
+@preconcurrency import ZcashLightClientKit
 
 extension DependencyValues {
     var autoServerSelection: AutoServerSelectionClient {
@@ -15,10 +16,14 @@ extension DependencyValues {
 
 @DependencyClient
 struct AutoServerSelectionClient {
-    /// Benchmarks known endpoints and switches to the fastest one when Automatic mode is enabled.
-    /// A no-op when Automatic is off, when the best server equals the current one, or when a
-    /// transaction submission is in progress (it retries on the next trigger).
-    var refreshIfEnabled: @Sendable () async -> Void
+    /// Benchmarks the known endpoints when Automatic mode is enabled. Returns the best
+    /// endpoint when it differs from the current one; nil when Automatic is off, the
+    /// benchmark produced nothing, or the best server is already the current one.
+    var findBestServer: @Sendable () async -> LightWalletEndpoint? = { nil }
+    /// Re-validates (Automatic still on, candidate still differs from current) and applies
+    /// the switch under the transaction guard (`switchIfIdle` + timeout), then persists
+    /// the new server. Returns true when the switch ran. Never throws; failures are logged.
+    var applySwitch: @Sendable (LightWalletEndpoint) async -> Bool = { _ in false }
 }
 
 enum AutoServerSelectionConstants {
@@ -26,4 +31,6 @@ enum AutoServerSelectionConstants {
     static let evaluationTimeoutSeconds = 5.0
     static let blocksToDownload: UInt64 = 1
     static let candidateCount = 3
+    /// A deferred switch candidate older than this is dropped instead of applied.
+    static let pendingCandidateTTL: TimeInterval = 15 * 60
 }

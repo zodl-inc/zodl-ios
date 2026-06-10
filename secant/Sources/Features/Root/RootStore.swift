@@ -433,7 +433,9 @@ struct Root {
                 // the manual Save uses switchWaiting (waits, then wins) while this uses switchIfIdle.
                 guard state.bgTask == nil, !state.isServerSetupVisible else { return .none }
                 return .run { _ in
-                    await autoServerSelection.refreshIfEnabled()
+                    if let best = await autoServerSelection.findBestServer() {
+                        _ = await autoServerSelection.applySwitch(best)
+                    }
                 }
                 .cancellable(id: state.automaticServerRefreshCancelId, cancelInFlight: true)
 
