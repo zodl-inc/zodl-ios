@@ -87,6 +87,12 @@ Closures to wrap (in their `liveValue`):
 | `SDKSynchronizerClient` | `getTreeState` | `SDKSynchronizerInterface.swift:108` |
 | `VotingAPIClient` | `submitVoteCommitment` | `VotingAPIClientInterface.swift:69` (live: `VotingAPIClientLiveKey.swift`) |
 | `VotingAPIClient` | `submitDelegation` | `VotingAPIClientInterface.swift:68` |
+| `VotingAPIClient` | `delegateShares` | `VotingAPIClientInterface.swift:71` |
+
+`delegateShares` is included because `Voting.delegateSharesWithFallback`
+(`VotingHelpers.swift:311`) calls it internally — it is what the call-site wrappers at
+`VotingCoordFlowCoordinator.swift:1939` and `:3484` actually protect today. Without it,
+deleting those wrappers would leave share delegation unguarded.
 
 `getTreeState` is included because the voting flow's round-snapshot fetch is currently
 call-site-guarded (`VotingCoordFlowCoordinator.swift:3312`) — a switch mid-fetch would fail
@@ -113,14 +119,14 @@ Call-site wrappers to delete (keep the bodies, drop the `withSubmission` and the
 - `ShieldingProcessorLiveKey.swift:75`
 - `VotingCoordFlowCoordinator.swift:1892`, `:1939`, `:2911`, `:3312`, `:3484`, `:3607`
 
-After this change, `transactionGuard` is referenced only by: the five LiveKey closures
+After this change, `transactionGuard` is referenced only by: the six LiveKey closures
 above, `AutoServerSelectionLiveKey` (`switchIfIdle`), and `ServerSetupStore`
 (`switchWaiting`).
 
 Deliberate semantic deltas:
 
-- `Voting.delegateSharesWithFallback` batches were previously one guard section including
-  fallback retries; now each inner `submitDelegation` acquires individually. Acceptable:
+- `Voting.delegateSharesWithFallback` previously held one guard section across its up-to-3
+  retry attempts; now each `delegateShares` attempt acquires individually. Acceptable:
   layer 2 covers the surrounding flow, and each broadcast remains individually exclusive
   against switches.
 - Test values are unaffected: the wrap exists only in `liveValue`. Tests that exercise
@@ -340,24 +346,20 @@ a pure function of current state, evaluated at the moment of each decision.
 ## Testing
 
 - `TransactionGuardTests` — unchanged (actor semantics untouched).
-- LiveKey wrapping — a test per wrapped closure: a switch attempted via `switchIfIdle`
-  during an in-flight call is skipped; `switchWaiting` waits, then runs.
-- `Root.State.isSensitiveFlowActive` — unit test pinning every `Path` case and the
-  Keystone binding.
-- Root reducer (TCA test store):
-  - candidate ready while sensitive flow active → deferred, no switch effect
-  - flow exit with pending candidate → re-fed through `.autoServerCandidateReady` → applied
-  - flow exit with expired candidate → dropped
-  - candidate ready while `isServerSetupVisible` / `bgTask != nil` → deferred
-  - newer candidate overwrites an older pending one
+- `Root.State.isSensitiveFlowActive` / `canApplyAutoServerSwitch` — unit tests pinning
+  every `Path` case, the Keystone binding, and the server-setup gate. (`Root.State` is not
+  `Equatable`, so TCA `TestStore` cannot be used on Root — the reducer glue is covered by
+  the pure-state property tests, the client tests, and manual QA instead.)
+- `PendingServerCandidate.isExpired` — unit test of the TTL comparison.
 - `AutoServerSelectionClientTests` — update for the split API (`findBestServer` returns
-  candidate without switching; `applySwitch` re-validates preference and current endpoint).
+  candidate without switching; `applySwitch` re-validates preference and current endpoint,
+  respects a busy guard, switches and persists when clear).
 - `ServerSetupStoreTests` — unchanged behavior.
 - Manual QA: the motivating scenario end-to-end, observing the defer → apply log sequence.
 
 ## Implementation order
 
-1. **Layer 1** — wrap the five LiveKey closures, delete the eleven call-site wrappers and
+1. **Layer 1** — wrap the six LiveKey closures, delete the eleven call-site wrappers and
    unused `transactionGuard` dependencies, update tests. No user-visible behavior change
    (besides delegate-batch guard granularity).
 2. **Layer 2** — split `AutoServerSelectionClient`, add Root state/action/gates and the
