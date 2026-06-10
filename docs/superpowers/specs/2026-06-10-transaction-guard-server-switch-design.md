@@ -223,7 +223,9 @@ Classification rationale:
   (`@Presents var votingCoordFlow`, `SettingsStore.swift:49`); marking the whole settings
   tree sensitive covers it with zero plumbing.
 - `.serverSwitch` — not sensitive; that window belongs to the manual flow and is governed
-  by `isServerSetupVisible` + `switchWaiting`.
+  by `isServerSetupVisible` + `switchWaiting`. (Implementation note: the smart-banner entry
+  presents Server Setup via `path == .serverSwitch` without setting `serverSetupViewBinding`,
+  so `isServerSetupVisible` includes the path check.)
 - `signWithKeystoneCoordFlowBinding` — the PCZT signing flow (minutes of QR signing),
   presented via a separate binding on Root, hence checked separately.
 

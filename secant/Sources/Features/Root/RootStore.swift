@@ -114,10 +114,12 @@ struct Root {
         var walletBackupCoordFlowState = WalletBackupCoordFlow.State.initial
         var torSetupState = TorSetup.State.initial
 
-        /// True while Server Setup is presented via either entry point — the home-banner full-screen
-        /// cover (`serverSetupViewBinding`) or Settings → Choose Server (`chooseServerSetup`).
+        /// True while Server Setup is presented via any of its three entry points — the
+        /// disconnect-alert full-screen cover (`serverSetupViewBinding`), the smart-banner
+        /// navigation (`path == .serverSwitch`), or Settings → Choose Server (`chooseServerSetup`).
         var isServerSetupVisible: Bool {
             serverSetupViewBinding
+                || path == .serverSwitch
                 || settingsState.path.contains { if case .chooseServerSetup = $0 { return true } else { return false } }
         }
 

@@ -143,6 +143,8 @@ final class AutoServerSelectionClientTests: XCTestCase {
 // MARK: - Root auto-switch gating
 
 final class RootAutoServerGatingTests: XCTestCase {
+    // Note: the bgTask arm of canApplyAutoServerSwitch is not unit-tested — BGProcessingTask
+    // has no public initializer, so it cannot be constructed in tests.
     func testNoFlowIsNotSensitive() {
         let state = Root.State.initial
         XCTAssertFalse(state.isSensitiveFlowActive)
@@ -183,6 +185,15 @@ final class RootAutoServerGatingTests: XCTestCase {
     func testServerSetupVisibleBlocksApplyButIsNotSensitive() {
         var state = Root.State.initial
         state.serverSetupViewBinding = true
+        XCTAssertFalse(state.isSensitiveFlowActive)
+        XCTAssertFalse(state.canApplyAutoServerSwitch)
+    }
+
+    func testServerSwitchPathBlocksApplyButIsNotSensitive() {
+        // The smart-banner entry presents Server Setup via path, not serverSetupViewBinding.
+        var state = Root.State.initial
+        state.path = .serverSwitch
+        XCTAssertTrue(state.isServerSetupVisible)
         XCTAssertFalse(state.isSensitiveFlowActive)
         XCTAssertFalse(state.canApplyAutoServerSwitch)
     }
