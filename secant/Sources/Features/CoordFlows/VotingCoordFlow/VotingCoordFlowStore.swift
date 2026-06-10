@@ -347,7 +347,6 @@ struct VotingCoordFlow {
     @Dependency(\.mnemonic) var mnemonic
     @Dependency(\.pasteboard) var pasteboard
     @Dependency(\.sdkSynchronizer) var sdkSynchronizer
-    @Dependency(\.transactionGuard) var transactionGuard
     @Dependency(\.votingAPI) var votingAPI
     @Dependency(\.votingCrypto) var votingCrypto
     @Dependency(\.votingMetadata) var votingMetadata
