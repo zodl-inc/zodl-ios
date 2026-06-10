@@ -424,6 +424,23 @@ struct Root {
     }
     
     var body: some Reducer<State, Action> {
+        combinedCore
+            .onChange(of: \.canApplyAutoServerSwitch) { _, canApply in
+                Reduce { state, _ in
+                    guard canApply, let pending = state.pendingServerCandidate else { return .none }
+                    state.pendingServerCandidate = nil
+                    if pending.isExpired(now: date.now()) {
+                        LoggerProxy.event("[AutoServerSelection] Deferred candidate expired, dropped")
+                        return .none
+                    }
+                    LoggerProxy.event("[AutoServerSelection] Applying deferred candidate after flow exit")
+                    return .send(.autoServerCandidateReady(pending.endpoint))
+                }
+            }
+    }
+
+    @ReducerBuilder<State, Action>
+    private var combinedCore: some Reducer<State, Action> {
         self.core
 
         Reduce { state, action in
@@ -484,7 +501,8 @@ struct Root {
                         endpoint: candidate,
                         benchmarkedAt: date.now()
                     )
-                    let gates = "bgTask: \(state.bgTask != nil), serverSetup: \(state.isServerSetupVisible), sensitiveFlow: \(state.isSensitiveFlowActive)"
+                    let hardGates = "bgTask: \(state.bgTask != nil), serverSetup: \(state.isServerSetupVisible)"
+                    let gates = "\(hardGates), sensitiveFlow: \(state.isSensitiveFlowActive)"
                     LoggerProxy.event("[AutoServerSelection] Candidate deferred (\(gates))")
                     return .none
                 }
