@@ -339,7 +339,10 @@ extension SDKSynchronizerClient: DependencyKey {
                 try await synchronizer.enhanceTransactionBy(txId: TxId(txId))
             },
             getTreeState: { height in
-                try await synchronizer.getTreeState(height: height)
+                @Dependency(\.transactionGuard) var transactionGuard
+                return try await transactionGuard.withSubmission {
+                    try await synchronizer.getTreeState(height: height)
+                }
             }
         )
     }

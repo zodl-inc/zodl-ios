@@ -3308,10 +3308,7 @@ extension VotingCoordFlow {
         // (the slow part of the pipeline) completes.
         await send(.earlyEligibilityConfirmed(roundId: roundId))
 
-        @Dependency(\.transactionGuard) var transactionGuard
-        let treeStateBytes = try await transactionGuard.withSubmission {
-            try await sdkSynchronizer.getTreeState(snapshotHeight)
-        }
+        let treeStateBytes = try await sdkSynchronizer.getTreeState(snapshotHeight)
         try await votingCrypto.storeTreeState(roundId, treeStateBytes)
 
         let noteChunks = notes.smartBundles().bundles
