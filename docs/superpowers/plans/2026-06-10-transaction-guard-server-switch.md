@@ -17,7 +17,8 @@
 - Read/search: `mcp__xcode__XcodeRead` / `mcp__xcode__XcodeGrep` with **Xcode-organization paths**.
 - Edit: `mcp__xcode__XcodeUpdate` (string replacement) with Xcode-organization paths. Plain `Edit` on the filesystem path is an acceptable fallback.
 - Build: `mcp__xcode__BuildProject`. On failure, `mcp__xcode__GetBuildLog`.
-- Tests: `mcp__xcode__RunSomeTests` with identifiers like `zodlTests/AutoServerSelectionClientTests`, or `mcp__xcode__RunAllTests`. The active scheme must be **zashi-internal**; tests live in target **zodlTests** and use `@testable import zodl_internal`.
+- Tests: `mcp__xcode__RunSomeTests` with identifiers like `zodlTests/AutoServerSelectionClientTests`, or `mcp__xcode__RunAllTests`. The active scheme must be **zodl-internal** (the Xcode MCP only operates on the active scheme and cannot switch it — ask the user if a different scheme is active); tests live in target **zodlTests** and use `@testable import zodl_internal`.
+- `RunSomeTests` validates against a possibly stale test index: after **adding** a test class or method, build first; if the test is reported "not found", use `mcp__xcode__RunAllTests` (it forces a build-for-testing and reliably discovers new tests). Do not use CLI `xcodebuild test` — it hits a known resource-copy conflict with the gitignored `PartnerKeys.plist`.
 
 **Path mapping** (Xcode organization ↔ filesystem, from repo root):
 
@@ -978,7 +979,7 @@ Directly after the `isServerSetupVisible` computed property (line ~112), insert:
 
 - [ ] **Step 6: Verify green**
 
-`mcp__xcode__BuildProject` → succeeds. `mcp__xcode__RunSomeTests` with `["zodlTests/RootAutoServerGatingTests"]` → all 6 pass.
+`mcp__xcode__BuildProject` → succeeds. `mcp__xcode__RunSomeTests` with `["zodlTests/RootAutoServerGatingTests"]` → all 6 pass. (This is a newly added class — if RunSomeTests reports it "not found", run `mcp__xcode__RunAllTests` instead.)
 
 - [ ] **Step 7: Commit**
 
@@ -1177,7 +1178,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 - [ ] **Step 5: Manual QA (report results to the user; needs a device/simulator)**
 
 The motivating scenario, observed via console logs:
-1. Launch the app (zashi-internal scheme), open Send, start a send.
+1. Launch the app (zodl-internal scheme), open Send, start a send.
 2. Background the app mid-flow, then foreground it — `refreshAutomaticServer` re-fires.
 3. While still inside the Send flow, expect `[AutoServerSelection] Candidate deferred (… sensitiveFlow: true)` once the benchmark completes (requires Automatic server selection ON and the benchmark picking a non-current server — a testnet config with several endpoints makes this likely).
 4. Leave the Send flow → expect `[AutoServerSelection] Applying deferred candidate after flow exit` followed by the switch.
