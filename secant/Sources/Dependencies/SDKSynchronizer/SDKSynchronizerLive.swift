@@ -242,51 +242,54 @@ extension SDKSynchronizerClient: DependencyKey {
                 try await synchronizer.addProofsToPCZT(pczt: pczt)
             },
             createTransactionFromPCZT: { pcztWithProofs, pcztWithSigs in
-                let stream = try await synchronizer.createTransactionFromPCZT(
-                    pcztWithProofs: pcztWithProofs,
-                    pcztWithSigs: pcztWithSigs
-                )
+                @Dependency(\.transactionGuard) var transactionGuard
+                return try await transactionGuard.withSubmission {
+                    let stream = try await synchronizer.createTransactionFromPCZT(
+                        pcztWithProofs: pcztWithProofs,
+                        pcztWithSigs: pcztWithSigs
+                    )
 
-                var successCount = 0
-                var iterator = stream.makeAsyncIterator()
-                
-                var txIds: [String] = []
-                var statuses: [String] = []
-                var errCode = 0
-                var errDesc = ""
-                var resubmitableFailure = false
-                
-                if let transactionSubmitResult = try await iterator.next() {
-                    switch transactionSubmitResult {
-                    case .success(txId: let id):
-                        successCount += 1
-                        txIds.append(id.toHexStringTxId())
-                        statuses.append("success")
-                    case let .grpcFailure(txId: id, error: error):
-                        txIds.append(id.toHexStringTxId())
-                        statuses.append(error.localizedDescription)
-                        resubmitableFailure = true
-                    case let .submitFailure(txId: id, code: code, description: description):
-                        txIds.append(id.toHexStringTxId())
-                        statuses.append("code: \(code) desc: \(description)")
-                        errCode = code
-                        errDesc = description
-                    case .notAttempted(txId: let id):
-                        txIds.append(id.toHexStringTxId())
-                        statuses.append("notAttempted")
+                    var successCount = 0
+                    var iterator = stream.makeAsyncIterator()
+
+                    var txIds: [String] = []
+                    var statuses: [String] = []
+                    var errCode = 0
+                    var errDesc = ""
+                    var resubmitableFailure = false
+
+                    if let transactionSubmitResult = try await iterator.next() {
+                        switch transactionSubmitResult {
+                        case .success(txId: let id):
+                            successCount += 1
+                            txIds.append(id.toHexStringTxId())
+                            statuses.append("success")
+                        case let .grpcFailure(txId: id, error: error):
+                            txIds.append(id.toHexStringTxId())
+                            statuses.append(error.localizedDescription)
+                            resubmitableFailure = true
+                        case let .submitFailure(txId: id, code: code, description: description):
+                            txIds.append(id.toHexStringTxId())
+                            statuses.append("code: \(code) desc: \(description)")
+                            errCode = code
+                            errDesc = description
+                        case .notAttempted(txId: let id):
+                            txIds.append(id.toHexStringTxId())
+                            statuses.append("notAttempted")
+                        }
                     }
-                }
-                
-                if successCount == 0 {
-                    if resubmitableFailure {
-                        return .grpcFailure(txIds: txIds)
+
+                    if successCount == 0 {
+                        if resubmitableFailure {
+                            return .grpcFailure(txIds: txIds)
+                        } else {
+                            return .failure(txIds: txIds, code: errCode, description: errDesc)
+                        }
+                    } else if successCount == 1 {
+                        return .success(txIds: txIds)
                     } else {
-                        return .failure(txIds: txIds, code: errCode, description: errDesc)
+                        return .partial(txIds: txIds, statuses: statuses)
                     }
-                } else if successCount == 1 {
-                    return .success(txIds: txIds)
-                } else {
-                    return .partial(txIds: txIds, statuses: statuses)
                 }
             },
             urEncoderForPCZT: { pczt in

@@ -187,7 +187,6 @@ struct SendConfirmation {
     @Dependency(\.mainQueue) var mainQueue
     @Dependency(\.mnemonic) var mnemonic
     @Dependency(\.sdkSynchronizer) var sdkSynchronizer
-    @Dependency(\.transactionGuard) var transactionGuard
     @Dependency(\.walletStorage) var walletStorage
     @Dependency(\.zcashSDKEnvironment) var zcashSDKEnvironment
 
@@ -538,9 +537,7 @@ struct SendConfirmation {
                 #endif
                 return .run { send in
                     do {
-                        let result = try await transactionGuard.withSubmission {
-                            try await sdkSynchronizer.createTransactionFromPCZT(pcztWithProofs, pcztWithSigs)
-                        }
+                        let result = try await sdkSynchronizer.createTransactionFromPCZT(pcztWithProofs, pcztWithSigs)
 
                         await send(.resetPCZTs)
 
