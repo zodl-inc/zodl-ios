@@ -1,7 +1,7 @@
 # Server switch vs. transaction coordination — TransactionGuard redesign
 
 **Date:** 2026-06-10
-**Status:** Approved in design discussion; implementation plan pending
+**Status:** Implemented (plan: docs/superpowers/plans/2026-06-10-transaction-guard-server-switch.md)
 **Branch:** `michal/change-server-switch-lock-mechanism`
 
 ## Problem

@@ -338,6 +338,9 @@ extension SDKSynchronizerClient: DependencyKey {
             enhanceTransactionBy: { txId in
                 try await synchronizer.enhanceTransactionBy(txId: TxId(txId))
             },
+            // A read, but guarded on purpose: the voting flow's round-snapshot fetch must not
+            // race a server switch, and any future caller queues FIFO behind in-flight
+            // broadcasts/switches — do not call this from a latency-sensitive path.
             getTreeState: { height in
                 @Dependency(\.transactionGuard) var transactionGuard
                 return try await transactionGuard.withSubmission {

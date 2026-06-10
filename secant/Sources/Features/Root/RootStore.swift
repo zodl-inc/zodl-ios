@@ -423,19 +423,20 @@ struct Root {
         checkFundsReduce()
     }
     
+    /// The `onChange` wrapper must observe every reducer that can mutate an input of
+    /// `canApplyAutoServerSwitch` (path, bindings, bgTask, settings path) — keep ALL
+    /// composed reducers inside `combinedCore`; never add a sibling reducer here in `body`.
     var body: some Reducer<State, Action> {
         combinedCore
-            .onChange(of: \.canApplyAutoServerSwitch) { _, canApply in
-                Reduce { state, _ in
-                    guard canApply, let pending = state.pendingServerCandidate else { return .none }
-                    state.pendingServerCandidate = nil
-                    if pending.isExpired(now: date.now()) {
-                        LoggerProxy.event("[AutoServerSelection] Deferred candidate expired, dropped")
-                        return .none
-                    }
-                    LoggerProxy.event("[AutoServerSelection] Applying deferred candidate after flow exit")
-                    return .send(.autoServerCandidateReady(pending.endpoint))
+            .onChange(of: \.canApplyAutoServerSwitch) { _, state in
+                guard state.canApplyAutoServerSwitch, let pending = state.pendingServerCandidate else { return .none }
+                state.pendingServerCandidate = nil
+                if pending.isExpired(now: date.now()) {
+                    LoggerProxy.event("[AutoServerSelection] Deferred candidate expired, dropped")
+                    return .none
                 }
+                LoggerProxy.event("[AutoServerSelection] Applying deferred candidate after flow exit")
+                return .send(.autoServerCandidateReady(pending.endpoint))
             }
     }
 
