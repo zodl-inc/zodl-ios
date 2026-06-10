@@ -233,6 +233,7 @@ struct Root {
         case torSetup(TorSetup.Action)
         case backToHomeFromServerSwitchTapped
         case refreshAutomaticServer
+        case autoServerCandidateReady(LightWalletEndpoint)
 
         // Transactions
         case observeTransactions
@@ -285,6 +286,7 @@ struct Root {
     @Dependency(\.autolockHandler) var autolockHandler
     @Dependency(\.databaseFiles) var databaseFiles
     @Dependency(\.deeplink) var deeplink
+    @Dependency(\.date) var date
     @Dependency(\.derivationTool) var derivationTool
     @Dependency(\.diskSpaceChecker) var diskSpaceChecker
     @Dependency(\.exchangeRate) var exchangeRate
@@ -460,17 +462,36 @@ struct Root {
                 return .send(.initialization(.initializeSDK(.newWallet)))
 
             case .refreshAutomaticServer:
-                // Skip during a background task, and while the user is on the Server Setup screen
-                // (a manual Save owns that window) to avoid redundant work and stale UI. Correctness
-                // against a concurrent manual switch is guaranteed by TransactionGuard regardless:
-                // the manual Save uses switchWaiting (waits, then wins) while this uses switchIfIdle.
+                // Skip during a background task, and while the user is on the Server Setup
+                // screen (a manual Save owns that window). The benchmark itself still runs
+                // while a sensitive flow is on screen — it is read-only, and a candidate
+                // should be ready to apply the moment the user leaves the flow; the apply
+                // decision is gated in .autoServerCandidateReady. Correctness against a
+                // concurrent manual switch is guaranteed by TransactionGuard regardless:
+                // the manual Save uses switchWaiting (waits, then wins) while applySwitch
+                // uses switchIfIdle (skips if busy).
                 guard state.bgTask == nil, !state.isServerSetupVisible else { return .none }
-                return .run { _ in
+                return .run { send in
                     if let best = await autoServerSelection.findBestServer() {
-                        _ = await autoServerSelection.applySwitch(best)
+                        await send(.autoServerCandidateReady(best))
                     }
                 }
                 .cancellable(id: state.automaticServerRefreshCancelId, cancelInFlight: true)
+
+            case .autoServerCandidateReady(let candidate):
+                guard state.canApplyAutoServerSwitch else {
+                    state.pendingServerCandidate = State.PendingServerCandidate(
+                        endpoint: candidate,
+                        benchmarkedAt: date.now()
+                    )
+                    let gates = "bgTask: \(state.bgTask != nil), serverSetup: \(state.isServerSetupVisible), sensitiveFlow: \(state.isSensitiveFlowActive)"
+                    LoggerProxy.event("[AutoServerSelection] Candidate deferred (\(gates))")
+                    return .none
+                }
+                state.pendingServerCandidate = nil
+                return .run { _ in
+                    _ = await autoServerSelection.applySwitch(candidate)
+                }
 
             default: return .none
             }
