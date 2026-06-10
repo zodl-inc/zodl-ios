@@ -91,7 +91,6 @@ struct SwapAndPayCoordFlow {
     @Dependency(\.mainQueue) var mainQueue
     @Dependency(\.mnemonic) var mnemonic
     @Dependency(\.sdkSynchronizer) var sdkSynchronizer
-    @Dependency(\.transactionGuard) var transactionGuard
     @Dependency(\.userMetadataProvider) var userMetadataProvider
     @Dependency(\.walletStorage) var walletStorage
     @Dependency(\.zcashSDKEnvironment) var zcashSDKEnvironment

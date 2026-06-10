@@ -30,7 +30,6 @@ private final class ShieldingProcessorImpl: @unchecked Sendable {
     @Dependency(\.derivationTool) var derivationTool
     @Dependency(\.mnemonic) var mnemonic
     @Dependency(\.sdkSynchronizer) var sdkSynchronizer
-    @Dependency(\.transactionGuard) var transactionGuard
     @Dependency(\.walletStorage) var walletStorage
     @Dependency(\.zcashSDKEnvironment) var zcashSDKEnvironment
 
@@ -62,7 +61,7 @@ private final class ShieldingProcessorImpl: @unchecked Sendable {
                 }
             }
         } else {
-            Task { [subject, derivationTool, mnemonic, sdkSynchronizer, walletStorage, zcashSDKEnvironment, transactionGuard] in
+            Task { [subject, derivationTool, mnemonic, sdkSynchronizer, walletStorage, zcashSDKEnvironment] in
                 do {
                     let storedWallet = try walletStorage.exportWallet()
                     let seedBytes = try mnemonic.toSeed(storedWallet.seedPhrase.value())
@@ -72,9 +71,7 @@ private final class ShieldingProcessorImpl: @unchecked Sendable {
 
                     guard let proposal else { throw "shieldFunds nil proposal" }
 
-                    let result = try await transactionGuard.withSubmission {
-                        try await sdkSynchronizer.createProposedTransactions(proposal, spendingKey)
-                    }
+                    let result = try await sdkSynchronizer.createProposedTransactions(proposal, spendingKey)
 
                     switch result {
                     case .grpcFailure:

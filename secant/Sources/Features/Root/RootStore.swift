@@ -265,7 +265,6 @@ struct Root {
     @Dependency(\.shieldingProcessor) var shieldingProcessor
     @Dependency(\.swapAndPay) var swapAndPay
     @Dependency(\.autoServerSelection) var autoServerSelection
-    @Dependency(\.transactionGuard) var transactionGuard
     @Dependency(\.uriParser) var uriParser
     @Dependency(\.userDefaults) var userDefaults
     @Dependency(\.userMetadataProvider) var userMetadataProvider
