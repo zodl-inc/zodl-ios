@@ -6,10 +6,13 @@
 //
 
 import Foundation
+import os
 @preconcurrency import Combine
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
 @preconcurrency import KeystoneSDK
+
+private let slipstreamLogger = Logger(subsystem: "co.ecc.zashi-testnet", category: "slipstream")
 
 extension SDKSynchronizerClient: DependencyKey {
     static let liveValue: SDKSynchronizerClient = Self.live()
@@ -51,7 +54,28 @@ extension SDKSynchronizerClient: DependencyKey {
             isExchangeRateEnabled: isRateEnabled
         )
         
-        let synchronizer = SDKSynchronizer(initializer: initializer)
+        // [#1755] slipstream: read cached feature flags from UserDefaults synchronously
+        // (WalletConfigProvider.load() is async; UserDefaultsWalletConfigStorage caches under
+        // "feature_flags_ud_config_cache" as plist-encoded WalletConfig.RawFlags).
+        let useSlipstream: Bool = {
+            guard let data = UserDefaults.standard.data(forKey: "feature_flags_ud_config_cache"),
+                  let rawFlags = try? PropertyListDecoder().decode(WalletConfig.RawFlags.self, from: data)
+            else {
+                return FeatureFlag.useSlipstreamSynchronizer.enabledByDefault
+            }
+            return rawFlags[.useSlipstreamSynchronizer] ?? FeatureFlag.useSlipstreamSynchronizer.enabledByDefault
+        }()
+
+        let synchronizer: any Synchronizer
+        if useSlipstream {
+            slipstreamLogger.info("[#1755] SlipstreamSynchronizer CONSTRUCTED (useSlipstreamSynchronizer=true)")
+            LoggerProxy.debug("[#1755] SlipstreamSynchronizer: selected (useSlipstreamSynchronizer=true)")
+            synchronizer = SlipstreamSynchronizer(initializer: initializer)
+        } else {
+            slipstreamLogger.info("[#1755] SDKSynchronizer CONSTRUCTED (useSlipstreamSynchronizer=false)")
+            LoggerProxy.debug("[#1755] SDKSynchronizer: selected (useSlipstreamSynchronizer=false)")
+            synchronizer = SDKSynchronizer(initializer: initializer)
+        }
 
         return SDKSynchronizerClient(
             stateStream: { synchronizer.stateStream },
@@ -261,7 +285,7 @@ extension SDKSynchronizerClient: DependencyKey {
                 await synchronizer.isTorSuccessfullyInitialized()
             },
             httpRequestOverTor: { request in
-                try await synchronizer.httpRequestOverTor(for: request)
+                try await synchronizer.httpRequestOverTor(for: request, retryLimit: 3)
             },
             debugDatabaseSql: { query in
                 synchronizer.debugDatabase(sql: query)
@@ -503,7 +527,7 @@ extension SDKSynchronizerClient {
     static func transactionStatesFromZcashTransactions(
         accountUUID: AccountUUID?,
         zcashTransactions: [ZcashTransaction.Overview],
-        synchronizer: SDKSynchronizer
+        synchronizer: any Synchronizer
     ) async throws -> IdentifiedArrayOf<TransactionState> {
         guard let accountUUID else {
             return []
