@@ -196,6 +196,7 @@ extension Root {
                             LoggerProxy.event("BGTask synchronizer.start() PASSED")
                         }
                         await send(.initialization(.registerForSynchronizersUpdate))
+                        await send(.observeTransactions)
                         await send(.refreshAutomaticServer)
                     } catch {
                         if state.bgTask != nil {
