@@ -18,6 +18,7 @@ directly impact users rather than highlighting other crucial architectural updat
 - The tax CSV export is now written to a protected location and deleted as soon as the share sheet closes, instead of remaining in temporary storage.
 - Exported support logs no longer leave plaintext files behind: staging files are removed right after the ZIP is built and the ZIP is deleted when the share sheet closes.
 - Turning Tor on or off now applies to exchange-rate, swap and voting requests immediately instead of after the next app launch.
+- Coinholder Polling now verifies the proposal titles, descriptions and option labels it displays against the round's on-chain `proposals_hash` before showing the ballot or accepting a vote, and refuses tampered rounds.
 
 ### Removed
 - A hidden legacy debug menu (reachable via a gesture on the splash screen) that could copy the seed phrase to the clipboard without Face ID / Touch ID.

@@ -695,6 +695,20 @@ private func authenticateVotingSession(_ session: VotingSession) async throws ->
         // surface as "no active round" rather than shown as a separate warning.
         throw SvAPIError.noActiveVotingSession
     }
+
+    // The EA key authenticates the round, but the proposal metadata (ids, titles,
+    // descriptions, option labels) arrives from the vote server unverified. Bind
+    // it to the chain-committed `proposals_hash` before it is displayed or a vote
+    // commitment is derived from it; fail closed on any mismatch.
+    let computedProposalsHash = ProposalsHasher.computeProposalsHash(session.proposals)
+    guard !session.proposalsHash.isEmpty, computedProposalsHash == session.proposalsHash else {
+        LoggerProxy.error(
+            // swiftlint:disable:next line_length
+            "Round auth failed: proposals_hash mismatch round=\(roundIdHex) chain=\(hexString(from: session.proposalsHash)) computed=\(hexString(from: computedProposalsHash))"
+        )
+        throw SvAPIError.noActiveVotingSession
+    }
+
     return session
 }
 

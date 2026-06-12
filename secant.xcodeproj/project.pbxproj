@@ -49,6 +49,10 @@
 		349CE5EA2FDC12D400E2B9CF /* MultiServerSubmitRoutingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 349CE5E92FDC12D400E2B9CF /* MultiServerSubmitRoutingTests.swift */; };
 		349CE5F82FDC167400E2B9CF /* RecoveryPhraseDisplayTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 349CE5F72FDC167400E2B9CF /* RecoveryPhraseDisplayTests.swift */; };
 		349CE65A2FDC358500E2B9CF /* AdvancedSettingsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 349CE6592FDC358500E2B9CF /* AdvancedSettingsTests.swift */; };
+		349CE63A2FDC259F00E2B9CF /* ProposalsHasher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 349CE6392FDC259F00E2B9CF /* ProposalsHasher.swift */; };
+		349CE63B2FDC259F00E2B9CF /* ProposalsHasher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 349CE6392FDC259F00E2B9CF /* ProposalsHasher.swift */; };
+		349CE63C2FDC259F00E2B9CF /* ProposalsHasher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 349CE6392FDC259F00E2B9CF /* ProposalsHasher.swift */; };
+		349CE6412FDC263900E2B9CF /* ProposalsHasherTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 349CE6402FDC263900E2B9CF /* ProposalsHasherTests.swift */; };
 		34AA6DD82F85774F00D244E2 /* SwapAndPayStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34AA6CF82F85774F00D244E2 /* SwapAndPayStore.swift */; };
 		34AA6DD92F85774F00D244E2 /* RemoteStorageInterface.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34AA6C102F85774F00D244E2 /* RemoteStorageInterface.swift */; };
 		34AA6DDA2F85774F00D244E2 /* WalletConfigProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34AA6C4B2F85774F00D244E2 /* WalletConfigProvider.swift */; };
@@ -1631,6 +1635,8 @@
 		349CE60A2FDC18E700E2B9CF /* ExportTransactionHistoryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportTransactionHistoryTests.swift; sourceTree = "<group>"; };
 		349CE6192FDC1B1500E2B9CF /* ExportLogsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportLogsTests.swift; sourceTree = "<group>"; };
 		349CE6272FDC1CEA00E2B9CF /* TorSetupTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TorSetupTests.swift; sourceTree = "<group>"; };
+		349CE6392FDC259F00E2B9CF /* ProposalsHasher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProposalsHasher.swift; sourceTree = "<group>"; };
+		349CE6402FDC263900E2B9CF /* ProposalsHasherTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProposalsHasherTests.swift; sourceTree = "<group>"; };
 		34AA6BA42F85774F00D244E2 /* ABv1.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ABv1.swift; sourceTree = "<group>"; };
 		34AA6BA62F85774F00D244E2 /* AddressBookContacts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddressBookContacts.swift; sourceTree = "<group>"; };
 		34AA6BA72F85774F00D244E2 /* AddressBookEncryption.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddressBookEncryption.swift; sourceTree = "<group>"; };
@@ -3971,6 +3977,7 @@
 				37CEBE932F8E939D002DA90E /* VotingAPIClientLiveKey.swift */,
 				37D0F0000000000000000002 /* RoundAuthenticator.swift */,
 				37CEBE942F8E939D002DA90E /* VotingAPIClientTestKey.swift */,
+				349CE6392FDC259F00E2B9CF /* ProposalsHasher.swift */,
 			);
 			path = VotingAPIClient;
 			sourceTree = "<group>";
@@ -4423,6 +4430,7 @@
 				AD0D00232D00000100000002 /* VotingServiceConfigTests.swift */,
 				AD0D00222D00000100000002 /* VotingCoordFlowCoordinatorTests.swift */,
 				AD0D00212D00000100000002 /* VotingHelpersTests.swift */,
+				349CE6402FDC263900E2B9CF /* ProposalsHasherTests.swift */,
 			);
 			path = VotingTests;
 			sourceTree = "<group>";
@@ -5134,6 +5142,7 @@
 				348EC4CD2FD7FD96008495FB /* ServerEndpointsTests.swift in Sources */,
 				348EC4CE2FD7FD96008495FB /* AutomaticServerSelectionMigrationTests.swift in Sources */,
 				348EC4CF2FD7FD96008495FB /* ServerSetupStoreTests.swift in Sources */,
+				349CE6412FDC263900E2B9CF /* ProposalsHasherTests.swift in Sources */,
 				348EC4D02FD7FD96008495FB /* TransactionGuardTests.swift in Sources */,
 				348EC4D12FD7FD96008495FB /* AutoServerSelectionClientTests.swift in Sources */,
 				921B3D95249329CD65C36E1B /* LoggerTests.swift in Sources */,
@@ -5250,6 +5259,7 @@
 				9EEBF83A2FBC64D700DD38DB /* ProposalDetailStore.swift in Sources */,
 				34AA74EC2F85774F00D244E2 /* VisualEffectBlur.swift in Sources */,
 				34AA74ED2F85774F00D244E2 /* RootAddressBook.swift in Sources */,
+				349CE63A2FDC259F00E2B9CF /* ProposalsHasher.swift in Sources */,
 				34AA74EE2F85774F00D244E2 /* PasteboardInterface.swift in Sources */,
 				34AA74EF2F85774F00D244E2 /* AddressBookEncryptionKeys.swift in Sources */,
 				34AA74F02F85774F00D244E2 /* ScanCoordFlowView.swift in Sources */,
@@ -5720,6 +5730,7 @@
 				9EEBF8392FBC64D700DD38DB /* ProposalDetailStore.swift in Sources */,
 				34AA71882F85774F00D244E2 /* VisualEffectBlur.swift in Sources */,
 				34AA71892F85774F00D244E2 /* RootAddressBook.swift in Sources */,
+				349CE63C2FDC259F00E2B9CF /* ProposalsHasher.swift in Sources */,
 				34AA718A2F85774F00D244E2 /* PasteboardInterface.swift in Sources */,
 				34AA718B2F85774F00D244E2 /* AddressBookEncryptionKeys.swift in Sources */,
 				34AA718C2F85774F00D244E2 /* ScanCoordFlowView.swift in Sources */,
@@ -6190,6 +6201,7 @@
 				9EEBF83C2FBC64D700DD38DB /* ProposalDetailStore.swift in Sources */,
 				34AA6E242F85774F00D244E2 /* VisualEffectBlur.swift in Sources */,
 				34AA6E252F85774F00D244E2 /* RootAddressBook.swift in Sources */,
+				349CE63B2FDC259F00E2B9CF /* ProposalsHasher.swift in Sources */,
 				34AA6E262F85774F00D244E2 /* PasteboardInterface.swift in Sources */,
 				34AA6E272F85774F00D244E2 /* AddressBookEncryptionKeys.swift in Sources */,
 				34AA6E282F85774F00D244E2 /* ScanCoordFlowView.swift in Sources */,
