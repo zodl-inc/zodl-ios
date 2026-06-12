@@ -191,6 +191,15 @@ extension Root {
                 }
                 return .run { [state] send in
                     do {
+                        // TODO: [#1755] T6.8-L1: resolve server selection BEFORE first start so the
+                        // automatic race completes while the synchronizer is still idle. Without this
+                        // the race finished ~10-20s into the first pass and triggered a switchTo
+                        // restart ([WARNING] switchTo during active sync — pass will restart).
+                        // Skip during background tasks (matches the .refreshAutomaticServer guard).
+                        // mid-session re-selection (post-start) is kept via .refreshAutomaticServer.
+                        if state.bgTask == nil {
+                            await autoServerSelection.refreshIfEnabled()
+                        }
                         try await sdkSynchronizer.start(true)
                         if state.bgTask != nil {
                             LoggerProxy.event("BGTask synchronizer.start() PASSED")
@@ -351,6 +360,17 @@ extension Root {
                             await send(.resolveMetadataEncryptionKeys)
                             await send(.loadUserMetadata)
 
+                            // TODO: [#1755] T6.8-L1: resolve server selection BEFORE first start.
+                            // The automatic race completes here while the synchronizer is still idle;
+                            // previously it ran post-start and triggered a switchTo restart ~10-20s
+                            // into the first pass ([WARNING] switchTo during active sync — pass will
+                            // restart), wasting ~50s on iPad A10 / ~5-10s on iPhone.
+                            // evaluateBestOf is bounded by evaluationTimeoutSeconds=5.0 (existing
+                            // constant in AutoServerSelectionConstants) so no new timeout is needed.
+                            // Manual-mode: refreshIfEnabled() is a no-op when
+                            // userStoredPreferences.automaticServerSelection() != true (first guard
+                            // in AutoServerSelectionLiveKey.refreshIfEnabled).
+                            await autoServerSelection.refreshIfEnabled()
                             try await sdkSynchronizer.start(false)
 
                             var selectedAccount: WalletAccount?
