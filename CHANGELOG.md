@@ -11,6 +11,7 @@ directly impact users rather than highlighting other crucial architectural updat
 
 ### Fixed
 - A sent transaction that broadcast on an older app version and never mined now correctly shows as "Failed" in the Activity list once its expiry passes the network chain tip. Previously it could stay stuck on "Sending" indefinitely after updating the app.
+- We fixed a bug where a successful TEX send could show a misleading "transaction failed" screen.
 
 ## 3.5.2 build 1 (20026-06-08)
 

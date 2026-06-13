@@ -11,6 +11,12 @@ import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
 @preconcurrency import KeystoneSDK
 
+private func isAlreadyKnownToNetwork(_ description: String) -> Bool {
+    let lower = description.lowercased()
+    return lower.contains("already exists in mempool")
+        || lower.contains("already queued for download")
+}
+
 extension SDKSynchronizerClient: DependencyKey {
     static let liveValue: SDKSynchronizerClient = Self.live()
     
@@ -161,16 +167,21 @@ extension SDKSynchronizerClient: DependencyKey {
                             resubmitableFailure = true
                         case let .submitFailure(txId: id, code: code, description: description):
                             txIds.append(id.toHexStringTxId())
-                            statuses.append("code: \(code) desc: \(description)")
-                            errCode = code
-                            errDesc = description
+                            if isAlreadyKnownToNetwork(description) {
+                                successCount += 1
+                                statuses.append("success (already known to network): \(description)")
+                            } else {
+                                statuses.append("code: \(code) desc: \(description)")
+                                errCode = code
+                                errDesc = description
+                            }
                         case .notAttempted(txId: let id):
                             txIds.append(id.toHexStringTxId())
                             statuses.append("notAttempted")
                         }
                     }
                 }
-                
+
                 if successCount == 0 {
                     if resubmitableFailure {
                         return .grpcFailure(txIds: txIds)
@@ -265,15 +276,20 @@ extension SDKSynchronizerClient: DependencyKey {
                         resubmitableFailure = true
                     case let .submitFailure(txId: id, code: code, description: description):
                         txIds.append(id.toHexStringTxId())
-                        statuses.append("code: \(code) desc: \(description)")
-                        errCode = code
-                        errDesc = description
+                        if isAlreadyKnownToNetwork(description) {
+                            successCount += 1
+                            statuses.append("success (already known to network): \(description)")
+                        } else {
+                            statuses.append("code: \(code) desc: \(description)")
+                            errCode = code
+                            errDesc = description
+                        }
                     case .notAttempted(txId: let id):
                         txIds.append(id.toHexStringTxId())
                         statuses.append("notAttempted")
                     }
                 }
-                
+
                 if successCount == 0 {
                     if resubmitableFailure {
                         return .grpcFailure(txIds: txIds)
