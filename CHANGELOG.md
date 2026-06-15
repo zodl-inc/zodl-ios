@@ -107,6 +107,9 @@ directly impact users rather than highlighting other crucial architectural updat
 - The Confirm button on a migration transfer plan now keeps its loading indicator up until your transfers are prepared and presigned (the first delivery kicked off), then opens the Migration Scheduled screen — one tap, no dead first tap, and the Home banner reflects the committed run when you return. The Confirm button still can no longer be tapped again after a successful commit.
 - [Ironwood] Accepting a migration plan on a large wallet no longer stalls for tens of minutes — plan commit completes promptly.
 
+### Security
+- Cross-chain swap quotes are now verified against your request before the transaction is signed: the ZEC amount, payout and refund addresses, assets, and slippage tolerance must match what you requested, and the swap is refused on any mismatch. This protects against a malicious or tampered swap-provider response redirecting your funds.
+
 ## 3.7.3 build 1 (20026-07-12)
 
 ### Changed
