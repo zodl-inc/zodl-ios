@@ -738,13 +738,27 @@ struct SwapAndPay {
                     state.isQuoteRequestInFlight = false
                     return .none
                 }
-                let zecAmount = Zatoshi(NSDecimalNumber(decimal: quote.amountIn).int64Value)
+                // Defensive re-bind to current user intent before signing (TOCTOU guard). The quote was
+                // already validated against the request at parse time; this re-checks it against the state
+                // the user is looking at now and fails closed without building a proposal.
+                guard let selectedAsset = state.selectedAsset,
+                      let zecAsset = state.zecAsset,
+                      quote.matchesSigningIntent(
+                        address: state.address,
+                        originAssetId: zecAsset.assetId,
+                        destinationAssetId: selectedAsset.assetId
+                      ) else {
+                    return .send(.sendFailed("swap quote does not match request".toZcashError()))
+                }
+                guard let zecAmount = Zatoshi(safeZatoshiDecimal: quote.amountIn) else {
+                    return .send(.sendFailed("swap amount out of range".toZcashError()))
+                }
                 return .run { send in
                     do {
                         let recipient = try Recipient(quote.depositAddress, network: zcashSDKEnvironment.network().networkType)
 
                         let proposal = try await sdkSynchronizer.proposeTransfer(account.id, recipient, zecAmount, nil)
-                        
+
                         await send(.proposal(proposal))
                     } catch {
                         await send(.sendFailed(error.toZcashError()))
