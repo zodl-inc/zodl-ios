@@ -96,4 +96,18 @@ import Testing
             try SwapQuoteValidator.requireWithinSlippage(swapType: Near1Click.Constants.exactInput, amountIn: Decimal(1000), amountOut: Decimal(100), minAmountIn: Decimal(1000), minAmountOut: Decimal.nan, slippageToleranceBps: 1000)
         }
     }
+
+    @Test func slippageFailsClosedOnNaNAmountInput() {
+        #expect(throws: SwapQuoteValidationError.slippageExceeded) {
+            try SwapQuoteValidator.requireWithinSlippage(swapType: Near1Click.Constants.exactOutput, amountIn: Decimal.nan, amountOut: Decimal(1000), minAmountIn: Decimal(110), minAmountOut: Decimal(1000), slippageToleranceBps: 1000)
+        }
+    }
+
+    @Test func slippageFailsClosedOnAbsurdBps() {
+        // Without the <= 10_000 bound, bps=10_001 makes (10000 - bps) negative -> floor negative -> any
+        // minAmountOut passes (bypass). The bound must make this fail closed.
+        #expect(throws: SwapQuoteValidationError.slippageExceeded) {
+            try SwapQuoteValidator.requireWithinSlippage(swapType: Near1Click.Constants.exactInput, amountIn: Decimal(1000), amountOut: Decimal(100), minAmountIn: Decimal(1000), minAmountOut: Decimal(0), slippageToleranceBps: 10_001)
+        }
+    }
 }

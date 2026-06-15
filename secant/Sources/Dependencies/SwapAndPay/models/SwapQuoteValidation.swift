@@ -44,7 +44,8 @@ enum SwapQuoteValidator {
         minAmountOut: Decimal,
         slippageToleranceBps: Int
     ) throws {
-        guard !amountIn.isNaN, !amountOut.isNaN, !minAmountIn.isNaN, !minAmountOut.isNaN, slippageToleranceBps >= 0 else {
+        guard !amountIn.isNaN, !amountOut.isNaN, !minAmountIn.isNaN, !minAmountOut.isNaN,
+              slippageToleranceBps >= 0, slippageToleranceBps <= 10_000 else {
             throw SwapQuoteValidationError.slippageExceeded
         }
 
@@ -71,6 +72,8 @@ enum SwapQuoteValidator {
             }
 
         default:
+            // Unknown swap type has no floating side to validate. swapType is pinned to the request by the
+            // validate() orchestrator, so this is unreachable in the integrated path; no-op here is safe.
             break
         }
     }
