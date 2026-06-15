@@ -1411,7 +1411,7 @@ extension SwapAndPay.State {
         
         let zashiFeeCoeff = (Decimal(SwapAndPayClient.Constants.zashiFeeBps) / Decimal(10_000))
         let zashiFee = quote.amountIn * zashiFeeCoeff
-        let zatoshi = Zatoshi(Int64(truncating: NSDecimalNumber(decimal: zashiFee)))
+        let zatoshi = Zatoshi(NSDecimalNumber(decimal: zashiFee).clampedInt64Value)
         
         return zatoshi.decimalString()
     }
@@ -1454,7 +1454,7 @@ extension SwapAndPay.State {
         let swapCoeff: Decimal = isSwapExperienceEnabled ? 0.0 : 1.0
         let slippageDecimal = amountInUsdDecimal * slippage * 0.01 * swapCoeff
         let zatoshiDecimal = NSDecimalNumber(decimal: (slippageDecimal / zecAsset.usdPrice) * Decimal(Zatoshi.Constants.oneZecInZatoshi))
-        let zatoshi = Zatoshi(Int64(zatoshiDecimal.doubleValue))
+        let zatoshi = Zatoshi(zatoshiDecimal.clampedInt64Value)
         
         return zatoshi.decimalString()
     }
@@ -1512,7 +1512,7 @@ extension SwapAndPay.State {
         
         // zashi fee
         let zashiFee = quote.amountIn * 0.005
-        let zatoshiZashiFee = Int64(truncating: NSDecimalNumber(decimal: zashiFee))
+        let zatoshiZashiFee = NSDecimalNumber(decimal: zashiFee).clampedInt64Value
         
         return transactionFee + zatoshiZashiFee
     }
