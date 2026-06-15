@@ -19,6 +19,8 @@
 		341C34202FDFEEE3000DD8DA /* SafeNumericConversions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 341C341E2FDFEEE3000DD8DA /* SafeNumericConversions.swift */; };
 		341C34212FDFEEE3000DD8DA /* SafeNumericConversions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 341C341E2FDFEEE3000DD8DA /* SafeNumericConversions.swift */; };
 		341C34232FDFEEE9000DD8DA /* SafeNumericConversionsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 341C34222FDFEEE9000DD8DA /* SafeNumericConversionsTests.swift */; };
+		341C342A2FDFF1EC000DD8DA /* SwapQuoteIntentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 341C34292FDFF1EC000DD8DA /* SwapQuoteIntentTests.swift */; };
+		341C342F2FDFF203000DD8DA /* Near1ClickQuoteMapperTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 341C342E2FDFF203000DD8DA /* Near1ClickQuoteMapperTests.swift */; };
 		34755C632F8647B00093FC84 /* DisconnectHWWalletView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34755C612F8647B00093FC84 /* DisconnectHWWalletView.swift */; };
 		34755C642F8647B00093FC84 /* DisconnectHWWalletStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34755C602F8647B00093FC84 /* DisconnectHWWalletStore.swift */; };
 		34755C652F8647B00093FC84 /* DisconnectHWWalletView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34755C612F8647B00093FC84 /* DisconnectHWWalletView.swift */; };
@@ -1621,6 +1623,8 @@
 		341C34052FDFE1DE000DD8DA /* SwapQuoteValidationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwapQuoteValidationTests.swift; sourceTree = "<group>"; };
 		341C341E2FDFEEE3000DD8DA /* SafeNumericConversions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SafeNumericConversions.swift; sourceTree = "<group>"; };
 		341C34222FDFEEE9000DD8DA /* SafeNumericConversionsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SafeNumericConversionsTests.swift; sourceTree = "<group>"; };
+		341C34292FDFF1EC000DD8DA /* SwapQuoteIntentTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwapQuoteIntentTests.swift; sourceTree = "<group>"; };
+		341C342E2FDFF203000DD8DA /* Near1ClickQuoteMapperTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Near1ClickQuoteMapperTests.swift; sourceTree = "<group>"; };
 		34755C602F8647B00093FC84 /* DisconnectHWWalletStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DisconnectHWWalletStore.swift; sourceTree = "<group>"; };
 		34755C612F8647B00093FC84 /* DisconnectHWWalletView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DisconnectHWWalletView.swift; sourceTree = "<group>"; };
 		348EC4C62FD7FD96008495FB /* AutomaticServerSelectionMigrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutomaticServerSelectionMigrationTests.swift; sourceTree = "<group>"; };
@@ -2401,6 +2405,8 @@
 			children = (
 				341C34052FDFE1DE000DD8DA /* SwapQuoteValidationTests.swift */,
 				341C34222FDFEEE9000DD8DA /* SafeNumericConversionsTests.swift */,
+				341C34292FDFF1EC000DD8DA /* SwapQuoteIntentTests.swift */,
+				341C342E2FDFF203000DD8DA /* Near1ClickQuoteMapperTests.swift */,
 			);
 			path = SwapTests;
 			sourceTree = "<group>";
@@ -5135,6 +5141,7 @@
 				34D06C912FD2CF0B00BB10EE /* DecommissionedServerMigrationTests.swift in Sources */,
 				AD0D00102D00000100000001 /* VotingSessionTests.swift in Sources */,
 				349CE65A2FDC358500E2B9CF /* AdvancedSettingsTests.swift in Sources */,
+				341C342A2FDFF1EC000DD8DA /* SwapQuoteIntentTests.swift in Sources */,
 				AD0D00202D00000100000001 /* VotingAPIResponseParserTests.swift in Sources */,
 				AD0D00232D00000100000001 /* VotingServiceConfigTests.swift in Sources */,
 				349CE5EA2FDC12D400E2B9CF /* MultiServerSubmitRoutingTests.swift in Sources */,
@@ -5165,6 +5172,7 @@
 				63B448CA6B0B3D800DE8CB2B /* SecItemClientTests.swift in Sources */,
 				2D502ADD8B5CBB60D72B642B /* UserPreferencesStorageTests.swift in Sources */,
 				BFE03A2F84B2F8B97831CD9F /* ZatoshiTests.swift in Sources */,
+				341C342F2FDFF203000DD8DA /* Near1ClickQuoteMapperTests.swift in Sources */,
 				A9BE701F099CD0D1379F63AE /* ZatoshiStringRepresentationCommaTests.swift in Sources */,
 				A409BF1DAB30483E4CDB0DCB /* ZatoshiStringRepresentationTests.swift in Sources */,
 				341C34062FDFE1DE000DD8DA /* SwapQuoteValidationTests.swift in Sources */,

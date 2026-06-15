@@ -46,6 +46,7 @@ struct Near1Click {
         static let refundedAmountFormatted = "refundedAmountFormatted"
         static let amountInFormatted = "amountInFormatted"
         static let amountOutFormatted = "amountOutFormatted"
+        static let minAmountOut = "minAmountOut"
         static let recipient = "recipient"
         static let deadline = "deadline"
         static let timestamp = "timestamp"
@@ -166,6 +167,103 @@ struct Near1Click {
             throw SwapAndPayClient.EndpointError.message("Unknown error")
         }
     }
+
+    /// Parses a NEAR 1Click quote response and validates it against the request we sent, returning a
+    /// trusted `SwapQuote` or throwing. Throws `SwapQuoteValidationError` on a field/amount/slippage
+    /// mismatch and `SwapAndPayClient.EndpointError.message` on malformed JSON. Pure and unit-testable.
+    static func makeValidatedQuote(
+        jsonObject: [String: Any],
+        request: SwapQuoteRequest,
+        zecAsset: SwapAsset,
+        toAsset: SwapAsset,
+        isSwapToZec: Bool
+    ) throws -> SwapQuote {
+        guard let quote = jsonObject[Constants.quote] as? [String: Any],
+              let depositAddress = quote[Constants.depositAddress] as? String,
+              let amountInString = quote[Constants.amountIn] as? String,
+              let amountInUsdString = quote[Constants.amountInUsd] as? String,
+              let amountInFormattedString = quote[Constants.amountInFormatted] as? String,
+              let minAmountInString = quote[Constants.minAmountIn] as? String,
+              let minAmountOutString = quote[Constants.minAmountOut] as? String,
+              let amountOutString = quote[Constants.amountOut] as? String,
+              let amountOutUsdString = quote[Constants.amountOutUsd] as? String,
+              let amountOutFormattedString = quote[Constants.amountOutFormatted] as? String,
+              let timeEstimate = quote[Constants.timeEstimate] as? Int else {
+            throw SwapAndPayClient.EndpointError.message("Parse of the quote failed.")
+        }
+
+        guard let quoteRequestDict = jsonObject[Constants.quoteRequest] as? [String: Any],
+              let echoedOriginAsset = quoteRequestDict[Constants.originAsset] as? String,
+              let echoedDestinationAsset = quoteRequestDict[Constants.destinationAsset] as? String,
+              let echoedSwapType = quoteRequestDict[Constants.swapType] as? String,
+              let echoedSlippage = quoteRequestDict[Constants.slippageTolerance] as? Int,
+              let echoedRecipient = quoteRequestDict[Constants.recipient] as? String,
+              let echoedRefundTo = quoteRequestDict[Constants.refundTo] as? String else {
+            throw SwapAndPayClient.EndpointError.message("Parse of the quote request echo failed.")
+        }
+
+        let posix = Locale(identifier: "en_US_POSIX")
+        let amountIn = NSDecimalNumber(string: amountInString).decimalValue
+        let minAmountIn = NSDecimalNumber(string: minAmountInString).decimalValue
+        let minAmountOut = NSDecimalNumber(string: minAmountOutString).decimalValue
+        let amountOut = NSDecimalNumber(string: amountOutString).decimalValue
+
+        guard let amountInFormatted = Decimal(string: amountInFormattedString, locale: posix),
+              let amountOutFormatted = Decimal(string: amountOutFormattedString, locale: posix) else {
+            throw SwapAndPayClient.EndpointError.message("Parse of the quote failed.")
+        }
+
+        let response = SwapQuoteResponseFields(
+            depositAddress: depositAddress,
+            echoedOriginAsset: echoedOriginAsset,
+            echoedDestinationAsset: echoedDestinationAsset,
+            echoedSwapType: echoedSwapType,
+            echoedSlippageTolerance: echoedSlippage,
+            echoedRecipient: echoedRecipient,
+            echoedRefundTo: echoedRefundTo,
+            amountIn: amountIn,
+            amountInFormatted: amountInFormatted,
+            minAmountIn: minAmountIn,
+            amountOut: amountOut,
+            amountOutFormatted: amountOutFormatted,
+            minAmountOut: minAmountOut
+        )
+
+        try SwapQuoteValidator.validate(
+            request: request,
+            response: response,
+            originDecimals: isSwapToZec ? toAsset.decimals : zecAsset.decimals,
+            destinationDecimals: isSwapToZec ? zecAsset.decimals : toAsset.decimals
+        )
+
+        if isSwapToZec {
+            return SwapQuote(
+                depositAddress: depositAddress,
+                amountIn: amountIn / Decimal(pow(10.0, Double(toAsset.decimals))),
+                amountInUsd: amountInUsdString,
+                minAmountIn: minAmountIn / Decimal(pow(10.0, Double(toAsset.decimals))),
+                amountOut: amountOut / Decimal(pow(10.0, Double(zecAsset.decimals))),
+                amountOutUsd: amountOutUsdString,
+                timeEstimate: TimeInterval(timeEstimate),
+                recipient: echoedRecipient,
+                originAssetId: echoedOriginAsset,
+                destinationAssetId: echoedDestinationAsset
+            )
+        }
+
+        return SwapQuote(
+            depositAddress: depositAddress,
+            amountIn: amountIn,
+            amountInUsd: amountInUsdString,
+            minAmountIn: minAmountIn,
+            amountOut: amountOut / Decimal(pow(10.0, Double(toAsset.decimals))),
+            amountOutUsd: amountOutUsdString,
+            timeEstimate: TimeInterval(timeEstimate),
+            recipient: echoedRecipient,
+            originAssetId: echoedOriginAsset,
+            destinationAssetId: echoedDestinationAsset
+        )
+    }
 }
 
 extension Near1Click {
@@ -285,42 +383,19 @@ extension Near1Click {
                 )
             }
             
-            guard let quote = jsonObject[Constants.quote] as? [String: Any],
-                  let depositAddress = quote[Constants.depositAddress] as? String,
-                  let amountInString = quote[Constants.amountIn] as? String,
-                  let amountInUsdString = quote[Constants.amountInUsd] as? String,
-                  let minAmountInString = quote[Constants.minAmountIn] as? String,
-                  let amountOutString = quote[Constants.amountOut] as? String,
-                  let amountOutUsdString = quote[Constants.amountOutUsd] as? String,
-                  let timeEstimate = quote[Constants.timeEstimate] as? Int else {
-                throw SwapAndPayClient.EndpointError.message("Parse of the quote failed.")
-            }
-            
-            let amountIn = NSDecimalNumber(string: amountInString).decimalValue
-            let minAmountIn = NSDecimalNumber(string: minAmountInString).decimalValue
-            let amountOut = NSDecimalNumber(string: amountOutString).decimalValue
-            
-            if isSwapToZec {
-                return SwapQuote(
-                    depositAddress: depositAddress,
-                    amountIn: amountIn / Decimal(pow(10.0, Double(toAsset.decimals))),
-                    amountInUsd: amountInUsdString,
-                    minAmountIn: minAmountIn / Decimal(pow(10.0, Double(toAsset.decimals))),
-                    amountOut: amountOut / Decimal(pow(10.0, Double(zecAsset.decimals))),
-                    amountOutUsd: amountOutUsdString,
-                    timeEstimate: TimeInterval(timeEstimate)
+            do {
+                return try Near1Click.makeValidatedQuote(
+                    jsonObject: jsonObject,
+                    request: requestData,
+                    zecAsset: zecAsset,
+                    toAsset: toAsset,
+                    isSwapToZec: isSwapToZec
+                )
+            } catch is SwapQuoteValidationError {
+                throw SwapAndPayClient.EndpointError.message(
+                    String(localizable: exactInput ? .swapQuoteUnavailableSwap : .swapQuoteUnavailable)
                 )
             }
-            
-            return SwapQuote(
-                depositAddress: depositAddress,
-                amountIn: amountIn,
-                amountInUsd: amountInUsdString,
-                minAmountIn: minAmountIn,
-                amountOut: amountOut / Decimal(pow(10.0, Double(toAsset.decimals))),
-                amountOutUsd: amountOutUsdString,
-                timeEstimate: TimeInterval(timeEstimate)
-            )
         },
         status: { depositAddress, isSwapToZec in
             let (data, response) = try await Near1Click.getCall(urlString: "\(Constants.statusUrl)\(depositAddress)", includeJwtKey: true)
