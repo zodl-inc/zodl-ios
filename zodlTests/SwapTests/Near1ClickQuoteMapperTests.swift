@@ -142,4 +142,60 @@ import Testing
         )
         #expect(quote.depositAddress == "attacker-deposit")
     }
+
+    @Test func acceptsValidCrosspayQuote() throws {
+        // Crosspay (ZEC -> token, EXACT_OUTPUT): user fixes the token OUTPUT; the ZEC input floats within the
+        // slippage ceiling. amountIn (ZEC) is kept raw for signing; amountOut is divided by the token decimals.
+        let crosspayRequest = SwapQuoteRequest(
+            dry: false, swapType: Near1Click.Constants.exactOutput, slippageTolerance: 100,
+            originAsset: "zec.id", depositType: Near1Click.Constants.originChain, destinationAsset: "btc.id",
+            amount: "200000", refundTo: "refund", refundType: Near1Click.Constants.originChain,
+            recipient: "recipient", recipientType: Near1Click.Constants.destinationChain,
+            deadline: "", referral: Near1Click.Constants.referral, quoteWaitingTimeMs: 3000, appFees: nil
+        )
+        let crosspayJson: [String: Any] = [
+            "quote": [
+                "depositAddress": "deposit", "amountIn": "300000000", "amountInUsd": "10",
+                "amountInFormatted": "3", "minAmountIn": "303000000",
+                "amountOut": "200000", "amountOutUsd": "10", "amountOutFormatted": "0.002", "minAmountOut": "200000",
+                "timeEstimate": 60
+            ],
+            "quoteRequest": [
+                "originAsset": "zec.id", "destinationAsset": "btc.id", "swapType": Near1Click.Constants.exactOutput,
+                "slippageTolerance": 100, "recipient": "recipient", "refundTo": "refund"
+            ]
+        ]
+        let quote = try Near1Click.makeValidatedQuote(jsonObject: crosspayJson, request: crosspayRequest, zecAsset: zecAsset, toAsset: btcAsset, isSwapToZec: false)
+        #expect(quote.amountIn == Decimal(300_000_000))
+        let expectedAmountOut = try #require(Decimal(string: "0.002", locale: Locale(identifier: "en_US_POSIX")))
+        #expect(quote.amountOut == expectedAmountOut)
+        #expect(quote.recipient == "recipient")
+    }
+
+    @Test func rejectsCrosspayInputAboveSlippageCeiling() {
+        // EXACT_OUTPUT input floats: ceiling = amountIn 300000000 × 1.01 = 303000000. A guaranteed worst-case
+        // input above that exceeds the user's slippage tolerance and must fail closed.
+        let crosspayRequest = SwapQuoteRequest(
+            dry: false, swapType: Near1Click.Constants.exactOutput, slippageTolerance: 100,
+            originAsset: "zec.id", depositType: Near1Click.Constants.originChain, destinationAsset: "btc.id",
+            amount: "200000", refundTo: "refund", refundType: Near1Click.Constants.originChain,
+            recipient: "recipient", recipientType: Near1Click.Constants.destinationChain,
+            deadline: "", referral: Near1Click.Constants.referral, quoteWaitingTimeMs: 3000, appFees: nil
+        )
+        let crosspayJson: [String: Any] = [
+            "quote": [
+                "depositAddress": "deposit", "amountIn": "300000000", "amountInUsd": "10",
+                "amountInFormatted": "3", "minAmountIn": "400000000",
+                "amountOut": "200000", "amountOutUsd": "10", "amountOutFormatted": "0.002", "minAmountOut": "200000",
+                "timeEstimate": 60
+            ],
+            "quoteRequest": [
+                "originAsset": "zec.id", "destinationAsset": "btc.id", "swapType": Near1Click.Constants.exactOutput,
+                "slippageTolerance": 100, "recipient": "recipient", "refundTo": "refund"
+            ]
+        ]
+        #expect(throws: SwapQuoteValidationError.slippageExceeded) {
+            _ = try Near1Click.makeValidatedQuote(jsonObject: crosspayJson, request: crosspayRequest, zecAsset: self.zecAsset, toAsset: self.btcAsset, isSwapToZec: false)
+        }
+    }
 }
