@@ -24,6 +24,9 @@ enum SwapQuoteValidator {
     /// `*Formatted` value. Exact-equality is intentional (the "trust the quote 0% or 100%" stance) and
     /// must not be relaxed to a tolerance.
     static func requireConsistent(name: String, raw: Decimal, formatted: Decimal, decimals: Int) throws {
+        guard !raw.isNaN, !formatted.isNaN, (0...32).contains(decimals) else {
+            throw SwapQuoteValidationError.amountInconsistency(field: name)
+        }
         let expected = NSDecimalNumber(decimal: formatted).multiplying(byPowerOf10: Int16(decimals))
         if NSDecimalNumber(decimal: raw).compare(expected) != ComparisonResult.orderedSame {
             throw SwapQuoteValidationError.amountInconsistency(field: name)
