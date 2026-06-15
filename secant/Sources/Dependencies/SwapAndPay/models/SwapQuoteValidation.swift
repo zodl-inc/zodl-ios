@@ -19,7 +19,64 @@ enum SwapQuoteValidationError: Error, Equatable {
     case refundMismatch
 }
 
+/// The subset of the swap-quote response the validator inspects: the echoed `quoteRequest` fields plus
+/// the `quote` amounts, all already parsed into typed values.
+struct SwapQuoteResponseFields: Equatable {
+    let depositAddress: String
+    let echoedOriginAsset: String
+    let echoedDestinationAsset: String
+    let echoedSwapType: String
+    let echoedSlippageTolerance: Int
+    let echoedRecipient: String
+    let echoedRefundTo: String
+    let amountIn: Decimal
+    let amountInFormatted: Decimal
+    let minAmountIn: Decimal
+    let amountOut: Decimal
+    let amountOutFormatted: Decimal
+    let minAmountOut: Decimal
+}
+
 enum SwapQuoteValidator {
+    /// Validates a freshly-received quote against the request we sent. Throws the first failure; the caller
+    /// fails closed (maps to the "quote unavailable" path) on any throw.
+    static func validate(
+        request: SwapQuoteRequest,
+        response: SwapQuoteResponseFields,
+        originDecimals: Int,
+        destinationDecimals: Int
+    ) throws {
+        try requireMatchingAssetId(field: "originAsset", expected: request.originAsset, actual: response.echoedOriginAsset)
+        try requireMatchingAssetId(field: "destinationAsset", expected: request.destinationAsset, actual: response.echoedDestinationAsset)
+
+        if request.swapType != response.echoedSwapType {
+            throw SwapQuoteValidationError.swapTypeMismatch
+        }
+        if request.slippageTolerance != response.echoedSlippageTolerance {
+            throw SwapQuoteValidationError.slippageToleranceMismatch
+        }
+        if request.recipient != response.echoedRecipient {
+            throw SwapQuoteValidationError.recipientMismatch
+        }
+        if request.refundTo != response.echoedRefundTo {
+            throw SwapQuoteValidationError.refundMismatch
+        }
+        // amountInFormatted must be strictly positive (also fail closed on NaN — defends zecExchangeRate-style
+        // divisions downstream). It comes from Decimal(string:) which never yields NaN, but guard anyway.
+        guard !response.amountInFormatted.isNaN,
+              NSDecimalNumber(decimal: response.amountInFormatted).compare(NSDecimalNumber.zero) == ComparisonResult.orderedDescending else {
+            throw SwapQuoteValidationError.nonPositiveAmount(field: "amountInFormatted")
+        }
+
+        try requireConsistent(name: "amountIn", raw: response.amountIn, formatted: response.amountInFormatted, decimals: originDecimals)
+        try requireConsistent(name: "amountOut", raw: response.amountOut, formatted: response.amountOutFormatted, decimals: destinationDecimals)
+        try requireWithinSlippage(
+            swapType: request.swapType, amountIn: response.amountIn, amountOut: response.amountOut,
+            minAmountIn: response.minAmountIn, minAmountOut: response.minAmountOut, slippageToleranceBps: request.slippageTolerance
+        )
+        try requireMatchesRequestedAmount(swapType: request.swapType, requestedAmount: request.amount, rawAmountIn: response.amountIn, rawAmountOut: response.amountOut)
+    }
+
     /// The signed raw base-unit amount must equal the exact decimal expansion of the displayed
     /// `*Formatted` value. Exact-equality is intentional (the "trust the quote 0% or 100%" stance) and
     /// must not be relaxed to a tolerance.
