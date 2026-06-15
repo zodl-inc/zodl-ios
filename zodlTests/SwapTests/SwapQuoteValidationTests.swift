@@ -110,4 +110,48 @@ import Testing
             try SwapQuoteValidator.requireWithinSlippage(swapType: Near1Click.Constants.exactInput, amountIn: Decimal(1000), amountOut: Decimal(100), minAmountIn: Decimal(1000), minAmountOut: Decimal(0), slippageToleranceBps: 10_001)
         }
     }
+
+    // MARK: requireMatchingAssetId
+
+    @Test func requireMatchingAssetIdPassesOnEqual() throws {
+        try SwapQuoteValidator.requireMatchingAssetId(field: "originAsset", expected: "nep141:zec.omft.near", actual: "nep141:zec.omft.near")
+    }
+
+    @Test func requireMatchingAssetIdThrowsOnDifferent() {
+        #expect(throws: SwapQuoteValidationError.assetMismatch(field: "originAsset")) {
+            try SwapQuoteValidator.requireMatchingAssetId(field: "originAsset", expected: "a", actual: "b")
+        }
+    }
+
+    // MARK: requireMatchesRequestedAmount — user-fixed side must equal requested base units
+
+    @Test func requestedAmountExactInputBindsAmountIn() throws {
+        try SwapQuoteValidator.requireMatchesRequestedAmount(swapType: Near1Click.Constants.exactInput, requestedAmount: "100000000", rawAmountIn: Decimal(100_000_000), rawAmountOut: Decimal(2_000_000))
+    }
+
+    @Test func requestedAmountExactOutputBindsAmountOut() throws {
+        try SwapQuoteValidator.requireMatchesRequestedAmount(swapType: Near1Click.Constants.exactOutput, requestedAmount: "2000000", rawAmountIn: Decimal(100_000_000), rawAmountOut: Decimal(2_000_000))
+    }
+
+    @Test func requestedAmountFlexInputBindsAmountIn() throws {
+        try SwapQuoteValidator.requireMatchesRequestedAmount(swapType: Near1Click.Constants.flexInput, requestedAmount: "2000000", rawAmountIn: Decimal(2_000_000), rawAmountOut: Decimal(100_000_000))
+    }
+
+    @Test func requestedAmountThrowsOnInflatedAmountIn() {
+        #expect(throws: SwapQuoteValidationError.requestedAmountMismatch) {
+            try SwapQuoteValidator.requireMatchesRequestedAmount(swapType: Near1Click.Constants.exactInput, requestedAmount: "100000000", rawAmountIn: Decimal(200_000_000), rawAmountOut: Decimal(2_000_000))
+        }
+    }
+
+    @Test func requestedAmountFailsClosedOnNaNAmount() {
+        #expect(throws: SwapQuoteValidationError.requestedAmountMismatch) {
+            try SwapQuoteValidator.requireMatchesRequestedAmount(swapType: Near1Click.Constants.exactInput, requestedAmount: "100000000", rawAmountIn: Decimal.nan, rawAmountOut: Decimal(2_000_000))
+        }
+    }
+
+    @Test func requestedAmountFailsClosedOnUnparseableRequest() {
+        #expect(throws: SwapQuoteValidationError.requestedAmountMismatch) {
+            try SwapQuoteValidator.requireMatchesRequestedAmount(swapType: Near1Click.Constants.exactInput, requestedAmount: "not-a-number", rawAmountIn: Decimal(100_000_000), rawAmountOut: Decimal(2_000_000))
+        }
+    }
 }
