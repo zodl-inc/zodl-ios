@@ -78,6 +78,38 @@ enum SwapQuoteValidator {
         }
     }
 
+    /// The returned asset id must exactly equal the asset id we requested (an opaque identifier from the
+    /// same token list, so exact-match is correct).
+    static func requireMatchingAssetId(field: String, expected: String, actual: String) throws {
+        if expected != actual {
+            throw SwapQuoteValidationError.assetMismatch(field: field)
+        }
+    }
+
+    /// The user-fixed side of the swap must equal the amount the user requested (exact, in base units).
+    /// EXACT_INPUT / FLEX_INPUT fix the input; EXACT_OUTPUT fixes the output. Fails closed on an
+    /// unparseable/NaN requested amount, a NaN quoted amount, or an unknown swap type.
+    static func requireMatchesRequestedAmount(swapType: String, requestedAmount: String, rawAmountIn: Decimal, rawAmountOut: Decimal) throws {
+        guard let requested = Decimal(string: requestedAmount, locale: Locale(identifier: "en_US_POSIX")), !requested.isNaN else {
+            throw SwapQuoteValidationError.requestedAmountMismatch
+        }
+        let userFixed: Decimal
+        switch swapType {
+        case Near1Click.Constants.exactInput, Near1Click.Constants.flexInput:
+            userFixed = rawAmountIn
+        case Near1Click.Constants.exactOutput:
+            userFixed = rawAmountOut
+        default:
+            throw SwapQuoteValidationError.requestedAmountMismatch
+        }
+        guard !userFixed.isNaN else {
+            throw SwapQuoteValidationError.requestedAmountMismatch
+        }
+        if NSDecimalNumber(decimal: userFixed).compare(NSDecimalNumber(decimal: requested)) != ComparisonResult.orderedSame {
+            throw SwapQuoteValidationError.requestedAmountMismatch
+        }
+    }
+
     static let roundDownZeroScale = NSDecimalNumberHandler(
         roundingMode: NSDecimalNumber.RoundingMode.down, scale: 0,
         raiseOnExactness: false, raiseOnOverflow: false, raiseOnUnderflow: false, raiseOnDivideByZero: false
