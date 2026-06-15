@@ -83,10 +83,51 @@ import Testing
         }
     }
 
-    @Test func rejectsMissingMinAmountOut() {
-        #expect(throws: (any Error).self) {
+    @Test func rejectsMissingMinAmountOutAsEndpointError() {
+        // A malformed/missing field surfaces as EndpointError (NOT a validation error), so it propagates
+        // out of the closure's `catch is SwapQuoteValidationError` and still fails closed downstream.
+        #expect(throws: SwapAndPayClient.EndpointError.self) {
             _ = try Near1Click.makeValidatedQuote(
                 jsonObject: self.json(includeMinAmountOut: false),
+                request: self.request(), zecAsset: self.zecAsset, toAsset: self.btcAsset, isSwapToZec: false
+            )
+        }
+    }
+
+    @Test func acceptsValidSwapToZecQuote() throws {
+        // Swap-to-ZEC (token -> ZEC, FLEX_INPUT): user fixes the token input; amountIn is divided by the
+        // token's decimals and amountOut by ZEC's decimals when built.
+        let swapToZecRequest = SwapQuoteRequest(
+            dry: false, swapType: Near1Click.Constants.flexInput, slippageTolerance: 100,
+            originAsset: "btc.id", depositType: Near1Click.Constants.originChain, destinationAsset: "zec.id",
+            amount: "200000", refundTo: "user-btc-addr", refundType: Near1Click.Constants.originChain,
+            recipient: "wallet-ua", recipientType: Near1Click.Constants.destinationChain,
+            deadline: "", referral: Near1Click.Constants.referral, quoteWaitingTimeMs: 3000, appFees: nil
+        )
+        let swapToZecJson: [String: Any] = [
+            "quote": [
+                "depositAddress": "deposit", "amountIn": "200000", "amountInUsd": "10",
+                "amountInFormatted": "0.002", "minAmountIn": "200000",
+                "amountOut": "100000000", "amountOutUsd": "10", "amountOutFormatted": "1", "minAmountOut": "99000000",
+                "timeEstimate": 60
+            ],
+            "quoteRequest": [
+                "originAsset": "btc.id", "destinationAsset": "zec.id", "swapType": Near1Click.Constants.flexInput,
+                "slippageTolerance": 100, "recipient": "wallet-ua", "refundTo": "user-btc-addr"
+            ]
+        ]
+        let quote = try Near1Click.makeValidatedQuote(jsonObject: swapToZecJson, request: swapToZecRequest, zecAsset: zecAsset, toAsset: btcAsset, isSwapToZec: true)
+        let expectedAmountIn = try #require(Decimal(string: "0.002", locale: Locale(identifier: "en_US_POSIX")))
+        #expect(quote.amountIn == expectedAmountIn)
+        #expect(quote.amountOut == Decimal(1))
+        #expect(quote.originAssetId == "btc.id")
+        #expect(quote.destinationAssetId == "zec.id")
+    }
+
+    @Test func rejectsSwapTypeSubstitution() {
+        #expect(throws: SwapQuoteValidationError.swapTypeMismatch) {
+            _ = try Near1Click.makeValidatedQuote(
+                jsonObject: self.json(swapType: Near1Click.Constants.exactOutput),
                 request: self.request(), zecAsset: self.zecAsset, toAsset: self.btcAsset, isSwapToZec: false
             )
         }
