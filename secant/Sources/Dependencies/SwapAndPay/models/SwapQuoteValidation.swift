@@ -32,4 +32,56 @@ enum SwapQuoteValidator {
             throw SwapQuoteValidationError.amountInconsistency(field: name)
         }
     }
+
+    /// Fail-closed slippage check on the server-determined (floating) side of the quote. Integer base-unit
+    /// math with the server's own DOWN/UP truncation so legitimate boundary quotes are accepted. Fails
+    /// closed on NaN bounds (server-controlled strings can parse to NaN) and negative slippage.
+    static func requireWithinSlippage(
+        swapType: String,
+        amountIn: Decimal,
+        amountOut: Decimal,
+        minAmountIn: Decimal,
+        minAmountOut: Decimal,
+        slippageToleranceBps: Int
+    ) throws {
+        guard !amountIn.isNaN, !amountOut.isNaN, !minAmountIn.isNaN, !minAmountOut.isNaN, slippageToleranceBps >= 0 else {
+            throw SwapQuoteValidationError.slippageExceeded
+        }
+
+        let denominator = NSDecimalNumber(value: 10_000)
+        let bps = NSDecimalNumber(value: slippageToleranceBps)
+
+        switch swapType {
+        case Near1Click.Constants.exactInput, Near1Click.Constants.flexInput:
+            // Output floats: minAmountOut must be >= amountOut * (1 - slippage), rounded DOWN.
+            let floor = NSDecimalNumber(decimal: amountOut)
+                .multiplying(by: denominator.subtracting(bps))
+                .dividing(by: denominator, withBehavior: SwapQuoteValidator.roundDownZeroScale)
+            if NSDecimalNumber(decimal: minAmountOut).compare(floor) == ComparisonResult.orderedAscending {
+                throw SwapQuoteValidationError.slippageExceeded
+            }
+
+        case Near1Click.Constants.exactOutput:
+            // Input floats: minAmountIn (worst-case max input) must be <= amountIn * (1 + slippage), rounded UP.
+            let ceiling = NSDecimalNumber(decimal: amountIn)
+                .multiplying(by: denominator.adding(bps))
+                .dividing(by: denominator, withBehavior: SwapQuoteValidator.roundUpZeroScale)
+            if NSDecimalNumber(decimal: minAmountIn).compare(ceiling) == ComparisonResult.orderedDescending {
+                throw SwapQuoteValidationError.slippageExceeded
+            }
+
+        default:
+            break
+        }
+    }
+
+    static let roundDownZeroScale = NSDecimalNumberHandler(
+        roundingMode: NSDecimalNumber.RoundingMode.down, scale: 0,
+        raiseOnExactness: false, raiseOnOverflow: false, raiseOnUnderflow: false, raiseOnDivideByZero: false
+    )
+
+    static let roundUpZeroScale = NSDecimalNumberHandler(
+        roundingMode: NSDecimalNumber.RoundingMode.up, scale: 0,
+        raiseOnExactness: false, raiseOnOverflow: false, raiseOnUnderflow: false, raiseOnDivideByZero: false
+    )
 }
