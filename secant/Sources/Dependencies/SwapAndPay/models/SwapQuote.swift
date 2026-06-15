@@ -23,7 +23,13 @@ struct SwapQuote: Codable, Equatable, Hashable {
     let amountOutUsd: String
     /// Number of seconds it takes to process this quote
     let timeEstimate: TimeInterval
-    
+    /// Echoed off-chain payout recipient (the address the user typed); validated == request at parse time.
+    let recipient: String
+    /// Echoed origin assetId; validated == request at parse time.
+    let originAssetId: String
+    /// Echoed destination assetId; validated == request at parse time.
+    let destinationAssetId: String
+
     init(
         depositAddress: String,
         amountIn: Decimal,
@@ -31,7 +37,10 @@ struct SwapQuote: Codable, Equatable, Hashable {
         minAmountIn: Decimal,
         amountOut: Decimal,
         amountOutUsd: String,
-        timeEstimate: TimeInterval
+        timeEstimate: TimeInterval,
+        recipient: String,
+        originAssetId: String,
+        destinationAssetId: String
     ) {
         self.depositAddress = depositAddress
         self.amountIn = amountIn
@@ -40,5 +49,18 @@ struct SwapQuote: Codable, Equatable, Hashable {
         self.amountOut = amountOut
         self.amountOutUsd = amountOutUsd
         self.timeEstimate = timeEstimate
+        self.recipient = recipient
+        self.originAssetId = originAssetId
+        self.destinationAssetId = destinationAssetId
+    }
+}
+
+extension SwapQuote {
+    /// Re-binds the quote to current user intent immediately before signing (TOCTOU guard): the echoed
+    /// payout recipient and both asset ids must still match what the user is looking at.
+    func matchesSigningIntent(address: String, originAssetId: String, destinationAssetId: String) -> Bool {
+        recipient == address
+            && self.originAssetId == originAssetId
+            && self.destinationAssetId == destinationAssetId
     }
 }
