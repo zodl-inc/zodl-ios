@@ -154,4 +154,106 @@ import Testing
             try SwapQuoteValidator.requireMatchesRequestedAmount(swapType: Near1Click.Constants.exactInput, requestedAmount: "not-a-number", rawAmountIn: Decimal(100_000_000), rawAmountOut: Decimal(2_000_000))
         }
     }
+
+    // MARK: validate — full orchestration over a baseline valid EXACT_INPUT quote
+
+    private func baselineRequest(swapType: String = Near1Click.Constants.exactInput, slippage: Int = 100, amount: String = "100000000") -> SwapQuoteRequest {
+        SwapQuoteRequest(
+            dry: false, swapType: swapType, slippageTolerance: slippage,
+            originAsset: "origin.id", depositType: Near1Click.Constants.originChain, destinationAsset: "dest.id",
+            amount: amount, refundTo: "refund-addr", refundType: Near1Click.Constants.originChain,
+            recipient: "recipient-addr", recipientType: Near1Click.Constants.destinationChain,
+            deadline: "", referral: Near1Click.Constants.referral, quoteWaitingTimeMs: 3000, appFees: nil
+        )
+    }
+
+    private func baselineResponse(
+        originAsset: String = "origin.id", destinationAsset: String = "dest.id",
+        swapType: String = Near1Click.Constants.exactInput, slippage: Int = 100,
+        recipient: String = "recipient-addr", refundTo: String = "refund-addr",
+        amountIn: Decimal = Decimal(100_000_000), amountInFormatted: Decimal = Decimal(1),
+        minAmountIn: Decimal = Decimal(100_000_000),
+        amountOut: Decimal = Decimal(2_000_000), amountOutFormatted: Decimal = Decimal(2),
+        minAmountOut: Decimal = Decimal(1_980_000)
+    ) -> SwapQuoteResponseFields {
+        SwapQuoteResponseFields(
+            depositAddress: "deposit-addr", echoedOriginAsset: originAsset, echoedDestinationAsset: destinationAsset,
+            echoedSwapType: swapType, echoedSlippageTolerance: slippage, echoedRecipient: recipient, echoedRefundTo: refundTo,
+            amountIn: amountIn, amountInFormatted: amountInFormatted, minAmountIn: minAmountIn,
+            amountOut: amountOut, amountOutFormatted: amountOutFormatted, minAmountOut: minAmountOut
+        )
+    }
+
+    private func validateBaseline(request: SwapQuoteRequest? = nil, response: SwapQuoteResponseFields? = nil) throws {
+        try SwapQuoteValidator.validate(
+            request: request ?? baselineRequest(),
+            response: response ?? baselineResponse(),
+            originDecimals: 8, destinationDecimals: 6
+        )
+    }
+
+    @Test func validateAcceptsConsistentQuote() throws {
+        try validateBaseline()
+    }
+
+    @Test func validateRejectsOriginAssetSubstitution() {
+        #expect(throws: SwapQuoteValidationError.assetMismatch(field: "originAsset")) {
+            try self.validateBaseline(response: self.baselineResponse(originAsset: "origin.tampered"))
+        }
+    }
+
+    @Test func validateRejectsDestinationAssetSubstitution() {
+        #expect(throws: SwapQuoteValidationError.assetMismatch(field: "destinationAsset")) {
+            try self.validateBaseline(response: self.baselineResponse(destinationAsset: "dest.tampered"))
+        }
+    }
+
+    @Test func validateRejectsSwapTypeSubstitution() {
+        #expect(throws: SwapQuoteValidationError.swapTypeMismatch) {
+            try self.validateBaseline(response: self.baselineResponse(swapType: Near1Click.Constants.exactOutput))
+        }
+    }
+
+    @Test func validateRejectsWidenedSlippageTolerance() {
+        #expect(throws: SwapQuoteValidationError.slippageToleranceMismatch) {
+            try self.validateBaseline(response: self.baselineResponse(slippage: 10_000))
+        }
+    }
+
+    @Test func validateRejectsRecipientSubstitution() {
+        #expect(throws: SwapQuoteValidationError.recipientMismatch) {
+            try self.validateBaseline(response: self.baselineResponse(recipient: "attacker-addr"))
+        }
+    }
+
+    @Test func validateRejectsRefundSubstitution() {
+        #expect(throws: SwapQuoteValidationError.refundMismatch) {
+            try self.validateBaseline(response: self.baselineResponse(refundTo: "attacker-addr"))
+        }
+    }
+
+    @Test func validateRejectsNonPositiveAmountIn() {
+        #expect(throws: SwapQuoteValidationError.nonPositiveAmount(field: "amountInFormatted")) {
+            try self.validateBaseline(response: self.baselineResponse(amountIn: Decimal(0), amountInFormatted: Decimal(0), minAmountIn: Decimal(0)))
+        }
+    }
+
+    @Test func validateRejectsRawFormattedInconsistency() {
+        #expect(throws: SwapQuoteValidationError.amountInconsistency(field: "amountIn")) {
+            try self.validateBaseline(response: self.baselineResponse(amountIn: Decimal(999)))
+        }
+    }
+
+    @Test func validateRejectsInflatedAmountIn() {
+        // Consistent at 8 decimals (2 × 1e8 == 200_000_000) but not what the user requested (1 ZEC).
+        #expect(throws: SwapQuoteValidationError.requestedAmountMismatch) {
+            try self.validateBaseline(response: self.baselineResponse(amountIn: Decimal(200_000_000), amountInFormatted: Decimal(2), minAmountIn: Decimal(200_000_000)))
+        }
+    }
+
+    @Test func validateRejectsSlippageBelowFloor() {
+        #expect(throws: SwapQuoteValidationError.slippageExceeded) {
+            try self.validateBaseline(response: self.baselineResponse(minAmountOut: Decimal(1_900_000)))
+        }
+    }
 }
