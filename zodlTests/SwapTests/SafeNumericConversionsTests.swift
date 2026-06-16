@@ -23,6 +23,19 @@ import Testing
         #expect(veryNegative.clampedInt64Value == Int64.min)
     }
 
+    @Test func clampedInt64TruncatesNonInteger() {
+        // Regression: NSDecimalNumber.int64Value returns 0 for any value with a fractional part, so an
+        // in-range non-integer (e.g. the slippage buffer in swapSlippageStr) must be truncated, not zeroed.
+        #expect(NSDecimalNumber(string: "333333.3333").clampedInt64Value == 333_333)
+        #expect(NSDecimalNumber(string: "0.9").clampedInt64Value == 0)
+        #expect(NSDecimalNumber(string: "100.5").clampedInt64Value == 100)
+    }
+
+    @Test func clampedInt64MapsNaNToZero() {
+        // A NaN (e.g. a Decimal division by a server usdPrice of 0) must fall back to 0, not Int64.min.
+        #expect(NSDecimalNumber.notANumber.clampedInt64Value == 0)
+    }
+
     @Test func safeZatoshiAcceptsNormalValue() {
         let zatoshi = Zatoshi(safeZatoshiDecimal: Decimal(100_000_000))
         #expect(zatoshi == Zatoshi(100_000_000))
