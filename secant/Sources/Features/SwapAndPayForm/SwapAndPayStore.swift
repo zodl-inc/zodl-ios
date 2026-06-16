@@ -20,7 +20,7 @@ struct SwapAndPay {
     }
     
     @ObservableState
-    struct State {
+    struct State: Equatable {
         var SwapAssetsCancelId = UUID()
         var ABCancelId = UUID()
         var QRCancelId = UUID()
@@ -194,7 +194,7 @@ struct SwapAndPay {
         }
     }
 
-    enum Action: BindableAction {
+    enum Action: BindableAction, Equatable {
         case alert(PresentationAction<Action>)
         case assetSelectRequested
         case assetTapped(SwapAsset)

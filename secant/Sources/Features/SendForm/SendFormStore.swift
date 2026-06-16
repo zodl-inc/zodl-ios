@@ -18,7 +18,7 @@ struct SendForm {
     }
     
     @ObservableState
-    struct State {
+    struct State: Equatable {
         var cancelId = UUID()
         
         var addMemoState: Bool
@@ -196,7 +196,7 @@ struct SendForm {
         }
     }
 
-    enum Action: BindableAction {
+    enum Action: BindableAction, Equatable {
         case addNewContactTapped(RedactableString)
         case addressBookTapped
         case addressUpdated(RedactableString)
