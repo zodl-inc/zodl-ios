@@ -7,16 +7,30 @@ import Foundation
 @preconcurrency import ZcashLightClientKit
 
 extension NSDecimalNumber {
-    /// `int64Value` clamped to the representable range. Never traps — unlike `Int64(self.doubleValue)`,
-    /// which traps when the value exceeds `Int64`'s range or is non-finite.
+    private static let int64MaxValue = NSDecimalNumber(value: Int64.max)
+    private static let int64MinValue = NSDecimalNumber(value: Int64.min)
+    /// Truncates the fractional part DOWN before the `Int64` conversion. `NSDecimalNumber.int64Value`
+    /// returns 0 for any value with a fractional part, so it must be rounded to integer scale first.
+    private static let truncatingBehavior = NSDecimalNumberHandler(
+        roundingMode: NSDecimalNumber.RoundingMode.down, scale: 0,
+        raiseOnExactness: false, raiseOnOverflow: false, raiseOnUnderflow: false, raiseOnDivideByZero: false
+    )
+
+    /// `Int64` value clamped to the representable range, with any fractional part truncated DOWN. Never
+    /// traps — unlike `Int64(self.doubleValue)`, which traps when the value exceeds `Int64`'s range or is
+    /// non-finite. A NaN maps to `0`. `NSDecimalNumber.int64Value` returns `0` for any non-integer value,
+    /// so the value is rounded to integer scale before that conversion.
     var clampedInt64Value: Int64 {
-        if self.compare(NSDecimalNumber(value: Int64.max)) != ComparisonResult.orderedAscending {
+        if self.doubleValue.isNaN {
+            return 0
+        }
+        if self.compare(NSDecimalNumber.int64MaxValue) != ComparisonResult.orderedAscending {
             return Int64.max
         }
-        if self.compare(NSDecimalNumber(value: Int64.min)) != ComparisonResult.orderedDescending {
+        if self.compare(NSDecimalNumber.int64MinValue) != ComparisonResult.orderedDescending {
             return Int64.min
         }
-        return self.int64Value
+        return self.rounding(accordingToBehavior: NSDecimalNumber.truncatingBehavior).int64Value
     }
 }
 
