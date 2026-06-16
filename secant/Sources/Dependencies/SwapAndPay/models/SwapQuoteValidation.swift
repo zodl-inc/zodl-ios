@@ -84,7 +84,14 @@ enum SwapQuoteValidator {
         guard !raw.isNaN, !formatted.isNaN, (0...32).contains(decimals) else {
             throw SwapQuoteValidationError.amountInconsistency(field: name)
         }
-        let expected = NSDecimalNumber(decimal: formatted).multiplying(byPowerOf10: Int16(decimals))
+        // A server-controlled `formatted` can be huge (e.g. "1e120"); the default NSDecimalNumber behavior
+        // raises an uncatchable NSDecimalNumberOverflowException on overflow, so use the non-raising handler
+        // and fail closed on the resulting NaN rather than crash.
+        let expected = NSDecimalNumber(decimal: formatted)
+            .multiplying(byPowerOf10: Int16(decimals), withBehavior: SwapQuoteValidator.nonRaisingNoScale)
+        guard !expected.doubleValue.isNaN else {
+            throw SwapQuoteValidationError.amountInconsistency(field: name)
+        }
         if NSDecimalNumber(decimal: raw).compare(expected) != ComparisonResult.orderedSame {
             throw SwapQuoteValidationError.amountInconsistency(field: name)
         }
@@ -113,8 +120,11 @@ enum SwapQuoteValidator {
         case Near1Click.Constants.exactInput, Near1Click.Constants.flexInput:
             // Output floats: minAmountOut must be >= amountOut * (1 - slippage), rounded DOWN.
             let floor = NSDecimalNumber(decimal: amountOut)
-                .multiplying(by: denominator.subtracting(bps))
+                .multiplying(by: denominator.subtracting(bps), withBehavior: SwapQuoteValidator.nonRaisingNoScale)
                 .dividing(by: denominator, withBehavior: SwapQuoteValidator.roundDownZeroScale)
+            guard !floor.doubleValue.isNaN else {
+                throw SwapQuoteValidationError.slippageExceeded
+            }
             if NSDecimalNumber(decimal: minAmountOut).compare(floor) == ComparisonResult.orderedAscending {
                 throw SwapQuoteValidationError.slippageExceeded
             }
@@ -122,8 +132,11 @@ enum SwapQuoteValidator {
         case Near1Click.Constants.exactOutput:
             // Input floats: minAmountIn (worst-case max input) must be <= amountIn * (1 + slippage), rounded UP.
             let ceiling = NSDecimalNumber(decimal: amountIn)
-                .multiplying(by: denominator.adding(bps))
+                .multiplying(by: denominator.adding(bps), withBehavior: SwapQuoteValidator.nonRaisingNoScale)
                 .dividing(by: denominator, withBehavior: SwapQuoteValidator.roundUpZeroScale)
+            guard !ceiling.doubleValue.isNaN else {
+                throw SwapQuoteValidationError.slippageExceeded
+            }
             if NSDecimalNumber(decimal: minAmountIn).compare(ceiling) == ComparisonResult.orderedDescending {
                 throw SwapQuoteValidationError.slippageExceeded
             }
@@ -166,6 +179,14 @@ enum SwapQuoteValidator {
             throw SwapQuoteValidationError.requestedAmountMismatch
         }
     }
+
+    /// Full-precision, non-raising behavior for the consistency/slippage multiplications. A server-controlled
+    /// amount can overflow `Decimal`; the default behavior raises an uncatchable NSDecimalNumberOverflowException,
+    /// so this returns NaN on overflow and the callers fail closed instead of crashing.
+    static let nonRaisingNoScale = NSDecimalNumberHandler(
+        roundingMode: NSDecimalNumber.RoundingMode.plain, scale: Int16(NSDecimalNoScale),
+        raiseOnExactness: false, raiseOnOverflow: false, raiseOnUnderflow: false, raiseOnDivideByZero: false
+    )
 
     static let roundDownZeroScale = NSDecimalNumberHandler(
         roundingMode: NSDecimalNumber.RoundingMode.down, scale: 0,

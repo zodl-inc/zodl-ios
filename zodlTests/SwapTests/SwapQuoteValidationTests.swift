@@ -42,6 +42,16 @@ import Testing
         try SwapQuoteValidator.requireConsistent(name: "amountIn", raw: Decimal(1), formatted: formatted, decimals: 8)
     }
 
+    @Test func requireConsistentFailsClosedOnOverflowingFormatted() throws {
+        // A server-controlled `formatted` can overflow when multiplied by 10^decimals; the default
+        // NSDecimalNumber behavior would raise an uncatchable NSDecimalNumberOverflowException (crash).
+        // It must instead fail closed.
+        let huge = try #require(Decimal(string: "1e120", locale: Locale(identifier: "en_US_POSIX")))
+        #expect(throws: SwapQuoteValidationError.amountInconsistency(field: "amountIn")) {
+            try SwapQuoteValidator.requireConsistent(name: "amountIn", raw: Decimal(1), formatted: huge, decimals: 8)
+        }
+    }
+
     // MARK: requireWithinSlippage — server's worst-case guarantee must respect requested slippage
 
     @Test func slippageOutputFloatingPassesAtAndAboveFloor() throws {
@@ -108,6 +118,24 @@ import Testing
         // minAmountOut passes (bypass). The bound must make this fail closed.
         #expect(throws: SwapQuoteValidationError.slippageExceeded) {
             try SwapQuoteValidator.requireWithinSlippage(swapType: Near1Click.Constants.exactInput, amountIn: Decimal(1000), amountOut: Decimal(100), minAmountIn: Decimal(1000), minAmountOut: Decimal(0), slippageToleranceBps: 10_001)
+        }
+    }
+
+    @Test func slippageFailsClosedOnOverflowingOutput() throws {
+        // amountOut * (10000 - bps) overflows Decimal; the multiply must not trap, and the NaN result
+        // must fail closed (output-floating side).
+        let huge = try #require(Decimal(string: "1e125", locale: Locale(identifier: "en_US_POSIX")))
+        #expect(throws: SwapQuoteValidationError.slippageExceeded) {
+            try SwapQuoteValidator.requireWithinSlippage(swapType: Near1Click.Constants.exactInput, amountIn: Decimal(1000), amountOut: huge, minAmountIn: Decimal(1000), minAmountOut: Decimal(1), slippageToleranceBps: 1000)
+        }
+    }
+
+    @Test func slippageFailsClosedOnOverflowingInput() throws {
+        // amountIn * (10000 + bps) overflows Decimal on the EXACT_OUTPUT ceiling. compare(NaN) is
+        // orderedAscending, so without the explicit NaN guard this would bypass — it must fail closed.
+        let huge = try #require(Decimal(string: "1e125", locale: Locale(identifier: "en_US_POSIX")))
+        #expect(throws: SwapQuoteValidationError.slippageExceeded) {
+            try SwapQuoteValidator.requireWithinSlippage(swapType: Near1Click.Constants.exactOutput, amountIn: huge, amountOut: Decimal(1000), minAmountIn: Decimal(1), minAmountOut: Decimal(1000), slippageToleranceBps: 1000)
         }
     }
 
