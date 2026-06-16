@@ -46,7 +46,7 @@ extension Zatoshi {
         var value = decimal
         NSDecimalRound(&rounded, &value, 0, NSDecimalNumber.RoundingMode.down)
 
-        let maxZatoshi = Decimal(21_000_000) * Decimal(Zatoshi.Constants.oneZecInZatoshi)
+        let maxZatoshi = Decimal(Zatoshi.Constants.maxZatoshi)
         guard rounded <= maxZatoshi else {
             return nil
         }
