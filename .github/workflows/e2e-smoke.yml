@@ -109,6 +109,57 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             IPHONEOS_DEPLOYMENT_TARGET=16.0
 
+      # Inject the real PartnerKeys.plist DIRECTLY into the built .app
+      # bundle, replacing the empty `<dict/>` dummy that the Xcode build
+      # phase writes when the source plist is absent (it's gitignored).
+      # Writing post-build (not pre-build) handles both code paths
+      # uniformly: cache hit (no xcodebuild ran) AND fresh build (the
+      # plist generation phase wrote the dummy into the bundle). In
+      # either case the .app bundle at the path below exists and we
+      # overwrite the bundle's PartnerKeys.plist resource.
+      #
+      # Two surgical secrets instead of the whole plist base64: the
+      # e2e suite only exercises NEAR swap/pay paths, which
+      # `Near1Click.swift` reads via PartnerKeys.{nearKey,
+      # nearFeeDepositAddress}. Flexa / Coinbase / CMC keys aren't on
+      # any e2e code path. Values are JWT-shaped and 0x-prefixed hex
+      # — both safe to drop into XML without escaping.
+      #
+      # Skips silently when either secret is unset; the .app then
+      # ships the empty dummy and the swap/crosspay flows fail with
+      # the recognizable "Quote Unavailable" message (so the broken
+      # state is loud rather than silently green).
+      - name: Inject PartnerKeys.plist into .app bundle
+        if: env.ZODL_IOS_NEAR_KEY != '' && env.ZODL_IOS_NEAR_FEE_DEPOSIT_ADDRESS != ''
+        env:
+          ZODL_IOS_NEAR_KEY: ${{ secrets.ZODL_IOS_NEAR_KEY }}
+          ZODL_IOS_NEAR_FEE_DEPOSIT_ADDRESS: ${{ secrets.ZODL_IOS_NEAR_FEE_DEPOSIT_ADDRESS }}
+        run: |
+          APP_PLIST=$(ls build/Build/Products/Debug-iphonesimulator/*.app/PartnerKeys.plist 2>/dev/null | head -1)
+          if [ -z "$APP_PLIST" ]; then
+              echo "::error::Could not locate PartnerKeys.plist inside the built .app bundle."
+              echo "build/Build/Products/Debug-iphonesimulator/ contents:"
+              ls -la build/Build/Products/Debug-iphonesimulator/ || true
+              exit 1
+          fi
+          cat > "$APP_PLIST" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>nearKey</key>
+              <string>${ZODL_IOS_NEAR_KEY}</string>
+              <key>nearFeeDepositAddress</key>
+              <string>${ZODL_IOS_NEAR_FEE_DEPOSIT_ADDRESS}</string>
+          </dict>
+          </plist>
+          EOF
+          if ! plutil -lint "$APP_PLIST" >/dev/null 2>&1; then
+              echo "::error::Composed PartnerKeys.plist is not a valid plist."
+              exit 1
+          fi
+          echo "Injected PartnerKeys.plist into $APP_PLIST ($(wc -c <"$APP_PLIST") bytes, 2 keys)"
+
       - name: Upload .app bundle
         uses: actions/upload-artifact@v4
         with:
@@ -123,11 +174,14 @@ jobs:
   e2e-ios:
     needs: build
     runs-on: macos-26
-    # Cold-cache phase 2 runs (no cached SDK DB yet for the seed)
-    # spend most of the budget scanning blocks from birthday height.
-    # 45 min leaves headroom for the first run; warm-cache runs
-    # finish in ~10-15 min.
-    timeout-minutes: 45
+    # Cold-cache phase 2 runs spend ~25-30 min on the
+    # restore-existing-wallet sync alone (chain-tip catchup from the
+    # birthday height on the iOS sim — no inter-run cache like the
+    # Android wrapper has via ~/.zodl-qa/cache). After sync we still
+    # need ~30 min for the 7 tx + verification flows that follow.
+    # 75 min covers cold cases; warm-cache runs (when we add that)
+    # will land well under.
+    timeout-minutes: 75
     permissions:
       contents: read
     strategy:
@@ -203,6 +257,48 @@ jobs:
           curl -Ls "https://get.maestro.mobile.dev" | bash
           echo "$HOME/.maestro/bin" >> $GITHUB_PATH
 
+      # Foundry / cast + zbar / zbarimg — installed via brew. Foundry
+      # provides `cast` for the Layer-2b on-chain USDC transfer; zbar
+      # provides `zbarimg` for QR decode (on-screen deposit-address
+      # text is truncated, and `simctl pbpaste` reads on a cold sim
+      # are unreliable, so the QR is the only robust surface).
+      #
+      # Why not foundry-rs/foundry-toolchain@v1: the action's
+      # foundryup runs an unauthenticated curl against
+      # api.github.com/repos/foundry-rs/foundry/releases/latest, and
+      # the macos-26 runner pool's egress IP regularly hits 403 from
+      # GitHub's rate limit. Even with GITHUB_TOKEN passed via env,
+      # the action's cached SHA doesn't always forward it to the
+      # underlying script. brew installs from its own bottle mirror
+      # with no GitHub API hop, which sidesteps the issue entirely.
+      - name: Install Foundry + zbar
+        run: brew install foundry zbar
+
+      # Warm-cache the iOS SDK DB across CI runs. The wrapper pushes
+      # this DB into the booted sim's app Documents/ before maestro
+      # runs; the Zcash SDK then warm-resumes from the cached scan
+      # state instead of replaying the full birthday-to-tip span
+      # (~25 min cold). Restore is best-effort — first run after this
+      # lands, plus runs after a key invalidation, fall back to cold
+      # scan and re-seed the cache on save.
+      #
+      # Only phase 2 participates: phase 1 uses random create-new-
+      # wallet seeds whose DB scan state would poison the next run's
+      # deterministic-seed warm-resume. The wrapper itself also
+      # short-circuits its cache-save block when ZODL_TEST_PHASE=1.
+      #
+      # Key is per-run-id so each successful run produces a fresh
+      # cache entry; restore-keys falls back to the most recent
+      # matching prefix.
+      - name: Restore Zcash SDK DB cache
+        if: ${{ matrix.phase == 2 }}
+        uses: actions/cache/restore@v5
+        with:
+          path: ~/.zodl-qa/cache
+          key: ${{ runner.os }}-${{ runner.arch }}-zodl-qa-ios-sdk-db-${{ github.run_id }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-zodl-qa-ios-sdk-db-
+
       - name: Run smoke tests
         env:
           # 600s (was 300s). The first XCTest driver init on a cold
@@ -220,7 +316,7 @@ jobs:
           ZODL_TEST_CONTACT_NAME_IOS: ${{ vars.ZODL_TEST_CONTACT_NAME_IOS || 'iOS Shield' }}
           ZODL_TEST_DIRECTION: ${{ vars.ZODL_TEST_DIRECTION || 'AUTO_ALTERNATE' }}
           ZODL_TEST_PHASE: ${{ matrix.phase }}
-          ZODL_TEST_SEND_AMOUNT: ${{ vars.ZODL_TEST_SEND_AMOUNT || '0.005' }}
+          ZODL_TEST_SEND_AMOUNT: ${{ vars.ZODL_TEST_SEND_AMOUNT || '0.001' }}
           ZODL_TEST_BALANCE_MIN: ${{ vars.ZODL_TEST_BALANCE_MIN || '1.3' }}
           ZODL_TEST_BALANCE_WARN: ${{ vars.ZODL_TEST_BALANCE_WARN || '1.36' }}
           ZODL_TEST_CROSSPAY_TARGET_ADDRESS: ${{ vars.ZODL_TEST_CROSSPAY_TARGET_ADDRESS || '0xf90bd7c30fd538efde8729ea61fdf20920ed3171' }}
@@ -228,10 +324,41 @@ jobs:
           ZODL_TEST_CROSSPAY_CHAIN: ${{ vars.ZODL_TEST_CROSSPAY_CHAIN || 'BASE' }}
           ZODL_TEST_CROSSPAY_USDC_AMOUNT: ${{ vars.ZODL_TEST_CROSSPAY_USDC_AMOUNT || '0.5' }}
           ZODL_TEST_SWAP_ZEC_AMOUNT: ${{ vars.ZODL_TEST_SWAP_ZEC_AMOUNT || '0.005' }}
+          ZODL_TEST_SWAP_RECV_USDC_AMOUNT: ${{ vars.ZODL_TEST_SWAP_RECV_USDC_AMOUNT || '2.3' }}
+          # Layer-2b: the wrapper auto-funds the reverse-swap deposit
+          # address (USDC on Base) after swap-receive-usdc-to-zec.yaml
+          # runs whenever ZODL_USDC_BASE_PRIVKEY is set. Same model
+          # as the other tx tests in the suite — they spend real
+          # mainnet funds whenever their respective secrets/seeds
+          # are present. Each fire = ~$2.30 USDC + ~$0.05 ETH gas
+          # from the counterparty wallet. NEAR 1Click JWT is
+          # auto-extracted by the wrapper from the in-checkout
+          # PartnerKeys.plist (FDroid reproducible-build constraint
+          # on Android keeps it in source; iOS uses the plist), so
+          # no JWT secret is required — kept here as an override
+          # hatch only.
+          ZODL_USDC_BASE_PRIVKEY: ${{ secrets.ZODL_USDC_BASE_PRIVKEY }}
+          ZODL_NEAR_1CLICK_JWT: ${{ secrets.ZODL_NEAR_1CLICK_JWT }}
+          # Phase 2 verifies arrival via activity-accuracy at the
+          # suite tail rather than blocking on the 10-min 1Click poll.
+          ZODL_LAYER_2B_POLL: ${{ vars.ZODL_LAYER_2B_POLL || '0' }}
           ZODL_TEST_STATE_DIR: ${{ github.workspace }}/.zodl-qa-state
         run: |
           chmod +x zodl-qa/scripts/run-smoke-ios.sh
           ./zodl-qa/scripts/run-smoke-ios.sh
+
+      # Persist the SDK DB regardless of test outcome — partial sync
+      # progress is still useful for the next run's warm-resume. If
+      # the job is hard-killed by the 75-min timeout the save won't
+      # fire, but the prior run's cache entry stays in the pool and
+      # restore-keys will pick it up next time.
+      - name: Save Zcash SDK DB cache
+        if: ${{ always() && matrix.phase == 2 }}
+        continue-on-error: true
+        uses: actions/cache/save@v5
+        with:
+          path: ~/.zodl-qa/cache
+          key: ${{ runner.os }}-${{ runner.arch }}-zodl-qa-ios-sdk-db-${{ github.run_id }}
 
       - name: Upload test results
         if: always()
