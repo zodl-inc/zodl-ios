@@ -22,7 +22,6 @@ enum SwapQuoteValidationError: Error, Equatable {
 /// The subset of the swap-quote response the validator inspects: the echoed `quoteRequest` fields plus
 /// the `quote` amounts, all already parsed into typed values.
 struct SwapQuoteResponseFields: Equatable {
-    let depositAddress: String
     let echoedOriginAsset: String
     let echoedDestinationAsset: String
     let echoedSwapType: String

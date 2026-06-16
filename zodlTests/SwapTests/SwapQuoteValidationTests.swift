@@ -205,7 +205,7 @@ import Testing
         minAmountOut: Decimal = Decimal(1_980_000)
     ) -> SwapQuoteResponseFields {
         SwapQuoteResponseFields(
-            depositAddress: "deposit-addr", echoedOriginAsset: originAsset, echoedDestinationAsset: destinationAsset,
+            echoedOriginAsset: originAsset, echoedDestinationAsset: destinationAsset,
             echoedSwapType: swapType, echoedSlippageTolerance: slippage, echoedRecipient: recipient, echoedRefundTo: refundTo,
             amountIn: amountIn, amountInFormatted: amountInFormatted, minAmountIn: minAmountIn,
             amountOut: amountOut, amountOutFormatted: amountOutFormatted, minAmountOut: minAmountOut
