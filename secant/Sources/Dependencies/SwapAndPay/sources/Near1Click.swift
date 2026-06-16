@@ -214,7 +214,6 @@ struct Near1Click {
         }
 
         let response = SwapQuoteResponseFields(
-            depositAddress: depositAddress,
             echoedOriginAsset: echoedOriginAsset,
             echoedDestinationAsset: echoedDestinationAsset,
             echoedSwapType: echoedSwapType,
