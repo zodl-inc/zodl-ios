@@ -74,6 +74,17 @@ import Testing
         }
     }
 
+    @Test func rejectsOverflowingAmountFormatted() {
+        // A huge server amountInFormatted overflows the consistency multiply; it must fail closed as a
+        // validation error, not crash the validator with an uncatchable NSDecimalNumberOverflowException.
+        #expect(throws: SwapQuoteValidationError.self) {
+            _ = try Near1Click.makeValidatedQuote(
+                jsonObject: self.json(amountInFormatted: "1e120"),
+                request: self.request(), zecAsset: self.zecAsset, toAsset: self.btcAsset, isSwapToZec: false
+            )
+        }
+    }
+
     @Test func rejectsOriginAssetSubstitution() {
         #expect(throws: SwapQuoteValidationError.assetMismatch(field: "originAsset")) {
             _ = try Near1Click.makeValidatedQuote(
