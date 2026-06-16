@@ -6308,13 +6308,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "If Tor Protection is enabled (Advanced Settings), Zodl protects your IP address."
+            "value" : "Zodl's currency conversion feature doesn't compromise your IP address."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Si la Protección Tor está activada (Configuración Avanzada), Zodl protege tu dirección IP."
+            "value" : "La función de conversión de moneda de Zodl no compromete tu dirección IP."
           }
         }
       }
@@ -6348,7 +6348,7 @@
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Muestra tu saldo y los montos de pago en la moneda seleccionada. En Swap and Pay, las tasas de cambio seguirán mostrándose en USD. Puedes gestionar esta función en Configuración Avanzada."
+            "value" : "Muestra tu saldo y montos de pago en tu moneda seleccionada. Para Swap y Pay, los tipos de cambio se seguirán mostrando en USD. Puedes administrar esta función en Configuración avanzada."
           }
         }
       }
@@ -6376,7 +6376,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Don’t show the currency conversion."
+            "value" : "Don't show currency conversion."
           }
         },
         "es" : {
@@ -6393,13 +6393,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Show me the currency conversion."
+            "value" : "Show currency conversion."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Mostrarme la conversión de moneda."
+            "value" : "Mostrar la conversión de moneda."
           }
         }
       }
@@ -6478,13 +6478,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Select Currency"
+            "value" : "Select currency"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Seleccionar Moneda"
+            "value" : "Seleccionar moneda"
           }
         }
       }
@@ -6501,7 +6501,7 @@
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Muestra tu saldo y los montos de pago en tu moneda seleccionada. En Swap and Pay, las tasas de cambio seguirán mostrándose en USD."
+            "value" : "Muestra tu saldo y montos de pago en tu moneda seleccionada. Para Swap y Pay, los tipos de cambio se seguirán mostrando en USD."
           }
         }
       }
@@ -6518,7 +6518,7 @@
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Omitir"
+            "value" : "Omitir por ahora"
           }
         }
       }
@@ -12172,7 +12172,7 @@
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "No se puede obtener la tasa en tiempo real para %@ ahora mismo. Puedes usar USD como alternativa, o seguir introduciendo cantidades solo en ZEC."
+            "value" : "No se pueden obtener las tasas en tiempo real de %@ en este momento. Puedes usar USD como alternativa o seguir ingresando montos solo en ZEC."
           }
         }
       }
@@ -12206,7 +12206,7 @@
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Conversión a %@ no disponible"
+            "value" : "Conversión de %@ no disponible"
           }
         }
       }
@@ -13922,13 +13922,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Enable to display USD values"
+            "value" : "Enable to display fiat values"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Activa para mostrar valores en USD"
+            "value" : "Activa para mostrar valores fiat"
           }
         }
       }
