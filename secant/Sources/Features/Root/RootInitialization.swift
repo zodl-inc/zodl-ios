@@ -198,7 +198,13 @@ extension Root {
                         // Skip during background tasks (matches the .refreshAutomaticServer guard).
                         // mid-session re-selection (post-start) is kept via .refreshAutomaticServer.
                         if state.bgTask == nil {
-                            await autoServerSelection.refreshIfEnabled()
+                            // zcash #1757 split refreshIfEnabled() into findBestServer + applySwitch.
+                            // Pre-start the synchronizer is idle, so applySwitch (switchIfIdle) applies
+                            // immediately — same intent. findBestServer() returns nil when Automatic is
+                            // off / nothing better, so this is a no-op in manual mode.
+                            if let best = await autoServerSelection.findBestServer() {
+                                _ = await autoServerSelection.applySwitch(best)
+                            }
                         }
                         try await sdkSynchronizer.start(true)
                         if state.bgTask != nil {
@@ -367,10 +373,13 @@ extension Root {
                             // restart), wasting ~50s on iPad A10 / ~5-10s on iPhone.
                             // evaluateBestOf is bounded by evaluationTimeoutSeconds=5.0 (existing
                             // constant in AutoServerSelectionConstants) so no new timeout is needed.
-                            // Manual-mode: refreshIfEnabled() is a no-op when
-                            // userStoredPreferences.automaticServerSelection() != true (first guard
-                            // in AutoServerSelectionLiveKey.refreshIfEnabled).
-                            await autoServerSelection.refreshIfEnabled()
+                            // zcash #1757 split refreshIfEnabled() into findBestServer + applySwitch.
+                            // findBestServer() returns nil when Automatic is off, so this stays a
+                            // no-op in manual mode; pre-start the synchronizer is idle so applySwitch
+                            // (switchIfIdle) applies immediately — same intent as before.
+                            if let best = await autoServerSelection.findBestServer() {
+                                _ = await autoServerSelection.applySwitch(best)
+                            }
                             try await sdkSynchronizer.start(false)
 
                             var selectedAccount: WalletAccount?
