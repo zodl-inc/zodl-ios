@@ -47,6 +47,9 @@
 		34B967672F8CC48B00823B20 /* Atomics in Frameworks */ = {isa = PBXBuildFile; productRef = 34B967662F8CC48B00823B20 /* Atomics */; };
 		34B967692F8CC49100823B20 /* Atomics in Frameworks */ = {isa = PBXBuildFile; productRef = 34B967682F8CC49100823B20 /* Atomics */; };
 		9E6E823A2FE33B7E008A82EF /* ZcashLightClientKit in Frameworks */ = {isa = PBXBuildFile; productRef = 9E6E82392FE33B7E008A82EF /* ZcashLightClientKit */; };
+		9E6E82472FE34147008A82EF /* ZcashLightClientKit in Frameworks */ = {isa = PBXBuildFile; productRef = 9E6E82462FE34147008A82EF /* ZcashLightClientKit */; };
+		9E6E82492FE3414F008A82EF /* ZcashLightClientKit in Frameworks */ = {isa = PBXBuildFile; productRef = 9E6E82482FE3414F008A82EF /* ZcashLightClientKit */; };
+		9E6E824B2FE34156008A82EF /* ZcashLightClientKit in Frameworks */ = {isa = PBXBuildFile; productRef = 9E6E824A2FE34156008A82EF /* ZcashLightClientKit */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -129,6 +132,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				9E6E824B2FE34156008A82EF /* ZcashLightClientKit in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -143,6 +147,7 @@
 				34AA771C2F857DBB00D244E2 /* ComposableArchitecture in Frameworks */,
 				34AA778E2F85833900D244E2 /* Lottie in Frameworks */,
 				34AA77402F8580D700D244E2 /* CasePathsCore in Frameworks */,
+				9E6E82492FE3414F008A82EF /* ZcashLightClientKit in Frameworks */,
 				34AA77A42F8583C300D244E2 /* BigDecimal in Frameworks */,
 				34AA77C02F85862200D244E2 /* UInt128 in Frameworks */,
 				34AA77782F8582AC00D244E2 /* Flexa in Frameworks */,
@@ -163,6 +168,7 @@
 				34AA77182F857DB300D244E2 /* ComposableArchitecture in Frameworks */,
 				34AA778A2F85832E00D244E2 /* Lottie in Frameworks */,
 				34AA77382F8580CB00D244E2 /* CasePathsCore in Frameworks */,
+				9E6E82472FE34147008A82EF /* ZcashLightClientKit in Frameworks */,
 				34AA77A02F8583BA00D244E2 /* BigDecimal in Frameworks */,
 				34AA77BC2F85861800D244E2 /* UInt128 in Frameworks */,
 				34AA77742F8582A200D244E2 /* Flexa in Frameworks */,
@@ -294,6 +300,7 @@
 				34AA77A32F8583C300D244E2 /* BigDecimal */,
 				34AA77BF2F85862200D244E2 /* UInt128 */,
 				34B967682F8CC49100823B20 /* Atomics */,
+				9E6E82482FE3414F008A82EF /* ZcashLightClientKit */,
 			);
 			productName = "zodl-testnet";
 			productReference = 9E41FFBB2CB2814500783CFD /* zodl-testnet.app */;
@@ -333,6 +340,7 @@
 				34AA779F2F8583BA00D244E2 /* BigDecimal */,
 				34AA77BB2F85861800D244E2 /* UInt128 */,
 				34B967642F8CC48700823B20 /* Atomics */,
+				9E6E82462FE34147008A82EF /* ZcashLightClientKit */,
 			);
 			productName = "zodl-production";
 			productReference = 9E4AB2B72BA1BEE900F5D6DB /* zodl-production.app */;
@@ -1153,7 +1161,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = "zashi-internal.entitlements";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 7;
+				CURRENT_PROJECT_VERSION = 1;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_ASSET_PATHS = "\"secant/Preview Content\"";
 				DEVELOPMENT_TEAM = RLPRR8CPQG;
@@ -1166,7 +1174,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 3.6.0;
+				MARKETING_VERSION = 3.6.1;
 				OTHER_SWIFT_FLAGS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = "co.electriccoin.secant-testnet";
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -1183,7 +1191,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = "zashi-internal.entitlements";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 7;
+				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "\"secant/Preview Content\"";
 				DEVELOPMENT_TEAM = RLPRR8CPQG;
 				ENABLE_BITCODE = NO;
@@ -1195,7 +1203,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 3.6.0;
+				MARKETING_VERSION = 3.6.1;
 				OTHER_SWIFT_FLAGS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = "co.electriccoin.secant-testnet";
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -1212,7 +1220,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = "zashi-internal.entitlements";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 7;
+				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "\"secant/Preview Content\"";
 				DEVELOPMENT_TEAM = RLPRR8CPQG;
 				ENABLE_BITCODE = NO;
@@ -1224,7 +1232,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 3.6.0;
+				MARKETING_VERSION = 3.6.1;
 				OTHER_SWIFT_FLAGS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = "co.electriccoin.secant-testnet";
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -1617,6 +1625,21 @@
 			productName = Atomics;
 		};
 		9E6E82392FE33B7E008A82EF /* ZcashLightClientKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 9E34CAE92FE337E700238B7D /* XCLocalSwiftPackageReference "../ZcashLightClientKit" */;
+			productName = ZcashLightClientKit;
+		};
+		9E6E82462FE34147008A82EF /* ZcashLightClientKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 9E34CAE92FE337E700238B7D /* XCLocalSwiftPackageReference "../ZcashLightClientKit" */;
+			productName = ZcashLightClientKit;
+		};
+		9E6E82482FE3414F008A82EF /* ZcashLightClientKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 9E34CAE92FE337E700238B7D /* XCLocalSwiftPackageReference "../ZcashLightClientKit" */;
+			productName = ZcashLightClientKit;
+		};
+		9E6E824A2FE34156008A82EF /* ZcashLightClientKit */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 9E34CAE92FE337E700238B7D /* XCLocalSwiftPackageReference "../ZcashLightClientKit" */;
 			productName = ZcashLightClientKit;
