@@ -6,6 +6,8 @@
 //
 
 import ComposableArchitecture
+import Foundation
+import Combine
 
 @Reducer
 struct NotEnoughFreeSpace {

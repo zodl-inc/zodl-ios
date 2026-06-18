@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 import ComposableArchitecture
 
 private enum VotingChainDisplayURL {
@@ -474,8 +475,12 @@ private var bottomBar: some View {
                 .tracking(-0.256)
                 .lineLimit(1)
                 .truncationMode(.middle)
+#if os(iOS)
                 .keyboardType(isURL ? .URL : .default)
+#endif
+#if os(iOS)
                 .textInputAutocapitalization(isURL ? .never : .words)
+#endif
                 .autocorrectionDisabled()
                 .focused($focusedSourceField, equals: focusField)
             }
@@ -627,7 +632,7 @@ private var bottomBar: some View {
     }
 
     private var sourceFormSheetMinHeight: CGFloat {
-        max(620, UIScreen.main.bounds.height - 62)
+        max(620, PlatformScreen.bounds.height - 62)
     }
 }
 

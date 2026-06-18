@@ -6,12 +6,13 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 
 struct AddressBookContactView: View {
     @Environment(\.colorScheme) var colorScheme
     
-    @Perception.Bindable var store: StoreOf<AddressBook>
+    @PlatformBindable var store: StoreOf<AddressBook>
 
     @FocusState var isAddressFocused: Bool
     @FocusState var isNameFocused: Bool

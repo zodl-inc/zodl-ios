@@ -6,9 +6,12 @@
 //
 
 import ComposableArchitecture
+import Combine
 import SwiftUI
 @preconcurrency import ZcashLightClientKit
+#if canImport(MessageUI)
 import MessageUI
+#endif
 
 @Reducer
 struct TransactionDetails {
@@ -255,7 +258,7 @@ struct TransactionDetails {
             case .onAppear:
                 // __LD TESTED
                 // TCA Store is @MainActor; reducer body always runs on main.
-                state.canSendMail = MainActor.assumeIsolated { MFMailComposeViewController.canSendMail() }
+                state.canSendMail = MailSupport.canSendMail()
                 state.messageToBeShared = nil
                 state.supportData = nil
                 state.isSwap = userMetadataProvider.isSwapTransaction(state.transaction.zAddress ?? "")

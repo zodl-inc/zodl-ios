@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
 
@@ -16,7 +17,7 @@ struct SignWithKeystoneView: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.presentationMode) var presentationMode
 
-    @Perception.Bindable var store: StoreOf<SendConfirmation>
+    @PlatformBindable var store: StoreOf<SendConfirmation>
 
     @Dependency(\.sdkSynchronizer) var sdkSynchronizer
 
@@ -162,12 +163,12 @@ struct SignWithKeystoneView: View {
         .screenHorizontalPadding()
         .applyScreenBackground()
         .navigationBarBackButtonHidden(true)
-        .navigationBarTitleDisplayMode(.inline)
+        .zashiNavBarTitleDisplayMode(.inline)
         .screenTitle(String(localizable: .keystoneSignWithSignTransaction))
         .enlargeQR(isPresented: $store.isQRCodeEnlarged) {
             Group {
                 if let pczt = store.pcztForUI, let encoder = sdkSynchronizer.urEncoderForPCZT(pczt) {
-                    AnimatedQRCode(urEncoder: encoder, size: UIScreen.main.bounds.width - 64)
+                    AnimatedQRCode(urEncoder: encoder, size: PlatformScreen.bounds.width - 64)
                         .padding()
                         .background {
                             RoundedRectangle(cornerRadius: Design.Radius._4xl)

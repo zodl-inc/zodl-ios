@@ -11,6 +11,7 @@ struct KeyboardVisibilityModifier: ViewModifier {
     @Binding var isVisible: Bool
 
     func body(content: Content) -> some View {
+#if canImport(UIKit)
         content
             .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
                 withAnimation { isVisible = true }
@@ -18,6 +19,9 @@ struct KeyboardVisibilityModifier: ViewModifier {
             .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
                 withAnimation { isVisible = false }
             }
+#else
+        content // macOS: no software keyboard to track
+#endif
     }
 }
 

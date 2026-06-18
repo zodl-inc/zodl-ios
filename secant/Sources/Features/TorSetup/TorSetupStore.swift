@@ -6,6 +6,7 @@
 //
 
 import ComposableArchitecture
+import Combine
 @preconcurrency import ZcashLightClientKit
 
 @Reducer

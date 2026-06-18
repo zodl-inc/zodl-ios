@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 //import Scan
 
@@ -19,7 +20,7 @@ struct SendFormView: View {
     
     @State private var keyboardVisible: Bool = false
 
-    @Perception.Bindable var store: StoreOf<SendForm>
+    @PlatformBindable var store: StoreOf<SendForm>
     let tokenName: String
 
     @FocusState private var isAddressFocused
@@ -86,7 +87,9 @@ struct SendFormView: View {
                                                     .offset(x: 8)
                                             )
                                             .id(InputID.addressBookHint)
+#if os(iOS)
                                             .keyboardType(.alphabet)
+#endif
                                             .focused($isAddressFocused)
                                             .submitLabel(.next)
                                             .onSubmit {
@@ -109,7 +112,9 @@ struct SendFormView: View {
                                                             Asset.Assets.Icons.currencyZec.image
                                                                 .zImage(size: 20, style: Design.Inputs.Default.text)
                                                     )
+#if os(iOS)
                                                     .keyboardType(.decimalPad)
+#endif
                                                     .focused($isAmountFocused)
                                                     
                                                     if store.isCurrencyConversionEnabled {
@@ -130,7 +135,9 @@ struct SendFormView: View {
                                                                     }
                                                                 }
                                                         )
+#if os(iOS)
                                                         .keyboardType(.decimalPad)
+#endif
                                                         .focused($isCurrencyFocused)
                                                         .padding(.top, 23)
                                                         .disabled(store.currencyConversion == nil)
@@ -470,7 +477,7 @@ struct SendFormView: View {
             tokenName: "ZEC"
         )
     }
-    .navigationViewStyle(.stack)
+    .zashiStackNavigationStyle()
 }
 
 // MARK: - Store

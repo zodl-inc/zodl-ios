@@ -1,3 +1,4 @@
+#if os(iOS)
 //
 //  AppDelegate.swift
 //  secant
@@ -200,3 +201,4 @@ extension AppDelegate {
         }
     }
 }
+#endif

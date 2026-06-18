@@ -5,7 +5,10 @@
 //  Created by Lukáš Korba on 28.08.2025.
 //
 
+#if canImport(UIKit)
 import UIKit
+import Combine
+#endif
 import SwiftUI
 import ComposableArchitecture
 
@@ -174,7 +177,9 @@ extension SwapAndPayForm {
                                    ? CGFloat(store.customSlippage.count - 1) * 13.0 + 2.0
                                    : CGFloat(store.customSlippage.count) * 13.0
                             )
+#if os(iOS)
                             .keyboardType(.decimalPad)
+#endif
                             .onAppear {
                                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                                     isSlippageFocused = true

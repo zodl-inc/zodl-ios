@@ -6,12 +6,13 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 
 struct SignWithKeystoneCoordFlowView: View {
     @Environment(\.colorScheme) var colorScheme
 
-    @Perception.Bindable var store: StoreOf<SignWithKeystoneCoordFlow>
+    @PlatformBindable var store: StoreOf<SignWithKeystoneCoordFlow>
     let tokenName: String
 
     init(store: StoreOf<SignWithKeystoneCoordFlow>, tokenName: String) {
@@ -30,7 +31,7 @@ struct SignWithKeystoneCoordFlowView: View {
                         ),
                     tokenName: tokenName
                 )
-                .navigationBarHidden(true)
+                .zashiNavigationBarHidden(true)
             } destination: { store in
                 switch store.case {
                 case let .preSendingFailure(store):
@@ -49,7 +50,7 @@ struct SignWithKeystoneCoordFlowView: View {
                     TransactionDetailsView(store: store, tokenName: tokenName)
                 }
             }
-            .navigationBarHidden(!store.path.isEmpty)
+            .zashiNavigationBarHidden(!store.path.isEmpty)
         }
         .applyScreenBackground()
         .zashiBack()

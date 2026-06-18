@@ -9,7 +9,9 @@
 import ComposableArchitecture
 import Foundation
 import LocalAuthentication
+#if canImport(UIKit)
 import UIKit
+#endif
 
 struct SupportData: Equatable {
     let toAddress: String

@@ -6,12 +6,13 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 
 struct DeleteWalletView: View {
     @Environment(\.colorScheme) var colorScheme
     
-    @Perception.Bindable var store: StoreOf<DeleteWallet>
+    @PlatformBindable var store: StoreOf<DeleteWallet>
     
     init(store: StoreOf<DeleteWallet>) {
         self.store = store
@@ -86,7 +87,7 @@ struct DeleteWalletView: View {
                 helpSheetContent()
             }
         }
-        .navigationBarTitleDisplayMode(.inline)
+        .zashiNavBarTitleDisplayMode(.inline)
         .screenHorizontalPadding()
         .applyScreenBackground()
         .screenTitle(String(localizable: .deleteWalletScreenTitle).uppercased())

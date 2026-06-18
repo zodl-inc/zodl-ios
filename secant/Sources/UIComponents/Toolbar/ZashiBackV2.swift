@@ -25,7 +25,7 @@ struct ZashiBackV2Modifier: ViewModifier {
             content
                 .navigationBarBackButtonHidden(true)
                 .toolbar {
-                    ToolbarItem(placement: .navigationBarLeading) {
+                    ToolbarItem(placement: .zashiLeading) {
                         Button {
                             if let customDismiss {
                                 customDismiss()

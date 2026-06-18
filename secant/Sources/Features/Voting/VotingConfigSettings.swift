@@ -1,4 +1,5 @@
 import ComposableArchitecture
+import Combine
 import Foundation
 
 struct CustomChainEntry: Codable, Equatable, Identifiable, Sendable {

@@ -7,7 +7,10 @@
 
 import Foundation
 import ComposableArchitecture
+#if canImport(UIKit)
 import UIKit
+#endif
+@preconcurrency import ZcashLightClientKit
 @preconcurrency import Combine
 
 extension ShieldingProcessorClient: DependencyKey {

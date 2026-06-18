@@ -6,6 +6,7 @@
 //
 
 import Combine
+import Dispatch
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
 

@@ -4,6 +4,7 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 
 /// Empty-state shown when the voting service returns zero rounds. Renders the
@@ -73,7 +74,7 @@ struct VotingCoordFlowBackdrop: View {
         .screenTitle(String(localizable: .coinVoteCommonScreenTitle))
         .zashiBack { store.send(.dismissFlow) }
         .toolbar {
-            ToolbarItem(placement: .navigationBarTrailing) {
+            ToolbarItem(placement: .zashiTrailing) {
                 Button {
                     store.send(.openConfigSettings)
                 } label: {

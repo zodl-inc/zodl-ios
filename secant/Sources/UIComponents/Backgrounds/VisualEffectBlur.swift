@@ -1,3 +1,4 @@
+#if canImport(UIKit)
 //
 //  VisualEffectBlur.swift
 //  Zashi
@@ -19,3 +20,15 @@ struct VisualEffectBlur: UIViewRepresentable {
 
     func updateUIView(_ uiView: UIVisualEffectView, context: Context) { }
 }
+
+#else
+import SwiftUI
+
+/// macOS: use a native SwiftUI material instead of UIVisualEffectView.
+struct VisualEffectBlur: View {
+    init() {}
+    var body: some View {
+        Rectangle().fill(.ultraThinMaterial)
+    }
+}
+#endif

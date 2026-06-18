@@ -1,4 +1,7 @@
+#if canImport(UIKit)
 import UIKit
+#endif
+import Combine
 import SwiftUI
 @preconcurrency import AVFoundation
 import ComposableArchitecture

@@ -1,11 +1,12 @@
 import SwiftUI
+import Combine
 import ComposableArchitecture
 import StoreKit
 
 struct HomeView: View {
     @Environment(\.colorScheme) var colorScheme
     
-    @Perception.Bindable var store: StoreOf<Home>
+    @PlatformBindable var store: StoreOf<Home>
     let tokenName: String
 
     @Shared(.appStorage(.sensitiveContent)) var isSensitiveContentHidden = false
@@ -116,11 +117,11 @@ struct HomeView: View {
                 // FIXME: delete this
                 payRequestContent()
             }
-            .navigationBarItems(
+            .zashiNavigationBarItems(
                 leading:
                     walletAccountSwitcher()
             )
-            .navigationBarItems(
+            .zashiNavigationBarItems(
                 trailing:
                     HStack(spacing: 0) {
                         hideBalancesButton()
@@ -152,9 +153,11 @@ struct HomeView: View {
             }
             .onChange(of: store.canRequestReview) { canRequestReview in
                 if canRequestReview {
+#if os(iOS)
                     if let currentScene = UIApplication.shared.connectedScenes.first as? UIWindowScene {
                         SKStoreReviewController.requestReview(in: currentScene)
                     }
+#endif
                     store.send(.reviewRequestFinished)
                 }
             }
@@ -335,8 +338,8 @@ struct HomeView_Previews: PreviewProvider {
                     },
                 tokenName: "ZEC"
             )
-            .navigationBarTitleDisplayMode(.inline)
-            .navigationBarItems(
+            .zashiNavBarTitleDisplayMode(.inline)
+            .zashiNavigationBarItems(
                 trailing: Text("M")
             )
             .screenTitle("Title")

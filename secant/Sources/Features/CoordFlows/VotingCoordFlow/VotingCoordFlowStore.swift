@@ -4,6 +4,7 @@
 //
 
 import ComposableArchitecture
+import Combine
 import Foundation
 @preconcurrency import ZcashLightClientKit
 

@@ -8,7 +8,9 @@
 import Foundation
 import ComposableArchitecture
 @preconcurrency import Combine
+#if canImport(Flexa)
 import Flexa
+#endif
 @preconcurrency import ZcashLightClientKit
 
 extension DependencyValues {

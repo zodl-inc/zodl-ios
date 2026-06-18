@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 
 extension SwapAndPayForm {
@@ -119,9 +120,11 @@ extension SwapAndPayForm {
                 isAddressFocused = false
             }
             .applyScreenBackground()
+#if os(iOS)
             .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
                 store.send(.willEnterForeground)
             }
+#endif
             .popover(isPresented: $store.assetSelectBinding) {
                 assetContent(colorScheme)
                     .padding(.horizontal, 4)
@@ -199,8 +202,7 @@ extension SwapAndPayForm {
                                 Spacer()
                                 
                                 Button {
-                                    UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder),
-                                                                    to: nil, from: nil, for: nil)
+                                    PlatformKeyboard.dismiss()
                                 } label: {
                                     Text(String(localizable: .generalDone).uppercased())
                                         .zFont(.regular, size: 14, style: Design.Text.primary)
@@ -233,10 +235,12 @@ extension SwapAndPayForm {
         }
         .onAppear {
             store.send(.onAppear)
+#if os(iOS)
             if let window = UIApplication.shared.windows.first {
                 let safeFrame = window.safeAreaLayoutGuide.layoutFrame
                 safeAreaHeight = safeFrame.height
             }
+#endif
         }
     }
     
@@ -317,9 +321,13 @@ extension SwapAndPayForm {
                             .disabled(store.isQuoteRequestInFlight)
                             .frame(maxWidth: .infinity)
                             .frame(height: 32)
+#if os(iOS)
                             .autocapitalization(.none)
+#endif
                             .autocorrectionDisabled()
+#if os(iOS)
                             .keyboardType(.decimalPad)
+#endif
                             .zFont(.semiBold, size: 24, style: Design.Text.primary)
                             .lineLimit(1)
                             .multilineTextAlignment(.trailing)
@@ -459,9 +467,13 @@ extension SwapAndPayForm {
                         .disabled(store.isQuoteRequestInFlight)
                         .frame(maxWidth: .infinity)
                         .frame(height: 32)
+#if os(iOS)
                         .autocapitalization(.none)
+#endif
                         .autocorrectionDisabled()
+#if os(iOS)
                         .keyboardType(.decimalPad)
+#endif
                         .zFont(.semiBold, size: 24, style: Design.Text.primary)
                         .lineLimit(1)
                         .multilineTextAlignment(.trailing)

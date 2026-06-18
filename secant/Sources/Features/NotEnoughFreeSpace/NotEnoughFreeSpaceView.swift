@@ -6,12 +6,13 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 
 struct NotEnoughFreeSpaceView: View {
     @Environment(\.colorScheme) private var colorScheme
     
-    @Perception.Bindable var store: StoreOf<NotEnoughFreeSpace>
+    @PlatformBindable var store: StoreOf<NotEnoughFreeSpace>
     
     init(store: StoreOf<NotEnoughFreeSpace>) {
         self.store = store
@@ -55,8 +56,8 @@ struct NotEnoughFreeSpaceView: View {
             }
             .frame(maxWidth: .infinity)
             .onAppear { store.send(.onAppear) }
-            .navigationBarTitleDisplayMode(.inline)
-            .navigationBarItems(trailing: settingsButton())
+            .zashiNavBarTitleDisplayMode(.inline)
+            .zashiNavigationBarItems(trailing: settingsButton())
             .screenHorizontalPadding()
             .applyErredScreenBackground()
         }

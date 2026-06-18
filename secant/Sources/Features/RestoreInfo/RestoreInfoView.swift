@@ -6,12 +6,13 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 
 struct RestoreInfoView: View {
     @Environment(\.colorScheme) var colorScheme
     
-    @Perception.Bindable var store: StoreOf<RestoreInfo>
+    @PlatformBindable var store: StoreOf<RestoreInfo>
     
     init(store: StoreOf<RestoreInfo>) {
         self.store = store
@@ -105,7 +106,7 @@ struct RestoreInfoView: View {
             }
             .zashiBack(hidden: true)
         }
-        .navigationBarTitleDisplayMode(.inline)
+        .zashiNavBarTitleDisplayMode(.inline)
         .screenHorizontalPadding()
         .applyScreenBackground()
     }

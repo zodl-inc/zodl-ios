@@ -6,10 +6,11 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 
 struct DeeplinkWarningView: View {
-    @Perception.Bindable var store: StoreOf<DeeplinkWarning>
+    @PlatformBindable var store: StoreOf<DeeplinkWarning>
 
     init(store: StoreOf<DeeplinkWarning>) {
         self.store = store
@@ -46,7 +47,7 @@ struct DeeplinkWarningView: View {
                 .padding(.bottom, 24)
             }
         }
-        .navigationBarTitleDisplayMode(.inline)
+        .zashiNavBarTitleDisplayMode(.inline)
         .screenHorizontalPadding()
         .applyErredScreenBackground()
         .screenTitle(String(localizable: .deeplinkWarningScreenTitle).uppercased())

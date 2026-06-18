@@ -6,12 +6,13 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 
 struct TransactionsCoordFlowView: View {
     @Environment(\.colorScheme) var colorScheme
 
-    @Perception.Bindable var store: StoreOf<TransactionsCoordFlow>
+    @PlatformBindable var store: StoreOf<TransactionsCoordFlow>
     let tokenName: String
 
     init(store: StoreOf<TransactionsCoordFlow>, tokenName: String) {
@@ -49,7 +50,7 @@ struct TransactionsCoordFlowView: View {
                     TransactionDetailsView(store: store, tokenName: tokenName)
                 }
             }
-            .navigationBarHidden(true)
+            .zashiNavigationBarHidden(true)
         }
         .applyScreenBackground()
         .zashiBack()

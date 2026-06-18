@@ -6,11 +6,12 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 
 struct AddKeystoneHWWalletView: View {
     @Environment(\.colorScheme) private var colorScheme
-    @Perception.Bindable var store: StoreOf<AddKeystoneHWWallet>
+    @PlatformBindable var store: StoreOf<AddKeystoneHWWallet>
     
     init(store: StoreOf<AddKeystoneHWWallet>) {
         self.store = store
@@ -98,7 +99,7 @@ struct AddKeystoneHWWalletView: View {
                     InAppBrowserView(url: url)
                 }
             }
-            .navigationBarItems(
+            .zashiNavigationBarItems(
                 trailing:
                     Button {
                         store.send(.helpSheetRequested)
@@ -109,7 +110,7 @@ struct AddKeystoneHWWalletView: View {
                     }
             )
         }
-        .navigationBarTitleDisplayMode(.inline)
+        .zashiNavBarTitleDisplayMode(.inline)
         .applyScreenBackground()
     }
     

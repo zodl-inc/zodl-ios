@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
 
@@ -7,7 +8,7 @@ struct RootView: View {
     @Environment(\.colorScheme) var colorScheme
     @State var covered = false
     
-    @Perception.Bindable var store: StoreOf<Root>
+    @PlatformBindable var store: StoreOf<Root>
     let tokenName: String
     let networkType: NetworkType
 
@@ -63,7 +64,7 @@ private extension RootView {
                             )
                         )
                     }
-                    .navigationViewStyle(.stack)
+                    .zashiStackNavigationStyle()
                     .overlayedWithSplash(store.splashAppeared) {
                         store.send(.splashRemovalRequested)
                     }
@@ -77,7 +78,7 @@ private extension RootView {
                             )
                         )
                     }
-                    .navigationViewStyle(.stack)
+                    .zashiStackNavigationStyle()
                     .overlayedWithSplash(store.splashAppeared) {
                         store.send(.splashRemovalRequested)
                     }
@@ -91,7 +92,7 @@ private extension RootView {
                             )
                         )
                     }
-                    .navigationViewStyle(.stack)
+                    .zashiStackNavigationStyle()
                     .overlayedWithSplash(store.splashAppeared) {
                         store.send(.splashRemovalRequested)
                     }
@@ -298,7 +299,7 @@ private extension RootView {
                 state: \.exportLogsState.$alert,
                 action: \.exportLogs.alert
             ))
-            .fullScreenCover(
+            .zashiFullScreenCover(
                 isPresented:
                     Binding(
                         get: { store.serverSetupViewBinding },

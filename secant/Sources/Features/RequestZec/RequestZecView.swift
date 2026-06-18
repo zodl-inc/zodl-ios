@@ -6,12 +6,13 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
 
 struct RequestZecView: View {
     @Environment(\.colorScheme) private var colorScheme
-    @Perception.Bindable var store: StoreOf<RequestZec>
+    @PlatformBindable var store: StoreOf<RequestZec>
     
     @State private var keyboardVisible: Bool = false
 

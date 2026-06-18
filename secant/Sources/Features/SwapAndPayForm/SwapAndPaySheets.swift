@@ -5,7 +5,10 @@
 //  Created by Lukáš Korba on 2025-05-26.
 //
 
+#if canImport(UIKit)
 import UIKit
+import Combine
+#endif
 import SwiftUI
 import ComposableArchitecture
 
@@ -119,6 +122,7 @@ extension SwapAndPayForm {
     }
 }
 
+#if canImport(UIKit)
 struct FocusableTextField: UIViewRepresentable {
     @Binding var text: String
     @Binding var isFirstResponder: Bool
@@ -131,7 +135,7 @@ struct FocusableTextField: UIViewRepresentable {
         textField.attributedPlaceholder = NSAttributedString(
             string: placeholder,
             attributes: [
-                .foregroundColor: UIColor(Design.Switcher.selectedText.color(colorScheme)),
+                .foregroundColor: PlatformColor(Design.Switcher.selectedText.color(colorScheme)),
                 .font: FontFamily.Inter.medium.font(size: 16)
             ]
         )
@@ -141,7 +145,7 @@ struct FocusableTextField: UIViewRepresentable {
         textField.keyboardType = .decimalPad
         textField.addTarget(context.coordinator, action: #selector(Coordinator.textDidChange(_:)), for: .editingChanged)
         textField.font = FontFamily.Inter.medium.font(size: 16)
-        textField.textColor = UIColor(Design.Switcher.selectedText.color(colorScheme))
+        textField.textColor = PlatformColor(Design.Switcher.selectedText.color(colorScheme))
 
         return textField
     }
@@ -182,3 +186,15 @@ struct FocusableTextField: UIViewRepresentable {
         }
     }
 }
+#else
+// macOS: native text field (advanced focus handling deferred to goal #3).
+struct FocusableTextField: View {
+    @Binding var text: String
+    @Binding var isFirstResponder: Bool
+    var placeholder: String = ""
+    let colorScheme: ColorScheme
+    var body: some View {
+        TextField(placeholder, text: $text)
+    }
+}
+#endif

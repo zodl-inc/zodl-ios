@@ -6,7 +6,9 @@
 //
 
 import SwiftUI
+#if canImport(UIKit)
 import UIKit
+#endif
 
 struct ShimmerConfiguration {
     let gradient: Gradient
@@ -68,6 +70,7 @@ struct NoTransactionPlaceholder: View {
     }
 }
 
+#if canImport(UIKit)
 class ShimmerCALayer: UIView {
     private var gradientLayer: CAGradientLayer?
     private let configuration: ShimmerConfiguration
@@ -84,12 +87,12 @@ class ShimmerCALayer: UIView {
     }
     
     private func setupLayer() {
-        backgroundColor = UIColor.clear
+        backgroundColor = PlatformColor.clear
         
         let gradient = CAGradientLayer()
         gradient.colors = configuration.gradient.stops.map { stop in
             // Convert SwiftUI Color to CGColor
-            UIColor(stop.color).cgColor
+            PlatformColor(stop.color).cgColor
         }
         
         gradient.locations = configuration.gradient.stops.map { stop in
@@ -169,7 +172,7 @@ struct CALayerView: UIViewRepresentable {
         let gradientLayer = CAGradientLayer()
         gradientLayer.frame = CGRect(origin: .zero, size: size)
         gradientLayer.colors = configuration.gradient.stops.map { stop in
-            UIColor(stop.color).cgColor
+            PlatformColor(stop.color).cgColor
         }
         gradientLayer.locations = configuration.gradient.stops.map { stop in
             NSNumber(value: stop.location)
@@ -221,8 +224,11 @@ struct CALayerView: UIViewRepresentable {
     }
 }
 
+#endif
+
 extension View {
     func shimmer(_ active: Bool, configuration: ShimmerConfiguration = ShimmerConfiguration.default) -> some View {
+#if canImport(UIKit)
         self.overlay(
             active ?
             DirectCAShimmerView(isActive: active, configuration: configuration)
@@ -231,5 +237,9 @@ extension View {
                 .allowsHitTesting(false)
             : nil
         )
+#else
+        // TODO: [#1438] native macOS shimmer (Core Animation overlay); no-op for now — cosmetic only.
+        self
+#endif
     }
 }

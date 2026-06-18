@@ -1,5 +1,5 @@
 {
-  "originHash" : "b09e579f97d7da266c2476255b55b82cc6807305dce353e0e6327235419913e9",
+  "originHash" : "b83e89197577b497ff7c24ce3725ac56e1c4c54d3e655f88084f0a076f8dd6c0",
   "pins" : [
     {
       "identity" : "base32",
@@ -107,15 +107,6 @@
       "state" : {
         "revision" : "8d33ffd6f74b3bcfc99af759d4204c6395a3f918",
         "version" : "3.2.1"
-      }
-    },
-    {
-      "identity" : "keystone-sdk-ios",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/KeystoneHQ/keystone-sdk-ios/",
-      "state" : {
-        "revision" : "7dbf7476bf6b04b204f79e37f71115574acb3e40",
-        "version" : "0.8.6"
       }
     },
     {
@@ -339,8 +330,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/objecthub/swift-numberkit.git",
       "state" : {
-        "revision" : "33af3f9011e45dcd8ee696492d30dbcd5a8a67f3",
-        "version" : "2.6.0"
+        "revision" : "6182110549aa7cf614cb6fff3d6142e65be9b602",
+        "version" : "2.6.1"
       }
     },
     {
@@ -456,8 +447,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/BlockchainCommons/URKit",
       "state" : {
-        "revision" : "c7cf16b03ce061c2d461fb4c635cc27c9e1d00e3",
-        "version" : "15.0.0"
+        "revision" : "c0a447560768e2552cf85a586dea8cfc26162891",
+        "version" : "15.1.0"
       }
     },
     {

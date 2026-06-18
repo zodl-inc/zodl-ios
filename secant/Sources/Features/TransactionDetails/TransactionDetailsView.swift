@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
 
@@ -16,7 +17,7 @@ struct TransactionDetailsView: View {
         case middle
         case top
         
-        var corners: UIRectCorner {
+        var corners: RectCorner {
             switch self {
             case .bottom:
                 return [.bottomLeft, .bottomRight]
@@ -34,7 +35,7 @@ struct TransactionDetailsView: View {
 
     @FocusState var isAnnotationFocused
 
-    @Perception.Bindable var store: StoreOf<TransactionDetails>
+    @PlatformBindable var store: StoreOf<TransactionDetails>
     let tokenName: String
 
     @Shared(.appStorage(.sensitiveContent)) var isSensitiveContentHidden = false
@@ -124,7 +125,7 @@ struct TransactionDetailsView: View {
             .zashiBackV2(hidden: !store.isCloseButtonRequired) {
                 store.send(.closeDetailTapped)
             }
-            .navigationBarItems(
+            .zashiNavigationBarItems(
                 trailing:
                     HStack(spacing: 0) {
                         hideBalancesButton()
@@ -137,7 +138,7 @@ struct TransactionDetailsView: View {
                 annotationContent(store.isEditMode)
             }
         }
-        .navigationBarTitleDisplayMode(.inline)
+        .zashiNavBarTitleDisplayMode(.inline)
         .applyDefaultGradientScreenBackground()
     }
     

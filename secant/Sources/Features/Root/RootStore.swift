@@ -1,8 +1,10 @@
 import ComposableArchitecture
+import Combine
 @preconcurrency import ZcashLightClientKit
 import Foundation
-import BackgroundTasks
+#if canImport(Flexa)
 import Flexa
+#endif
 
 @Reducer
 struct Root {
@@ -55,7 +57,7 @@ struct Root {
         var appInitializationState: InitializationState = .uninitialized
         var appStartState: AppStartState = .unknown
         var areMetadataPreserved = true
-        var bgTask: BGProcessingTask?
+        var bgTask: PlatformBackgroundTask?
         @Shared(.inMemory(.exchangeRate)) var currencyConversion: CurrencyConversion? = nil
         var deeplinkWarningState: DeeplinkWarning.State = .initial
         var destinationState: DestinationState

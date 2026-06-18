@@ -6,13 +6,14 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 
 struct ScanView: View {
     @Environment(\.colorScheme) var colorScheme
     @Environment(\.openURL) var openURL
     
-    @State private var image: UIImage?
+    @State private var image: PlatformImage?
     @State private var showSheet = false
     
     let store: StoreOf<Scan>
@@ -90,9 +91,11 @@ struct ScanView: View {
                             
                             if !store.isCameraEnabled {
                                 primaryButton(String(localizable: .scanOpenSettings)) {
+#if os(iOS)
                                     if let url = URL(string: UIApplication.openSettingsURLString) {
                                         openURL(url)
                                     }
+#endif
                                 }
                             } else {
                                 primaryButton(String(localizable: .generalCancel)) {
@@ -316,7 +319,7 @@ extension ScanView {
     }
 
     static func normalizedRectsOfInterest(_ popoverRatio: CGFloat) -> (renderOnly: CGRect, real: CGRect) {
-        let rect = UIScreen.main.bounds
+        let rect = PlatformScreen.bounds
         
         let readRectSize = 0.6
 

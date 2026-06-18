@@ -4,6 +4,7 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
 
@@ -48,7 +49,7 @@ struct PollsListView: View {
             .screenTitle(String(localizable: .coinVoteCommonScreenTitle))
             .zashiBack { store.send(.dismissFlow) }
             .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
+                ToolbarItem(placement: .zashiTrailing) {
                     Button {
                         store.send(.openConfigSettings)
                     } label: {

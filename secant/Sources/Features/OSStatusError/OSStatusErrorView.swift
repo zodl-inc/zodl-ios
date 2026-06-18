@@ -6,12 +6,13 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 
 struct OSStatusErrorView: View {
     @Environment(\.colorScheme) private var colorScheme
     
-    @Perception.Bindable var store: StoreOf<OSStatusError>
+    @PlatformBindable var store: StoreOf<OSStatusError>
     
     init(store: StoreOf<OSStatusError>) {
         self.store = store

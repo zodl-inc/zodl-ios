@@ -6,12 +6,13 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 
 struct WalletBirthdayEstimatedHeightView: View {
     @Environment(\.colorScheme) var colorScheme
     
-    @Perception.Bindable var store: StoreOf<WalletBirthday>
+    @PlatformBindable var store: StoreOf<WalletBirthday>
     
     init(store: StoreOf<WalletBirthday>) {
         self.store = store
@@ -80,8 +81,8 @@ struct WalletBirthdayEstimatedHeightView: View {
                 .padding(.bottom, 24)
             }
             .zashiBack()
-            .navigationBarTitleDisplayMode(.inline)
-            .navigationBarItems(
+            .zashiNavBarTitleDisplayMode(.inline)
+            .zashiNavigationBarItems(
                 trailing:
                     Button {
                         store.send(.helpSheetRequested)

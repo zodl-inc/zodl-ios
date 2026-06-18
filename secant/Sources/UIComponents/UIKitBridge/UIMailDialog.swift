@@ -1,3 +1,4 @@
+#if canImport(UIKit)
 //
 //  UIMailDialog.swift
 //  secant
@@ -76,3 +77,19 @@ struct UIMailDialogView: UIViewRepresentable {
 
     typealias UIViewType = UIMailDialog
 }
+
+#else
+import SwiftUI
+
+/// macOS stub: no in-app mail composer here, so this renders nothing. Callers present it as a
+/// zero-frame helper view; on macOS it's simply an `EmptyView`.
+struct UIMailDialogView: View {
+    let supportData: SupportData
+    let completion: () -> Void
+    init(supportData: SupportData, completion: @escaping () -> Void) {
+        self.supportData = supportData
+        self.completion = completion
+    }
+    var body: some View { EmptyView() }
+}
+#endif

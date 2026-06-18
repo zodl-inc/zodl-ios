@@ -8,8 +8,17 @@
 import Foundation
 import CoreImage.CIFilterBuiltins
 import SwiftUI
+#if canImport(UIKit)
+import UIKit
+typealias PlatformColor = UIColor
+typealias PlatformImage = UIImage
+#elseif canImport(AppKit)
+import AppKit
+typealias PlatformColor = NSColor
+typealias PlatformImage = NSImage
+#endif
 
-enum QRCodeGenerator {
+nonisolated enum QRCodeGenerator {
     enum QRCodeError: Error {
         case failedToGenerate
     }
@@ -23,7 +32,7 @@ enum QRCodeGenerator {
         from string: String,
         maxPrivacy: Bool = true,
         vendor: Vendor = .zashi,
-        color: UIColor = Asset.Colors.primary.systemColor,
+        color: PlatformColor = Asset.Colors.primary.systemColor,
         overlayedWithZcashLogo: Bool = true
     ) async -> CGImage? {
         await Task.detached(priority: .userInitiated) {
@@ -42,7 +51,7 @@ enum QRCodeGenerator {
         scale: CGFloat = 15,
         maxPrivacy: Bool = true,
         vendor: Vendor = .zashi,
-        color: UIColor = Asset.Colors.primary.systemColor,
+        color: PlatformColor = Asset.Colors.primary.systemColor,
         overlayedWithZcashLogo: Bool = true
     ) -> CGImage? {
         let data = string.data(using: String.Encoding.utf8)
@@ -93,13 +102,20 @@ enum QRCodeGenerator {
         let filename = export ? "QROverlay" : "QRDynamicOverlay"
         let overlayImageName = "\(vendorPrefix)\(filename)\(maxPrivacyPostfix)"
         
-        guard let overlayImage = UIImage(named: overlayImageName) else {
+        guard let overlayImage = PlatformImage(named: overlayImageName) else {
             return nil
         }
 
+#if canImport(UIKit)
         guard let iconCIImage = CIImage(image: overlayImage) else {
             return nil
         }
+#else
+        guard let cgOverlay = overlayImage.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+            return nil
+        }
+        let iconCIImage = CIImage(cgImage: cgOverlay)
+#endif
         
         let ratio = 0.25
         let size = baseImage.extent.width * ratio
@@ -120,24 +136,24 @@ enum QRCodeGenerator {
 }
 
 extension CIImage {
-    var transparent: CIImage? {
+    nonisolated var transparent: CIImage? {
         inverted?.blackTransparent
     }
 
-    var inverted: CIImage? {
+    nonisolated var inverted: CIImage? {
         guard let invertedColorFilter = CIFilter(name: "CIColorInvert") else { return nil }
 
         invertedColorFilter.setValue(self, forKey: "inputImage")
         return invertedColorFilter.outputImage
     }
 
-    var blackTransparent: CIImage? {
+    nonisolated var blackTransparent: CIImage? {
         guard let blackTransparentFilter = CIFilter(name: "CIMaskToAlpha") else { return nil }
         blackTransparentFilter.setValue(self, forKey: "inputImage")
         return blackTransparentFilter.outputImage
     }
 
-    func tinted(using color: UIColor) -> CIImage?
+    nonisolated func tinted(using color: PlatformColor) -> CIImage?
     {
         guard
             let transparentQRImage = transparent,

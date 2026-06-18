@@ -117,10 +117,34 @@ private final class BundleToken {
 
 fileprivate extension Font {
   static func mappedFont(_ name: String, textStyle: TextStyle) -> Font {
+#if os(iOS) || os(tvOS) || os(watchOS)
     let fontSize = UIFont.preferredFont(forTextStyle: self.mapToUIFontTextStyle(textStyle)).pointSize
+#else
+    let fontSize = self.nominalSize(for: textStyle)
+#endif
     return Font.custom(name, size: fontSize, relativeTo: textStyle)
   }
 
+#if os(macOS)
+  // macOS: native Dynamic Type metrics differ from UIKit; use nominal iOS default point sizes.
+  // swiftlint:disable:next cyclomatic_complexity
+  static func nominalSize(for textStyle: SwiftUI.Font.TextStyle) -> CGFloat {
+    switch textStyle {
+    case .largeTitle: return 34
+    case .title: return 28
+    case .title2: return 22
+    case .title3: return 20
+    case .headline: return 17
+    case .subheadline: return 15
+    case .callout: return 16
+    case .body: return 17
+    case .caption: return 12
+    case .caption2: return 11
+    case .footnote: return 13
+    @unknown default: return 17
+    }
+  }
+#else
   // swiftlint:disable:next cyclomatic_complexity
   static func mapToUIFontTextStyle(_ textStyle: SwiftUI.Font.TextStyle) -> UIFont.TextStyle {
     switch textStyle {
@@ -150,6 +174,7 @@ fileprivate extension Font {
       fatalError("Missing a TextStyle mapping")
     }
   }
+#endif
 }
 
 // swiftlint:enable convenience_type

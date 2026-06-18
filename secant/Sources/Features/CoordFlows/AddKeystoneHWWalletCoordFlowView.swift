@@ -6,12 +6,13 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 
 struct AddKeystoneHWWalletCoordFlowView: View {
     @Environment(\.colorScheme) var colorScheme
 
-    @Perception.Bindable var store: StoreOf<AddKeystoneHWWalletCoordFlow>
+    @PlatformBindable var store: StoreOf<AddKeystoneHWWalletCoordFlow>
     let tokenName: String
 
     init(store: StoreOf<AddKeystoneHWWalletCoordFlow>, tokenName: String) {

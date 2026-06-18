@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
 
@@ -19,7 +20,7 @@ struct SendingView: View {
         static let lottieNameDark = "sending-dark"
     }
     
-    @Perception.Bindable var store: StoreOf<SendConfirmation>
+    @PlatformBindable var store: StoreOf<SendConfirmation>
     let tokenName: String
     
     init(store: StoreOf<SendConfirmation>, tokenName: String) {

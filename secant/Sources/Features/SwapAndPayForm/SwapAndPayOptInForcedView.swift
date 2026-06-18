@@ -6,12 +6,13 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 
 struct SwapAndPayOptInForcedView: View {
     @Environment(\.colorScheme) private var colorScheme
     
-    @Perception.Bindable var store: StoreOf<SwapAndPay>
+    @PlatformBindable var store: StoreOf<SwapAndPay>
     
     init(store: StoreOf<SwapAndPay>) {
         self.store = store

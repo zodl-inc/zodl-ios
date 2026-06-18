@@ -6,8 +6,12 @@
 //
 
 import ComposableArchitecture
+import Foundation
+import Combine
 @preconcurrency import ZcashLightClientKit
+#if canImport(MessageUI)
 @preconcurrency import MessageUI
+#endif
 
 @Reducer
 struct DisconnectHWWallet {
@@ -55,7 +59,11 @@ struct DisconnectHWWallet {
             switch action {
             case .onAppear:
                 // TCA Store is @MainActor; reducer body always runs on main.
+#if canImport(MessageUI)
                 state.canSendMail = MainActor.assumeIsolated { MFMailComposeViewController.canSendMail() }
+#else
+                state.canSendMail = false
+#endif
                 return .none
 
             case .binding:

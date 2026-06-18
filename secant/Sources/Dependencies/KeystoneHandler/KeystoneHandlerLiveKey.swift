@@ -9,7 +9,7 @@ import ComposableArchitecture
 @preconcurrency import KeystoneSDK
 import Atomics
 
-final class KeystoneSDKWrapper: Sendable {
+nonisolated final class KeystoneSDKWrapper: Sendable {
     let keystoneSDK = KeystoneSDK()
     let foundResult = ManagedAtomic<Bool>(false)
 

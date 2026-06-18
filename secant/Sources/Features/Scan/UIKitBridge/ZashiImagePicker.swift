@@ -7,6 +7,7 @@
 
 import SwiftUI
 
+#if canImport(UIKit)
 struct ZashiImagePicker: UIViewControllerRepresentable {
     final class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
         var parent: ZashiImagePicker
@@ -55,3 +56,11 @@ struct ZashiImagePicker: UIViewControllerRepresentable {
         Coordinator(self)
     }
 }
+#else
+// macOS: photo-library picker isn't available yet (goal #3: NSOpenPanel-based picker). Stub renders nothing.
+struct ZashiImagePicker: View {
+    @Binding var selectedImage: PlatformImage?
+    @Binding var showSheet: Bool
+    var body: some View { EmptyView() }
+}
+#endif

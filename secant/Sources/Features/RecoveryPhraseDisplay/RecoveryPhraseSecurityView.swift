@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 @preconcurrency import MnemonicSwift
 
@@ -17,7 +18,7 @@ struct RecoveryPhraseSecurityView: View {
         static let blurBDValue = 10.0
     }
     
-    @Perception.Bindable var store: StoreOf<RecoveryPhraseDisplay>
+    @PlatformBindable var store: StoreOf<RecoveryPhraseDisplay>
     
     init(store: StoreOf<RecoveryPhraseDisplay>) {
         self.store = store

@@ -12,7 +12,7 @@ struct EnlargeQRView<QRContent: View>: ViewModifier {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.presentationMode) var presentationMode
 
-    @State private var previousBrightness: CGFloat = UIScreen.main.brightness
+    @State private var previousBrightness: CGFloat = PlatformScreen.brightness
     @Binding var isPresented: Bool
     var qrContent: QRContent
 
@@ -20,12 +20,12 @@ struct EnlargeQRView<QRContent: View>: ViewModifier {
         ZStack {
             content
                 .onAppear {
-                    previousBrightness = UIScreen.main.brightness
-                    UIScreen.main.brightness = 1.0
+                    previousBrightness = PlatformScreen.brightness
+                    PlatformScreen.brightness = 1.0
                 }
                 .onChange(of: presentationMode.wrappedValue.isPresented) { isPresented in
                     if !isPresented {
-                        UIScreen.main.brightness = previousBrightness
+                        PlatformScreen.brightness = previousBrightness
                     }
                 }
             

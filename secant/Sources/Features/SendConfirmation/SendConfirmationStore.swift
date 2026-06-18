@@ -6,9 +6,12 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
+#if canImport(MessageUI)
 import MessageUI
+#endif
 
 @Reducer
 struct SendConfirmation {
@@ -212,7 +215,7 @@ struct SendConfirmation {
                 state.randomResubmissionIconIndex = Int.random(in: 1...2)
                 state.isTransparentAddress = derivationTool.isTransparentAddress(state.address, zcashSDKEnvironment.network().networkType)
                 // TCA Store is @MainActor; reducer body always runs on main.
-                state.canSendMail = MainActor.assumeIsolated { MFMailComposeViewController.canSendMail() }
+                state.canSendMail = MailSupport.canSendMail()
                 state.alias = nil
                 for contact in state.addressBookContacts.contacts {
                     if contact.address == state.address {

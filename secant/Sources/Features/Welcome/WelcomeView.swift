@@ -6,10 +6,11 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 
 struct WelcomeView: View {
-    @Perception.Bindable var store: StoreOf<Welcome>
+    @PlatformBindable var store: StoreOf<Welcome>
 
     var hiHeight: CGFloat {
         var potentialCountryCode: String?

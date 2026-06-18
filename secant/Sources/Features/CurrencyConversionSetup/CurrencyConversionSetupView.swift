@@ -6,11 +6,12 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 
 struct CurrencyConversionSetupView: View {
     @Environment(\.colorScheme) private var colorScheme
-    @Perception.Bindable var store: StoreOf<CurrencyConversionSetup>
+    @PlatformBindable var store: StoreOf<CurrencyConversionSetup>
     
     init(store: StoreOf<CurrencyConversionSetup>) {
         self.store = store
@@ -48,7 +49,7 @@ struct CurrencyConversionSetupView: View {
                     .presentationDragIndicator(.visible)
             }
         }
-        .navigationBarTitleDisplayMode(.inline)
+        .zashiNavBarTitleDisplayMode(.inline)
         .applyScreenBackground()
     }
     
@@ -189,7 +190,7 @@ struct CurrencyConversionSetupView: View {
                     Button {
                         store.send(.binding(.set(\.isCurrencyPickerSheetPresented, false)))
                     } label: {
-                        if #available(iOS 26.0, *) {
+                        if #available(iOS 26.0, macOS 26.0, *) {
                             Asset.Assets.buttonCloseX.image
                                 .zImage(size: 20, style: Design.Text.primary)
                                 .padding(10)

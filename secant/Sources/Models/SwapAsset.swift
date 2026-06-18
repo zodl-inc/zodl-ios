@@ -6,6 +6,11 @@
 //
 
 import SwiftUI
+#if canImport(UIKit)
+import UIKit
+#elseif canImport(AppKit)
+import AppKit
+#endif
 
 /// Codable struct for JSON serialization
 /// Supported Near tokens 
@@ -62,19 +67,31 @@ struct SwapAsset: Equatable, Codable, Identifiable, Hashable {
     }
 
     var chainIcon: Image {
-        guard let icon = UIImage(named: "chain_\(chain.lowercased())") else {
+#if canImport(UIKit)
+        guard let icon = PlatformImage(named: "chain_\(chain.lowercased())") else {
             return Asset.Assets.Tickers.none.image
         }
-
-        return Image(uiImage: icon)
+        return Image(platformImage: icon)
+#else
+        guard let icon = NSImage(named: "chain_\(chain.lowercased())") else {
+            return Asset.Assets.Tickers.none.image
+        }
+        return Image(nsImage: icon)
+#endif
     }
 
     var tokenIcon: Image {
-        guard let icon = UIImage(named: token.lowercased()) else {
+#if canImport(UIKit)
+        guard let icon = PlatformImage(named: token.lowercased()) else {
             return Asset.Assets.Tickers.none.image
         }
-
-        return Image(uiImage: icon)
+        return Image(platformImage: icon)
+#else
+        guard let icon = NSImage(named: token.lowercased()) else {
+            return Asset.Assets.Tickers.none.image
+        }
+        return Image(nsImage: icon)
+#endif
     }
 
     var provider: String

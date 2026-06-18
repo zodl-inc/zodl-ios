@@ -6,12 +6,13 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 
 struct WalletBackupCoordFlowView: View {
     @Environment(\.colorScheme) var colorScheme
 
-    @Perception.Bindable var store: StoreOf<WalletBackupCoordFlow>
+    @PlatformBindable var store: StoreOf<WalletBackupCoordFlow>
 
     init(store: StoreOf<WalletBackupCoordFlow>) {
         self.store = store

@@ -1,10 +1,11 @@
 import SwiftUI
+import Combine
 import ComposableArchitecture
 
 struct SettingsView: View {
     @Environment(\.colorScheme) var colorScheme
     
-    @Perception.Bindable var store: StoreOf<Settings>
+    @PlatformBindable var store: StoreOf<Settings>
     
     init(store: StoreOf<Settings>) {
         self.store = store
@@ -162,7 +163,7 @@ struct SettingsView: View {
             .zashiSheet(isPresented: $store.isResyncHelpSheetPresented) {
                 resyncHelpSheetContent()
             }
-            .fullScreenCover(
+            .zashiFullScreenCover(
                 item: $store.scope(state: \.votingCoordFlow, action: \.votingCoordFlow)
             ) { votingStore in
                 // fullScreenCover content is an escaping closure — needs its

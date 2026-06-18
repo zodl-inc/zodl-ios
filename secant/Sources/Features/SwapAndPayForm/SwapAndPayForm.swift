@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 
 struct SwapAndPayForm: View {
@@ -28,7 +29,7 @@ struct SwapAndPayForm: View {
     
     @State var safeAreaHeight: CGFloat = 0
 
-    @Perception.Bindable var store: StoreOf<SwapAndPay>
+    @PlatformBindable var store: StoreOf<SwapAndPay>
     let tokenName: String
     
     init(store: StoreOf<SwapAndPay>, tokenName: String) {
@@ -138,7 +139,9 @@ struct SwapAndPayForm: View {
             .frame(minHeight: 44)
             .disabled(store.isQuoteRequestInFlight)
             .id(InputID.addressBookHint)
+#if os(iOS)
             .keyboardType(.alphabet)
+#endif
             .focused($isAddressFocused)
             .padding(.top, 8)
             .anchorPreference(

@@ -6,10 +6,11 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 
 struct PrivateDataConsentView: View {
-    @Perception.Bindable var store: StoreOf<PrivateDataConsent>
+    @PlatformBindable var store: StoreOf<PrivateDataConsent>
 
     init(store: StoreOf<PrivateDataConsent>) {
         self.store = store
@@ -94,7 +95,7 @@ struct PrivateDataConsentView: View {
 
             shareLogsView()
         }
-        .navigationBarTitleDisplayMode(.inline)
+        .zashiNavBarTitleDisplayMode(.inline)
         .screenHorizontalPadding()
         .applyScreenBackground()
         .screenTitle(String(localizable: .privateDataConsentScreenTitle).uppercased())

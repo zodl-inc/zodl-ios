@@ -6,6 +6,7 @@
 //
 
 import ComposableArchitecture
+import Combine
 import SwiftUI
 
 @preconcurrency import ZcashLightClientKit
@@ -418,11 +419,11 @@ extension AddressBook {
     static func contactTicker(chainId: String?) -> Image? {
         guard let chainId else { return nil }
         
-        guard let icon = UIImage(named: "chain_\(chainId.lowercased())") else {
+        guard let icon = PlatformImage(named: "chain_\(chainId.lowercased())") else {
             return Asset.Assets.Tickers.none.image
         }
 
-        return Image(uiImage: icon)
+        return Image(platformImage: icon)
     }
 }
 

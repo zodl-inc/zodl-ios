@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 
 @MainActor
@@ -38,7 +39,7 @@ final class SplashManager: ObservableObject {
 
     init(_ isHidden: Bool, completion: @escaping () -> Void) {
         self.isHidden = isHidden
-        self.screenSize = UIScreen.main.bounds.size
+        self.screenSize = PlatformScreen.bounds.size
         self.completion = completion
         
         if !isHidden {

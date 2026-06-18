@@ -6,12 +6,13 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
 
 struct ZecKeyboardView: View {
     @Environment(\.colorScheme) private var colorScheme
-    @Perception.Bindable var store: StoreOf<ZecKeyboard>
+    @PlatformBindable var store: StoreOf<ZecKeyboard>
     
     let tokenName: String
     

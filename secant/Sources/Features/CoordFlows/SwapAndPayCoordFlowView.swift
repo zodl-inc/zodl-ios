@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 
 struct SwapAndPayCoordFlowView: View {
@@ -13,7 +14,7 @@ struct SwapAndPayCoordFlowView: View {
 
     @Shared(.appStorage(.sensitiveContent)) var isSensitiveContentHidden = false
     
-    @Perception.Bindable var store: StoreOf<SwapAndPayCoordFlow>
+    @PlatformBindable var store: StoreOf<SwapAndPayCoordFlow>
     let tokenName: String
 
     init(store: StoreOf<SwapAndPayCoordFlow>, tokenName: String) {
@@ -44,7 +45,7 @@ struct SwapAndPayCoordFlowView: View {
                         )
                         .zFont(.semiBold, size: 16, style: Design.Text.primary)
                     }
-                    .navigationBarItems(
+                    .zashiNavigationBarItems(
                         trailing:
                             HStack(spacing: 4) {
                                 if store.isSensitiveButtonVisible {

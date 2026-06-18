@@ -12,7 +12,7 @@ import ComposableArchitecture
 
 struct BalancesView: View {
     @Environment(\.colorScheme) private var colorScheme
-    @Perception.Bindable var store: StoreOf<Balances>
+    @PlatformBindable var store: StoreOf<Balances>
     let tokenName: String
     
     @Shared(.appStorage(.sensitiveContent)) var isSensitiveContentHidden = false
@@ -172,7 +172,7 @@ extension BalancesView {
             tokenName: "ZEC"
         )
     }
-    .navigationViewStyle(.stack)
+    .zashiStackNavigationStyle()
 }
 
 // MARK: - Placeholders

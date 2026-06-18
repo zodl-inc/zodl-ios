@@ -6,12 +6,13 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 
 struct AdvancedSettingsView: View {
     @Environment(\.colorScheme) private var colorScheme
     
-    @Perception.Bindable var store: StoreOf<AdvancedSettings>
+    @PlatformBindable var store: StoreOf<AdvancedSettings>
     @Shared(.inMemory(.walletStatus)) var walletStatus: WalletStatus = .none
     
     init(store: StoreOf<AdvancedSettings>) {
@@ -121,7 +122,7 @@ struct AdvancedSettingsView: View {
         }
         .applyScreenBackground()
         .listStyle(.plain)
-        .navigationBarTitleDisplayMode(.inline)
+        .zashiNavBarTitleDisplayMode(.inline)
         .zashiBack()
         .screenTitle(String(localizable: .settingsAdvanced))
     }

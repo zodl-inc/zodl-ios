@@ -6,11 +6,12 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 
 struct AccountsSelectionView: View {
     @Environment(\.colorScheme) private var colorScheme
-    @Perception.Bindable var store: StoreOf<AddKeystoneHWWallet>
+    @PlatformBindable var store: StoreOf<AddKeystoneHWWallet>
     
     init(store: StoreOf<AddKeystoneHWWallet>) {
         self.store = store

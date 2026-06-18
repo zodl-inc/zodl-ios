@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 
 struct SwapToZecSummaryView: View {
@@ -13,7 +14,7 @@ struct SwapToZecSummaryView: View {
 
     @Shared(.appStorage(.sensitiveContent)) var isSensitiveContentHidden = false
 
-    @Perception.Bindable var store: StoreOf<SwapAndPay>
+    @PlatformBindable var store: StoreOf<SwapAndPay>
     let tokenName: String
     
     init(store: StoreOf<SwapAndPay>, tokenName: String) {
@@ -126,7 +127,7 @@ struct SwapToZecSummaryView: View {
                     action: \.alert
                 )
             )
-            .navigationBarItems(
+            .zashiNavigationBarItems(
                 trailing:
                     Button {
                         store.send(.openDepositHelpSheetTapped)
@@ -250,7 +251,7 @@ struct SwapToZecSummaryView: View {
            ) {
             UIShareDialogView(activityItems: [
                 ShareableImage(
-                    image: UIImage(cgImage: cgImg),
+                    image: PlatformImage(cgImage: cgImg),
                     title: String(localizable: .swapToZecShareTitle),
                     reason: String(localizable: .swapToZecShareMsg(store.swapToZecAmountInQuotePreciseCopy, store.shareAssetName))
                 ), String(localizable: .swapToZecShareMsg(store.swapToZecAmountInQuotePreciseCopy, store.shareAssetName))

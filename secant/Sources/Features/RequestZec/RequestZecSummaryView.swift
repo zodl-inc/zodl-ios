@@ -6,13 +6,14 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
 
 struct RequestZecSummaryView: View {
     @Environment(\.colorScheme) var colorScheme
 
-    @Perception.Bindable var store: StoreOf<RequestZec>
+    @PlatformBindable var store: StoreOf<RequestZec>
 
     let tokenName: String
     
@@ -138,7 +139,7 @@ extension RequestZecSummaryView {
            ) {
             UIShareDialogView(activityItems: [
                 ShareableImage(
-                    image: UIImage(cgImage: cgImg),
+                    image: PlatformImage(cgImage: cgImg),
                     title: String(localizable: .requestZecSummaryShareTitle),
                     reason: String(localizable: .requestZecSummaryShareDesc)
                 ), "\(String(localizable: .requestZecSummaryShareDesc)) \(String(localizable: .requestZecSummaryShareMsg))"

@@ -6,12 +6,13 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 
 struct SendCoordFlowView: View {
     @Environment(\.colorScheme) var colorScheme
 
-    @Perception.Bindable var store: StoreOf<SendCoordFlow>
+    @PlatformBindable var store: StoreOf<SendCoordFlow>
     let tokenName: String
 
     @Shared(.appStorage(.sensitiveContent)) var isSensitiveContentHidden = false
@@ -33,7 +34,7 @@ struct SendCoordFlowView: View {
                     tokenName: tokenName
                 )
                 .screenTitle(String(localizable: .generalSend))
-                .navigationBarItems(
+                .zashiNavigationBarItems(
                     trailing:
                         HStack(spacing: 0) {
                             hideBalancesButton()

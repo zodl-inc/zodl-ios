@@ -1,0 +1,4 @@
+module URRegistryFFI {
+    header "lib_ur_registry_ffi.h"
+    export *
+}

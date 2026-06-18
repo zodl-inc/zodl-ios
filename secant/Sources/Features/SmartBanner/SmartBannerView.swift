@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 
 enum SBConstants {
@@ -17,7 +18,7 @@ enum SBConstants {
 struct SmartBannerView: View {
     @Environment(\.colorScheme) var colorScheme
 
-    @Perception.Bindable var store: StoreOf<SmartBanner>
+    @PlatformBindable var store: StoreOf<SmartBanner>
     
     @State private var realHeight: CGFloat = 100
     @State private var isUnhidden = false

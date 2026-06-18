@@ -4,7 +4,9 @@
 //
 
 import ComposableArchitecture
+#if canImport(UIKit)
 import UIKit
+#endif
 import XCTestDynamicOverlay
 
 extension BackgroundTaskClient: TestDependencyKey {

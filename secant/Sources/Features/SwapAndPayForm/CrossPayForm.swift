@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 
 extension SwapAndPayForm {
@@ -49,7 +50,9 @@ extension SwapAndPayForm {
                                         title: String(localizable: .sendAmount),
                                         error: store.isCrossPayInsufficientFunds ? String(localizable: .sendErrorInsufficientFunds) : nil
                                     )
+#if os(iOS)
                                     .keyboardType(.decimalPad)
+#endif
                                     .focused($isAmountFocused)
 
                                     Asset.Assets.Icons.switchHorizontal.image
@@ -65,7 +68,9 @@ extension SwapAndPayForm {
                                             Asset.Assets.Icons.currencyDollar.image
                                             .zImage(size: 20, style: Design.Inputs.Default.text)
                                     )
+#if os(iOS)
                                     .keyboardType(.decimalPad)
+#endif
                                     .focused($isUsdFocused)
                                     .padding(.top, 23)
                                 }
@@ -156,9 +161,11 @@ extension SwapAndPayForm {
                 isAddressFocused = false
             }
             .applyScreenBackground()
+#if os(iOS)
             .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
                 store.send(.willEnterForeground)
             }
+#endif
             .popover(isPresented: $store.assetSelectBinding) {
                 assetContent(colorScheme)
                     .padding(.horizontal, 4)
@@ -189,8 +196,7 @@ extension SwapAndPayForm {
                                 Spacer()
                                 
                                 Button {
-                                    UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder),
-                                                                    to: nil, from: nil, for: nil)
+                                    PlatformKeyboard.dismiss()
                                 } label: {
                                     Text(String(localizable: .generalDone).uppercased())
                                         .zFont(.regular, size: 14, style: Design.Text.primary)
@@ -279,10 +285,12 @@ extension SwapAndPayForm {
         }
         .onAppear {
             store.send(.onAppear)
+#if os(iOS)
             if let window = UIApplication.shared.windows.first {
                 let safeFrame = window.safeAreaLayoutGuide.layoutFrame
                 safeAreaHeight = safeFrame.height
             }
+#endif
         }
     }
 }

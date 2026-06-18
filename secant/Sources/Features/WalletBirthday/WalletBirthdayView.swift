@@ -6,10 +6,11 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 
 struct WalletBirthdayView: View {
-    @Perception.Bindable var store: StoreOf<WalletBirthday>
+    @PlatformBindable var store: StoreOf<WalletBirthday>
     
     @State var keyboardVisible: Bool = false
     @FocusState var isBirthdayFocused
@@ -43,8 +44,12 @@ struct WalletBirthdayView: View {
                     title: String(localizable: .restoreWalletBirthdayTitle)
                 )
                 .padding(.bottom, 6)
+#if os(iOS)
                 .keyboardType(.numberPad)
+#endif
+#if os(iOS)
                 .autocapitalization(.none)
+#endif
                 .disableAutocorrection(true)
                 .focused($isBirthdayFocused)
                 
@@ -81,9 +86,9 @@ struct WalletBirthdayView: View {
                     isBirthdayFocused = true
                 }
             }
-            .navigationBarTitleDisplayMode(.inline)
+            .zashiNavBarTitleDisplayMode(.inline)
             .trackKeyboardVisibility($keyboardVisible)
-            .navigationBarItems(
+            .zashiNavigationBarItems(
                 trailing:
                     Button {
                         store.send(.helpSheetRequested)

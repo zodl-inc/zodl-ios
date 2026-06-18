@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 
 extension View {
@@ -13,7 +14,9 @@ extension View {
         if #available(iOS 16.0, *) {
             return self.scrollContentBackground(.hidden).background(content)
         } else {
+#if canImport(UIKit)
             UITextView.appearance().backgroundColor = .clear
+#endif
             return self.background(content)
         }
     }
@@ -21,7 +24,7 @@ extension View {
 
 struct MessageEditorView: View {
     @Environment(\.colorScheme) private var colorScheme
-    @Perception.Bindable var store: StoreOf<MessageEditor>
+    @PlatformBindable var store: StoreOf<MessageEditor>
 
     let title: String
     let placeholder: String

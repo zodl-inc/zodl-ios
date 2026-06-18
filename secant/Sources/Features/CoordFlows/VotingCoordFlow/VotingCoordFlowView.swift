@@ -4,10 +4,11 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 
 struct VotingCoordFlowView: View {
-    @Perception.Bindable var store: StoreOf<VotingCoordFlow>
+    @PlatformBindable var store: StoreOf<VotingCoordFlow>
 
     init(store: StoreOf<VotingCoordFlow>) {
         self.store = store

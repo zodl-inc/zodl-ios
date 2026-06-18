@@ -6,12 +6,13 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 
 struct ScanCoordFlowView: View {
     @Environment(\.colorScheme) var colorScheme
 
-    @Perception.Bindable var store: StoreOf<ScanCoordFlow>
+    @PlatformBindable var store: StoreOf<ScanCoordFlow>
     let tokenName: String
 
     init(store: StoreOf<ScanCoordFlow>, tokenName: String) {
@@ -60,7 +61,7 @@ struct ScanCoordFlowView: View {
                     TransactionDetailsView(store: store, tokenName: tokenName)
                 }
             }
-            .navigationBarHidden(true)
+            .zashiNavigationBarHidden(true)
             .navigationBarBackButtonHidden()
         }
     }

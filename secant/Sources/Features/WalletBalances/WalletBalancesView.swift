@@ -6,12 +6,14 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
+ import ZcashLightClientKit
 
 struct WalletBalancesView: View {
     @Environment(\.colorScheme) private var colorScheme
     
-    @Perception.Bindable var store: StoreOf<WalletBalances>
+    @PlatformBindable var store: StoreOf<WalletBalances>
     let tokenName: String
     let couldBeHidden: Bool
     let shortened: Bool

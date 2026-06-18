@@ -6,12 +6,13 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 
 struct RestoreWalletCoordFlowView: View {
     @Environment(\.colorScheme) var colorScheme
 
-    @Perception.Bindable var store: StoreOf<RestoreWalletCoordFlow>
+    @PlatformBindable var store: StoreOf<RestoreWalletCoordFlow>
 
     init(store: StoreOf<RestoreWalletCoordFlow>) {
         self.store = store
@@ -187,7 +188,7 @@ struct RecoverySeedPhraseEntryView: View {
 
     @Environment(\.colorScheme) var colorScheme
 
-    @Perception.Bindable var store: StoreOf<RestoreWalletCoordFlow>
+    @PlatformBindable var store: StoreOf<RestoreWalletCoordFlow>
 
     @FocusState private var focusedField: FocusTextField?
     @State private var keyboardVisible: Bool = false
@@ -235,9 +236,13 @@ struct RecoverySeedPhraseEntryView: View {
                                             TextField("", text: $store.words[j * 3 + i])
                                                 .zFont(size: 16, style: Design.Text.primary)
                                                 .disableAutocorrection(true)
+#if os(iOS)
                                                 .textInputAutocapitalization(.never)
+#endif
                                                 .focused($focusedField, equals: .field((j * 3 + i)))
+#if os(iOS)
                                                 .keyboardType(.alphabet)
+#endif
                                                 .submitLabel(.next)
                                                 .onSubmit {
                                                     focusedField = ((j * 3 + i) < 23)
@@ -312,7 +317,7 @@ struct RecoverySeedPhraseEntryView: View {
                 }
             }
             .applyScreenBackground()
-            .navigationBarItems(
+            .zashiNavigationBarItems(
                 trailing:
                     Button {
                         store.send(.helpSheetRequested)

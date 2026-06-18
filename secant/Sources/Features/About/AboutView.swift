@@ -6,10 +6,11 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 
 struct AboutView: View {
-    @Perception.Bindable var store: StoreOf<About>
+    @PlatformBindable var store: StoreOf<About>
     
     init(store: StoreOf<About>) {
         self.store = store

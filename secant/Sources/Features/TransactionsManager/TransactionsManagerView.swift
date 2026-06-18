@@ -6,13 +6,14 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
 
 struct TransactionsManagerView: View {
     @Environment(\.colorScheme) private var colorScheme
 
-    @Perception.Bindable var store: StoreOf<TransactionsManager>
+    @PlatformBindable var store: StoreOf<TransactionsManager>
     let tokenName: String
     
     @Shared(.appStorage(.sensitiveContent)) var isSensitiveContentHidden = false
@@ -146,12 +147,12 @@ struct TransactionsManagerView: View {
             .applyScreenBackground()
             .listStyle(.plain)
             .onAppear { store.send(.onAppear) }
-            .navigationBarItems(trailing: hideBalancesButton())
+            .zashiNavigationBarItems(trailing: hideBalancesButton())
             .zashiSheet(isPresented: $store.filtersRequest) {
                 filtersContent()
             }
         }
-        .navigationBarTitleDisplayMode(.inline)
+        .zashiNavBarTitleDisplayMode(.inline)
         .zashiBack() {
             store.send(.dismissRequired)
         }

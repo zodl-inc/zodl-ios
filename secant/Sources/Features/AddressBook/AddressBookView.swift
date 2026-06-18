@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 
 extension String {
@@ -23,7 +24,7 @@ extension String {
 
 struct AddressBookView: View {
     @Environment(\.colorScheme) private var colorScheme
-    @Perception.Bindable var store: StoreOf<AddressBook>
+    @PlatformBindable var store: StoreOf<AddressBook>
 
     init(store: StoreOf<AddressBook>) {
         self.store = store
@@ -65,7 +66,7 @@ struct AddressBookView: View {
                 ? String(localizable: .addressBookSelectRecipient)
                 : String(localizable: .addressBookTitle)
             )
-            .navigationBarTitleDisplayMode(.inline)
+            .zashiNavBarTitleDisplayMode(.inline)
             .applyScreenBackground()
         }
     }

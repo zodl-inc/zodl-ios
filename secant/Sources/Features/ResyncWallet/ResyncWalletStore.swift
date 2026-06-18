@@ -6,8 +6,11 @@
 //
 
 import Foundation
+import Combine
 import ComposableArchitecture
+#if canImport(MessageUI)
 import MessageUI
+#endif
 @preconcurrency import ZcashLightClientKit
 
 @Reducer
@@ -53,7 +56,7 @@ struct ResyncWallet {
             switch action {
             case .onAppear:
                 // TCA Store is @MainActor; reducer body always runs on main.
-                state.canSendMail = MainActor.assumeIsolated { MFMailComposeViewController.canSendMail() }
+                state.canSendMail = MailSupport.canSendMail()
                 state.birthday = try? walletStorage.exportWallet().birthday?.value()
                 if let birthday = state.birthday, let timeInterval = sdkSynchronizer.estimateTimestamp(birthday) {
                     let date = Date(timeIntervalSince1970: timeInterval)

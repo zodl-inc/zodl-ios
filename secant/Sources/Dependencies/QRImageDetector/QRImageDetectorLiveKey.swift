@@ -14,6 +14,7 @@ extension QRImageDetectorClient: DependencyKey {
     static func live() -> Self {
         Self(
             check: { image in
+#if canImport(UIKit)
                 guard let image else { return nil }
                 guard let ciImage = CIImage(image: image) else { return nil }
 
@@ -25,6 +26,10 @@ extension QRImageDetectorClient: DependencyKey {
                 return features?.compactMap {
                     ($0 as? CIQRCodeFeature)?.messageString
                 }
+#else
+                _ = image
+                return nil
+#endif
             }
         )
     }

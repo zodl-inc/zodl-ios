@@ -103,12 +103,12 @@ extension LogsHandlerClient: DependencyKey {
     }
 
     /// All log exports live under this directory so they can be removed wholesale.
-    private static func exportsRootURL() -> URL {
+    nonisolated private static func exportsRootURL() -> URL {
         FileManager.default.temporaryDirectory.appendingPathComponent("logs-exports", isDirectory: true)
     }
 
     /// Staging directory used before exports moved under `logs-exports`.
-    private static func legacyStagingURL() -> URL {
+    nonisolated private static func legacyStagingURL() -> URL {
         FileManager.default.temporaryDirectory.appendingPathComponent("zashiPrivateData", isDirectory: true)
     }
 }

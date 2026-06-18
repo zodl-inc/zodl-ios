@@ -1,3 +1,4 @@
+#if canImport(UIKit)
 //
 //  QRCodeScanView.swift
 //  Zashi
@@ -26,3 +27,15 @@ struct QRCodeScanView: UIViewRepresentable {
     
     typealias UIViewType = ScanUIView
 }
+
+#else
+import SwiftUI
+
+/// macOS stub: camera QR scanning isn't bridged yet (AVCaptureSession preview needs an NSView host).
+struct QRCodeScanView: View {
+    let rectOfInterest: CGRect
+    let onQRScanningDidFail: () -> Void
+    let onQRScanningSucceededWithCode: (String) -> Void
+    var body: some View { Color.black }
+}
+#endif

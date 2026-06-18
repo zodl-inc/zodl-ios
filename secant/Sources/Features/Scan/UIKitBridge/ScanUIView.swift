@@ -1,3 +1,4 @@
+#if canImport(UIKit)
 //
 //  ScanUIView.swift
 //  Zashi
@@ -131,3 +132,5 @@ extension ScanUIView: @preconcurrency AVCaptureMetadataOutputObjectsDelegate {
         }
     }
 }
+
+#endif

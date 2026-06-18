@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
 
@@ -14,7 +15,7 @@ struct ServerSetupView: View {
 
     var customDismiss: (() -> Void)? = nil
 
-    @Perception.Bindable var store: StoreOf<ServerSetup>
+    @PlatformBindable var store: StoreOf<ServerSetup>
 
     init(store: StoreOf<ServerSetup>, customDismiss: (() -> Void)? = nil) {
         self.store = store
@@ -47,7 +48,7 @@ struct ServerSetupView: View {
             .alert($store.scope(state: \.alert, action: \.alert))
             .applyScreenBackground()
         }
-        .navigationBarTitleDisplayMode(.inline)
+        .zashiNavBarTitleDisplayMode(.inline)
     }
 
     // MARK: - Connection Mode
@@ -225,9 +226,13 @@ struct ServerSetupView: View {
                                             )
                                             .zFont(.medium, size: 14, style: Design.Text.primary)
                                             .frame(height: 40)
+#if os(iOS)
                                             .autocapitalization(.none)
+#endif
                                             .autocorrectionDisabled()
+#if os(iOS)
                                             .keyboardType(.URL)
+#endif
                                             .multilineTextAlignment(.leading)
                                             .padding(.leading, 10)
                                             .background {

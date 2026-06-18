@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 @preconcurrency import MnemonicSwift
 
@@ -21,7 +22,7 @@ struct RecoveryPhraseDisplayView: View {
         static let hiddenWordPlaceholder = "•••••"
     }
 
-    @Perception.Bindable var store: StoreOf<RecoveryPhraseDisplay>
+    @PlatformBindable var store: StoreOf<RecoveryPhraseDisplay>
 
     init(store: StoreOf<RecoveryPhraseDisplay>) {
         self.store = store
@@ -93,6 +94,7 @@ struct RecoveryPhraseDisplayView: View {
                 }
             }
             .onAppear { store.send(.onAppear) }
+#if os(iOS)
             .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
                 store.send(.hideEverything)
             }
@@ -102,12 +104,13 @@ struct RecoveryPhraseDisplayView: View {
             .onReceive(NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)) { _ in
                 store.send(.hideEverything)
             }
+#endif
             .alert($store.scope(state: \.alert, action: \.alert))
             .zashiBack()
             .zashiSheet(isPresented: $store.isHelpSheetPresented) {
                 helpSheetContent()
             }
-            .navigationBarItems(
+            .zashiNavigationBarItems(
                 trailing:
                     Button {
                         store.send(

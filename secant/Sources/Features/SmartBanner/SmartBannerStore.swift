@@ -6,10 +6,14 @@
 //
 
 import Foundation
+import SwiftUI
+import Combine
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
 
+#if canImport(MessageUI)
 import MessageUI
+#endif
 
 @Reducer
 struct SmartBanner {
@@ -261,7 +265,7 @@ struct SmartBanner {
                 \(supportData.message)
                 """
                 // TCA Store is @MainActor; reducer body always runs on main.
-                if MainActor.assumeIsolated({ MFMailComposeViewController.canSendMail() }) {
+                if MailSupport.canSendMail() {
                     state.supportData = supportData
                 } else {
                     state.messageToBeShared = supportData.message

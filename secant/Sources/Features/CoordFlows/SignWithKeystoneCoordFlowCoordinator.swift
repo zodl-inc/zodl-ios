@@ -6,6 +6,7 @@
 //
 
 import ComposableArchitecture
+@preconcurrency import ZcashLightClientKit
 
 extension SignWithKeystoneCoordFlow {
     func coordinatorReduce() -> Reduce<SignWithKeystoneCoordFlow.State, SignWithKeystoneCoordFlow.Action> {

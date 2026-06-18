@@ -1,6 +1,9 @@
 import SwiftUI
+import Combine
 import ComposableArchitecture
+#if canImport(MessageUI)
 import MessageUI
+#endif
 
 @Reducer
 struct AdvancedSettings {

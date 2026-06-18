@@ -6,11 +6,12 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 
 struct TorSetupView: View {
     @Environment(\.colorScheme) private var colorScheme
-    @Perception.Bindable var store: StoreOf<TorSetup>
+    @PlatformBindable var store: StoreOf<TorSetup>
     
     init(store: StoreOf<TorSetup>) {
         self.store = store
@@ -39,7 +40,7 @@ struct TorSetupView: View {
             .onAppear { store.send(.onAppear) }
             .zashiBack() { store.send(.backToHomeTapped) }
         }
-        .navigationBarTitleDisplayMode(.inline)
+        .zashiNavBarTitleDisplayMode(.inline)
         .applyScreenBackground()
     }
     

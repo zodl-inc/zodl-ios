@@ -6,8 +6,11 @@
 //
 
 import Foundation
+import Combine
 import SwiftUI
+#if canImport(UIKit)
 import UIKit
+#endif
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
 
@@ -132,8 +135,10 @@ struct ZecKeyboard {
 
                 // TCA Store is @MainActor; reducer body always runs on main. UIImpactFeedbackGenerator is @MainActor.
                 MainActor.assumeIsolated {
+#if os(iOS)
                     let impactFeedback = UIImpactFeedbackGenerator(style: .light)
                     impactFeedback.impactOccurred()
+#endif
                 }
 
                 // backspace

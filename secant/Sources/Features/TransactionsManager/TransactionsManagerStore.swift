@@ -6,6 +6,7 @@
 //
 
 import ComposableArchitecture
+import Combine
 import SwiftUI
 @preconcurrency import ZcashLightClientKit
 

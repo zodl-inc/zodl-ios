@@ -6,6 +6,8 @@
 //
 
 import ComposableArchitecture
+@preconcurrency import ZcashLightClientKit
+import MnemonicSwift
 
 extension RestoreWalletCoordFlow {
     func coordinatorReduce() -> Reduce<RestoreWalletCoordFlow.State, RestoreWalletCoordFlow.Action> {

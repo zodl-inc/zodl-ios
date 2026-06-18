@@ -4,6 +4,7 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 
 /// Shown while the wallet's contiguous-from-birthday scan height is below

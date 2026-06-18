@@ -1,3 +1,4 @@
+#if canImport(UIKit)
 //
 //  UIShareDialog.swift
 //  Zashi
@@ -188,3 +189,55 @@ struct UIShareDialogView: UIViewRepresentable {
     
     typealias UIViewType = UIShareDialog
 }
+
+#else
+import SwiftUI
+
+// macOS: data-holder stubs for the share payloads (native NSSharingServicePicker deferred to goal #3).
+struct ShareableImage {
+    let image: PlatformImage
+    let title: String
+    let reason: String
+    init(image: PlatformImage, title: String, reason: String) {
+        self.image = image
+        self.title = title
+        self.reason = reason
+    }
+}
+
+struct ShareableMessage {
+    let title: String
+    let message: String
+    let desc: String
+    init(title: String, message: String, desc: String) {
+        self.title = title
+        self.message = message
+        self.desc = desc
+    }
+}
+
+struct ShareableURL {
+    let url: URL
+    let title: String
+    let desc: String
+    init(url: URL, title: String, desc: String) {
+        self.url = url
+        self.title = title
+        self.desc = desc
+    }
+}
+
+/// macOS stub: the iOS `UIActivityViewController` share sheet isn't bridged here yet
+/// (NSSharingServicePicker is the macOS follow-up). Renders nothing.
+struct UIShareDialogView: View {
+    let activityItems: [Any]
+    let completion: () -> Void
+    let onDismiss: (() -> Void)?
+    init(activityItems: [Any], completion: @escaping () -> Void, onDismiss: (() -> Void)? = nil) {
+        self.activityItems = activityItems
+        self.completion = completion
+        self.onDismiss = onDismiss
+    }
+    var body: some View { EmptyView() }
+}
+#endif

@@ -6,11 +6,10 @@
 //
 
 import Foundation
-import BackgroundTasks
 
 enum AppDelegateAction: Equatable {
     case didFinishLaunching
     case didEnterBackground
     case willEnterForeground
-    case backgroundTask(BGProcessingTask)
+    case backgroundTask(PlatformBackgroundTask)
 }

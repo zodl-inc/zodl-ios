@@ -23,7 +23,7 @@ extension LocalAuthenticationClient: DependencyKey {
 #endif
                 let context = LAContext()
                 var error: NSError?
-                let reason = String(localizable: .localAuthenticationReason)
+                let reason = await String(localizable: .localAuthenticationReason)
 
                 do {
                     /// Biometrics validation

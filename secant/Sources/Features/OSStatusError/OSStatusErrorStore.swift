@@ -6,8 +6,11 @@
 //
 
 import Foundation
+import Combine
 import ComposableArchitecture
+#if canImport(MessageUI)
 import MessageUI
+#endif
 
 @Reducer
 struct OSStatusError {
@@ -51,7 +54,7 @@ struct OSStatusError {
             case .sendSupportMail:
                 let supportData = SupportDataGenerator.generateOSStatusError(osStatus: state.osStatus)
                 // TCA Store is @MainActor; reducer body always runs on main.
-                if MainActor.assumeIsolated({ MFMailComposeViewController.canSendMail() }) {
+                if MailSupport.canSendMail() {
                     state.supportData = supportData
                 } else {
                     state.message = supportData.message
