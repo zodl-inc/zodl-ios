@@ -11,6 +11,10 @@ struct ZashiTitleModifier<ZashiTitleContent>: ViewModifier where ZashiTitleConte
     @ViewBuilder let zashiTitleContent: ZashiTitleContent
     
     func body(content: Content) -> some View {
+#if os(macOS)
+        // macOS wraps principal toolbar items in a liquid-glass bubble; skip it (see ScreenTitle).
+        content
+#else
         content
             .zashiNavBarTitleDisplayMode(.inline)
             .toolbar {
@@ -18,6 +22,7 @@ struct ZashiTitleModifier<ZashiTitleContent>: ViewModifier where ZashiTitleConte
                     zashiTitleContent
                 }
             }
+#endif
     }
 }
 

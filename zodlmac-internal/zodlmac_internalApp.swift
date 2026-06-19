@@ -32,7 +32,7 @@ struct zodlmac_internalApp: App {
     }
 
     var body: some Scene {
-        WindowGroup {
+        WindowGroup("Zodl") {
             RootView(
                 store: rootStore,
                 tokenName: TargetConstants.tokenName,

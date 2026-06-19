@@ -17,6 +17,7 @@ import ComposableArchitecture
 
 struct MacSplitView: View {
     @Environment(\.colorScheme) private var colorScheme
+    @Shared(.appStorage(.sensitiveContent)) private var isSensitiveContentHidden = false
     let store: StoreOf<Root>
     let tokenName: String
     let networkType: NetworkType
@@ -31,6 +32,7 @@ struct MacSplitView: View {
 
                 rightPanel
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .padding(.horizontal, 24)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .applyScreenBackground()
@@ -53,15 +55,36 @@ struct MacSplitView: View {
     // MARK: - Left rail
 
     private var sidebar: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            // TODO: [#1755] Phase 3 — account switcher + balance + currency + sync banner here.
-            Text("Zashi")
-                .zFont(.semiBold, size: 20, style: Design.Text.primary)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 16)
+        VStack(alignment: .leading, spacing: 0) {
+            // Account switcher + hide-balance eye.
+            HStack(spacing: 0) {
+                accountSwitcher
+                Spacer(minLength: 8)
+                hideEyeButton
+            }
+            .padding(.horizontal, 4)
+            .padding(.bottom, 16)
 
-            ForEach(MacSection.allCases, id: \.self) { section in
-                sidebarRow(section)
+            // Balance + spendable (reused from Home).
+            WalletBalancesView(
+                store: store.scope(state: \.homeState.walletBalancesState, action: \.home.walletBalances),
+                tokenName: tokenName,
+                couldBeHidden: true,
+                shortened: true
+            )
+            .padding(.bottom, 12)
+
+            // Sync / status banner ("Restoring …").
+            SmartBannerView(
+                store: store.scope(state: \.homeState.smartBannerState, action: \.home.smartBanner),
+                tokenName: tokenName
+            )
+            .padding(.bottom, 12)
+
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(MacSection.allCases, id: \.self) { section in
+                    sidebarRow(section)
+                }
             }
 
             Spacer()
@@ -104,6 +127,48 @@ struct MacSplitView: View {
         case .swap: return store.path == .swapAndPayCoordFlow && store.swapAndPayCoordFlowState.isSwapExperience
         case .pay: return store.path == .swapAndPayCoordFlow && !store.swapAndPayCoordFlowState.isSwapExperience
         case .more: return store.path == .settings
+        }
+    }
+
+    @ViewBuilder private var accountSwitcher: some View {
+        WithPerceptionTracking {
+            if let account = store.homeState.selectedWalletAccount {
+                Button {
+                    store.send(.home(.accountSwitchTapped))
+                } label: {
+                    HStack(spacing: 0) {
+                        account.vendor.icon()
+                            .resizable()
+                            .frame(width: 19, height: 19)
+                            .background {
+                                Circle()
+                                    .fill(Design.Surfaces.bgAlt.color(colorScheme))
+                                    .frame(width: 30, height: 30)
+                            }
+                        Text(account.vendor.name())
+                            .zFont(.semiBold, size: 18, style: Design.Text.primary)
+                            .padding(.leading, 14)
+                        Asset.Assets.chevronDown.image
+                            .zImage(size: 20, style: Design.Text.primary)
+                            .padding(.leading, 6)
+                    }
+                    .padding(.leading, 8)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    @ViewBuilder private var hideEyeButton: some View {
+        WithPerceptionTracking {
+            Button {
+                $isSensitiveContentHidden.withLock { $0.toggle() }
+            } label: {
+                (isSensitiveContentHidden ? Asset.Assets.eyeOff.image : Asset.Assets.eyeOn.image)
+                    .zImage(size: 22, color: Asset.Colors.primary.color)
+                    .padding(8)
+            }
+            .buttonStyle(.plain)
         }
     }
 

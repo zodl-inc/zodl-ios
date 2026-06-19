@@ -53,7 +53,9 @@ struct TransactionsCoordFlowView: View {
             .zashiNavigationBarHidden(true)
         }
         .applyScreenBackground()
+#if !os(macOS)
         .zashiBack()
+#endif
         .screenTitle(String(localizable: .generalRequest))
     }
 }

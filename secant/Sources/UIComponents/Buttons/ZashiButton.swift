@@ -80,7 +80,12 @@ struct ZashiButton<PrefixContent, AccessoryContent>: View where PrefixContent: V
             .zForegroundColor(fgColor())
             .padding(.horizontal, horizontalPadding)
             .padding(.vertical, verticalPadding)
+#if os(macOS)
+            // macOS: full-width buttons look wrong on the wide canvas; cap at a sensible default.
+            .frame(maxWidth: infinityWidth ? 360 : nil, minHeight: minHeight)
+#else
             .frame(maxWidth: infinityWidth ? .infinity : nil, minHeight: minHeight)
+#endif
             .background {
                 RoundedRectangle(cornerRadius: Design.Radius._xl)
                     .fill(bgColor().color(colorScheme))

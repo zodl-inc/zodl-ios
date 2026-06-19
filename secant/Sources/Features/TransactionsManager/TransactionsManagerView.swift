@@ -147,15 +147,21 @@ struct TransactionsManagerView: View {
             .applyScreenBackground()
             .listStyle(.plain)
             .onAppear { store.send(.onAppear) }
+#if !os(macOS)
+            // macOS: the hide-balance eye lives in the split's left rail; don't duplicate it.
             .zashiNavigationBarItems(trailing: hideBalancesButton())
+#endif
             .zashiSheet(isPresented: $store.filtersRequest) {
                 filtersContent()
             }
         }
         .zashiNavBarTitleDisplayMode(.inline)
+#if !os(macOS)
+        // macOS: this is the split's default content (Activity) — no back-to-home.
         .zashiBack() {
             store.send(.dismissRequired)
         }
+#endif
         .screenTitle(String(localizable: .generalActivity).uppercased())
     }
     
