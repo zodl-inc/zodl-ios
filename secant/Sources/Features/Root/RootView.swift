@@ -281,6 +281,7 @@ private extension RootView {
                             action: \.onboarding
                         )
                     )
+                    .macOSSingleViewLayout()
                     .overlayedWithSplash(store.splashAppeared) {
                         store.send(.splashRemovalRequested)
                     }
@@ -292,6 +293,7 @@ private extension RootView {
                             action: \.welcome
                         )
                     )
+                    .macOSSingleViewLayout()
                 }
             }
             .onOpenURL(perform: { store.goToDeeplink($0) })

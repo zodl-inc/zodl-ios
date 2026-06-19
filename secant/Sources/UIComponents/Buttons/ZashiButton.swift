@@ -81,8 +81,10 @@ struct ZashiButton<PrefixContent, AccessoryContent>: View where PrefixContent: V
             .padding(.horizontal, horizontalPadding)
             .padding(.vertical, verticalPadding)
 #if os(macOS)
-            // macOS: full-width buttons look wrong on the wide canvas; cap at a sensible default.
+            // macOS: full-width buttons look wrong on the wide canvas; cap at a default width and
+            // center horizontally regardless of the surrounding stack's alignment.
             .frame(maxWidth: infinityWidth ? 360 : nil, minHeight: minHeight)
+            .frame(maxWidth: infinityWidth ? .infinity : nil, alignment: .center)
 #else
             .frame(maxWidth: infinityWidth ? .infinity : nil, minHeight: minHeight)
 #endif

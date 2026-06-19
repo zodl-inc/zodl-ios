@@ -18,6 +18,7 @@ import ComposableArchitecture
 struct MacSplitView: View {
     @Environment(\.colorScheme) private var colorScheme
     @Shared(.appStorage(.sensitiveContent)) private var isSensitiveContentHidden = false
+    @State private var selectedSection: MacSection = .activity
     let store: StoreOf<Root>
     let tokenName: String
     let networkType: NetworkType
@@ -46,6 +47,7 @@ struct MacSplitView: View {
                 // A finished flow sets path = nil; the split has no empty "home" state on macOS,
                 // so fall back to Activity rather than showing a blank panel.
                 if newPath == nil {
+                    selectedSection = .activity
                     store.send(.home(.seeAllTransactionsTapped))
                 }
             }
@@ -96,6 +98,7 @@ struct MacSplitView: View {
     private func sidebarRow(_ section: MacSection) -> some View {
         WithPerceptionTracking {
             Button {
+                selectedSection = section
                 store.send(section.action)
             } label: {
                 HStack(spacing: 12) {
@@ -120,14 +123,7 @@ struct MacSplitView: View {
     }
 
     private func isSelected(_ section: MacSection) -> Bool {
-        switch section {
-        case .activity: return store.path == .transactionsCoordFlow
-        case .receive: return store.path == .receive
-        case .send: return store.path == .sendCoordFlow
-        case .swap: return store.path == .swapAndPayCoordFlow && store.swapAndPayCoordFlowState.isSwapExperience
-        case .pay: return store.path == .swapAndPayCoordFlow && !store.swapAndPayCoordFlowState.isSwapExperience
-        case .more: return store.path == .settings
-        }
+        selectedSection == section
     }
 
     @ViewBuilder private var accountSwitcher: some View {

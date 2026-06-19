@@ -146,6 +146,7 @@ struct TransactionsManagerView: View {
             .disabled(store.transactions.isEmpty)
             .applyScreenBackground()
             .listStyle(.plain)
+            .zashiHideListBackground()
             .onAppear { store.send(.onAppear) }
 #if !os(macOS)
             // macOS: the hide-balance eye lives in the split's left rail; don't duplicate it.
