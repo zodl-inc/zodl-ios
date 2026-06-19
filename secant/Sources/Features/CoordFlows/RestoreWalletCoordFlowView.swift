@@ -60,9 +60,6 @@ struct RestoreWalletCoordFlowView: View {
                 .zashiSheet(isPresented: $store.isHelpSheetPresented) {
                     helpSheetContent()
                 }
-                .zashiSheet(isPresented: $store.isTorSheetPresented) {
-                    torSheetContent()
-                }
                 .alert($store.scope(state: \.alert, action: \.alert))
             } destination: { store in
                 switch store.case {
@@ -78,9 +75,16 @@ struct RestoreWalletCoordFlowView: View {
                     WalletBirthdayView(store: store)
                 }
             }
+            // macOS allows only one `.sheet` per view; if two are attached, one silently
+            // refuses to present (and macOS logs "only presenting a single sheet is
+            // supported"). Keep the Tor confirmation sheet on the NavigationStack so it
+            // and the help sheet live on different views and both present window-level.
+            .zashiSheet(isPresented: $store.isTorSheetPresented) {
+                torSheetContent()
+            }
         }
     }
-    
+
     @ViewBuilder private func helpSheetContent() -> some View {
         VStack(spacing: 0) {
             Text(localizable: .restoreWalletHelpTitle)

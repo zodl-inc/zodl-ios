@@ -59,6 +59,18 @@ struct ZashiSheetModifier<SheetContent: View>: ViewModifier {
     var sheetContent: SheetContent
 
     func body(content: Content) -> some View {
+#if os(macOS)
+        // macOS sheets are centered panels and don't support iOS `presentationDetents`
+        // (the height-detent sizing collapses the sheet on macOS). Present the content
+        // directly at a sensible size instead.
+        content
+            .sheet(isPresented: $isPresented, onDismiss: onDismiss) {
+                mainBody()
+                    .padding(.horizontal, horizontalPadding)
+                    .frame(minWidth: 460, minHeight: 220)
+                    .applySheetBackground()
+            }
+#else
         content
             .sheet(isPresented: $isPresented, onDismiss: onDismiss) {
                 if #available(iOS 26.0, *) {
@@ -88,6 +100,7 @@ struct ZashiSheetModifier<SheetContent: View>: ViewModifier {
                         .applySheetBackground()
                 }
             }
+#endif
     }
 
     @ViewBuilder func mainBody(stickToBottom: Bool = false) -> some View {
