@@ -57,9 +57,6 @@ struct RestoreWalletCoordFlowView: View {
                 }
                 .screenHorizontalPadding()
                 .applyOnboardingScreenBackground()
-                .zashiSheet(isPresented: $store.isHelpSheetPresented) {
-                    helpSheetContent()
-                }
                 .alert($store.scope(state: \.alert, action: \.alert))
             } destination: { store in
                 switch store.case {
@@ -75,10 +72,14 @@ struct RestoreWalletCoordFlowView: View {
                     WalletBirthdayView(store: store)
                 }
             }
-            // macOS allows only one `.sheet` per view; if two are attached, one silently
-            // refuses to present (and macOS logs "only presenting a single sheet is
-            // supported"). Keep the Tor confirmation sheet on the NavigationStack so it
-            // and the help sheet live on different views and both present window-level.
+            // Both the (?) help and Tor sheets are triggered from pushed destinations (seed
+            // entry, wallet birthday). On macOS zashiSheet renders an overlay, which is hidden
+            // if attached to a view the NavigationStack has covered — so keep both here on the
+            // NavigationStack, where the overlay sits above the whole pushed stack. (On iOS these
+            // are native sheets that present window-level from either spot.)
+            .zashiSheet(isPresented: $store.isHelpSheetPresented) {
+                helpSheetContent()
+            }
             .zashiSheet(isPresented: $store.isTorSheetPresented) {
                 torSheetContent()
             }

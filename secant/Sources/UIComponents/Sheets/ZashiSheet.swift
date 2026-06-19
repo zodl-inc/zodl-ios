@@ -60,15 +60,21 @@ struct ZashiSheetModifier<SheetContent: View>: ViewModifier {
 
     func body(content: Content) -> some View {
 #if os(macOS)
-        // macOS sheets are centered panels and don't support iOS `presentationDetents`
-        // (the height-detent sizing collapses the sheet on macOS). Present the content
-        // directly at a sensible size instead.
+        // macOS doesn't support iOS `presentationDetents` (they collapse the sheet to 0 height)
+        // and honors only one `.sheet` per view — so the app's stacked, custom-styled zashiSheets
+        // can't use a native sheet. Present a centered, content-sized card as an overlay instead:
+        // overlays stack freely, the card hugs its content height (sheets vary in size), and it gets
+        // an explicit close button plus click-outside / ESC dismissal.
         content
-            .sheet(isPresented: $isPresented, onDismiss: onDismiss) {
-                mainBody()
-                    .padding(.horizontal, horizontalPadding)
-                    .frame(minWidth: 460, minHeight: 220)
-                    .applySheetBackground()
+            .overlay {
+                if isPresented {
+                    macOSSheetOverlay()
+                        .transition(.opacity)
+                }
+            }
+            .animation(.easeOut(duration: 0.18), value: isPresented)
+            .onChange(of: isPresented) { _, newValue in
+                if !newValue { onDismiss?() }
             }
 #else
         content
@@ -102,6 +108,42 @@ struct ZashiSheetModifier<SheetContent: View>: ViewModifier {
             }
 #endif
     }
+
+#if os(macOS)
+    @ViewBuilder func macOSSheetOverlay() -> some View {
+        ZStack {
+            // Dimmed backdrop — click anywhere outside the card to dismiss.
+            Rectangle()
+                .fill(Color.black.opacity(0.45))
+                .ignoresSafeArea()
+                .onTapGesture { isPresented = false }
+
+            // Card: width-capped, height follows the content (sheets vary in size).
+            VStack(alignment: .leading, spacing: 0) {
+                sheetContent
+            }
+            .padding(.horizontal, horizontalPadding)
+            .padding(.vertical, Design.Spacing._3xl)
+            .frame(maxWidth: 480)
+            .fixedSize(horizontal: false, vertical: true)
+            .background(Asset.Colors.background.color)
+            .clipShape(RoundedRectangle(cornerRadius: Design.Radius._4xl))
+            .overlay(alignment: .topTrailing) {
+                Button {
+                    isPresented = false
+                } label: {
+                    Asset.Assets.buttonCloseX.image
+                        .zImage(size: 24, style: Design.Text.primary)
+                        .padding(Design.Spacing._lg)
+                }
+                .buttonStyle(.plain)
+                .keyboardShortcut(.cancelAction)
+            }
+            .shadow(color: Color.black.opacity(0.25), radius: 24, x: 0, y: 10)
+            .padding(40)
+        }
+    }
+#endif
 
     @ViewBuilder func mainBody(stickToBottom: Bool = false) -> some View {
         VStack(alignment: .leading, spacing: 0) {
