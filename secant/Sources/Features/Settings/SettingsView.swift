@@ -102,6 +102,7 @@ struct SettingsView: View {
                         .padding(.bottom, 24)
                 }
                 .listStyle(.plain)
+                .zashiHideListBackground()
                 .applyScreenBackground()
                 .zashiBack() { store.send(.backToHomeTapped) }
                 .screenTitle(String(localizable: .settingsTitle))

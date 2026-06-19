@@ -122,6 +122,7 @@ struct AdvancedSettingsView: View {
         }
         .applyScreenBackground()
         .listStyle(.plain)
+        .zashiHideListBackground()
         .zashiNavBarTitleDisplayMode(.inline)
         .zashiBack()
         .screenTitle(String(localizable: .settingsAdvanced))

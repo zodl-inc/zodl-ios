@@ -7,6 +7,7 @@
 //
 
 import SwiftUI
+import AppKit
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
 
@@ -37,6 +38,8 @@ struct zodlmac_internalApp: App {
                 tokenName: TargetConstants.tokenName,
                 networkType: TargetConstants.zcashNetwork.networkType
             )
+            .frame(width: WindowSize.width, height: WindowSize.height)
+            .background(FixedWindowConfigurator())
             .font(.custom(FontFamily.Inter.regular.name, size: 17))
             // macOS gives every default-styled Button a bezeled gray background; iOS doesn't.
             // Force plain app-wide so buttons render only their own (iOS) styling — custom
@@ -69,6 +72,7 @@ struct zodlmac_internalApp: App {
                 }
             }
         }
+        .windowResizability(.contentSize)
     }
 }
 
@@ -80,6 +84,29 @@ private extension zodlmac_internalApp {
                 appLaunchBiometric: true,
                 flexa: false
             )
+        }
+    }
+}
+
+private enum WindowSize {
+    // Fixed phone-portrait window. Tweak these two numbers to resize the whole app window.
+    static let width: CGFloat = 440
+    static let height: CGFloat = 880
+}
+
+/// Locks the macOS window to a fixed size and disables the full-screen (green) button, so the
+/// iOS phone layout always renders at its intended proportions.
+private struct FixedWindowConfigurator: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView { ConfigView() }
+    func updateNSView(_ nsView: NSView, context: Context) {}
+
+    final class ConfigView: NSView {
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            guard let window else { return }
+            window.styleMask.remove(.resizable)
+            window.collectionBehavior.remove(.fullScreenPrimary)
+            window.collectionBehavior.insert(.fullScreenNone)
         }
     }
 }

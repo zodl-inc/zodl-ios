@@ -28,6 +28,7 @@ extension AddressBookContactView {
         .padding(.vertical, 1)
         .background(Asset.Colors.background.color)
         .listStyle(.plain)
+        .zashiHideListBackground()
     }
     
     @ViewBuilder func assetsLoadingComposition(_ colorScheme: ColorScheme) -> some View {
@@ -127,6 +128,7 @@ extension AddressBookContactView {
                     .padding(.vertical, 1)
                     .background(Asset.Colors.background.color)
                     .listStyle(.plain)
+                    .zashiHideListBackground()
                 }
             }
         }

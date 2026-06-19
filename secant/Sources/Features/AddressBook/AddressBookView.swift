@@ -215,6 +215,7 @@ struct AddressBookView: View {
         .padding(.vertical, 1)
         .background(Asset.Colors.background.color)
         .listStyle(.plain)
+        .zashiHideListBackground()
     }
 
     @ViewBuilder func walletAccountView(
