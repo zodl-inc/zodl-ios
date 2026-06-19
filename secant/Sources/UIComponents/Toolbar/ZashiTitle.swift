@@ -25,6 +25,11 @@ struct ScreenTitleModifier: ViewModifier {
     let text: String
     
     func body(content: Content) -> some View {
+#if os(macOS)
+        // macOS auto-wraps principal toolbar items in a liquid-glass bubble, which looks wrong for
+        // a plain screen title. Drop it on macOS — content screens carry their own headers.
+        content
+#else
         content
             .zashiNavBarTitleDisplayMode(.inline)
             .toolbar {
@@ -34,6 +39,7 @@ struct ScreenTitleModifier: ViewModifier {
                         .fixedSize()
                 }
             }
+#endif
     }
 }
 

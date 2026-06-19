@@ -98,6 +98,12 @@ private extension RootView {
                     }
 
                 case .home:
+#if os(macOS)
+                    MacSplitView(store: store, tokenName: tokenName, networkType: networkType)
+                        .overlayedWithSplash(store.splashAppeared) {
+                            store.send(.splashRemovalRequested)
+                        }
+#else
                     ZStack {
                         // Home view
                         NavigationStack {
@@ -266,6 +272,7 @@ private extension RootView {
                     .overlayedWithSplash(store.splashAppeared) {
                         store.send(.splashRemovalRequested)
                     }
+#endif
 
                 case .onboarding:
                     RestoreWalletCoordFlowView(
