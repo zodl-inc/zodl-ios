@@ -37,6 +37,30 @@ extension SmartBannerView {
         }
     }
 
+    /// Banner row layout: HStack (labels left, CTA right) on iOS; on macOS — where the rail is
+    /// narrow — the CTA stacks below the labels.
+    @ViewBuilder
+    func bannerCTALayout<Content: View, CTA: View>(
+        @ViewBuilder content: () -> Content,
+        @ViewBuilder cta: () -> CTA
+    ) -> some View {
+#if os(macOS)
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 0) {
+                content()
+                Spacer()
+            }
+            cta()
+        }
+#else
+        HStack(spacing: 0) {
+            content()
+            Spacer()
+            cta()
+        }
+#endif
+    }
+
     @ViewBuilder func disconnectedContent() -> some View {
         HStack(spacing: 0) {
             Asset.Assets.Icons.wifiOff.image
@@ -149,21 +173,19 @@ extension SmartBannerView {
     }
 
     @ViewBuilder func walletBackupContent() -> some View {
-        HStack(spacing: 0) {
+        bannerCTALayout {
             Asset.Assets.Icons.alertTriangle.image
                 .zImage(size: 20, color: titleStyle())
                 .padding(.trailing, 12)
-            
+
             VStack(alignment: .leading, spacing: 2) {
                 Text(localizable: .smartBannerContentBackupTitle)
                     .zFont(.medium, size: 14, color: titleStyle())
-                
+
                 Text(localizable: .smartBannerContentBackupInfo)
                     .zFont(.medium, size: 12, color: infoStyle())
             }
-            
-            Spacer()
-            
+        } cta: {
             ZashiButton(
                 String(localizable: .smartBannerContentBackupButton),
                 type: .ghost,
@@ -175,21 +197,19 @@ extension SmartBannerView {
     }
 
     @ViewBuilder func shieldingContent() -> some View {
-        HStack(spacing: 0) {
+        bannerCTALayout {
             Asset.Assets.Icons.shieldOff.image
                 .zImage(size: 20, color: titleStyle())
                 .padding(.trailing, 12)
-            
+
             VStack(alignment: .leading, spacing: 2) {
                 Text(localizable: .smartBannerContentShieldTitle)
                     .zFont(.medium, size: 14, color: titleStyle())
-                
+
                 ZatoshiText(store.transparentBalance, .expanded, store.tokenName)
                     .zFont(.medium, size: 12, color: infoStyle())
             }
-            
-            Spacer()
-            
+        } cta: {
             ZashiButton(
                 String(localizable: .smartBannerContentShieldButton),
                 type: .ghost,
@@ -206,21 +226,19 @@ extension SmartBannerView {
     }
 
     @ViewBuilder func torSetupContent() -> some View {
-        HStack(spacing: 0) {
+        bannerCTALayout {
             Asset.Assets.Icons.shieldZap.image
                 .zImage(size: 20, color: titleStyle())
                 .padding(.trailing, 12)
-            
+
             VStack(alignment: .leading, spacing: 2) {
                 Text(localizable: .smartBannerContentTorTitle)
                     .zFont(.medium, size: 14, color: titleStyle())
-                
+
                 Text(localizable: .smartBannerContentTorInfo)
                     .zFont(.medium, size: 12, color: infoStyle())
             }
-            
-            Spacer()
-            
+        } cta: {
             ZashiButton(
                 String(localizable: .smartBannerContentTorButton),
                 type: .ghost,
@@ -232,21 +250,19 @@ extension SmartBannerView {
     }
     
     @ViewBuilder func currencyConversionContent() -> some View {
-        HStack(spacing: 0) {
+        bannerCTALayout {
             Asset.Assets.Icons.coinsSwap.image
                 .zImage(size: 20, color: titleStyle())
                 .padding(.trailing, 12)
-            
+
             VStack(alignment: .leading, spacing: 2) {
                 Text(localizable: .smartBannerContentCurrencyConversionTitle)
                     .zFont(.medium, size: 14, color: titleStyle())
-                
+
                 Text(localizable: .smartBannerContentCurrencyConversionInfo)
                     .zFont(.medium, size: 12, color: infoStyle())
             }
-            
-            Spacer()
-            
+        } cta: {
             ZashiButton(
                 String(localizable: .smartBannerContentCurrencyConversionButton),
                 type: .ghost,
@@ -258,21 +274,19 @@ extension SmartBannerView {
     }
 
     @ViewBuilder func autoShieldingContent() -> some View {
-        HStack(spacing: 0) {
+        bannerCTALayout {
             Asset.Assets.Icons.shieldZap.image
                 .zImage(size: 20, color: titleStyle())
                 .padding(.trailing, 12)
-            
+
             VStack(alignment: .leading, spacing: 2) {
                 Text(localizable: .smartBannerContentAutoShieldingTitle)
                     .zFont(.medium, size: 14, color: titleStyle())
-                
+
                 Text(localizable: .smartBannerContentAutoShieldingInfo)
                     .zFont(.medium, size: 12, color: infoStyle())
             }
-            
-            Spacer()
-            
+        } cta: {
             ZashiButton(
                 String(localizable: .smartBannerContentAutoShieldingButton),
                 type: .ghost,

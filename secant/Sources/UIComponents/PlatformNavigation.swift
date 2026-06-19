@@ -43,12 +43,12 @@ extension View {
 }
 
 extension ToolbarItemPlacement {
-    /// iOS: `.navigationBarLeading`. macOS: `.automatic`.
+    /// iOS: `.navigationBarLeading`. macOS: `.navigation` (top-left, by the window controls).
     static var zashiLeading: ToolbarItemPlacement {
 #if os(iOS)
         return .navigationBarLeading
 #else
-        return .automatic
+        return .navigation
 #endif
     }
 

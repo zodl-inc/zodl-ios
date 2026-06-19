@@ -31,6 +31,10 @@ struct ZashiBackModifier: ViewModifier {
                                 dismiss()
                             }
                         } label: {
+#if os(macOS)
+                            backIcon()
+                                .padding(.horizontal, 6)
+#else
                             if #available(iOS 26.0, *) {
                                 backIcon()
                             } else {
@@ -38,6 +42,7 @@ struct ZashiBackModifier: ViewModifier {
                                     .padding(.trailing, 24)
                                     .padding(8)
                             }
+#endif
                         }
                         .disabled(disabled)
                         .accessibilityIdentifier(AccessibilityID.Navigation.back)
