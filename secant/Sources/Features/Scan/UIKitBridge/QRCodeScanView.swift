@@ -105,8 +105,15 @@ final class ScanNSView: NSView {
         captureSession = session
 
         guard let device = AVCaptureDevice.default(for: .video),
-              let input = try? AVCaptureDeviceInput(device: device),
-              session.canAddInput(input) else {
+              let input = try? AVCaptureDeviceInput(device: device) else {
+            onQRScanningDidFail?()
+            return
+        }
+
+        session.beginConfiguration()
+
+        guard session.canAddInput(input) else {
+            session.commitConfiguration()
             onQRScanningDidFail?()
             return
         }
@@ -114,12 +121,22 @@ final class ScanNSView: NSView {
 
         let metadataOutput = AVCaptureMetadataOutput()
         guard session.canAddOutput(metadataOutput) else {
+            session.commitConfiguration()
             onQRScanningDidFail?()
             return
         }
         session.addOutput(metadataOutput)
+
+        // Commit BEFORE touching `metadataObjectTypes`: the metadata connection (and thus
+        // `availableMetadataObjectTypes`) only exists once the output is wired into the session.
+        // Setting `.qr` before that crashes on macOS ("Unsupported type found"). Then guard the
+        // assignment by what's actually available.
+        session.commitConfiguration()
+
         metadataOutput.setMetadataObjectsDelegate(self, queue: .main)
-        metadataOutput.metadataObjectTypes = [.qr]
+        if metadataOutput.availableMetadataObjectTypes.contains(.qr) {
+            metadataOutput.metadataObjectTypes = [.qr]
+        }
 
         previewLayer.session = session
 
