@@ -26,44 +26,57 @@ struct MacSplitView: View {
 
     var body: some View {
         WithPerceptionTracking {
-            NavigationSplitView {
-                sidebar
-                    .navigationSplitViewColumnWidth(min: 240, ideal: 280, max: 340)
-            } detail: {
-                rightPanel
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    // Blank the title with an empty string — do NOT use `.toolbar(removing: .title)`,
-                    // which kills the toolbar's center anchor and collapses `.primaryAction` items to
-                    // the leading edge. An empty title keeps trailing placement intact.
-                    .navigationTitle("")
-                    // Seamless top bar (no hard separator line) like Mail/Messages.
-                    .toolbarBackground(.hidden, for: .windowToolbar)
-            }
-            .onAppear {
-                // Initialize the default peer-root (Activity) once. Section switches are handled
-                // by the sidebar's `selectedSection` onChange; `store.path` is NOT used to drive
-                // the macOS panel — each section is an independent peer-root, not a pushed screen.
-                if !hasInitialized {
-                    hasInitialized = true
-                    store.send(selectedSection.action)
-                }
-            }
-            // Account-switch sheet (account list + Keystone connect). Presented here on macOS,
-            // since HomeView — which hosts it on iOS — is not in the macOS view tree.
-            .zashiSheet(
-                isPresented: Binding(
-                    get: { store.homeState.accountSwitchRequest },
-                    set: { newValue in
-                        // Only toggle closed when it is actually open, to avoid a re-open race if a
-                        // selection inside the sheet already set the flag false.
-                        if !newValue && store.homeState.accountSwitchRequest {
-                            store.send(.home(.accountSwitchTapped))
-                        }
-                    }
+            // Keystone hardware-wallet setup takes over the whole window (multi-step flow + camera
+            // QR scan), then returns to the split when it finishes/cancels (path moves away from it).
+            if store.path == .addKeystoneHWWalletCoordFlow {
+                AddKeystoneHWWalletCoordFlowView(
+                    store: store.scope(state: \.addKeystoneHWWalletCoordFlowState, action: \.addKeystoneHWWalletCoordFlow),
+                    tokenName: tokenName
                 )
-            ) {
-                WalletAccountsSheetView(store: store.scope(state: \.homeState, action: \.home))
+            } else {
+                splitView
             }
+        }
+    }
+
+    private var splitView: some View {
+        NavigationSplitView {
+            sidebar
+                .navigationSplitViewColumnWidth(min: 240, ideal: 280, max: 340)
+        } detail: {
+            rightPanel
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                // Blank the title with an empty string — do NOT use `.toolbar(removing: .title)`,
+                // which kills the toolbar's center anchor and collapses `.primaryAction` items to
+                // the leading edge. An empty title keeps trailing placement intact.
+                .navigationTitle("")
+                // Seamless top bar (no hard separator line) like Mail/Messages.
+                .toolbarBackground(.hidden, for: .windowToolbar)
+        }
+        .onAppear {
+            // Initialize the default peer-root (Activity) once. Section switches are handled
+            // by the sidebar's `selectedSection` onChange; `store.path` is NOT used to drive
+            // the macOS panel — each section is an independent peer-root, not a pushed screen.
+            if !hasInitialized {
+                hasInitialized = true
+                store.send(selectedSection.action)
+            }
+        }
+        // Account-switch sheet (account list + Keystone connect). Presented here on macOS,
+        // since HomeView — which hosts it on iOS — is not in the macOS view tree.
+        .zashiSheet(
+            isPresented: Binding(
+                get: { store.homeState.accountSwitchRequest },
+                set: { newValue in
+                    // Only toggle closed when it is actually open, to avoid a re-open race if a
+                    // selection inside the sheet already set the flag false.
+                    if !newValue && store.homeState.accountSwitchRequest {
+                        store.send(.home(.accountSwitchTapped))
+                    }
+                }
+            )
+        ) {
+            WalletAccountsSheetView(store: store.scope(state: \.homeState, action: \.home))
         }
     }
 
