@@ -32,73 +32,102 @@ struct SmartBannerView: View {
     
     var body: some View {
         WithPerceptionTracking {
-            ZStack(alignment: .top) {
-                BottomRoundedRectangle(radius: SBConstants.fixedHeight)
-                    .frame(height: SBConstants.fixedHeight)
-                    .foregroundColor(Design.screenBackground.color(colorScheme))
-                    .shadow(color: Design.Text.primary.color(colorScheme).opacity(store.isOpen ? 0.25 : 0), radius: 1)
-                    .zIndex(1)
-                
-                VStack(spacing: 0) {
-                    if store.isOpen {
-                        priorityContent()
-                            .padding(.vertical, 16)
-                            .padding(.top, SBConstants.fixedHeight)
-                            .screenHorizontalPadding()
-                    }
-                    
-                    TopRoundedRectangle(radius: store.isOpen ? SBConstants.fixedHeight : 0)
-                        .frame(height: SBConstants.fixedHeightWithShadow)
-                        .foregroundColor(Design.screenBackground.color(colorScheme))
-                        .shadow(color: Design.Text.primary.color(colorScheme).opacity(0.1), radius: store.isOpen ? 1 : 0, y: -1)
+            bannerContainer
+                .zashiSheet(isPresented: $store.isSmartBannerSheetPresented) {
+                    helpSheetContent()
                 }
-                .frame(minHeight: SBConstants.fixedHeight + SBConstants.shadowHeight)
-                
-                if let supportData = store.supportData {
-                    UIMailDialogView(
-                        supportData: supportData,
-                        completion: {
-                            store.send(.sendSupportMailFinished)
-                        }
-                    )
-                    // UIMailDialogView only wraps MFMailComposeViewController presentation
-                    // so frame is set to 0 to not break SwiftUI's layout
-                    .frame(width: 0, height: 0)
+                .zashiSheet(isPresented: $store.isSyncTimedOutSheetPresented) {
+                    syncTimedSheetContent()
                 }
-                
-                shareMessageView()
-            }
-            .zashiSheet(isPresented: $store.isSmartBannerSheetPresented) {
-                helpSheetContent()
-            }
-            .zashiSheet(isPresented: $store.isSyncTimedOutSheetPresented) {
-                syncTimedSheetContent()
-            }
-            .onAppear { store.send(.onAppear) }
-            .onDisappear { store.send(.onDisappear) }
-            .background {
-                VStack(spacing: 0) {
-                    Design.screenBackground.color(colorScheme)
-                        .frame(height: 2)
-                        .frame(maxWidth: .infinity)
-                    LinearGradient(
-                        stops: [
-                            Gradient.Stop(color: Design.Utility.Purple._700.color(.light), location: 0.00),
-                            Gradient.Stop(color: Design.Utility.Purple._950.color(.light), location: 1.00)
-                        ],
-                        startPoint: UnitPoint(x: 0.5, y: 0.0),
-                        endPoint: UnitPoint(x: 0.5, y: 1.0)
-                    )
-                    Design.screenBackground.color(colorScheme)
-                        .frame(height: 2)
-                        .frame(maxWidth: .infinity)
-                }
-                .onTapGesture {
-                    store.send(.smartBannerContentTapped)
-                }
-            }
-            .clipShape( Rectangle() )
+                .onAppear { store.send(.onAppear) }
+                .onDisappear { store.send(.onDisappear) }
         }
+    }
+
+    @ViewBuilder private var bannerContainer: some View {
+#if os(macOS)
+        // macOS: the smart banner is a RoundedRectangle card that reveals/dismisses IN PLACE
+        // (the iOS side-by-side reveal + shaped corners don't translate to the sidebar).
+        Group {
+            if store.isOpen {
+                priorityContent()
+                    .padding(20)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(
+                        RoundedRectangle(cornerRadius: 20)
+                            .fill(LinearGradient(
+                                stops: [
+                                    Gradient.Stop(color: Design.Utility.Purple._700.color(.light), location: 0.00),
+                                    Gradient.Stop(color: Design.Utility.Purple._950.color(.light), location: 1.00)
+                                ],
+                                startPoint: UnitPoint(x: 0.5, y: 0.0),
+                                endPoint: UnitPoint(x: 0.5, y: 1.0)
+                            ))
+                    )
+                    .transition(.opacity.combined(with: .scale(scale: 0.95, anchor: .top)))
+            }
+        }
+        .animation(.spring(response: 0.45, dampingFraction: 0.82), value: store.isOpen)
+#else
+        ZStack(alignment: .top) {
+            BottomRoundedRectangle(radius: SBConstants.fixedHeight)
+                .frame(height: SBConstants.fixedHeight)
+                .foregroundColor(Design.screenBackground.color(colorScheme))
+                .shadow(color: Design.Text.primary.color(colorScheme).opacity(store.isOpen ? 0.25 : 0), radius: 1)
+                .zIndex(1)
+
+            VStack(spacing: 0) {
+                if store.isOpen {
+                    priorityContent()
+                        .padding(.vertical, 16)
+                        .padding(.top, SBConstants.fixedHeight)
+                        .screenHorizontalPadding()
+                }
+
+                TopRoundedRectangle(radius: store.isOpen ? SBConstants.fixedHeight : 0)
+                    .frame(height: SBConstants.fixedHeightWithShadow)
+                    .foregroundColor(Design.screenBackground.color(colorScheme))
+                    .shadow(color: Design.Text.primary.color(colorScheme).opacity(0.1), radius: store.isOpen ? 1 : 0, y: -1)
+            }
+            .frame(minHeight: SBConstants.fixedHeight + SBConstants.shadowHeight)
+
+            if let supportData = store.supportData {
+                UIMailDialogView(
+                    supportData: supportData,
+                    completion: {
+                        store.send(.sendSupportMailFinished)
+                    }
+                )
+                // UIMailDialogView only wraps MFMailComposeViewController presentation
+                // so frame is set to 0 to not break SwiftUI's layout
+                .frame(width: 0, height: 0)
+            }
+
+            shareMessageView()
+        }
+        .background {
+            VStack(spacing: 0) {
+                Design.screenBackground.color(colorScheme)
+                    .frame(height: 2)
+                    .frame(maxWidth: .infinity)
+                LinearGradient(
+                    stops: [
+                        Gradient.Stop(color: Design.Utility.Purple._700.color(.light), location: 0.00),
+                        Gradient.Stop(color: Design.Utility.Purple._950.color(.light), location: 1.00)
+                    ],
+                    startPoint: UnitPoint(x: 0.5, y: 0.0),
+                    endPoint: UnitPoint(x: 0.5, y: 1.0)
+                )
+                Design.screenBackground.color(colorScheme)
+                    .frame(height: 2)
+                    .frame(maxWidth: .infinity)
+            }
+            .onTapGesture {
+                store.send(.smartBannerContentTapped)
+            }
+        }
+        .clipShape( Rectangle() )
+#endif
     }
 }
 

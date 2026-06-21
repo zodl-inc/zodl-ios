@@ -61,6 +61,16 @@ extension SmartBannerView {
 #endif
     }
 
+    /// On macOS the CTA stacks below the labels (VStack) so it should fill the width; on iOS it sits
+    /// inline (HStack) at intrinsic width.
+    var bannerCTAFullWidth: Bool {
+#if os(macOS)
+        true
+#else
+        false
+#endif
+    }
+
     @ViewBuilder func disconnectedContent() -> some View {
         HStack(spacing: 0) {
             Asset.Assets.Icons.wifiOff.image
@@ -189,7 +199,7 @@ extension SmartBannerView {
             ZashiButton(
                 String(localizable: .smartBannerContentBackupButton),
                 type: .ghost,
-                infinityWidth: false
+                infinityWidth: bannerCTAFullWidth
             ) {
                 store.send(.walletBackupTapped)
             }
@@ -213,7 +223,7 @@ extension SmartBannerView {
             ZashiButton(
                 String(localizable: .smartBannerContentShieldButton),
                 type: .ghost,
-                infinityWidth: false
+                infinityWidth: bannerCTAFullWidth
             ) {
                 if store.isShieldingAcknowledgedAtKeychain {
                     store.send(.shieldFundsTapped)
@@ -242,7 +252,7 @@ extension SmartBannerView {
             ZashiButton(
                 String(localizable: .smartBannerContentTorButton),
                 type: .ghost,
-                infinityWidth: false
+                infinityWidth: bannerCTAFullWidth
             ) {
                 store.send(.torSetupTapped)
             }
@@ -266,7 +276,7 @@ extension SmartBannerView {
             ZashiButton(
                 String(localizable: .smartBannerContentCurrencyConversionButton),
                 type: .ghost,
-                infinityWidth: false
+                infinityWidth: bannerCTAFullWidth
             ) {
                 store.send(.currencyConversionTapped)
             }
@@ -290,7 +300,7 @@ extension SmartBannerView {
             ZashiButton(
                 String(localizable: .smartBannerContentAutoShieldingButton),
                 type: .ghost,
-                infinityWidth: false
+                infinityWidth: bannerCTAFullWidth
             ) {
                 store.send(.autoShieldingTapped)
             }

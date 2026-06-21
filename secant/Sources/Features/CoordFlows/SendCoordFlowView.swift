@@ -34,12 +34,15 @@ struct SendCoordFlowView: View {
                     tokenName: tokenName
                 )
                 .screenTitle(String(localizable: .generalSend))
+#if !os(macOS)
+                // macOS: the hide-balance eye lives in the split's left rail; don't duplicate it.
                 .zashiNavigationBarItems(
                     trailing:
                         HStack(spacing: 0) {
                             hideBalancesButton()
                         }
                 )
+#endif
             } destination: { store in
                 switch store.case {
                 case let .addressBook(store):

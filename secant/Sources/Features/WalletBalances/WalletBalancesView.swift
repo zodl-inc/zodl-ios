@@ -17,24 +17,29 @@ struct WalletBalancesView: View {
     let tokenName: String
     let couldBeHidden: Bool
     let shortened: Bool
+    /// macOS sidebar: align the amount + currency to the leading edge (and drop the large top
+    /// padding) instead of the default centered layout. Default false → iOS unchanged.
+    let leadingAligned: Bool
 
     init(
         store: StoreOf<WalletBalances>,
         tokenName: String,
         couldBeHidden: Bool = false,
-        shortened: Bool = false
+        shortened: Bool = false,
+        leadingAligned: Bool = false
     ) {
         self.store = store
         self.tokenName = tokenName
         self.couldBeHidden = couldBeHidden
         self.shortened = shortened
+        self.leadingAligned = leadingAligned
     }
 
     var body: some View {
         WithPerceptionTracking {
-            VStack(spacing: 0) {
+            VStack(alignment: leadingAligned ? .leading : .center, spacing: 0) {
                 balanceContent()
-                    .padding(.top, 40)
+                    .padding(.top, leadingAligned ? 0 : 40)
                     .anchorPreference(
                         key: ExchangeRateFeaturePreferenceKey.self,
                         value: .bounds

@@ -9,52 +9,59 @@ import SwiftUI
 import Combine
 import ComposableArchitecture
 
-extension HomeView {
-    @ViewBuilder func accountSwitchContent() -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text(localizable: .keystoneDrawerTitle)
-                .zFont(.semiBold, size: 20, style: Design.Text.primary)
-                .padding(.top, 32)
-                .padding(.bottom, 24)
-                .padding(.horizontal, 20)
-            
-            ForEach(store.walletAccounts, id: \.self) { walletAccount in
-                walletAccountView(
-                    icon: walletAccount.vendor.icon(),
-                    title: walletAccount.vendor.name(),
-                    address: walletAccount.unifiedAddress ?? String(localizable: .receiveErrorCantExtractUnifiedAddress),
-                    selected: store.selectedWalletAccount == walletAccount
-                ) {
-                    store.send(.walletAccountTapped(walletAccount))
-                }
-            }
-            
-            if store.walletAccounts.count == 1 {
-                addKeystoneBannerView()
-                    .padding(.top, 8)
-                    .onTapGesture {
-                        store.send(.keystoneBannerTapped)
-                    }
+/// The account-switch sheet content (account list + Keystone connect). Extracted from `HomeView`
+/// into a standalone view so both iOS (`HomeView`) and macOS (`MacSplitView`) present the same UI.
+struct WalletAccountsSheetView: View {
+    @Environment(\.colorScheme) private var colorScheme
+    let store: StoreOf<Home>
 
-                ZashiButton(
-                    String(localizable: .keystoneConnect),
-                    type: .secondary
-                ) {
-                    store.send(.addKeystoneHWWalletTapped)
+    var body: some View {
+        WithPerceptionTracking {
+            VStack(alignment: .leading, spacing: 0) {
+                Text(localizable: .keystoneDrawerTitle)
+                    .zFont(.semiBold, size: 20, style: Design.Text.primary)
+                    .padding(.top, 32)
+                    .padding(.bottom, 24)
+                    .padding(.horizontal, 20)
+
+                ForEach(store.walletAccounts, id: \.self) { walletAccount in
+                    walletAccountView(
+                        icon: walletAccount.vendor.icon(),
+                        title: walletAccount.vendor.name(),
+                        address: walletAccount.unifiedAddress ?? String(localizable: .receiveErrorCantExtractUnifiedAddress),
+                        selected: store.selectedWalletAccount == walletAccount
+                    ) {
+                        store.send(.walletAccountTapped(walletAccount))
+                    }
                 }
-                .padding(.top, 32)
-                .padding(.horizontal, 20)
-                .padding(.bottom, Design.Spacing.sheetBottomSpace)
-            } else {
-                Color.clear
-                    .frame(height: 1)
-                    .padding(.bottom, 23)
+
+                if store.walletAccounts.count == 1 {
+                    addKeystoneBannerView()
+                        .padding(.top, 8)
+                        .onTapGesture {
+                            store.send(.keystoneBannerTapped)
+                        }
+
+                    ZashiButton(
+                        String(localizable: .keystoneConnect),
+                        type: .secondary
+                    ) {
+                        store.send(.addKeystoneHWWalletTapped)
+                    }
+                    .padding(.top, 32)
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, Design.Spacing.sheetBottomSpace)
+                } else {
+                    Color.clear
+                        .frame(height: 1)
+                        .padding(.bottom, 23)
+                }
             }
+            .padding(.horizontal, 4)
         }
-        .padding(.horizontal, 4)
     }
-    
-    @ViewBuilder func walletAccountView(
+
+    @ViewBuilder private func walletAccountView(
         icon: Image,
         title: String,
         address: String,
@@ -75,15 +82,15 @@ extension HomeView {
                                 .fill(Design.Surfaces.bgAlt.color(colorScheme))
                         }
                         .padding(.trailing, 12)
-                    
+
                     VStack(alignment: .leading, spacing: 0) {
                         Text(title)
                             .zFont(.semiBold, size: 16, style: Design.Text.primary)
-                        
+
                         Text(address.zip316)
                             .zFont(fontFamily: .robotoMono, size: 12, style: Design.Text.tertiary)
                     }
-                    
+
                     Spacer()
                 }
                 .padding(.horizontal, 20)
@@ -98,13 +105,13 @@ extension HomeView {
         }
     }
 
-    @ViewBuilder func addKeystoneBannerView() -> some View {
+    @ViewBuilder private func addKeystoneBannerView() -> some View {
         WithPerceptionTracking {
             VStack(spacing: 0) {
                 VStack(alignment: .leading, spacing: 0) {
                     Text(localizable: .keystoneDrawerBannerTitle)
                         .zFont(.semiBold, size: 18, style: Design.Text.primary)
-                    
+
                     Text(localizable: .keystoneDrawerBannerDesc)
                         .zFont(size: 12, style: Design.Text.tertiary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -127,5 +134,11 @@ extension HomeView {
                     .fill(Design.Surfaces.bgTertiary.color(colorScheme))
             }
         }
+    }
+}
+
+extension HomeView {
+    @ViewBuilder func accountSwitchContent() -> some View {
+        WalletAccountsSheetView(store: store)
     }
 }

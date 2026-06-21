@@ -34,9 +34,12 @@ struct SwapAndPayCoordFlowView: View {
                             ),
                         tokenName: tokenName
                     )
+#if !os(macOS)
+                    // macOS: Swap/Pay are peer-roots in the split, not screens pushed over Activity.
                     .zashiBack {
                         store.send(.backButtonTapped)
                     }
+#endif
                     .zashiTitle {
                         Text(
                             store.isSwapHelpContent
@@ -48,6 +51,8 @@ struct SwapAndPayCoordFlowView: View {
                     .zashiNavigationBarItems(
                         trailing:
                             HStack(spacing: 4) {
+#if !os(macOS)
+                                // macOS: the hide-balance eye lives in the split's left rail; keep only the (?) here.
                                 if store.isSensitiveButtonVisible {
                                     Button {
                                         $isSensitiveContentHidden.withLock { $0.toggle() }
@@ -58,7 +63,8 @@ struct SwapAndPayCoordFlowView: View {
                                             .padding(store.isSensitiveButtonVisible ? 8 : Design.Spacing.navBarButtonPadding)
                                     }
                                 }
-                                
+#endif
+
                                 Button {
                                     store.send(.helpSheetRequested)
                                 } label: {

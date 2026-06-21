@@ -128,7 +128,10 @@ struct TransactionDetailsView: View {
             .zashiNavigationBarItems(
                 trailing:
                     HStack(spacing: 0) {
+#if !os(macOS)
+                        // macOS: the hide-balance eye lives in the split's left rail; keep the bookmark.
                         hideBalancesButton()
+#endif
                         bookmarkButton()
                     }
             )

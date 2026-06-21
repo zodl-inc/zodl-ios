@@ -104,7 +104,10 @@ struct SettingsView: View {
                 .listStyle(.plain)
                 .zashiHideListBackground()
                 .applyScreenBackground()
+#if !os(macOS)
+                // macOS: More/Settings is a peer-root in the split, not a screen pushed over Activity.
                 .zashiBack() { store.send(.backToHomeTapped) }
+#endif
                 .screenTitle(String(localizable: .settingsTitle))
             } destination: { store in
                 switch store.case {

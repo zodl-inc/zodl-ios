@@ -26,6 +26,9 @@ struct TransactionsManagerView: View {
     var body: some View {
         WithPerceptionTracking {
             VStack(spacing: 0) {
+#if !os(macOS)
+                // macOS: search + filter live in the window toolbar (see the `.toolbar` below);
+                // the content area is the full transaction list.
                 HStack(spacing: 0) {
                     ZashiTextField(
                         text: $store.searchTerm,
@@ -37,7 +40,7 @@ struct TransactionsManagerView: View {
                             .zImage(size: 20, style: Design.Dropdowns.Default.text)
                     )
                     .padding(.trailing, 8)
-                    
+
                     Button {
                         store.send(.filterTapped)
                     } label: {
@@ -78,6 +81,7 @@ struct TransactionsManagerView: View {
                 }
                 .screenHorizontalPadding()
                 .padding(.vertical, 12)
+#endif
                 
                 if store.transactionSections.isEmpty && !store.isInvalidated {
                     noTransactionsView()
@@ -148,6 +152,25 @@ struct TransactionsManagerView: View {
             .listStyle(.plain)
             .zashiHideListBackground()
             .onAppear { store.send(.onAppear) }
+#if os(macOS)
+            // macOS: search + filter live in the window toolbar as two SEPARATE glass capsules —
+            // search first (native NSSearchField), filter second (clean icon-only circle).
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    NativeSearchField(
+                        text: $store.searchTerm,
+                        placeholder: String(localizable: .filterSearch)
+                    )
+                    .frame(width: 200)
+                }
+                if #available(macOS 26.0, *) {
+                    ToolbarSpacer(.fixed, placement: .primaryAction)
+                }
+                ToolbarItem(placement: .primaryAction) {
+                    macFilterToolbarButton()
+                }
+            }
+#endif
 #if !os(macOS)
             // macOS: the hide-balance eye lives in the split's left rail; don't duplicate it.
             .zashiNavigationBarItems(trailing: hideBalancesButton())
@@ -165,7 +188,25 @@ struct TransactionsManagerView: View {
 #endif
         .screenTitle(String(localizable: .generalActivity).uppercased())
     }
-    
+
+#if os(macOS)
+    /// Native window-toolbar filter button (macOS). Provide ONLY the SF Symbol — no `.resizable()`,
+    /// no frame, no color: the system sizes it and wraps it in a clean circular glass capsule.
+    /// (Forcing a size via `zImage` is what turned it into a scaled-up capsule.) The active-filter
+    /// count is omitted to preserve the circular shape; active filters show in the filter sheet.
+    @ViewBuilder func macFilterToolbarButton() -> some View {
+        Button {
+            store.send(.filterTapped)
+        } label: {
+            Image(systemName: "line.3.horizontal.decrease")
+        }
+        // The app sets a global `.buttonStyle(.plain)` for content buttons; that cascades into the
+        // toolbar and strips the native glass capsule. Resetting to `.automatic` restores the
+        // toolbar's default — a clean circular glass button.
+        .buttonStyle(.automatic)
+    }
+#endif
+
     @ViewBuilder func hideBalancesButton() -> some View {
         Button {
             $isSensitiveContentHidden.withLock { $0.toggle() }
