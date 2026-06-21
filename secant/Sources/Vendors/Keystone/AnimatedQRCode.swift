@@ -105,12 +105,65 @@ class MockData {
 
 #else
 import SwiftUI
+import Combine
+@preconcurrency import KeystoneSDK
 import URKit
+import CoreImage
 
-/// macOS stub: animated QR rendering isn't ported yet (PlatformImage→NSImage / CIFilter output). Placeholder.
+/// macOS animated QR: renders each UR fragment as a QR via CoreImage (CIImage → CGImage, no
+/// UIKit/NSImage round-trip) and cycles the fragments on a timer for the Keystone device to scan
+/// during signing. Mirrors the iOS `AnimatedQRCode` behavior.
 struct AnimatedQRCode: View {
+    @StateObject private var viewModel: ViewModel
+    private let timer = Timer.publish(every: 0.2, on: .main, in: .common).autoconnect()
     let size: CGFloat
-    init(urEncoder: UREncoder, size: CGFloat) { self.size = size }
-    var body: some View { Color.clear.frame(width: size, height: size) }
+
+    init(urEncoder: UREncoder, size: CGFloat) {
+        self._viewModel = StateObject(wrappedValue: ViewModel(urEncoder: urEncoder))
+        self.size = size
+    }
+
+    var body: some View {
+        Group {
+            if let frame = viewModel.frame {
+                Image(decorative: frame, scale: 1)
+                    .resizable()
+                    .interpolation(.none)
+                    .frame(width: size, height: size)
+            } else {
+                Color.clear.frame(width: size, height: size)
+            }
+        }
+        .onReceive(timer) { _ in viewModel.nextQRCode() }
+    }
+}
+
+extension AnimatedQRCode {
+    final class ViewModel: ObservableObject {
+        @Published var frame: CGImage?
+        private let encoder: UREncoder
+        private let context = CIContext()
+
+        init(urEncoder: UREncoder) {
+            self.encoder = urEncoder
+            self.frame = makeFrame(from: encoder.nextPart())
+        }
+
+        func nextQRCode() {
+            guard !encoder.isSinglePart else { return }
+            frame = makeFrame(from: encoder.nextPart())
+        }
+
+        private func makeFrame(from string: String) -> CGImage? {
+            guard let data = string.data(using: .ascii),
+                  let filter = CIFilter(name: "CIQRCodeGenerator") else {
+                return nil
+            }
+            filter.setValue(data, forKey: "inputMessage")
+            guard let output = filter.outputImage else { return nil }
+            let scaled = output.transformed(by: CGAffineTransform(scaleX: 10, y: 10))
+            return context.createCGImage(scaled, from: scaled.extent)
+        }
+    }
 }
 #endif
