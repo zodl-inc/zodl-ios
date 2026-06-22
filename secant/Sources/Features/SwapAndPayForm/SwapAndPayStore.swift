@@ -1409,7 +1409,7 @@ extension SwapAndPay.State {
             return "0"
         }
         
-        let zashiFeeCoeff = (Decimal(SwapAndPayClient.Constants.zashiFeeBps) / Decimal(10_000))
+        let zashiFeeCoeff = SwapAndPayClient.Constants.zashiFeeCoefficient
         let zashiFee = quote.amountIn * zashiFeeCoeff
         let zatoshi = Zatoshi(NSDecimalNumber(decimal: zashiFee).clampedInt64Value)
         
@@ -1425,7 +1425,7 @@ extension SwapAndPay.State {
             return "0"
         }
         
-        let zashiFeeCoeff = (Decimal(SwapAndPayClient.Constants.zashiFeeBps) / Decimal(10_000))
+        let zashiFeeCoeff = SwapAndPayClient.Constants.zashiFeeCoefficient
         let zashiFee = ((quote.amountIn * zashiFeeCoeff) / Decimal(100_000_000)) * zecAsset.usdPrice
         
         if zashiFee < 0.01 {
@@ -1511,7 +1511,7 @@ extension SwapAndPay.State {
         let transactionFee = proposal.totalFeeRequired().amount
         
         // zashi fee
-        let zashiFee = quote.amountIn * 0.005
+        let zashiFee = quote.amountIn * SwapAndPayClient.Constants.zashiFeeCoefficient
         let zatoshiZashiFee = NSDecimalNumber(decimal: zashiFee).clampedInt64Value
         
         return transactionFee + zatoshiZashiFee
@@ -1743,7 +1743,7 @@ extension SwapAndPay.State {
         }
 
         // zashi fee
-        let zashiFee = quote.amountIn * 0.005
+        let zashiFee = quote.amountIn * SwapAndPayClient.Constants.zashiFeeCoefficient
 
         return conversionFormatter.string(from: NSDecimalNumber(decimal: zashiFee.simplified)) ?? "\(zashiFee.simplified)"
     }

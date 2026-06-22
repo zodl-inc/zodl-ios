@@ -13,6 +13,7 @@ directly impact users rather than highlighting other crucial architectural updat
 - Sending, swapping, shielding, and Flexa payments now broadcast your transaction to multiple servers at once when you're in Automatic server mode (Manual mode still uses the server you selected), so a single slow or unreachable server is less likely to make a submission fail. If a server times out before confirming, you now see a clear message that your transaction may still have been broadcast, rather than an outright failure.
 
 ### Fixed
+- The swap / CrossPay confirmation now shows the correct total service fee (0.67%) instead of an understated 0.5%, matching what is actually charged.
 - A sent transaction that broadcast on an older app version and never mined now correctly shows as "Failed" in the Activity list once its expiry passes the network chain tip. Previously it could stay stuck on "Sending" indefinitely after updating the app.
 - Opening the Recovery Phrase from Advanced Settings now always requires Face ID / Touch ID, and the seed words are only loaded and rendered after a successful authentication.
 - The tax CSV export is now written to a protected location and deleted as soon as the share sheet closes, instead of remaining in temporary storage.
