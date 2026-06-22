@@ -353,12 +353,6 @@ extension Root {
                     .sendCoordFlow(.path(.element(id: _, action: .sendResultFailure(.closeTapped)))),
                     .sendCoordFlow(.path(.element(id: _, action: .sendResultPending(.closeTapped)))):
                 state.path = nil
-#if os(macOS)
-                // macOS: Send is a peer-root (the panel renders by section, not by `path`), so
-                // clearing `path` alone leaves the flow's own NavigationStack on the success screen
-                // ("close does nothing"). Reset the flow to return to the empty Send form.
-                state.sendCoordFlowState = .initial
-#endif
                 return .send(.fetchTransactionsForTheSelectedAccount)
 
             case .sendCoordFlow(.path(.element(id: _, action: .transactionDetails(.closeDetailTapped)))):

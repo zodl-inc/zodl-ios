@@ -67,6 +67,16 @@ struct MacSplitView: View {
                 store.send(selectedSection.action)
             }
         }
+        .onChange(of: store.path) { _, newPath in
+            // On macOS the panel always renders the selected section (not `path`), so a flow that
+            // dismisses itself by setting `path = nil` (e.g. a Send/Swap success "close", a finished
+            // sub-flow) would leave that section's own NavigationStack stuck on the terminal screen.
+            // Re-initialize the current section so it returns to its root. (Does NOT fire for the
+            // Keystone full-window flow: this view isn't in the hierarchy while that's presented.)
+            if newPath == nil {
+                store.send(selectedSection.action)
+            }
+        }
         // Account-switch sheet (account list + Keystone connect). Presented here on macOS,
         // since HomeView — which hosts it on iOS — is not in the macOS view tree.
         .zashiSheet(
