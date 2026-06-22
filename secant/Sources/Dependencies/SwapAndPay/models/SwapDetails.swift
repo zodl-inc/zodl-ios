@@ -20,6 +20,7 @@ struct SwapDetails: Codable, Equatable, Hashable {
         case refunded
         case success
         case expired
+        case unknown
 
         var isPending: Bool {
             self == .pending || self == .pendingDeposit || self == .processing
@@ -35,6 +36,32 @@ struct SwapDetails: Codable, Equatable, Hashable {
             case .refunded: return SwapConstants.refunded
             case .success: return SwapConstants.success
             case .expired: return SwapConstants.expired
+            case .unknown: return SwapConstants.unknown
+            }
+        }
+
+        /// Fail-closed mapping of a server status string. An unrecognized value maps to `.unknown`
+        /// rather than silently to `.pending` (MOB-1354 / iOS-Z10), so a garbage or tampered status
+        /// can't be presented as a benign "pending" swap.
+        static func from(serverStatus: String, isSwapToZec: Bool) -> SwapDetails.Status {
+            if isSwapToZec {
+                switch serverStatus {
+                case SwapConstants.pendingDeposit: return .pendingDeposit
+                case SwapConstants.refunded: return .refunded
+                case SwapConstants.success: return .success
+                case SwapConstants.failed: return .failed
+                case SwapConstants.incompleteDeposit: return .incompleteDeposit
+                case SwapConstants.processing: return .processing
+                default: return .unknown
+                }
+            } else {
+                switch serverStatus {
+                case SwapConstants.incompleteDeposit: return .incompleteDeposit
+                case SwapConstants.pendingDeposit: return .pending
+                case SwapConstants.refunded: return .refunded
+                case SwapConstants.success: return .success
+                default: return .unknown
+                }
             }
         }
     }

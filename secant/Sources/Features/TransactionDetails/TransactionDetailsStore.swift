@@ -193,6 +193,7 @@ struct TransactionDetails {
             case .incompleteDeposit: return String(localizable: .swapToZecSwapIncomplete)
             case .processing: return String(localizable: .swapToZecSwapProcessing)
             case .expired: return String(localizable: .swapToZecSwapExpired)
+            case .unknown: return String(localizable: .swapToZecSwapUnknown)
             }
         }
         
@@ -486,16 +487,17 @@ struct TransactionDetails {
                 
                 var needsUpdate = false
                 
-                // from asset
+                // from/to asset — reconcile, don't blindly overwrite (MOB-1354 / iOS-Z10): fill an asset
+                // only when it isn't recorded locally yet; a status poll must not rewrite an asset that
+                // was already established at swap creation.
                 if let fromAsset = state.swapAssets.filter({ $0.assetId == swapDetails.fromAsset }).first {
-                    if umSwapId.fromAsset != fromAsset.id {
+                    if umSwapId.fromAsset.isEmpty {
                         needsUpdate = true
                         state.umSwapId?.fromAsset = fromAsset.id
                     }
                 }
-                // to asset
                 if let toAsset = state.swapAssets.filter({ $0.assetId == swapDetails.toAsset }).first {
-                    if umSwapId.toAsset != toAsset.id {
+                    if umSwapId.toAsset.isEmpty {
                         needsUpdate = true
                         state.umSwapId?.toAsset = toAsset.id
                     }
@@ -516,8 +518,9 @@ struct TransactionDetails {
                         }
                     }
                 }
-                // status
-                if umSwapId.status != swapDetails.status.rawName {
+                // status — keep the last known status; never regress it to unknown from an unrecognized
+                // server status (MOB-1354 / iOS-Z10).
+                if swapDetails.status != .unknown, umSwapId.status != swapDetails.status.rawName {
                     needsUpdate = true
                     state.umSwapId?.status = swapDetails.status.rawName
                 }
@@ -614,6 +617,7 @@ extension TransactionDetails.State {
         case .failed: return .failed
         case .processing: return .processing
         case .expired: return .expired
+        case .unknown: return nil
         }
     }
 

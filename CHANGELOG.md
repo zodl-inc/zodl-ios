@@ -24,6 +24,7 @@ directly impact users rather than highlighting other crucial architectural updat
 
 ### Security
 - Cross-chain swap quotes are now verified against your request before the transaction is signed: the ZEC amount, payout and refund addresses, assets, and slippage tolerance must match what you requested, and the swap is refused on any mismatch. This protects against a malicious or tampered swap-provider response redirecting your funds.
+- Swap status updates from the provider are now validated: an unrecognized status is no longer shown as "pending", and the provider can no longer rewrite the assets recorded for an existing swap.
 
 ## 3.5.2 build 1 (20026-06-08)
 

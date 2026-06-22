@@ -407,27 +407,9 @@ extension Near1Click {
                 throw SwapAndPayClient.EndpointError.message("Check status: Missing `status` parameter.")
             }
             
-            var status: SwapDetails.Status
-            
-            if isSwapToZec {
-                status = switch statusStr {
-                case SwapConstants.pendingDeposit: .pendingDeposit
-                case SwapConstants.refunded: .refunded
-                case SwapConstants.success: .success
-                case SwapConstants.failed: .failed
-                case SwapConstants.incompleteDeposit: .incompleteDeposit
-                case SwapConstants.processing: .processing
-                default: .pending
-                }
-            } else {
-                status = switch statusStr {
-                case SwapConstants.incompleteDeposit: .incompleteDeposit
-                case SwapConstants.pendingDeposit: .pending
-                case SwapConstants.refunded: .refunded
-                case SwapConstants.success: .success
-                default: .pending
-                }
-            }
+            // SECURITY (MOB-1354 / iOS-Z10): map the server status through a fail-closed parser so an
+            // unrecognized value becomes `.unknown` instead of silently being treated as pending.
+            var status = SwapDetails.Status.from(serverStatus: statusStr, isSwapToZec: isSwapToZec)
             
             guard let quoteResponseDict = jsonObject[Constants.quoteResponse] as? [String: Any],
                   let quoteRequestDict = quoteResponseDict[Constants.quoteRequest] as? [String: Any] else {
