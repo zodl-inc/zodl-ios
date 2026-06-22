@@ -80,7 +80,7 @@ struct VotingCoordFlowBackdrop: View {
                 } label: {
                     settingsButtonIcon()
                 }
-                .buttonStyle(.plain)
+                .zashiPlainButtonStyle()
                 .accessibilityLabel(String(localizable: .coinVotePollsListChainConfigAccessibility))
             }
         }

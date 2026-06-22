@@ -136,7 +136,7 @@ struct ZashiSheetModifier<SheetContent: View>: ViewModifier {
                         .zImage(size: 24, style: Design.Text.primary)
                         .padding(Design.Spacing._lg)
                 }
-                .buttonStyle(.plain)
+                .zashiPlainButtonStyle()
                 .keyboardShortcut(.cancelAction)
             }
             .shadow(color: Color.black.opacity(0.25), radius: 24, x: 0, y: 10)

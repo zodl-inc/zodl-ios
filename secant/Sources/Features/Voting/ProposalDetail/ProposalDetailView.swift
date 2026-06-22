@@ -271,7 +271,7 @@ struct ProposalDetailView: View {
             }
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .zashiPlainButtonStyle()
     }
 
     @ViewBuilder
@@ -341,7 +341,7 @@ struct ProposalDetailView: View {
             .padding(.vertical, 16)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .zashiPlainButtonStyle()
         .disabled(isLocked)
     }
 

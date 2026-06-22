@@ -102,7 +102,7 @@ struct ProposalListView: View {
                                         choice: displayedChoices[proposal.id]
                                     )
                                 }
-                                .buttonStyle(.plain)
+                                .zashiPlainButtonStyle()
                             }
                         }
                     }
@@ -506,7 +506,7 @@ private struct ExpandableText: View {
                             .foregroundStyle(Design.Text.primary.color(colorScheme))
                     }
                 }
-                .buttonStyle(.plain)
+                .zashiPlainButtonStyle()
             }
         }
     }

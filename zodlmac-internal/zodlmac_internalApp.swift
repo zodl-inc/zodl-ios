@@ -44,7 +44,7 @@ struct zodlmac_internalApp: App {
             // macOS gives every default-styled Button a bezeled gray background; iOS doesn't.
             // Force plain app-wide so buttons render only their own (iOS) styling — custom
             // ZashiButton backgrounds stay, raw icon/text buttons go flat like on iOS.
-            .buttonStyle(.plain)
+            .zashiPlainButtonStyle()
             // Same story for text fields: macOS draws a native bezel/inset; iOS is borderless and
             // the app supplies its own background + padding. Force plain so inputs match iOS.
             .textFieldStyle(.plain)

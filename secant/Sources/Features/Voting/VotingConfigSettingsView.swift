@@ -149,7 +149,7 @@ struct VotingConfigSettingsView: View {
                 selectionIndicator(isSelected: isSelected)
                     .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .zashiPlainButtonStyle()
             .accessibilityLabel(selectAccessibilityLabel)
             .accessibilityAddTraits(isSelected ? .isSelected : [])
 
@@ -201,7 +201,7 @@ struct VotingConfigSettingsView: View {
             chainSourceCardContentRow(name: name, url: url, isDefault: isDefault, showChevron: showChevron)
                 .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .zashiPlainButtonStyle()
     }
 
     private func chainSourceCardContentRow(
@@ -275,7 +275,7 @@ private var bottomBar: some View {
                         .fill(Design.Inputs.Default.bg.color(colorScheme))
                 }
             }
-            .buttonStyle(.plain)
+            .zashiPlainButtonStyle()
 
             ZashiButton(saveTitle) {
                 store.send(.saveTapped)
@@ -371,7 +371,7 @@ private var bottomBar: some View {
                                 .fill(Design.Btns.Tertiary.bg.color(colorScheme))
                         }
                 }
-                .buttonStyle(.plain)
+                .zashiPlainButtonStyle()
                 .accessibilityLabel(String(localizable: .coinVoteConfigSettingsAccessibilityClose))
 
                 Spacer()

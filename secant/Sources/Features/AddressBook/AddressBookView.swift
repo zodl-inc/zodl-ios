@@ -171,7 +171,7 @@ struct AddressBookView: View {
                 .contentShape(Rectangle())
                 .padding(.vertical, 14)
             }
-            .buttonStyle(.plain)
+            .zashiPlainButtonStyle()
             .accessibilityIdentifier(AccessibilityID.AddressBook.manualEntry)
 
             Divider()
@@ -192,7 +192,7 @@ struct AddressBookView: View {
                 .contentShape(Rectangle())
                 .padding(.vertical, 14)
             }
-            .buttonStyle(.plain)
+            .zashiPlainButtonStyle()
             .accessibilityIdentifier(AccessibilityID.AddressBook.scanEntry)
         }
         .frame(maxWidth: .infinity, alignment: .leading)

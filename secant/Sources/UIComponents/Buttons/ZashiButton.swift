@@ -217,6 +217,32 @@ struct ZashiButton<PrefixContent, AccessoryContent>: View where PrefixContent: V
     }
 }
 
+/// Plain button styling that makes the ENTIRE frame tappable on macOS. SwiftUI's `.plain` style on
+/// macOS only hit-tests the *drawn* parts of a label, so transparent gaps — `Spacer`s, the padding
+/// between an icon and a chevron — ignore clicks (rows respond only on their icon/label). Adding
+/// `.contentShape(Rectangle())` makes the whole label rectangle the hit area, so full rows
+/// (transaction rows, settings rows, the account switcher) respond anywhere, matching iOS. Defined
+/// cross-platform but only applied on macOS via `View.zashiPlainButtonStyle()`.
+struct FullAreaButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .contentShape(Rectangle())
+            .opacity(configuration.isPressed ? 0.7 : 1.0)
+    }
+}
+
+extension View {
+    /// Plain button style, but full-frame tappable on macOS (see `FullAreaButtonStyle`). On iOS this
+    /// is exactly `.zashiPlainButtonStyle()`, so the shipping iOS app is byte-for-byte unchanged.
+    @ViewBuilder func zashiPlainButtonStyle() -> some View {
+#if os(macOS)
+        buttonStyle(FullAreaButtonStyle())
+#else
+        buttonStyle(.plain)
+#endif
+    }
+}
+
 extension ZashiButton where PrefixContent == EmptyView, AccessoryContent == EmptyView {
     init(
         _ title: String,

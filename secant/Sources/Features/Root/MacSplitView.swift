@@ -205,7 +205,7 @@ struct MacSplitView: View {
                     .frame(maxWidth: .infinity)
                     .macGlassCapsule()
                 }
-                .buttonStyle(.plain)
+                .zashiPlainButtonStyle()
             }
         }
     }
@@ -219,7 +219,7 @@ struct MacSplitView: View {
                 (isSensitiveContentHidden ? Asset.Assets.eyeOff.image : Asset.Assets.eyeOn.image)
                     .zImage(size: 22, color: Asset.Colors.primary.color)
             }
-            .buttonStyle(.plain)
+            .zashiPlainButtonStyle()
         }
     }
 

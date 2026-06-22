@@ -200,7 +200,7 @@ struct TransactionsManagerView: View {
         } label: {
             Image(systemName: "line.3.horizontal.decrease")
         }
-        // The app sets a global `.buttonStyle(.plain)` for content buttons; that cascades into the
+        // The app sets a global `.zashiPlainButtonStyle()` for content buttons; that cascades into the
         // toolbar and strips the native glass capsule. Resetting to `.automatic` restores the
         // toolbar's default — a clean circular glass button.
         .buttonStyle(.automatic)

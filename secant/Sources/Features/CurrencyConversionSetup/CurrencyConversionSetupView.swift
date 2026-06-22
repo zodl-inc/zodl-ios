@@ -243,7 +243,7 @@ struct CurrencyConversionSetupView: View {
                             .padding(.vertical, 20)
                             .contentShape(Rectangle())
                         }
-                        .buttonStyle(.plain)
+                        .zashiPlainButtonStyle()
 
                         if index < CurrencyISO4217.allCases.count - 1 {
                             Design.Surfaces.divider.color(colorScheme)

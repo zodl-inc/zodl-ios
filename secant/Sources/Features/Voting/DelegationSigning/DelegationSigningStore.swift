@@ -356,7 +356,7 @@ struct DelegationSigningView: View {
             .padding(.vertical, 12)
             .frame(maxWidth: .infinity, minHeight: 60)
         }
-        .buttonStyle(.plain)
+        .zashiPlainButtonStyle()
     }
 
     @ViewBuilder
