@@ -192,8 +192,9 @@ struct UIShareDialogView: UIViewRepresentable {
 
 #else
 import SwiftUI
+import AppKit
 
-// macOS: data-holder stubs for the share payloads (native NSSharingServicePicker deferred to goal #3).
+// macOS: data-holder payloads for the share content (unwrapped into native share items below).
 struct ShareableImage {
     let image: PlatformImage
     let title: String
@@ -227,17 +228,57 @@ struct ShareableURL {
     }
 }
 
-/// macOS stub: the iOS `UIActivityViewController` share sheet isn't bridged here yet
-/// (NSSharingServicePicker is the macOS follow-up). Renders nothing.
-struct UIShareDialogView: View {
+/// macOS: native share via `NSSharingServicePicker` (AirDrop / Mail / Messages / Save to Files /
+/// Copy …). Unwraps the `Shareable*` payloads into native items (NSImage / String / URL) and anchors
+/// the picker to the key window so it survives the binding reset (`completion`).
+struct UIShareDialogView: NSViewRepresentable {
     let activityItems: [Any]
     let completion: () -> Void
     let onDismiss: (() -> Void)?
+
     init(activityItems: [Any], completion: @escaping () -> Void, onDismiss: (() -> Void)? = nil) {
         self.activityItems = activityItems
         self.completion = completion
         self.onDismiss = onDismiss
     }
-    var body: some View { EmptyView() }
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        let items = Self.shareItems(from: activityItems)
+        if !items.isEmpty, let anchor = NSApp.keyWindow?.contentView ?? NSApp.mainWindow?.contentView {
+            let picker = NSSharingServicePicker(items: items)
+            picker.delegate = context.coordinator
+            let rect = NSRect(x: anchor.bounds.midX, y: anchor.bounds.midY, width: 1, height: 1)
+            picker.show(relativeTo: rect, of: anchor, preferredEdge: .minY)
+        } else {
+            onDismiss?()
+        }
+        completion()
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) { }
+
+    func makeCoordinator() -> Coordinator { Coordinator(onDismiss: onDismiss) }
+
+    final class Coordinator: NSObject, NSSharingServicePickerDelegate {
+        let onDismiss: (() -> Void)?
+        init(onDismiss: (() -> Void)?) { self.onDismiss = onDismiss }
+
+        func sharingServicePicker(_ sharingServicePicker: NSSharingServicePicker, didChoose service: NSSharingService?) {
+            onDismiss?()
+        }
+    }
+
+    private static func shareItems(from activityItems: [Any]) -> [Any] {
+        activityItems.flatMap { item -> [Any] in
+            switch item {
+            case let payload as ShareableImage: return [payload.image]
+            case let payload as ShareableMessage: return [payload.message]
+            case let payload as ShareableURL: return [payload.url]
+            default: return [item]
+            }
+        }
+    }
 }
 #endif

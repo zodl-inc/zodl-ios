@@ -57,10 +57,29 @@ struct ZashiImagePicker: UIViewControllerRepresentable {
     }
 }
 #else
-// macOS: photo-library picker isn't available yet (goal #3: NSOpenPanel-based picker). Stub renders nothing.
+import AppKit
+import UniformTypeIdentifiers
+
+/// macOS: pick an image file via `NSOpenPanel`; the chosen `NSImage` flows through the same
+/// `selectedImage` binding the iOS picker drives, into the QR image detector.
 struct ZashiImagePicker: View {
     @Binding var selectedImage: PlatformImage?
     @Binding var showSheet: Bool
-    var body: some View { EmptyView() }
+
+    var body: some View {
+        Color.clear
+            .frame(width: 0, height: 0)
+            .onAppear {
+                let panel = NSOpenPanel()
+                panel.allowedContentTypes = [.image]
+                panel.allowsMultipleSelection = false
+                panel.canChooseDirectories = false
+                panel.canChooseFiles = true
+                if panel.runModal() == .OK, let url = panel.url, let image = NSImage(contentsOf: url) {
+                    selectedImage = image
+                }
+                showSheet = false
+            }
+    }
 }
 #endif

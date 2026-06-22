@@ -45,6 +45,11 @@ struct MacSplitView: View {
                 .navigationSplitViewColumnWidth(min: 240, ideal: 280, max: 340)
         } detail: {
             rightPanel
+                // Give each section a distinct identity so switching fully tears down the previous
+                // section's NavigationStack instead of trying to migrate its path onto the next one
+                // (SwiftUI `AnyNavigationPath.comparisonTypeMismatch` crash when a deep flow — e.g. a
+                // completed Send — is left, then another section is selected).
+                .id(selectedSection)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 // Blank the title with an empty string — do NOT use `.toolbar(removing: .title)`,
                 // which kills the toolbar's center anchor and collapses `.primaryAction` items to

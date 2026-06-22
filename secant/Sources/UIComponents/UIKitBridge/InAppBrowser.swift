@@ -28,11 +28,23 @@ struct InAppBrowserView: UIViewControllerRepresentable {
 import Foundation
 import SwiftUI
 
-/// macOS stub: `SFSafariViewController` is iOS-only. Renders nothing here; opening URLs
-/// externally (NSWorkspace) is a follow-up.
+/// macOS: there is no in-app Safari, so open the URL in the default browser and dismiss the
+/// (empty) presentation immediately. Works for every caller that presents this in a sheet —
+/// `dismiss()` flips the `isPresented` binding back.
 struct InAppBrowserView: View {
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.openURL) private var openURL
     let url: URL
+
     init(url: URL) { self.url = url }
-    var body: some View { EmptyView() }
+
+    var body: some View {
+        Color.clear
+            .frame(width: 1, height: 1)
+            .onAppear {
+                openURL(url)
+                dismiss()
+            }
+    }
 }
 #endif
