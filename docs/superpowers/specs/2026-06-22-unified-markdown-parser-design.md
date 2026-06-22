@@ -184,6 +184,14 @@ output does not change. Example:
 "^[Warning:](style: 'boldPrimary') Your funds..."  →  "==Warning:== Your funds..."
 ```
 
+### Modified: bundled WhatsNew JSON
+
+`WhatsNewProvider` loads its content from **bundled** resources
+(`Bundle.main.url(forResource:...)` in `WhatsNewProviderLiveKey`), not a remote server, so
+these ship with the app and must be migrated in lockstep:
+`secant/Resources/WhatsNew/whatsNew.json` (and `whatsNew_es.json`). The EN file contained two
+`^[X](style: 'bold')` markers → `**X**`; the ES file had none.
+
 ## Testing
 
 New Swift Testing suite `zodlTests/MarkdownTests/ZashiMarkdownParserTests.swift`
@@ -208,8 +216,10 @@ parsed `AttributedString` runs (`run.zStyle`, the run's substring, and `.link` U
 - **Coordination (not code):**
   - Android adopts the same grammar, especially `==boldPrimary==`. This spec's Grammar
     section is the shared contract.
-  - WhatsNew server content and any link-bearing dynamic strings must emit the unified
-    syntax. Until they do, those surfaces keep rendering literally (no crash, no data loss).
+  - All current in-app content (localized strings + bundled WhatsNew JSON) is migrated here.
+    Any *future* externally-sourced markdown (e.g. a remotely-pushed WhatsNew payload, if that
+    ever exists) must emit the unified syntax; until it does, such surfaces render literally
+    (no crash, no data loss — the parser is total).
 
 ## Estimate
 

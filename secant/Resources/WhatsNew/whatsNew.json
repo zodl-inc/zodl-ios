@@ -1077,9 +1077,9 @@
                 {
                     "title": "Added:",
                     "bulletpoints": [
-                        "Highly requested ^[dark mode](style: 'bold') functionality added. Turn it on by switching into dark mode in your device settings. Enjoy!",
+                        "Highly requested **dark mode** functionality added. Turn it on by switching into dark mode in your device settings. Enjoy!",
                         "Scan QR code from an image stored in your photo library.",
-                        "Security feature added - ^[hide your balances](style: 'bold') and transaction history with an eye icon on the Account and Balances tabs."
+                        "Security feature added - **hide your balances** and transaction history with an eye icon on the Account and Balances tabs."
                     ]
                 },
                 {
