@@ -111,7 +111,16 @@ struct AddressBookView: View {
                 .screenHorizontalPadding()
                 .padding(.bottom, 24)
                 .padding(.top, 8)
+#if os(macOS)
+                // A Menu label can't be an interactive Button on macOS — the ZashiButton swallows
+                // the click and the menu never opens. Disable its hit testing and let the borderless
+                // menu handle the click.
+                .allowsHitTesting(false)
+#endif
             }
+#if os(macOS)
+            .menuStyle(.borderlessButton)
+#endif
             .accessibilityIdentifier(AccessibilityID.AddressBook.addContact)
         }
     }
