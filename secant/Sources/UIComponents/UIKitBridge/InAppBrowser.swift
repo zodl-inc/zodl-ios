@@ -27,10 +27,11 @@ struct InAppBrowserView: UIViewControllerRepresentable {
 #else
 import Foundation
 import SwiftUI
+import WebKit
 
-/// macOS: there is no in-app Safari, so open the URL in the default browser and dismiss the
-/// (empty) presentation immediately. Works for every caller that presents this in a sheet —
-/// `dismiss()` flips the `isPresented` binding back.
+/// macOS: a real in-app browser (WKWebView) — keeps the user inside the app (the iOS
+/// `SFSafariViewController` security model) rather than handing off to the system browser. A small
+/// chrome bar offers Done + "open in default browser".
 struct InAppBrowserView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
@@ -39,12 +40,35 @@ struct InAppBrowserView: View {
     init(url: URL) { self.url = url }
 
     var body: some View {
-        Color.clear
-            .frame(width: 1, height: 1)
-            .onAppear {
-                openURL(url)
-                dismiss()
+        VStack(spacing: 0) {
+            HStack(spacing: 12) {
+                Button("Done") { dismiss() }
+                Spacer()
+                Text(url.host ?? url.absoluteString)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button { openURL(url) } label: { Image(systemName: "safari") }
+                    .help("Open in default browser")
             }
+            .padding(10)
+            Divider()
+            InAppWebView(url: url)
+        }
+        .frame(minWidth: 720, idealWidth: 900, minHeight: 640, idealHeight: 760)
     }
+}
+
+private struct InAppWebView: NSViewRepresentable {
+    let url: URL
+
+    func makeNSView(context: Context) -> WKWebView {
+        let webView = WKWebView()
+        webView.load(URLRequest(url: url))
+        return webView
+    }
+
+    func updateNSView(_ nsView: WKWebView, context: Context) { }
 }
 #endif

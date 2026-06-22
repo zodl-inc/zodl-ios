@@ -17,7 +17,9 @@ enum MailSupport {
 #if canImport(MessageUI)
         return MainActor.assumeIsolated { MFMailComposeViewController.canSendMail() }
 #else
-        return false
+        // macOS: there's no in-app composer, but `UIMailDialogView` opens the default mail client
+        // via a `mailto:` URL, so report `true` to route support/feedback to mail (not share).
+        return true
 #endif
     }
 }
