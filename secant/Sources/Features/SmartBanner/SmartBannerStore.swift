@@ -10,10 +10,6 @@ import SwiftUI
 import Combine
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
-import OSLog
-
-// [#1755] TEMP diagnostic — remove once the macOS SmartBanner sync trigger is confirmed.
-private let smartBannerDiagLogger = Logger(subsystem: "co.ecc.zashi-testnet", category: "slipstream")
 
 #if canImport(MessageUI)
 import MessageUI
@@ -351,14 +347,6 @@ struct SmartBanner {
                 
             case .synchronizerStateChanged(let latestState):
                 let snapshot = SyncStatusSnapshot.snapshotFor(state: latestState.data.syncStatus)
-                // [#1755] TEMP diagnostic: fires on every observed state change (proves the macOS
-                // observation runs) + the three gate inputs for the syncing banner. Extract locals
-                // first — os.Logger interpolation is an escaping autoclosure and can't capture `state`.
-                let dbgStatus = String(describing: snapshot.syncStatus)
-                let dbgWalletStatus = String(describing: state.walletStatus)
-                let dbgPriority = String(describing: state.priorityContent)
-                let dbgIsOpen = state.isOpen
-                smartBannerDiagLogger.info("[#1755] smartbanner observed: status=\(dbgStatus, privacy: .public) walletStatus=\(dbgWalletStatus, privacy: .public) priority=\(dbgPriority, privacy: .public) isOpen=\(dbgIsOpen, privacy: .public)")
 
                 if let account = state.selectedWalletAccount, let accountBalance = latestState.data.accountsBalances[account.id] {
                     state.spendableBalance = accountBalance.saplingBalance.spendableValue + accountBalance.orchardBalance.spendableValue
