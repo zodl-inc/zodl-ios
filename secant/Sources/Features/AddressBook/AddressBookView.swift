@@ -25,6 +25,11 @@ extension String {
 struct AddressBookView: View {
     @Environment(\.colorScheme) private var colorScheme
     @PlatformBindable var store: StoreOf<AddressBook>
+#if os(macOS)
+    // macOS replaces the iOS Menu "bubble" (manual vs scan) with the app's macOS sheet equivalent —
+    // a zashiSheet card offering the same two choices. This drives its presentation.
+    @State private var macAddContactDialog = false
+#endif
 
     init(store: StoreOf<AddressBook>) {
         self.store = store
@@ -74,10 +79,10 @@ struct AddressBookView: View {
     func addContactButton(_ store: StoreOf<AddressBook>) -> some View {
         WithPerceptionTracking {
 #if os(macOS)
-            // macOS: a `Menu` whose label is an interactive `ZashiButton` mis-renders here — the
-            // button swallows the click AND `.menuStyle(.borderlessButton)` blows up the label
-            // layout (a full-screen plus icon). For alpha, go straight to manual entry — the core
-            // "add a contact" path; scan-to-add is a beta nicety.
+            // macOS: a `Menu` whose label is an interactive `ZashiButton` mis-renders here (the
+            // button swallows the click AND `.menuStyle(.borderlessButton)` blows the label up to a
+            // full-screen plus icon). Replace the iOS Menu "bubble" with the app's macOS sheet
+            // equivalent — a zashiSheet card offering the same two choices (manual vs scan).
             ZashiButton(
                 String(localizable: .addressBookAddNewContact),
                 prefixView:
@@ -86,12 +91,15 @@ struct AddressBookView: View {
                         .resizable()
                         .frame(width: 20, height: 20)
             ) {
-                store.send(.addManualButtonTapped)
+                macAddContactDialog = true
             }
             .screenHorizontalPadding()
             .padding(.bottom, 24)
             .padding(.top, 8)
             .accessibilityIdentifier(AccessibilityID.AddressBook.addContact)
+            .zashiSheet(isPresented: $macAddContactDialog) {
+                macAddContactChoice()
+            }
 #else
             Menu {
                 Button {
@@ -136,7 +144,61 @@ struct AddressBookView: View {
 #endif
         }
     }
-    
+
+#if os(macOS)
+    // The macOS card-dialog equivalent of the iOS "Add New Contact" Menu bubble: the same two
+    // choices (manual entry vs scan), presented in a zashiSheet. The sheet provides the card
+    // chrome (background, rounded corners, close button); this is just its content.
+    @ViewBuilder func macAddContactChoice() -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(localizable: .addressBookAddNewContact)
+                .zFont(.semiBold, size: 20, style: Design.Text.primary)
+                .padding(.bottom, 8)
+
+            Button {
+                macAddContactDialog = false
+                store.send(.addManualButtonTapped)
+            } label: {
+                HStack(spacing: 12) {
+                    Asset.Assets.Icons.pencil.image
+                        .zImage(size: 20, style: Design.Text.primary)
+
+                    Text(localizable: .addressBookManualEntry)
+                        .zFont(.medium, size: 16, style: Design.Text.primary)
+
+                    Spacer()
+                }
+                .contentShape(Rectangle())
+                .padding(.vertical, 14)
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier(AccessibilityID.AddressBook.manualEntry)
+
+            Divider()
+
+            Button {
+                macAddContactDialog = false
+                store.send(.scanButtonTapped)
+            } label: {
+                HStack(spacing: 12) {
+                    Asset.Assets.Icons.qr.image
+                        .zImage(size: 20, style: Design.Text.primary)
+
+                    Text(localizable: .addressBookScanAddress)
+                        .zFont(.medium, size: 16, style: Design.Text.primary)
+
+                    Spacer()
+                }
+                .contentShape(Rectangle())
+                .padding(.vertical, 14)
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier(AccessibilityID.AddressBook.scanEntry)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+#endif
+
     func emptyComposition() -> some View {
         Asset.Assets.send.image
             .zImage(size: 32, style: Design.Btns.Tertiary.fg)
