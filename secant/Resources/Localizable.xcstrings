@@ -8700,13 +8700,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "^[Warning:](style: 'boldPrimary') Your Zodl funds cannot be spent until your Keystone wallet is synced."
+            "value" : "==Warning:== Your Zodl funds cannot be spent until your Keystone wallet is synced."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "^[Advertencia:](style: 'boldPrimary') No podrás usar tus fondos de Zodl hasta que tu billetera Keystone esté sincronizada."
+            "value" : "==Advertencia:== No podrás usar tus fondos de Zodl hasta que tu billetera Keystone esté sincronizada."
           }
         }
       }
@@ -8717,13 +8717,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "^[Warning:](style: 'boldPrimary') Your funds cannot be spent until your wallet is restored."
+            "value" : "==Warning:== Your funds cannot be spent until your wallet is restored."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "^[Advertencia:](style: 'boldPrimary') No podrás usar tus fondos hasta que tu billetera esté completamente restaurada."
+            "value" : "==Advertencia:== No podrás usar tus fondos hasta que tu billetera esté completamente restaurada."
           }
         }
       }
@@ -8734,13 +8734,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "^[Warning:](style: 'boldPrimary') Your funds cannot be spent until your wallet is resynced."
+            "value" : "==Warning:== Your funds cannot be spent until your wallet is resynced."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "^[Advertencia:](style: 'boldPrimary') No podrás usar tus fondos hasta que tu billetera se haya resincronizado."
+            "value" : "==Advertencia:== No podrás usar tus fondos hasta que tu billetera se haya resincronizado."
           }
         }
       }
@@ -11109,13 +11109,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "^[The Secret Recovery Phrase](style: 'boldPrimary') is a unique set of 24 words, appearing in a precise order. It can be used to gain full control of your funds from any device via any Zcash wallet app. Think of it as the master key to your wallet. It is stored in Zodl’s Advanced Settings."
+            "value" : "==The Secret Recovery Phrase== is a unique set of 24 words, appearing in a precise order. It can be used to gain full control of your funds from any device via any Zcash wallet app. Think of it as the master key to your wallet. It is stored in Zodl’s Advanced Settings."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "^[La Frase de Recuperación Secreta](style: 'boldPrimary') es un conjunto único de 24 palabras, que aparecen en un orden preciso. Se puede usar para obtener control total de tus fondos desde cualquier dispositivo a través de cualquier aplicación de billetera Zcash. Piensa en ella como la llave maestra de tu billetera. Se guarda en la Configuración Avanzada de Zodl."
+            "value" : "==La Frase de Recuperación Secreta== es un conjunto único de 24 palabras, que aparecen en un orden preciso. Se puede usar para obtener control total de tus fondos desde cualquier dispositivo a través de cualquier aplicación de billetera Zcash. Piensa en ella como la llave maestra de tu billetera. Se guarda en la Configuración Avanzada de Zodl."
           }
         }
       }
@@ -11178,13 +11178,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Your wallet will be resynced from ^[%@](style: 'boldPrimary') (%@ blocks). Zodl will scan and recover all transactions made after the following block number."
+            "value" : "Your wallet will be resynced from ==%@== (%@ blocks). Zodl will scan and recover all transactions made after the following block number."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Tu billetera se resincronizará desde ^[%@](style: 'boldPrimary') (%@ bloques).. Zodl escaneará y recuperará todas las transacciones realizadas después del siguiente número de bloque."
+            "value" : "Tu billetera se resincronizará desde ==%@== (%@ bloques).. Zodl escaneará y recuperará todas las transacciones realizadas después del siguiente número de bloque."
           }
         }
       }
@@ -11331,13 +11331,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Your wallet will be resynced from ^[%@](style: 'boldPrimary') (%@ blocks). Use the button below if you wish to change it."
+            "value" : "Your wallet will be resynced from ==%@== (%@ blocks). Use the button below if you wish to change it."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Tu billetera se resincronizará desde ^[%@](style: 'boldPrimary') (%@ bloques).. Usa el botón de abajo si deseas cambiarlo."
+            "value" : "Tu billetera se resincronizará desde ==%@== (%@ bloques).. Usa el botón de abajo si deseas cambiarlo."
           }
         }
       }
@@ -15528,13 +15528,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Deposit an additional ^[%@ %@](style: 'boldPrimary') to complete this swap before ^[%@](style: 'boldPrimary'), or your deposit will be refunded."
+            "value" : "Deposit an additional ==%@ %@== to complete this swap before ==%@==, or your deposit will be refunded."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Deposita ^[%@ %@](style: 'boldPrimary') adicionales para completar este intercambio antes del ^[%@](style: 'boldPrimary'), o tu depósito será reembolsado."
+            "value" : "Deposita ==%@ %@== adicionales para completar este intercambio antes del ==%@==, o tu depósito será reembolsado."
           }
         }
       }
@@ -16242,13 +16242,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "^[Warning:](style: 'boldPrimary') Slippage ^[under %@%%](style: 'boldPrimary') increases the chance your swap will be unsuccessful and refunded. Consider using ^[%@%% or higher](style: 'boldPrimary'), especially for larger amounts."
+            "value" : "==Warning:== Slippage ==under %@%%== increases the chance your swap will be unsuccessful and refunded. Consider using ==%@%% or higher==, especially for larger amounts."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "^[Advertencia:](style: 'boldPrimary') Un deslizamiento menor ^[al %@%%](style: 'boldPrimary') aumenta la probabilidad de que tu intercambio no se complete y sea reembolsado. Considera usar ^[%@%% o más](style: 'boldPrimary'), especialmente para montos mayores."
+            "value" : "==Advertencia:== Un deslizamiento menor ==al %@%%== aumenta la probabilidad de que tu intercambio no se complete y sea reembolsado. Considera usar ==%@%% o más==, especialmente para montos mayores."
           }
         }
       }
@@ -18543,13 +18543,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "^[The Wallet Birthday Height](style: 'boldPrimary') is the block height (block # in the blockchain) at which your wallet was created. It is important to provide the correct height because that determines the range of blocks we will scan to display your transaction history and wallet balance. If you have recovered a seed from a different hardware device, make sure to enter the block height of your original hardware device."
+            "value" : "==The Wallet Birthday Height== is the block height (block # in the blockchain) at which your wallet was created. It is important to provide the correct height because that determines the range of blocks we will scan to display your transaction history and wallet balance. If you have recovered a seed from a different hardware device, make sure to enter the block height of your original hardware device."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "^[La Altura de Creación de la Billetera (Wallet Birthday Height)](style: 'boldPrimary') corresponde a la altura del bloque (número de bloque en la cadena de bloques) en la que se creó tu billetera. Es importante proporcionar la altura correcta, ya que determina el rango de bloques que analizaremos para mostrar tu historial de transacciones y el saldo de tu billetera. Si recuperaste una semilla de otro dispositivo, asegúrate de ingresar la altura del bloque de tu dispositivo original."
+            "value" : "==La Altura de Creación de la Billetera (Wallet Birthday Height)== corresponde a la altura del bloque (número de bloque en la cadena de bloques) en la que se creó tu billetera. Es importante proporcionar la altura correcta, ya que determina el rango de bloques que analizaremos para mostrar tu historial de transacciones y el saldo de tu billetera. Si recuperaste una semilla de otro dispositivo, asegúrate de ingresar la altura del bloque de tu dispositivo original."
           }
         }
       }
@@ -18560,13 +18560,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "^[The Wallet Birthday Height](style: 'boldPrimary') is the block height (block # in the blockchain) at which your wallet was created. If you ever lose access to your Zodl app and need to recover your funds, providing the block height along with your recovery phrase can significantly speed up the process."
+            "value" : "==The Wallet Birthday Height== is the block height (block # in the blockchain) at which your wallet was created. If you ever lose access to your Zodl app and need to recover your funds, providing the block height along with your recovery phrase can significantly speed up the process."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "^[La Altura de Cumpleaños de la Billetera](style: 'boldPrimary') es la altura del bloque (número de bloque en la blockchain) en el que tu billetera fue creada. Si alguna vez pierdes acceso a tu aplicación Zodl y necesitas recuperar tus fondos, proporcionar la altura del bloque junto con tu frase de recuperación puede acelerar significativamente el proceso."
+            "value" : "==La Altura de Cumpleaños de la Billetera== es la altura del bloque (número de bloque en la blockchain) en el que tu billetera fue creada. Si alguna vez pierdes acceso a tu aplicación Zodl y necesitas recuperar tus fondos, proporcionar la altura del bloque junto con tu frase de recuperación puede acelerar significativamente el proceso."
           }
         }
       }

@@ -272,14 +272,9 @@ struct ReceiveView: View {
                 .foregroundColor(Design.Text.tertiary.color(colorScheme))
                 .padding(.top, 8)
             
-            if let attrText = try? AttributedString(
-                markdown: text,
-                including: \.zashiApp
-            ) {
-                ZashiText(withAttributedString: attrText, colorScheme: colorScheme)
-                    .zFont(size: 14, style: Design.Text.tertiary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+            ZashiText(markdown: text, colorScheme: colorScheme)
+                .zFont(size: 14, style: Design.Text.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
     
