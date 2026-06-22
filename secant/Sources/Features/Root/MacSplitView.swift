@@ -82,6 +82,12 @@ struct MacSplitView: View {
             if !hasInitialized {
                 hasInitialized = true
                 store.send(selectedSection.action)
+                // Start the SmartBanner's sync observation. On iOS this is sent by
+                // HomeView.onAppear → Home.onAppear → `.smartBanner(.onAppear)`, which subscribes
+                // the banner to `sdkSynchronizer.stateStream()`. HomeView isn't in the macOS tree,
+                // so without this the banner never sees ANY sync state and stays dark during sync.
+                // The effect is `.cancellable(cancelInFlight: true)`, so this is idempotent.
+                store.send(.home(.smartBanner(.onAppear)))
             }
         }
         .onChange(of: store.path) { _, newPath in
