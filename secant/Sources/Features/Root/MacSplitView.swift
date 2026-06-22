@@ -12,6 +12,7 @@
 
 #if os(macOS)
 import SwiftUI
+import AppKit
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
 
@@ -40,24 +41,40 @@ struct MacSplitView: View {
     }
 
     private var splitView: some View {
-        NavigationSplitView {
+        // A *manual* HStack split — NOT NavigationSplitView. NavigationSplitView keeps ONE
+        // `NavigationColumnState` for its detail column; our sections are independent
+        // NavigationStacks with DIFFERENT path types, so swapping them (or navigating deep inside
+        // one — e.g. Settings → Recovery Phrase) makes that shared column compare mismatched path
+        // types and hard-crash (`SwiftUI.AnyNavigationPath.Error.comparisonTypeMismatch`, thrown
+        // from NavigationColumnState). A plain HStack has no shared column state: each section's
+        // NavigationStack is fully independent, so neither a section swap NOR deep in-section
+        // navigation can crash. We reproduce the split chrome ourselves (sidebar vibrancy material
+        // + transparent full-size title bar) below.
+        HStack(spacing: 0) {
             sidebar
-                .navigationSplitViewColumnWidth(min: 240, ideal: 280, max: 340)
-        } detail: {
+                .frame(width: 280)
+                .frame(maxHeight: .infinity)
+                .background(
+                    // Native translucent sidebar material (follows system light/dark); flows up
+                    // under the transparent title bar for the seamless Mail/Messages look.
+                    SidebarVibrancyView()
+                        .ignoresSafeArea()
+                )
+
             rightPanel
-                // Give each section a distinct identity so switching fully tears down the previous
-                // section's NavigationStack instead of trying to migrate its path onto the next one
-                // (SwiftUI `AnyNavigationPath.comparisonTypeMismatch` crash when a deep flow — e.g. a
-                // completed Send — is left, then another section is selected).
+                // Distinct identity per section so switching fully tears down the previous
+                // section's NavigationStack instead of migrating its path onto the next one.
                 .id(selectedSection)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                // Blank the title with an empty string — do NOT use `.toolbar(removing: .title)`,
-                // which kills the toolbar's center anchor and collapses `.primaryAction` items to
-                // the leading edge. An empty title keeps trailing placement intact.
+                // Blank the title with an empty string — NOT `.toolbar(removing: .title)`, which
+                // collapses `.primaryAction` items to the leading edge. Empty keeps trailing intact.
                 .navigationTitle("")
                 // Seamless top bar (no hard separator line) like Mail/Messages.
                 .toolbarBackground(.hidden, for: .windowToolbar)
         }
+        // Transparent, full-size title bar so the split's backgrounds flow underneath it — the
+        // seamless look NavigationSplitView used to give us for free.
+        .background(SeamlessTitleBarConfigurator())
         .onAppear {
             // Initialize the default peer-root (Activity) once. Section switches are handled
             // by the sidebar's `selectedSection` onChange; `store.path` is NOT used to drive
@@ -146,14 +163,15 @@ struct MacSplitView: View {
                 }
             }
             .listStyle(.sidebar)
+            // Let the sidebar vibrancy material show through uniformly (header + list share one
+            // material) instead of the List drawing its own opaque background.
+            .scrollContentBackground(.hidden)
             // Grey selection instead of the system-accent blue.
             .tint(.gray)
             // Fixed-size window with few options — scrolling is pointless and looks odd under the
             // fixed header.
             .scrollDisabled(true)
         }
-        // Drop the system "hide sidebar" toolbar button — the rail is always visible.
-        .toolbar(removing: .sidebarToggle)
         .onChange(of: selectedSection) { _, section in
             store.send(section.action)
         }
@@ -277,6 +295,37 @@ private enum MacSection: CaseIterable {
         case .pay: return .home(.payWithNearTapped)
         case .swap: return .home(.swapWithNearTapped)
         case .more: return .home(.settingsTapped)
+        }
+    }
+}
+
+/// Native translucent sidebar material (follows system light/dark) for the manual HStack split,
+/// which doesn't get NavigationSplitView's automatic sidebar background.
+private struct SidebarVibrancyView: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.material = .sidebar
+        view.blendingMode = .behindWindow
+        view.state = .followsWindowActiveState
+        return view
+    }
+
+    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {}
+}
+
+/// Makes the window's title bar transparent + full-size so the split's backgrounds flow up
+/// underneath it — the seamless Mail/Messages look NavigationSplitView provided automatically.
+private struct SeamlessTitleBarConfigurator: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView { ConfigView() }
+    func updateNSView(_ nsView: NSView, context: Context) {}
+
+    final class ConfigView: NSView {
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            guard let window else { return }
+            window.titlebarAppearsTransparent = true
+            window.titleVisibility = .hidden
+            window.styleMask.insert(.fullSizeContentView)
         }
     }
 }

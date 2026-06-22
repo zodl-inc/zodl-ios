@@ -73,6 +73,26 @@ struct AddressBookView: View {
 
     func addContactButton(_ store: StoreOf<AddressBook>) -> some View {
         WithPerceptionTracking {
+#if os(macOS)
+            // macOS: a `Menu` whose label is an interactive `ZashiButton` mis-renders here — the
+            // button swallows the click AND `.menuStyle(.borderlessButton)` blows up the label
+            // layout (a full-screen plus icon). For alpha, go straight to manual entry — the core
+            // "add a contact" path; scan-to-add is a beta nicety.
+            ZashiButton(
+                String(localizable: .addressBookAddNewContact),
+                prefixView:
+                    Asset.Assets.Icons.plus.image
+                        .renderingMode(.template)
+                        .resizable()
+                        .frame(width: 20, height: 20)
+            ) {
+                store.send(.addManualButtonTapped)
+            }
+            .screenHorizontalPadding()
+            .padding(.bottom, 24)
+            .padding(.top, 8)
+            .accessibilityIdentifier(AccessibilityID.AddressBook.addContact)
+#else
             Menu {
                 Button {
                     store.send(.scanButtonTapped)
@@ -111,17 +131,9 @@ struct AddressBookView: View {
                 .screenHorizontalPadding()
                 .padding(.bottom, 24)
                 .padding(.top, 8)
-#if os(macOS)
-                // A Menu label can't be an interactive Button on macOS — the ZashiButton swallows
-                // the click and the menu never opens. Disable its hit testing and let the borderless
-                // menu handle the click.
-                .allowsHitTesting(false)
-#endif
             }
-#if os(macOS)
-            .menuStyle(.borderlessButton)
-#endif
             .accessibilityIdentifier(AccessibilityID.AddressBook.addContact)
+#endif
         }
     }
     
