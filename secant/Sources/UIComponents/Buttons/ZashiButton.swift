@@ -81,22 +81,28 @@ struct ZashiButton<PrefixContent, AccessoryContent>: View where PrefixContent: V
             .padding(.horizontal, horizontalPadding)
             .padding(.vertical, verticalPadding)
 #if os(macOS)
-            // macOS: full-width buttons look wrong on the wide canvas; cap at a default width and
-            // center horizontally regardless of the surrounding stack's alignment.
+            // macOS: cap the CTA (background INCLUDED) to a logical width and center it, so buttons
+            // don't stretch across the wide window. Order matters — cap → background → expand-and-
+            // center. Capping only the label and applying the background AFTER the expand-to-infinity
+            // frame (the old code) left a full-width background with merely centered text, which is
+            // exactly what looked "full width".
             .frame(maxWidth: infinityWidth ? 360 : nil, minHeight: minHeight)
+            .background { buttonBackground }
             .frame(maxWidth: infinityWidth ? .infinity : nil, alignment: .center)
 #else
             .frame(maxWidth: infinityWidth ? .infinity : nil, minHeight: minHeight)
+            .background { buttonBackground }
 #endif
-            .background {
-                RoundedRectangle(cornerRadius: Design.Radius._xl)
-                    .fill(bgColor().color(colorScheme))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: Design.Radius._xl)
-                            .stroke(strokeColor().color(colorScheme))
-                    }
-            }
         }
+    }
+
+    private var buttonBackground: some View {
+        RoundedRectangle(cornerRadius: Design.Radius._xl)
+            .fill(bgColor().color(colorScheme))
+            .overlay {
+                RoundedRectangle(cornerRadius: Design.Radius._xl)
+                    .stroke(strokeColor().color(colorScheme))
+            }
     }
     
     private func bgColor() -> Colorable {

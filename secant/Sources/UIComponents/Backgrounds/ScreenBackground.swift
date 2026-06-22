@@ -7,6 +7,29 @@
 
 import SwiftUI
 
+/// macOS layout foundation: a screen's *content* (lists, stacks, forms) is capped to a readable
+/// column width, while the colorful screen background stays full-bleed. Applied centrally by the
+/// `apply*ScreenBackground()` modifiers below, so single-view flows AND the split's right panel
+/// both inherit the cap without per-screen changes. No effect on iOS.
+enum ZashiScreenLayout {
+    /// Max content width on macOS. Single full-window views (~1120pt) and the split's right panel
+    /// (~842pt) both constrain their content to this; the background is never capped.
+    static let macContentMaxWidth: CGFloat = 800
+}
+
+private extension View {
+    /// Cap a screen's content to `ZashiScreenLayout.macContentMaxWidth` (centered) on macOS so it
+    /// doesn't sprawl across the wide window; no-op on iOS. The background modifier that wraps the
+    /// result keeps filling the full screen — only the content column is constrained.
+    @ViewBuilder func macCappedScreenContent() -> some View {
+#if os(macOS)
+        frame(maxWidth: ZashiScreenLayout.macContentMaxWidth)
+#else
+        self
+#endif
+    }
+}
+
 struct ScreenBackgroundModifier: ViewModifier {
     var color: Color
 
@@ -142,14 +165,16 @@ struct ScreenDefaultGradientBackgroundModifier: ViewModifier {
 
 extension View {
     func applyScreenBackground() -> some View {
-        modifier(
-            ScreenBackgroundModifier(
-                color: Asset.Colors.background.color
+        macCappedScreenContent()
+            .modifier(
+                ScreenBackgroundModifier(
+                    color: Asset.Colors.background.color
+                )
             )
-        )
     }
-    
+
     func applySheetBackground() -> some View {
+        // Sheets manage their own (narrower) width on macOS, so the screen content cap isn't applied.
         if #available(iOS 26.0, *) {
             modifier(
                 ScreenBackgroundModifier(
@@ -164,53 +189,61 @@ extension View {
             )
         }
     }
-    
+
     func applyErredScreenBackground() -> some View {
-        modifier(
-            ScreenGradientBackgroundModifier(mode: .erred)
-        )
+        macCappedScreenContent()
+            .modifier(
+                ScreenGradientBackgroundModifier(mode: .erred)
+            )
     }
-    
+
     func applyIndigoScreenBackground() -> some View {
-        modifier(
-            ScreenGradientBackgroundModifier(mode: .indigo)
-        )
+        macCappedScreenContent()
+            .modifier(
+                ScreenGradientBackgroundModifier(mode: .indigo)
+            )
     }
-    
+
     func applyBrandedScreenBackground() -> some View {
-        modifier(
-            ScreenGradientBackgroundModifier(mode: .branded)
-        )
+        macCappedScreenContent()
+            .modifier(
+                ScreenGradientBackgroundModifier(mode: .branded)
+            )
     }
-    
+
     func applyOnboardingScreenBackground() -> some View {
-        self.modifier(
-            ScreenOnboardingGradientBackgroundModifier()
-        )
+        macCappedScreenContent()
+            .modifier(
+                ScreenOnboardingGradientBackgroundModifier()
+            )
     }
 
     func applyDefaultGradientScreenBackground() -> some View {
-        self.modifier(
-            ScreenDefaultGradientBackgroundModifier()
-        )
+        macCappedScreenContent()
+            .modifier(
+                ScreenDefaultGradientBackgroundModifier()
+            )
     }
 
     func applySuccessScreenBackground() -> some View {
-        modifier(
-            ScreenGradientBackgroundModifier(mode: .success)
-        )
+        macCappedScreenContent()
+            .modifier(
+                ScreenGradientBackgroundModifier(mode: .success)
+            )
     }
-    
+
     func applyFailureScreenBackground() -> some View {
-        modifier(
-            ScreenGradientBackgroundModifier(mode: .failure)
-        )
+        macCappedScreenContent()
+            .modifier(
+                ScreenGradientBackgroundModifier(mode: .failure)
+            )
     }
-    
+
     func applyWarnScreenBackground() -> some View {
-        modifier(
-            ScreenGradientBackgroundModifier(mode: .warning)
-        )
+        macCappedScreenContent()
+            .modifier(
+                ScreenGradientBackgroundModifier(mode: .warning)
+            )
     }
 }
 
