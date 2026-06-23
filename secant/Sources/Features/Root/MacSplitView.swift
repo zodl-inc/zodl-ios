@@ -2,12 +2,20 @@
 //  MacSplitView.swift
 //  Zashi
 //
-//  macOS-only two-column split (Mail-style): left control rail + right content panel.
+//  macOS-only two-column split (Mail-style): full-height sidebar + content detail, built on the
+//  native `NavigationSplitView` per the 4-rule layout foundation (see docs/macos/LAYOUT_FOUNDATION.md,
+//  proven in ~/Downloads/testApp):
+//    #1 sidebar visuals — native split; a `ToolbarSpacer` on button-less screens keeps the traffic
+//       lights inside the sidebar with no glass bubble.
+//    #2 navigation — per-section CoordFlow `NavigationStack`s in `Group { switch }.id(selectedSection)`;
+//       push/pop/pop-to-root/switch with no crash (the `.id` teardown resets the old stack to root).
+//    #3 toolbar rendering — never style buttons above the toolbar; the system draws the capsules.
+//    #4 sidebar sizing — scrollable list (fits any window height) + a FIXED, non-draggable width
+//       (`FixedSidebarWidth` pins the NSSplitViewItem and re-pins on every switch).
 //
-//  Approach A — the sidebar drives the existing `Root.path` via the *same* `Home` actions the
-//  iOS HomeView buttons send (RootCoordinator already does `state.X = .initial` + `state.path =`),
-//  and the right panel renders the *existing* path-destination views. No new reducer/selection
-//  state; reset-on-switch and in-panel back arrows come free from the existing coordinator.
+//  The sidebar still drives the existing `Root.path` via the same `Home` actions the iOS buttons send
+//  (RootCoordinator does `state.X = .initial` + `state.path =`); a handful of `Root.path` flows take
+//  over the whole window (Keystone setup + the smart-banner destinations).
 //
 
 #if os(macOS)
@@ -17,6 +25,9 @@ import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
 
 struct MacSplitView: View {
+    // RULE #4: the sidebar is a fixed width — never resizable, never remembered.
+    private let sidebarWidth: CGFloat = 320
+
     @Environment(\.colorScheme) private var colorScheme
     @Shared(.appStorage(.sensitiveContent)) private var isSensitiveContentHidden = false
     @State private var selectedSection: MacSection = .activity
@@ -27,81 +38,92 @@ struct MacSplitView: View {
 
     var body: some View {
         WithPerceptionTracking {
-            // Keystone hardware-wallet setup takes over the whole window (multi-step flow + camera
-            // QR scan), then returns to the split when it finishes/cancels (path moves away from it).
-            if store.path == .addKeystoneHWWalletCoordFlow {
+            // A few `Root.path` flows take over the whole window instead of the split. The macOS panel
+            // renders the selected *section*, not `store.path` (see `splitView`), so without this these
+            // path-driven flows would be invisible on macOS: Keystone HW-wallet setup (multi-step +
+            // camera) and the smart-banner destinations (wallet backup, currency-conversion setup, Tor
+            // setup, server switch — reached from the sidebar banner's CTAs / tap). Each sets
+            // `path = nil` on close, and the `onChange(of: store.path)` below returns us to the split.
+            // Scopes mirror RootView's iOS path rendering.
+            switch store.path {
+            case .addKeystoneHWWalletCoordFlow?:
                 AddKeystoneHWWalletCoordFlowView(
                     store: store.scope(state: \.addKeystoneHWWalletCoordFlowState, action: \.addKeystoneHWWalletCoordFlow),
                     tokenName: tokenName
                 )
-            } else {
+            case .walletBackup?:
+                WalletBackupCoordFlowView(
+                    store: store.scope(state: \.walletBackupCoordFlowState, action: \.walletBackupCoordFlow)
+                )
+            case .currencyConversionSetup?:
+                NavigationStack {
+                    CurrencyConversionSetupView(
+                        store: store.scope(state: \.currencyConversionSetupState, action: \.currencyConversionSetup)
+                    )
+                }
+            case .torSetup?:
+                NavigationStack {
+                    TorSetupView(
+                        store: store.scope(state: \.torSetupState, action: \.torSetup)
+                    )
+                }
+            case .serverSwitch?:
+                NavigationStack {
+                    ServerSetupView(
+                        store: store.scope(state: \.serverSetupState, action: \.serverSetup)
+                    ) {
+                        store.send(.backToHomeFromServerSwitchTapped)
+                    }
+                }
+            default:
                 splitView
             }
         }
     }
 
     private var splitView: some View {
-        // A *manual* HStack split — NOT NavigationSplitView. NavigationSplitView keeps ONE
-        // `NavigationColumnState` for its detail column; our sections are independent
-        // NavigationStacks with DIFFERENT path types, so swapping them (or navigating deep inside
-        // one — e.g. Settings → Recovery Phrase) makes that shared column compare mismatched path
-        // types and hard-crash (`SwiftUI.AnyNavigationPath.Error.comparisonTypeMismatch`, thrown
-        // from NavigationColumnState). A plain HStack has no shared column state: each section's
-        // NavigationStack is fully independent, so neither a section swap NOR deep in-section
-        // navigation can crash. We reproduce the split chrome ourselves (sidebar vibrancy material
-        // + transparent full-size title bar) below.
-        HStack(spacing: 0) {
+        // RULE #1/#2: the NATIVE split — it owns the chrome (traffic lights inside the sidebar, the
+        // unified glass toolbar). No manual HStack, no SidebarVibrancyView, no title-bar configurator;
+        // fighting SwiftUI's window ownership at the view level crashes or gets overridden.
+        NavigationSplitView {
             sidebar
-                .frame(width: 280)
-                .frame(maxHeight: .infinity)
-                .background(
-                    // Native translucent sidebar material (follows system light/dark); flows up
-                    // under the transparent title bar for the seamless Mail/Messages look.
-                    SidebarVibrancyView()
-                        .ignoresSafeArea()
-                )
-
+                // RULE #4: seed the initial width; `FixedSidebarWidth` pins the underlying
+                // NSSplitViewItem (single-value column width still lets the divider drag) and re-pins
+                // on every section switch (SwiftUI re-asserts a resizable width on each body re-run).
+                .navigationSplitViewColumnWidth(sidebarWidth)
+                .toolbar(removing: .sidebarToggle)
+                .background(FixedSidebarWidth(width: sidebarWidth, trigger: selectedSection))
+        } detail: {
             rightPanel
-                // Distinct identity per section so switching fully tears down the previous
-                // section's NavigationStack instead of migrating its path onto the next one.
+                // RULE #2: distinct identity per section → switching FULLY tears down the previous
+                // section's NavigationStack (reset to root) instead of the detail column reconciling
+                // two mismatched path types.
                 .id(selectedSection)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                // Blank the title with an empty string — NOT `.toolbar(removing: .title)`, which
-                // collapses `.primaryAction` items to the leading edge. Empty keeps trailing intact.
                 .navigationTitle("")
-                // Seamless top bar (no hard separator line) like Mail/Messages.
                 .toolbarBackground(.hidden, for: .windowToolbar)
         }
-        // Transparent, full-size title bar so the split's backgrounds flow underneath it — the
-        // seamless look NavigationSplitView used to give us for free.
-        .background(SeamlessTitleBarConfigurator())
         .onAppear {
-            // Initialize the default peer-root (Activity) once. Section switches are handled
-            // by the sidebar's `selectedSection` onChange; `store.path` is NOT used to drive
-            // the macOS panel — each section is an independent peer-root, not a pushed screen.
+            // Initialize the default peer-root (Activity) once. Section switches are handled by the
+            // sidebar's `selectedSection` onChange; `store.path` is NOT used to drive the panel.
             if !hasInitialized {
                 hasInitialized = true
                 store.send(selectedSection.action)
                 // Start the SmartBanner's sync observation. On iOS this is sent by
-                // HomeView.onAppear → Home.onAppear → `.smartBanner(.onAppear)`, which subscribes
-                // the banner to `sdkSynchronizer.stateStream()`. HomeView isn't in the macOS tree,
-                // so without this the banner never sees ANY sync state and stays dark during sync.
-                // The effect is `.cancellable(cancelInFlight: true)`, so this is idempotent.
+                // HomeView.onAppear → Home.onAppear → `.smartBanner(.onAppear)`. HomeView isn't in the
+                // macOS tree, so without this the banner never sees sync state. The effect is
+                // `.cancellable(cancelInFlight: true)`, so this is idempotent.
                 store.send(.home(.smartBanner(.onAppear)))
             }
         }
         .onChange(of: store.path) { _, newPath in
-            // On macOS the panel always renders the selected section (not `path`), so a flow that
-            // dismisses itself by setting `path = nil` (e.g. a Send/Swap success "close", a finished
-            // sub-flow) would leave that section's own NavigationStack stuck on the terminal screen.
-            // Re-initialize the current section so it returns to its root. (Does NOT fire for the
-            // Keystone full-window flow: this view isn't in the hierarchy while that's presented.)
+            // A flow that dismisses itself by setting `path = nil` (a finished sub-flow) should return
+            // the current section to its root. Re-initialize the selected section.
             if newPath == nil {
                 store.send(selectedSection.action)
             }
         }
-        // Account-switch sheet (account list + Keystone connect). Presented here on macOS,
-        // since HomeView — which hosts it on iOS — is not in the macOS view tree.
+        // Account-switch sheet (account list + Keystone connect). Hosted here on macOS, since HomeView
+        // — which hosts it on iOS — is not in the macOS view tree.
         .zashiSheet(
             isPresented: Binding(
                 get: { store.homeState.accountSwitchRequest },
@@ -118,7 +140,7 @@ struct MacSplitView: View {
         }
     }
 
-    // MARK: - Left rail (native sidebar material — follows system light/dark)
+    // MARK: - Left rail (native NavigationSplitView sidebar — material + lights inside come for free)
 
     private var sidebar: some View {
         VStack(spacing: 0) {
@@ -174,9 +196,8 @@ struct MacSplitView: View {
             .scrollContentBackground(.hidden)
             // Grey selection instead of the system-accent blue.
             .tint(.gray)
-            // Fixed-size window with few options — scrolling is pointless and looks odd under the
-            // fixed header.
-            .scrollDisabled(true)
+            // RULE #4: do NOT disable scrolling — the list must scroll if rows ever overflow so the
+            // sidebar fits any window height (today there are few rows, so it won't scroll).
         }
         .onChange(of: selectedSection) { _, section in
             store.send(section.action)
@@ -233,9 +254,14 @@ struct MacSplitView: View {
 
     @ViewBuilder private var rightPanel: some View {
         WithPerceptionTracking {
-            // Peer-roots: the LOCAL selection picks the section view directly. No `store.path`,
-            // no pushing one section onto another — each is its own independent root. Switching
-            // sections resets the chosen section (its `Home` action sets state = `.initial`).
+            // Peer-roots: the LOCAL selection picks the section view directly. No `store.path`, no
+            // pushing one section onto another — each is its own independent root. Switching sections
+            // resets the chosen section (its `Home` action sets state = `.initial`).
+            //
+            // RULE #1: sections whose ROOT has no toolbar buttons get a `.macSidebarToolbarSpacer()` so
+            // the traffic lights stay inside the sidebar (Activity already has search + filter, so it
+            // needs none). The spacer sits at trailing; a pushed screen's back button sits at leading,
+            // so they never collide.
             switch selectedSection {
             case .activity:
                 TransactionsCoordFlowView(
@@ -248,21 +274,25 @@ struct MacSplitView: View {
                     networkType: networkType,
                     tokenName: tokenName
                 )
+                .macSidebarToolbarSpacer()
             case .send:
                 SendCoordFlowView(
                     store: store.scope(state: \.sendCoordFlowState, action: \.sendCoordFlow),
                     tokenName: tokenName
                 )
+                .macSidebarToolbarSpacer()
             case .pay, .swap:
                 // Same flow, EXACT_INPUT vs EXACT_OUTPUT — the `Home` action flips the mode.
                 SwapAndPayCoordFlowView(
                     store: store.scope(state: \.swapAndPayCoordFlowState, action: \.swapAndPayCoordFlow),
                     tokenName: tokenName
                 )
+                .macSidebarToolbarSpacer()
             case .more:
                 SettingsView(
                     store: store.scope(state: \.settingsState, action: \.settings)
                 )
+                .macSidebarToolbarSpacer()
             }
         }
     }
@@ -305,38 +335,103 @@ private enum MacSection: CaseIterable {
     }
 }
 
-/// Native translucent sidebar material (follows system light/dark) for the manual HStack split,
-/// which doesn't get NavigationSplitView's automatic sidebar background.
-private struct SidebarVibrancyView: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSVisualEffectView {
-        let view = NSVisualEffectView()
-        view.material = .sidebar
-        view.blendingMode = .behindWindow
-        view.state = .followsWindowActiveState
-        return view
+/// RULE #4: SwiftUI's `navigationSplitViewColumnWidth` only seeds the INITIAL width and leaves the
+/// divider draggable (and macOS remembers a dragged width across launches). Reach the underlying
+/// `NSSplitViewItem` and pin `minimumThickness == maximumThickness` (which actually stops the
+/// resize), disable collapse, and clear the autosave. SwiftUI re-asserts a resizable width on every
+/// `body` re-run (e.g. a section switch), so `trigger` (the selection) makes `updateNSView` fire and
+/// re-apply the pin each time.
+private struct FixedSidebarWidth: NSViewRepresentable {
+    let width: CGFloat
+    var trigger: MacSection
+
+    func makeNSView(context: Context) -> NSView { PinView(width: width) }
+    func updateNSView(_ nsView: NSView, context: Context) {
+        (nsView as? PinView)?.schedulePin()
     }
 
-    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {}
-}
+    final class PinView: NSView {
+        let width: CGFloat
+        init(width: CGFloat) { self.width = width; super.init(frame: .zero) }
+        required init?(coder: NSCoder) { fatalError("init(coder:) not used") }
 
-/// Makes the window's title bar transparent + full-size so the split's backgrounds flow up
-/// underneath it — the seamless Mail/Messages look NavigationSplitView provided automatically.
-private struct SeamlessTitleBarConfigurator: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSView { ConfigView() }
-    func updateNSView(_ nsView: NSView, context: Context) {}
-
-    final class ConfigView: NSView {
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
-            guard let window else { return }
-            window.titlebarAppearsTransparent = true
-            window.titleVisibility = .hidden
-            window.styleMask.insert(.fullSizeContentView)
+            schedulePin()
+        }
+
+        func schedulePin() {
+            guard window != nil else { return }
+            // The split controller may not be in the responder chain yet, and SwiftUI re-asserts a
+            // resizable column width on later body passes — so retry across a few runloop turns (and
+            // re-pin on every update). Deferred so we run AFTER SwiftUI applies its width this cycle.
+            attemptPin(retriesLeft: 6)
+        }
+
+        private func attemptPin(retriesLeft: Int) {
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                if !self.pinSidebar(), retriesLeft > 0 {
+                    self.attemptPin(retriesLeft: retriesLeft - 1)
+                }
+            }
+        }
+
+        /// Forces the sidebar to exactly `width`. The CONSTANT is authoritative — never a persisted
+        /// or restored width. SwiftUI's `NavigationSplitView` autosaves the sidebar width under an
+        /// "NSSplitView Subview Frames …" key and RESTORES it on launch; left alone that remembered
+        /// width overrides the constant forever (ship 320, later change to 300 → existing users keep
+        /// 320). We purge that persisted state, stop new saves, and slam the divider every pin.
+        @discardableResult
+        private func pinSidebar() -> Bool {
+            // Find the enclosing NSSplitView.
+            var view: NSView? = self
+            while let cur = view, !(cur is NSSplitView) { view = cur.superview }
+            guard let splitView = view as? NSSplitView else { return false }
+            // Find its NSSplitViewController via the responder chain.
+            var responder: NSResponder? = splitView
+            while let r = responder {
+                if let controller = r as? NSSplitViewController,
+                   let sidebarItem = controller.splitViewItems.first {
+                    sidebarItem.minimumThickness = width
+                    sidebarItem.maximumThickness = width
+                    sidebarItem.canCollapse = false
+                    splitView.autosaveName = ""            // stop persisting the width this session
+                    Self.purgeRememberedWidthsOnce()       // delete any width saved by a prior launch
+                    splitView.setPosition(width, ofDividerAt: 0)  // override any restored width NOW
+                    return true
+                }
+                responder = r.nextResponder
+            }
+            return false
+        }
+
+        /// One-shot removal of every persisted NavigationSplitView width so a stale "remembered"
+        /// value can never win over the constant on the next launch.
+        private static var didPurgeRememberedWidths = false
+        private static func purgeRememberedWidthsOnce() {
+            guard !didPurgeRememberedWidths else { return }
+            didPurgeRememberedWidths = true
+            let defaults = UserDefaults.standard
+            for key in defaults.dictionaryRepresentation().keys where key.hasPrefix("NSSplitView Subview Frames") {
+                defaults.removeObject(forKey: key)
+            }
         }
     }
 }
 
 private extension View {
+    /// RULE #1: a `ToolbarSpacer` (NOT a placeholder item — the system would draw an empty glass
+    /// capsule around an item) keeps the unified sidebar (traffic lights inside) on screens that have
+    /// no toolbar buttons of their own. No-op below macOS 26.
+    @ViewBuilder func macSidebarToolbarSpacer() -> some View {
+        if #available(macOS 26.0, *) {
+            self.toolbar { ToolbarSpacer(.fixed, placement: .primaryAction) }
+        } else {
+            self
+        }
+    }
+
     /// Wrap a sidebar control in a Liquid Glass capsule (macOS 26+); no-op on older systems.
     @ViewBuilder func macGlassCapsule() -> some View {
         if #available(macOS 26.0, *) {
