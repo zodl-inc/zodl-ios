@@ -221,7 +221,10 @@ struct SendFormView: View {
             }
             .padding(.vertical, 1)
             .applyScreenBackground()
+#if !os(macOS)
+            // macOS: Send is a peer-root in the split, not a screen pushed over Activity — no back arrow.
             .zashiBack() { store.send(.dismissRequired) }
+#endif
             .zashiSheet(isPresented: $store.isSheetTexAddressVisible) {
                 helpSheetContent()
             }
