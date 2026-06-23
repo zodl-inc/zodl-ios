@@ -107,6 +107,18 @@ private struct FixedWindowConfigurator: NSViewRepresentable {
             window.styleMask.remove(.resizable)
             window.collectionBehavior.remove(.fullScreenPrimary)
             window.collectionBehavior.insert(.fullScreenNone)
+            // Always open CENTERED on the active screen — never restore a remembered (often too-low /
+            // partially-offscreen) position. Disable frame autosave, then center within `visibleFrame`
+            // (which excludes the menu bar + Dock). Deferred so we win against SwiftUI's restore.
+            window.setFrameAutosaveName("")
+            DispatchQueue.main.async { [weak window] in
+                guard let window, let screen = window.screen ?? NSScreen.main else { return }
+                let visible = screen.visibleFrame
+                let size = window.frame.size
+                window.setFrameOrigin(
+                    NSPoint(x: visible.midX - size.width / 2, y: visible.midY - size.height / 2)
+                )
+            }
         }
     }
 }
