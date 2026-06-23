@@ -115,6 +115,21 @@ extension AddressBookContactView {
                 } else if store.chainsToPresent.isEmpty && store.searchTerm.isEmpty {
                     assetsEmptyComposition(colorScheme)
                 } else {
+#if os(macOS)
+                    // macOS: a `List` has no intrinsic height and collapses inside the card; use a
+                    // scrollable stack that fills the definite card height instead.
+                    ScrollView {
+                        LazyVStack(spacing: 0) {
+                            WithPerceptionTracking {
+                                ForEach(store.chainsToPresent, id: \.self) { chain in
+                                    chainView(chain, colorScheme)
+                                        .zashiPlainButtonStyle()
+                                }
+                            }
+                        }
+                    }
+                    .background(Asset.Colors.background.color)
+#else
                     List {
                         WithPerceptionTracking {
                             ForEach(store.chainsToPresent, id: \.self) { chain in
@@ -129,6 +144,7 @@ extension AddressBookContactView {
                     .background(Asset.Colors.background.color)
                     .listStyle(.plain)
                     .zashiHideListBackground()
+#endif
                 }
             }
         }

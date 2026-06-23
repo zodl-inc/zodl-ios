@@ -22,7 +22,7 @@ struct zodlmac_internalApp: App {
         initialState: .initial
     ) {
         Root()
-            .logging()
+//            .logging()
     }
 
     init() {

@@ -64,6 +64,12 @@ struct SmartBannerView: View {
                                 endPoint: UnitPoint(x: 0.5, y: 1.0)
                             ))
                     )
+                    // Tap the banner (anywhere but a CTA button, which consumes its own click) to
+                    // open its help sheet / setup screen — on iOS this is the background tap (#else).
+                    .contentShape(RoundedRectangle(cornerRadius: 20))
+                    .onTapGesture {
+                        store.send(.smartBannerContentTapped)
+                    }
                     .transition(.opacity.combined(with: .scale(scale: 0.95, anchor: .top)))
             }
         }

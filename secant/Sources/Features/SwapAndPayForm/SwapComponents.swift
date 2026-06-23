@@ -58,6 +58,21 @@ extension SwapAndPayForm {
                 } else if store.swapAssetsToPresent.isEmpty && store.searchTerm.isEmpty {
                     assetsLoadingComposition(colorScheme)
                 } else {
+#if os(macOS)
+                    // macOS: a `List` has no intrinsic height and collapses inside the card; use a
+                    // scrollable stack that fills the definite card height instead.
+                    ScrollView {
+                        LazyVStack(spacing: 0) {
+                            WithPerceptionTracking {
+                                ForEach(store.swapAssetsToPresent, id: \.self) { asset in
+                                    assetView(asset, colorScheme)
+                                        .zashiPlainButtonStyle()
+                                }
+                            }
+                        }
+                    }
+                    .background(Asset.Colors.background.color)
+#else
                     List {
                         WithPerceptionTracking {
                             ForEach(store.swapAssetsToPresent, id: \.self) { asset in
@@ -71,6 +86,7 @@ extension SwapAndPayForm {
                     .padding(.vertical, 1)
                     .background(Asset.Colors.background.color)
                     .listStyle(.plain)
+#endif
                 }
             }
         }

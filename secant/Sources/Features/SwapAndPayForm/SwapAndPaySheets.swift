@@ -14,6 +14,19 @@ import ComposableArchitecture
 
 extension SwapAndPayForm {
     @ViewBuilder func assetsLoadingComposition(_ colorScheme: ColorScheme) -> some View {
+#if os(macOS)
+        // macOS: a `List` collapses inside the fixed-height selector card; fill it with a
+        // scrollable stack of the same shimmering placeholders instead.
+        ScrollView {
+            LazyVStack(spacing: 0) {
+                ForEach(0..<15) { _ in
+                    NoTransactionPlaceholder(true)
+                }
+            }
+        }
+        .disabled(true)
+        .background(Asset.Colors.background.color)
+#else
         List {
             WithPerceptionTracking {
                 ForEach(0..<15) { _ in
@@ -28,6 +41,7 @@ extension SwapAndPayForm {
         .padding(.vertical, 1)
         .background(Asset.Colors.background.color)
         .listStyle(.plain)
+#endif
     }
     
     @ViewBuilder func assetsEmptyComposition(_ colorScheme: ColorScheme) -> some View {

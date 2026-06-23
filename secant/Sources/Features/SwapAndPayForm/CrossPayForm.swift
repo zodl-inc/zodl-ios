@@ -166,10 +166,8 @@ extension SwapAndPayForm {
                 store.send(.willEnterForeground)
             }
 #endif
-            .popover(isPresented: $store.assetSelectBinding) {
+            .zashiSelectorSheet(isPresented: $store.assetSelectBinding) {
                 assetContent(colorScheme)
-                    .padding(.horizontal, 4)
-                    .applyScreenBackground()
             }
             .zashiSheet(isPresented: $store.isQuotePresented) {
                 quoteContent(colorScheme)

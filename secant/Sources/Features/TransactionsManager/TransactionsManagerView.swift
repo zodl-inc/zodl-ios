@@ -170,6 +170,11 @@ struct TransactionsManagerView: View {
                     macFilterToolbarButton()
                 }
             }
+            // A title MUST be set or `.primaryAction` items collapse to the LEADING edge — landing
+            // over the sidebar / traffic lights instead of trailing. `.screenTitle` is a no-op on
+            // macOS, so anchor it here. The window hides the title text (titleVisibility = .hidden in
+            // the split), so this is placement-only: search + filter snap right, over the content.
+            .navigationTitle("")
 #endif
 #if !os(macOS)
             // macOS: the hide-balance eye lives in the split's left rail; don't duplicate it.
@@ -192,18 +197,24 @@ struct TransactionsManagerView: View {
 #if os(macOS)
     /// Native window-toolbar filter button (macOS). Provide ONLY the SF Symbol — no `.resizable()`,
     /// no frame, no color: the system sizes it and wraps it in a clean circular glass capsule.
-    /// (Forcing a size via `zImage` is what turned it into a scaled-up capsule.) The active-filter
-    /// count is omitted to preserve the circular shape; active filters show in the filter sheet.
+    /// (Forcing a size via `zImage` is what turned it into a scaled-up capsule.) An active filter is
+    /// signalled by swapping to the filled-circle glyph (the Finder/Mail idiom): it keeps the capsule
+    /// intact, unlike a count badge, which needs an overlay that breaks it. The exact count stays in
+    /// the filter sheet. `WithPerceptionTracking` so the glyph refreshes when `activeFilters` changes.
     @ViewBuilder func macFilterToolbarButton() -> some View {
-        Button {
-            store.send(.filterTapped)
-        } label: {
-            Image(systemName: "line.3.horizontal.decrease")
+        WithPerceptionTracking {
+            Button {
+                store.send(.filterTapped)
+            } label: {
+                Image(systemName: store.activeFilters.count > 0
+                      ? "line.3.horizontal.decrease.circle.fill"
+                      : "line.3.horizontal.decrease")
+            }
+            // The app sets a global `.zashiPlainButtonStyle()` for content buttons; that cascades into
+            // the toolbar and strips the native glass capsule. Resetting to `.automatic` restores the
+            // toolbar's default — a clean circular glass button.
+            .buttonStyle(.automatic)
         }
-        // The app sets a global `.zashiPlainButtonStyle()` for content buttons; that cascades into the
-        // toolbar and strips the native glass capsule. Resetting to `.automatic` restores the
-        // toolbar's default — a clean circular glass button.
-        .buttonStyle(.automatic)
     }
 #endif
 

@@ -97,6 +97,7 @@ struct Near1Click {
             
             return (data, response)
         } catch let urlError as URLError {
+            print("🟥 1click \(urlError.code.rawValue) \(urlError.code) — \(urlError.localizedDescription)")
             throw NetworkError.transport(urlError)
         } catch let error as NetworkError {
             throw error
@@ -195,8 +196,13 @@ extension Near1Click {
             }
         },
         swapAssets: {
-            let (data, _) = try await Near1Click.getCall(urlString: Constants.tokensUrl)
-            
+            // Send the Bearer JWT like every other 1click call (quote/submit/status). /tokens was the
+            // only unauthenticated one; 1click sits behind Cloudflare, whose bot-management resets the
+            // TLS connection of unauthenticated CFNetwork (URLSession) requests — which surfaced as a
+            // transport URLError on macOS while `curl` (different TLS fingerprint) and the authenticated
+            // CMC call both worked. Authenticating makes it a trusted request.
+            let (data, _) = try await Near1Click.getCall(urlString: Constants.tokensUrl, includeJwtKey: true)
+
             guard let jsonObject = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
                 throw URLError(.cannotParseResponse)
             }

@@ -153,10 +153,8 @@ struct AddressBookContactView: View {
                     action: \.alert
                 )
             )
-            .popover(isPresented: $store.chainSelectBinding) {
+            .zashiSelectorSheet(isPresented: $store.chainSelectBinding) {
                 assetContent(colorScheme)
-                    .padding(.horizontal, 4)
-                    .applyScreenBackground()
             }
         }
         .applyScreenBackground()
