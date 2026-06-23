@@ -203,6 +203,10 @@ struct MacSplitView: View {
             .scrollContentBackground(.hidden)
             // Grey selection instead of the system-accent blue.
             .tint(.gray)
+            // …but `.tint` only colours the NON-emphasized state; the first click focuses the table
+            // (emphasized) → system-accent blue, and it stays. Force the rows non-emphasized (grey) and
+            // re-assert on every selection change — same "set it each time" shape as FixedSidebarWidth.
+            .background(SidebarSelectionGray(trigger: selectedSection))
             // RULE #4: do NOT disable scrolling — the list must scroll if rows ever overflow so the
             // sidebar fits any window height (today there are few rows, so it won't scroll).
         }
@@ -423,6 +427,37 @@ private struct FixedSidebarWidth: NSViewRepresentable {
             for key in defaults.dictionaryRepresentation().keys where key.hasPrefix("NSSplitView Subview Frames") {
                 defaults.removeObject(forKey: key)
             }
+        }
+    }
+}
+
+/// The sidebar selection highlight is the system accent (blue) when the table is FOCUSED (emphasized)
+/// and grey otherwise; SwiftUI's `.tint(.gray)` only affects the non-emphasized state, so the first
+/// click focuses the table for good. Force the row views non-emphasized (grey) and re-assert on every
+/// selection change (the `trigger`), deferred so we run after the table re-emphasizes this cycle.
+private struct SidebarSelectionGray: NSViewRepresentable {
+    var trigger: MacSection
+
+    func makeNSView(context: Context) -> NSView { DeemphView() }
+    func updateNSView(_ nsView: NSView, context: Context) { (nsView as? DeemphView)?.schedule() }
+
+    final class DeemphView: NSView {
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            schedule()
+        }
+
+        func schedule() {
+            guard window != nil else { return }
+            DispatchQueue.main.async { [weak self] in self?.deemphasize() }
+        }
+
+        private func deemphasize() {
+            // Walk up to the sidebar List's own NSScrollView, then de-emphasize its table's rows.
+            var view: NSView? = self
+            while let cur = view, !(cur is NSScrollView) { view = cur.superview }
+            guard let table = (view as? NSScrollView)?.documentView as? NSTableView else { return }
+            table.enumerateAvailableRowViews { rowView, _ in rowView.isEmphasized = false }
         }
     }
 }
