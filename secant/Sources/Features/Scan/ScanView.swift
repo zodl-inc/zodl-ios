@@ -137,7 +137,7 @@ struct ScanView: View {
                 .padding(.vertical, 12)
 #if os(macOS)
                 // RULE #7: cap the scan overlay buttons (Cancel / Open Settings) — never full-width.
-                .frame(maxWidth: 360)
+                .frame(maxWidth: 261)
 #else
                 .frame(maxWidth: .infinity)
 #endif
@@ -327,28 +327,26 @@ extension ScanView {
     }
 
     static func normalizedRectsOfInterest(_ popoverRatio: CGFloat) -> (renderOnly: CGRect, real: CGRect) {
-        let rect = PlatformScreen.bounds
-        
         let readRectSize = 0.6
-
         let topLeftX = (1.0 - readRectSize) * 0.5
+        let real = CGRect(x: topLeftX, y: topLeftX, width: readRectSize, height: readRectSize)
+#if os(macOS)
+        // macOS: the cutout was sized from the SCREEN aspect ratio (so it was very tall) and CENTERED,
+        // which overlapped the Cancel button AND pushed the torch/library buttons (positioned just below
+        // the cutout) off the bottom of the window. Use a SQUARE cutout ~15% smaller, TOP-aligned —
+        // everything fits and the library button returns. (Camera scan zone `real` is unchanged; the iOS
+        // path is untouched — Rule #11.)
+        let macSize = readRectSize * 0.85
+        let renderOnly = CGRect(x: (1.0 - macSize) * 0.5, y: 0.14, width: macSize, height: macSize)
+#else
+        let rect = PlatformScreen.bounds
         let ratio = rect.width / rect.height
         let rectHeight = ratio * readRectSize * popoverRatio
         let topLeftY = (1.0 - rectHeight) * 0.5
+        let renderOnly = CGRect(x: topLeftX, y: topLeftY, width: readRectSize, height: rectHeight)
+#endif
 
-        return (
-            renderOnly: CGRect(
-                x: topLeftX,
-                y: topLeftY,
-                width: readRectSize,
-                height: rectHeight
-            ), real: CGRect(
-                x: topLeftX,
-                y: topLeftX,
-                width: readRectSize,
-                height: readRectSize
-            )
-        )
+        return (renderOnly: renderOnly, real: real)
     }
 }
 
