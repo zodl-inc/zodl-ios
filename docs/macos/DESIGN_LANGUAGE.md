@@ -54,17 +54,17 @@ pill — not edge-to-edge. Violations come from (a) call sites passing `infinity
 the stragglers.
 
 ### Content width — Rule #8
-**No content view is wider than 800pt.** Whether it's a single view over the whole window or the right
-side of the split, cap the content at `maxWidth: 800` and center it. Beyond 800 the content centers
+**No content view is wider than 740pt.** Whether it's a single view over the whole window or the right
+side of the split, cap the content at `maxWidth: 740` and center it. Beyond 740 the content centers
 with padding while the **background (Rule #6) still full-bleeds the window**. The three sizing rules
-compose: full-bleed window background (#6) → ≤800 centered content column (#8) → ≤360 capped buttons (#7).
+compose: full-bleed window background (#6) → ≤740 centered content column (#8) → ≤360 capped buttons (#7).
 
 ### Scan view — Rule #9 (full-window single view; exception to #8)
 The scan (QR) view is special in two ways:
-1. **Exempt from the 800pt cap (#8) — full-bleed content.** Its purposeful semi-transparent gray-out
+1. **Exempt from the 740pt cap (#8) — full-bleed content.** Its purposeful semi-transparent gray-out
    overlay with the scan-rect "hole" (the camera viewfinder cutout), plus the library button and
    controls, is built to fill the ENTIRE window. Applying #8 shrinks the overlay and the cutout to
-   800pt and breaks both the look and the camera framing.
+   740pt and breaks both the look and the camera framing.
 2. **Must be a SINGLE-view window — sidebar HIDDEN, never overlaid.** Scan is never presented inside the
    split (where the sidebar would sit over it). Present it as a full-window takeover with the sidebar
    hidden — the same pattern as `MacSplitView`'s other full-window `store.path` flows (Keystone, wallet
