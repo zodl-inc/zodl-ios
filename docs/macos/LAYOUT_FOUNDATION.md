@@ -43,8 +43,8 @@ us.
 - **Width:** SwiftUI `.navigationSplitViewColumnWidth` only seeds the INITIAL width and leaves the
   divider draggable (even `min==max`). Pin it in AppKit: walk `superview` to the enclosing
   `NSSplitView` → walk the responder chain to its `NSSplitViewController` → `splitViewItems.first`
-  (the sidebar) → set `minimumThickness == maximumThickness == <width>` (Zodl Mac: **320**, matching
-  macOS Messages), `canCollapse = false`.
+  (the sidebar) → set `minimumThickness == maximumThickness == <width>` (Zodl Mac: **232**, proportional to the
+  900×720 Beta window), `canCollapse = false`.
   **CRUCIAL: SwiftUI re-asserts a resizable width on EVERY `body` re-run (e.g. a section switch),
   undoing the pin → RE-PIN every time** — pass `selection` as a trigger to the `NSViewRepresentable`
   so `updateNSView` re-applies it. The walk is timing-flaky (the `NSSplitViewController` may not be

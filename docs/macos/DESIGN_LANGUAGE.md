@@ -22,7 +22,7 @@ hacks).
   / switch with 0 crashes.
 - **#3 — Toolbar rendering.** Never `.buttonStyle` above the toolbar; the system draws the Liquid Glass
   capsule. Content buttons style themselves locally.
-- **#4 — Sidebar sizing.** Authoritative fixed width (320, matching Messages), scrollable height. The
+- **#4 — Sidebar sizing.** Authoritative fixed width (232, proportional to the 900×720 Beta window), scrollable height. The
   constant always wins — persisted width is purged + overridden (the trap is closed; PROVEN).
 
 ### Modals — Rule #5 → [`MODALS.md`](MODALS.md)
@@ -46,7 +46,7 @@ truth: the content view. Single-view windows are the same — the content backgr
 window. Sandbox: Overview → "Rule #6" (`RootSplitView.contentBackground`).
 
 ### Buttons — Rule #7
-**Every `ZashiButton` has a capped width — never fully horizontally stretched.** The cap is **360pt**
+**Every `ZashiButton` has a capped width — never fully horizontally stretched.** The cap is **261pt**
 on macOS, done by the component when `infinityWidth: true` (the default: cap → background → expand &
 center, `secant/Sources/UIComponents/Buttons/ZashiButton.swift:89`). A button is a capped, centered
 pill — not edge-to-edge. Violations come from (a) call sites passing `infinityWidth: false`, or
@@ -54,17 +54,17 @@ pill — not edge-to-edge. Violations come from (a) call sites passing `infinity
 the stragglers.
 
 ### Content width — Rule #8
-**No content view is wider than 740pt.** Whether it's a single view over the whole window or the right
-side of the split, cap the content at `maxWidth: 740` and center it. Beyond 740 the content centers
+**No content view is wider than 536pt.** Whether it's a single view over the whole window or the right
+side of the split, cap the content at `maxWidth: 536` and center it. Beyond 536 the content centers
 with padding while the **background (Rule #6) still full-bleeds the window**. The three sizing rules
-compose: full-bleed window background (#6) → ≤740 centered content column (#8) → ≤360 capped buttons (#7).
+compose: full-bleed window background (#6) → ≤536 centered content column (#8) → ≤261 capped buttons (#7).
 
 ### Scan view — Rule #9 (full-window single view; exception to #8)
 The scan (QR) view is special in two ways:
-1. **Exempt from the 740pt cap (#8) — full-bleed content.** Its purposeful semi-transparent gray-out
+1. **Exempt from the 536pt cap (#8) — full-bleed content.** Its purposeful semi-transparent gray-out
    overlay with the scan-rect "hole" (the camera viewfinder cutout), plus the library button and
    controls, is built to fill the ENTIRE window. Applying #8 shrinks the overlay and the cutout to
-   740pt and breaks both the look and the camera framing.
+   536pt and breaks both the look and the camera framing.
 2. **Must be a SINGLE-view window — sidebar HIDDEN, never overlaid.** Scan is never presented inside the
    split (where the sidebar would sit over it). Present it as a full-window takeover with the sidebar
    hidden — the same pattern as `MacSplitView`'s other full-window `store.path` flows (Keystone, wallet
@@ -98,7 +98,7 @@ either `#if os(macOS)`-guarded or provably iOS-neutral; a shared component adds 
 platform branch and NEVER alters the iOS path. **Verify** by building an iOS target
 (`secant-testnet` / `secant-mainnet`) after macOS changes — iOS must stay green and visually unchanged.
 This is a HARD constraint: if a macOS fix can't be made without risking iOS, **stop and flag it rather
-than guess.** (It's why, e.g., Rule #7's 360pt cap lives inside `ZashiButton`'s `#if os(macOS)` block,
+than guess.** (It's why, e.g., Rule #7's 261pt cap lives inside `ZashiButton`'s `#if os(macOS)` block,
 not in shared layout, and #8's cap is the macOS-only `ScreenBackground.macContentMaxWidth`.)
 
 ### (more rules coming)
@@ -114,7 +114,7 @@ fix. Known flaws under this rule:
   size/padding the system can't shape into a circular capsule. Fix everywhere — on macOS render a plain
   SF symbol (no `.resizable()`, frame, color, or padding) and let the system size + capsule it. Audit
   every `zashiNavigationBarItems` / `.toolbar` button. (`.zImage` in regular CONTENT is fine.)
-- **Duplicated or raw button widths** (Rule #7): never re-implement the 360pt cap (e.g. the scan Cancel
+- **Duplicated or raw button widths** (Rule #7): never re-implement the 261pt cap (e.g. the scan Cancel
   button is a separate button that re-hardcodes it) or use a raw SwiftUI `Button` for a CTA (e.g. the
   agency-built Coinholder voting flow likely has pure `Button`s). Consolidate to `ZashiButton`, which
   owns the cap — one source of truth for button sizing.
