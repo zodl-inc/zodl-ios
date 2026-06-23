@@ -70,15 +70,21 @@ struct ZashiImagePicker: View {
         Color.clear
             .frame(width: 0, height: 0)
             .onAppear {
-                let panel = NSOpenPanel()
-                panel.allowedContentTypes = [.image]
-                panel.allowsMultipleSelection = false
-                panel.canChooseDirectories = false
-                panel.canChooseFiles = true
-                if panel.runModal() == .OK, let url = panel.url, let image = NSImage(contentsOf: url) {
-                    selectedImage = image
+                // Defer past the SwiftUI view update: NSOpenPanel.runModal() spins a nested modal run
+                // loop, which silently no-ops (the panel never appears) when called synchronously inside
+                // onAppear during a render pass — the reported "library button does nothing". Hopping to
+                // the next runloop turn lets the file dialog open normally.
+                DispatchQueue.main.async {
+                    let panel = NSOpenPanel()
+                    panel.allowedContentTypes = [.image]
+                    panel.allowsMultipleSelection = false
+                    panel.canChooseDirectories = false
+                    panel.canChooseFiles = true
+                    if panel.runModal() == .OK, let url = panel.url, let image = NSImage(contentsOf: url) {
+                        selectedImage = image
+                    }
+                    showSheet = false
                 }
-                showSheet = false
             }
     }
 }
