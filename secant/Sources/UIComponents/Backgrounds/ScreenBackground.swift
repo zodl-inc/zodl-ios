@@ -12,9 +12,9 @@ import SwiftUI
 /// `apply*ScreenBackground()` modifiers below, so single-view flows AND the split's right panel
 /// both inherit the cap without per-screen changes. No effect on iOS.
 enum ZashiScreenLayout {
-    /// Max content width on macOS. Single full-window views (~1120pt) and the split's right panel
-    /// (~842pt) both constrain their content to this; the background is never capped.
-    static let macContentMaxWidth: CGFloat = 740
+    /// Max content width on macOS. Single full-window views (~900pt) and the split's right panel
+    /// (~668pt) both constrain their content to this; the background is never capped.
+    static let macContentMaxWidth: CGFloat = 536
 }
 
 private extension View {

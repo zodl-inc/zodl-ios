@@ -90,8 +90,8 @@ private extension zodlmac_internalApp {
 
 private enum WindowSize {
     // Fixed landscape window for the macOS split layout. Tweak these two numbers to resize.
-    static let width: CGFloat = 1120
-    static let height: CGFloat = 760
+    static let width: CGFloat = 900
+    static let height: CGFloat = 720
 }
 
 /// Locks the macOS window to a fixed size and disables the full-screen (green) button, so the

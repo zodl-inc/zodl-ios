@@ -86,7 +86,7 @@ struct ZashiButton<PrefixContent, AccessoryContent>: View where PrefixContent: V
             // center. Capping only the label and applying the background AFTER the expand-to-infinity
             // frame (the old code) left a full-width background with merely centered text, which is
             // exactly what looked "full width".
-            .frame(maxWidth: infinityWidth ? 360 : nil, minHeight: minHeight)
+            .frame(maxWidth: infinityWidth ? 261 : nil, minHeight: minHeight)
             .background { buttonBackground }
             .frame(maxWidth: infinityWidth ? .infinity : nil, alignment: .center)
 #else
