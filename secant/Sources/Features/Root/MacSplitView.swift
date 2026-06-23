@@ -32,6 +32,8 @@ struct MacSplitView: View {
     @Shared(.appStorage(.sensitiveContent)) private var isSensitiveContentHidden = false
     @State private var selectedSection: MacSection = .activity
     @State private var hasInitialized = false
+    // RULE #9: hide the sidebar while scan is showing (scan must be a full-window single view).
+    @State private var columnVisibility: NavigationSplitViewVisibility = .all
     let store: StoreOf<Root>
     let tokenName: String
     let networkType: NetworkType
@@ -88,11 +90,20 @@ struct MacSplitView: View {
         }
     }
 
+    // RULE #9: scan is pushed inside the Send / Pay-Swap / More section flows (their `.scan` path
+    // element), which on macOS renders in the split detail with the sidebar still visible. Detect it
+    // so we collapse the sidebar (below) and let scan own the whole window — nothing overriding it.
+    private var isScanActive: Bool {
+        store.sendCoordFlowState.path.contains { $0.is(\.scan) }
+            || store.swapAndPayCoordFlowState.path.contains { $0.is(\.scan) }
+            || store.settingsState.path.contains { $0.is(\.scan) }
+    }
+
     private var splitView: some View {
         // RULE #1/#2: the NATIVE split — it owns the chrome (traffic lights inside the sidebar, the
         // unified glass toolbar). No manual HStack, no SidebarVibrancyView, no title-bar configurator;
         // fighting SwiftUI's window ownership at the view level crashes or gets overridden.
-        NavigationSplitView {
+        NavigationSplitView(columnVisibility: $columnVisibility) {
             sidebar
                 // RULE #4: seed the initial width; `FixedSidebarWidth` pins the underlying
                 // NSSplitViewItem (single-value column width still lets the divider drag) and re-pins
@@ -128,6 +139,11 @@ struct MacSplitView: View {
             if newPath == nil {
                 store.send(selectedSection.action)
             }
+        }
+        // RULE #9: while scan is showing in any section flow, collapse to detail-only so the sidebar is
+        // hidden and scan owns the whole window — nothing overrides it. Restores when scan dismisses.
+        .onChange(of: isScanActive) { _, scanning in
+            columnVisibility = scanning ? .detailOnly : .all
         }
         // Account-switch sheet (account list + Keystone connect). Hosted here on macOS, since HomeView
         // — which hosts it on iOS — is not in the macOS view tree.
@@ -190,34 +206,18 @@ struct MacSplitView: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 16)
 
-            // Navigation — CUSTOM selectable rows so the selection is ALWAYS grey. The native
-            // `List(selection:)` highlight turns system-accent blue the moment the table is focused
-            // (emphasized) and no amount of re-asserting reliably wins that race. Each row is a plain
-            // button that sets `selectedSection` (still driving the section action via onChange) and
-            // draws its own grey capsule when selected — no system highlight in play, so never blue.
-            List {
+            // Navigation — native selectable rows. The native (system-accent) selection highlight is
+            // fine for Beta; the custom-grey attempts were wider than native and had render latency.
+            List(selection: $selectedSection) {
                 ForEach(MacSection.allCases, id: \.self) { section in
-                    Button {
-                        selectedSection = section
-                    } label: {
-                        Label(section.title, systemImage: section.systemImage)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .listRowBackground(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(section == selectedSection ? Color.gray.opacity(0.25) : Color.clear)
-                            .padding(.vertical, 1)
-                    )
+                    Label(section.title, systemImage: section.systemImage)
+                        .tag(section)
                 }
             }
             .listStyle(.sidebar)
             // Let the sidebar vibrancy material show through uniformly (header + list share one
             // material) instead of the List drawing its own opaque background.
             .scrollContentBackground(.hidden)
-            // Keep the row icons/content neutral-grey (not accent).
-            .tint(.gray)
             // RULE #4: do NOT disable scrolling — the list must scroll if rows ever overflow so the
             // sidebar fits any window height (today there are few rows, so it won't scroll).
         }
