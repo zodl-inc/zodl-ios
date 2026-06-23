@@ -135,7 +135,12 @@ struct ScanView: View {
                 .foregroundColor(Asset.Colors.ZDesign.Base.obsidian.color)
                 .padding(.horizontal, 18)
                 .padding(.vertical, 12)
+#if os(macOS)
+                // RULE #7: cap the scan overlay buttons (Cancel / Open Settings) — never full-width.
+                .frame(maxWidth: 360)
+#else
                 .frame(maxWidth: .infinity)
+#endif
                 .background {
                     RoundedRectangle(cornerRadius: Design.Radius._xl)
                         .fill(Asset.Colors.ZDesign.Base.bone.color)
