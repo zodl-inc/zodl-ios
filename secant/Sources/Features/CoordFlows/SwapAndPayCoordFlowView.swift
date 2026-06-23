@@ -68,9 +68,16 @@ struct SwapAndPayCoordFlowView: View {
                                 Button {
                                     store.send(.helpSheetRequested)
                                 } label: {
+#if os(macOS)
+                                    // RULE #3: provide ONLY the SF symbol — no forced size/padding — so
+                                    // the system wraps it in a clean circular glass capsule. (zImage's
+                                    // size + padding broke it into a non-circular pill.)
+                                    Image(systemName: "info.circle")
+#else
                                     Asset.Assets.infoCircle.image
                                         .zImage(size: 24, style: Design.Text.primary)
                                         .padding(store.isSensitiveButtonVisible ? 8 : Design.Spacing.navBarButtonPadding)
+#endif
                                 }
                             }
                     )
