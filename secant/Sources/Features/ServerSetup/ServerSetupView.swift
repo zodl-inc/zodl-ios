@@ -324,31 +324,25 @@ struct ServerSetupView: View {
                 let needsServer = store.connectionMode == .manual && (store.selectedServer == nil || customIsInvalid)
                 let canSave = store.hasChanges && !needsServer
 
-                Button {
-                    store.send(.setServerTapped)
-                } label: {
-                    HStack(spacing: 8) {
-                        Text(localizable: .serverSetupSave)
-                            .zFont(.semiBold, size: 16,
-                                   style: !canSave
-                                   ? Design.Btns.Primary.fgDisabled
-                                   : Design.Btns.Primary.fg
-                            )
-                        if store.isUpdatingServer {
-                            progressView(invertTint: true)
-                        }
+                // Rule #7 + button consolidation: ZashiButton owns the 261 macOS width cap and the
+                // primary/disabled styling — don't re-implement a full-width hand-rolled CTA. Branch only
+                // to keep the in-progress spinner as the accessory while the server is being saved.
+                if store.isUpdatingServer {
+                    ZashiButton(
+                        String(localizable: .serverSetupSave),
+                        accessoryView: progressView(invertTint: true)
+                    ) {
+                        store.send(.setServerTapped)
                     }
-                    .frame(height: 48)
-                    .frame(maxWidth: .infinity)
-                    .background(
-                        !canSave
-                        ? Design.Btns.Primary.bgDisabled.color(colorScheme)
-                        : Design.Btns.Primary.bg.color(colorScheme)
-                    )
-                    .cornerRadius(10)
+                    .disabled(true)
+                    .screenHorizontalPadding()
+                } else {
+                    ZashiButton(String(localizable: .serverSetupSave)) {
+                        store.send(.setServerTapped)
+                    }
+                    .disabled(!canSave)
                     .screenHorizontalPadding()
                 }
-                .disabled(store.isUpdatingServer || !canSave)
             }
         }
     }
