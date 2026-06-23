@@ -77,4 +77,17 @@ extension View {
             )
         )
     }
+
+    /// Back/dismiss control for a screen that is the ROOT of a sidebar SECTION's navigation stack.
+    /// On iOS the section is presented (popover/push), so this is the normal `.zashiBack` and the back
+    /// arrow dismisses it. On macOS the section is a peer-root inside the split — there is nothing to go
+    /// back to — so it renders NOTHING (no back button). RULE: use this instead of `.zashiBack` on every
+    /// sidebar-section root screen, so adding a new section can never reintroduce the macOS back-button bug.
+    @ViewBuilder func zashiSectionRootBack(customDismiss: @escaping () -> Void) -> some View {
+#if os(macOS)
+        self
+#else
+        zashiBack(customDismiss: customDismiss)
+#endif
+    }
 }

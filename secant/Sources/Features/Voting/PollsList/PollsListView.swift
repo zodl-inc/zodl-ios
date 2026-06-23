@@ -47,7 +47,7 @@ struct PollsListView: View {
             .padding(.vertical, 1)
             .applyScreenBackground()
             .screenTitle(String(localizable: .coinVoteCommonScreenTitle))
-            .zashiBack { store.send(.dismissFlow) }
+            .zashiSectionRootBack { store.send(.dismissFlow) }
             .toolbar {
                 ToolbarItem(placement: .zashiTrailing) {
                     Button {
@@ -55,7 +55,9 @@ struct PollsListView: View {
                     } label: {
                         settingsButtonIcon()
                     }
+#if !os(macOS)
                     .zashiPlainButtonStyle()
+#endif
                     .accessibilityLabel(String(localizable: .coinVotePollsListChainConfigAccessibility))
                 }
             }
@@ -176,6 +178,11 @@ struct PollsListView: View {
 
     @ViewBuilder
     private func settingsButtonIcon() -> some View {
+#if os(macOS)
+        // Plain SF symbol so macOS 26 draws its Liquid Glass capsule around the toolbar item — a forced
+        // size (.zImage(size:)) breaks the capsule.
+        Image(systemName: "gearshape")
+#else
         let icon = Asset.Assets.Icons.settings2.image
             .zImage(size: 20, style: Design.Btns.Ghost.fg)
 
@@ -189,6 +196,7 @@ struct PollsListView: View {
                         .fill(Design.Btns.Ghost.bg.color(colorScheme))
                 }
         }
+#endif
     }
 
     private var visiblePolls: [RoundListItem] {
