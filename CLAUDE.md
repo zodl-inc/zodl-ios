@@ -85,3 +85,9 @@ struct SomeCoordFlow {
 - `secant/swiftgen.yml` - SwiftGen configuration
 - `secant/Resources/PartnerKeys.plist` - Partner API keys (gitignored, do not commit)
 - `secant/Resources/Localizable.xcstrings` - Localization strings
+
+## macOS design language (LAW — read before any macOS UI work)
+
+Zodl Mac has a defined design language — **define the system first, then only follow the rules.** The home/index is `docs/macos/DESIGN_LANGUAGE.md` (philosophy + every rule + links); read it first for any macOS UI work. All macOS layout / chrome / navigation follows the **4-rule foundation** in `docs/macos/LAYOUT_FOUNDATION.md`: native `NavigationSplitView` (never a manual HStack or view-level AppKit window hacks); a `ToolbarSpacer` on button-less screens (keeps the traffic lights inside the sidebar with no glass bubble); `Group { switch }.id(selection)` navigation (push/pop/switch, no crash); never `.buttonStyle` above the toolbar; an AppKit-pinned fixed sidebar width. `secant/Sources/Features/Root/MacSplitView.swift` is the reference implementation; the sandbox is `~/Downloads/testApp`.
+
+For modal/overlay choices (sheets, alerts, dialogs, popovers, windows, inspectors, file panels), see `docs/macos/MODALS.md` — the native decision guide plus what the wallet uses today. Note: `.zashiSheet` and `.zashiSelectorSheet` are **custom overlay cards** on macOS, not native `.sheet` (deliberate — native sheets can't stack and iOS detents collapse them).
