@@ -33,6 +33,17 @@ struct WelcomeView: View {
     }
 
     var body: some View {
+#if os(macOS)
+        // macOS: render IDENTICALLY to the static SplashView — a full-canvas, centered logo on the
+        // splash colour. The GeometryReader/`.position` path below didn't fill the whole canvas (the
+        // logo wasn't stretched and a second colour showed where it stopped), which made the splash
+        // look like TWO different "Hi" states. One consistent Hi now. iOS path is untouched (Rule #11).
+        ZStack {
+            Asset.Colors.splash.color.ignoresSafeArea()
+            Asset.Assets.welcomeScreenLogo.image
+                .zImage(height: 60, color: .white)
+        }
+#else
         GeometryReader { proxy in
             WithPerceptionTracking {
                 Asset.Assets.welcomeScreenLogo.image
@@ -45,6 +56,7 @@ struct WelcomeView: View {
         }
         .background(Asset.Colors.splash.color)
         .ignoresSafeArea()
+#endif
     }
 }
 
