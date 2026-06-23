@@ -194,20 +194,14 @@ struct SplashView: View {
         : 0.0
     }
 
-    var hiHeight: CGFloat {
-        var potentialCountryCode: String?
-        
-        if #available(iOS 16, *) {
-            potentialCountryCode = Locale.current.language.languageCode?.identifier
-        } else {
-            potentialCountryCode = Locale.current.languageCode
-        }
-        
-        if let potentialCountryCode, potentialCountryCode == "es" {
-            return 0.6
-        } else {
-            return 0.35
-        }
+    // Centered "Hi" logo, scaled up on macOS for the larger window. Matches WelcomeView.hiLogoHeight so
+    // the launch transition (splash → welcome → home) shows ONE consistent logo. iOS size unchanged.
+    private var hiLogoHeight: CGFloat {
+#if os(macOS)
+        96
+#else
+        60
+#endif
     }
 
     var body: some View {
@@ -219,7 +213,7 @@ struct SplashView: View {
             ZStack {
                 Asset.Colors.splash.color.ignoresSafeArea()
                 Asset.Assets.welcomeScreenLogo.image
-                    .zImage(height: 60, color: .white)
+                    .zImage(height: hiLogoHeight, color: .white)
                 lockedIcons()
             }
 #else
@@ -233,15 +227,15 @@ struct SplashView: View {
     }
     
     @ViewBuilder func hiIcon() -> some View {
-        GeometryReader { proxy in
+        // Simplified from a GeometryReader/.position (over-engineering left from when two images needed
+        // placing) to a plain centered ZStack — the logo just centers, shifted up by hiIconYOffset when
+        // auth fails. The tear-away mask + splash colour are unchanged, so the iOS animation is identical.
+        ZStack {
+            Asset.Colors.splash.color
             Asset.Assets.welcomeScreenLogo.image
-                .zImage(height: 60, color: .white)
-                .position(
-                    x: proxy.frame(in: .local).midX,
-                    y: proxy.frame(in: .local).midY - hiIconYOffset
-                )
+                .zImage(height: hiLogoHeight, color: .white)
+                .offset(y: -hiIconYOffset)
         }
-        .background(Asset.Colors.splash.color)
         .mask {
             SplashManager.SplashShape(points: splashManager.points)
         }
