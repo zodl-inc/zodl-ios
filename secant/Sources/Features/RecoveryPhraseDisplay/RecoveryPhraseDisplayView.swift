@@ -138,7 +138,7 @@ struct RecoveryPhraseDisplayView: View {
             )
         }
         .padding(.horizontal, 20)
-        .applyScreenBackground()
+        .applyScreenBackground(scrollable: true)
         .screenTitle(String(localizable: .recoveryPhraseDisplayScreenTitle).uppercased())
     }
     

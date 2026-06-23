@@ -34,12 +34,16 @@ private extension View {
     /// rendered ABOVE the window (seed grid, delete-wallet warnings, voting intro). Wrap so short
     /// content still fills + centers, but tall content SCROLLS within the pane instead of escaping it.
     /// No-op on iOS (Rule #11). Deliberately NOT applied to the scan view (capped: false) or sheets.
-    @ViewBuilder func macScrollableContent() -> some View {
+    @ViewBuilder func macScrollableContent(_ enabled: Bool) -> some View {
 #if os(macOS)
-        GeometryReader { proxy in
-            ScrollView {
-                frame(maxWidth: .infinity, minHeight: proxy.size.height, alignment: .center)
+        if enabled {
+            GeometryReader { proxy in
+                ScrollView {
+                    frame(maxWidth: .infinity, minHeight: proxy.size.height, alignment: .center)
+                }
             }
+        } else {
+            self
         }
 #else
         self
@@ -184,10 +188,10 @@ extension View {
     /// RULE #8: caps content to `macContentMaxWidth` on macOS (no-op on iOS). RULE #9: the scan view
     /// passes `capped: false` so its full-window camera overlay isn't shrunk to the 800pt column.
     /// On iOS both paths are identical (the cap is macOS-only), so this is iOS-neutral (Rule #11).
-    @ViewBuilder func applyScreenBackground(capped: Bool = true) -> some View {
+    @ViewBuilder func applyScreenBackground(capped: Bool = true, scrollable: Bool = false) -> some View {
         if capped {
             macCappedScreenContent()
-                .macScrollableContent()
+                .macScrollableContent(scrollable)
                 .modifier(ScreenBackgroundModifier(color: Asset.Colors.background.color))
         } else {
             modifier(ScreenBackgroundModifier(color: Asset.Colors.background.color))
@@ -213,7 +217,6 @@ extension View {
 
     func applyErredScreenBackground() -> some View {
         macCappedScreenContent()
-            .macScrollableContent()
             .modifier(
                 ScreenGradientBackgroundModifier(mode: .erred)
             )
@@ -221,7 +224,6 @@ extension View {
 
     func applyIndigoScreenBackground() -> some View {
         macCappedScreenContent()
-            .macScrollableContent()
             .modifier(
                 ScreenGradientBackgroundModifier(mode: .indigo)
             )
@@ -229,7 +231,6 @@ extension View {
 
     func applyBrandedScreenBackground() -> some View {
         macCappedScreenContent()
-            .macScrollableContent()
             .modifier(
                 ScreenGradientBackgroundModifier(mode: .branded)
             )
@@ -237,7 +238,6 @@ extension View {
 
     func applyOnboardingScreenBackground() -> some View {
         macCappedScreenContent()
-            .macScrollableContent()
             .modifier(
                 ScreenOnboardingGradientBackgroundModifier()
             )
@@ -245,7 +245,6 @@ extension View {
 
     func applyDefaultGradientScreenBackground() -> some View {
         macCappedScreenContent()
-            .macScrollableContent()
             .modifier(
                 ScreenDefaultGradientBackgroundModifier()
             )
@@ -253,7 +252,6 @@ extension View {
 
     func applySuccessScreenBackground() -> some View {
         macCappedScreenContent()
-            .macScrollableContent()
             .modifier(
                 ScreenGradientBackgroundModifier(mode: .success)
             )
@@ -261,7 +259,6 @@ extension View {
 
     func applyFailureScreenBackground() -> some View {
         macCappedScreenContent()
-            .macScrollableContent()
             .modifier(
                 ScreenGradientBackgroundModifier(mode: .failure)
             )
@@ -269,7 +266,6 @@ extension View {
 
     func applyWarnScreenBackground() -> some View {
         macCappedScreenContent()
-            .macScrollableContent()
             .modifier(
                 ScreenGradientBackgroundModifier(mode: .warning)
             )
