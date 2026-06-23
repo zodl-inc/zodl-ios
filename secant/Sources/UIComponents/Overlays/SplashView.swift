@@ -47,9 +47,14 @@ final class SplashManager: ObservableObject {
             if featureFlags.appLaunchBiometric {
                 authenticate()
             } else {
+#if os(macOS)
+                // macOS: no biometric + no animation — reveal Home right away (static logo only).
+                Task { self.finished() }
+#else
                 Task {
                     self.spinTheWheel()
                 }
+#endif
             }
         }
     }
@@ -63,7 +68,12 @@ final class SplashManager: ObservableObject {
             if await !localAuthentication.authenticate() {
                 self.authenticationFailed()
             } else {
+#if os(macOS)
+                // macOS: no tear-away animation — reveal Home immediately after a successful auth.
+                self.finished()
+#else
                 self.spinTheWheel()
+#endif
             }
         }
     }
@@ -202,11 +212,23 @@ struct SplashView: View {
 
     var body: some View {
         if splashManager.isOn && !isHidden {
+#if os(macOS)
+            // macOS: a STATIC, window-sized logo — no tear-away animation, no screen-bounds mask
+            // (that mask sized to the whole screen and "framed" the logo inside the window). Touch ID
+            // runs over it; on success Home is revealed immediately. iOS keeps the animated splash.
+            ZStack {
+                Asset.Colors.splash.color.ignoresSafeArea()
+                Asset.Assets.welcomeScreenLogo.image
+                    .zImage(height: 60, color: .white)
+                lockedIcons()
+            }
+#else
             ZStack {
                 hiIcon()
                 lockedIcons()
             }
             .ignoresSafeArea(.keyboard)
+#endif
         }
     }
     
