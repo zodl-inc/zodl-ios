@@ -310,6 +310,13 @@ struct MacSplitView: View {
                     tokenName: tokenName
                 )
                 .macSidebarToolbarSpacer()
+            case .vote:
+                // Beta: Coinholder Voting as a peer-root (its own NavigationStack), rendered in the
+                // detail like Send/Pay. iOS still presents it as a popover from Settings.
+                VotingCoordFlowView(
+                    store: store.scope(state: \.votingCoordFlowState, action: \.votingCoordFlow)
+                )
+                .macSidebarToolbarSpacer()
             case .more:
                 SettingsView(
                     store: store.scope(state: \.settingsState, action: \.settings)
@@ -321,7 +328,7 @@ struct MacSplitView: View {
 }
 
 private enum MacSection: CaseIterable {
-    case activity, receive, send, pay, swap, more
+    case activity, receive, send, pay, swap, vote, more
 
     var title: String {
         switch self {
@@ -330,6 +337,7 @@ private enum MacSection: CaseIterable {
         case .send: return String(localizable: .tabsSend)
         case .pay: return String(localizable: .swapAndPayPay)
         case .swap: return String(localizable: .swapAndPaySwap)
+        case .vote: return "Beta: Vote"
         case .more: return "More"
         }
     }
@@ -341,6 +349,7 @@ private enum MacSection: CaseIterable {
         case .send: return "arrow.up.circle"
         case .pay: return "creditcard"
         case .swap: return "arrow.2.squarepath"
+        case .vote: return "hand.raised"
         case .more: return "ellipsis"
         }
     }
@@ -352,6 +361,7 @@ private enum MacSection: CaseIterable {
         case .send: return .home(.sendTapped)
         case .pay: return .home(.payWithNearTapped)
         case .swap: return .home(.swapWithNearTapped)
+        case .vote: return .macVoteSectionSelected
         case .more: return .home(.settingsTapped)
         }
     }

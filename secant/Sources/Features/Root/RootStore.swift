@@ -107,6 +107,9 @@ struct Root {
         var requestZecCoordFlowState = RequestZecCoordFlow.State.initial
         var scanCoordFlowState = ScanCoordFlow.State.initial
         var sendCoordFlowState = SendCoordFlow.State.initial
+        // macOS: the "Beta: Vote" sidebar section renders this as a peer-root (iOS presents voting from
+        // Settings instead, so this Root-level state is used only on macOS).
+        var votingCoordFlowState = VotingCoordFlow.State()
         var settingsState = Settings.State.initial
         var signWithKeystoneCoordFlowState = SignWithKeystoneCoordFlow.State.initial
         var swapAndPayCoordFlowState = SwapAndPayCoordFlow.State.initial
@@ -223,6 +226,8 @@ struct Root {
         case scanCoordFlow(ScanCoordFlow.Action)
         case sendAgainRequested(TransactionState)
         case sendCoordFlow(SendCoordFlow.Action)
+        case votingCoordFlow(VotingCoordFlow.Action)
+        case macVoteSectionSelected
         case settings(Settings.Action)
         case signWithKeystoneCoordFlow(SignWithKeystoneCoordFlow.Action)
         case signWithKeystoneRequested
@@ -366,7 +371,32 @@ struct Root {
         Scope(state: \.sendCoordFlowState, action: \.sendCoordFlow) {
             SendCoordFlow()
         }
-        
+
+        Scope(state: \.votingCoordFlowState, action: \.votingCoordFlow) {
+            VotingCoordFlow()
+        }
+
+        // macOS: the "Beta: Vote" sidebar section configures the Root-level voting flow from the
+        // selected account (mirrors SettingsCoordinator.coinholderPollingTapped); VotingCoordFlowView's
+        // onAppear then loads. Only (re)initializes when the account changes, to preserve in-progress
+        // voting when switching back to the section. iOS path is untouched.
+        Reduce { state, action in
+            switch action {
+            case .macVoteSectionSelected:
+                guard let account = state.selectedWalletAccount else { return .none }
+                let walletId = account.id.id.map { String(format: "%02x", $0) }.joined()
+                if state.votingCoordFlowState.walletId != walletId {
+                    var votingState = VotingCoordFlow.State()
+                    votingState.isKeystoneUser = account.vendor == .keystone
+                    votingState.walletId = walletId
+                    state.votingCoordFlowState = votingState
+                }
+                return .none
+            default:
+                return .none
+            }
+        }
+
         Scope(state: \.scanCoordFlowState, action: \.scanCoordFlow) {
             ScanCoordFlow()
         }
