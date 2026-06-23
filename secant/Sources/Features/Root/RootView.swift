@@ -99,10 +99,21 @@ private extension RootView {
 
                 case .home:
 #if os(macOS)
-                    MacSplitView(store: store, tokenName: tokenName, networkType: networkType)
-                        .overlayedWithSplash(store.splashAppeared) {
-                            store.send(.splashRemovalRequested)
+                    // STARTUP FIX: the splash is a CONTENT overlay, but MacSplitView's window toolbar
+                    // (Activity's search + filter) is chrome ABOVE the overlay, so those items leak
+                    // through during the splash. Don't build the split until the splash is gone
+                    // (`splashAppeared == true`); show the splash colour beneath meanwhile so the
+                    // tear-away reveals a seamless background, and the toolbar only ever exists after.
+                    Group {
+                        if store.splashAppeared {
+                            MacSplitView(store: store, tokenName: tokenName, networkType: networkType)
+                        } else {
+                            Asset.Colors.splash.color.ignoresSafeArea()
                         }
+                    }
+                    .overlayedWithSplash(store.splashAppeared) {
+                        store.send(.splashRemovalRequested)
+                    }
 #else
                     ZStack {
                         // Home view
