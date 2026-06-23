@@ -1577,12 +1577,13 @@ extension SwapAndPay.State {
     }
     
     var payUsdLabel: String {
+        // MOB-1435: USD countervalue is rounded to 2 decimals, matching the Send page (SendFormStore).
         guard let selectedAsset else {
-            return conversionCrossPayFormatter.string(from: NSNumber(value: 0.0)) ?? "0"
+            return Decimal(0).formatted(.number.precision(.fractionLength(2)))
         }
 
         let amountInUsd = assetAmount * selectedAsset.usdPrice
-        return conversionCrossPayFormatter.string(from: NSDecimalNumber(decimal: amountInUsd)) ?? "0"
+        return amountInUsd.formatted(.number.precision(.fractionLength(2)))
     }
 }
 
