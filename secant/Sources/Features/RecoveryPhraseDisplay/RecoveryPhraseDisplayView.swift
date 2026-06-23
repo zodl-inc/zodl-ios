@@ -120,6 +120,10 @@ struct RecoveryPhraseDisplayView: View {
                             animation: .easeInOut
                         )
                     } label: {
+#if os(macOS)
+                        // RULE #3: plain SF symbols → clean circular glass capsule (no forced zImage size).
+                        Image(systemName: (store.isRecoveryPhraseHidden || !store.isWalletBackup) ? "info.circle" : "eye.slash")
+#else
                         if store.isRecoveryPhraseHidden || !store.isWalletBackup {
                             Asset.Assets.Icons.help.image
                                 .zImage(size: 24, style: Design.Text.primary)
@@ -129,6 +133,7 @@ struct RecoveryPhraseDisplayView: View {
                                 .zImage(size: 24, style: Design.Text.primary)
                                 .padding(Design.Spacing.navBarButtonPadding)
                         }
+#endif
                     }
             )
         }

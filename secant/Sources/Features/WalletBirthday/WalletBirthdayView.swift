@@ -93,9 +93,14 @@ struct WalletBirthdayView: View {
                     Button {
                         store.send(.helpSheetRequested)
                     } label: {
+#if os(macOS)
+                        // RULE #3: plain SF symbol → clean circular glass capsule (no forced zImage size).
+                        Image(systemName: "info.circle")
+#else
                         Asset.Assets.Icons.help.image
                             .zImage(size: 24, style: Design.Text.primary)
                             .padding(Design.Spacing.navBarButtonPadding)
+#endif
                     }
             )
             .screenHorizontalPadding()

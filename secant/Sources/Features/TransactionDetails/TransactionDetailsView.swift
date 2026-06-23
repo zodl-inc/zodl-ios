@@ -256,6 +256,10 @@ extension TransactionDetailsView {
         Button {
             store.send(.bookmarkTapped)
         } label: {
+#if os(macOS)
+            // RULE #3: plain SF symbols → clean circular glass capsule (no forced zImage size).
+            Image(systemName: store.isBookmarked ? "bookmark.fill" : "bookmark")
+#else
             if store.isBookmarked {
                 Asset.Assets.Icons.bookmarkCheck.image
                     .zImage(size: 32, style: Design.Text.primary)
@@ -267,6 +271,7 @@ extension TransactionDetailsView {
                     .padding(4)
                     .tint(Asset.Colors.primary.color)
             }
+#endif
         }
     }
     
