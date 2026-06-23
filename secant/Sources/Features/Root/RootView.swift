@@ -298,13 +298,15 @@ private extension RootView {
                     }
 
                 case .welcome:
+                    // The welcome screen is a full-bleed splash (colour + centered logo), NOT a capped
+                    // single-view form. macOSSingleViewLayout() framed it to a 460pt column on the app
+                    // background — the "green frame, not full window" seen at launch. Let it fill.
                     WelcomeView(
                         store: store.scope(
                             state: \.welcomeState,
                             action: \.welcome
                         )
                     )
-                    .macOSSingleViewLayout()
                 }
             }
             .onOpenURL(perform: { store.goToDeeplink($0) })
