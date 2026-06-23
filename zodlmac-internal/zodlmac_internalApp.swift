@@ -107,6 +107,12 @@ private struct FixedWindowConfigurator: NSViewRepresentable {
             window.styleMask.remove(.resizable)
             window.collectionBehavior.remove(.fullScreenPrimary)
             window.collectionBehavior.insert(.fullScreenNone)
+            // Lock the content size so a screen with tall, unconstrained content (e.g. the voting
+            // "how to vote" screen) can't grow the window (which also enlarged the sidebar). With the
+            // size locked, such a screen is clamped to the fixed pane and its ScrollView scrolls instead.
+            let fixedContent = NSSize(width: WindowSize.width, height: WindowSize.height)
+            window.contentMinSize = fixedContent
+            window.contentMaxSize = fixedContent
             // Always open CENTERED on the active screen — never restore a remembered (often too-low /
             // partially-offscreen) position. Disable frame autosave, then center within `visibleFrame`
             // (which excludes the menu bar + Dock). Deferred so we win against SwiftUI's restore.
