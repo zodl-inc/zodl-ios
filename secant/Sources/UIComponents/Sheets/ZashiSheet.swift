@@ -126,8 +126,8 @@ struct ZashiSheetModifier<SheetContent: View>: ViewModifier {
             .padding(.vertical, Design.Spacing._3xl)
             .frame(maxWidth: 480)
             .fixedSize(horizontal: false, vertical: true)
-            .background(Asset.Colors.background.color)
-            .clipShape(RoundedRectangle(cornerRadius: Design.Radius._4xl))
+            // RULE #5: the macOS dynamic-content card surface is Liquid Glass (was a solid color).
+            .macSheetCardSurface()
             .overlay(alignment: .topTrailing) {
                 Button {
                     isPresented = false
@@ -178,6 +178,22 @@ struct ZashiSheetModifier<SheetContent: View>: ViewModifier {
         }
     }
 }
+
+#if os(macOS)
+private extension View {
+    /// RULE #5: the macOS sheet card surface is Liquid Glass (macOS 26+), with a solid fallback below.
+    /// macOS-only — the iOS sheet path is untouched (Rule #11).
+    @ViewBuilder func macSheetCardSurface() -> some View {
+        if #available(macOS 26.0, *) {
+            self.glassEffect(in: RoundedRectangle(cornerRadius: Design.Radius._4xl))
+        } else {
+            self
+                .background(Asset.Colors.background.color)
+                .clipShape(RoundedRectangle(cornerRadius: Design.Radius._4xl))
+        }
+    }
+}
+#endif
 
 extension View {
     func zashiSheet(
