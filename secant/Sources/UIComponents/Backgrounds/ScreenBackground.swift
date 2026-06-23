@@ -164,13 +164,16 @@ struct ScreenDefaultGradientBackgroundModifier: ViewModifier {
 }
 
 extension View {
-    func applyScreenBackground() -> some View {
-        macCappedScreenContent()
-            .modifier(
-                ScreenBackgroundModifier(
-                    color: Asset.Colors.background.color
-                )
-            )
+    /// RULE #8: caps content to `macContentMaxWidth` on macOS (no-op on iOS). RULE #9: the scan view
+    /// passes `capped: false` so its full-window camera overlay isn't shrunk to the 800pt column.
+    /// On iOS both paths are identical (the cap is macOS-only), so this is iOS-neutral (Rule #11).
+    @ViewBuilder func applyScreenBackground(capped: Bool = true) -> some View {
+        if capped {
+            macCappedScreenContent()
+                .modifier(ScreenBackgroundModifier(color: Asset.Colors.background.color))
+        } else {
+            modifier(ScreenBackgroundModifier(color: Asset.Colors.background.color))
+        }
     }
 
     func applySheetBackground() -> some View {

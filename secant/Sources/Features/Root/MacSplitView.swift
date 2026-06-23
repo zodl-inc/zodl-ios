@@ -51,6 +51,13 @@ struct MacSplitView: View {
                     store: store.scope(state: \.addKeystoneHWWalletCoordFlowState, action: \.addKeystoneHWWalletCoordFlow),
                     tokenName: tokenName
                 )
+            case .scanCoordFlow?:
+                // RULE #9: scan is a full-window SINGLE view — sidebar hidden, never overlaid. Rendered
+                // here as a `store.path` takeover (bypasses the split) like the other full-window flows.
+                ScanCoordFlowView(
+                    store: store.scope(state: \.scanCoordFlowState, action: \.scanCoordFlow),
+                    tokenName: tokenName
+                )
             case .walletBackup?:
                 WalletBackupCoordFlowView(
                     store: store.scope(state: \.walletBackupCoordFlowState, action: \.walletBackupCoordFlow)

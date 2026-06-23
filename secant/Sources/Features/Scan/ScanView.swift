@@ -109,7 +109,10 @@ struct ScanView: View {
             }
             .edgesIgnoringSafeArea(.all)
             .ignoresSafeArea()
-            .applyScreenBackground()
+            // RULE #9: scan is EXEMPT from the macOS 800pt content cap — the full-window gray-out
+            // overlay + camera cutout must fill the whole window, not shrink to the content column.
+            // (No-op on iOS, where there is no cap — Rule #11.)
+            .applyScreenBackground(capped: false)
             .onAppear { store.send(.onAppear) }
             .onDisappear { store.send(.onDisappear) }
             .zashiBackV2(hidden: store.isCameraEnabled, invertedColors: colorScheme == .light) {
