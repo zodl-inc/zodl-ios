@@ -105,6 +105,20 @@ not in shared layout, and #8's cap is the macOS-only `ScreenBackground.macConten
 The design language is still being authored. Add each new rule as its own chapter here once it's been
 proven in the sandbox and confirmed.
 
+## Working rules (process — how we fix, not what we build)
+**Fix flaws broadly + consolidate.** When a flaw is found (a pattern that breaks a rule), do NOT just
+patch the one reported instance — **review the whole codebase and fix EVERY occurrence**, then
+**consolidate the pattern into a shared component** so it can't recur. One flaw → one sweep → one shared
+fix. Known flaws under this rule:
+- **`.zImage(size:)` on a top-bar button breaks the system glass capsule** (Rule #3): it forces a
+  size/padding the system can't shape into a circular capsule. Fix everywhere — on macOS render a plain
+  SF symbol (no `.resizable()`, frame, color, or padding) and let the system size + capsule it. Audit
+  every `zashiNavigationBarItems` / `.toolbar` button. (`.zImage` in regular CONTENT is fine.)
+- **Duplicated or raw button widths** (Rule #7): never re-implement the 360pt cap (e.g. the scan Cancel
+  button is a separate button that re-hardcodes it) or use a raw SwiftUI `Button` for a CTA (e.g. the
+  agency-built Coinholder voting flow likely has pure `Button`s). Consolidate to `ZashiButton`, which
+  owns the cap — one source of truth for button sizing.
+
 ## How a rule is made (the loop)
 1. **Experiment** in the sandbox `~/Downloads/testApp` (one focused section per concern).
 2. **Confirm** visually on macOS 26.
