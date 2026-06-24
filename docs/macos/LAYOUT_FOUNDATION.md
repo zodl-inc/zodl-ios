@@ -26,9 +26,38 @@ Sidebar options are **peer roots**; each is its own `NavigationStack`. The detai
 previous section's stack on switch (resetting it to root) instead of the shared detail column
 reconciling mismatched path types. Push / pop / pop-to-root / switch between independent options run
 with **0 crashes**, and the native back button renders correctly at the detail's leading edge (not
-over the sidebar). NOTE: 0 crashes contradicts the earlier assumption that "mismatched path types"
-alone caused the wallet's `comparisonTypeMismatch` — the `.id` teardown sidesteps it. (Worth a
-post-mortem on the original crash.)
+over the sidebar).
+
+### Rule #2a — the `.id` is NOT enough when a section has a PUSHED path (POST-MORTEM, PROVEN 2026-06-24)
+The sandbox showed 0 crashes because it only ever switched sections **at root**. In the real wallet,
+switching a section that has a **pushed** screen still crashes: open a transaction detail in Activity
+(pushes onto its `NavigationStack`), then tap another section (e.g. Receive) →
+`SwiftUI/NavigationColumnState.swift: Fatal error: AnyNavigationPath.Error.comparisonTypeMismatch`.
+`.id(selection)` resets the detail **content** but NOT the column's **nav state**, which SwiftUI
+reconciles across the switch — a pushed path of one section's type vs the incoming section's different
+path type can't be compared. (Clearing the path in the **same** update does NOT help — the pushed path
+is still live when SwiftUI reconciles.)
+
+**THE FIX — a three-phase switch through a one-frame BLANK detail** (`MacSplitView.sectionSelection` +
+`detailSection`):
+1. Intercept the sidebar `List(selection:)` with a custom `Binding` (do NOT bind `selectedSection` directly).
+2. On switch, THIS frame: send `Root.macResetSectionPaths` (clears EVERY section's `.path`), move the
+   sidebar highlight (`selectedSection`), and **blank the detail** (`detailSection = nil`).
+3. NEXT runloop: reveal the new section (`DispatchQueue.main.async { detailSection = newSection }`).
+4. The detail renders via **`detailSection`** (not `selectedSection`); the `nil` branch is the blank.
+5. The blank branch MUST carry **`.macSidebarToolbarSpacer()`** (Rule #1) — without toolbar content the
+   traffic lights jump to the title bar for that frame and the whole window "pops".
+
+The one-frame `nil` (a) breaks the reconcile (no path type present) and (b) HIDES the pop-to-root — the
+user sees `B → blank → C`, never the popped root `A`.
+
+**FUTURE-PROOFING — every new sidebar section / detail flow MUST:**
+- add its `.path.removeAll()` to `Root.macResetSectionPaths`;
+- be reached only through the `sectionSelection` binding (never set `selectedSection` directly elsewhere);
+- render through `detailSection` in the detail `switch`;
+- give a button-less root a `.macSidebarToolbarSpacer()`.
+
+NEVER switch sections in a single update while a pushed path is live — always go through blank-then-reveal.
 
 ## Rule #3 — toolbar rendering (let the system draw the capsule)
 NEVER apply `.buttonStyle` / custom padding / sizes ABOVE the toolbar, and never on a toolbar item.
