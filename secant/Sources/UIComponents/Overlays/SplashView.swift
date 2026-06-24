@@ -44,7 +44,13 @@ final class SplashManager: ObservableObject {
         
         if !isHidden {
             preparePoints()
-            if featureFlags.appLaunchBiometric {
+            // Only prompt for biometrics at launch when a wallet actually EXISTS. Authenticating to
+            // unlock nothing (fresh install / onboarding) is pointless and annoying — macOS surfaced
+            // this by prompting Touch ID on the empty onboarding launch. `areKeysPresent` is the same
+            // "wallet exists" signal the Root init flow uses; with no wallet, skip straight to reveal.
+            @Dependency(\.walletStorage) var walletStorage
+            let walletExists = (try? walletStorage.areKeysPresent()) ?? false
+            if featureFlags.appLaunchBiometric && walletExists {
                 authenticate()
             } else {
 #if os(macOS)
