@@ -12,7 +12,7 @@ import ComposableArchitecture
 extension SwapAndPayForm {
     @ViewBuilder func swapFormView(_ colorScheme: ColorScheme) -> some View {
         WithPerceptionTracking {
-            ScrollView {
+            PlatformScrollable {
                 VStack(spacing: 0) {
                     if store.isSwapExperienceEnabled {
                         fromView(colorScheme)
@@ -110,7 +110,13 @@ extension SwapAndPayForm {
                     }
                 }
                 .ignoresSafeArea()
+#if os(macOS)
+                // macOS: fill the fixed window (the screen-height minHeight overflows it); the existing
+                // Spacers then pin the CTA to the bottom with no scroll — content-top / CTA-bottom.
+                .frame(maxHeight: .infinity)
+#else
                 .frame(minHeight: keyboardVisible ? 0 : safeAreaHeight)
+#endif
                 .screenHorizontalPadding()
             }
             .padding(.top, 1)
