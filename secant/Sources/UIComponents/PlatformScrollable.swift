@@ -25,15 +25,9 @@
 import SwiftUI
 
 struct PlatformScrollable<Content: View>: View {
-    /// Whether the macOS (non-scrolling) container FILLS the height. Forms set this true (the default) so
-    /// an inner Spacer pins the CTA to the bottom; a display screen that has its OWN outer Spacer (e.g.
-    /// Receive: `VStack { PlatformScrollable { … }; Spacer; footer }`) sets false so the content keeps its
-    /// natural height at the top and the outer Spacer does the pinning.
-    let fillsHeight: Bool
     @ViewBuilder let content: Content
 
-    init(fillsHeight: Bool = true, @ViewBuilder content: () -> Content) {
-        self.fillsHeight = fillsHeight
+    init(@ViewBuilder content: () -> Content) {
         self.content = content()
     }
 
@@ -42,7 +36,7 @@ struct PlatformScrollable<Content: View>: View {
         VStack(spacing: 0) {
             content
         }
-        .frame(maxWidth: .infinity, maxHeight: fillsHeight ? .infinity : nil, alignment: .top)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
 #else
         ScrollView {
             content
