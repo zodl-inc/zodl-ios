@@ -257,8 +257,10 @@ extension TransactionDetailsView {
             store.send(.bookmarkTapped)
         } label: {
 #if os(macOS)
-            // RULE #3: plain SF symbols → clean circular glass capsule (no forced zImage size).
+            // macOS 26 sizes the glass capsule to the icon's WIDTH — a bare SF symbol is narrow → a TALL
+            // capsule. Horizontal padding widens it to the same circular capsule as the back button.
             Image(systemName: store.isBookmarked ? "bookmark.fill" : "bookmark")
+                .zashiToolbarIconPadding()
 #else
             if store.isBookmarked {
                 Asset.Assets.Icons.bookmarkCheck.image

@@ -123,6 +123,7 @@ struct RecoveryPhraseDisplayView: View {
 #if os(macOS)
                         // RULE #3: plain SF symbols → clean circular glass capsule (no forced zImage size).
                         Image(systemName: (store.isRecoveryPhraseHidden || !store.isWalletBackup) ? "info.circle" : "eye.slash")
+                            .zashiToolbarIconPadding()
 #else
                         if store.isRecoveryPhraseHidden || !store.isWalletBackup {
                             Asset.Assets.Icons.help.image

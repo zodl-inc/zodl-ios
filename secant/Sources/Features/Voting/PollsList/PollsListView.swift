@@ -179,9 +179,10 @@ struct PollsListView: View {
     @ViewBuilder
     private func settingsButtonIcon() -> some View {
 #if os(macOS)
-        // Plain SF symbol so macOS 26 draws its Liquid Glass capsule around the toolbar item — a forced
-        // size (.zImage(size:)) breaks the capsule.
+        // macOS 26 sizes the glass capsule to the icon's WIDTH — a bare SF symbol is narrow → a TALL
+        // capsule. Horizontal padding widens it to the same circular capsule as the back button.
         Image(systemName: "gearshape")
+            .zashiToolbarIconPadding()
 #else
         let icon = Asset.Assets.Icons.settings2.image
             .zImage(size: 20, style: Design.Btns.Ghost.fg)

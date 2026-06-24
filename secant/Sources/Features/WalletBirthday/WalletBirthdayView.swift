@@ -94,8 +94,10 @@ struct WalletBirthdayView: View {
                         store.send(.helpSheetRequested)
                     } label: {
 #if os(macOS)
-                        // RULE #3: plain SF symbol → clean circular glass capsule (no forced zImage size).
+                        // macOS 26 sizes the glass capsule to the icon's WIDTH — a bare SF symbol is narrow
+                        // → tall capsule. zashiToolbarIconPadding() widens it to circular (matches the back).
                         Image(systemName: "info.circle")
+                            .zashiToolbarIconPadding()
 #else
                         Asset.Assets.Icons.help.image
                             .zImage(size: 24, style: Design.Text.primary)

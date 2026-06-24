@@ -69,10 +69,11 @@ struct SwapAndPayCoordFlowView: View {
                                     store.send(.helpSheetRequested)
                                 } label: {
 #if os(macOS)
-                                    // RULE #3: provide ONLY the SF symbol — no forced size/padding — so
-                                    // the system wraps it in a clean circular glass capsule. (zImage's
-                                    // size + padding broke it into a non-circular pill.)
+                                    // macOS 26 sizes the glass capsule to the icon's WIDTH — a bare SF
+                                    // symbol is narrow → a TALL capsule. Horizontal padding widens it to
+                                    // the same circular capsule as the back button.
                                     Image(systemName: "info.circle")
+                                        .zashiToolbarIconPadding()
 #else
                                     Asset.Assets.infoCircle.image
                                         .zImage(size: 24, style: Design.Text.primary)

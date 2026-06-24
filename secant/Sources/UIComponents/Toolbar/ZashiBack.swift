@@ -90,4 +90,17 @@ extension View {
         zashiBack(customDismiss: customDismiss)
 #endif
     }
+
+    /// macOS: horizontal padding that widens a toolbar icon into a circular Liquid Glass capsule. A bare
+    /// SF symbol / asset is narrow, so macOS 26 sizes the capsule to that width → a TALL pill; this padding
+    /// matches the back button's width and makes it circular. ONE source of truth for the value, so a tweak
+    /// (or a later swap SF → branded Asset icons — the shape comes from width, not the icon source) is a
+    /// one-liner. No-op on iOS (toolbar icons there draw their own iOS styling). RULE for toolbar icons.
+    @ViewBuilder func zashiToolbarIconPadding() -> some View {
+#if os(macOS)
+        padding(.horizontal, 11)
+#else
+        self
+#endif
+    }
 }
