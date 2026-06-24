@@ -236,11 +236,16 @@ extension View {
             )
     }
 
+    /// RULE #8a: the onboarding / launch LANDING is a full-bleed HERO (logo + title + CTAs centered on
+    /// the gradient), the same family as Splash/Welcome — NOT a content screen, so it is EXEMPT from
+    /// Rule #8's 536pt content cap (cf. Scan, Rule #9). Capping it boxes the hero into a narrow column
+    /// on the wide macOS window. The gradient already full-bleeds; here the content fills the window too
+    /// (inner logo/title keep their centering, buttons keep the #7 261pt cap). `macCappedScreenContent()`
+    /// was macOS-only, so dropping it is a no-op on iOS (Rule #11-safe).
     func applyOnboardingScreenBackground() -> some View {
-        macCappedScreenContent()
-            .modifier(
-                ScreenOnboardingGradientBackgroundModifier()
-            )
+        modifier(
+            ScreenOnboardingGradientBackgroundModifier()
+        )
     }
 
     func applyDefaultGradientScreenBackground() -> some View {

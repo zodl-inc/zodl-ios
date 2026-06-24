@@ -286,21 +286,26 @@ private extension RootView {
 #endif
 
                 case .onboarding:
+                    // The onboarding landing is a full-bleed HERO (logo + title + CTAs on the gradient),
+                    // the same launch-sequence family as .welcome — NOT a capped single-view form. The old
+                    // macOSSingleViewLayout() framed it (gradient included) to a 460pt column on the app
+                    // background — the boxed "card" on a dark surround. The onboarding gradient must
+                    // full-bleed the window, so the wrapper is gone (Rule #8a). Let it fill.
                     RestoreWalletCoordFlowView(
                         store: store.scope(
                             state: \.onboardingState,
                             action: \.onboarding
                         )
                     )
-                    .macOSSingleViewLayout()
                     .overlayedWithSplash(store.splashAppeared) {
                         store.send(.splashRemovalRequested)
                     }
 
                 case .welcome:
                     // The welcome screen is a full-bleed splash (colour + centered logo), NOT a capped
-                    // single-view form. macOSSingleViewLayout() framed it to a 460pt column on the app
-                    // background — the "green frame, not full window" seen at launch. Let it fill.
+                    // single-view form. The macOSSingleViewLayout() box wrapper (since removed, Rule #8a)
+                    // framed it to a 460pt column on the app background — the "green frame, not full
+                    // window" seen at launch. Let it fill.
                     WelcomeView(
                         store: store.scope(
                             state: \.welcomeState,

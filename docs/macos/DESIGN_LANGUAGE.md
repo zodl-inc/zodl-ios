@@ -59,6 +59,24 @@ side of the split, cap the content at `maxWidth: 536` and center it. Beyond 536 
 with padding while the **background (Rule #6) still full-bleeds the window**. The three sizing rules
 compose: full-bleed window background (#6) → ≤536 centered content column (#8) → ≤261 capped buttons (#7).
 
+### Onboarding / launch hero — Rule #8a (full-bleed hero; exception to #8)
+The onboarding **landing** screen (`RestoreWalletCoordFlowView` — logo + title + Restore/Create CTAs
+vertically centered on the onboarding gradient) is a **hero**, the same launch-sequence family as
+`SplashView` / `WelcomeView` (all full-bleed). It is EXEMPT from #8's 536pt content cap. A hero gets
+boxed into a centered column by **two** independent caps — kill **both**:
+1. **Host wrapper** (the dominant one). Do NOT wrap a hero in a phone-width box at the `RootView` switch.
+   The old `macOSSingleViewLayout()` painted the app background full-bleed and framed the screen —
+   *gradient included* — to a 460pt column with vertical inset: the "boxed card on a dark surround".
+   It boxed `.welcome`, then `.onboarding`; it is now **removed** (no callers). A hero case carries no
+   layout wrapper, so the screen's own background full-bleeds the window.
+2. **Content cap.** `applyOnboardingScreenBackground()` does NOT apply `macCappedScreenContent()` (unlike
+   the capped `applyScreenBackground()`), so the hero content fills instead of sitting in the 536 column.
+
+Inner elements still obey their own rules — the gradient full-bleeds (#6), buttons stay ≤261 (#7), and
+content stays centered. Distinct from #9: Scan is full-bleed for its camera overlay; the hero is
+full-bleed because it's a hero. (`RootView.swift` `.onboarding` / `.welcome`;
+`secant/Sources/UIComponents/Backgrounds/ScreenBackground.swift`.)
+
 ### Scan view — Rule #9 (full-window single view; exception to #8)
 The scan (QR) view is special in two ways:
 1. **Exempt from the 536pt cap (#8) — full-bleed content.** Its purposeful semi-transparent gray-out
@@ -70,7 +88,8 @@ The scan (QR) view is special in two ways:
    hidden — the same pattern as `MacSplitView`'s other full-window `store.path` flows (Keystone, wallet
    backup, server switch), NOT in the detail pane. The camera/overlay owns the whole window.
 
-The one screen where full-width, single-view content is intentional.
+Full-width, single-view content is intentional here and on the onboarding hero (#8a); everywhere else
+#8's 536pt cap holds.
 (`secant/Sources/Features/Scan/ScanView.swift`, `secant/Sources/Features/CoordFlows/ScanCoordFlowView.swift`.)
 
 ### Flows promote split → full-window (lock) — Rule #10
