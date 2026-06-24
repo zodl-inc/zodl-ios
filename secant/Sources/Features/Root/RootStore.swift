@@ -228,6 +228,7 @@ struct Root {
         case sendCoordFlow(SendCoordFlow.Action)
         case votingCoordFlow(VotingCoordFlow.Action)
         case macVoteSectionSelected
+        case macResetSectionPaths
         case settings(Settings.Action)
         case signWithKeystoneCoordFlow(SignWithKeystoneCoordFlow.Action)
         case signWithKeystoneRequested
@@ -391,6 +392,18 @@ struct Root {
                     votingState.walletId = walletId
                     state.votingCoordFlowState = votingState
                 }
+                return .none
+            case .macResetSectionPaths:
+                // macOS: pop EVERY section's NavigationStack to root before the sidebar switches
+                // sections. SwiftUI's NavigationSplitView reconciles the detail column's nav state on a
+                // section switch; a PUSHED path of one type vs the incoming section's different path type
+                // crashes with AnyNavigationPath.comparisonTypeMismatch (a try!). Empty = nothing to compare.
+                state.transactionsCoordFlowState.path.removeAll()
+                state.receiveState.path.removeAll()
+                state.sendCoordFlowState.path.removeAll()
+                state.swapAndPayCoordFlowState.path.removeAll()
+                state.votingCoordFlowState.path.removeAll()
+                state.settingsState.path.removeAll()
                 return .none
             default:
                 return .none

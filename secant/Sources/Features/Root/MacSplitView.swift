@@ -165,6 +165,25 @@ struct MacSplitView: View {
 
     // MARK: - Left rail (native NavigationSplitView sidebar — material + lights inside come for free)
 
+    // CRASH FIX (AnyNavigationPath.comparisonTypeMismatch): intercept the sidebar selection to pop EVERY
+    // section's NavigationStack to root BEFORE switching. SwiftUI's NavigationSplitView reconciles the
+    // detail column's nav state across a section switch; a PUSHED path (e.g. a transaction detail open in
+    // Activity) of a different type than the incoming section triggers a try! crash in NavigationColumnState
+    // — the `.id(selectedSection)` resets the CONTENT but not that column nav state. Clearing the paths
+    // first = nothing to reconcile. We keep the native split layout; the trade-off is the outgoing section
+    // resets to root (the intended pop-to-root behaviour).
+    private var sectionSelection: Binding<MacSection> {
+        Binding(
+            get: { selectedSection },
+            set: { newSection in
+                guard newSection != selectedSection else { return }
+                LoggerProxy.event("[macOS nav] section \(selectedSection) -> \(newSection): clearing section paths (avoid comparisonTypeMismatch)")
+                store.send(.macResetSectionPaths)
+                selectedSection = newSection
+            }
+        )
+    }
+
     private var sidebar: some View {
         VStack(spacing: 0) {
             // Header (account + eye + balance + sync) lives OUTSIDE the List: Liquid Glass is
@@ -208,7 +227,7 @@ struct MacSplitView: View {
 
             // Navigation — native selectable rows. The native (system-accent) selection highlight is
             // fine for Beta; the custom-grey attempts were wider than native and had render latency.
-            List(selection: $selectedSection) {
+            List(selection: sectionSelection) {
                 ForEach(MacSection.allCases, id: \.self) { section in
                     Label(section.title, systemImage: section.systemImage)
                         .tag(section)
