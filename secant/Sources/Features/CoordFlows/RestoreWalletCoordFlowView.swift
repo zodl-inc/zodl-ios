@@ -204,203 +204,263 @@ struct RecoverySeedPhraseEntryView: View {
 
     var body: some View {
         WithPerceptionTracking {
-            ZStack {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 0) {
-                        Text(localizable: .restoreWalletTitle)
-                            .zFont(.semiBold, size: 24, style: Design.Text.primary)
-                            .padding(.top, 20)
-                            .onLongPressGesture {
-#if DEBUG
-                                store.send(.debugPasteSeed)
-#endif
-                            }
-                        
-                        Text(localizable: .restoreWalletInfo)
-                            .zFont(size: 14, style: Design.Text.primary)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .padding(.top, 8)
-                            .padding(.bottom, 20)
-                        
-                        ForEach(0..<8, id: \.self) { j in
-                            HStack(spacing: 4) {
-                                ForEach(0..<3, id: \.self) { i in
-                                    WithPerceptionTracking {
-                                        HStack(spacing: 0) {
-                                            Text("\(j * 3 + i + 1)")
-                                                .zFont(.medium, size: 14, style: Design.Tags.tcCountFg)
-                                                .frame(minWidth: 12)
-                                                .padding(.vertical, 2)
-                                                .padding(.horizontal, 4)
-                                                .background {
-                                                    RoundedRectangle(cornerRadius: Design.Radius._lg)
-                                                        .fill(Design.Tags.tcCountBg.color(colorScheme))
-                                                }
-                                                .padding(.trailing, 4)
-                                            
-                                            TextField("", text: $store.words[j * 3 + i])
-                                                .zFont(size: 16, style: Design.Text.primary)
-                                                .disableAutocorrection(true)
-#if os(iOS)
-                                                .textInputAutocapitalization(.never)
-#endif
-                                                .focused($focusedField, equals: .field((j * 3 + i)))
-#if os(iOS)
-                                                .keyboardType(.alphabet)
-#endif
-                                                .submitLabel(.next)
-                                                .onSubmit {
-                                                    focusedField = ((j * 3 + i) < 23)
-                                                    ? .field((j * 3 + i) + 1)
-                                                    : .field(0)
-                                                }
-                                        }
-                                        .padding(6)
-                                        .background {
-                                            RoundedRectangle(cornerRadius: Design.Radius._xl)
-                                                .fill(
-                                                    focusedField == .field(j * 3 + i)
-                                                    ? Design.Surfaces.bgPrimary.color(colorScheme)
-                                                    : Design.Surfaces.bgSecondary.color(colorScheme)
-                                                )
-                                                .background {
-                                                    RoundedRectangle(cornerRadius: Design.Radius._xl)
-                                                        .stroke(strokeColor(index: j * 3 + i), lineWidth: 2)
-                                                }
-                                        }
-                                        .padding(2)
-                                        .padding(.bottom, 4)
-                                    }
-                                }
-                            }
-                        }
-                        
-                        if keyboardVisible {
-                            Color.clear
-                                .frame(height: 44)
-                        }
+            seedEntryLayout
+                .frame(maxWidth: .infinity)
+                .trackKeyboardVisibility($keyboardVisible)
+                .onChange(of: keyboardVisible) { value in
+                    store.send(.updateKeyboardFlag(value))
+                }
+                .onChange(of: focusedField) { handle in
+                    if case .field(let index) = handle {
+                        store.send(.selectedIndex(index))
                     }
-                    .screenHorizontalPadding()
-                }
-                .padding(.vertical, 1)
-                
-                VStack {
-                    Spacer()
-                    
-                    ZashiButton(String(localizable: .generalNext)) {
-                        store.send(.nextTapped)
+
+                    if handle == nil {
+                        store.send(.selectedIndex(nil))
                     }
-                    .disabled(!store.isValidSeed)
-                    .padding(.bottom, 24)
-                    .screenHorizontalPadding()
                 }
-                .ignoresSafeArea(.keyboard, edges: .bottom)
-            }
-            .frame(maxWidth: .infinity)
-            .trackKeyboardVisibility($keyboardVisible)
-            .onChange(of: keyboardVisible) { value in
-                store.send(.updateKeyboardFlag(value))
-            }
-            .onChange(of: focusedField) { handle in
-                if case .field(let index) = handle {
-                    store.send(.selectedIndex(index))
-                }
-                
-                if handle == nil {
-                    store.send(.selectedIndex(nil))
-                }
-            }
-            .onChange(of: store.nextIndex) { value in
-                if let nextIndex = value {
-                    focusedField = .field(nextIndex)
-                }
-            }
-            .onChange(of: store.isKeyboardVisible) { value in
-                if keyboardVisible && !value {
-                    keyboardVisible = value
-                    focusedField = nil
-                }
-            }
-            .applyScreenBackground()
-            .zashiNavigationBarItems(
-                trailing:
-                    Button {
-                        store.send(.helpSheetRequested)
-                    } label: {
-#if os(macOS)
-                        // macOS 26 sizes the glass capsule to the icon's WIDTH — a bare SF symbol is narrow
-                        // → tall capsule. zashiToolbarIconPadding() widens it to circular (matches the back).
-                        Image(systemName: "info.circle")
-                            .zashiToolbarIconPadding()
-#else
-                        Asset.Assets.Icons.help.image
-                            .zImage(size: 24, style: Design.Text.primary)
-                            .padding(Design.Spacing.navBarButtonPadding)
-#endif
+                .onChange(of: store.nextIndex) { value in
+                    if let nextIndex = value {
+                        focusedField = .field(nextIndex)
                     }
-            )
-            .zashiBack()
-            .screenTitle(String(localizable: .importWalletButtonRestoreWallet))
-            .overlay(
-                VStack(spacing: 0) {
-                    Spacer()
-                    
-                    Asset.Colors.primary.color
-                        .frame(height: 1)
-                        .opacity(0.1)
-                    
-                    HStack(alignment: .center) {
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 4) {
-                                ForEach(store.suggestedWords, id: \.self) { suggestedWord in
-                                    Button {
-                                        store.send(.suggestedWordTapped(suggestedWord))
-                                    } label: {
-                                        Text(suggestedWord)
-                                            .zFont(size: 16, style: Design.Text.primary)
-                                            .fixedSize()
-                                            .padding(8)
-                                            .background {
-                                                RoundedRectangle(cornerRadius: Design.Radius._xl)
-                                                    .fill(Design.Surfaces.bgSecondary.color(colorScheme))
-                                            }
-                                    }
-                                }
-                            }
-                            .padding(.leading, 4)
-                        }
-                        .mask(
-                            LinearGradient(
-                                gradient: Gradient(stops: [
-                                    .init(color: Design.Surfaces.bgSecondary.color(colorScheme).opacity(0.7), location: 0.9),
-                                    .init(color: Design.Surfaces.bgSecondary.color(colorScheme).opacity(0), location: 0.98)
-                                ]),
-                                startPoint: .leading,
-                                endPoint: .trailing
-                            )
-                        )
-                        .frame(height: 38)
-                        
-                        Spacer()
-                        
+                }
+                .onChange(of: store.isKeyboardVisible) { value in
+                    if keyboardVisible && !value {
+                        keyboardVisible = value
+                        focusedField = nil
+                    }
+                }
+                .applyScreenBackground()
+                .zashiNavigationBarItems(
+                    trailing:
                         Button {
-                            focusedField = nil
+                            store.send(.helpSheetRequested)
                         } label: {
-                            Text(String(localizable: .generalDone).uppercased())
-                                .zFont(.regular, size: 14, style: Design.Text.primary)
+#if os(macOS)
+                            // macOS 26 sizes the glass capsule to the icon's WIDTH — a bare SF symbol is narrow
+                            // → tall capsule. zashiToolbarIconPadding() widens it to circular (matches the back).
+                            Image(systemName: "info.circle")
+                                .zashiToolbarIconPadding()
+#else
+                            Asset.Assets.Icons.help.image
+                                .zImage(size: 24, style: Design.Text.primary)
+                                .padding(Design.Spacing.navBarButtonPadding)
+#endif
                         }
-                        .padding(.trailing, 24)
-                        .padding(.leading, 4)
-                    }
-                    .applyScreenBackground()
-                    .frame(height: keyboardVisible ? 44 : 0)
-                    .frame(maxWidth: .infinity)
-                    .opacity(keyboardVisible ? 1 : 0)
-                }
-            )
+                )
+                .zashiBack()
+                .screenTitle(String(localizable: .importWalletButtonRestoreWallet))
+#if os(iOS)
+                .overlay(keyboardSuggestionsBar)
+#endif
         }
     }
-    
+
+    // Two layouts share the same word fields / chips. iOS: the grid scrolls and the suggestion bar is
+    // pinned above the software keyboard (`keyboardSuggestionsBar` overlay). macOS: there is NO software
+    // keyboard, so that bar would never show — instead the matches WRAP (FlowLayout) into a band BETWEEN
+    // the grid and the Next CTA, visible only while there are suggestions. Rule #11: the iOS branch is the
+    // original tree, untouched.
+    @ViewBuilder private var seedEntryLayout: some View {
+#if os(macOS)
+        // No software keyboard on macOS, so the suggestions can't ride above it: they wrap (FlowLayout)
+        // directly BELOW the word grid, scrolling with it. Shown from the FIRST character (matching iOS's
+        // timing), but capped to 2 lines (`maxRows: 2` + `.clipped()`) so a 1–2 char prefix's many matches
+        // can't flood the window — which words fit depends on width, narrowing as the user types.
+        VStack(spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    seedEntryGrid
+
+                    if !store.suggestedWords.isEmpty {
+                        FlowLayout(spacing: 8, alignment: .leading, maxRows: 2) {
+                            ForEach(store.suggestedWords, id: \.self) { suggestedWord in
+                                suggestionChip(suggestedWord)
+                            }
+                        }
+                        .clipped()
+                        .padding(.top, 12)
+                    }
+                }
+                .screenHorizontalPadding()
+            }
+            .padding(.vertical, 1)
+
+            nextButton
+                .padding(.top, 16)
+                .padding(.bottom, 24)
+                .screenHorizontalPadding()
+        }
+#else
+        ZStack {
+            ScrollView {
+                seedEntryGrid
+                    .screenHorizontalPadding()
+            }
+            .padding(.vertical, 1)
+
+            VStack {
+                Spacer()
+
+                nextButton
+                    .padding(.bottom, 24)
+                    .screenHorizontalPadding()
+            }
+            .ignoresSafeArea(.keyboard, edges: .bottom)
+        }
+#endif
+    }
+
+    @ViewBuilder private var seedEntryGrid: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(localizable: .restoreWalletTitle)
+                .zFont(.semiBold, size: 24, style: Design.Text.primary)
+                .padding(.top, 20)
+                .onLongPressGesture {
+#if DEBUG
+                    store.send(.debugPasteSeed)
+#endif
+                }
+
+            Text(localizable: .restoreWalletInfo)
+                .zFont(size: 14, style: Design.Text.primary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 8)
+                .padding(.bottom, 20)
+
+            ForEach(0..<8, id: \.self) { j in
+                HStack(spacing: 4) {
+                    ForEach(0..<3, id: \.self) { i in
+                        WithPerceptionTracking {
+                            HStack(spacing: 0) {
+                                Text("\(j * 3 + i + 1)")
+                                    .zFont(.medium, size: 14, style: Design.Tags.tcCountFg)
+                                    .frame(minWidth: 12)
+                                    .padding(.vertical, 2)
+                                    .padding(.horizontal, 4)
+                                    .background {
+                                        RoundedRectangle(cornerRadius: Design.Radius._lg)
+                                            .fill(Design.Tags.tcCountBg.color(colorScheme))
+                                    }
+                                    .padding(.trailing, 4)
+
+                                TextField("", text: $store.words[j * 3 + i])
+                                    .zFont(size: 16, style: Design.Text.primary)
+                                    .disableAutocorrection(true)
+#if os(iOS)
+                                    .textInputAutocapitalization(.never)
+#endif
+                                    .focused($focusedField, equals: .field((j * 3 + i)))
+#if os(iOS)
+                                    .keyboardType(.alphabet)
+#endif
+                                    .submitLabel(.next)
+                                    .onSubmit {
+                                        focusedField = ((j * 3 + i) < 23)
+                                        ? .field((j * 3 + i) + 1)
+                                        : .field(0)
+                                    }
+                            }
+                            .padding(6)
+                            .background {
+                                RoundedRectangle(cornerRadius: Design.Radius._xl)
+                                    .fill(
+                                        focusedField == .field(j * 3 + i)
+                                        ? Design.Surfaces.bgPrimary.color(colorScheme)
+                                        : Design.Surfaces.bgSecondary.color(colorScheme)
+                                    )
+                                    .background {
+                                        RoundedRectangle(cornerRadius: Design.Radius._xl)
+                                            .stroke(strokeColor(index: j * 3 + i), lineWidth: 2)
+                                    }
+                            }
+                            .padding(2)
+                            .padding(.bottom, 4)
+                        }
+                    }
+                }
+            }
+
+            if keyboardVisible {
+                Color.clear
+                    .frame(height: 44)
+            }
+        }
+    }
+
+    @ViewBuilder private var nextButton: some View {
+        ZashiButton(String(localizable: .generalNext)) {
+            store.send(.nextTapped)
+        }
+        .disabled(!store.isValidSeed)
+    }
+
+    @ViewBuilder private func suggestionChip(_ word: String) -> some View {
+        Button {
+            store.send(.suggestedWordTapped(word))
+        } label: {
+            Text(word)
+                .zFont(size: 16, style: Design.Text.primary)
+                .fixedSize()
+                .padding(8)
+                .background {
+                    RoundedRectangle(cornerRadius: Design.Radius._xl)
+                        .fill(Design.Surfaces.bgSecondary.color(colorScheme))
+                }
+        }
+    }
+
+#if os(iOS)
+    // iOS-only: suggestion bar pinned above the software keyboard (collapses to 0 height when the
+    // keyboard is down). macOS surfaces suggestions inline in `seedEntryLayout` (no keyboard there).
+    @ViewBuilder private var keyboardSuggestionsBar: some View {
+        VStack(spacing: 0) {
+            Spacer()
+
+            Asset.Colors.primary.color
+                .frame(height: 1)
+                .opacity(0.1)
+
+            HStack(alignment: .center) {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 4) {
+                        ForEach(store.suggestedWords, id: \.self) { suggestedWord in
+                            suggestionChip(suggestedWord)
+                        }
+                    }
+                    .padding(.leading, 4)
+                }
+                .mask(
+                    LinearGradient(
+                        gradient: Gradient(stops: [
+                            .init(color: Design.Surfaces.bgSecondary.color(colorScheme).opacity(0.7), location: 0.9),
+                            .init(color: Design.Surfaces.bgSecondary.color(colorScheme).opacity(0), location: 0.98)
+                        ]),
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                )
+                .frame(height: 38)
+
+                Spacer()
+
+                Button {
+                    focusedField = nil
+                } label: {
+                    Text(String(localizable: .generalDone).uppercased())
+                        .zFont(.regular, size: 14, style: Design.Text.primary)
+                }
+                .padding(.trailing, 24)
+                .padding(.leading, 4)
+            }
+            .applyScreenBackground()
+            .frame(height: keyboardVisible ? 44 : 0)
+            .frame(maxWidth: .infinity)
+            .opacity(keyboardVisible ? 1 : 0)
+        }
+    }
+#endif
+
     private func strokeColor(index: Int) -> Color {
         !store.wordsValidity[index]
         ? Design.Inputs.ErrorFilled.stroke.color(colorScheme)
