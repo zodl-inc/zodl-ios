@@ -55,16 +55,25 @@ user sees `B → blank → C`, never the popped root `A`.
 - add its `.path.removeAll()` to `Root.macResetSectionPaths`;
 - be reached only through the `sectionSelection` binding (never set `selectedSection` directly elsewhere);
 - render through `detailSection` in the detail `switch`;
-- give a button-less root a `.macSidebarToolbarSpacer()`.
+- give a button-less root a `.macSidebarToolbarSpacer()`;
+- use **`.zashiSectionRootBack`** (NOT `.zashiBack`) on a section ROOT screen — it's a no-op on macOS (a
+  peer-root has nothing to go back to), so a new section can never reintroduce the macOS back-button bug.
 
 NEVER switch sections in a single update while a pushed path is live — always go through blank-then-reveal.
 
 ## Rule #3 — toolbar rendering (let the system draw the capsule)
-NEVER apply `.buttonStyle` / custom padding / sizes ABOVE the toolbar, and never on a toolbar item.
-An App/Scene-level `.buttonStyle(.plain)` CASCADES into the toolbar and breaks the system Liquid
-Glass capsule (buttons render as malformed, tall, zero-horizontal-padding pills). Content buttons set
-their style **locally**; the toolbar is left entirely to the system → correct capsules, no sizes from
-us.
+NEVER apply `.buttonStyle` to a toolbar item, and never let an App/Scene-level `.buttonStyle(.plain)`
+CASCADE into the toolbar — it breaks the system Liquid Glass capsule (buttons render as malformed, tall,
+zero-horizontal-padding pills). Never force the icon's SIZE either (`.zImage(size:)` / a `.frame`) — that
+also breaks the capsule. Content buttons set their style **locally**; the toolbar is left to the system.
+
+### Rule #3a — a toolbar ICON needs HORIZONTAL padding to be circular, not tall (PROVEN 2026-06-24)
+macOS 26 sizes the glass capsule to the icon's WIDTH, so a lone SF symbol / asset is narrow → a TALL
+pill. The back button (already circular) proved the cure: a sized icon + horizontal padding. So the
+toolbar-icon recipe is: a plain `Button` in a toolbar item + a plain `Image(systemName:)` (or asset, NO
+`.zImage(size:)`) + NO `.buttonStyle` + **`.zashiToolbarIconPadding()`** (the shared helper — horizontal
+padding, ONE source of truth for the value, no-op on iOS). EVERY new toolbar action icon must use it.
+The capsule shape comes from WIDTH, so swapping SF → branded Asset icons later keeps the helper unchanged.
 
 ## Rule #4 — sidebar sizing (fits any window, fixed width, the CONSTANT is authoritative)
 - **Height:** the nav `List` must SCROLL when rows overflow — never `.scrollDisabled(true)` (it
