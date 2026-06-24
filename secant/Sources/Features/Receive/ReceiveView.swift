@@ -29,7 +29,7 @@ struct ReceiveView: View {
         WithPerceptionTracking {
             NavigationStack(path: $store.scope(state: \.path, action: \.path)) {
                 VStack(spacing: 0) {
-                    ScrollView {
+                    PlatformScrollable(fillsHeight: false) {
                         WithPerceptionTracking {
                             if store.selectedWalletAccount?.vendor == .keystone {
                                 addressBlock(
