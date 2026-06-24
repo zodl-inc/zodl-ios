@@ -116,9 +116,6 @@ struct TransactionDetailsView: View {
                 
                 footer()
             }
-            .zashiSheet(isPresented: $store.isReportSwapSheetEnabled) {
-                reportSwapSheetContent()
-            }
             .zashiBack(hidden: store.isCloseButtonRequired) {
                 store.send(.closeDetailTapped)
             }
@@ -137,12 +134,19 @@ struct TransactionDetailsView: View {
             )
             .onAppear { store.send(.onAppear) }
             .onDisappear { store.send(.onDisappear) }
-            .zashiSheet(isPresented: $store.annotationRequest) {
-                annotationContent(store.isEditMode)
-            }
         }
         .zashiNavBarTitleDisplayMode(.inline)
         .applyDefaultGradientScreenBackground()
+        // macOS: present the sheets AFTER applyDefaultGradientScreenBackground so the dimmed backdrop
+        // covers the FULL detail pane, not the max-width-capped (Rule #8) content column — a `.zashiSheet`
+        // is an overlay bound to the view it's attached to, so above the cap it clamps to ~536pt. iOS
+        // (native `.sheet`) is modal regardless, so this is iOS-neutral.
+        .zashiSheet(isPresented: $store.isReportSwapSheetEnabled) {
+            reportSwapSheetContent()
+        }
+        .zashiSheet(isPresented: $store.annotationRequest) {
+            annotationContent(store.isEditMode)
+        }
     }
     
     @ViewBuilder func footer() -> some View {

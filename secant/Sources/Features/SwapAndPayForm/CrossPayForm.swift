@@ -184,6 +184,11 @@ extension SwapAndPayForm {
             .zashiSheet(isPresented: $store.isCancelSheetVisible) {
                 cancelSheetContent(colorScheme)
             }
+#if os(macOS)
+            .zashiSheet(isPresented: $store.isSlippagePresented) {
+                slippageContent(colorScheme)
+            }
+#else
             .sheet(isPresented: $store.isSlippagePresented) {
                 slippageContent(colorScheme)
                     .screenHorizontalPadding()
@@ -215,6 +220,7 @@ extension SwapAndPayForm {
                         }
                     )
             }
+#endif
             .zashiSheet(isPresented: $store.balancesBinding) {
                 WithPerceptionTracking {
                     BalancesView(

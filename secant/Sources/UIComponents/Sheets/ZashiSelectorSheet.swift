@@ -23,36 +23,20 @@ struct ZashiSelectorSheetModifier<SelectorContent: View>: ViewModifier {
 
     func body(content: Content) -> some View {
 #if os(macOS)
+        // macOS: publish to the single root card host (`.macCardHost()`) — the definite-size selector card
+        // (the list needs a real height) rendered centered + dimmed over the WHOLE window, above the 536pt
+        // content cap (MODALS.md Rule #5). The selector draws its own close button, so the host omits one.
         content
-            .overlay {
-                if isPresented {
-                    GeometryReader { geo in
-                        ZStack {
-                            // Dimmed backdrop — click anywhere outside the card to dismiss.
-                            Rectangle()
-                                .fill(Color.black.opacity(0.45))
-                                .ignoresSafeArea()
-                                .onTapGesture { isPresented = false }
-
-                            // Card: phone-width, definite height so the list fills and scrolls.
-                            selectorContent
-                                .frame(width: 460, height: max(320, min(600, geo.size.height - 80)))
-                                .background(Asset.Colors.background.color)
-                                .clipShape(RoundedRectangle(cornerRadius: Design.Radius._4xl))
-                                .shadow(color: Color.black.opacity(0.25), radius: 24, x: 0, y: 10)
-                                .background {
-                                    // ESC dismisses, matching the standard card behaviour.
-                                    Button("") { isPresented = false }
-                                        .keyboardShortcut(.cancelAction)
-                                        .opacity(0)
-                                }
-                        }
-                        .frame(width: geo.size.width, height: geo.size.height)
-                    }
-                    .transition(.opacity)
-                }
+            .macCardPublish(
+                isPresented: isPresented,
+                fixedWidth: 460,
+                fixedHeightRange: 320...600,
+                horizontalPadding: 0,
+                showsCloseButton: false,
+                dismiss: { isPresented = false }
+            ) {
+                selectorContent
             }
-            .animation(.easeOut(duration: 0.18), value: isPresented)
 #else
         content
             .popover(isPresented: $isPresented) {

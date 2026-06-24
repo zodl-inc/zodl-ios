@@ -35,12 +35,15 @@ struct SettingsView: View {
                                 }
                             }
                             
+#if !os(macOS)
+                            // macOS hosts voting in the sidebar (Beta: Vote); the Settings entry is iOS-only.
                             ActionRow(
                                 icon: Asset.Assets.Icons.checkVerified.image,
                                 title: String(localizable: .settingsCoinholderPolling)
                             ) {
                                 store.send(.coinholderPollingTapped)
                             }
+#endif
 
                             ActionRow(
                                 icon: Asset.Assets.Icons.settings.image,

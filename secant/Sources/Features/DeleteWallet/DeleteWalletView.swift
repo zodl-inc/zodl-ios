@@ -89,7 +89,9 @@ struct DeleteWalletView: View {
         }
         .zashiNavBarTitleDisplayMode(.inline)
         .screenHorizontalPadding()
-        .applyScreenBackground()
+        // macOS: scroll tall content WITHIN the short pane instead of letting it overflow above the
+        // window and balloon the split's sidebar (same fix as recovery-phrase). iOS: scrollable is a no-op.
+        .applyScreenBackground(scrollable: true)
         .screenTitle(String(localizable: .deleteWalletScreenTitle).uppercased())
     }
     

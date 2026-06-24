@@ -18,17 +18,42 @@ The macOS design language's modal rule (see `DESIGN_LANGUAGE.md`):
 - **Native modals stay for their specific purposes** — alert, file panel, confirmation dialog, new
   window, inspector (see the decision guide + use-case table below).
 
-**Implementation path (the consequence).** An `.overlay` only covers the view it's attached to, so the
-current ~40 feature-level `.zashiSheet` sites center in the **detail pane only** (sidebar stays bright)
-— except the account switch (`MacSplitView:127`), which is already whole-window. To satisfy "global +
-presentable from anywhere", **hoist card presentation to the `MacSplitView` root**: one global card
-presenter holds the state + the window-level overlay; features *request* the card (shared state /
-presenter), they do not attach `.zashiSheet` to their own view. This is the modal analog of the
-HStack→`NavigationSplitView` migration — mechanical, not a config flag. Sandbox reference: the
-"Over whole window" path (`RootSplitView` owns the state, `ModalsView` triggers it → `DemoCardOverlay`).
+**Implementation path — BUILT (`MacCard.swift`).** Done. `.zashiSheet` / `.zashiSelectorSheet` on macOS no
+longer overlay locally (that local backdrop was clamped to the 536pt content cap — the "dimmed capped"
+bug). They write their content to a `MacCardCoordinator` injected via the **environment** by
+`.macCardHost()` at the **RootView root** — above the cap, above both MacSplitView and the single-window
+screens. The host renders ONE centered, dimmed card over the whole window, in two sizing modes
+(content-hug for `.zashiSheet`; fixed 460×[320–600] for the selector). **All ~40 sites adopted it with zero
+call-site changes** — the reroute lives in the two modifiers' macOS impl. iOS keeps native `.sheet` /
+`.popover`.
 
-**Still open (to define):** default card sizing/shape per content, animation, and the exact global
-presenter API. We'll keep refining Rule #5 before applying it to the wallet.
+**Key learning:** a `PreferenceKey` (up-propagation) is swallowed by `NavigationStack` /
+`NavigationSplitView` and never reaches the root — the card simply never appeared. The **environment**
+(down-propagation) crosses navigation reliably, so an injected coordinator is the right channel. Content is
+built in the child's body (store + colorScheme correct) and self-refreshes via its own
+`WithPerceptionTracking`.
+
+**Still open (minor):** the appear/dismiss animation (currently instant). Sizing, surface, scope and
+dismissal are settled.
+
+## Rule #5a — native `.sheet` / `.popover` / `presentationDetents` are BANNED for app content (audit the whole app, don't patch one)
+A native `.sheet` or `.popover` does **not** become a MacCard on macOS — it renders as a raw macOS
+sheet/popover, and any `.presentationDetents([...])` collapse it to **0 height** (gotcha #1). So every
+app-content modal MUST use `.zashiSheet` (dynamic content) or `.zashiSelectorSheet` (searchable list) —
+never the native modifiers directly. On iOS those reroute to a native `.sheet`/`.popover`, so nothing is lost.
+
+**Discipline (learned from slippage, which shipped as a native `.sheet`):** one native modal is almost never
+alone. When you find one, sweep the ENTIRE app and fix the *class*, not the instance:
+
+```
+grep -rn '\.sheet(\|\.popover(\|\.fullScreenCover(\|presentationDetents' --include='*.swift' secant/Sources | grep -v /Tests/
+```
+
+Classify each hit: **app content** → `.zashiSheet` / `.zashiSelectorSheet` (bug on macOS); **`ZashiSheet.swift`
+/ `ZashiSelectorSheet.swift`** → the iOS implementations, correct; **`InAppBrowserView` / web** → a separate
+macOS concern (window / system browser, not a card); **QR scan / file panel** → its own native treatment.
+Current audit + the still-to-convert sites: `KNOWN_ISSUES.md` entry 5. (This is the modal instance of the
+process rule "discover a flaw → sweep the whole tree → fix every instance.")
 
 ## Decision guide — what an iOS sheet *becomes* on Mac
 iOS reaches for one bottom sheet for almost everything. On Mac that splits by the task's relationship

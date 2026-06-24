@@ -73,6 +73,14 @@ struct VotingConfigSettingsView: View {
             .applyScreenBackground()
             .screenTitle(String(localizable: .coinVoteConfigSettingsScreenTitle))
             .zashiBack { store.send(.dismissTapped) }
+#if os(macOS)
+            .zashiSelectorSheet(isPresented: addCustomChainSheetBinding) {
+                addCustomChainSheet
+            }
+            .zashiSelectorSheet(isPresented: editCustomChainSheetBinding) {
+                editCustomChainSheet
+            }
+#else
             .sheet(isPresented: addCustomChainSheetBinding) {
                 addCustomChainSheet
                     .presentationDetents([.large])
@@ -83,6 +91,7 @@ struct VotingConfigSettingsView: View {
                     .presentationDetents([.large])
                     .presentationDragIndicator(.hidden)
             }
+#endif
             .onAppear {
                 store.send(.onAppear)
             }
@@ -346,7 +355,10 @@ private var bottomBar: some View {
             .padding(.top, 12)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+#if !os(macOS)
+        // macOS presents this in a MacCard (Liquid Glass); a screen background would cover the glass.
         .applyScreenBackground()
+#endif
         .onAppear {
             focusedSourceField = isEditing ? .editTitle : .addTitle
         }

@@ -58,6 +58,11 @@ struct MessageEditorView: View {
                         .font(.custom(FontFamily.Inter.regular.name, size: 16))
                         .padding(.horizontal, 10)
                         .padding(.top, 2)
+#if os(macOS)
+                        // NSTextView sits at ~0 top inset (vs UITextView's ~8), so typed text hugs the top
+                        // edge; nudge it down to line up with the placeholder overlay.
+                        .padding(.top, 8)
+#endif
                         .padding(.bottom, 10)
                         .colorBackground(Design.Inputs.Default.bg.color(colorScheme))
                         .cornerRadius(10)

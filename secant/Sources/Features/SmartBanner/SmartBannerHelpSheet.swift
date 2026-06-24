@@ -9,8 +9,21 @@ import SwiftUI
 import Combine
 import ComposableArchitecture
 
-extension SmartBannerView {
-    @ViewBuilder func helpSheetContent() -> some View {
+// A standalone view (not a method on SmartBannerView) so it can be presented from the MacSplitView ROOT
+// on macOS (MODALS.md Rule #5) — the banner sits in the sidebar, and `.zashiSheet` overlays only the view
+// it's attached to. As a real view in the hierarchy it also gets the correct `colorScheme` (dark mode).
+// iOS presents it inline from SmartBannerView, unchanged.
+struct SmartBannerHelpSheetView: View {
+    @Environment(\.colorScheme) private var colorScheme
+    @PlatformBindable var store: StoreOf<SmartBanner>
+    let tokenName: String
+
+    init(store: StoreOf<SmartBanner>, tokenName: String) {
+        self.store = store
+        self.tokenName = tokenName
+    }
+
+    var body: some View {
         WithPerceptionTracking {
             switch store.priorityContent {
             case .priority1: disconnectedHelpContent()

@@ -190,6 +190,11 @@ extension SwapAndPayForm {
                     .opacity(keyboardVisible ? 1 : 0)
                 }
             )
+#if os(macOS)
+            .zashiSheet(isPresented: $store.isSlippagePresented) {
+                slippageContent(colorScheme)
+            }
+#else
             .sheet(isPresented: $store.isSlippagePresented) {
                 slippageContent(colorScheme)
                     .screenHorizontalPadding()
@@ -221,6 +226,7 @@ extension SwapAndPayForm {
                         }
                     )
             }
+#endif
             .zashiSheet(isPresented: $store.isQuotePresented) {
                 quoteContent(colorScheme)
             }
@@ -324,8 +330,9 @@ extension SwapAndPayForm {
                             )
                             .disabled(store.isQuoteRequestInFlight)
                             .frame(maxWidth: .infinity)
-                            .frame(height: 32)
 #if os(iOS)
+                            // macOS top-aligns text in a taller-than-text frame; let it hug + center instead.
+                            .frame(height: 32)
                             .autocapitalization(.none)
 #endif
                             .autocorrectionDisabled()
@@ -470,8 +477,9 @@ extension SwapAndPayForm {
                         )
                         .disabled(store.isQuoteRequestInFlight)
                         .frame(maxWidth: .infinity)
-                        .frame(height: 32)
 #if os(iOS)
+                        // macOS top-aligns text in a taller-than-text frame; let it hug + center instead.
+                        .frame(height: 32)
                         .autocapitalization(.none)
 #endif
                         .autocorrectionDisabled()

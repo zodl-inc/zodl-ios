@@ -221,6 +221,7 @@ public enum Asset {
     public static let eyeOn = ImageAsset(name: "eyeOn")
     public static let flyReceivedFilled = ImageAsset(name: "flyReceivedFilled")
     public enum Icons {
+      public static let activity = ImageAsset(name: "activity")
       public static let alertCircle = ImageAsset(name: "alertCircle")
       public static let alertOutline = ImageAsset(name: "alertOutline")
       public static let alertTriangle = ImageAsset(name: "alertTriangle")

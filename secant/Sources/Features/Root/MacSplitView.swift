@@ -191,6 +191,40 @@ struct MacSplitView: View {
         ) {
             WalletAccountsSheetView(store: store.scope(state: \.homeState, action: \.home))
         }
+        // Smart-banner help sheet (shielding / sync error / …). Hosted here on macOS (MODALS.md Rule #5):
+        // the banner lives in the sidebar, so a `.zashiSheet` on it would clamp the card to the sidebar
+        // width. At the window root it covers the whole window. iOS presents it inline from SmartBannerView.
+        .zashiSheet(
+            isPresented: Binding(
+                get: { store.homeState.smartBannerState.isSmartBannerSheetPresented },
+                set: { newValue in
+                    if !newValue && store.homeState.smartBannerState.isSmartBannerSheetPresented {
+                        store.send(.home(.smartBanner(.closeSheetTapped)))
+                    }
+                }
+            )
+        ) {
+            SmartBannerHelpSheetView(
+                store: store.scope(state: \.homeState.smartBannerState, action: \.home.smartBanner),
+                tokenName: tokenName
+            )
+        }
+        // Smart-banner sync-timeout sheet — hosted at the root on macOS for the same reason (MODALS.md
+        // Rule #5). iOS presents it inline from SmartBannerView.
+        .zashiSheet(
+            isPresented: Binding(
+                get: { store.homeState.smartBannerState.isSyncTimedOutSheetPresented },
+                set: { newValue in
+                    if !newValue && store.homeState.smartBannerState.isSyncTimedOutSheetPresented {
+                        store.send(.home(.smartBanner(.binding(.set(\.isSyncTimedOutSheetPresented, false)))))
+                    }
+                }
+            )
+        ) {
+            SmartBannerSyncTimeoutSheetView(
+                store: store.scope(state: \.homeState.smartBannerState, action: \.home.smartBanner)
+            )
+        }
     }
 
     // MARK: - Left rail (native NavigationSplitView sidebar — material + lights inside come for free)
@@ -267,8 +301,14 @@ struct MacSplitView: View {
             // fine for Beta; the custom-grey attempts were wider than native and had render latency.
             List(selection: sectionSelection) {
                 ForEach(MacSection.allCases, id: \.self) { section in
-                    Label(section.title, systemImage: section.systemImage)
-                        .tag(section)
+                    HStack {
+                        section.sectionIcon
+                            .zImage(size: 16, style: Design.Text.primary)
+                        
+                        Text(section.title)
+                            .zFont(.medium, size: 14, style: Design.Text.primary)
+                    }
+                    .tag(section)
                 }
             }
             .listStyle(.sidebar)
@@ -399,15 +439,15 @@ private enum MacSection: CaseIterable {
         }
     }
 
-    var systemImage: String {
+    var sectionIcon: Image {
         switch self {
-        case .activity: return "house"
-        case .receive: return "arrow.down.circle"
-        case .send: return "arrow.up.circle"
-        case .pay: return "creditcard"
-        case .swap: return "arrow.2.squarepath"
-        case .vote: return "hand.raised"
-        case .more: return "ellipsis"
+        case .activity: return Asset.Assets.Icons.activity.image
+        case .receive: return Asset.Assets.Icons.received.image
+        case .send: return Asset.Assets.Icons.sent.image
+        case .pay: return Asset.Assets.Icons.pay.image
+        case .swap: return Asset.Assets.Icons.swap.image
+        case .vote: return Asset.Assets.Icons.checkVerified.image
+        case .more: return Asset.Assets.Icons.dotsMenu.image
         }
     }
 

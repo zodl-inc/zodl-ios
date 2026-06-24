@@ -33,12 +33,17 @@ struct SmartBannerView: View {
     var body: some View {
         WithPerceptionTracking {
             bannerContainer
+#if !os(macOS)
+                // macOS: both banner sheets are hosted at the window ROOT (MacSplitView, MODALS.md Rule #5)
+                // — a `.zashiSheet` here overlays only the sidebar the banner lives in, clamping the card to
+                // the sidebar width. iOS presents them inline.
                 .zashiSheet(isPresented: $store.isSmartBannerSheetPresented) {
-                    helpSheetContent()
+                    SmartBannerHelpSheetView(store: store, tokenName: tokenName)
                 }
                 .zashiSheet(isPresented: $store.isSyncTimedOutSheetPresented) {
-                    syncTimedSheetContent()
+                    SmartBannerSyncTimeoutSheetView(store: store)
                 }
+#endif
                 .onAppear { store.send(.onAppear) }
                 .onDisappear { store.send(.onDisappear) }
         }
@@ -151,7 +156,15 @@ extension SmartBannerView {
         }
     }
     
-    @ViewBuilder private func syncTimedSheetContent() -> some View {
+}
+
+// A standalone view (MODALS.md Rule #5) — hosted at the MacSplitView ROOT on macOS (the banner is in the
+// sidebar), inline on iOS; same rationale as SmartBannerHelpSheetView.
+struct SmartBannerSyncTimeoutSheetView: View {
+    @Environment(\.colorScheme) private var colorScheme
+    let store: StoreOf<SmartBanner>
+
+    var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Asset.Assets.infoOutline.image
                 .zImage(size: 20, style: Design.Utility.ErrorRed._500)

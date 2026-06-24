@@ -71,7 +71,8 @@ extension SwapAndPayForm {
                             }
                         }
                     }
-                    .background(Asset.Colors.background.color)
+                    // No solid background on macOS — let the sheet's Liquid Glass card surface show
+                    // through the (transparent) rows. iOS keeps its list-row background below.
 #else
                     List {
                         WithPerceptionTracking {
@@ -153,6 +154,8 @@ extension SwapAndPayForm {
     @ViewBuilder func slippageContent(_ colorScheme: ColorScheme) -> some View {
         WithPerceptionTracking {
             VStack(alignment: .leading, spacing: 0) {
+#if !os(macOS)
+                // macOS presents this in a MacCard, which draws its own close button.
                 Button {
                     store.send(.closeSlippageSheetTapped)
                 } label: {
@@ -161,6 +164,7 @@ extension SwapAndPayForm {
                         .padding(8)
                 }
                 .padding(.vertical, 24)
+#endif
                 
                 Text(localizable: .swapAndPaySlippage)
                     .zFont(.semiBold, size: 24, style: Design.Text.primary)

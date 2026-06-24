@@ -42,12 +42,18 @@ struct CurrencyConversionSetupView: View {
             .zashiSheet(isPresented: $store.isTorSheetPresented) {
                 torSheetContent()
             }
+#if os(macOS)
+            .zashiSelectorSheet(isPresented: $store.isCurrencyPickerSheetPresented) {
+                currencyPickerSheetContent()
+            }
+#else
             .sheet(isPresented: $store.isCurrencyPickerSheetPresented) {
                 currencyPickerSheetContent()
                     .applySheetBackground()
                     .presentationDetents([.large])
                     .presentationDragIndicator(.visible)
             }
+#endif
         }
         .zashiNavBarTitleDisplayMode(.inline)
         .applyScreenBackground()
