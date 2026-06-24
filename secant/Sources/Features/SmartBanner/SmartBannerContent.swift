@@ -37,23 +37,23 @@ extension SmartBannerView {
         }
     }
 
-    /// Banner row layout: HStack (labels left, CTA right) on iOS; on macOS — where the rail is
-    /// narrow — the CTA stacks below the labels.
+    /// Banner row layout. iOS: an HStack — icon + labels on the left, CTA on the right. macOS: the rail
+    /// is narrow, so everything stacks in a 3-row VStack — icon, then labels, then the (full-width) CTA.
     @ViewBuilder
-    func bannerCTALayout<Content: View, CTA: View>(
+    func bannerCTALayout<Icon: View, Content: View, CTA: View>(
+        @ViewBuilder icon: () -> Icon,
         @ViewBuilder content: () -> Content,
         @ViewBuilder cta: () -> CTA
     ) -> some View {
 #if os(macOS)
         VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 0) {
-                content()
-                Spacer()
-            }
+            icon()
+            content()
             cta()
         }
 #else
         HStack(spacing: 0) {
+            icon()
             content()
             Spacer()
             cta()
@@ -187,7 +187,7 @@ extension SmartBannerView {
             Asset.Assets.Icons.alertTriangle.image
                 .zImage(size: 20, color: titleStyle())
                 .padding(.trailing, 12)
-
+        } content: {
             VStack(alignment: .leading, spacing: 2) {
                 Text(localizable: .smartBannerContentBackupTitle)
                     .zFont(.medium, size: 14, color: titleStyle())
@@ -211,7 +211,7 @@ extension SmartBannerView {
             Asset.Assets.Icons.shieldOff.image
                 .zImage(size: 20, color: titleStyle())
                 .padding(.trailing, 12)
-
+        } content: {
             VStack(alignment: .leading, spacing: 2) {
                 Text(localizable: .smartBannerContentShieldTitle)
                     .zFont(.medium, size: 14, color: titleStyle())
@@ -240,7 +240,7 @@ extension SmartBannerView {
             Asset.Assets.Icons.shieldZap.image
                 .zImage(size: 20, color: titleStyle())
                 .padding(.trailing, 12)
-
+        } content: {
             VStack(alignment: .leading, spacing: 2) {
                 Text(localizable: .smartBannerContentTorTitle)
                     .zFont(.medium, size: 14, color: titleStyle())
@@ -264,7 +264,7 @@ extension SmartBannerView {
             Asset.Assets.Icons.coinsSwap.image
                 .zImage(size: 20, color: titleStyle())
                 .padding(.trailing, 12)
-
+        } content: {
             VStack(alignment: .leading, spacing: 2) {
                 Text(localizable: .smartBannerContentCurrencyConversionTitle)
                     .zFont(.medium, size: 14, color: titleStyle())
@@ -288,7 +288,7 @@ extension SmartBannerView {
             Asset.Assets.Icons.shieldZap.image
                 .zImage(size: 20, color: titleStyle())
                 .padding(.trailing, 12)
-
+        } content: {
             VStack(alignment: .leading, spacing: 2) {
                 Text(localizable: .smartBannerContentAutoShieldingTitle)
                     .zFont(.medium, size: 14, color: titleStyle())
