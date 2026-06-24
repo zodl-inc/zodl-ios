@@ -37,7 +37,7 @@ struct SendFormView: View {
         WithPerceptionTracking {
             ZStack {
                 WithPerceptionTracking {
-                    ScrollView {
+                    PlatformScrollable {
                         ScrollViewReader { value in
                             WithPerceptionTracking {
                                 VStack(alignment: .center) {
@@ -151,7 +151,14 @@ struct SendFormView: View {
                                         if store.isMemoInputEnabled {
                                             MessageEditorView(store: store.memoStore(), isAddUAtoMemoActive: true)
                                                 .frame(minHeight: 155)
+#if os(macOS)
+                                                // macOS: don't stretch with the extra height — keep it
+                                                // fixed so the bottom Spacer takes ALL the slack (content
+                                                // hugs the top, biggest gap above the CTA at the bottom).
+                                                .frame(maxHeight: 155)
+#else
                                                 .frame(maxHeight: 300)
+#endif
                                                 .id(InputID.message)
                                                 .focused($isMemoFocused)
                                         } else {
@@ -182,14 +189,25 @@ struct SendFormView: View {
                                             }
                                         }
                                         
+#if os(macOS)
+                                        // macOS: push the CTA to the bottom (no scroll); on iOS it flows under the form.
+                                        Spacer(minLength: 24)
+#endif
                                         ZashiButton(String(localizable: .sendReview)) {
                                             store.send(.reviewTapped)
                                         }
                                         .disabled(!store.isValidForm)
                                         .padding(.top, 40)
+#if os(macOS)
+                                        .padding(.bottom, 24)
+#endif
                                         .accessibilityIdentifier(AccessibilityID.SendForm.reviewButton)
                                     }
                                 }
+#if os(macOS)
+                                // macOS: fill the pane so the Spacer below the form pins the CTA to the bottom.
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+#endif
                                 .screenHorizontalPadding()
                                 .onChange(of: store.isNotAddressInAddressBook) { update in
                                     withAnimation {

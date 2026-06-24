@@ -67,8 +67,15 @@ struct WalletBalancesView: View {
                         .padding(.bottom, 30)
                     }
                 } else if !shortened {
+#if os(macOS)
+                    // macOS: don't RESERVE the spendable row's space when it isn't shown (spendability ==
+                    // .everything). The empty 30pt left a gap between the balance and the form; macOS wants
+                    // the content hugging the top. iOS keeps the reservation (avoids a scroll-layout jump).
+                    EmptyView()
+#else
                     Color.clear
                         .padding(.bottom, 30)
+#endif
                 }
             }
             .foregroundColor(Asset.Colors.primary.color)
