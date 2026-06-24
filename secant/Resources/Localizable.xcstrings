@@ -1377,6 +1377,23 @@
         }
       }
     },
+    "coinVote.sidebarTitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Beta: Vote"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Beta: Votar"
+          }
+        }
+      }
+    },
     "coinVote.common.submission" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -7753,6 +7770,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Actividad"
+          }
+        }
+      }
+    },
+    "general.balance" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Balance"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Balance"
           }
         }
       }

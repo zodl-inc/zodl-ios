@@ -234,7 +234,7 @@ struct MacSplitView: View {
 
                 // Balance label + hide-balances eye.
                 HStack(spacing: 0) {
-                    Text("Balance")
+                    Text(localizable: .generalBalance)
                         .zFont(.medium, size: 16, style: Design.Text.tertiary)
                     Spacer()
                     hideEyeButton
@@ -389,13 +389,13 @@ private enum MacSection: CaseIterable {
 
     var title: String {
         switch self {
-        case .activity: return "Activity"
+        case .activity: return String(localizable: .generalActivity)
         case .receive: return String(localizable: .tabsReceive)
         case .send: return String(localizable: .tabsSend)
         case .pay: return String(localizable: .swapAndPayPay)
         case .swap: return String(localizable: .swapAndPaySwap)
-        case .vote: return "Beta: Vote"
-        case .more: return "More"
+        case .vote: return String(localizable: .coinVoteSidebarTitle)
+        case .more: return String(localizable: .settingsTitle)
         }
     }
 
