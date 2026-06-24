@@ -31,6 +31,10 @@ struct MacSplitView: View {
     @Environment(\.colorScheme) private var colorScheme
     @Shared(.appStorage(.sensitiveContent)) private var isSensitiveContentHidden = false
     @State private var selectedSection: MacSection = .activity
+    // The section the DETAIL actually renders (vs `selectedSection`, the sidebar highlight). On a switch
+    // it goes selected -> nil (a one-frame blank) -> new, so the popped root never renders: the user sees
+    // B -> blank -> C, not B -> A -> C. The nil frame also breaks SwiftUI's path reconcile (the crash).
+    @State private var detailSection: MacSection? = .activity
     @State private var hasInitialized = false
     // RULE #9: hide the sidebar while scan is showing (scan must be a full-window single view).
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
@@ -112,13 +116,24 @@ struct MacSplitView: View {
                 .toolbar(removing: .sidebarToggle)
                 .background(FixedSidebarWidth(width: sidebarWidth, trigger: selectedSection))
         } detail: {
-            rightPanel
-                // RULE #2: distinct identity per section → switching FULLY tears down the previous
-                // section's NavigationStack (reset to root) instead of the detail column reconciling
-                // two mismatched path types.
-                .id(selectedSection)
-                .navigationTitle("")
-                .toolbarBackground(.hidden, for: .windowToolbar)
+            // RULE #2 + crash + UX: render the new section via `detailSection`, which goes X -> nil (a
+            // one-frame blank) -> Y on a switch. The nil frame (a) breaks SwiftUI's X-path↔Y-path reconcile
+            // that crashes (comparisonTypeMismatch), and (b) HIDES the pop-to-root — the user sees B ->
+            // blank -> C, never the popped root A. The blank is the screen background, a brief neutral frame.
+            Group {
+                if detailSection != nil {
+                    rightPanel
+                } else {
+                    // Keep a ToolbarSpacer on the blank frame (RULE #1) so the traffic lights stay INSIDE
+                    // the sidebar during the transition. Without it the blank has no toolbar content, the
+                    // lights jump out to the title bar for one frame and back, and the whole window "pops".
+                    Asset.Colors.background.color.ignoresSafeArea()
+                        .macSidebarToolbarSpacer()
+                }
+            }
+            .id(detailSection)
+            .navigationTitle("")
+            .toolbarBackground(.hidden, for: .windowToolbar)
         }
         .onAppear {
             // Initialize the default peer-root (Activity) once. Section switches are handled by the
@@ -177,9 +192,17 @@ struct MacSplitView: View {
             get: { selectedSection },
             set: { newSection in
                 guard newSection != selectedSection else { return }
-                LoggerProxy.event("[macOS nav] section \(selectedSection) -> \(newSection): clearing section paths (avoid comparisonTypeMismatch)")
+                LoggerProxy.event("[macOS nav] section \(selectedSection) -> \(newSection): blank-then-reveal (avoid comparisonTypeMismatch + hide pop-to-root)")
+                // THREE-PHASE: clear paths + move the sidebar highlight + BLANK the detail (detailSection
+                // = nil) THIS frame, then reveal the new section NEXT runloop. The one-frame blank both (a)
+                // breaks SwiftUI's path reconcile (the crash) and (b) HIDES the pop-to-root, so the user
+                // sees B -> blank -> C, never the popped root A.
                 store.send(.macResetSectionPaths)
                 selectedSection = newSection
+                detailSection = nil
+                DispatchQueue.main.async {
+                    detailSection = newSection
+                }
             }
         )
     }
