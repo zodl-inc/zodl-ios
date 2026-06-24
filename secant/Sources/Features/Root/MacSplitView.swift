@@ -103,6 +103,20 @@ struct MacSplitView: View {
             || store.settingsState.path.contains { $0.is(\.scan) }
     }
 
+    // RULE #10: lock the user into the Send broadcast. Once Send reaches the sending / result screens,
+    // promote to full-window (hide the sidebar) so they can't tap another section and abandon an in-flight
+    // broadcast. "Close" on the result pops the path → this goes false → the split (sidebar) returns.
+    private var isSendLocked: Bool {
+        store.sendCoordFlowState.path.contains {
+            $0.is(\.sending) || $0.is(\.sendResultPending) || $0.is(\.sendResultSuccess) || $0.is(\.sendResultFailure)
+        }
+    }
+
+    // Either flow owns the whole window (sidebar hidden): scan = RULE #9, the Send broadcast = RULE #10.
+    private var isFullWindowFlow: Bool {
+        isScanActive || isSendLocked
+    }
+
     private var splitView: some View {
         // RULE #1/#2: the NATIVE split — it owns the chrome (traffic lights inside the sidebar, the
         // unified glass toolbar). No manual HStack, no SidebarVibrancyView, no title-bar configurator;
@@ -155,10 +169,11 @@ struct MacSplitView: View {
                 store.send(selectedSection.action)
             }
         }
-        // RULE #9: while scan is showing in any section flow, collapse to detail-only so the sidebar is
-        // hidden and scan owns the whole window — nothing overrides it. Restores when scan dismisses.
-        .onChange(of: isScanActive) { _, scanning in
-            columnVisibility = scanning ? .detailOnly : .all
+        // RULE #9 (scan) + RULE #10 (Send broadcast lock): collapse to detail-only so the sidebar is
+        // hidden and the flow owns the whole window — the user can't switch sections (so can't cancel an
+        // in-flight send). Restores to .all when the flow ends (scan dismissed / send result closed).
+        .onChange(of: isFullWindowFlow) { _, full in
+            columnVisibility = full ? .detailOnly : .all
         }
         // Account-switch sheet (account list + Keystone connect). Hosted here on macOS, since HomeView
         // — which hosts it on iOS — is not in the macOS view tree.
