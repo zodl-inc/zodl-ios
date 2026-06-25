@@ -2,10 +2,21 @@ import SwiftUI
 import Combine
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
+#if canImport(UIKit)
+import UIKit
+#endif
 
 struct RootView: View {
     @Environment(\.scenePhase) var scenePhase
     @Environment(\.colorScheme) var colorScheme
+#if os(iOS)
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    /// iPad in regular width → the adaptive split (IPadSplitView). iPhone + iPad-compact keep the existing
+    /// layout; re-evaluates on rotation / Split-View via the observed size class. Rule iP-0.
+    private var isIPadRegular: Bool {
+        UIDevice.current.userInterfaceIdiom == .pad && horizontalSizeClass == .regular
+    }
+#endif
     @State var covered = false
     
     @PlatformBindable var store: StoreOf<Root>
@@ -115,6 +126,11 @@ private extension RootView {
                         store.send(.splashRemovalRequested)
                     }
 #else
+                    if isIPadRegular {
+                        // iPad-regular → the adaptive split layout (Phase iP-2). iPhone + iPad-compact use
+                        // the existing layout below, unchanged (Rule iP-0).
+                        IPadSplitView(store: store, tokenName: tokenName, networkType: networkType)
+                    } else {
                     ZStack {
                         // Home view
                         NavigationStack {
@@ -282,6 +298,7 @@ private extension RootView {
                     .animation(.easeInOut(duration: 0.3), value: store.path)
                     .overlayedWithSplash(store.splashAppeared) {
                         store.send(.splashRemovalRequested)
+                    }
                     }
 #endif
 
