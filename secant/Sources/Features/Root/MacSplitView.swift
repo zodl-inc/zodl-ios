@@ -103,18 +103,24 @@ struct MacSplitView: View {
             || store.settingsState.path.contains { $0.is(\.scan) }
     }
 
-    // RULE #10: lock the user into the Send broadcast. Once Send reaches the sending / result screens,
-    // promote to full-window (hide the sidebar) so they can't tap another section and abandon an in-flight
-    // broadcast. "Close" on the result pops the path → this goes false → the split (sidebar) returns.
-    private var isSendLocked: Bool {
+    // RULE #10: lock the user into a ZEC broadcast. Send, Pay and Swap ALL converge on the same
+    // SendConfirmation sending / result screens (`.sending` + `.sendResult{Pending,Success,Failure}`) —
+    // hosted by SendCoordFlow for Send and by SwapAndPayCoordFlow for Pay/Swap. Once ANY of them reaches
+    // those screens, promote to full-window (hide the sidebar) so the user can't tap another section and
+    // abandon an in-flight broadcast. "Close" on the result pops the path → this goes false → the split
+    // (sidebar) returns. (Pre-broadcast confirmation / Keystone-signing screens intentionally keep the
+    // sidebar — the user can still back out there.)
+    private var isBroadcastLocked: Bool {
         store.sendCoordFlowState.path.contains {
+            $0.is(\.sending) || $0.is(\.sendResultPending) || $0.is(\.sendResultSuccess) || $0.is(\.sendResultFailure)
+        } || store.swapAndPayCoordFlowState.path.contains {
             $0.is(\.sending) || $0.is(\.sendResultPending) || $0.is(\.sendResultSuccess) || $0.is(\.sendResultFailure)
         }
     }
 
-    // Either flow owns the whole window (sidebar hidden): scan = RULE #9, the Send broadcast = RULE #10.
+    // A flow owns the whole window (sidebar hidden): scan = RULE #9, a Send/Pay/Swap broadcast = RULE #10.
     private var isFullWindowFlow: Bool {
-        isScanActive || isSendLocked
+        isScanActive || isBroadcastLocked
     }
 
     private var splitView: some View {
@@ -169,9 +175,9 @@ struct MacSplitView: View {
                 store.send(selectedSection.action)
             }
         }
-        // RULE #9 (scan) + RULE #10 (Send broadcast lock): collapse to detail-only so the sidebar is
-        // hidden and the flow owns the whole window — the user can't switch sections (so can't cancel an
-        // in-flight send). Restores to .all when the flow ends (scan dismissed / send result closed).
+        // RULE #9 (scan) + RULE #10 (Send/Pay/Swap broadcast lock): collapse to detail-only so the sidebar
+        // is hidden and the flow owns the whole window — the user can't switch sections (so can't cancel an
+        // in-flight broadcast). Restores to .all when the flow ends (scan dismissed / result closed).
         .onChange(of: isFullWindowFlow) { _, full in
             columnVisibility = full ? .detailOnly : .all
         }
