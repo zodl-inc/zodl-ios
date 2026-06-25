@@ -54,8 +54,19 @@ struct AddKeystoneHWWalletCoordFlowView: View {
                 }
             }
         }
-        .applyScreenBackground()
+        // `capped: false` at the flow level: every keystone screen already applies its OWN background
+        // (capped for content, `capped: false` for the pushed ScanView). A capped flow background framed
+        // the whole NavigationStack to the capped content column (`Design.Mac.viewCapWidth`), which also shrank the full-window scan
+        // (the "dimmed capped" scan bug). Uncapped here, the scan's own full-window background wins.
+        .applyScreenBackground(capped: false)
+#if os(iOS)
+        // The flow's root content (AddHWWalletView) already owns the canonical back —
+        // `.zashiBack { backToHomeTapped }` → returns to the split home. This wrapper-level `.zashiBack()`
+        // (default env dismiss) DUPLICATES it; on macOS that drew a SECOND back arrow whose env dismiss,
+        // with no presentation to close, hid the whole app. Keep it iOS-only — macOS shows the single
+        // content back.
         .zashiBack()
+#endif
     }
     
     @ViewBuilder private func helpSheetContent() -> some View {
