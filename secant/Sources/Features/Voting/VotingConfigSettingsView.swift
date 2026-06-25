@@ -264,7 +264,17 @@ struct VotingConfigSettingsView: View {
             }
     }
 
-private var bottomBar: some View {
+    // macOS caps the "add a custom source" affordance to ZashiButton's width (Rule #7) so it lines up
+    // with the Save button below; iOS keeps it full-width (byte-identical to before).
+    private var addSourceMaxWidth: CGFloat {
+#if os(macOS)
+        261
+#else
+        .infinity
+#endif
+    }
+
+    private var bottomBar: some View {
         VStack(spacing: 12) {
             Button {
                 store.send(.addCustomChainButtonTapped)
@@ -277,12 +287,17 @@ private var bottomBar: some View {
                         .zFont(.semiBold, size: 16, style: Design.Text.primary)
                         .tracking(-0.256)
                 }
-                .frame(maxWidth: .infinity)
+                .frame(maxWidth: addSourceMaxWidth)
                 .frame(height: 48)
                 .background {
                     RoundedRectangle(cornerRadius: Design.Radius._xl)
                         .fill(Design.Inputs.Default.bg.color(colorScheme))
                 }
+#if os(macOS)
+                // Capped above to ZashiButton's macOS width (Rule #7); expand + center so it lines up with
+                // the Save button below instead of stretching full-width.
+                .frame(maxWidth: .infinity, alignment: .center)
+#endif
             }
             .zashiPlainButtonStyle()
 
