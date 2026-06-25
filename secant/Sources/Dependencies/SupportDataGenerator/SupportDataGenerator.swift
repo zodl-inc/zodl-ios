@@ -116,7 +116,13 @@ private struct AppVersionItem: SupportDataGeneratorItem {
 
 private struct SystemVersionItem: SupportDataGeneratorItem {
     private enum Constants {
+        // The version value (ProcessInfo) is already correct per-platform; only the label differed —
+        // "iOS version" read wrong in the macOS support email. The value below is unchanged.
+#if os(macOS)
+        static let systemVersionKey = String(localizable: .supportDataSystemVersionItemVersionMac)
+#else
         static let systemVersionKey = String(localizable: .supportDataSystemVersionItemVersion)
+#endif
     }
 
     func generate() -> [(String, String)] {

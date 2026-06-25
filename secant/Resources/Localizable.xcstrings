@@ -14878,6 +14878,23 @@
         }
       }
     },
+    "supportData.systemVersionItem.versionMac" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "macOS version"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Versión de macOS"
+          }
+        }
+      }
+    },
     "supportData.timeItem.time" : {
       "comment" : "MARK: - Support Data",
       "extractionState" : "manual",
