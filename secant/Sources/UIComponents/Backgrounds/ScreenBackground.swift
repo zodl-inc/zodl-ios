@@ -6,6 +6,9 @@
 //
 
 import SwiftUI
+#if canImport(UIKit)
+import UIKit
+#endif
 
 /// macOS layout foundation: a screen's *content* (lists, stacks, forms) is capped to a readable
 /// column width, while the colorful screen background stays full-bleed. Applied centrally by the
@@ -25,7 +28,10 @@ private extension View {
 #if os(macOS)
         frame(maxWidth: ZashiScreenLayout.macContentMaxWidth)
 #else
-        self
+        // iPad-regular gets the same readable-column cap (Design.IPad.viewCapWidth) so content doesn't
+        // sprawl across a 13" iPad — mirrors the macOS Rule #8 cap. iPhone and iPad-compact stay
+        // full-bleed (the modifier is a no-op there), so the iPhone layout is byte-identical (Rule iP-0).
+        modifier(IPadContentCapModifier())
 #endif
     }
 
@@ -50,6 +56,22 @@ private extension View {
 #endif
     }
 }
+
+#if os(iOS)
+/// Caps content to the iPad readable column ONLY on iPad in regular width; a no-op on iPhone and on
+/// iPad-compact (Slide Over / narrow Split View), so the iPhone layout stays byte-identical (Rule iP-0).
+/// Same gate as RootView.isIPadRegular, so the cap and the split layout switch together.
+private struct IPadContentCapModifier: ViewModifier {
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    func body(content: Content) -> some View {
+        if UIDevice.current.userInterfaceIdiom == .pad && horizontalSizeClass == .regular {
+            content.frame(maxWidth: Design.IPad.viewCapWidth)
+        } else {
+            content
+        }
+    }
+}
+#endif
 
 struct ScreenBackgroundModifier: ViewModifier {
     var color: Color
