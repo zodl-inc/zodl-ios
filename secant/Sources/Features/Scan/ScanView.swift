@@ -44,9 +44,13 @@ struct ScanView: View {
                                 torchButton(size: proxy.size)
                             }
                             
+#if os(iOS)
+                            // iOS: the library picker sits below the scan cutout. macOS moves it to the
+                            // window toolbar (`.toolbar` below) so nothing sits below the cutout.
                             if !store.forceLibraryToHide {
                                 libraryButton(size: proxy.size)
                             }
+#endif
                         }
                         
                         WithPerceptionTracking {
@@ -123,6 +127,23 @@ struct ScanView: View {
                     store.send(.libraryImage(img))
                 }
             }
+#if os(macOS)
+            // macOS: the image-library picker lives in the window toolbar (like the Activity filter
+            // button), so nothing sits below the scan cutout and it can be larger. Conditionally add the
+            // whole ToolbarItem (not an empty one) so there's no stray glass capsule when it's hidden.
+            .toolbar {
+                if !store.forceLibraryToHide {
+                    ToolbarItem(placement: .zashiTrailing) {
+                        Button {
+                            showSheet = true
+                        } label: {
+                            Image(systemName: "photo.on.rectangle")
+                                .zashiToolbarIconPadding()
+                        }
+                    }
+                }
+            }
+#endif
         }
     }
     
@@ -331,13 +352,18 @@ extension ScanView {
         let topLeftX = (1.0 - readRectSize) * 0.5
         let real = CGRect(x: topLeftX, y: topLeftX, width: readRectSize, height: readRectSize)
 #if os(macOS)
-        // macOS: the cutout was sized from the SCREEN aspect ratio (so it was very tall) and CENTERED,
-        // which overlapped the Cancel button AND pushed the torch/library buttons (positioned just below
-        // the cutout) off the bottom of the window. Use a SQUARE cutout ~15% smaller, TOP-aligned —
-        // everything fits and the library button returns. (Camera scan zone `real` is unchanged; the iOS
-        // path is untouched — Rule #11.)
-        let macSize = readRectSize * 0.85
-        let renderOnly = CGRect(x: (1.0 - macSize) * 0.5, y: 0.14, width: macSize, height: macSize)
+        // macOS: a large SQUARE cutout. The width fraction → height fraction is aspect-corrected by the
+        // fixed window ratio (Design.Mac.windowWidth / windowHeight) so the rendered rect is square in
+        // POINTS, not stretched to the landscape window. Sized to sit just above the Cancel CTA — the
+        // library button now lives in the toolbar, so nothing sits below the cutout. (Camera scan zone
+        // `real` unchanged; the iOS path is untouched — Rule #11.)
+        let widthFraction = 0.54
+        let renderOnly = CGRect(
+            x: (1.0 - widthFraction) * 0.5,
+            y: 0.1,
+            width: widthFraction,
+            height: widthFraction * (Design.Mac.windowWidth / Design.Mac.windowHeight)
+        )
 #else
         let rect = PlatformScreen.bounds
         let ratio = rect.width / rect.height
