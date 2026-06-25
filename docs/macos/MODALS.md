@@ -30,8 +30,8 @@ call-site changes** — the reroute lives in the two modifiers' macOS impl. iOS 
 **Key learning:** a `PreferenceKey` (up-propagation) is swallowed by `NavigationStack` /
 `NavigationSplitView` and never reaches the root — the card simply never appeared. The **environment**
 (down-propagation) crosses navigation reliably, so an injected coordinator is the right channel. Content is
-built in the child's body (store + colorScheme correct) and self-refreshes via its own
-`WithPerceptionTracking`.
+built in the child's body (store + colorScheme correct); because it renders DETACHED at the root host, the
+plumbing wraps it in `WithPerceptionTracking` so it stays reactive to store changes (Rule #5b).
 
 **Still open (minor):** the appear/dismiss animation (currently instant). Sizing, surface, scope and
 dismissal are settled.
@@ -54,6 +54,22 @@ Classify each hit: **app content** → `.zashiSheet` / `.zashiSelectorSheet` (bu
 macOS concern (window / system browser, not a card); **QR scan / file panel** → its own native treatment.
 Current audit + the still-to-convert sites: `KNOWN_ISSUES.md` entry 5. (This is the modal instance of the
 process rule "discover a flaw → sweep the whole tree → fix every instance.")
+
+## Rule #5b — DETACHED card content must be `WithPerceptionTracking`-wrapped (the chips-don't-toggle bug)
+The card renders the dialog's content at the **root host** (`MacCardOverlay`), captured into the coordinator
+entry — i.e. OUTSIDE the presenting view's TCA observation scope. A TCA view only re-renders on store changes
+when the store access happens inside a `WithPerceptionTracking`. So a dialog whose body reads store state
+directly (e.g. `FiltersSheet`: each chip's `active: store.isSentFilterActive`) updates the *state* on tap but
+the card keeps drawing the **stale snapshot** — chips never toggle from unselected→selected, Reset doesn't
+clear them. iOS is immune: the native `.sheet` re-renders in-hierarchy whenever the parent re-renders.
+
+**Fix — central, not per-dialog.** `.zashiSheet` / `.zashiSelectorSheet` wrap the content in
+`WithPerceptionTracking { content() }` inside the two modifiers (`ZashiSheet.swift` / `ZashiSelectorSheet.swift`,
+the *only* two `macCardPublish` callers). One wrap each makes **all ~40 dialogs** self-reactive; it is
+behaviour-neutral on iOS (the native sheet already propagated). A new dialog therefore needs NO per-view
+`WithPerceptionTracking` for the card to track it (adding one anyway is harmless — nesting is fine).
+
+**Symptom to recognise:** "the data flow is correct but the UI doesn't refresh" on a macOS card → it's this.
 
 ## Decision guide — what an iOS sheet *becomes* on Mac
 iOS reaches for one bottom sheet for almost everything. On Mac that splits by the task's relationship

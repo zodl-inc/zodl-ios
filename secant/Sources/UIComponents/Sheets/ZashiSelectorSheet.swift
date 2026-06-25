@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import ComposableArchitecture
 
 /// Presents a searchable selector (swap token / address-book chain) whose body is a scrollable list.
 ///
@@ -51,8 +52,11 @@ struct ZashiSelectorSheetModifier<SelectorContent: View>: ViewModifier {
 extension View {
     func zashiSelectorSheet(
         isPresented: Binding<Bool>,
-        @ViewBuilder content: () -> some View
+        @ViewBuilder content: @escaping () -> some View
     ) -> some View {
-        modifier(ZashiSelectorSheetModifier(isPresented: isPresented, selectorContent: content()))
+        // PERCEPTION (MODALS.md Rule #5b): keep the selector reactive when rendered detached in the macOS
+        // root card (MacCard) — see ZashiSheet for the full rationale. `@escaping` because the
+        // WithPerceptionTracking wrapper holds the content closure to re-evaluate it on store changes.
+        modifier(ZashiSelectorSheetModifier(isPresented: isPresented, selectorContent: WithPerceptionTracking { content() }))
     }
 }

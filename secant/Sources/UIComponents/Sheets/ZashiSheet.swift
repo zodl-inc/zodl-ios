@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import ComposableArchitecture
 
 private struct SheetHeightKey: PreferenceKey {
     static let defaultValue: CGFloat = 0
@@ -173,7 +174,13 @@ extension View {
                 horizontalPadding: horizontalPadding,
                 dragIndicatorVisibility: dragIndicatorVisibility,
                 onDismiss: onDismiss,
-                sheetContent: content()
+                // PERCEPTION (MODALS.md Rule #5b): wrap the content in WithPerceptionTracking so it stays
+                // reactive when rendered DETACHED in the macOS root card (MacCard), where it observes store
+                // state OUTSIDE the presenting view's tracking scope. Without it, a tap updates the state
+                // but the card keeps drawing the stale snapshot (e.g. filter chips never toggle, reset
+                // doesn't clear them). iOS re-renders via the native sheet's parent propagation regardless;
+                // wrapping is behaviour-neutral there. One wrap here covers every `.zashiSheet` dialog.
+                sheetContent: WithPerceptionTracking { content() }
             )
         )
     }

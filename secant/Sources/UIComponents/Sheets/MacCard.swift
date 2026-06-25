@@ -6,10 +6,12 @@
 //  `.zashiSelectorSheet` on macOS writes its content to a `MacCardCoordinator` injected via the
 //  environment by `.macCardHost()` at the app root, which renders ONE centered, dimmed, dynamically-sized
 //  card OVER THE WHOLE WINDOW — outside the 536pt content cap (`macCappedScreenContent`). The content is
-//  built in the child's body (store + colorScheme correct) and re-renders itself via its own
-//  `WithPerceptionTracking`. The environment (down-propagation) reliably crosses NavigationStack /
-//  NavigationSplitView, where a PreferenceKey (up-propagation) is consumed by the container. iOS keeps
-//  native `.sheet` / `.popover`.
+//  built in the child's body (store + colorScheme correct). It renders DETACHED here, OUTSIDE the
+//  presenting view's TCA observation, so the `.zashiSheet` / `.zashiSelectorSheet` plumbing wraps it in
+//  `WithPerceptionTracking` (MODALS.md Rule #5b) — without that, store changes update state but the card
+//  redraws a stale snapshot (filter chips not toggling, etc.). The environment (down-propagation) reliably
+//  crosses NavigationStack / NavigationSplitView, where a PreferenceKey (up-propagation) is consumed by
+//  the container. iOS keeps native `.sheet` / `.popover`.
 //
 //  Single slot — there's only ever one card (these exist only because there's no always-one iOS `.sheet`).
 //
