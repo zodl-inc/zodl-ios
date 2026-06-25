@@ -324,14 +324,34 @@ extension SwapAndPayForm {
                                 "",
                                 text: $store.amountText,
                                 prompt:
-                                    Text(isAmountFocused ? "" : store.localePlaceholder)
+                                    Text({
+#if os(macOS)
+                                        // macOS shows the placeholder via the centered overlay below; the
+                                        // native prompt renders top-aligned with no way to center it, so
+                                        // keep it empty here.
+                                        ""
+#else
+                                        isAmountFocused ? "" : store.localePlaceholder
+#endif
+                                    }())
                                     .font(.custom(FontFamily.Inter.semiBold.name, size: 24))
                                     .foregroundColor(Design.Text.tertiary.color(colorScheme))
                             )
                             .disabled(store.isQuoteRequestInFlight)
                             .frame(maxWidth: .infinity)
+#if os(macOS)
+                            // Overlay our own placeholder Text (Text DOES vertically center, unlike the
+                            // native prompt), trailing-aligned to match the input position.
+                            .overlay(alignment: .trailing) {
+                                if store.amountText.isEmpty && !isAmountFocused {
+                                    Text(store.localePlaceholder)
+                                        .font(.custom(FontFamily.Inter.semiBold.name, size: 24))
+                                        .foregroundColor(Design.Text.tertiary.color(colorScheme))
+                                        .allowsHitTesting(false)
+                                }
+                            }
+#endif
 #if os(iOS)
-                            // macOS top-aligns text in a taller-than-text frame; let it hug + center instead.
                             .frame(height: 32)
                             .autocapitalization(.none)
 #endif
@@ -471,14 +491,34 @@ extension SwapAndPayForm {
                             "",
                             text: $store.amountText,
                             prompt:
-                                Text(isAmountFocused ? "" : store.localePlaceholder)
+                                Text({
+#if os(macOS)
+                                    // macOS shows the placeholder via the centered overlay below; the
+                                    // native prompt renders top-aligned with no way to center it, so keep
+                                    // it empty here.
+                                    ""
+#else
+                                    isAmountFocused ? "" : store.localePlaceholder
+#endif
+                                }())
                                     .font(.custom(FontFamily.Inter.semiBold.name, size: 24))
                                     .foregroundColor(Design.Text.tertiary.color(colorScheme))
                         )
                         .disabled(store.isQuoteRequestInFlight)
                         .frame(maxWidth: .infinity)
+#if os(macOS)
+                        // Overlay our own placeholder Text (Text DOES vertically center, unlike the native
+                        // prompt), trailing-aligned to match the input position.
+                        .overlay(alignment: .trailing) {
+                            if store.amountText.isEmpty && !isAmountFocused {
+                                Text(store.localePlaceholder)
+                                    .font(.custom(FontFamily.Inter.semiBold.name, size: 24))
+                                    .foregroundColor(Design.Text.tertiary.color(colorScheme))
+                                    .allowsHitTesting(false)
+                            }
+                        }
+#endif
 #if os(iOS)
-                        // macOS top-aligns text in a taller-than-text frame; let it hug + center instead.
                         .frame(height: 32)
                         .autocapitalization(.none)
 #endif
