@@ -5,7 +5,7 @@
 //  macOS: a SINGLE root-hosted card presenter (MODALS.md Rule #5). Every `.zashiSheet` /
 //  `.zashiSelectorSheet` on macOS writes its content to a `MacCardCoordinator` injected via the
 //  environment by `.macCardHost()` at the app root, which renders ONE centered, dimmed, dynamically-sized
-//  card OVER THE WHOLE WINDOW — outside the 536pt content cap (`macCappedScreenContent`). The content is
+//  card OVER THE WHOLE WINDOW — outside the content cap (`Design.Mac.viewCapWidth` / `macCappedScreenContent`). The content is
 //  built in the child's body (store + colorScheme correct). It renders DETACHED here, OUTSIDE the
 //  presenting view's TCA observation, so the `.zashiSheet` / `.zashiSelectorSheet` plumbing wraps it in
 //  `WithPerceptionTracking` (MODALS.md Rule #5b) — without that, store changes update state but the card

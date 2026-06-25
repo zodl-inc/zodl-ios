@@ -399,11 +399,11 @@ public enum Design: Colorable {
         /// Fixed macOS window height (`zodlmac_internalApp` / `WindowSize`).
         public static let windowHeight: CGFloat = 720
         /// Fixed sidebar (left column) width (`MacSplitView` / `FixedSidebarWidth`, Rule #4).
-        public static let sidebarWidth: CGFloat = 232
+        public static let sidebarWidth: CGFloat = 240
         /// Max width of a content view's centered column (Rule #8) — `applyScreenBackground`'s cap.
-        public static let viewCapWidth: CGFloat = 536
+        public static let viewCapWidth: CGFloat = 530
         /// Max width of a button — the capped, centered pill (Rule #7) — `ZashiButton`.
-        public static let maxButtonWidth: CGFloat = 261
+        public static let maxButtonWidth: CGFloat = 260
     }
 
     // MARK: - Spacing Constants

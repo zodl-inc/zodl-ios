@@ -324,7 +324,7 @@ struct ServerSetupView: View {
                 let needsServer = store.connectionMode == .manual && (store.selectedServer == nil || customIsInvalid)
                 let canSave = store.hasChanges && !needsServer
 
-                // Rule #7 + button consolidation: ZashiButton owns the 261 macOS width cap and the
+                // Rule #7 + button consolidation: ZashiButton owns the macOS width cap (`Design.Mac.maxButtonWidth`) and the
                 // primary/disabled styling — don't re-implement a full-width hand-rolled CTA. Branch only
                 // to keep the in-progress spinner as the accessory while the server is being saved.
                 if store.isUpdatingServer {

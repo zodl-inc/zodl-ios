@@ -25,8 +25,9 @@ struct ZashiSelectorSheetModifier<SelectorContent: View>: ViewModifier {
     func body(content: Content) -> some View {
 #if os(macOS)
         // macOS: publish to the single root card host (`.macCardHost()`) — the definite-size selector card
-        // (the list needs a real height) rendered centered + dimmed over the WHOLE window, above the 536pt
-        // content cap (MODALS.md Rule #5). The selector draws its own close button, so the host omits one.
+        // (the list needs a real height) rendered centered + dimmed over the WHOLE window, above the
+        // content cap (`Design.Mac.viewCapWidth`, MODALS.md Rule #5). The selector draws its own close
+        // button, so the host omits one.
         content
             .macCardPublish(
                 isPresented: isPresented,

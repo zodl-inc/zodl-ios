@@ -62,8 +62,9 @@ struct ZashiSheetModifier<SheetContent: View>: ViewModifier {
     func body(content: Content) -> some View {
 #if os(macOS)
         // macOS: publish to the single root card host (`.macCardHost()`), which renders the centered,
-        // dimmed, content-hugging card OVER THE WHOLE WINDOW — escaping the 536pt content cap (MODALS.md
-        // Rule #5). Replaces the old local `.overlay`, whose dimmed backdrop was clamped to the capped
+        // dimmed, content-hugging card OVER THE WHOLE WINDOW — escaping the content cap
+        // (`Design.Mac.viewCapWidth`, MODALS.md Rule #5). Replaces the old local `.overlay`, whose dimmed
+        // backdrop was clamped to the capped
         // content column.
         content
             .macCardPublish(

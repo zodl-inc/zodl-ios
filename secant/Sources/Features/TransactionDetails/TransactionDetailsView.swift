@@ -139,7 +139,7 @@ struct TransactionDetailsView: View {
         .applyDefaultGradientScreenBackground()
         // macOS: present the sheets AFTER applyDefaultGradientScreenBackground so the dimmed backdrop
         // covers the FULL detail pane, not the max-width-capped (Rule #8) content column — a `.zashiSheet`
-        // is an overlay bound to the view it's attached to, so above the cap it clamps to ~536pt. iOS
+        // is an overlay bound to the view it's attached to, so above the cap it clamps to `Design.Mac.viewCapWidth`. iOS
         // (native `.sheet`) is modal regardless, so this is iOS-neutral.
         .zashiSheet(isPresented: $store.isReportSwapSheetEnabled) {
             reportSwapSheetContent()

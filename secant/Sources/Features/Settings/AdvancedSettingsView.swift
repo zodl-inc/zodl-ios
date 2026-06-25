@@ -99,7 +99,7 @@ struct AdvancedSettingsView: View {
                 .zFont(size: 12, style: Design.Text.tertiary)
                 .padding(.bottom, 20)
 
-                // Rule #7 + consolidation: ZashiButton owns the 261 macOS width cap + the Destructive1
+                // Rule #7 + consolidation: ZashiButton owns the macOS width cap (`Design.Mac.maxButtonWidth`) + the Destructive1
                 // styling — don't hand-roll a full-width destructive CTA. (Reset / Delete Zashi.)
                 ZashiButton(
                     String(localizable: .settingsDeleteZashi),

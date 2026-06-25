@@ -363,8 +363,8 @@ private extension RootView {
         }
         .toast()
         // macOS: the single root card host — renders any `.zashiSheet` / `.zashiSelectorSheet` (which now
-        // publish up a PreferenceKey) as ONE centered, dimmed card over the whole window, above the 536pt
-        // content cap. No-op on iOS (native `.sheet`).
+        // publish up a PreferenceKey) as ONE centered, dimmed card over the whole window, above the
+        // content cap (`Design.Mac.viewCapWidth`). No-op on iOS (native `.sheet`).
         .macCardHost()
     }
 }

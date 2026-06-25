@@ -52,14 +52,14 @@ entry 1.
 Hoisted to the window root like the help sheet, builds green, but the macOS visual hasn't been eyeballed
 (uncommon path — fires only on a sync timeout). Verify when convenient.
 
-### 4. "Dimmed capped" — dialog backdrops clamped to the 536pt content width — RESOLVED
+### 4. "Dimmed capped" — dialog backdrops clamped to the content width (`Design.Mac.viewCapWidth`) — RESOLVED
 **RESOLVED (`MacCard.swift`).** All `.zashiSheet` / `.zashiSelectorSheet` cards now present via one root
 card host (`.macCardHost()` at the RootView root) — a single centered card dimming the WHOLE window, above
-the 536pt cap, for both split and single-window screens. (The *onboarding screen-bg* variant below is NOT a
+the content cap (`Design.Mac.viewCapWidth`), for both split and single-window screens. (The *onboarding screen-bg* variant below is NOT a
 dialog — a capped screen background — so it may still want a separate fix.) Analysis kept for reference.
 
 **Symptom.** A dialog's dimmed semi-transparent backdrop should cover the FULL pane/screen, but it's capped
-to the Rule-#8 content max-width (536pt) — it dims only the centre column. Cosmetic (the dialogs work). One
+to the Rule-#8 content max-width (`Design.Mac.viewCapWidth`) — it dims only the centre column. Cosmetic (the dialogs work). One
 non-dialog variant: a single-view screen whose own background is capped (empty side margins).
 
 **Status.** PARKED — resume next. The dialog *content* (card + Liquid Glass) is correct; only the backdrop
@@ -73,7 +73,7 @@ width is wrong. More restore-flow cases TBD (being listed).
 - *Screen-bg variant (NOT a dialog):* onboarding (create / restore wallet) — its background is capped.
 
 **Root cause (confirmed via Lukas's clue).** The backdrop is a SwiftUI `.overlay`, confined to the bounds of
-the view it's attached to. macOS caps content to 536pt via `frame(maxWidth: 536)` (`macCappedScreenContent`
+the view it's attached to. macOS caps content via `frame(maxWidth: Design.Mac.viewCapWidth)` (`macCappedScreenContent`
 in `ScreenBackground.swift`); the overlay inherits that frame — *"a parental modifier tells the dialog the
 frame to render in."*
 

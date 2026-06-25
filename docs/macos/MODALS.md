@@ -19,7 +19,7 @@ The macOS design language's modal rule (see `DESIGN_LANGUAGE.md`):
   window, inspector (see the decision guide + use-case table below).
 
 **Implementation path — BUILT (`MacCard.swift`).** Done. `.zashiSheet` / `.zashiSelectorSheet` on macOS no
-longer overlay locally (that local backdrop was clamped to the 536pt content cap — the "dimmed capped"
+longer overlay locally (that local backdrop was clamped to the content cap (`Design.Mac.viewCapWidth`) — the "dimmed capped"
 bug). They write their content to a `MacCardCoordinator` injected via the **environment** by
 `.macCardHost()` at the **RootView root** — above the cap, above both MacSplitView and the single-window
 screens. The host renders ONE centered, dimmed card over the whole window, in two sizing modes
