@@ -50,4 +50,38 @@ import Testing
         )
         #expect(SwapAndPayClient.Constants.zashiFeeCoefficient == Decimal(67) / Decimal(10_000))
     }
+
+    /// The post-swap transaction-detail screen must show the same 0.67% affiliate fee as the
+    /// confirmation screen, not the old hardcoded 0.5%. Guards `TransactionDetails.State.totalSwapToZecFee`
+    /// against the same `0.005` literal the confirmation sites were fixed for.
+    @Test func transactionDetailSwapToZecFeeUsesZashiFeeBpsNotHardcodedHalfPercent() {
+        let amountIn = Decimal(10_000)
+        var state = TransactionDetails.State(transaction: TransactionState.placeholder())
+        state.swapDetails = SwapDetails(
+            amountInFormatted: amountIn,
+            amountInUsd: nil,
+            amountOutFormatted: nil,
+            amountOutUsd: nil,
+            fromAsset: "nep141:btc.omft.near",
+            toAsset: "nep141:zec.omft.near",
+            isSwap: true,
+            slippage: nil,
+            status: .success,
+            refundedAmountFormatted: nil,
+            swapRecipient: nil,
+            addressToCheckShield: "",
+            whenInitiated: "",
+            deadline: "",
+            depositedAmountFormatted: nil
+        )
+
+        // Build the expected strings with the store's own formatter so the assertion is locale-independent.
+        let correctFee = amountIn * SwapAndPayClient.Constants.zashiFeeCoefficient
+        let correctDisplay = state.conversionFormatter.string(from: NSDecimalNumber(decimal: correctFee)) ?? ""
+        let oldHalfPercentFee = amountIn * (Decimal(5) / Decimal(1_000))
+        let oldHalfPercentDisplay = state.conversionFormatter.string(from: NSDecimalNumber(decimal: oldHalfPercentFee)) ?? ""
+
+        #expect(state.totalSwapToZecFee == correctDisplay)
+        #expect(state.totalSwapToZecFee != oldHalfPercentDisplay)
+    }
 }
