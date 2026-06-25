@@ -704,8 +704,8 @@ extension TransactionDetails.State {
             return nil
         }
         
-        let fee = amountIn * 0.005
-        
+        let fee = amountIn * SwapAndPayClient.Constants.zashiFeeCoefficient
+
         return conversionFormatter.string(from: NSDecimalNumber(decimal: fee)) ?? ""
     }
     

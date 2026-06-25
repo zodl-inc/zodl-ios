@@ -6,6 +6,7 @@
 //
 
 import ComposableArchitecture
+import Foundation
 
 extension DependencyValues {
     var swapAndPay: SwapAndPayClient {
@@ -23,6 +24,9 @@ struct SwapAndPayClient {
     enum Constants {
         /// Affiliate fee in basis points
         static let zashiFeeBps = 67
+        /// Affiliate fee as a decimal coefficient (e.g. 67 bps -> 0.0067). Single source of truth for
+        /// fee math/display so the amount shown always matches what `zashiFeeBps` actually charges.
+        static let zashiFeeCoefficient = Decimal(zashiFeeBps) / Decimal(10_000)
     }
     
     var submitDepositTxId: @Sendable (String, String) async throws -> Void
