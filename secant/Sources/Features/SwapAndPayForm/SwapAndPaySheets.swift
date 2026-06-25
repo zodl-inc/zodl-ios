@@ -201,7 +201,9 @@ struct FocusableTextField: UIViewRepresentable {
     }
 }
 #else
-// macOS: native text field (advanced focus handling deferred to goal #3).
+// macOS: native text field (advanced focus handling deferred to goal #3). Match the iOS field's styling —
+// centered, Inter medium 16, Design.Switcher.selectedText — so the typed slippage value is legible. The
+// bare TextField had no foreground set, so on the card surface the value rendered near-invisible (white-ish).
 struct FocusableTextField: View {
     @Binding var text: String
     @Binding var isFirstResponder: Bool
@@ -209,6 +211,8 @@ struct FocusableTextField: View {
     let colorScheme: ColorScheme
     var body: some View {
         TextField(placeholder, text: $text)
+            .multilineTextAlignment(.center)
+            .zFont(.medium, size: 16, color: Design.Switcher.selectedText.color(colorScheme))
     }
 }
 #endif
