@@ -61,6 +61,29 @@ extension SmartBannerView {
 #endif
     }
 
+    /// Status-banner row layout (icon + labels, NO CTA). iOS: an HStack — icon then labels, pushed
+    /// left by a trailing Spacer. macOS: the rail is narrow, so the icon (or the circular progress ring
+    /// on the sync / restore banners) sits on its OWN first row above the labels — matching
+    /// `bannerCTALayout`'s icon slot so every banner stacks consistently.
+    @ViewBuilder
+    func bannerStatusLayout<Icon: View, Content: View>(
+        @ViewBuilder icon: () -> Icon,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+#if os(macOS)
+        VStack(alignment: .leading, spacing: 12) {
+            icon()
+            content()
+        }
+#else
+        HStack(spacing: 0) {
+            icon()
+            content()
+            Spacer()
+        }
+#endif
+    }
+
     /// On macOS the CTA stacks below the labels (VStack) so it should fill the width; on iOS it sits
     /// inline (HStack) at intrinsic width.
     var bannerCTAFullWidth: Bool {
@@ -72,113 +95,101 @@ extension SmartBannerView {
     }
 
     @ViewBuilder func disconnectedContent() -> some View {
-        HStack(spacing: 0) {
+        bannerStatusLayout {
             Asset.Assets.Icons.wifiOff.image
                 .zImage(size: 20, color: titleStyle())
                 .padding(.trailing, 12)
-            
+        } content: {
             VStack(alignment: .leading, spacing: 2) {
                 Text(localizable: .smartBannerContentDisconnectedTitle)
                     .zFont(.medium, size: 14, color: titleStyle())
-                
+
                 Text(localizable: .smartBannerContentDisconnectedInfo)
                     .zFont(.medium, size: 12, color: infoStyle())
             }
-            
-            Spacer()
         }
     }
 
     @ViewBuilder func syncingErrorContent() -> some View {
-        HStack(spacing: 0) {
+        bannerStatusLayout {
             Asset.Assets.Icons.alertTriangle.image
                 .zImage(size: 20, color: titleStyle())
                 .padding(.trailing, 12)
-            
+        } content: {
             VStack(alignment: .leading, spacing: 2) {
                 Text(localizable: .smartBannerContentSyncingErrorTitle)
                     .zFont(.medium, size: 14, color: titleStyle())
-                
+
                 Text(localizable: .smartBannerContentSyncingErrorInfo)
                     .zFont(.medium, size: 12, color: infoStyle())
             }
-            
-            Spacer()
         }
     }
 
     @ViewBuilder func restoringContent() -> some View {
-        HStack(spacing: 0) {
+        bannerStatusLayout {
             CircularProgressView(progress: store.syncingPercentage)
                 .frame(width: 20, height: 20)
                 .padding(.trailing, 12)
-            
+        } content: {
             VStack(alignment: .leading, spacing: 2) {
                 Text(localizable: .smartBannerContentRestoreTitle(String(format: "%0.1f%%", store.lastKnownSyncPercentage * 100)))
                     .zFont(.medium, size: 14, color: titleStyle())
-                
+
                 Text(store.areFundsSpendable
                      ? String(localizable: .smartBannerContentRestoreInfoSpendable)
                      : String(localizable: .smartBannerContentRestoreInfo)
                 )
                 .zFont(.medium, size: 12, color: infoStyle())
             }
-            
-            Spacer()
         }
     }
 
     @ViewBuilder func resyncingContent() -> some View {
-        HStack(spacing: 0) {
+        bannerStatusLayout {
             ProgressView()
                 .frame(width: 20, height: 20)
                 .padding(.trailing, 12)
-
+        } content: {
             VStack(alignment: .leading, spacing: 2) {
                 Text(localizable: .smartBannerContentResyncing)
                     .zFont(.medium, size: 14, color: titleStyle())
-                
+
                 Text(localizable: .smartBannerContentRestoreInfo)
-                .zFont(.medium, size: 12, color: infoStyle())
+                    .zFont(.medium, size: 12, color: infoStyle())
             }
-            
-            Spacer()
         }
     }
 
     @ViewBuilder func syncingContent() -> some View {
-        HStack(spacing: 0) {
+        bannerStatusLayout {
             CircularProgressView(progress: store.syncingPercentage)
                 .frame(width: 20, height: 20)
                 .padding(.trailing, 12)
-            
+        } content: {
             VStack(alignment: .leading, spacing: 2) {
                 Text(localizable: .smartBannerContentSyncTitle(String(format: "%0.1f%%", store.lastKnownSyncPercentage * 100)))
                     .zFont(.medium, size: 14, color: titleStyle())
-                
+
                 Text(localizable: .smartBannerContentSyncInfo)
                     .zFont(.medium, size: 12, color: infoStyle())
             }
-            
-            Spacer()
         }
     }
 
     @ViewBuilder func updatingBalanceContent() -> some View {
-        HStack(spacing: 0) {
+        bannerStatusLayout {
             Asset.Assets.Icons.loading.image
                 .zImage(size: 20, color: titleStyle())
                 .padding(.trailing, 12)
-            
+        } content: {
             VStack(alignment: .leading, spacing: 2) {
                 Text(localizable: .smartBannerContentUpdatingBalanceTitle)
                     .zFont(.medium, size: 14, color: titleStyle())
-                
+
                 Text(localizable: .smartBannerContentUpdatingBalanceInfo)
                     .zFont(.medium, size: 12, color: infoStyle())
             }
-            
-            Spacer()
         }
     }
 
