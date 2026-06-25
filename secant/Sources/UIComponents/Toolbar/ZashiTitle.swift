@@ -12,8 +12,11 @@ struct ZashiTitleModifier<ZashiTitleContent>: ViewModifier where ZashiTitleConte
     
     func body(content: Content) -> some View {
 #if os(macOS)
-        // macOS wraps principal toolbar items in a liquid-glass bubble; skip it (see ScreenTitle).
+        // macOS wraps principal toolbar items in a liquid-glass bubble; skip it (see ScreenTitle). Set an
+        // EMPTY navigationTitle so the next pushed screen's native back button shows just the chevron, not
+        // the window-title fallback ("← Zodl") — the Beta back labels are non-contextual, so drop them.
         content
+            .navigationTitle("")
 #else
         content
             .zashiNavBarTitleDisplayMode(.inline)
@@ -31,9 +34,12 @@ struct ScreenTitleModifier: ViewModifier {
     
     func body(content: Content) -> some View {
 #if os(macOS)
-        // macOS auto-wraps principal toolbar items in a liquid-glass bubble, which looks wrong for
-        // a plain screen title. Drop it on macOS — content screens carry their own headers.
+        // macOS auto-wraps principal toolbar items in a liquid-glass bubble, which looks wrong for a plain
+        // screen title, so we don't render it. But set an EMPTY navigationTitle so the native back button on
+        // the next pushed screen shows just the chevron, not the window-title fallback ("← Zodl"). Beta
+        // back labels are non-contextual; drop them everywhere screenTitle is used.
         content
+            .navigationTitle("")
 #else
         content
             .zashiNavBarTitleDisplayMode(.inline)

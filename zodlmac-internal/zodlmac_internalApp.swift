@@ -32,7 +32,11 @@ struct zodlmac_internalApp: App {
     }
 
     var body: some Scene {
-        WindowGroup("Zodl") {
+        // Empty window title: macOS uses the window title as the navigation fallback, which surfaced as a
+        // non-contextual "← Zodl" on every back button. Blank it for Beta (screens can set their own
+        // contextual navigationTitle later — e.g. "← Vote"). The app name in the dock/menu is the bundle
+        // name, unaffected.
+        WindowGroup("") {
             RootView(
                 store: rootStore,
                 tokenName: TargetConstants.tokenName,
