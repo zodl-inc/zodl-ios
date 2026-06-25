@@ -18,17 +18,17 @@ reference). Commit format `[#1755] slipstream: iPad — …`. Local-only; never 
 | iP-1 enable iPad + landscape | ✅ `52826d60` — `TARGETED_DEVICE_FAMILY "1,2"` on **all** app targets (not just testnet — it's a dev branch), iPad-only orientations |
 | iP-2 IPadSplitView | ✅ `f6d78937` — split + #2a switching + path takeovers + sidebar/detail + root sheets |
 | iP-3 native sheets | ✅ folded into iP-2 — free on iOS (`.zashiSheet` → native sheet; MacCard is Mac-only) |
-| iP-4 Design.IPad sizing | 🟡 `dfd392b7` — namespace + sidebar wired; **content-cap NOT wired yet** |
+| iP-4 Design.IPad sizing + content cap | ✅ `dfd392b7` + `35e942d5` — namespace, sidebar, and the iPad-regular-only content cap all wired |
 | iP-5 broadcast/scan lock | ✅ folded into iP-2 — `isFullWindowFlow` + `columnVisibility=.detailOnly` |
-| iP-6 polish / copy / design-language doc | ⬜ pending — needs iPad visual testing |
-| iP-7 consolidate `MacSection`/`PadSection` | ⬜ pending |
+| iP-6 copy table | ✅ `c463d792` — iPad copy table; **visual sweep + Design.IPad tuning still need iPad testing** |
+| iP-7 consolidate `MacSection`/`PadSection` | ✅ `5a9e0302` — shared `AppSection.swift`, both via `typealias` |
 
-**Next — needs eyes on an iPad sim:** run `zodl-testnet` on an iPad in regular width / landscape. The split
-(sidebar + detail) should appear; verify section switching (no crash), the account-switch sheet, and scan +
-a Send/Pay broadcast going full-screen (sidebar hidden). Then: iP-4 content-cap (generalize
-`ScreenBackground`'s `macContentMaxWidth` for iPad-regular WITHOUT touching the iPhone full-bleed path),
-iP-6 polish + an **iPad copy table** (device refs "phone"→"iPad" — reuse `MACOS_COPY_AUDIT.md` §1; "tap"
-STAYS, iPad is touch), iP-7 consolidation. Builds green on iOS + macOS at every committed rung.
+**All autonomously-doable phases are done (iP-1…iP-7), each green on iOS + macOS.** What remains is purely
+visual tuning that needs eyes on a real iPad: run `zodl-testnet` on an iPad in regular width / landscape and
+verify the split appears (sidebar + detail), section switching doesn't crash, the account-switch sheet
+opens, scan + a Send/Pay broadcast go full-screen (sidebar hidden), and the content is **capped + centered,
+not stretched**. Then the iP-6 visual sub-items: per-section toolbar/back-button sweep, `Design.IPad`
+tuning (320 / 640 / 340 against real iPad sizes), and the sidebar-collapse UX decision. Fix issues 1-by-1.
 
 ---
 
