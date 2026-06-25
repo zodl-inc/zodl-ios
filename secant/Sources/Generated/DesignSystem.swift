@@ -406,6 +406,18 @@ public enum Design: Colorable {
         public static let maxButtonWidth: CGFloat = 260
     }
 
+    /// Adaptive iPad dimensions (mirror of `Mac`) for the regular-width `IPadSplitView`. There is no fixed
+    /// window — the iPad screen is variable — so these are the column / content-cap / button widths, tuned
+    /// wider than Mac's narrower fixed window. See docs/ipad/IPAD_SUPPORT_PLAN.md.
+    public enum IPad {
+        /// Seeded sidebar width — natively collapsible (not pinned like Mac's Rule #4).
+        public static let sidebarWidth: CGFloat = 320
+        /// Max width of a centered content column on iPad (wired into the detail in a later iP-4 step).
+        public static let viewCapWidth: CGFloat = 640
+        /// Max width of a touch button — capped + centered.
+        public static let maxButtonWidth: CGFloat = 340
+    }
+
     // MARK: - Spacing Constants
     
     public enum Spacing {

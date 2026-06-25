@@ -17,8 +17,9 @@ import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
 
 struct IPadSplitView: View {
-    // Seeded (not pinned) — iPad's sidebar is natively collapsible. Tuned via Design.iPad in Phase iP-4.
-    private let sidebarWidth: CGFloat = 320
+    // Seeded (not pinned) — iPad's sidebar is natively collapsible. Sourced from the single iPad sizing
+    // namespace (Design.IPad) so the layout can be tuned from one place, like Design.Mac.
+    private let sidebarWidth: CGFloat = Design.IPad.sidebarWidth
 
     @Environment(\.colorScheme) private var colorScheme
     @Shared(.appStorage(.sensitiveContent)) private var isSensitiveContentHidden = false
