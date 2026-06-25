@@ -56,6 +56,7 @@ struct zodlmac_internalApp: App {
                 guard !didFinishLaunching else { return }
                 didFinishLaunching = true
                 rootStore.send(.initialization(.appDelegate(.didFinishLaunching)))
+                MacMenuSimplifier.simplifyDeferred()
             }
             .onChange(of: scenePhase) { _, newPhase in
                 switch newPhase {
@@ -77,6 +78,12 @@ struct zodlmac_internalApp: App {
             }
         }
         .windowResizability(.contentSize)
+        // Single-window app: remove the "New Window" command (and its ⌘N) so neither the menu nor the
+        // shortcut can spawn a confusing second Zodl window. The File menu itself (which otherwise lingers
+        // with just "Close") is dropped in MacMenuSimplifier.
+        .commands {
+            CommandGroup(replacing: .newItem) { }
+        }
     }
 }
 
@@ -89,6 +96,51 @@ private extension zodlmac_internalApp {
                 flexa: false
             )
         }
+    }
+}
+
+/// Simplifies the macOS menu bar for a single-window app: keep only the app menu (trimmed to a single
+/// "Quit Zodl"), Edit, and Window; drop File (its "New Window" spawned a confusing second window), View,
+/// and Help. Menus are identified STRUCTURALLY — by their items' selectors and `NSApp.windowsMenu`, never
+/// by title — so it survives localized (e.g. Spanish) builds. Runs once, after the system builds the menu.
+private enum MacMenuSimplifier {
+    static func simplifyDeferred() {
+        // Defer to the next runloop so SwiftUI/AppKit has finished installing the default main menu.
+        DispatchQueue.main.async { simplify() }
+    }
+
+    static func simplify() {
+        guard let mainMenu = NSApp.mainMenu else { return }
+        let windowsMenu = NSApp.windowsMenu
+        let editActions: Set<Selector> = [NSSelectorFromString("paste:"), NSSelectorFromString("selectAll:")]
+        let windowActions: Set<Selector> = [
+            NSSelectorFromString("performMiniaturize:"),
+            NSSelectorFromString("performZoom:"),
+            NSSelectorFromString("arrangeInFront:")
+        ]
+
+        // Drop every top-level menu except the app menu (always first), Edit, and Window.
+        var removable: [NSMenuItem] = []
+        for (index, item) in mainMenu.items.enumerated() {
+            if index == 0 { continue }
+            let submenuItems = item.submenu?.items ?? []
+            let isWindow = item.submenu === windowsMenu
+                || submenuItems.contains { $0.action.map(windowActions.contains) ?? false }
+            let isEdit = submenuItems.contains { $0.action.map(editActions.contains) ?? false }
+            if isWindow || isEdit { continue }
+            removable.append(item)
+        }
+        removable.forEach { mainMenu.removeItem($0) }
+
+        // App menu → "Zodl" with a single "Quit Zodl" item (drop About / Settings / Services / Hide …).
+        guard let appItem = mainMenu.items.first, let appMenu = appItem.submenu else { return }
+        appItem.title = "Zodl"
+        appMenu.title = "Zodl"
+        let terminate = #selector(NSApplication.terminate(_:))
+        appMenu.items
+            .filter { $0.action != terminate }
+            .forEach { appMenu.removeItem($0) }
+        appMenu.items.first { $0.action == terminate }?.title = "Quit Zodl"
     }
 }
 
