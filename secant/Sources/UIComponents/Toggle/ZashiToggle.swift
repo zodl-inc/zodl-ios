@@ -40,6 +40,13 @@ struct ZashiToggle: View {
             }
         }
         .foregroundColor(textColor)
+#if os(macOS)
+        // macOS: force the plain (full-area) button style explicitly. When a ZashiToggle is nested inside
+        // another Button's label (e.g. the Keystone account row), the inner button doesn't inherit the
+        // app-wide plain style, so macOS draws its default rounded bezel behind the toggle. Standalone
+        // usages already get the plain style, so this is a no-op there. iOS is unaffected.
+        .zashiPlainButtonStyle()
+#endif
     }
 }
 
