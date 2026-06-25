@@ -334,45 +334,6 @@ struct IPadSplitView: View {
     }
 }
 
-// Mirror of MacSection (consolidate into one shared enum in Phase iP-7). Pure data — the `.action`s are
-// the same Root actions the iPhone Home buttons send, so the store graph is reused unchanged.
-private enum PadSection: CaseIterable {
-    case activity, receive, send, pay, swap, vote, more
-
-    var title: String {
-        switch self {
-        case .activity: return String(localizable: .generalActivity)
-        case .receive: return String(localizable: .tabsReceive)
-        case .send: return String(localizable: .tabsSend)
-        case .pay: return String(localizable: .swapAndPayPay)
-        case .swap: return String(localizable: .swapAndPaySwap)
-        case .vote: return String(localizable: .coinVoteSidebarTitle)
-        case .more: return String(localizable: .settingsTitle)
-        }
-    }
-
-    var sectionIcon: Image {
-        switch self {
-        case .activity: return Asset.Assets.Icons.activity.image
-        case .receive: return Asset.Assets.Icons.received.image
-        case .send: return Asset.Assets.Icons.sent.image
-        case .pay: return Asset.Assets.Icons.pay.image
-        case .swap: return Asset.Assets.Icons.swap.image
-        case .vote: return Asset.Assets.Icons.checkVerified.image
-        case .more: return Asset.Assets.Icons.dotsMenu.image
-        }
-    }
-
-    var action: Root.Action {
-        switch self {
-        case .activity: return .home(.seeAllTransactionsTapped)
-        case .receive: return .home(.receiveTapped)
-        case .send: return .home(.sendTapped)
-        case .pay: return .home(.payWithNearTapped)
-        case .swap: return .home(.swapWithNearTapped)
-        case .vote: return .macVoteSectionSelected
-        case .more: return .home(.settingsTapped)
-        }
-    }
-}
+// The split's sidebar sections — single-sourced in AppSection.swift (Phase iP-7), shared with MacSplitView.
+private typealias PadSection = AppSection
 #endif

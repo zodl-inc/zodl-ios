@@ -430,45 +430,10 @@ struct MacSplitView: View {
     }
 }
 
-private enum MacSection: CaseIterable {
-    case activity, receive, send, pay, swap, vote, more
-
-    var title: String {
-        switch self {
-        case .activity: return String(localizable: .generalActivity)
-        case .receive: return String(localizable: .tabsReceive)
-        case .send: return String(localizable: .tabsSend)
-        case .pay: return String(localizable: .swapAndPayPay)
-        case .swap: return String(localizable: .swapAndPaySwap)
-        case .vote: return String(localizable: .coinVoteSidebarTitle)
-        case .more: return String(localizable: .settingsTitle)
-        }
-    }
-
-    var sectionIcon: Image {
-        switch self {
-        case .activity: return Asset.Assets.Icons.activity.image
-        case .receive: return Asset.Assets.Icons.received.image
-        case .send: return Asset.Assets.Icons.sent.image
-        case .pay: return Asset.Assets.Icons.pay.image
-        case .swap: return Asset.Assets.Icons.swap.image
-        case .vote: return Asset.Assets.Icons.checkVerified.image
-        case .more: return Asset.Assets.Icons.dotsMenu.image
-        }
-    }
-
-    var action: Root.Action {
-        switch self {
-        case .activity: return .home(.seeAllTransactionsTapped)
-        case .receive: return .home(.receiveTapped)
-        case .send: return .home(.sendTapped)
-        case .pay: return .home(.payWithNearTapped)
-        case .swap: return .home(.swapWithNearTapped)
-        case .vote: return .macVoteSectionSelected
-        case .more: return .home(.settingsTapped)
-        }
-    }
-}
+// The split's sidebar sections — single-sourced in AppSection.swift (Phase iP-7). Kept as a local alias
+// so the existing references (selectedSection / detailSection / FixedSidebarWidth.trigger / …) are
+// unchanged.
+private typealias MacSection = AppSection
 
 /// RULE #4: SwiftUI's `navigationSplitViewColumnWidth` only seeds the INITIAL width and leaves the
 /// divider draggable (and macOS remembers a dragged width across launches). Reach the underlying
