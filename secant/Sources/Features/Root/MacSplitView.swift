@@ -26,7 +26,7 @@ import ComposableArchitecture
 
 struct MacSplitView: View {
     // RULE #4: the sidebar is a fixed width — never resizable, never remembered.
-    private let sidebarWidth: CGFloat = 232
+    private let sidebarWidth: CGFloat = Design.Mac.sidebarWidth
 
     @Environment(\.colorScheme) private var colorScheme
     @Shared(.appStorage(.sensitiveContent)) private var isSensitiveContentHidden = false

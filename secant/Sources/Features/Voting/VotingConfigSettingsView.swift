@@ -268,7 +268,7 @@ struct VotingConfigSettingsView: View {
     // with the Save button below; iOS keeps it full-width (byte-identical to before).
     private var addSourceMaxWidth: CGFloat {
 #if os(macOS)
-        261
+        Design.Mac.maxButtonWidth
 #else
         .infinity
 #endif

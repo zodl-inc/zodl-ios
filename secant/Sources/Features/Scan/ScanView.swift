@@ -137,7 +137,7 @@ struct ScanView: View {
                 .padding(.vertical, 12)
 #if os(macOS)
                 // RULE #7: cap the scan overlay buttons (Cancel / Open Settings) — never full-width.
-                .frame(maxWidth: 261)
+                .frame(maxWidth: Design.Mac.maxButtonWidth)
 #else
                 .frame(maxWidth: .infinity)
 #endif

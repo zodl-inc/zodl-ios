@@ -14,7 +14,7 @@ import SwiftUI
 enum ZashiScreenLayout {
     /// Max content width on macOS. Single full-window views (~900pt) and the split's right panel
     /// (~668pt) both constrain their content to this; the background is never capped.
-    static let macContentMaxWidth: CGFloat = 536
+    static let macContentMaxWidth: CGFloat = Design.Mac.viewCapWidth
 }
 
 private extension View {

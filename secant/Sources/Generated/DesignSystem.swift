@@ -389,6 +389,23 @@ public enum Design: Colorable {
         public static let _full: CGFloat = 9999
     }
     
+    // MARK: - macOS sizing — the 5 control numbers
+
+    /// Every fixed macOS dimension lives here, so the whole Mac app can be resized from ONE place:
+    /// change a value and the window, sidebar, content column, or button width updates everywhere.
+    public enum Mac {
+        /// Fixed macOS window width (`zodlmac_internalApp` / `WindowSize`).
+        public static let windowWidth: CGFloat = 900
+        /// Fixed macOS window height (`zodlmac_internalApp` / `WindowSize`).
+        public static let windowHeight: CGFloat = 720
+        /// Fixed sidebar (left column) width (`MacSplitView` / `FixedSidebarWidth`, Rule #4).
+        public static let sidebarWidth: CGFloat = 232
+        /// Max width of a content view's centered column (Rule #8) — `applyScreenBackground`'s cap.
+        public static let viewCapWidth: CGFloat = 536
+        /// Max width of a button — the capped, centered pill (Rule #7) — `ZashiButton`.
+        public static let maxButtonWidth: CGFloat = 261
+    }
+
     // MARK: - Spacing Constants
     
     public enum Spacing {
