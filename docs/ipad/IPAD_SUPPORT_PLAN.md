@@ -11,6 +11,27 @@ reference). Commit format `[#1755] slipstream: iPad — …`. Local-only; never 
 
 ---
 
+## Status (2026-06-25 — autonomous run)
+
+| Phase | Status |
+|---|---|
+| iP-1 enable iPad + landscape | ✅ `52826d60` — `TARGETED_DEVICE_FAMILY "1,2"` on **all** app targets (not just testnet — it's a dev branch), iPad-only orientations |
+| iP-2 IPadSplitView | ✅ `f6d78937` — split + #2a switching + path takeovers + sidebar/detail + root sheets |
+| iP-3 native sheets | ✅ folded into iP-2 — free on iOS (`.zashiSheet` → native sheet; MacCard is Mac-only) |
+| iP-4 Design.IPad sizing | 🟡 `dfd392b7` — namespace + sidebar wired; **content-cap NOT wired yet** |
+| iP-5 broadcast/scan lock | ✅ folded into iP-2 — `isFullWindowFlow` + `columnVisibility=.detailOnly` |
+| iP-6 polish / copy / design-language doc | ⬜ pending — needs iPad visual testing |
+| iP-7 consolidate `MacSection`/`PadSection` | ⬜ pending |
+
+**Next — needs eyes on an iPad sim:** run `zodl-testnet` on an iPad in regular width / landscape. The split
+(sidebar + detail) should appear; verify section switching (no crash), the account-switch sheet, and scan +
+a Send/Pay broadcast going full-screen (sidebar hidden). Then: iP-4 content-cap (generalize
+`ScreenBackground`'s `macContentMaxWidth` for iPad-regular WITHOUT touching the iPhone full-bleed path),
+iP-6 polish + an **iPad copy table** (device refs "phone"→"iPad" — reuse `MACOS_COPY_AUDIT.md` §1; "tap"
+STAYS, iPad is touch), iP-7 consolidation. Builds green on iOS + macOS at every committed rung.
+
+---
+
 ## Current state (verified 2026-06-25)
 
 - **No iPad app target.** Every app config is `TARGETED_DEVICE_FAMILY = 1` (iPhone). Only `zodlTests` is
