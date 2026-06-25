@@ -330,7 +330,7 @@ extension Near1Click {
             )
         },
         status: { depositAddress, isSwapToZec in
-            let (data, response) = try await Near1Click.getCall(urlString: "\(Constants.statusUrl)\(depositAddress)", includeJwtKey: true)
+            let (data, _) = try await Near1Click.getCall(urlString: "\(Constants.statusUrl)\(depositAddress)", includeJwtKey: true)
 
             guard let jsonObject = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
                 throw SwapAndPayClient.EndpointError.message("Check status: Cannot parse response")
@@ -371,11 +371,11 @@ extension Near1Click {
                 throw SwapAndPayClient.EndpointError.message("Check status: Missing `swapType` parameter.")
             }
 
-            guard var fromAsset = quoteRequestDict[Constants.originAsset] as? String else {
+            guard let fromAsset = quoteRequestDict[Constants.originAsset] as? String else {
                 throw SwapAndPayClient.EndpointError.message("Check status: Missing `originAsset` parameter.")
             }
 
-            guard var toAsset = quoteRequestDict[Constants.destinationAsset] as? String else {
+            guard let toAsset = quoteRequestDict[Constants.destinationAsset] as? String else {
                 throw SwapAndPayClient.EndpointError.message("Check status: Missing `destinationAsset` parameter.")
             }
             
