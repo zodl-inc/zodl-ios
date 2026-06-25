@@ -15,6 +15,7 @@ enum SwapConstants {
     static let failed = "FAILED"
     static let refunded = "REFUNDED"
     static let expired = "EXPIRED"
+    static let unknown = "UNKNOWN"
     
     static let zecAssetIdOnNear = "near.zec.zec"
 }

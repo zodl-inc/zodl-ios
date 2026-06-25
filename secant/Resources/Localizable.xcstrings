@@ -17053,6 +17053,23 @@
         }
       }
     },
+    "swapToZec.swapUnknown" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Unknown"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Desconocido"
+          }
+        }
+      }
+    },
     "sync.message.error" : {
       "extractionState" : "manual",
       "localizations" : {
