@@ -58,6 +58,9 @@ struct SwapAndPay {
         var selectedOperationChip = 0
         var proposal: Proposal?
         var quote: SwapQuote?
+        /// Account the in-flight quote was requested for (MOB-1353); the spend, refund address, and
+        /// spending key must all match it, so the swap is rejected if the selection changes mid-flow.
+        var quoteAccountId: AccountUUID?
         var quoteRequestedTime: TimeInterval = 0
         var quoteUnavailableErrorMsg = ""
         var searchTerm = ""
@@ -705,6 +708,10 @@ struct SwapAndPay {
                 }
                 state.isQuoteRequestInFlight = true
                 state.quoteRequestedTime = Date().timeIntervalSince1970
+                // SECURITY (MOB-1353): bind this quote to the account it was requested for. The refund
+                // address sent in the request above is this account's; the proposal and spending key
+                // must match it, so the swap is rejected if the selection changes before signing.
+                state.quoteAccountId = state.selectedWalletAccount?.id
                 return .run { [amountString] send in
                     do {
                         let swapQuote = try await swapAndPay.quote(
@@ -737,6 +744,12 @@ struct SwapAndPay {
                     state.isQuoteToZecPresented = true
                     state.isQuoteRequestInFlight = false
                     return .none
+                }
+                // SECURITY (MOB-1353): the spend must come from the account the quote was requested for.
+                // Reject if the selected account changed during the quote window (the refund address
+                // baked into the quote belongs to quoteAccountId, not the now-selected account).
+                guard account.id == state.quoteAccountId else {
+                    return .send(.sendFailed("selected account changed during the swap".toZcashError()))
                 }
                 // Defensive re-bind to current user intent before signing (TOCTOU guard). The quote was
                 // already validated against the request at parse time; this re-checks it against the state

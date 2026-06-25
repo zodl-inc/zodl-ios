@@ -294,8 +294,13 @@ extension SwapAndPayCoordFlow {
                     // wallet the pending screen could be waiting for (matches SendConfirmation).
                     return .send(.sendFailed("missing proposal".toZcashError(), false))
                 }
-                guard let zip32AccountIndex = state.selectedWalletAccount?.zip32AccountIndex else {
-                    return .none
+                // SECURITY (MOB-1353): bind the spend to the account the quote was requested for. If the
+                // user switched accounts during review/biometric, fail closed rather than signing the
+                // proposal (built for the quote account) with a different account's spending key.
+                guard let account = state.selectedWalletAccount,
+                      account.id == state.swapAndPayState.quoteAccountId,
+                      let zip32AccountIndex = account.zip32AccountIndex else {
+                    return .send(.sendFailed("selected account changed during the swap".toZcashError(), false))
                 }
                 
                 // present sending screen

@@ -24,6 +24,7 @@ directly impact users rather than highlighting other crucial architectural updat
 
 ### Security
 - Cross-chain swap quotes are now verified against your request before the transaction is signed: the ZEC amount, payout and refund addresses, assets, and slippage tolerance must match what you requested, and the swap is refused on any mismatch. This protects against a malicious or tampered swap-provider response redirecting your funds.
+- A cross-chain swap is now refused if you switch wallet accounts after requesting the quote, so the spend, refund address, and signing key always belong to the same account you started the swap from.
 
 ## 3.5.2 build 1 (20026-06-08)
 

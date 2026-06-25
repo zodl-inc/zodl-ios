@@ -295,6 +295,9 @@ import ComposableArchitecture
         initialState.swapAndPayState.address = "ztestaddr"
         initialState.swapAndPayState.proposal = .testOnlyFakeProposal(totalFee: 10_000)
         initialState.$selectedWalletAccount.withLock { $0 = testWalletAccount }
+        // SECURITY (MOB-1353): `.swapRequested` rejects the swap unless the selected account still
+        // matches the account the quote was bound to, so mirror that binding in the test setup.
+        initialState.swapAndPayState.quoteAccountId = testWalletAccount.id
 
         return Store(initialState: initialState) {
             SwapAndPayCoordFlow()
