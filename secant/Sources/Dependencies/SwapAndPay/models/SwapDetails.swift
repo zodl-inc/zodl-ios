@@ -25,7 +25,16 @@ struct SwapDetails: Codable, Equatable, Hashable {
         var isPending: Bool {
             self == .pending || self == .pendingDeposit || self == .processing
         }
-        
+
+        /// Whether the swap is still in-flight and must keep being polled for status updates.
+        /// `.unknown` is included so a transient or unrecognized server status keeps being polled
+        /// (it may resolve to a real status on a later poll) instead of being treated as terminal —
+        /// while `isPending` stays false for it so it is never shown as a benign pending swap
+        /// (MOB-1354 / iOS-Z10).
+        var requiresPolling: Bool {
+            isPending || self == .unknown
+        }
+
         var rawName: String {
             switch self {
             case .failed: return SwapConstants.failed

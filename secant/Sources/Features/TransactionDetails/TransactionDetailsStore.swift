@@ -350,8 +350,10 @@ struct TransactionDetails {
                     let swapDetails = try? await swapAndPay.status(address, isSwapToZec)
                     await send(.swapDetailsLoaded(swapDetails))
                     
-                    // fire another check if not done
-                    if let status = swapDetails?.status, status.isPending {
+                    // fire another check if not done — `.unknown` keeps polling (non-terminal; it may
+                    // resolve to a real status on a later poll) even though it isn't pending, so a single
+                    // unrecognized/garbage response doesn't freeze the screen's status (MOB-1354 / iOS-Z10).
+                    if let status = swapDetails?.status, status.requiresPolling {
                         try? await mainQueue.sleep(for: .seconds(10))
                         await send(.checkSwapStatus)
                     }

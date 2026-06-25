@@ -36,4 +36,25 @@ import Testing
     @Test func unknownIsNotTreatedAsPending() {
         #expect(SwapDetails.Status.unknown.isPending == false)
     }
+
+    // MOB-1354 / iOS-Z10 — `.unknown` is fail-closed for *display* (not pending) but must stay in the
+    // polling lifecycle so a transient/unrecognized status can resolve to a real one. `requiresPolling`
+    // decouples "keep polling this swap" from "show it as pending".
+    @Test func unknownStatusStillRequiresPolling() {
+        #expect(SwapDetails.Status.unknown.requiresPolling == true)
+    }
+
+    @Test func pendingStatusesRequirePolling() {
+        #expect(SwapDetails.Status.pending.requiresPolling == true)
+        #expect(SwapDetails.Status.pendingDeposit.requiresPolling == true)
+        #expect(SwapDetails.Status.processing.requiresPolling == true)
+    }
+
+    @Test func terminalStatusesDoNotRequirePolling() {
+        #expect(SwapDetails.Status.success.requiresPolling == false)
+        #expect(SwapDetails.Status.failed.requiresPolling == false)
+        #expect(SwapDetails.Status.refunded.requiresPolling == false)
+        #expect(SwapDetails.Status.expired.requiresPolling == false)
+        #expect(SwapDetails.Status.incompleteDeposit.requiresPolling == false)
+    }
 }

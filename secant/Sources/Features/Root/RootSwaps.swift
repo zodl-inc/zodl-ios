@@ -76,8 +76,10 @@ extension Root {
                     return .none
                 }
                 
-                // terminated status update
-                if candidate.isPending && !swapDetails.status.isPending {
+                // terminated status update — `.unknown` is non-terminal: keep it in the auto-update
+                // queue so it can resolve on a later poll rather than being ejected after one
+                // unrecognized/garbage response (MOB-1354 / iOS-Z10).
+                if candidate.isPending && !swapDetails.status.requiresPolling {
                     return .send(.compareAndUpdateMetadataOfSwap(swapDetails))
                 }
                 
