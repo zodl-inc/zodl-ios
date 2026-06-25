@@ -64,7 +64,11 @@ struct HowToVoteView: View {
                 .padding(.horizontal, 24)
                 .padding(.bottom, 24)
             }
-            .applyScreenBackground()
+            // macOS: this intro is taller than the fixed pane, so without scroll-within-pane the
+            // centered content renders ABOVE the window and grows the window/sidebar. `scrollable: true`
+            // clamps it to the pane and scrolls instead (macScrollableContent — names this "voting intro").
+            // No-op on iOS (Rule #11), where the inner ScrollView + pinned CTA already handle it.
+            .applyScreenBackground(scrollable: true)
             .screenTitle(String(localizable: .coinVoteCommonScreenTitle))
             .zashiSectionRootBack { store.send(.dismissFlow) }
         }
