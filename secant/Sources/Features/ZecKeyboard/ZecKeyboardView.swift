@@ -13,7 +13,11 @@ import ComposableArchitecture
 struct ZecKeyboardView: View {
     @Environment(\.colorScheme) private var colorScheme
     @PlatformBindable var store: StoreOf<ZecKeyboard>
-    
+#if os(macOS)
+    // macOS: focus target so the keypad container receives hardware-keyboard input (see handleHardwareKey).
+    @FocusState private var keyboardFocused: Bool
+#endif
+
     let tokenName: String
     
     init(store: StoreOf<ZecKeyboard>, tokenName: String) {
@@ -170,7 +174,44 @@ struct ZecKeyboardView: View {
                 .screenHorizontalPadding()
         }
         .onAppear { store.send(.onAppear) }
+#if os(macOS)
+        // macOS: drive the SW keypad from the physical keyboard. Each hardware key routes through the
+        // SAME `.keyTapped(index)` action the on-screen buttons use, so every input rule (8-decimal cap,
+        // leading-zero replace, validation) is reused. `.onKeyPress` on this container also catches keys
+        // that bubble up from a focused button, so clicking a SW button never stops keyboard input;
+        // auto-focus on appear makes it work without a click first.
+        .focusable()
+        .focusEffectDisabled()
+        .focused($keyboardFocused)
+        .onAppear { keyboardFocused = true }
+        .onKeyPress { handleHardwareKey($0) }
+#endif
     }
+
+#if os(macOS)
+    /// macOS: map a hardware key to the matching SW-keypad index and replay it as `.keyTapped`, so
+    /// physical and on-screen input share one path. Returns `.ignored` for keys we don't handle.
+    private func handleHardwareKey(_ press: KeyPress) -> KeyPress.Result {
+        // Backspace → "remove last" (the SW `x`, index 11). macOS backspace is `KeyEquivalent.delete`.
+        if press.key == .delete {
+            store.send(.keyTapped(11))
+            return .handled
+        }
+        guard let character = press.characters.first else { return .ignored }
+        // Decimal: accept BOTH `.` and `,`. Index 9 appends `state.decimalSeparator`, so the result
+        // always respects locale (Czech `,`, US `.`) regardless of which physical key was pressed.
+        if character == "." || character == "," {
+            store.send(.keyTapped(9))
+            return .handled
+        }
+        // Digits: position in `keys` (["1"…"9", separator, "0", "x"]) — "1"…"9" → 0…8, "0" → 10.
+        if character.isNumber, let index = store.keys.firstIndex(of: String(character)) {
+            store.send(.keyTapped(index))
+            return .handled
+        }
+        return .ignored
+    }
+#endif
 
     @ViewBuilder private func currencyUnavailableSheetContent() -> some View {
         VStack(alignment: .center, spacing: 0) {
