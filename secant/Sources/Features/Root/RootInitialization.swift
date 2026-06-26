@@ -415,7 +415,14 @@ extension Root {
                             )
                             // Never overwrite a real key with an empty set if derivation produced nothing.
                             if !expectedKeys.keys.isEmpty {
-                                try? walletStorage.reconcileAddressBookEncryptionKeys(expectedKeys)
+                                do {
+                                    try walletStorage.reconcileAddressBookEncryptionKeys(expectedKeys)
+                                } catch {
+                                    // A failed reconcile leaves a possibly-stale key in place, so the
+                                    // security fix would silently not apply — log it (UI-level error
+                                    // handling still tracked by #1408) rather than dropping it.
+                                    LoggerProxy.error("MOB-1450: Address Book key reconcile failed: \(error)")
+                                }
                             }
                         }
                         await send(.loadContacts)
@@ -462,16 +469,25 @@ extension Root {
                                 // Never overwrite a real key with an empty set if derivation produced nothing.
                                 guard !keys.keys.isEmpty else { continue }
                                 let changed = (try? walletStorage.exportUserMetadataEncryptionKeys(account.account)) != keys
-                                try? walletStorage.reconcileUserMetadataEncryptionKeys(keys, account: account.account)
+                                do {
+                                    try walletStorage.reconcileUserMetadataEncryptionKeys(keys, account: account.account)
+                                } catch {
+                                    // A failed reconcile leaves a possibly-stale key in place, so the
+                                    // security fix would silently not apply — log it (UI-level error
+                                    // handling still tracked by #1408) rather than dropping it.
+                                    LoggerProxy.error("MOB-1450: user-metadata key reconcile failed: \(error)")
+                                }
                                 if changed {
                                     await send(.loadUserMetadata)
                                 }
                             }
                         }
                     }
-                } catch { }
+                } catch {
+                    LoggerProxy.error("MOB-1450: resolving user-metadata encryption keys failed: \(error)")
+                }
                 return .none
-                
+
             case .initialization(.checkBackupPhraseValidation):
                 do {
                     let _ = try walletStorage.exportWallet()
