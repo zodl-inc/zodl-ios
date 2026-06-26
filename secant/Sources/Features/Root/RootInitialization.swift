@@ -347,8 +347,9 @@ extension Root {
 
                             let walletAccounts = try await sdkSynchronizer.walletAccounts()
                             await send(.initialization(.loadedWalletAccounts(walletAccounts)))
-                            await send(.resolveMetadataEncryptionKeys)
-                            await send(.loadUserMetadata)
+                            // MOB-1450: the user-metadata key reconcile and the metadata load are driven
+                            // by .loadedWalletAccounts (via .concatenate) so the load can't race the
+                            // reconcile and decrypt/write metadata with a stale key from a previous seed.
 
                             try await sdkSynchronizer.start(false)
 
@@ -419,7 +420,14 @@ extension Root {
                         }
                         await send(.loadContacts)
                     },
-                    .send(.loadUserMetadata),
+                    // MOB-1450: reconcile the user-metadata key BEFORE metadata loads — the same
+                    // "reconcile before decrypt" guarantee the Address Book .run above gives contacts.
+                    // .concatenate waits for the reconcile effect to finish before .loadUserMetadata, so
+                    // metadata is never decrypted or written back with a stale key from a previous seed.
+                    .concatenate(
+                        .send(.resolveMetadataEncryptionKeys),
+                        .send(.loadUserMetadata)
+                    ),
                     .send(.loadSwapAPIAccess)
                 )
 
