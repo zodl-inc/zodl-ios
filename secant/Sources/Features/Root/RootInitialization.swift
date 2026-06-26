@@ -391,11 +391,14 @@ extension Root {
                 }
 
                 // MOB-1450: ensure the Address Book encryption key matches the CURRENT seed
-                // before contacts load. The cached key is the source of contact decryption, so a
-                // key left over from a previous wallet (e.g. a stale keychain entry that survived
-                // a wipe) would otherwise let this wallet read and write another wallet's encrypted
+                // before contacts load. The address book is tied to the Zashi (seed-based, .zcash)
+                // account — every AddressBook operation resolves against it — so we select that
+                // account by vendor and reconcile its key. Keystone (hardware) accounts have no
+                // in-app seed and no separate address book, so they are intentionally skipped. A
+                // key left over from a previous wallet (e.g. a stale keychain entry that survived a
+                // wipe) would otherwise let this wallet read and write another wallet's encrypted
                 // contacts file in the shared iCloud container.
-                if let zashiAccount = state.zashiWalletAccount,
+                if let zashiAccount = walletAccounts.first(where: { $0.vendor == .zcash }),
                    let storedWallet = try? walletStorage.exportWallet(),
                    let seedBytes = try? mnemonic.toSeed(storedWallet.seedPhrase.value()) {
                     var expectedKeys = AddressBookEncryptionKeys.empty
