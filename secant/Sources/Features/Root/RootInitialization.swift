@@ -398,23 +398,27 @@ extension Root {
                 // key left over from a previous wallet (e.g. a stale keychain entry that survived a
                 // wipe) would otherwise let this wallet read and write another wallet's encrypted
                 // contacts file in the shared iCloud container.
-                if let zashiAccount = walletAccounts.first(where: { $0.vendor == .zcash }),
-                   let storedWallet = try? walletStorage.exportWallet(),
-                   let seedBytes = try? mnemonic.toSeed(storedWallet.seedPhrase.value()) {
-                    var expectedKeys = AddressBookEncryptionKeys.empty
-                    try? expectedKeys.cacheFor(
-                        seed: seedBytes,
-                        account: zashiAccount.account,
-                        network: zcashSDKEnvironment.network().networkType
-                    )
-                    // Never overwrite a real key with an empty set if derivation produced nothing.
-                    if !expectedKeys.keys.isEmpty {
-                        try? walletStorage.reconcileAddressBookEncryptionKeys(expectedKeys)
-                    }
-                }
-
                 return .merge(
-                    .send(.loadContacts),
+                    // Reconcile inside the effect — seed derivation (PBKDF2) and keychain access
+                    // block — then load contacts, preserving the "reconcile before decrypt"
+                    // ordering without blocking the store's actor.
+                    .run { send in
+                        if let zashiAccount = walletAccounts.first(where: { $0.vendor == .zcash }),
+                           let storedWallet = try? walletStorage.exportWallet(),
+                           let seedBytes = try? mnemonic.toSeed(storedWallet.seedPhrase.value()) {
+                            var expectedKeys = AddressBookEncryptionKeys.empty
+                            try? expectedKeys.cacheFor(
+                                seed: seedBytes,
+                                account: zashiAccount.account,
+                                network: zcashSDKEnvironment.network().networkType
+                            )
+                            // Never overwrite a real key with an empty set if derivation produced nothing.
+                            if !expectedKeys.keys.isEmpty {
+                                try? walletStorage.reconcileAddressBookEncryptionKeys(expectedKeys)
+                            }
+                        }
+                        await send(.loadContacts)
+                    },
                     .send(.loadUserMetadata),
                     .send(.loadSwapAPIAccess)
                 )
