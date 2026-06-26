@@ -352,36 +352,9 @@ extension Root {
 
                             try await sdkSynchronizer.start(false)
 
-                            var selectedAccount: WalletAccount?
-                            
-                            for account in walletAccounts {
-                                if account.vendor == .zcash {
-                                    selectedAccount = account
-                                }
-                            }
-
                             exchangeRate.refreshExchangeRateUSD()
 
-                            if let account = selectedAccount {
-                                let addressBookEncryptionKeys = try? walletStorage.exportAddressBookEncryptionKeys()
-                                if addressBookEncryptionKeys == nil {
-                                    do {
-                                        var keys = AddressBookEncryptionKeys.empty
-                                        try keys.cacheFor(
-                                            seed: seedBytes,
-                                            account: account.account,
-                                            network: zcashSDKEnvironment.network().networkType
-                                        )
-                                        try walletStorage.importAddressBookEncryptionKeys(keys)
-                                    } catch {
-                                        // TODO: [#1408] error handling https://github.com/Electric-Coin-Company/zashi-ios/issues/1408
-                                    }
-                                }
-
-                                await send(.initialization(.initializationSuccessfullyDone))
-                            } else {
-                                await send(.initialization(.initializationSuccessfullyDone))
-                            }
+                            await send(.initialization(.initializationSuccessfullyDone))
                         } catch {
                             await send(.initialization(.initializationFailed(error.toZcashError())))
                         }
@@ -416,6 +389,27 @@ extension Root {
                         }
                     }
                 }
+
+                // MOB-1450: ensure the Address Book encryption key matches the CURRENT seed
+                // before contacts load. The cached key is the source of contact decryption, so a
+                // key left over from a previous wallet (e.g. a stale keychain entry that survived
+                // a wipe) would otherwise let this wallet read and write another wallet's encrypted
+                // contacts file in the shared iCloud container.
+                if let zashiAccount = state.zashiWalletAccount,
+                   let storedWallet = try? walletStorage.exportWallet(),
+                   let seedBytes = try? mnemonic.toSeed(storedWallet.seedPhrase.value()) {
+                    var expectedKeys = AddressBookEncryptionKeys.empty
+                    try? expectedKeys.cacheFor(
+                        seed: seedBytes,
+                        account: zashiAccount.account,
+                        network: zcashSDKEnvironment.network().networkType
+                    )
+                    // Never overwrite a real key with an empty set if derivation produced nothing.
+                    if !expectedKeys.keys.isEmpty {
+                        try? walletStorage.reconcileAddressBookEncryptionKeys(expectedKeys)
+                    }
+                }
+
                 return .merge(
                     .send(.loadContacts),
                     .send(.loadUserMetadata),
