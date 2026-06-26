@@ -1360,6 +1360,7 @@
 		34B967672F8CC48B00823B20 /* Atomics in Frameworks */ = {isa = PBXBuildFile; productRef = 34B967662F8CC48B00823B20 /* Atomics */; };
 		34B967692F8CC49100823B20 /* Atomics in Frameworks */ = {isa = PBXBuildFile; productRef = 34B967682F8CC49100823B20 /* Atomics */; };
 		34D06C912FD2CF0B00BB10EE /* DecommissionedServerMigrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34D06C902FD2CF0B00BB10EE /* DecommissionedServerMigrationTests.swift */; };
+		34F6DA972FEEDD8E004C654E /* AddressBookEncryptionKeyReconcileTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34F6DA962FEEDD8E004C654E /* AddressBookEncryptionKeyReconcileTests.swift */; };
 		37BTC00000000000000INT04 /* BackgroundTaskClientInterface.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37BTC00000000000000INT01 /* BackgroundTaskClientInterface.swift */; };
 		37BTC00000000000000INT05 /* BackgroundTaskClientInterface.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37BTC00000000000000INT01 /* BackgroundTaskClientInterface.swift */; };
 		37BTC00000000000000INT06 /* BackgroundTaskClientInterface.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37BTC00000000000000INT01 /* BackgroundTaskClientInterface.swift */; };
@@ -2050,6 +2051,7 @@
 		34AA77032F857D4100D244E2 /* fonts_swift5_swiftui.stencil */ = {isa = PBXFileReference; lastKnownFileType = text; path = fonts_swift5_swiftui.stencil; sourceTree = "<group>"; };
 		34AA77052F857D4100D244E2 /* assets_swift5_swiftui.stencil */ = {isa = PBXFileReference; lastKnownFileType = text; path = assets_swift5_swiftui.stencil; sourceTree = "<group>"; };
 		34D06C902FD2CF0B00BB10EE /* DecommissionedServerMigrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DecommissionedServerMigrationTests.swift; sourceTree = "<group>"; };
+		34F6DA962FEEDD8E004C654E /* AddressBookEncryptionKeyReconcileTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddressBookEncryptionKeyReconcileTests.swift; sourceTree = "<group>"; };
 		37BTC00000000000000INT01 /* BackgroundTaskClientInterface.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundTaskClientInterface.swift; sourceTree = "<group>"; };
 		37BTC00000000000000LIV01 /* BackgroundTaskClientLiveKey.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundTaskClientLiveKey.swift; sourceTree = "<group>"; };
 		37BTC00000000000000TST01 /* BackgroundTaskClientTestKey.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundTaskClientTestKey.swift; sourceTree = "<group>"; };
@@ -4353,6 +4355,7 @@
 				348EC4CB2FD7FD96008495FB /* TransactionGuardTests.swift */,
 				9EF8135B27ECC25E0075AF48 /* UserPreferencesStorageTests.swift */,
 				9E39112D283F91600073DD9A /* ZatoshiTests.swift */,
+				34F6DA962FEEDD8E004C654E /* AddressBookEncryptionKeyReconcileTests.swift */,
 			);
 			path = UtilTests;
 			sourceTree = "<group>";
@@ -5020,6 +5023,7 @@
 				348EC4D12FD7FD96008495FB /* AutoServerSelectionClientTests.swift in Sources */,
 				921B3D95249329CD65C36E1B /* LoggerTests.swift in Sources */,
 				63B448CA6B0B3D800DE8CB2B /* SecItemClientTests.swift in Sources */,
+				34F6DA972FEEDD8E004C654E /* AddressBookEncryptionKeyReconcileTests.swift in Sources */,
 				2D502ADD8B5CBB60D72B642B /* UserPreferencesStorageTests.swift in Sources */,
 				BFE03A2F84B2F8B97831CD9F /* ZatoshiTests.swift in Sources */,
 				A9BE701F099CD0D1379F63AE /* ZatoshiStringRepresentationCommaTests.swift in Sources */,
