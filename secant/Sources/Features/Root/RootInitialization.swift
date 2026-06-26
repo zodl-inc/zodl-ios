@@ -348,8 +348,9 @@ extension Root {
                             let walletAccounts = try await sdkSynchronizer.walletAccounts()
                             await send(.initialization(.loadedWalletAccounts(walletAccounts)))
                             // MOB-1450: the user-metadata key reconcile and the metadata load are driven
-                            // by .loadedWalletAccounts (via .concatenate) so the load can't race the
-                            // reconcile and decrypt/write metadata with a stale key from a previous seed.
+                            // by .loadedWalletAccounts (which reconciles inline, then sends .loadUserMetadata)
+                            // so the load can't race the reconcile and decrypt/write metadata with a stale
+                            // key from a previous seed.
 
                             try await sdkSynchronizer.start(false)
 
@@ -427,14 +428,43 @@ extension Root {
                         }
                         await send(.loadContacts)
                     },
-                    // MOB-1450: reconcile the user-metadata key BEFORE metadata loads — the same
-                    // "reconcile before decrypt" guarantee the Address Book .run above gives contacts.
-                    // .concatenate waits for the reconcile effect to finish before .loadUserMetadata, so
-                    // metadata is never decrypted or written back with a stale key from a previous seed.
-                    .concatenate(
-                        .send(.resolveMetadataEncryptionKeys),
-                        .send(.loadUserMetadata)
-                    ),
+                    // MOB-1450: reconcile each account's user-metadata key BEFORE metadata loads — the
+                    // same "reconcile before decrypt" guarantee the Address Book .run above gives
+                    // contacts. The reconcile runs inline inside this .run (seed derivation + keychain
+                    // access block), and .loadUserMetadata is sent only after it completes, so metadata
+                    // is never decrypted or written back with a stale key from a previous seed.
+                    //
+                    // This must NOT be expressed as
+                    // .concatenate(.send(.resolveMetadataEncryptionKeys), .send(.loadUserMetadata)):
+                    // .resolveMetadataEncryptionKeys returns its OWN async .run that does the reconcile,
+                    // and .concatenate sequences only the delivery of the actions, not the completion of
+                    // that effect — so .loadUserMetadata would race the reconcile and could decrypt with
+                    // a stale key. (.resolveMetadataEncryptionKeys is still used by the account-switch
+                    // and disconnect paths, which sequence their own load afterwards.)
+                    .run { send in
+                        if let storedWallet = try? walletStorage.exportWallet(),
+                           let seedBytes = try? mnemonic.toSeed(storedWallet.seedPhrase.value()) {
+                            for account in walletAccounts {
+                                var expectedKeys = UserMetadataEncryptionKeys.empty
+                                try? expectedKeys.cacheFor(
+                                    seed: seedBytes,
+                                    account: account.account,
+                                    network: zcashSDKEnvironment.network().networkType
+                                )
+                                // Never overwrite a real key with an empty set if derivation produced nothing.
+                                guard !expectedKeys.keys.isEmpty else { continue }
+                                do {
+                                    try walletStorage.reconcileUserMetadataEncryptionKeys(expectedKeys, account: account.account)
+                                } catch {
+                                    // A failed reconcile leaves a possibly-stale key in place, so the
+                                    // security fix would silently not apply — log it (UI-level error
+                                    // handling still tracked by #1408) rather than dropping it.
+                                    LoggerProxy.error("MOB-1450: user-metadata key reconcile failed: \(error)")
+                                }
+                            }
+                        }
+                        await send(.loadUserMetadata)
+                    },
                     .send(.loadSwapAPIAccess)
                 )
 
