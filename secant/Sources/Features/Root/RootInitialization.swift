@@ -438,20 +438,25 @@ extension Root {
                         do {
                             
                             for account in walletAccounts {
-                                let userMetadataEncryptionKeys = try? walletStorage.exportUserMetadataEncryptionKeys(account.account)
-                                if userMetadataEncryptionKeys == nil {
-                                    do {
-                                        var keys = UserMetadataEncryptionKeys.empty
-                                        try keys.cacheFor(
-                                            seed: seedBytes,
-                                            account: account.account,
-                                            network: zcashSDKEnvironment.network().networkType
-                                        )
-                                        try walletStorage.importUserMetadataEncryptionKeys(keys, account.account)
-                                        await send(.loadUserMetadata)
-                                    } catch {
-                                        // TODO: [#1408] error handling https://github.com/Electric-Coin-Company/zashi-ios/issues/1408
-                                    }
+                                // MOB-1450: reconcile each account's user-metadata encryption key
+                                // against the CURRENT seed before metadata loads. The cached key
+                                // decrypts the metadata file synced through the shared iCloud
+                                // container, so a key left over from a previous wallet seed must
+                                // never survive into a new wallet — otherwise this wallet could read
+                                // and write another wallet's encrypted metadata. Overwrite a stale or
+                                // absent key (replaces the old "derive only when the slot is nil").
+                                var keys = UserMetadataEncryptionKeys.empty
+                                try? keys.cacheFor(
+                                    seed: seedBytes,
+                                    account: account.account,
+                                    network: zcashSDKEnvironment.network().networkType
+                                )
+                                // Never overwrite a real key with an empty set if derivation produced nothing.
+                                guard !keys.keys.isEmpty else { continue }
+                                let changed = (try? walletStorage.exportUserMetadataEncryptionKeys(account.account)) != keys
+                                try? walletStorage.reconcileUserMetadataEncryptionKeys(keys, account: account.account)
+                                if changed {
+                                    await send(.loadUserMetadata)
                                 }
                             }
                         }

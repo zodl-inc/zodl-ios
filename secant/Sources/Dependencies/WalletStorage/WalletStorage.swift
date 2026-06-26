@@ -257,14 +257,19 @@ struct WalletStorage {
                 throw KeychainError.encoding
             }
             
-            try setData(data, forKey: Constants.accountMetadataFilename(account: account))
-        } catch KeychainError.duplicate {
-            throw WalletStorageError.alreadyImported
+            do {
+                try setData(data, forKey: Constants.accountMetadataFilename(account: account))
+            } catch KeychainError.duplicate {
+                // The slot already holds keys; overwrite instead of failing so a key derived
+                // from a previous wallet seed can be replaced with the current seed's key. A
+                // stale key must never survive into a new wallet (MOB-1450).
+                try updateData(data, forKey: Constants.accountMetadataFilename(account: account))
+            }
         } catch {
             throw WalletStorageError.storageError(error)
         }
     }
-    
+
     func exportUserMetadataEncryptionKeys(account: Account) throws -> UserMetadataEncryptionKeys {
         let reqData: Data?
         
