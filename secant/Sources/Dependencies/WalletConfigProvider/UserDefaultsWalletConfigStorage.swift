@@ -75,3 +75,18 @@ extension UserDefaultsWalletConfigStorage: WalletConfigProviderCache {
         await store(flags: configuration.flags, key: Constants.cacheKey)
     }
 }
+
+extension UserDefaultsWalletConfigStorage {
+    /// Synchronous cache read for the boot / early-construction sites that can't await the async
+    /// `WalletConfigProvider.load()` — engine selection in `SDKSynchronizerLive`, boot logging in
+    /// `AppDelegate`. Returns whether `flag` is enabled in the cached `RawFlags`, falling back to the
+    /// flag's compiled default when nothing is cached yet.
+    static func cachedFlag(_ flag: FeatureFlag) -> Bool {
+        guard let data = UserDefaults.standard.data(forKey: Constants.cacheKey),
+              let rawFlags = try? PropertyListDecoder().decode(WalletConfig.RawFlags.self, from: data)
+        else {
+            return flag.enabledByDefault
+        }
+        return rawFlags[flag] ?? flag.enabledByDefault
+    }
+}

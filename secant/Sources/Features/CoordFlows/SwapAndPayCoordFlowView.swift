@@ -34,12 +34,9 @@ struct SwapAndPayCoordFlowView: View {
                             ),
                         tokenName: tokenName
                     )
-#if !os(macOS)
-                    // macOS: Swap/Pay are peer-roots in the split, not screens pushed over Activity.
-                    .zashiBack {
+                    .zashiSectionRootBack {
                         store.send(.backButtonTapped)
                     }
-#endif
                     .zashiTitle {
                         Text(
                             store.isSwapHelpContent

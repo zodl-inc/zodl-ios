@@ -9,6 +9,9 @@ import SwiftUI
 import Combine
 import ComposableArchitecture
 @preconcurrency import MnemonicSwift
+#if os(macOS)
+import AppKit
+#endif
 
 struct RecoveryPhraseDisplayView: View {
     @Environment(\.colorScheme) private var colorScheme
@@ -102,6 +105,12 @@ struct RecoveryPhraseDisplayView: View {
                 store.send(.hideEverything)
             }
             .onReceive(NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)) { _ in
+                store.send(.hideEverything)
+            }
+#elseif os(macOS)
+            // macOS: hide the revealed phrase when the app loses focus (user switches away), matching the
+            // iOS willResignActive purge so the seed isn't left on screen on focus loss (MOB-1363).
+            .onReceive(NotificationCenter.default.publisher(for: NSApplication.willResignActiveNotification)) { _ in
                 store.send(.hideEverything)
             }
 #endif

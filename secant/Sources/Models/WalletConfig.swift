@@ -12,7 +12,6 @@ enum FeatureFlag: String, CaseIterable, Codable {
     case onboardingFlow
     case testBackupPhraseFlow
     case showFiatConversion
-    // TODO: [#1755] M1 demo default — revert after physical-device A/B sign-off
     case useSlipstreamSynchronizer
 
     var enabledByDefault: Bool {
@@ -21,7 +20,7 @@ enum FeatureFlag: String, CaseIterable, Codable {
         case .onboardingFlow: return false
         case .testBackupPhraseFlow: return false
         case .showFiatConversion: return false
-        case .useSlipstreamSynchronizer: return true
+        case .useSlipstreamSynchronizer: return false
         }
     }
 }

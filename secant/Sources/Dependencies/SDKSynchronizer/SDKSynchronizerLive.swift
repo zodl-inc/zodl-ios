@@ -12,7 +12,7 @@ import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
 @preconcurrency import KeystoneSDK
 
-private let slipstreamLogger = Logger(subsystem: "co.ecc.zashi-testnet", category: "slipstream")
+private let slipstreamLogger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "co.ecc.zashi", category: "slipstream")
 
 extension SDKSynchronizerClient: DependencyKey {
     static let liveValue: SDKSynchronizerClient = Self.live()
@@ -54,17 +54,9 @@ extension SDKSynchronizerClient: DependencyKey {
             isExchangeRateEnabled: isRateEnabled
         )
         
-        // [#1755] slipstream: read cached feature flags from UserDefaults synchronously
-        // (WalletConfigProvider.load() is async; UserDefaultsWalletConfigStorage caches under
-        // "feature_flags_ud_config_cache" as plist-encoded WalletConfig.RawFlags).
-        let useSlipstream: Bool = {
-            guard let data = UserDefaults.standard.data(forKey: "feature_flags_ud_config_cache"),
-                  let rawFlags = try? PropertyListDecoder().decode(WalletConfig.RawFlags.self, from: data)
-            else {
-                return FeatureFlag.useSlipstreamSynchronizer.enabledByDefault
-            }
-            return rawFlags[.useSlipstreamSynchronizer] ?? FeatureFlag.useSlipstreamSynchronizer.enabledByDefault
-        }()
+        // [#1755] slipstream: engine selection from the synchronously-readable flag cache (the async
+        // WalletConfigProvider.load() can't be awaited here; the cache is the early-construction shortcut).
+        let useSlipstream = UserDefaultsWalletConfigStorage.cachedFlag(.useSlipstreamSynchronizer)
 
         let synchronizer: any Synchronizer
         if useSlipstream {

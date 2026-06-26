@@ -31,8 +31,8 @@ struct ZashiSelectorSheetModifier<SelectorContent: View>: ViewModifier {
         content
             .macCardPublish(
                 isPresented: isPresented,
-                fixedWidth: 460,
-                fixedHeightRange: 320...600,
+                fixedWidth: Design.Mac.selectorCardWidth,
+                fixedHeightRange: Design.Mac.selectorCardHeightRange,
                 horizontalPadding: 0,
                 showsCloseButton: false,
                 dismiss: { isPresented = false }

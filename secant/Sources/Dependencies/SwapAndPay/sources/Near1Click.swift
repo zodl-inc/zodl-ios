@@ -97,7 +97,6 @@ struct Near1Click {
             
             return (data, response)
         } catch let urlError as URLError {
-            print("🟥 1click \(urlError.code.rawValue) \(urlError.code) — \(urlError.localizedDescription)")
             throw NetworkError.transport(urlError)
         } catch let error as NetworkError {
             throw error

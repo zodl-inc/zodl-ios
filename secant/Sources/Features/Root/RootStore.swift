@@ -107,9 +107,15 @@ struct Root {
         var requestZecCoordFlowState = RequestZecCoordFlow.State.initial
         var scanCoordFlowState = ScanCoordFlow.State.initial
         var sendCoordFlowState = SendCoordFlow.State.initial
+#if os(macOS)
         // macOS: the "Beta: Vote" sidebar section renders this as a peer-root (iOS presents voting from
-        // Settings instead, so this Root-level state is used only on macOS).
+        // Settings instead, so this Root-level state exists only on macOS).
         var votingCoordFlowState = VotingCoordFlow.State()
+        // macOS: true while the "Beta: Vote" peer-section is selected. iOS treats voting as sensitive via
+        // `path == .settings`; macOS voting has no `path`, so this flag carries the same signal into
+        // `isSensitiveFlowActive` so an automatic server switch is deferred during a vote (iOS parity).
+        var isMacVotingSectionActive = false
+#endif
         var settingsState = Settings.State.initial
         var signWithKeystoneCoordFlowState = SignWithKeystoneCoordFlow.State.initial
         var swapAndPayCoordFlowState = SwapAndPayCoordFlow.State.initial
@@ -132,6 +138,12 @@ struct Root {
         /// before the project compiles.
         var isSensitiveFlowActive: Bool {
             if signWithKeystoneCoordFlowBinding { return true }
+#if os(macOS)
+            // macOS: voting is a peer-section with no `path`, so carry its in-progress signal here to
+            // defer an automatic server switch during a vote — matching iOS, where `path == .settings`
+            // covers the same voting broadcasts.
+            if isMacVotingSectionActive { return true }
+#endif
             guard let path else { return false }
             switch path {
             // The voting flow has no `Path` case of its own — it is presented from inside Settings
@@ -226,9 +238,12 @@ struct Root {
         case scanCoordFlow(ScanCoordFlow.Action)
         case sendAgainRequested(TransactionState)
         case sendCoordFlow(SendCoordFlow.Action)
+#if os(macOS)
+        // macOS-only: Root-level "Beta: Vote" peer-section actions (iOS reaches voting via Settings).
         case votingCoordFlow(VotingCoordFlow.Action)
         case macVoteSectionSelected
         case macResetSectionPaths
+#endif
         case settings(Settings.Action)
         case signWithKeystoneCoordFlow(SignWithKeystoneCoordFlow.Action)
         case signWithKeystoneRequested
@@ -373,6 +388,7 @@ struct Root {
             SendCoordFlow()
         }
 
+#if os(macOS)
         Scope(state: \.votingCoordFlowState, action: \.votingCoordFlow) {
             VotingCoordFlow()
         }
@@ -384,6 +400,7 @@ struct Root {
         Reduce { state, action in
             switch action {
             case .macVoteSectionSelected:
+                state.isMacVotingSectionActive = true
                 guard let account = state.selectedWalletAccount else { return .none }
                 let walletId = account.id.id.map { String(format: "%02x", $0) }.joined()
                 if state.votingCoordFlowState.walletId != walletId {
@@ -394,6 +411,9 @@ struct Root {
                 }
                 return .none
             case .macResetSectionPaths:
+                // macOS: clear the vote-section flag on every switch; `.macVoteSectionSelected` (sent
+                // right after this when switching TO Vote) re-sets it, so leaving Vote lands on false.
+                state.isMacVotingSectionActive = false
                 // macOS: pop EVERY section's NavigationStack to root before the sidebar switches
                 // sections. SwiftUI's NavigationSplitView reconciles the detail column's nav state on a
                 // section switch; a PUSHED path of one type vs the incoming section's different path type
@@ -409,6 +429,7 @@ struct Root {
                 return .none
             }
         }
+#endif
 
         Scope(state: \.scanCoordFlowState, action: \.scanCoordFlow) {
             ScanCoordFlow()

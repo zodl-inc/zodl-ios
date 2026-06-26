@@ -99,6 +99,11 @@ struct ScanView: View {
                                     if let url = URL(string: UIApplication.openSettingsURLString) {
                                         openURL(url)
                                     }
+#elseif os(macOS)
+                                    // Deep-link to System Settings → Privacy & Security → Camera.
+                                    if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Camera") {
+                                        openURL(url)
+                                    }
 #endif
                                 }
                             } else {

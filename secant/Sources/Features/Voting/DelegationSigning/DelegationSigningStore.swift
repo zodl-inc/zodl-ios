@@ -106,7 +106,14 @@ struct DelegationSigningView: View {
                 Group {
                     if let pczt = store.roundCache[roundId]?.pendingUnsignedDelegationPczt,
                        let encoder = sdkSynchronizer.urEncoderForPCZT(pczt) {
-                        AnimatedQRCode(urEncoder: encoder, size: PlatformScreen.bounds.width - 64)
+                        #if os(macOS)
+                        // No full device screen to fill — clamp to the capped content column so the
+                        // enlarged QR doesn't overflow the window. iOS fills the device width.
+                        let qrSize = Design.Mac.viewCapWidth - 64
+                        #else
+                        let qrSize = PlatformScreen.bounds.width - 64
+                        #endif
+                        AnimatedQRCode(urEncoder: encoder, size: qrSize)
                             .padding()
                             .background {
                                 RoundedRectangle(cornerRadius: Design.Radius._4xl)

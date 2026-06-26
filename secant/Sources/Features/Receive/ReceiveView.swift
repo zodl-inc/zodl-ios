@@ -162,10 +162,7 @@ struct ReceiveView: View {
                 .padding(.horizontal, 4)
                 .applyScreenBackground()
                 .screenTitle(String(localizable: .tabsReceiveZec))
-#if !os(macOS)
-                // macOS: Receive is a peer-root in the split, not a screen pushed over Activity.
-                .zashiBack() { store.send(.backToHomeTapped) }
-#endif
+                .zashiSectionRootBack { store.send(.backToHomeTapped) }
             } destination: { store in
                 switch store.case {
                 case let .addressDetails(store):
