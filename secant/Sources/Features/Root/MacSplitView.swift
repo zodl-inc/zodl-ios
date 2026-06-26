@@ -452,7 +452,10 @@ private struct FixedSidebarWidth: NSViewRepresentable {
 
     final class PinView: NSView {
         let width: CGFloat
-        init(width: CGFloat) { self.width = width; super.init(frame: .zero) }
+        init(width: CGFloat) {
+            self.width = width
+            super.init(frame: .zero)
+        }
         required init?(coder: NSCoder) { fatalError("init(coder:) not used") }
 
         override func viewDidMoveToWindow() {

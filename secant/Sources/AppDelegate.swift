@@ -17,7 +17,7 @@ import BackgroundTasks
 import UserNotifications
 
 // [#1755] slipstream: boot evidence logger
-private let slipstreamBootLogger = Logger(subsystem: "co.ecc.zashi-testnet", category: "slipstream")
+private let slipstreamBootLogger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "co.ecc.zashi", category: "slipstream")
 
 // swiftlint:disable indentation_width
 final class AppDelegate: NSObject, UIApplicationDelegate {
@@ -49,12 +49,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         NSDecimalNumber.defaultBehavior = Zatoshi.decimalHandler
 
         // [#1755] slipstream: log engine selection at boot (before wallet init, always fires)
-        let useSlipstreamAtBoot: Bool = {
-            guard let data = UserDefaults.standard.data(forKey: "feature_flags_ud_config_cache"),
-                  let rawFlags = try? PropertyListDecoder().decode(WalletConfig.RawFlags.self, from: data)
-            else { return FeatureFlag.useSlipstreamSynchronizer.enabledByDefault }
-            return rawFlags[.useSlipstreamSynchronizer] ?? FeatureFlag.useSlipstreamSynchronizer.enabledByDefault
-        }()
+        let useSlipstreamAtBoot = UserDefaultsWalletConfigStorage.cachedFlag(.useSlipstreamSynchronizer)
         if useSlipstreamAtBoot {
             slipstreamBootLogger.info("[#1755] ENGINE=SlipstreamSynchronizer (flag=true)")
         } else {

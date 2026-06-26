@@ -161,7 +161,7 @@ struct TransactionsManagerView: View {
                         text: $store.searchTerm,
                         placeholder: String(localizable: .filterSearch)
                     )
-                    .frame(width: 200)
+                    .frame(width: Design.Mac.toolbarSearchFieldWidth)
                 }
                 if #available(macOS 26.0, *) {
                     ToolbarSpacer(.fixed, placement: .primaryAction)

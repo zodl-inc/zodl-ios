@@ -79,6 +79,20 @@ struct SmartBannerView: View {
             }
         }
         .animation(.spring(response: 0.45, dampingFraction: 0.82), value: store.isOpen)
+        // macOS has no in-app mail composer; when a support report is queued (`reportPrepared` sets
+        // `supportData` because `MailSupport.canSendMail()` is true here), this zero-frame helper opens
+        // the default mail client via `mailto:`. iOS renders the same view inline in the #else ZStack.
+        .background {
+            if let supportData = store.supportData {
+                UIMailDialogView(
+                    supportData: supportData,
+                    completion: {
+                        store.send(.sendSupportMailFinished)
+                    }
+                )
+                .frame(width: 0, height: 0)
+            }
+        }
 #else
         ZStack(alignment: .top) {
             BottomRoundedRectangle(radius: SBConstants.fixedHeight)

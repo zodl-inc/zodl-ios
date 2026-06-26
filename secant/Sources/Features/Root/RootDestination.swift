@@ -80,7 +80,14 @@ extension Root {
                 // long-lived serverSetupState so each open re-benchmarks instead of showing a stale
                 // "Fastest servers" ranking and reusing a stale recommendedSyncServer on an Automatic Save.
                 state.serverSetupState = .initial
+#if os(macOS)
+                // macOS: present full-window via the path (MacSplitView `.serverSwitch?`), exactly like
+                // the smart-banner entry above. The serverSetupViewBinding → zashiFullScreenCover route
+                // renders a raw native .sheet on macOS, which is banned for app content (MODALS Rule #5a).
+                state.path = .serverSwitch
+#else
                 state.serverSetupViewBinding = true
+#endif
                 return .none
 
             case .splashRemovalRequested:

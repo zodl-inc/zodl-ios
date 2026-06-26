@@ -389,10 +389,10 @@ public enum Design: Colorable {
         public static let _full: CGFloat = 9999
     }
     
-    // MARK: - macOS sizing — the 5 control numbers
+    // MARK: - macOS sizing — the control numbers
 
     /// Every fixed macOS dimension lives here, so the whole Mac app can be resized from ONE place:
-    /// change a value and the window, sidebar, content column, or button width updates everywhere.
+    /// change a value and the window, sidebar, content column, button, card, or toolbar width updates everywhere.
     public enum Mac {
         /// Fixed macOS window width (`zodlmac_internalApp` / `WindowSize`).
         public static let windowWidth: CGFloat = 900
@@ -404,6 +404,17 @@ public enum Design: Colorable {
         public static let viewCapWidth: CGFloat = 530
         /// Max width of a button — the capped, centered pill (Rule #7) — `ZashiButton`.
         public static let maxButtonWidth: CGFloat = 260
+
+        // Root-hosted overlay cards (MODALS.md Rule #5).
+        /// `.zashiSheet` content-hug card max width (`MacCard`).
+        public static let cardMaxWidth: CGFloat = 480
+        /// `.zashiSelectorSheet` definite-size card width.
+        public static let selectorCardWidth: CGFloat = 460
+        /// `.zashiSelectorSheet` definite-size card height range (so its inner List can fill + scroll).
+        public static let selectorCardHeightRange: ClosedRange<CGFloat> = 320...600
+
+        /// macOS window-toolbar search field width (`NativeSearchField`).
+        public static let toolbarSearchFieldWidth: CGFloat = 200
     }
 
     /// Adaptive iPad dimensions (mirror of `Mac`) for the regular-width `IPadSplitView`. There is no fixed

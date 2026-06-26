@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Version-matched macOS URRegistryFFI build, take 2 — using sdk-0.2.3's pinned toolchain.
-set -uo pipefail
+set -euo pipefail            # fail fast — a missing sdk-0.2.3 tag must abort, not silently build wrong FFI
 source "$HOME/.cargo/env" 2>/dev/null || true
 TC=nightly-2023-12-01            # sdk-0.2.3's pinned toolchain (old ahash needs stdsimd)
 RUST=/tmp/keystone-sdk-rust
@@ -16,7 +16,6 @@ rustup toolchain install "$TC" --profile minimal 2>&1 | tail -3
 rustup target add aarch64-apple-darwin x86_64-apple-darwin --toolchain "$TC" 2>&1 | tail -4
 
 echo; echo "===== build macOS slices ($TC) ====="
-set -e
 for T in aarch64-apple-darwin x86_64-apple-darwin; do
   echo "--- $T ---"; cargo "+$TC" build -r -p ur-registry-ffi --target "$T" --no-default-features 2>&1 | tail -3
 done

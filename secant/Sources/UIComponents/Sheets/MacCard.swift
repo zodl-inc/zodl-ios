@@ -155,7 +155,7 @@ private struct MacCardOverlay: View {
                 }
                 .padding(.horizontal, entry.horizontalPadding)
                 .padding(.vertical, Design.Spacing._3xl)
-                .frame(maxWidth: 480)
+                .frame(maxWidth: Design.Mac.cardMaxWidth)
                 .fixedSize(horizontal: false, vertical: true)
             }
         }
