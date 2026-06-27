@@ -127,7 +127,9 @@ struct RecoveryPhraseDisplay {
                 
             case .recoveryPhraseUnhideRequested:
                 return .run { send in
-                    guard await localAuthentication.authenticate() else {
+                    // macOS: the SE seed decrypt below is the single biometric gate
+                    // (see `authenticateForSeedDecrypt`); iOS prompts here.
+                    guard await localAuthentication.authenticateForSeedDecrypt() else {
                         return
                     }
 

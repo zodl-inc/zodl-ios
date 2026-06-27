@@ -22,7 +22,23 @@ struct LocalAuthenticationClient {
         case passcode
         case touchID
     }
-    
+
     var authenticate: @Sendable () async -> Bool = { false }
     var method: @Sendable () -> Method = { .none }
+}
+
+extension LocalAuthenticationClient {
+    /// Authentication for an action that immediately decrypts the seed via the Secure Enclave (send, view
+    /// phrase, swap/pay, vote, Flexa). On macOS that SE decrypt is itself a `.userPresence` biometric gate,
+    /// so prompting here too would be a redundant SECOND biometric — skip the app-level prompt and let the
+    /// SE decrypt be the single auth. iOS has no SE seed-wrap, so it keeps this as the only gate. (Keystone
+    /// spends sign via PCZT and never reach these seed-decrypt call sites, so this never removes a hardware
+    /// wallet's only auth.)
+    func authenticateForSeedDecrypt() async -> Bool {
+        #if os(macOS)
+        return true
+        #else
+        return await authenticate()
+        #endif
+    }
 }

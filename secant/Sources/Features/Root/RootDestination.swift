@@ -111,7 +111,9 @@ extension Root {
                 flexaHandler.clearTransactionRequest()
                 return .run { send in
                     do {
-                        if await !localAuthentication.authenticate() {
+                        // macOS: the SE seed decrypt below is the single biometric gate
+                        // (see `authenticateForSeedDecrypt`); iOS prompts here.
+                        if await !localAuthentication.authenticateForSeedDecrypt() {
                             return
                         }
 

@@ -280,11 +280,13 @@ extension SwapAndPayCoordFlow {
                     .path(.element(id: _, action: .crossPayConfirmation(.confirmButtonTapped))),
                     .path(.element(id: _, action: .swapAndPayForm(.confirmButtonTapped))):
                 return .run { send in
-                    guard await localAuthentication.authenticate() else {
+                    // macOS: the SE seed decrypt in `.swapRequested` is the single biometric gate
+                    // (see `authenticateForSeedDecrypt`); iOS prompts here.
+                    guard await localAuthentication.authenticateForSeedDecrypt() else {
                         await send(.stopSending)
                         return
                     }
-                    
+
                     await send(.swapRequested)
                 }
 

@@ -265,11 +265,14 @@ struct SendConfirmation {
             case .sendTapped:
                 state.isSending = true
                 return .run { send in
-                    guard await localAuthentication.authenticate() else {
+                    // macOS: the Secure-Enclave seed decrypt in `.sendTriggered` is itself the biometric
+                    // gate, so an app-level prompt here would be a redundant SECOND auth — defer to it
+                    // (`authenticateForSeedDecrypt` returns true without prompting on macOS). iOS prompts.
+                    guard await localAuthentication.authenticateForSeedDecrypt() else {
                         await send(.stopSending)
                         return
                     }
-                    
+
                     await send(.sendRequested)
                 }
 
