@@ -9688,6 +9688,40 @@
         }
       }
     },
+    "osStatusError.secureEnclaveMessage" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your funds are safe. Zashi on Mac uses the Secure Enclave to protect your data, which needs a Mac with Apple silicon or an Intel Mac with a T2 chip. This Mac doesn’t have one, so Zashi can’t run securely here."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tus fondos están seguros. Zashi en Mac usa el Secure Enclave para proteger tus datos, lo que requiere un Mac con Apple silicon o un Mac Intel con chip T2. Este Mac no lo tiene, por lo que Zashi no puede ejecutarse de forma segura aquí."
+          }
+        }
+      }
+    },
+    "osStatusError.secureEnclaveTitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This Mac isn’t supported"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Este Mac no es compatible"
+          }
+        }
+      }
+    },
     "osStatusError.title" : {
       "comment" : "MARK: OSStatusError",
       "extractionState" : "manual",

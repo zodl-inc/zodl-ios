@@ -32,6 +32,9 @@ extension WalletStorageClient: DependencyKey {
             areKeysPresent: {
                 try walletStorage.areKeysPresent()
             },
+            isSecureStorageAvailable: {
+                walletStorage.isSecureStorageAvailable()
+            },
             migrateToSecureEnclave: {
                 try await walletStorage.migrateToSecureEnclaveIfNeeded()
             },

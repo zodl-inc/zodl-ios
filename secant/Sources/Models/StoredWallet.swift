@@ -51,19 +51,15 @@ struct WalletMetadata: Codable, Equatable {
     var version: Int
     var birthday: Birthday?
     var hasUserPassedPhraseBackupTest: Bool
-    /// Non-sensitive seed fingerprint for the launch-time desync guard — populated in a later step.
-    var seedFingerprint: Data?
 
     init(
         version: Int,
         birthday: Birthday? = nil,
-        hasUserPassedPhraseBackupTest: Bool,
-        seedFingerprint: Data? = nil
+        hasUserPassedPhraseBackupTest: Bool
     ) {
         self.version = version
         self.birthday = birthday
         self.hasUserPassedPhraseBackupTest = hasUserPassedPhraseBackupTest
-        self.seedFingerprint = seedFingerprint
     }
 }
 

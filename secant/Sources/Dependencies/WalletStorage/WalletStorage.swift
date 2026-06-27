@@ -239,7 +239,16 @@ struct WalletStorage {
 
     func areKeysPresent() throws -> Bool {
         let key = secureEnclave != nil ? Constants.zcashStoredWalletSeed : Constants.zcashStoredWallet
-        return itemExists(forKey: key)
+        let present = itemExists(forKey: key)
+        return present
+    }
+
+    /// Whether the seed can be stored securely on this device. macOS requires a Secure Enclave and has
+    /// no plaintext fallback, so creation/restore on a Mac without one (pre-T2 Intel) would hard-error;
+    /// callers can use this to surface a clear message instead. Always `true` on iOS and on Macs with a
+    /// Secure Enclave (Apple silicon, T2 Intel).
+    func isSecureStorageAvailable() -> Bool {
+        secureEnclave?.isAvailable() ?? true
     }
 
     func updateBirthday(_ height: BlockHeight) throws {
@@ -286,8 +295,13 @@ struct WalletStorage {
     /// launch — no-op on iOS, and an auth-free version check short-circuits once migrated. So existing
     /// testers upgrade invisibly instead of landing on onboarding. See docs/macos/KEYCHAIN_SE_HARDENING.md.
     func migrateToSecureEnclaveIfNeeded() async throws {
-        guard let secureEnclave, secureEnclave.isAvailable() else { return }
-        if storageVersion() >= Constants.zcashStorageVersionSecureEnclave { return }
+        guard let secureEnclave, secureEnclave.isAvailable() else {
+            return
+        }
+        let version = storageVersion()
+        if version >= Constants.zcashStorageVersionSecureEnclave {
+            return
+        }
 
         let seedItemExists = itemExists(forKey: Constants.zcashStoredWalletSeed)
         let plaintextExists = itemExists(forKey: Constants.zcashStoredWallet)
@@ -295,6 +309,7 @@ struct WalletStorage {
         // Already SE-wrapped (fresh install, or a prior run that wrote the ciphertext but crashed before
         // clearing the plaintext): verify the enclave copy, then make sure no plaintext lingers.
         if seedItemExists {
+            // Verify + drop any lingering plaintext from a prior crashed run; otherwise just stamp.
             if plaintextExists {
                 _ = try await exportWallet()
                 try? deleteData(forKey: Constants.zcashStoredWallet)
@@ -308,7 +323,9 @@ struct WalletStorage {
             plaintextExists,
             let oldData = try? data(forKey: Constants.zcashStoredWallet),
             let wallet = try? decode(json: oldData, as: StoredWallet.self)
-        else { return }
+        else {
+            return
+        }
 
         try storeWalletSecurely(wallet, secureEnclave: secureEnclave)   // encrypt + write (no prompt)
         _ = try await exportWallet()                                    // verify the enclave copy (prompt)

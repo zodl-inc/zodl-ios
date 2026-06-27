@@ -20,17 +20,22 @@ struct OSStatusError {
         var message: String
         var osStatus: OSStatus
         var supportData: SupportData?
+        /// macOS only: this Mac has no Secure Enclave, so the seed can't be stored securely and there is
+        /// no plaintext fallback. Shows a dedicated "unsupported Mac" message instead of a keychain code.
+        var secureEnclaveUnavailable: Bool
 
         init(
             isExportingData: Bool = false,
             message: String,
             osStatus: OSStatus,
-            supportData: SupportData? = nil
+            supportData: SupportData? = nil,
+            secureEnclaveUnavailable: Bool = false
         ) {
             self.isExportingData = isExportingData
             self.message = message
             self.osStatus = osStatus
             self.supportData = supportData
+            self.secureEnclaveUnavailable = secureEnclaveUnavailable
         }
     }
     

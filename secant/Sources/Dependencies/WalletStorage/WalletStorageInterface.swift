@@ -60,6 +60,11 @@ struct WalletStorageClient {
     /// - Returns: the information whether some wallet is stored or is not available
     var areKeysPresent: @Sendable () throws -> Bool
 
+    /// Whether the seed can be stored securely on this device. Always `true` on iOS and on Macs with a
+    /// Secure Enclave; `false` only on a Mac without one (pre-T2 Intel), where there is no plaintext
+    /// fallback — callers can surface a clear message instead of letting create/restore hard-error.
+    var isSecureStorageAvailable: @Sendable () -> Bool = { true }
+
     /// One-time, crash-safe migration of a legacy plaintext seed into the Secure Enclave (macOS).
     /// No-op on iOS and once already migrated. May trigger a single biometric prompt while verifying.
     var migrateToSecureEnclave: @Sendable () async throws -> Void

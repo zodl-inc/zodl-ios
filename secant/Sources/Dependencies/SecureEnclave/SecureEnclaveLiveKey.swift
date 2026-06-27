@@ -19,6 +19,24 @@ private let seedWrappingKeyTag = Data("com.zodl.seedWrappingKey".utf8)
 /// decrypt with the in-enclave private key. Handles the small seed payload directly.
 private let seedWrappingAlgorithm: SecKeyAlgorithm = .eciesEncryptionCofactorVariableIVX963SHA256AESGCM
 
+/// A successful Secure-Enclave auth is reused for this many seconds before re-prompting. A single user
+/// action can trigger more than one seed decrypt (e.g. a send: the spend, then deriving metadata keys);
+/// reusing the auth over a short window collapses that burst into ONE prompt instead of one per decrypt.
+/// Short on purpose — a deliberate later action re-authenticates.
+private let seedAuthReuseDuration: TimeInterval = 10
+
+/// Holds the single `LAContext` reused across decrypts so the reuse window above actually applies (a
+/// fresh context per call would re-prompt every time). `LAContext` isn't `Sendable`, but seed decrypts
+/// are serialized by the user's auth prompt, so sharing one is safe — hence `@unchecked Sendable`.
+private final class SeedAuthContextHolder: @unchecked Sendable {
+    let context: LAContext = {
+        let context = LAContext()
+        context.touchIDAuthenticationAllowableReuseDuration = seedAuthReuseDuration
+        return context
+    }()
+}
+private let seedAuthContextHolder = SeedAuthContextHolder()
+
 extension SecureEnclaveClient: DependencyKey {
     static let liveValue = SecureEnclaveClient(
         isAvailable: { SecureEnclave.isAvailable },
@@ -133,7 +151,9 @@ private func getOrCreateSeedWrappingKey() throws -> SecKey {
 }
 
 private func decryptWithSeedWrappingKey(_ ciphertext: Data, reason: String) throws -> Data {
-    let context = LAContext()
+    // Reuse the shared context so an auth from a recent decrypt (within `seedAuthReuseDuration`) is
+    // honored without re-prompting — one FaceID per burst, not per decrypt.
+    let context = seedAuthContextHolder.context
     context.localizedReason = reason
     guard let privateKey = try loadSeedWrappingKey(authContext: context) else {
         throw SecureEnclaveError.keyNotFound

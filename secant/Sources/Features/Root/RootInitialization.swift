@@ -260,6 +260,13 @@ extension Root {
                 )
                 
             case .initialization(.initialSetups):
+                // macOS without a Secure Enclave (pre-T2 Intel): the seed can't be stored securely and
+                // there's no plaintext fallback, so create/restore would hard-error. Surface a clear info
+                // screen instead. Always true on iOS and on Secure-Enclave Macs → no behavior change there.
+                if !walletStorage.isSecureStorageAvailable() {
+                    state.osStatusErrorState.secureEnclaveUnavailable = true
+                    return .send(.destination(.updateDestination(.osStatusError)))
+                }
                 if !diskSpaceChecker.hasEnoughFreeSpaceForSync() {
                     state.destinationState.preNotEnoughFreeSpaceDestination = state.destinationState.internalDestination
                     return .send(.destination(.updateDestination(.notEnoughFreeSpace)))
@@ -498,7 +505,7 @@ extension Root {
                             try walletStorage.importUserMetadataEncryptionKeys(keys, account.account)
                             await send(.loadUserMetadata)
                         } catch {
-                            // TODO: [#1408] error handling https://github.com/Electric-Coin-Company/zashi-ios/issues/1408
+                            LoggerProxy.event("resolveMetadataEncryptionKeys: failed to derive metadata keys for account '\(account.account.name ?? "?")': \(error)")
                         }
                     }
                 }
@@ -514,14 +521,14 @@ extension Root {
 
                 return .run { send in
 #if !os(macOS)
-                    // Defensive backstop ([#1024]): on iOS the seed reads without a prompt, so catch an
-                    // already-desynced install where the keychain seed no longer matches the wallet DB
-                    // (a restore that slipped past the preventive guard, or keychain/DB drift). Only a
-                    // definitive `false` warns; any error defaults to relevant so a transient rust hiccup
-                    // never falsely locks a valid wallet, and hardware-only wallets are skipped by `try?`.
-                    // On macOS the seed is SE-wrapped — reading it here would prompt on EVERY launch — so
-                    // this backstop moves to a stored seed fingerprint (no decrypt) in a later step; the
-                    // preventive guard at restore still applies.
+                    // iOS-only launch-time desync check ([#1024]): the keychain seed reads without a
+                    // prompt here, so re-confirm it still matches the wallet DB and warn if it drifted.
+                    // Only a definitive `false` warns; any error defaults to relevant so a transient rust
+                    // hiccup never falsely locks a valid wallet, and hardware-only wallets are skipped by
+                    // `try?`. Intentionally NOT done on macOS: the seed is Secure-Enclave-wrapped, so this
+                    // would prompt on EVERY launch, and the preventive guard at restore (`resolveRestore`,
+                    // which uses the freshly-typed seed — no decrypt) already prevents the desync at its
+                    // source. Re-checking every launch buys nothing there but a biometric.
                     if databaseFiles.areDbFilesPresentFor(zcashSDKEnvironment.network()),
                        let storedWallet = try? await walletStorage.exportWallet(),
                        let seedBytes = try? mnemonic.toSeed(storedWallet.seedPhrase.value()) {
