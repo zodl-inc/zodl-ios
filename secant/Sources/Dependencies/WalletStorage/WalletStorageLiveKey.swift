@@ -32,6 +32,9 @@ extension WalletStorageClient: DependencyKey {
             areKeysPresent: {
                 try walletStorage.areKeysPresent()
             },
+            migrateToSecureEnclave: {
+                try await walletStorage.migrateToSecureEnclaveIfNeeded()
+            },
             updateBirthday: { birthday in
                 try walletStorage.updateBirthday(birthday)
             },

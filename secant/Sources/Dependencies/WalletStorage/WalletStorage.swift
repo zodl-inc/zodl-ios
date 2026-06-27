@@ -20,6 +20,9 @@ struct WalletStorage {
         /// the single `zcashStoredWallet` blob is used instead.
         static let zcashStoredWalletSeed = "zcashStoredWalletSeed"
         static let zcashStoredWalletMeta = "zcashStoredWalletMeta"
+        /// Auth-free storage-format version marker (plaintext) — drives the one-time SE migration.
+        static let zcashStorageVersion = "zcashStorageVersion"
+        static let zcashStorageVersionSecureEnclave = 2
         static let zcashStoredAdressBookEncryptionKeys = "zcashStoredAdressBookEncryptionKeys"
         static let zcashStoredUserMetadataEncryptionKeys = "zcashStoredMetadataEncryptionKeys"
 
@@ -275,7 +278,63 @@ struct WalletStorage {
         }
     }
 
+    // MARK: - Secure Enclave migration (macOS)
+
+    /// One-time, crash-safe migration of a legacy plaintext seed into the Secure Enclave: read the old
+    /// plaintext item, re-store the seed as enclave ciphertext + plaintext metadata, VERIFY the enclave
+    /// copy is readable (one biometric prompt) and only then delete the plaintext. Safe to call on every
+    /// launch — no-op on iOS, and an auth-free version check short-circuits once migrated. So existing
+    /// testers upgrade invisibly instead of landing on onboarding. See docs/macos/KEYCHAIN_SE_HARDENING.md.
+    func migrateToSecureEnclaveIfNeeded() async throws {
+        guard let secureEnclave, secureEnclave.isAvailable() else { return }
+        if storageVersion() >= Constants.zcashStorageVersionSecureEnclave { return }
+
+        let seedItemExists = itemExists(forKey: Constants.zcashStoredWalletSeed)
+        let plaintextExists = itemExists(forKey: Constants.zcashStoredWallet)
+
+        // Already SE-wrapped (fresh install, or a prior run that wrote the ciphertext but crashed before
+        // clearing the plaintext): verify the enclave copy, then make sure no plaintext lingers.
+        if seedItemExists {
+            if plaintextExists {
+                _ = try await exportWallet()
+                try? deleteData(forKey: Constants.zcashStoredWallet)
+            }
+            try setStorageVersion(Constants.zcashStorageVersionSecureEnclave)
+            return
+        }
+
+        // Nothing SE-wrapped yet: migrate the plaintext seed if there is one.
+        guard
+            plaintextExists,
+            let oldData = try? data(forKey: Constants.zcashStoredWallet),
+            let wallet = try? decode(json: oldData, as: StoredWallet.self)
+        else { return }
+
+        try storeWalletSecurely(wallet, secureEnclave: secureEnclave)   // encrypt + write (no prompt)
+        _ = try await exportWallet()                                    // verify the enclave copy (prompt)
+        try? deleteData(forKey: Constants.zcashStoredWallet)            // verified → drop the plaintext
+        try setStorageVersion(Constants.zcashStorageVersionSecureEnclave)
+    }
+
+    private func storageVersion() -> Int {
+        guard
+            let data = try? data(forKey: Constants.zcashStorageVersion),
+            let version = try? decode(json: data, as: Int.self)
+        else { return 0 }
+        return version
+    }
+
+    private func setStorageVersion(_ version: Int) throws {
+        guard let data = try encode(object: version) else { throw KeychainError.encoding }
+        do {
+            try setData(data, forKey: Constants.zcashStorageVersion)
+        } catch KeychainError.duplicate {
+            try updateData(data, forKey: Constants.zcashStorageVersion)
+        }
+    }
+
     func resetZashi() throws {
+        try? deleteData(forKey: Constants.zcashStorageVersion)
         try? deleteData(forKey: Constants.zcashStoredWalletSeed)
         try? deleteData(forKey: Constants.zcashStoredWalletMeta)
         try? secureEnclave?.deleteKey()

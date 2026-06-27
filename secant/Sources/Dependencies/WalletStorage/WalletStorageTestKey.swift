@@ -14,6 +14,7 @@ extension WalletStorageClient {
         exportWallet: { .placeholder },
         exportWalletMetadata: { StoredWallet.placeholder.metadata },
         areKeysPresent: { false },
+        migrateToSecureEnclave: { },
         updateBirthday: { _ in },
         markUserPassedPhraseBackupTest: { _ in },
         resetZashi: { },
