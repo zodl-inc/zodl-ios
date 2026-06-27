@@ -98,6 +98,18 @@ extension RestoreWalletCoordFlow {
                     // update the backup phrase validation flag
                     try walletStorage.markUserPassedPhraseBackupTest(true)
 
+#if os(macOS)
+                    // S3 (seed-input hardening — see docs/macos/SEED_INPUT_SECURITY.md): the user very
+                    // likely pasted their full phrase from a password manager, and on macOS the clipboard
+                    // is readable by any process (and persisted by clipboard-history managers). If it still
+                    // holds the just-restored seed, wipe it. The exact-match guard means we ONLY ever clear
+                    // the seed itself — never unrelated clipboard content the user put there.
+                    if let clipboard = pasteboard.getString()?.data,
+                       clipboard.normalizedSeedPhrase == seedPhrase.normalizedSeedPhrase {
+                        pasteboard.setString("".redacted)
+                    }
+#endif
+
                     state.path.append(.restoreInfo(RestoreInfo.State.initial))
 
                     // notify user
@@ -176,3 +188,14 @@ extension RestoreWalletCoordFlow {
         }
     }
 }
+
+#if os(macOS)
+private extension String {
+    /// Whitespace- and case-normalized form, used to safely compare the just-restored phrase against
+    /// the current clipboard contents before wiping the clipboard (S3). Collapses any run of
+    /// whitespace to single spaces so trivial formatting differences never cause a false negative.
+    var normalizedSeedPhrase: String {
+        split(whereSeparator: { $0.isWhitespace }).joined(separator: " ").lowercased()
+    }
+}
+#endif

@@ -250,6 +250,9 @@ struct RecoverySeedPhraseEntryView: View {
                 )
                 .zashiBack()
                 .screenTitle(String(localizable: .importWalletButtonRestoreWallet))
+                // macOS seed-input hardening (S1 secure event input + S2 capture-exclusion); no-op on iOS.
+                // See docs/macos/SEED_INPUT_SECURITY.md.
+                .seedScreenSecurityGuard()
 #if os(iOS)
                 .overlay(keyboardSuggestionsBar)
 #endif
