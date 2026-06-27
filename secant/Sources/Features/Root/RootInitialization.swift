@@ -439,8 +439,14 @@ extension Root {
                     // .resolveMetadataEncryptionKeys returns its OWN async .run that does the reconcile,
                     // and .concatenate sequences only the delivery of the actions, not the completion of
                     // that effect — so .loadUserMetadata would race the reconcile and could decrypt with
-                    // a stale key. (.resolveMetadataEncryptionKeys is still used by the account-switch
-                    // and disconnect paths, which sequence their own load afterwards.)
+                    // a stale key. (.resolveMetadataEncryptionKeys is still used by the account-switch,
+                    // hardware-wallet-import, and disconnect paths in RootCoordinator, which do NOT
+                    // strictly order their load after the reconcile — they use the same
+                    // .concatenate(.send, .send) / sequential-`await send` shape called out as unsafe
+                    // above. That race is benign on those paths: they run within a single wallet/seed,
+                    // so the stored key already matches the current seed and the reconcile is a no-op —
+                    // only create/restore (startup, handled here) can leave a stale key from a DIFFERENT
+                    // seed. Ordering those paths too is defense-in-depth, tracked as a MOB-1450 follow-up.)
                     .run { send in
                         if let storedWallet = try? walletStorage.exportWallet(),
                            let seedBytes = try? mnemonic.toSeed(storedWallet.seedPhrase.value()) {
