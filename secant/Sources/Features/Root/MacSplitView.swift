@@ -170,10 +170,20 @@ struct MacSplitView: View {
         }
         .onChange(of: store.path) { _, newPath in
             // A flow that dismisses itself by setting `path = nil` (a finished sub-flow) should return
-            // the current section to its root. Re-initialize the selected section.
-            if newPath == nil {
+            // the current section to its root. Re-initialize the selected section — UNLESS a transaction
+            // Result screen just asked to redirect to Activity (handled below), which supersedes the re-init.
+            if newPath == nil && !store.macRedirectToActivityAfterClose {
                 store.send(selectedSection.action)
             }
+        }
+        .onChange(of: store.macRedirectToActivityAfterClose) { _, redirect in
+            // macOS: a transaction Result screen (Send / Pay / Swap — incl. Keystone & scan) was closed.
+            // Land the user on Activity so the just-finished transaction is visible at the top; the section
+            // switch's `macResetSectionPaths` also pops the finished flow to root. Then clear the flag.
+            // Covers Keystone too — it dismisses via a binding (not `path`), so a path-only hook would miss it.
+            guard redirect else { return }
+            store.send(.macRedirectToActivityHandled)
+            selectSection(.activity)
         }
         // RULE #9 (scan) + RULE #10 (Send/Pay/Swap broadcast lock): collapse to detail-only so the sidebar
         // is hidden and the flow owns the whole window — the user can't switch sections (so can't cancel an
@@ -245,21 +255,24 @@ struct MacSplitView: View {
     private var sectionSelection: Binding<MacSection> {
         Binding(
             get: { selectedSection },
-            set: { newSection in
-                guard newSection != selectedSection else { return }
-                LoggerProxy.event("[macOS nav] section \(selectedSection) -> \(newSection): blank-then-reveal (avoid comparisonTypeMismatch + hide pop-to-root)")
-                // THREE-PHASE: clear paths + move the sidebar highlight + BLANK the detail (detailSection
-                // = nil) THIS frame, then reveal the new section NEXT runloop. The one-frame blank both (a)
-                // breaks SwiftUI's path reconcile (the crash) and (b) HIDES the pop-to-root, so the user
-                // sees B -> blank -> C, never the popped root A.
-                store.send(.macResetSectionPaths)
-                selectedSection = newSection
-                detailSection = nil
-                DispatchQueue.main.async {
-                    detailSection = newSection
-                }
-            }
+            set: { newSection in selectSection(newSection) }
         )
+    }
+
+    // Switch the macOS sidebar to `newSection` with the THREE-PHASE blank-then-reveal: clear paths + move
+    // the sidebar highlight + BLANK the detail (detailSection = nil) THIS frame, then reveal the new
+    // section NEXT runloop. The one-frame blank both (a) breaks SwiftUI's path reconcile (the crash) and
+    // (b) HIDES the pop-to-root, so the user sees B -> blank -> C, never the popped root A. Shared by the
+    // sidebar selection binding and the post-transaction redirect to Activity.
+    private func selectSection(_ newSection: MacSection) {
+        guard newSection != selectedSection else { return }
+        LoggerProxy.event("[macOS nav] section \(selectedSection) -> \(newSection): blank-then-reveal (avoid comparisonTypeMismatch + hide pop-to-root)")
+        store.send(.macResetSectionPaths)
+        selectedSection = newSection
+        detailSection = nil
+        DispatchQueue.main.async {
+            detailSection = newSection
+        }
     }
 
     private var sidebar: some View {

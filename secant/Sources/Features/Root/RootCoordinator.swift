@@ -333,6 +333,7 @@ extension Root {
                     .scanCoordFlow(.path(.element(id: _, action: .sendResultFailure(.closeTapped)))),
                     .scanCoordFlow(.path(.element(id: _, action: .sendResultPending(.closeTapped)))):
                 state.path = nil
+                state.macRedirectToActivityAfterClose = true
                 return .send(.fetchTransactionsForTheSelectedAccount)
 
                 // MARK: - Self
@@ -360,6 +361,7 @@ extension Root {
                     .sendCoordFlow(.path(.element(id: _, action: .sendResultFailure(.closeTapped)))),
                     .sendCoordFlow(.path(.element(id: _, action: .sendResultPending(.closeTapped)))):
                 state.path = nil
+                state.macRedirectToActivityAfterClose = true
                 return .send(.fetchTransactionsForTheSelectedAccount)
 
             case .sendCoordFlow(.path(.element(id: _, action: .transactionDetails(.closeDetailTapped)))):
@@ -372,6 +374,7 @@ extension Root {
                     .signWithKeystoneCoordFlow(.path(.element(id: _, action: .sendResultFailure(.closeTapped)))),
                     .signWithKeystoneCoordFlow(.path(.element(id: _, action: .sendResultPending(.closeTapped)))):
                 state.signWithKeystoneCoordFlowBinding = false
+                state.macRedirectToActivityAfterClose = true
                 return .send(.fetchTransactionsForTheSelectedAccount)
 
             case .signWithKeystoneCoordFlow(.path(.element(id: _, action: .transactionDetails(.closeDetailTapped)))):
@@ -410,6 +413,7 @@ extension Root {
                     .swapAndPayCoordFlow(.path(.element(id: _, action: .sendResultFailure(.closeTapped)))),
                     .swapAndPayCoordFlow(.path(.element(id: _, action: .sendResultPending(.closeTapped)))):
                 state.path = nil
+                state.macRedirectToActivityAfterClose = true
                 return .send(.fetchTransactionsForTheSelectedAccount)
 
             case .swapAndPayCoordFlow(.path(.element(id: _, action: .transactionDetails(.closeDetailTapped)))):

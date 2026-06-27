@@ -81,6 +81,11 @@ struct Root {
         var serverSetupState: ServerSetup.State
         var serverSetupViewBinding = false
         var signWithKeystoneCoordFlowBinding = false
+        // macOS: set true when a transaction Result screen (Send / Pay / Swap — incl. Keystone & scan)
+        // is closed; `MacSplitView` observes it, redirects the sidebar to Activity so the finished
+        // transaction is visible at the top, then clears it via `.macRedirectToActivityHandled`. Unused
+        // on iOS (no sidebar) — harmless if left set.
+        var macRedirectToActivityAfterClose = false
         var splashAppeared = false
         var supportData: SupportData?
         @Shared(.inMemory(.swapAPIAccess)) var swapAPIAccess: WalletStorage.SwapAPIAccess = .direct
@@ -243,6 +248,7 @@ struct Root {
         case votingCoordFlow(VotingCoordFlow.Action)
         case macVoteSectionSelected
         case macResetSectionPaths
+        case macRedirectToActivityHandled
 #endif
         case settings(Settings.Action)
         case signWithKeystoneCoordFlow(SignWithKeystoneCoordFlow.Action)
@@ -424,6 +430,9 @@ struct Root {
                 state.swapAndPayCoordFlowState.path.removeAll()
                 state.votingCoordFlowState.path.removeAll()
                 state.settingsState.path.removeAll()
+                return .none
+            case .macRedirectToActivityHandled:
+                state.macRedirectToActivityAfterClose = false
                 return .none
             default:
                 return .none
