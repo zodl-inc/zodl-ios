@@ -49,17 +49,52 @@ extension RestoreWalletCoordFlow {
                 return .none
 
             case .resolveRestore:
+                guard state.birthday != nil else {
+                    return .none
+                }
+                let seedPhrase = state.words.joined(separator: " ")
+                do {
+                    // validate the seed
+                    try mnemonic.isValid(seedPhrase)
+                } catch {
+                    return .send(.failedToRecover(error.toZcashError()))
+                }
+                // Preventive guard ([#1024]): if a wallet DB is already on disk, the entered seed MUST be
+                // relevant to it — otherwise it belongs to a different wallet and importing it over the
+                // existing DB desyncs the keychain seed from data.db (the USK no longer matches any account,
+                // so every send fails with `createToAddress` "Wallet does not contain an account…").
+                if databaseFiles.areDbFilesPresentFor(zcashSDKEnvironment.network()) {
+                    return .run { send in
+                        do {
+                            let seedBytes = try mnemonic.toSeed(seedPhrase)
+                            let relevant = try await sdkSynchronizer.isSeedRelevantToAnyDerivedAccount(seedBytes)
+                            await send(.seedRelevanceChecked(relevant))
+                        } catch {
+                            await send(.failedToRecover(error.toZcashError()))
+                        }
+                    }
+                }
+                return .send(.commitRestore)
+
+            case .seedRelevanceChecked(let relevant):
+                // relevant → the entered seed matches the existing DB (same wallet); import silently and
+                // keep the already-synced data.db. not relevant → a different wallet; warn before we ever
+                // write the seed to the keychain (Root presents the alert and drives the wipe).
+                return relevant ? .send(.commitRestore) : .send(.seedNotRelevantToExistingDB)
+
+            case .seedNotRelevantToExistingDB:
+                // Handled by the Root reducer (presents `differentSeed()` + offers Start over / Try again).
+                return .none
+
+            case .commitRestore:
                 guard let birthday = state.birthday else {
                     return .none
                 }
                 do {
                     let seedPhrase = state.words.joined(separator: " ")
-                    
-                    // validate the seed
-                    try mnemonic.isValid(seedPhrase)
 
                     try walletStorage.importWallet(seedPhrase, birthday, .english, false)
-                    
+
                     // update the backup phrase validation flag
                     try walletStorage.markUserPassedPhraseBackupTest(true)
 

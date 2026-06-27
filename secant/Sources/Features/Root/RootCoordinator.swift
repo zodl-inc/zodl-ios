@@ -291,6 +291,13 @@ extension Root {
 
                 // MARK: - Restore Wallet Coord Flow from Onboarding
 
+            case .onboarding(.seedNotRelevantToExistingDB):
+                // Preventive guard ([#1024]): the entered seed doesn't match the wallet DB already on disk.
+                // Funnel through the single mismatch sink (`seedValidationResult(false)` → `differentSeed()`:
+                // "Start over" wipes via resetZashi, "Try again" dismisses) — before the seed is ever written
+                // to the keychain.
+                return .send(.initialization(.seedValidationResult(false)))
+
             case .onboarding(.path(.element(id: _, action: .restoreInfo(.gotItTapped)))):
                 var leavesScreenOpen = false
                 for element in state.onboardingState.path {

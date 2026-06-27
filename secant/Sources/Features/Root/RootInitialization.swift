@@ -490,16 +490,31 @@ extension Root {
                 return .none
                 
             case .initialization(.checkBackupPhraseValidation):
+                let storedWallet: StoredWallet
                 do {
-                    let _ = try walletStorage.exportWallet()
+                    storedWallet = try walletStorage.exportWallet()
                 } catch {
                     return .send(.destination(.updateDestination(.osStatusError)))
                 }
 
                 state.appInitializationState = .initialized
                 let isAtDeeplinkWarningScreen = state.destinationState.destination == .deeplinkWarning
+                let dbFilesPresent = databaseFiles.areDbFilesPresentFor(zcashSDKEnvironment.network())
 
                 return .run { send in
+                    // Defensive backstop ([#1024]): catch an already-desynced install where the keychain seed
+                    // no longer matches the wallet DB on disk (a restore that slipped past the preventive guard,
+                    // or keychain/DB drift). Only a definitive `false` warns; any error defaults to relevant so a
+                    // transient rust hiccup never falsely locks a valid wallet, and wallets without an exportable
+                    // seed (hardware-only) are skipped by the `try?`. The alert sits over home — the user can
+                    // still view balances, but is told the data doesn't match the seed and offered a reset.
+                    if dbFilesPresent, let seedBytes = try? mnemonic.toSeed(storedWallet.seedPhrase.value()) {
+                        let relevant = (try? await sdkSynchronizer.isSeedRelevantToAnyDerivedAccount(seedBytes)) ?? true
+                        if !relevant {
+                            await send(.initialization(.seedValidationResult(false)))
+                        }
+                    }
+
                     // Delay the splash overlay dismissal
                     try await mainQueue.sleep(for: .seconds(0.5))
                     if !isAtDeeplinkWarningScreen {

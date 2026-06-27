@@ -56,6 +56,7 @@ struct RestoreWalletCoordFlow {
     enum Action: BindableAction {
         case alert(PresentationAction<Action>)
         case binding(BindingAction<RestoreWalletCoordFlow.State>)
+        case commitRestore
         case evaluateSeedValidity
         case failedToRecover(ZcashError)
         case helpSheetRequested
@@ -65,6 +66,8 @@ struct RestoreWalletCoordFlow {
         case resolveRestoreRequested
         case resolveRestoreTapped
         case restoreCancelTapped
+        case seedNotRelevantToExistingDB
+        case seedRelevanceChecked(Bool)
         case selectedIndex(Int?)
         case successfullyRecovered
         case suggestedWordTapped(String)
@@ -82,6 +85,7 @@ struct RestoreWalletCoordFlow {
         case newWalletSuccessfulyCreated
     }
 
+    @Dependency(\.databaseFiles) var databaseFiles
     @Dependency(\.mnemonic) var mnemonic
     @Dependency(\.pasteboard) var pasteboard
     @Dependency(\.sdkSynchronizer) var sdkSynchronizer
