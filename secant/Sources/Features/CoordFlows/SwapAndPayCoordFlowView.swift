@@ -116,7 +116,11 @@ struct SwapAndPayCoordFlowView: View {
                 }
                 .onAppear { store.send(.onAppear) }
             }
-            .applyScreenBackground()
+            // macOS: hosts the select-recipient AddressBook List (already full-width via its own
+            // `capped: false` + `macContentRowCap()`). Move the cap OFF the flow so that List's scroll
+            // indicator reaches the window edge; every other screen in the flow self-caps (audited). iOS
+            // unaffected — `capped: false` collapses to the same background-only path there (Rule #11).
+            .applyScreenBackground(capped: false)
         }
     }
 

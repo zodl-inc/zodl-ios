@@ -109,14 +109,18 @@ struct ProposalListView: View {
                     .padding(.horizontal, 24)
                     .padding(.top, 12)
                     .padding(.bottom, showCTA ? 96 : 24)
+                    // macOS: cap the scroll CONTENT so the full-width scroller reaches the window edge.
+                    .macContentRowCap()
                 }
                 .padding(.vertical, 1)
 
                 if showCTA {
+                    // chrome pinned outside the scroll — cap it too so it stays in the column.
                     bottomCTA(proposals: proposals, choices: displayedChoices)
+                        .macContentRowCap()
                 }
             }
-            .applyScreenBackground()
+            .applyScreenBackground(capped: false)
             .screenTitle(String(localizable: .coinVoteCommonScreenTitle))
             .zashiBack()
         }

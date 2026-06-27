@@ -157,7 +157,12 @@ struct SettingsView: View {
                     WhatsNewView(store: store)
                 }
             }
-            .applyScreenBackground()
+            // macOS: the Settings NavigationStack hosts AddressBook, whose List must be full-width so its
+            // (visible) scroll indicator sits at the window edge, not the 530-column edge. Move the cap OFF
+            // the stack (`capped: false`); the Settings root list self-caps (its own background above) and
+            // every pushed destination self-caps too, so only AddressBook's full-width List is affected.
+            // iOS unaffected — `capped: false` collapses to the same background-only path there (Rule #11).
+            .applyScreenBackground(capped: false)
             .zashiSheet(isPresented: $store.isInRecoverFundsMode) {
                 recoverFundsSheetContent()
             }

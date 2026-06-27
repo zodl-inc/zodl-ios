@@ -277,6 +277,33 @@ extension View {
     }
 }
 
+extension View {
+    /// macOS: cap a single piece of scrollable CONTENT — a `List` row, or a `ScrollView`'s content —
+    /// to the readable column width (`ZashiScreenLayout.macContentMaxWidth`) and center it, while the
+    /// enclosing `List` / `ScrollView` itself stays full-width.
+    ///
+    /// Use together with `applyScreenBackground(capped: false)`: the scroll container fills the window,
+    /// so its scroll indicator sits at the window's trailing edge instead of floating at the 530-column
+    /// edge (the old symptom from capping the whole screen — including the scroller — to 530). The
+    /// content is still capped + centered, so inside the column it looks identical to the capped screen.
+    /// Only apply this to lists/scrolls whose indicator is actually visible (content that overflows);
+    /// short content that never scrolls needs neither this nor `capped: false`.
+    ///
+    /// Three frames: fill the available width first (so leading-aligned content like section headers
+    /// keep their left edge against the column, not the window), cap that to the column width, then
+    /// center the capped column in the full width. No-op on iOS (Rule #11) — there the column cap is
+    /// irrelevant and the scroller already hugs the screen edge.
+    @ViewBuilder func macContentRowCap() -> some View {
+#if os(macOS)
+        frame(maxWidth: .infinity, alignment: .leading)
+            .frame(maxWidth: ZashiScreenLayout.macContentMaxWidth)
+            .frame(maxWidth: .infinity, alignment: .center)
+#else
+        self
+#endif
+    }
+}
+
 struct ScreenBackground_Previews: PreviewProvider {
     static var previews: some View {
         VStack {

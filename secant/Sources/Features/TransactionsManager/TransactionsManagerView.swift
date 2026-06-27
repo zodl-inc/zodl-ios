@@ -85,7 +85,8 @@ struct TransactionsManagerView: View {
                 
                 if store.transactionSections.isEmpty && !store.isInvalidated {
                     noTransactionsView()
-                    
+                        .macContentRowCap()
+
                     Spacer()
                 } else {
                     ScrollViewReader { scrollViewProxy in
@@ -99,6 +100,7 @@ struct TransactionsManagerView: View {
                                     Spacer()
                                 }
                                 .frame(maxWidth: .infinity)
+                                .macContentRowCap()
                                 .listRowInsets(EdgeInsets())
                                 .listRowBackground(Asset.Colors.background.color)
                                 .listRowSeparator(.hidden)
@@ -123,6 +125,7 @@ struct TransactionsManagerView: View {
                                                             }
                                                         }
                                                     }
+                                                    .macContentRowCap()
                                                     .listRowInsets(EdgeInsets())
                                                 }
                                             }
@@ -132,6 +135,7 @@ struct TransactionsManagerView: View {
                                             Text(section.id)
                                                 .zFont(.medium, size: 16, style: Design.Text.tertiary)
                                                 .screenHorizontalPadding()
+                                                .macContentRowCap()
                                                 .listRowInsets(EdgeInsets())
                                                 .listRowBackground(Asset.Colors.background.color)
                                                 .listRowSeparator(.hidden)
@@ -148,7 +152,10 @@ struct TransactionsManagerView: View {
                 }
             }
             .disabled(store.transactions.isEmpty)
-            .applyScreenBackground()
+            // macOS: full-width List so the (visible) scroll indicator hits the window edge, not the
+            // 530-column edge. Each row/empty-state caps its own content via `.macContentRowCap()`.
+            // iOS unaffected — `capped: false` collapses to the same background-only path there (Rule #11).
+            .applyScreenBackground(capped: false)
             .listStyle(.plain)
             .zashiHideListBackground()
             .onAppear { store.send(.onAppear) }

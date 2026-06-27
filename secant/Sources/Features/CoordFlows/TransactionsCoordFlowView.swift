@@ -52,7 +52,13 @@ struct TransactionsCoordFlowView: View {
             }
             .zashiNavigationBarHidden(true)
         }
-        .applyScreenBackground()
+        // macOS: this flow hosts the Activity List, which must be full-width so its (visible) scroll
+        // indicator sits at the window edge, not the 530-column edge. The content cap is moved OFF the
+        // flow (`capped: false`) and onto each screen: Activity caps per-row via `.macContentRowCap()`,
+        // while TransactionDetails / AddressBookContact self-cap via their own backgrounds. The flow
+        // background stays full-bleed either way. iOS unaffected — `capped: false` collapses to the same
+        // background-only path there (Rule #11).
+        .applyScreenBackground(capped: false)
         .zashiSectionRootBack()
         .screenTitle(String(localizable: .generalRequest))
     }

@@ -53,6 +53,7 @@ struct AddressBookView: View {
                         }
                         .frame(maxWidth: .infinity)
                         .screenHorizontalPadding()
+                        .macContentRowCap()
                     } else {
                         contactsList()
                     }
@@ -61,6 +62,7 @@ struct AddressBookView: View {
                 Spacer()
 
                 addContactButton(store)
+                    .macContentRowCap()
             }
             .padding(.top, 24)
             .onAppear { store.send(.onAppear) }
@@ -72,7 +74,9 @@ struct AddressBookView: View {
                 : String(localizable: .addressBookTitle)
             )
             .zashiNavBarTitleDisplayMode(.inline)
-            .applyScreenBackground()
+            // macOS: full-width scroll container so the (visible) indicator hits the window edge, not the
+            // 530-column edge; rows/chrome cap their own content via `.macContentRowCap()`. iOS no-op (Rule #11).
+            .applyScreenBackground(capped: false)
         }
     }
 
@@ -218,6 +222,7 @@ struct AddressBookView: View {
                     .padding(.top, 24)
                     .padding(.bottom, 16)
                     .screenHorizontalPadding()
+                    .macContentRowCap()
                     .listBackground()
 
                 ForEach(store.walletAccounts, id: \.self) { walletAccount in
@@ -238,6 +243,7 @@ struct AddressBookView: View {
                                     .padding(.horizontal, 4)
                             }
                         }
+                        .macContentRowCap()
                         .listBackground()
                     }
                 }
@@ -261,12 +267,14 @@ struct AddressBookView: View {
                     }
                     .padding(.top, 24)
                     .screenHorizontalPadding()
+                    .macContentRowCap()
                 } else {
                     Text(localizable: .accountsAddressBookContacts)
                         .zFont(.medium, size: 14, style: Design.Text.tertiary)
                         .padding(.top, 32)
                         .padding(.bottom, 16)
                         .screenHorizontalPadding()
+                        .macContentRowCap()
                         .listBackground()
                 }
             }
@@ -290,6 +298,7 @@ struct AddressBookView: View {
                             .padding(.horizontal, 4)
                     }
                 }
+                .macContentRowCap()
                 .listRowInsets(EdgeInsets())
                 .listRowBackground(Asset.Colors.background.color)
                 .listRowSeparator(.hidden)

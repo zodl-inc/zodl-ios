@@ -73,9 +73,11 @@ struct ResultsView: View {
                 .padding(.horizontal, 24)
                 .padding(.top, 12)
                 .padding(.bottom, 24)
+                // macOS: cap the scroll CONTENT so the full-width scroller reaches the window edge.
+                .macContentRowCap()
             }
             .padding(.vertical, 1)
-            .applyScreenBackground()
+            .applyScreenBackground(capped: false)
             .screenTitle(String(localizable: .coinVoteCommonScreenTitle))
             .zashiBack()
             .onAppear { store.send(.fetchTallyResults(roundId: roundId)) }

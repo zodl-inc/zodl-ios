@@ -43,9 +43,12 @@ struct PollsListView: View {
                 }
                 .padding(.horizontal, 24)
                 .padding(.bottom, 24)
+                // macOS: cap the scroll CONTENT (not the ScrollView) so the full-width scroller reaches
+                // the window edge while content stays in the 530 column. No flow cap above this screen.
+                .macContentRowCap()
             }
             .padding(.vertical, 1)
-            .applyScreenBackground()
+            .applyScreenBackground(capped: false)
             .screenTitle(String(localizable: .coinVoteCommonScreenTitle))
             .zashiSectionRootBack { store.send(.dismissFlow) }
             .toolbar {
