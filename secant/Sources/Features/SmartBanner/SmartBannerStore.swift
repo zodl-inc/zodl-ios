@@ -455,7 +455,7 @@ struct SmartBanner {
                 guard !state.transactions.isEmpty else {
                     return .send(.evaluatePriority7)
                 }
-                if let storedWallet = try? walletStorage.exportWallet(), !storedWallet.hasUserPassedPhraseBackupTest {
+                if let metadata = try? walletStorage.exportWalletMetadata(), !metadata.hasUserPassedPhraseBackupTest {
                     if let walletBackupReminder = walletStorage.exportWalletBackupReminder() {
                         state.remindMeWalletBackupPhaseCounter = walletBackupReminder.occurence
                         let now = Date().timeIntervalSince1970

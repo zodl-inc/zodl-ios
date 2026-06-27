@@ -66,7 +66,7 @@ private final class ShieldingProcessorImpl: @unchecked Sendable {
         } else {
             Task { [subject, derivationTool, mnemonic, sdkSynchronizer, walletStorage, zcashSDKEnvironment] in
                 do {
-                    let storedWallet = try walletStorage.exportWallet()
+                    let storedWallet = try await walletStorage.exportWallet()
                     let seedBytes = try mnemonic.toSeed(storedWallet.seedPhrase.value())
                     let spendingKey = try derivationTool.deriveSpendingKey(seedBytes, zip32AccountIndex, zcashSDKEnvironment.network().networkType)
 

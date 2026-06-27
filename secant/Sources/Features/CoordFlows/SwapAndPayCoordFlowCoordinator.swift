@@ -335,7 +335,7 @@ extension SwapAndPayCoordFlow {
                 let depositAddress = state.swapAndPayState.quote?.depositAddress
                 return .run { send in
                     do {
-                        let storedWallet = try walletStorage.exportWallet()
+                        let storedWallet = try await walletStorage.exportWallet()
                         let seedBytes = try mnemonic.toSeed(storedWallet.seedPhrase.value())
                         let network = zcashSDKEnvironment.network().networkType
                         let spendingKey = try derivationTool.deriveSpendingKey(seedBytes, zip32AccountIndex, network)

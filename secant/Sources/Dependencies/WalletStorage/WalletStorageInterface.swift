@@ -45,7 +45,15 @@ struct WalletStorageClient {
     ///   - `WalletStorageError.uninitializedWallet`:  when no wallet's data is found in the keychain.
     ///   - `WalletStorageError.storageError` when some unrecognized error occurred.
     ///   - `WalletStorageError.unsupportedVersion` when wallet's version stored in the keychain is outdated.
-    var exportWallet: @Sendable () throws -> StoredWallet
+    ///
+    /// On macOS this decrypts the Secure-Enclave-wrapped seed and triggers an OS auth prompt, hence
+    /// `async` — call only when the seed itself is needed (spend / export / first init). For birthday /
+    /// backup-flag, use `exportWalletMetadata` (no prompt).
+    var exportWallet: @Sendable () async throws -> StoredWallet
+
+    /// Loads the non-secret wallet metadata (version, birthday, backup-flag) WITHOUT decrypting the
+    /// seed — never triggers a biometric prompt.
+    var exportWalletMetadata: @Sendable () throws -> WalletMetadata
 
     /// Check if the wallet representation `StoredWallet` is present in the persistent storage.
     ///

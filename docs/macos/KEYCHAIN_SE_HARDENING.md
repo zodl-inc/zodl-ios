@@ -70,6 +70,29 @@ Promptless after the split:
   meta against the DB's account fingerprint — no decrypt. (Fallback if the SDK exposes no
   fingerprint: defer the defensive backstop to the first genuine seed read.)
 
+## Critical finding: the launch prompt (and why it's avoidable)
+
+`RootInitialization.initializeSDK` passes the seed to `sdkSynchronizer.prepareWith(...)` on **every
+launch**, and `resolveMetadataEncryptionKeys` + `checkBackupPhraseValidation` also read the seed at
+launch. Naively SE-wrapping the seed would therefore fire **multiple biometric prompts on every app
+launch** — unacceptable.
+
+**Resolution:** the SDK's `Synchronizer.prepare(with seed: [UInt8]?, …)` takes an **optional** seed.
+Once the wallet's accounts exist in `data.db`, `prepare(with: nil)` works — no seed needed. So:
+
+- The seed is decrypted at launch **only on the first init** (when `data.db` is absent — i.e. right
+  after wallet create/restore, when the user just supplied it). That single decrypt is reused for
+  `prepare` + address-book/metadata key derivation (consolidate — do NOT call `exportWallet` three
+  times = three prompts).
+- **Every subsequent launch** prepares with `nil` → zero seed reads → **zero prompts**. The biometric
+  then appears only on genuine spend / export.
+- `checkBackupPhraseValidation` (the [#1024] launch guard) must use the stored **seed fingerprint**
+  (plaintext meta) instead of decrypting — pulling that part of step 3 forward.
+
+Work this adds to step 2's launch wiring: make the app's `prepareWith` accept `[UInt8]?`; branch
+`initializeSDK` on `databaseFiles.areDbFilesPresentFor(...)` (present → `prepare(nil)`, absent →
+decrypt once + reuse); route the launch guard through the fingerprint.
+
 ## Architecture
 
 **New `SecureEnclaveClient` dependency** (sits alongside `SecItemClient`; mockable for iOS/CI/tests):

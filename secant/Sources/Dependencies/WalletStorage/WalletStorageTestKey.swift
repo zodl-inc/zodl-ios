@@ -12,6 +12,7 @@ extension WalletStorageClient {
     static let noOp = Self(
         importWallet: { _, _, _, _ in },
         exportWallet: { .placeholder },
+        exportWalletMetadata: { StoredWallet.placeholder.metadata },
         areKeysPresent: { false },
         updateBirthday: { _ in },
         markUserPassedPhraseBackupTest: { _ in },

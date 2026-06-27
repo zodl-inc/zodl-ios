@@ -13,7 +13,7 @@ import ComposableArchitecture
 extension WalletStorageClient: DependencyKey {
     static let liveValue = WalletStorageClient.live()
 
-    static func live(walletStorage: WalletStorage = WalletStorage(secItem: .live)) -> Self {
+    static func live(walletStorage: WalletStorage = .liveStorage) -> Self {
         Self(
             importWallet: { bip39, birthday, language, hasUserPassedPhraseBackupTest  in
                 try walletStorage.importWallet(
@@ -24,7 +24,10 @@ extension WalletStorageClient: DependencyKey {
                 )
             },
             exportWallet: {
-                try walletStorage.exportWallet()
+                try await walletStorage.exportWallet()
+            },
+            exportWalletMetadata: {
+                try walletStorage.exportWalletMetadata()
             },
             areKeysPresent: {
                 try walletStorage.areKeysPresent()
@@ -93,5 +96,17 @@ extension WalletStorageClient: DependencyKey {
                 try walletStorage.exportVotingHotkey(accountId: accountId)
             }
         )
+    }
+}
+
+extension WalletStorage {
+    /// The live storage: Secure-Enclave-backed on macOS (seed wrapped by a non-extractable enclave
+    /// key), legacy plaintext on iOS. See docs/macos/KEYCHAIN_SE_HARDENING.md.
+    static var liveStorage: WalletStorage {
+#if os(macOS)
+        WalletStorage(secItem: .live, secureEnclave: .liveValue)
+#else
+        WalletStorage(secItem: .live)
+#endif
     }
 }

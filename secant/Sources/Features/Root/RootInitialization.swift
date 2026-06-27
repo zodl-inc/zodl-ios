@@ -335,19 +335,33 @@ extension Root {
                 /// Stored wallet is present, database files may or may not be present, trying to initialize app state variables and environments.
                 /// When initialization succeeds user is taken to the home screen.
             case .initialization(.initializeSDK(let walletMode)):
-                do {
-                    let storedWallet: StoredWallet
-                    do {
-                        storedWallet = try walletStorage.exportWallet()
-                    } catch {
-                        return .send(.destination(.updateDestination(.osStatusError)))
-                    }
-                    let birthday = storedWallet.birthday?.value() ?? zcashSDKEnvironment.latestCheckpoint()
-                    try mnemonic.isValid(storedWallet.seedPhrase.value())
-                    let seedBytes = try mnemonic.toSeed(storedWallet.seedPhrase.value())
-                    
-                    return .run { send in
+                let dbFilesPresent = databaseFiles.areDbFilesPresentFor(zcashSDKEnvironment.network())
+                return .run { send in
                         do {
+                            // Seed handling (docs/macos/KEYCHAIN_SE_HARDENING.md): the macOS seed is
+                            // Secure-Enclave-wrapped, so decrypting it prompts. The SDK's `prepare` takes
+                            // an OPTIONAL seed — once the wallet exists in `data.db` we prepare WITHOUT it
+                            // (no prompt on normal launches). The seed is decrypted only on FIRST init
+                            // (the user just supplied it) and reused for the seed-derived keys below.
+                            let seedBytes: [UInt8]?
+                            let birthday: BlockHeight
+                            if dbFilesPresent {
+                                seedBytes = nil
+                                birthday = (try? walletStorage.exportWalletMetadata().birthday?.value())
+                                    ?? zcashSDKEnvironment.latestCheckpoint()
+                            } else {
+                                let storedWallet: StoredWallet
+                                do {
+                                    storedWallet = try await walletStorage.exportWallet()
+                                } catch {
+                                    await send(.destination(.updateDestination(.osStatusError)))
+                                    return
+                                }
+                                try mnemonic.isValid(storedWallet.seedPhrase.value())
+                                seedBytes = try mnemonic.toSeed(storedWallet.seedPhrase.value())
+                                birthday = storedWallet.birthday?.value() ?? zcashSDKEnvironment.latestCheckpoint()
+                            }
+
                             try await sdkSynchronizer.prepareWith(
                                 seedBytes,
                                 birthday,
@@ -393,7 +407,10 @@ extension Root {
 
                             exchangeRate.refreshExchangeRateUSD()
 
-                            if let account = selectedAccount {
+                            // Address-book keys are seed-derived — derive only when we actually hold the
+                            // seed (first init) and they're missing. On normal launches `seedBytes` is nil
+                            // and they're already cached, so this is skipped (no prompt).
+                            if let account = selectedAccount, let seedBytes {
                                 let addressBookEncryptionKeys = try? walletStorage.exportAddressBookEncryptionKeys()
                                 if addressBookEncryptionKeys == nil {
                                     do {
@@ -417,10 +434,7 @@ extension Root {
                             await send(.initialization(.initializationFailed(error.toZcashError())))
                         }
                     }
-                } catch {
-                    return .send(.initialization(.initializationFailed(error.toZcashError())))
-                }
-                
+
             case .initialization(.initializationSuccessfullyDone):
                 return .merge(
                     .send(.initialization(.registerForSynchronizersUpdate)),
@@ -454,66 +468,64 @@ extension Root {
                 )
 
             case .resolveMetadataEncryptionKeys:
-                do {
-                    let storedWallet: StoredWallet
-                    do {
-                        storedWallet = try walletStorage.exportWallet()
-                    } catch {
-                        return .send(.destination(.updateDestination(.osStatusError)))
+                return .run { [walletAccounts = state.walletAccounts] send in
+                    // Decrypt the seed only if some account is actually missing its metadata keys
+                    // (promptless otherwise — docs/macos/KEYCHAIN_SE_HARDENING.md). The keys are
+                    // seed-derived, so on normal launches they're already cached and this never decrypts.
+                    let accountsMissingKeys = walletAccounts.filter {
+                        (try? walletStorage.exportUserMetadataEncryptionKeys($0.account)) == nil
                     }
-                    try mnemonic.isValid(storedWallet.seedPhrase.value())
-                    let seedBytes = try mnemonic.toSeed(storedWallet.seedPhrase.value())
-                    
-                    return .run { [walletAccounts = state.walletAccounts] send in
+                    guard !accountsMissingKeys.isEmpty else { return }
+
+                    guard
+                        let storedWallet = try? await walletStorage.exportWallet(),
+                        let seedBytes = try? mnemonic.toSeed(storedWallet.seedPhrase.value())
+                    else { return }
+
+                    for account in accountsMissingKeys {
                         do {
-                            
-                            for account in walletAccounts {
-                                let userMetadataEncryptionKeys = try? walletStorage.exportUserMetadataEncryptionKeys(account.account)
-                                if userMetadataEncryptionKeys == nil {
-                                    do {
-                                        var keys = UserMetadataEncryptionKeys.empty
-                                        try keys.cacheFor(
-                                            seed: seedBytes,
-                                            account: account.account,
-                                            network: zcashSDKEnvironment.network().networkType
-                                        )
-                                        try walletStorage.importUserMetadataEncryptionKeys(keys, account.account)
-                                        await send(.loadUserMetadata)
-                                    } catch {
-                                        // TODO: [#1408] error handling https://github.com/Electric-Coin-Company/zashi-ios/issues/1408
-                                    }
-                                }
-                            }
+                            var keys = UserMetadataEncryptionKeys.empty
+                            try keys.cacheFor(
+                                seed: seedBytes,
+                                account: account.account,
+                                network: zcashSDKEnvironment.network().networkType
+                            )
+                            try walletStorage.importUserMetadataEncryptionKeys(keys, account.account)
+                            await send(.loadUserMetadata)
+                        } catch {
+                            // TODO: [#1408] error handling https://github.com/Electric-Coin-Company/zashi-ios/issues/1408
                         }
                     }
-                } catch { }
-                return .none
+                }
                 
             case .initialization(.checkBackupPhraseValidation):
-                let storedWallet: StoredWallet
-                do {
-                    storedWallet = try walletStorage.exportWallet()
-                } catch {
+                // Existence check only (promptless) — do NOT decrypt the seed here.
+                guard (try? walletStorage.areKeysPresent()) == true else {
                     return .send(.destination(.updateDestination(.osStatusError)))
                 }
 
                 state.appInitializationState = .initialized
                 let isAtDeeplinkWarningScreen = state.destinationState.destination == .deeplinkWarning
-                let dbFilesPresent = databaseFiles.areDbFilesPresentFor(zcashSDKEnvironment.network())
 
                 return .run { send in
-                    // Defensive backstop ([#1024]): catch an already-desynced install where the keychain seed
-                    // no longer matches the wallet DB on disk (a restore that slipped past the preventive guard,
-                    // or keychain/DB drift). Only a definitive `false` warns; any error defaults to relevant so a
-                    // transient rust hiccup never falsely locks a valid wallet, and wallets without an exportable
-                    // seed (hardware-only) are skipped by the `try?`. The alert sits over home — the user can
-                    // still view balances, but is told the data doesn't match the seed and offered a reset.
-                    if dbFilesPresent, let seedBytes = try? mnemonic.toSeed(storedWallet.seedPhrase.value()) {
+#if !os(macOS)
+                    // Defensive backstop ([#1024]): on iOS the seed reads without a prompt, so catch an
+                    // already-desynced install where the keychain seed no longer matches the wallet DB
+                    // (a restore that slipped past the preventive guard, or keychain/DB drift). Only a
+                    // definitive `false` warns; any error defaults to relevant so a transient rust hiccup
+                    // never falsely locks a valid wallet, and hardware-only wallets are skipped by `try?`.
+                    // On macOS the seed is SE-wrapped — reading it here would prompt on EVERY launch — so
+                    // this backstop moves to a stored seed fingerprint (no decrypt) in a later step; the
+                    // preventive guard at restore still applies.
+                    if databaseFiles.areDbFilesPresentFor(zcashSDKEnvironment.network()),
+                       let storedWallet = try? await walletStorage.exportWallet(),
+                       let seedBytes = try? mnemonic.toSeed(storedWallet.seedPhrase.value()) {
                         let relevant = (try? await sdkSynchronizer.isSeedRelevantToAnyDerivedAccount(seedBytes)) ?? true
                         if !relevant {
                             await send(.initialization(.seedValidationResult(false)))
                         }
                     }
+#endif
 
                     // Delay the splash overlay dismissal
                     try await mainQueue.sleep(for: .seconds(0.5))

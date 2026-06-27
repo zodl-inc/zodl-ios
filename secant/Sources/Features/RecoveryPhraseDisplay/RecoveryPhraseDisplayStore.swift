@@ -136,7 +136,7 @@ struct RecoveryPhraseDisplay {
                     // reducer. The seed reaches the state only via the action below,
                     // and only after authentication has already succeeded.
                     do {
-                        let storedWallet = try walletStorage.exportWallet()
+                        let storedWallet = try await walletStorage.exportWallet()
                         await send(.recoveryPhraseRevealed(storedWallet))
                     } catch {
                         await send(.recoveryPhraseRevealFailed(error.toZcashError()))

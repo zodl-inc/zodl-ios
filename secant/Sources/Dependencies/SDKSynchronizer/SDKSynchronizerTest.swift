@@ -147,7 +147,7 @@ extension SDKSynchronizerClient {
         exchangeRateUSDStream: @escaping @Sendable () -> AnyPublisher<FiatCurrencyResult?, Never> = { Empty().eraseToAnyPublisher() },
         latestState: @escaping @Sendable () -> SynchronizerState = { .zero },
         latestScannedHeight: @escaping @Sendable () -> BlockHeight = { 0 },
-        prepareWith: @escaping @Sendable ([UInt8], BlockHeight, WalletInitMode, String, String?) throws -> Void = { _, _, _, _, _ in },
+        prepareWith: @escaping @Sendable ([UInt8]?, BlockHeight, WalletInitMode, String, String?) throws -> Void = { _, _, _, _, _ in },
         start: @escaping @Sendable (_ retry: Bool) throws -> Void = { _ in },
         stop: @escaping @Sendable () -> Void = { },
         isSyncing: @escaping @Sendable () -> Bool = { false },
