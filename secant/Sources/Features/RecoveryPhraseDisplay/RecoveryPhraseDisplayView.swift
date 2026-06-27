@@ -35,7 +35,10 @@ struct RecoveryPhraseDisplayView: View {
         WithPerceptionTracking {
             VStack(alignment: .leading, spacing: 0) {
                 Text(localizable: .recoveryPhraseDisplayTitle)
-
+                #if os(macos)
+                    .padding(.top, 24)
+                #endif
+                
                 Text(localizable: .recoveryPhraseDisplayDescription)
                     .zFont(size: 14, style: Design.Text.primary)
                     .fixedSize(horizontal: false, vertical: true)

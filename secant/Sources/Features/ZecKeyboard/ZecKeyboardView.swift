@@ -193,7 +193,7 @@ struct ZecKeyboardView: View {
     /// physical and on-screen input share one path. Returns `.ignored` for keys we don't handle.
     private func handleHardwareKey(_ press: KeyPress) -> KeyPress.Result {
         // Backspace → "remove last" (the SW `x`, index 11). macOS backspace is `KeyEquivalent.delete`.
-        if press.key == .delete {
+        if press.key == .delete || press.characters.first == "\u{7f}" {
             store.send(.keyTapped(11))
             return .handled
         }
