@@ -481,7 +481,7 @@ extension Root {
                     
                     return .run { [walletAccounts = state.walletAccounts] send in
                         do {
-                            
+                            var metadataKeyChanged = false
                             for account in walletAccounts {
                                 // MOB-1450: reconcile each account's user-metadata encryption key
                                 // against the CURRENT seed before metadata loads. The cached key
@@ -508,8 +508,14 @@ extension Root {
                                     LoggerProxy.error("MOB-1450: user-metadata key reconcile failed: \(error)")
                                 }
                                 if changed {
-                                    await send(.loadUserMetadata)
+                                    metadataKeyChanged = true
                                 }
+                            }
+                            // Reload metadata once if any account's key changed — not once per
+                            // account. `.loadUserMetadata` always targets the single selected
+                            // account, so repeated sends would only duplicate the load + reset.
+                            if metadataKeyChanged {
+                                await send(.loadUserMetadata)
                             }
                         }
                     }
