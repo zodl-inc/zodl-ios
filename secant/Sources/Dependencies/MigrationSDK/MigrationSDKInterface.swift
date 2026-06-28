@@ -72,6 +72,15 @@ struct MigrationSDKClient: Sendable {
     var isMigrationCompleteAcknowledged: @Sendable () -> Bool = { false }
     /// PROTOTYPE: called when the user taps Done on C6, so the completion banner stops showing.
     var acknowledgeMigrationComplete: @Sendable () -> Void = {}
+
+    // ── PROTOTYPE: background-task run log (debug observability) ──────────────
+    /// Records one entry per `MigrationBackgroundWorker` run (real BGTask or the debug "Run now"), so
+    /// the debug panel can show when background tasks actually fired and what the send returned.
+    var recordBackgroundRun: @Sendable (MigrationBackgroundRun.Outcome) -> Void = { _ in }
+    /// Persisted run history, newest first (capped). Survives Reset/Seed.
+    var backgroundRunLog: @Sendable () -> [MigrationBackgroundRun] = { [] }
+    var clearBackgroundRunLog: @Sendable () -> Void = {}
+
     /// Debug surface driven by the MigrationDebug panel (DEBUG builds only).
     var debug: MigrationDebugControls = .noOp
 }

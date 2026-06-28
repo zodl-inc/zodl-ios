@@ -7,13 +7,15 @@
 //
 
 import ComposableArchitecture
+import Foundation
 @preconcurrency import ZcashLightClientKit
 
 extension MigrationSDKClient: DependencyKey {
     static let liveValue: MigrationSDKClient = Self.live()
 
     static func live(
-        store: MigrationStateStore = .live(fileURL: MigrationStateStore.defaultFileURL)
+        store: MigrationStateStore = .live(fileURL: MigrationStateStore.defaultFileURL),
+        runLogStore: MigrationRunLogStore = .live(fileURL: MigrationRunLogStore.defaultFileURL)
     ) -> MigrationSDKClient {
         let engine = DummyMigrationEngine(store: store)
 
@@ -40,6 +42,9 @@ extension MigrationSDKClient: DependencyKey {
             migrationTransfers: { engine.transferRows() },
             isMigrationCompleteAcknowledged: { engine.isCompletionAcknowledged() },
             acknowledgeMigrationComplete: { engine.acknowledgeCompletion() },
+            recordBackgroundRun: { runLogStore.append(MigrationBackgroundRun(timestamp: Date(), outcome: $0)) },
+            backgroundRunLog: { runLogStore.load() },
+            clearBackgroundRunLog: { runLogStore.clear() },
             debug: MigrationDebugControls(
                 reset: { await engine.debugReset() },
                 seed: { await engine.debugSeed(orchard: $0, noteCount: $1) },

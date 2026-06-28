@@ -33,6 +33,14 @@ struct MigrationBackgroundWorker: Sendable {
 
     @discardableResult
     func runMigrationStep() async -> MigrationStepOutcome {
+        let outcome = await performStep()
+        // PROTOTYPE: record every run (real BGTask or the debug "Run now") so the debug panel can show
+        // when background tasks actually fired and what the transfer send returned.
+        migrationSDK.recordBackgroundRun(Self.runLogOutcome(for: outcome))
+        return outcome
+    }
+
+    private func performStep() async -> MigrationStepOutcome {
         // Sync must not run inside the background task. If the next transfer needs a sync first, bail
         // out and let the foreground app handle the sync, decoupled in time from the broadcast.
         guard !migrationSDK.isSyncRequiredBeforeNextTransfer() else { return .syncRequired }
@@ -71,5 +79,25 @@ struct MigrationBackgroundWorker: Sendable {
             body = "Migration transfer complete."
         }
         await localNotification.post("ZODL", body, "ironwood-migration-\(txId)")
+    }
+
+    private static func runLogOutcome(for outcome: MigrationStepOutcome) -> MigrationBackgroundRun.Outcome {
+        switch outcome {
+        case .syncRequired:
+            return .syncRequired
+        case .nothingPending:
+            return .nothingPending
+        case let .result(result):
+            switch result {
+            case let .success(txId):
+                return .sent(txId: txId)
+            case .networkError:
+                return .networkError
+            case .invalidNote:
+                return .invalidNote
+            case .expired:
+                return .expired
+            }
+        }
     }
 }

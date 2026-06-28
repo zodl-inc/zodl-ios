@@ -21,6 +21,7 @@ struct MigrationDebug {
         var orchardZec = "12.458"
         var noteCount = 5
         var advanceBlocks = 100
+        var runLog: [MigrationBackgroundRun] = []
 
         init() { }
     }
@@ -31,6 +32,7 @@ struct MigrationDebug {
         case onAppear
         case refresh
         case snapshotLoaded(String)
+        case logLoaded([MigrationBackgroundRun])
         case resetTapped
         case seedTapped
         case advanceHeightTapped
@@ -39,6 +41,7 @@ struct MigrationDebug {
         case backgroundTaskFinished(MigrationStepOutcome)
         case armNextResult(TransferResult)
         case jumpTo(MigrationDebugTarget)
+        case clearLogTapped
         /// Presents a one-button feedback alert with the given title + message.
         case report(title: String, message: String)
 
@@ -56,10 +59,15 @@ struct MigrationDebug {
             case .onAppear, .refresh:
                 return .run { [migrationSDK] send in
                     await send(.snapshotLoaded(migrationSDK.debug.snapshotDescription()))
+                    await send(.logLoaded(migrationSDK.backgroundRunLog()))
                 }
 
             case let .snapshotLoaded(snapshot):
                 state.snapshot = snapshot
+                return .none
+
+            case let .logLoaded(entries):
+                state.runLog = entries
                 return .none
 
             case .resetTapped:
@@ -122,6 +130,13 @@ struct MigrationDebug {
                     await migrationSDK.debug.jumpTo(target)
                     await send(.refresh)
                     await send(.report(title: "Jumped", message: "Forced state: \(label)."))
+                }
+
+            case .clearLogTapped:
+                return .run { [migrationSDK] send in
+                    migrationSDK.clearBackgroundRunLog()
+                    await send(.refresh)
+                    await send(.report(title: "Log cleared", message: "Background task log cleared."))
                 }
 
             case let .report(title, message):

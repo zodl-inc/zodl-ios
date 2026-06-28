@@ -161,3 +161,119 @@ struct MigrationStateStore: Sendable {
         return base.appendingPathComponent("ironwood_migration_state.json")
     }
 }
+
+// MARK: - Background-task run log (PROTOTYPE debug observability)
+
+/// One recorded execution of `MigrationBackgroundWorker.runMigrationStep` — when it ran and what the
+/// transfer-send attempt returned. Persisted independently of the migration snapshot so it survives the
+/// debug Reset / Seed (which reset the simulation) and the background-task relaunch lifecycle.
+struct MigrationBackgroundRun: Equatable, Sendable, Codable, Identifiable {
+    enum Outcome: Equatable, Sendable, Codable {
+        case sent(txId: String)
+        case networkError
+        case invalidNote
+        case expired
+        case nothingPending
+        case syncRequired
+    }
+
+    enum Severity: Equatable, Sendable {
+        case success
+        case failure
+        case neutral
+    }
+
+    var id: UUID
+    var timestamp: Date
+    var outcome: Outcome
+
+    init(id: UUID = UUID(), timestamp: Date, outcome: Outcome) {
+        self.id = id
+        self.timestamp = timestamp
+        self.outcome = outcome
+    }
+
+    /// One-line description for the debug list.
+    var summary: String {
+        switch outcome {
+        case let .sent(txId): return "Sent ✓  \(txId)"
+        case .networkError: return "Network error ✗"
+        case .invalidNote: return "Invalid note ✗"
+        case .expired: return "Expired ✗"
+        case .nothingPending: return "Nothing pending"
+        case .syncRequired: return "Sync required (skipped)"
+        }
+    }
+
+    var severity: Severity {
+        switch outcome {
+        case .sent: return .success
+        case .networkError, .invalidNote, .expired: return .failure
+        case .nothingPending, .syncRequired: return .neutral
+        }
+    }
+}
+
+/// Append/load/clear the background-task run log. Mirrors `MigrationStateStore`: `live` (JSON file,
+/// newest-first, capped) and `ephemeral` (in-memory, tests). Kept separate from the migration snapshot
+/// so Reset/Seed don't wipe the record of when background tasks actually fired.
+struct MigrationRunLogStore: Sendable {
+    /// Keep only the most recent N runs.
+    static let capacity = 50
+
+    var load: @Sendable () -> [MigrationBackgroundRun] = { [] }
+    var append: @Sendable (MigrationBackgroundRun) -> Void
+    var clear: @Sendable () -> Void
+
+    static func live(fileURL: URL) -> MigrationRunLogStore {
+        let lock = OSAllocatedUnfairLock(initialState: ())
+
+        @Sendable func read() -> [MigrationBackgroundRun] {
+            guard
+                let data = try? Data(contentsOf: fileURL),
+                let log = try? JSONDecoder().decode([MigrationBackgroundRun].self, from: data)
+            else {
+                return []
+            }
+            return log
+        }
+
+        return MigrationRunLogStore(
+            load: { lock.withLockUnchecked { _ in read() } },
+            append: { entry in
+                lock.withLockUnchecked { _ in
+                    var log = read()
+                    log.insert(entry, at: 0)
+                    if log.count > MigrationRunLogStore.capacity {
+                        log = Array(log.prefix(MigrationRunLogStore.capacity))
+                    }
+                    guard let data = try? JSONEncoder().encode(log) else { return }
+                    try? data.write(to: fileURL, options: .atomic)
+                }
+            },
+            clear: { lock.withLockUnchecked { _ in try? FileManager.default.removeItem(at: fileURL) } }
+        )
+    }
+
+    static func ephemeral() -> MigrationRunLogStore {
+        let state = OSAllocatedUnfairLock(initialState: [MigrationBackgroundRun]())
+        return MigrationRunLogStore(
+            load: { state.withLock { $0 } },
+            append: { entry in
+                state.withLock { log in
+                    log.insert(entry, at: 0)
+                    if log.count > MigrationRunLogStore.capacity {
+                        log = Array(log.prefix(MigrationRunLogStore.capacity))
+                    }
+                }
+            },
+            clear: { state.withLock { $0 = [] } }
+        )
+    }
+
+    static var defaultFileURL: URL {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? FileManager.default.temporaryDirectory
+        return base.appendingPathComponent("ironwood_migration_runlog.json")
+    }
+}

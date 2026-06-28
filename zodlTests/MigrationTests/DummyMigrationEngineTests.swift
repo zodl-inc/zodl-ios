@@ -314,4 +314,42 @@ struct MigrationBackgroundWorkerTests {
             #expect(!client.hasInvalidTransfers())
         }
     }
+
+    @Test func recordsRunLogEntriesPerRun() async {
+        let client = MigrationSDKClient.live(store: .ephemeral(), runLogStore: .ephemeral())
+
+        await withDependencies {
+            $0.migrationSDK = client
+            $0.localNotification.post = { _, _, _ in }
+            $0.migrationBGScheduler.scheduleNextRun = { _ in }
+        } operation: {
+            let worker = MigrationBackgroundWorker()
+
+            // No schedule yet → the run records a "nothing pending" entry.
+            await client.debug.seed(Zatoshi(1_000_000_000), 3)
+            _ = await worker.runMigrationStep()
+            #expect(client.backgroundRunLog().count == 1)
+            #expect(client.backgroundRunLog().first?.outcome == .nothingPending)
+
+            // Commit a schedule, then a run sends transfer 1 and records a "sent" entry (newest first).
+            client.selectMigrationMode(.privateScheduled)
+            let proposal = await client.prepareNoteSplit()
+            _ = await client.submitNoteSplit(proposal)
+            await client.debug.confirmSplitNow()
+            let schedule = await client.proposeMigrationTransfers()
+            await client.signAndStoreMigrationSchedule(schedule)
+            _ = await worker.runMigrationStep()
+
+            let log = client.backgroundRunLog()
+            #expect(log.count == 2)
+            if case .sent = log.first?.outcome {
+                // expected
+            } else {
+                Issue.record("expected newest entry .sent, got \(String(describing: log.first?.outcome))")
+            }
+
+            client.clearBackgroundRunLog()
+            #expect(client.backgroundRunLog().isEmpty)
+        }
+    }
 }
