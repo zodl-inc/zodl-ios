@@ -54,12 +54,12 @@ struct MigrationBackgroundDeliveryView: View {
                 }
 
                 VStack(spacing: 8) {
-                    ZashiButton("Allow Background Access") {
-                        store.send(.allowTapped)
-                    }
-
                     ZashiButton("Skip — I'll open the app", type: .secondary) {
                         store.send(.skipTapped)
+                    }
+                    
+                    ZashiButton("Allow Background Access") {
+                        store.send(.allowTapped)
                     }
                 }
                 .padding(.top, 8)
