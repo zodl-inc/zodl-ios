@@ -20,6 +20,7 @@ extension SmartBannerView {
     @ViewBuilder func priorityContent() -> some View {
         WithPerceptionTracking {
             switch store.priorityContent {
+            case .priorityMigration: migrationContent()
             case .priority1: disconnectedContent()
             case .priority2: syncingErrorContent()
             case .priority3: restoringContent()
@@ -32,6 +33,57 @@ extension SmartBannerView {
             case .priority8: currencyConversionContent()
             case .priority9: autoShieldingContent()
             default: EmptyView()
+            }
+        }
+    }
+
+    // PROTOTYPE: Ironwood migration CTA. Tapping the banner (or its button) opens the migration flow.
+    var migrationBannerTitle: String {
+        switch store.migrationState {
+        case .inProgress: return "Migration in Progress"
+        case .requiresAttention: return "Action Needed"
+        default: return "Migration Required"
+        }
+    }
+
+    var migrationBannerInfo: String {
+        switch store.migrationState {
+        case .inProgress: return "Transfers are sending in the background"
+        case .requiresAttention: return "A transfer needs your attention"
+        default: return "Move your funds to Ironwood"
+        }
+    }
+
+    var migrationBannerButton: String {
+        switch store.migrationState {
+        case .inProgress: return "View"
+        case .requiresAttention: return "Resolve"
+        default: return "Migrate"
+        }
+    }
+
+    @ViewBuilder func migrationContent() -> some View {
+        HStack(spacing: 0) {
+            Asset.Assets.Icons.coinsSwap.image
+                .zImage(size: 20, color: titleStyle())
+                .padding(.trailing, 12)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(migrationBannerTitle)
+                    .zFont(.medium, size: 14, color: titleStyle())
+
+                Text(migrationBannerInfo)
+                    .zFont(.medium, size: 12, color: infoStyle())
+            }
+
+            Spacer()
+
+            ZashiButton(
+                migrationBannerButton,
+                type: .ghost,
+                infinityWidth: false
+            ) {
+                store.send(.smartBannerContentTapped)
             }
         }
     }

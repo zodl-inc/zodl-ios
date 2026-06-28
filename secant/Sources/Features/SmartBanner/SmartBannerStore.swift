@@ -24,6 +24,7 @@ struct SmartBanner {
     @ObservableState
     struct State: Equatable {
         enum PriorityContent: Int {
+            case priorityMigration = -1 // PROTOTYPE: Ironwood migration CTA — highest, shows above all
             case priority1 = 0 // disconnected
             case priority2 // syncing error
             case priority3 // restoring
@@ -44,6 +45,7 @@ struct SmartBanner {
         var CancelNetworkMonitorId = UUID()
         var CancelStateStreamId = UUID()
         var CancelShieldingProcessorId = UUID()
+        var CancelMigrationStreamId = UUID()
 
         var isScanProgressComplete = false
         var delay = 1.5
@@ -62,6 +64,8 @@ struct SmartBanner {
         var messageToBeShared: String?
         var priorityContent: PriorityContent? = nil
         var priorityContentRequested: PriorityContent? = nil
+        /// PROTOTYPE: latest migration state, drives the migration banner copy.
+        var migrationState: MigrationState = .notStarted
         var remindMeShieldedPhaseCounter = 0
         var remindMeWalletBackupPhaseCounter = 0
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
@@ -122,6 +126,8 @@ struct SmartBanner {
         case evaluatePriority75
         case evaluatePriority8
         case evaluatePriority9
+        case migrationScreenRequested
+        case migrationStateUpdated(MigrationState)
         case networkMonitorChanged(Bool)
         case openBanner
         case openBannerRequest
@@ -150,6 +156,7 @@ struct SmartBanner {
     }
 
     @Dependency(\.mainQueue) var mainQueue
+    @Dependency(\.migrationSDK) var migrationSDK
     @Dependency(\.networkMonitor) var networkMonitor
     @Dependency(\.sdkSynchronizer) var sdkSynchronizer
     @Dependency(\.shieldingProcessor) var shieldingProcessor
@@ -193,15 +200,20 @@ struct SmartBanner {
                         shieldingProcessor.observe()
                             .map(Action.shieldingProcessorStateChanged)
                     }
-                    .cancellable(id: state.CancelShieldingProcessorId, cancelInFlight: true)
+                    .cancellable(id: state.CancelShieldingProcessorId, cancelInFlight: true),
+                    .publisher {
+                        migrationSDK.stateStream().map(Action.migrationStateUpdated)
+                    }
+                    .cancellable(id: state.CancelMigrationStreamId, cancelInFlight: true)
                 )
-                
+
             case .onDisappear:
                 // __LD2 TESTED
                 return .merge(
                     .cancel(id: state.CancelNetworkMonitorId),
                     .cancel(id: state.CancelStateStreamId),
-                    .cancel(id: state.CancelShieldingProcessorId)
+                    .cancel(id: state.CancelShieldingProcessorId),
+                    .cancel(id: state.CancelMigrationStreamId)
                 )
 
             case .binding(\.isShieldingAcknowledged):
@@ -286,6 +298,9 @@ struct SmartBanner {
                 return .none
                 
             case .smartBannerContentTapped:
+                if state.priorityContent == .priorityMigration {
+                    return .send(.migrationScreenRequested)
+                }
                 if state.priorityContent == .priority7 {
                     state.isShieldingAcknowledgedAtKeychain = walletStorage.exportShieldingAcknowledged()
                     if state.isShieldingAcknowledgedAtKeychain {
@@ -543,6 +558,21 @@ struct SmartBanner {
 
             case .transparentBalanceUpdated(let balance):
                 state.transparentBalance = balance
+                return .none
+
+            case let .migrationStateUpdated(migrationState):
+                state.migrationState = migrationState
+                let hasBalance = migrationSDK.simulatedOrchardBalance().amount > 0
+                let shouldShow = hasBalance && migrationState != .complete
+                if shouldShow {
+                    return .send(.triggerPriority(.priorityMigration))
+                } else if state.priorityContent == .priorityMigration {
+                    return .send(.closeAndCleanupBanner)
+                }
+                return .none
+
+            case .migrationScreenRequested:
+                // Handled by the parent (Home) — routes to the migration flow.
                 return .none
                 
             case .openBannerRequest:

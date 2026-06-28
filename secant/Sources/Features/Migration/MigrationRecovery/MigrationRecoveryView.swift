@@ -9,6 +9,8 @@ import ComposableArchitecture
 import SwiftUI
 
 struct MigrationRecoveryView: View {
+    @Environment(\.colorScheme) private var colorScheme
+
     @Perception.Bindable var store: StoreOf<MigrationRecovery>
     let tokenName: String
 
@@ -74,6 +76,17 @@ struct MigrationRecoveryView: View {
                 }
             }
             .screenHorizontalPadding()
+            .navigationBarBackButtonHidden(true)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        store.send(.closeTapped)
+                    } label: {
+                        Image(systemName: "chevron.backward")
+                            .foregroundStyle(Design.Text.primary.color(colorScheme))
+                    }
+                }
+            }
         }
         .applyScreenBackground()
     }

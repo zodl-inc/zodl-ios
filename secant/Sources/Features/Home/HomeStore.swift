@@ -21,8 +21,6 @@ struct Home {
         var moreRequest = false
         var payRequest = false
         var smartBannerState = SmartBanner.State.initial
-        var migrationBannerVisible = false
-        var migrationBannerVariant = 0
         var walletConfig: WalletConfig
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
         var transactionListState: TransactionList.State
@@ -79,7 +77,6 @@ struct Home {
         case moreTapped
         case moreInMoreTapped
         case migrationBannerTapped
-        case migrationStateChanged(MigrationState)
         case onAppear
         case onDisappear
         case payTapped
@@ -117,9 +114,6 @@ struct Home {
     @Dependency(\.swapAndPay) var swapAndPay
     @Dependency(\.userStoredPreferences) var userStoredPreferences
     @Dependency(\.zcashSDKEnvironment) var zcashSDKEnvironment
-    @Dependency(\.migrationSDK) var migrationSDK
-
-    enum CancelID { case migrationStream }
 
     init() { }
     
@@ -158,10 +152,6 @@ struct Home {
                             }
                     }
                     .cancellable(id: state.CancelEventId, cancelInFlight: true),
-                    .publisher {
-                        migrationSDK.stateStream().map(Home.Action.migrationStateChanged)
-                    }
-                    .cancellable(id: CancelID.migrationStream, cancelInFlight: true),
                     .send(.smartBanner(.onAppear)),
                     .send(.transactionList(.onAppear)),
                     .send(.walletBalances(.onAppear))
@@ -174,19 +164,6 @@ struct Home {
                     .send(.smartBanner(.onDisappear)),
                     .send(.walletBalances(.onDisappear))
                 )
-
-            case .migrationStateChanged(let migrationState):
-                let hasBalance = migrationSDK.simulatedOrchardBalance().amount > 0
-                state.migrationBannerVisible = hasBalance && migrationState != .complete
-                switch migrationState {
-                case .requiresAttention:
-                    state.migrationBannerVariant = 2
-                case .inProgress:
-                    state.migrationBannerVariant = 1
-                default:
-                    state.migrationBannerVariant = 0
-                }
-                return .none
 
             case .migrationBannerTapped:
                 // Launch is handled by RootCoordinator (.home(.migrationBannerTapped)).
@@ -366,6 +343,9 @@ struct Home {
                 return .none
 
                 // Smart Banner
+
+            case .smartBanner(.migrationScreenRequested):
+                return .send(.migrationBannerTapped)
 
             case .smartBanner(.currencyConversionScreenRequested):
                 return .send(.currencyConversionSetupTapped)

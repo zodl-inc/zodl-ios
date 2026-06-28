@@ -111,6 +111,73 @@ struct MigrationProgress: Equatable, Sendable, Codable {
     }
 }
 
+/// Summary of a finished (or in-flight) migration, used by the "Migration Complete" screen (Figma C6).
+///
+/// PROTOTYPE: the real SDK can expose an equivalent for its completion UI. `dust` is the remainder left
+/// in Orchard (0 in the clean case, a sub-threshold amount in the dust case).
+struct MigrationSummary: Equatable, Sendable, Codable {
+    var transferred: Zatoshi
+    var dust: Zatoshi
+    var transfersSent: Int
+    var transfersTotal: Int
+    var estimatedDurationHours: Int
+
+    static let zero = MigrationSummary(
+        transferred: .zero,
+        dust: .zero,
+        transfersSent: 0,
+        transfersTotal: 0,
+        estimatedDurationHours: 0
+    )
+
+    init(
+        transferred: Zatoshi,
+        dust: Zatoshi,
+        transfersSent: Int,
+        transfersTotal: Int,
+        estimatedDurationHours: Int
+    ) {
+        self.transferred = transferred
+        self.dust = dust
+        self.transfersSent = transfersSent
+        self.transfersTotal = transfersTotal
+        self.estimatedDurationHours = estimatedDurationHours
+    }
+}
+
+/// A single row in the in-progress transfer list (Figma B8). PROTOTYPE view-model surfaced by the SDK
+/// so the status screen can render per-transfer state without owning the schedule.
+struct MigrationTransferRow: Equatable, Sendable, Codable, Identifiable {
+    enum Status: Equatable, Sendable, Codable {
+        /// Broadcast and confirmed.
+        case sent
+        /// The next transfer, ready to send now.
+        case active
+        /// Pending but its window has passed.
+        case overdue
+        /// A future scheduled transfer.
+        case pending
+        case invalid
+        case expired
+    }
+
+    var id: String
+    /// 0-based position in the schedule.
+    var index: Int
+    var amount: Zatoshi
+    var status: Status
+    /// Approx hours until this transfer's window (0 = ready now). Only meaningful for pending rows.
+    var hoursFromNow: Int
+
+    init(id: String, index: Int, amount: Zatoshi, status: Status, hoursFromNow: Int) {
+        self.id = id
+        self.index = index
+        self.amount = amount
+        self.status = status
+        self.hoursFromNow = hoursFromNow
+    }
+}
+
 /// Why a migration cannot proceed automatically and needs the user.
 enum AttentionReason: Equatable, Sendable, Codable {
     /// Input note was spent externally before the transfer was broadcast.

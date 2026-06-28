@@ -32,6 +32,19 @@ struct HomeView: View {
                     shortened: true
                 )
                 .padding(.top, 1)
+#if DEBUG
+                // PROTOTYPE: long-press the balance to open the migration simulator debug panel.
+                // Attached to a non-Button view so the gesture fires reliably, and reachable even
+                // after migration completes (the banner is gone by then).
+                .onLongPressGesture(minimumDuration: 0.6) { showMigrationDebug = true }
+                .sheet(isPresented: $showMigrationDebug) {
+                    MigrationDebugView(
+                        store: StoreOf<MigrationDebug>(initialState: MigrationDebug.State()) {
+                            MigrationDebug()
+                        }
+                    )
+                }
+#endif
 
                 HStack {
                     button(
@@ -75,8 +88,6 @@ struct HomeView: View {
                 .zFont(.medium, size: 12, style: Design.Text.primary)
                 .padding(.top, 24)
                 .screenHorizontalPadding()
-
-                migrationBanner()
 
                 SmartBannerView(
                     store: store.scope(
@@ -172,71 +183,6 @@ struct HomeView: View {
                     )
             )
         }
-    }
-
-    // PROTOTYPE: Ironwood migration entry strip. Tap launches the flow; long-press (DEBUG) opens the
-    // migration debug panel. Color reflects the migration state (purple / orange / red variants).
-    @ViewBuilder private func migrationBanner() -> some View {
-        WithPerceptionTracking {
-            if bannerShouldShow {
-                Button {
-                    store.send(.migrationBannerTapped)
-                } label: {
-                    HStack(spacing: 12) {
-                        Image(systemName: "arrow.up.forward.circle.fill")
-                            .font(.title3)
-
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(store.migrationBannerVisible ? "Migration Required" : "Migration")
-                                .font(.subheadline.bold())
-                            Text(store.migrationBannerVisible ? "Move your funds to Ironwood" : "Tap to view · long-press to debug")
-                                .font(.caption)
-                                .opacity(0.9)
-                        }
-
-                        Spacer()
-
-                        Text("More")
-                            .font(.caption.bold())
-                    }
-                    .padding(12)
-                    .foregroundStyle(.white)
-                    .background(migrationBannerColor)
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
-                }
-                .buttonStyle(.plain)
-                .screenHorizontalPadding()
-                .padding(.top, 12)
-#if DEBUG
-                .onLongPressGesture { showMigrationDebug = true }
-                .sheet(isPresented: $showMigrationDebug) {
-                    MigrationDebugView(
-                        store: StoreOf<MigrationDebug>(initialState: MigrationDebug.State()) {
-                            MigrationDebug()
-                        }
-                    )
-                }
-#endif
-            }
-        }
-    }
-
-    private var migrationBannerColor: Color {
-        switch store.migrationBannerVariant {
-        case 2: return Color.red
-        case 1: return Color.orange
-        default: return Color(red: 0.40, green: 0.31, blue: 0.85)
-        }
-    }
-
-    // In DEBUG the strip stays reachable even after completion so the debug panel (long-press) is
-    // always available; in release it follows the migration state.
-    private var bannerShouldShow: Bool {
-#if DEBUG
-        return true
-#else
-        return store.migrationBannerVisible
-#endif
     }
 
     @ViewBuilder func transactionsView() -> some View {

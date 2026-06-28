@@ -20,11 +20,13 @@ final class DummyMigrationEngine: @unchecked Sendable {
         /// Simulates the ~288-block / 6h anchor bucket, compressed for the prototype.
         static let bucketBlocks: BlockHeight = 50
         static let expiryWindowBlocks: BlockHeight = 200
-        static let maxNotes = 10
+        /// Private/scheduled migrations split the balance into a random 5...8 transfers.
+        static let minNotes = 5
+        static let maxNotes = 8
         /// Cosmetic per-transfer fee (0.0001 ZEC).
         static let fee = Zatoshi(10_000)
-        static let zatPerZec = 100_000_000.0
-        static let splitConfirmDelay: Duration = .seconds(3)
+        /// Simulated note-split confirmation wait (~1 block). The user watches this on the split screen.
+        static let splitConfirmDelay: Duration = .seconds(15)
     }
 
     private let store: MigrationStateStore
@@ -96,6 +98,70 @@ final class DummyMigrationEngine: @unchecked Sendable {
 
     func orchardBalance() -> Zatoshi { read { $0.orchard } }
 
+    func summary() -> MigrationSummary {
+        read { snapshot in
+            let sentAmount = snapshot.transfers.reduce(Int64(0)) { acc, transfer in
+                if case .sent = transfer.status {
+                    return acc + transfer.proposal.amount.amount
+                }
+                return acc
+            }
+            let sentCount = snapshot.transfers.filter { transfer in
+                if case .sent = transfer.status {
+                    return true
+                }
+                return false
+            }.count
+            let total = snapshot.transfers.count
+            return MigrationSummary(
+                transferred: Zatoshi(sentAmount),
+                dust: snapshot.orchard,
+                transfersSent: sentCount,
+                transfersTotal: total,
+                estimatedDurationHours: max(0, (total - 1) * 6)
+            )
+        }
+    }
+
+    func transferRows() -> [MigrationTransferRow] {
+        read { snapshot in
+            let height = snapshot.currentHeight
+            var rows: [MigrationTransferRow] = []
+            var firstPendingSeen = false
+            for (index, transfer) in snapshot.transfers.enumerated() {
+                let status: MigrationTransferRow.Status
+                switch transfer.status {
+                case .sent:
+                    status = .sent
+                case .invalid:
+                    status = .invalid
+                case .expired:
+                    status = .expired
+                case .pending:
+                    let isOverdue = transfer.proposal.nextExecutableAfterHeight + Const.bucketBlocks <= height
+                    if firstPendingSeen {
+                        status = .pending
+                    } else {
+                        firstPendingSeen = true
+                        status = isOverdue ? .overdue : .active
+                    }
+                }
+                let blocksAway = max(0, transfer.proposal.nextExecutableAfterHeight - height)
+                let hours = Int((Double(blocksAway) / Double(Const.bucketBlocks)).rounded()) * 6
+                rows.append(
+                    MigrationTransferRow(
+                        id: transfer.proposal.id,
+                        index: index,
+                        amount: transfer.proposal.amount,
+                        status: status,
+                        hoursFromNow: hours
+                    )
+                )
+            }
+            return rows
+        }
+    }
+
     // ── Mutations ────────────────────────────────────────────────────────────
 
     func selectMode(_ mode: MigrationMode) {
@@ -113,7 +179,7 @@ final class DummyMigrationEngine: @unchecked Sendable {
     func prepareSplit() async -> NoteSplitProposal {
         let snapshot = read { $0 }
         let net = max(0, snapshot.orchard.amount - Const.fee.amount)
-        let count = snapshot.noteCountOverride ?? noteCount(for: net)
+        let count = snapshot.noteCountOverride ?? Int.random(in: Const.minNotes...Const.maxNotes)
         let notes = splitAmount(net, into: count).map { Zatoshi($0) }
         return NoteSplitProposal(outputNotes: notes, fee: Const.fee)
     }
@@ -204,7 +270,14 @@ final class DummyMigrationEngine: @unchecked Sendable {
             snapshot.transfers.removeAll {
                 $0.status == .invalid || $0.status == .expired || $0.status == .pending
             }
-            snapshot.notes = snapshot.orchard.amount > 0 ? [snapshot.orchard] : []
+            // Re-split the remaining Orchard balance into a fresh 5...8-transfer plan.
+            let net = max(0, snapshot.orchard.amount - Const.fee.amount)
+            if net > 0 {
+                let count = snapshot.noteCountOverride ?? Int.random(in: Const.minNotes...Const.maxNotes)
+                snapshot.notes = splitAmount(net, into: count).map { Zatoshi($0) }
+            } else {
+                snapshot.notes = []
+            }
             snapshot.armedFailure = nil
             snapshot.syncRequired = false
             snapshot.state = .readyToPropose
@@ -321,10 +394,20 @@ final class DummyMigrationEngine: @unchecked Sendable {
             return MigrationSchedule(transfers: [transfer], estimatedDurationHours: 0)
         }
 
-        let notes = snapshot.notes.isEmpty ? [snapshot.orchard] : snapshot.notes
+        // Private/scheduled: one transfer per split note. If the split was somehow skipped (notes
+        // empty), fall back to a fresh 5...8-way random division so the plan is never a single transfer.
+        let notes: [Zatoshi]
+        if snapshot.notes.count >= 2 {
+            notes = snapshot.notes
+        } else {
+            let net = max(0, snapshot.orchard.amount - Const.fee.amount)
+            let count = snapshot.noteCountOverride ?? Int.random(in: Const.minNotes...Const.maxNotes)
+            notes = splitAmount(net, into: count).map { Zatoshi($0) }
+        }
         var transfers: [TransferProposal] = []
         for (index, note) in notes.enumerated() {
-            let executableAt = height + Const.bucketBlocks * BlockHeight(index + 1)
+            // Transfer 1 is executable now; each subsequent transfer is one bucket (~6h) later.
+            let executableAt = height + Const.bucketBlocks * BlockHeight(index)
             let anchor = executableAt - (executableAt % Const.bucketBlocks)
             transfers.append(
                 TransferProposal(
@@ -336,28 +419,30 @@ final class DummyMigrationEngine: @unchecked Sendable {
                 )
             )
         }
-        return MigrationSchedule(transfers: transfers, estimatedDurationHours: notes.count * 6)
+        let durationHours = max(0, (notes.count - 1) * 6)
+        return MigrationSchedule(transfers: transfers, estimatedDurationHours: durationHours)
     }
 
-    private func noteCount(for netZatoshi: Int64) -> Int {
-        let zec = Double(netZatoshi) / Const.zatPerZec
-        switch zec {
-        case ..<0.5: return 1
-        case ..<5: return 3
-        case ..<50: return 5
-        default: return Const.maxNotes
-        }
-    }
-
-    /// Deterministic split summing exactly to `total` (no randomness, so tests are stable).
+    /// Randomly divides `total` into `count` positive amounts that sum **exactly** to `total`.
+    /// Every part is ≥ 1; the last part absorbs the rounding remainder.
     private func splitAmount(_ total: Int64, into count: Int) -> [Int64] {
-        guard count > 1, total > 0 else { return total > 0 ? [total] : [] }
-        let base = total / Int64(count)
+        guard count > 1 else { return total > 0 ? [total] : [] }
+        guard total >= Int64(count) else {
+            // Not enough to give every part ≥ 1 (never happens for prototype balances) — degrade gracefully.
+            var parts = Array(repeating: Int64(1), count: count)
+            parts[count - 1] = max(1, total - Int64(count - 1))
+            return parts
+        }
+        let weights = (0..<count).map { _ in Double.random(in: 0.5...1.5) }
+        let weightSum = weights.reduce(0, +)
         var parts: [Int64] = []
         var allocated: Int64 = 0
         for index in 0..<(count - 1) {
-            let variation = (base * Int64((index % 3) - 1)) / 8
-            let part = max(1, base + variation)
+            // Reserve at least 1 for each remaining part so the final remainder stays positive.
+            let remainingParts = Int64(count - 1 - index)
+            let maxForThis = total - allocated - remainingParts
+            var part = Int64((Double(total) * weights[index] / weightSum).rounded())
+            part = max(1, min(part, maxForThis))
             parts.append(part)
             allocated += part
         }

@@ -22,7 +22,8 @@ extension MigrationCoordFlow {
                     state.path.append(.recovery(MigrationRecovery.State(kind: .overdue)))
                 } else {
                     switch migrationSDK.getMigrationState() {
-                    case .inProgress:
+                    case .inProgress, .complete:
+                        // Both render on the status screen (which shows the Complete summary when done).
                         state.path.append(.status(MigrationStatus.State(presentation: .progress)))
                     case .splitPendingConfirmation:
                         state.path.append(.noteSplit(MigrationNoteSplit.State()))
@@ -35,6 +36,8 @@ extension MigrationCoordFlow {
             // ── Entry choice ──
             case let .entry(.delegate(.chose(mode))):
                 state.mode = mode
+                // Record the choice in the engine FIRST, so isNoteSplitNeeded() reflects it.
+                migrationSDK.selectMigrationMode(mode)
                 if mode == .immediate {
                     state.path.append(.networkPrivacy(MigrationNetworkPrivacy.State()))
                 } else if migrationSDK.isNoteSplitNeeded() {
@@ -80,6 +83,10 @@ extension MigrationCoordFlow {
                 return .send(.dismiss)
 
             // ── Recovery ──
+            case .path(.element(id: _, action: .recovery(.delegate(.close)))):
+                // Deep-entry screen: the leading back control closes the whole flow → Home.
+                return .send(.dismiss)
+
             case .path(.element(id: _, action: .recovery(.delegate(.recreate)))):
                 return .run { [migrationSDK] send in
                     _ = await migrationSDK.restartCurrentMigrationStep()

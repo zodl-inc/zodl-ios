@@ -58,6 +58,10 @@ struct MigrationSDKClient: Sendable {
     var selectMigrationMode: @Sendable (MigrationMode) -> Void = { _ in }
     /// Convenience read of the simulated Orchard balance at risk, for the entry/banner UI.
     var simulatedOrchardBalance: @Sendable () -> Zatoshi = { Zatoshi.zero }
+    /// PROTOTYPE: completion summary for the "Migration Complete" screen (Figma C6).
+    var migrationSummary: @Sendable () -> MigrationSummary = { MigrationSummary.zero }
+    /// PROTOTYPE: per-transfer rows for the in-progress status list (Figma B8).
+    var migrationTransfers: @Sendable () -> [MigrationTransferRow] = { [] }
     /// Debug surface driven by the MigrationDebug panel (DEBUG builds only).
     var debug: MigrationDebugControls = .noOp
 }

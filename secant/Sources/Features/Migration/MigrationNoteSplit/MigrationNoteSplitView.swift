@@ -2,7 +2,8 @@
 //  MigrationNoteSplitView.swift
 //  zodl
 //
-//  Figma nodes 2670:14995 / 15235 / 15570 (Split / Splitting / Confirmed).
+//  Figma B3a (Splitting Funds…) / B3b (Split Confirmed!). The send-to-self runs automatically on
+//  appear; the user waits ~15s for the simulated confirmation, then taps Continue.
 //
 
 import ComposableArchitecture
@@ -24,85 +25,122 @@ struct MigrationNoteSplitView: View {
             VStack(alignment: .leading, spacing: 0) {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 24) {
-                        Text(title)
-                            .zFont(.semiBold, size: 24, style: Design.Text.primary)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .padding(.top, 24)
+                        statusHeader
 
-                        Text("This sends a transaction to yourself, breaking your balance into smaller notes. Each Ironwood migration transfer can then send independently — no waiting for change.")
-                            .zFont(.regular, size: 16, style: Design.Text.tertiary)
-                            .fixedSize(horizontal: false, vertical: true)
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(title)
+                                .zFont(.semiBold, size: 28, style: Design.Text.primary)
+                                .fixedSize(horizontal: false, vertical: true)
 
-                        if store.step == .confirmed {
-                            HStack {
-                                Spacer()
-                                Image(systemName: "checkmark.circle.fill")
-                                    .resizable()
-                                    .frame(width: 64, height: 64)
-                                    .foregroundStyle(Color.green)
-                                Spacer()
-                            }
-                            .padding(.vertical, 8)
+                            Text("Splitting your balance into transfer-sized notes. This is a send-to-self — your \(tokenName) stays in Orchard.")
+                                .zFont(.regular, size: 14, style: Design.Text.tertiary)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
 
-                        detailsBlock()
-
-                        if store.step == .splitting {
-                            HStack {
-                                Spacer()
-                                ProgressView()
-                                Spacer()
-                            }
-                            .padding(.vertical, 8)
-                        }
+                        detailsCard
                     }
+                    .padding(.top, 24)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
                 Spacer(minLength: 0)
 
-                primaryButton()
-                    .padding(.bottom, 24)
+                footer
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .screenHorizontalPadding()
+            .navigationBarBackButtonHidden(true)
             .onAppear { store.send(.onAppear) }
         }
         .applyScreenBackground()
     }
-}
 
-extension MigrationNoteSplitView {
     private var title: String {
-        switch store.step {
-        case .confirm: return "Split Your Wallet Funds"
-        case .splitting: return "Splitting Funds…"
-        case .confirmed: return "Split Confirmed!"
-        }
+        store.step == .confirmed ? "Split Confirmed!" : "Splitting Funds…"
     }
 
-    @ViewBuilder func detailsBlock() -> some View {
+    @ViewBuilder private var statusHeader: some View {
+        HStack {
+            ZStack {
+                Circle()
+                    .fill(
+                        store.step == .confirmed
+                            ? Design.Utility.SuccessGreen._500.color(colorScheme).opacity(0.15)
+                            : Design.Surfaces.bgSecondary.color(colorScheme)
+                    )
+                    .frame(width: 64, height: 64)
+
+                if store.step == .confirmed {
+                    Image(systemName: "checkmark.seal.fill")
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 32, height: 32)
+                        .foregroundStyle(Design.Utility.SuccessGreen._500.color(colorScheme))
+                } else {
+                    ProgressView()
+                        .scaleEffect(1.2)
+                }
+            }
+            Spacer()
+        }
+        .padding(.top, 8)
+    }
+
+    @ViewBuilder private var detailsCard: some View {
         VStack(spacing: 0) {
+            if !store.txId.isEmpty {
+                detailRow(title: "Transaction ID", value: store.txId)
+                divider()
+            }
             detailRow(title: "Amount", value: "\(store.totalAmount.decimalString()) \(tokenName)")
             divider()
             detailRow(title: "Fee", value: "\(store.fee.decimalString()) \(tokenName)")
-            divider()
-            detailRow(title: "Notes", value: "\(store.noteCount)")
-
-            if !store.txId.isEmpty {
-                divider()
-                detailRow(title: "Transaction ID", value: store.txId)
-            }
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 4)
         .background {
             RoundedRectangle(cornerRadius: Design.Radius._xl)
                 .fill(Design.Surfaces.bgSecondary.color(colorScheme))
         }
     }
 
-    @ViewBuilder func detailRow(title: String, value: String) -> some View {
+    @ViewBuilder private var footer: some View {
+        VStack(spacing: 16) {
+            if store.step == .splitting {
+                progressInfoCard
+                ZashiButton("Splitting Funds…") { }
+                    .disabled(true)
+            } else {
+                ZashiButton("Continue") {
+                    store.send(.continueTapped)
+                }
+            }
+        }
+        .padding(.bottom, 24)
+    }
+
+    @ViewBuilder private var progressInfoCard: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "info.circle")
+                .foregroundStyle(Design.Text.tertiary.color(colorScheme))
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Transaction in Progress")
+                    .zFont(.semiBold, size: 14, style: Design.Text.primary)
+                Text("Keep your phone on and the app open until this step completes.")
+                    .zFont(.regular, size: 13, style: Design.Text.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background {
+            RoundedRectangle(cornerRadius: Design.Radius._xl)
+                .fill(Design.Surfaces.bgSecondary.color(colorScheme))
+        }
+    }
+
+    @ViewBuilder private func detailRow(title: String, value: String) -> some View {
         HStack(alignment: .top, spacing: 16) {
             Text(title)
                 .zFont(.medium, size: 14, style: Design.Text.tertiary)
@@ -112,31 +150,15 @@ extension MigrationNoteSplitView {
             Text(value)
                 .zFont(.semiBold, size: 14, style: Design.Text.primary)
                 .multilineTextAlignment(.trailing)
-                .lineLimit(2)
+                .lineLimit(1)
                 .truncationMode(.middle)
         }
-        .padding(.vertical, 12)
+        .padding(.vertical, 14)
     }
 
-    @ViewBuilder func divider() -> some View {
+    @ViewBuilder private func divider() -> some View {
         Rectangle()
             .fill(Design.Surfaces.strokeSecondary.color(colorScheme))
             .frame(height: 1)
-    }
-
-    @ViewBuilder func primaryButton() -> some View {
-        switch store.step {
-        case .confirm:
-            ZashiButton("Confirm") {
-                store.send(.confirmTapped)
-            }
-        case .splitting:
-            ZashiButton("Splitting Funds…") { }
-                .disabled(true)
-        case .confirmed:
-            ZashiButton("Continue") {
-                store.send(.continueTapped)
-            }
-        }
     }
 }

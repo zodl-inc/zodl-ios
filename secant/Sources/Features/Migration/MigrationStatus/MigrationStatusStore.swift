@@ -26,6 +26,11 @@ struct MigrationStatus {
         var migrationState: MigrationState = .notStarted
         var progress: MigrationProgress?
         var orchardRemaining: Zatoshi = .zero
+        var summary: MigrationSummary = .zero
+        /// Per-transfer rows for the in-progress list (Figma B8).
+        var transfers: [MigrationTransferRow] = []
+
+        var isComplete: Bool { migrationState == .complete }
 
         init(presentation: Presentation = .progress) {
             self.presentation = presentation
@@ -54,6 +59,8 @@ struct MigrationStatus {
                 state.migrationState = migrationSDK.getMigrationState()
                 state.progress = migrationSDK.getMigrationProgress()
                 state.orchardRemaining = migrationSDK.simulatedOrchardBalance()
+                state.summary = migrationSDK.migrationSummary()
+                state.transfers = migrationSDK.migrationTransfers()
                 return .publisher {
                     migrationSDK.stateStream().map(Action.stateChanged)
                 }
@@ -63,6 +70,8 @@ struct MigrationStatus {
                 state.migrationState = migrationState
                 state.progress = migrationSDK.getMigrationProgress()
                 state.orchardRemaining = migrationSDK.simulatedOrchardBalance()
+                state.summary = migrationSDK.migrationSummary()
+                state.transfers = migrationSDK.migrationTransfers()
                 return .none
 
             case .doneTapped:

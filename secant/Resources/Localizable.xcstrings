@@ -36,6 +36,26 @@
         }
       }
     },
+    "%@ %@ remaining in Orchard" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ %2$@ remaining in Orchard"
+          }
+        }
+      }
+    },
+    "%@ of %@ transfers complete" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ of %2$@ transfers complete"
+          }
+        }
+      }
+    },
     "%@ ZEC" : {
 
     },
@@ -64,6 +84,12 @@
           }
         }
       }
+    },
+    "A negligible amount remains in Orchard — no action needed." : {
+
+    },
+    "A transfer is no longer valid" : {
+
     },
     "about.additionalInfo" : {
       "extractionState" : "manual",
@@ -663,6 +689,9 @@
         }
       }
     },
+    "Allow Background Delivery" : {
+
+    },
     "annotation.add" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -800,6 +829,12 @@
       }
     },
     "autoShieldingHelpContent" : {
+
+    },
+    "Background delivery is best-effort, not guaranteed." : {
+
+    },
+    "Background delivery was delayed — this can happen on some devices. Send the pending transfers now, or reschedule them for later." : {
 
     },
     "balance.availableTitle" : {
@@ -6098,6 +6133,9 @@
         }
       }
     },
+    "Couldn't load your Orchard balance" : {
+
+    },
     "crosspay.help.desc1" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -7206,6 +7244,9 @@
           }
         }
       }
+    },
+    "Enable Tor to broadcast privately through the Tor network. This prevents your IP address from being linked to the transfer." : {
+
     },
     "enhanceTransaction.btn" : {
       "extractionState" : "manual",
@@ -9480,6 +9521,21 @@
         }
       }
     },
+    "Migration Progress" : {
+
+    },
+    "Migration Scheduled" : {
+
+    },
+    "More" : {
+
+    },
+    "Move to Ironwood" : {
+
+    },
+    "Network Privacy" : {
+
+    },
     "notEnoughFreeSpace.dataAvailable" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -9565,6 +9621,9 @@
           }
         }
       }
+    },
+    "ORCHARD BALANCE" : {
+
     },
     "osStatusError.error" : {
       "extractionState" : "manual",
@@ -9720,6 +9779,9 @@
           }
         }
       }
+    },
+    "Pool-crossing transfer amounts are visible on-chain." : {
+
     },
     "privateDataConsent.confirmation" : {
       "extractionState" : "manual",
@@ -11359,6 +11421,9 @@
         }
       }
     },
+    "Review Transfer" : {
+
+    },
     "root.destination.alert.failedToProcessDeeplink.message" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -11682,6 +11747,9 @@
           }
         }
       }
+    },
+    "Route via Tor" : {
+
     },
     "scan.cameraSettings" : {
       "extractionState" : "manual",
@@ -12723,6 +12791,9 @@
         }
       }
     },
+    "Sending…" : {
+
+    },
     "sendSelect.payWithNear" : {
       "comment" : "CrossPay",
       "extractionState" : "manual",
@@ -12825,6 +12896,9 @@
           }
         }
       }
+    },
+    "Sent!" : {
+
     },
     "serverSetup.active" : {
       "extractionState" : "manual",
@@ -14567,6 +14641,12 @@
           }
         }
       }
+    },
+    "Some funds were spent, so a scheduled transfer can't go through. We'll create a new transfer for your remaining Orchard balance." : {
+
+    },
+    "Something went wrong. Please try again from the migration screen." : {
+
     },
     "splash.authFaceID" : {
       "extractionState" : "manual",
@@ -17651,6 +17731,12 @@
         }
       }
     },
+    "The latest Zcash network upgrade requires moving your ZEC from the Orchard pool to the new Ironwood pool. Your funds are safe." : {
+
+    },
+    "This sends a transaction to yourself, breaking your balance into smaller notes. Each Ironwood migration transfer can then send independently — no waiting for change." : {
+
+    },
     "tokenOnChain" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -17702,6 +17788,9 @@
           }
         }
       }
+    },
+    "Tor is not available on this network. Consider a trusted VPN, or continue without." : {
+
     },
     "torSettingsSheet.desc" : {
       "extractionState" : "manual",
@@ -18145,6 +18234,9 @@
         }
       }
     },
+    "Transaction ID" : {
+
+    },
     "transaction.failedReceive" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -18554,6 +18646,21 @@
         }
       }
     },
+    "Transfer %@" : {
+
+    },
+    "Transfer failed" : {
+
+    },
+    "Transfer Plan" : {
+
+    },
+    "Transfers ready to send" : {
+
+    },
+    "Use Tor for transaction submission" : {
+
+    },
     "walletBirthdayHeightSubtitle" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -18640,6 +18747,9 @@
         }
       }
     },
+    "What Happens Next" : {
+
+    },
     "whatsNew.version" : {
       "comment" : "MARK: - What's new",
       "extractionState" : "manual",
@@ -18657,6 +18767,12 @@
           }
         }
       }
+    },
+    "Your ZEC has moved to the Ironwood pool." : {
+
+    },
+    "Your ZEC will be migrated to the Ironwood pool based on the schedule you approved." : {
+
     },
     "Zcash" : {
       "localizations" : {

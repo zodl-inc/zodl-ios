@@ -29,6 +29,36 @@ struct DummyMigrationEngineTests {
         #expect(sum <= 1_000_000_000)
     }
 
+    @Test func prepareSplitProducesFiveToEightNotesSummingToNet() async {
+        let engine = makeEngine()
+        await engine.debugSeed(orchard: Zatoshi(1_245_800_000), noteCount: 0) // ≈12.458 ZEC, no override
+        engine.selectMode(.privateScheduled)
+
+        let proposal = await engine.prepareSplit()
+
+        #expect((5...8).contains(proposal.outputNotes.count))
+        #expect(proposal.outputNotes.allSatisfy { $0.amount > 0 })
+        let sum = proposal.outputNotes.reduce(Int64(0)) { $0 + $1.amount }
+        let net = 1_245_800_000 - proposal.fee.amount
+        #expect(sum == net)
+    }
+
+    @Test func noteCountOverrideForcesExactTransferCount() async {
+        let engine = makeEngine()
+        await engine.debugSeed(orchard: Zatoshi(1_245_800_000), noteCount: 6)
+        engine.selectMode(.privateScheduled)
+
+        let proposal = await engine.prepareSplit()
+        _ = await engine.submitSplit(proposal)
+        engine.confirmSplit()
+        let schedule = await engine.propose()
+
+        #expect(proposal.outputNotes.count == 6)
+        #expect(schedule.transfers.count == 6)
+        // Transfer 1 is executable now; the rest are spaced one bucket apart, durations 6h apart.
+        #expect(schedule.estimatedDurationHours == 30) // 6 * (6 - 1)
+    }
+
     @Test func privateFlowProgressesToComplete() async {
         let engine = makeEngine()
         await engine.debugSeed(orchard: Zatoshi(1_000_000_000), noteCount: 0)

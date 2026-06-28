@@ -2,13 +2,16 @@
 //  MigrationImmediateReviewView.swift
 //  zodl
 //
-//  Review Transfer → Sending → Sent (immediate path). Figma section 2617:7260.
+//  Review Transfer → Sending → Migration Complete (immediate path). Figma A2 (2539:63339) for review;
+//  the finished state reuses the shared MigrationCompleteView (Figma C6).
 //
 
 import ComposableArchitecture
 import SwiftUI
 
 struct MigrationImmediateReviewView: View {
+    @Environment(\.colorScheme) var colorScheme
+
     @Perception.Bindable var store: StoreOf<MigrationImmediateReview>
     let tokenName: String
 
@@ -19,108 +22,160 @@ struct MigrationImmediateReviewView: View {
 
     var body: some View {
         WithPerceptionTracking {
-            VStack(alignment: .leading, spacing: 16) {
+            Group {
                 switch store.step {
                 case .review:
-                    reviewContent()
+                    reviewContent
                 case .sending:
-                    sendingContent()
+                    sendingContent
                 case .sent:
-                    sentContent()
+                    MigrationCompleteView(
+                        transferred: store.amount,
+                        dust: .zero,
+                        transfersSent: 1,
+                        transfersTotal: 1,
+                        durationHours: 0,
+                        tokenName: tokenName
+                    ) {
+                        store.send(.doneTapped)
+                    }
                 case .failed:
-                    failedContent()
+                    failedContent
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .padding(.top, 24)
-            .screenHorizontalPadding()
+            .navigationBarBackButtonHidden(store.step != .review)
             .onAppear { store.send(.onAppear) }
         }
-        .applyScreenBackground()
     }
 
-    @ViewBuilder private func reviewContent() -> some View {
-        Text("Review Transfer")
-            .zFont(.bold, size: 28, style: Design.Text.primary)
-            .padding(.bottom, 8)
+    // MARK: - Review (Figma A2)
 
-        VStack(spacing: 0) {
-            detailRow("Amount", value: "\(store.amount.decimalString()) \(tokenName)")
-            detailRow("To", value: "Ironwood pool")
-            detailRow("Type", value: "Single transfer")
-        }
-        .padding(16)
-        .background {
-            RoundedRectangle(cornerRadius: Design.Radius._xl)
-                .fill(Design.Surfaces.bgSecondary.color(.light))
-        }
+    @ViewBuilder private var reviewContent: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 24) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Review Transfer")
+                            .zFont(.semiBold, size: 28, style: Design.Text.primary)
 
-        Spacer()
+                        Text("Your full Orchard balance will be transferred to Ironwood in a single on-chain transfer.")
+                            .zFont(.regular, size: 14, style: Design.Text.tertiary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
 
-        ZashiButton("Confirm") {
-            store.send(.confirmTapped)
-        }
-        .padding(.bottom, 24)
-    }
+                    VStack(alignment: .leading, spacing: 12) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Your Transfer")
+                                .zFont(.semiBold, size: 16, style: Design.Text.primary)
+                            Text("Once confirmed, this transfer cannot be cancelled.")
+                                .zFont(.regular, size: 13, style: Design.Text.tertiary)
+                        }
 
-    @ViewBuilder private func sendingContent() -> some View {
-        VStack(spacing: 16) {
-            ProgressView()
-                .scaleEffect(1.5)
-
-            Text("Sending…")
-                .zFont(.bold, size: 20, style: Design.Text.primary)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-    }
-
-    @ViewBuilder private func sentContent() -> some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Image(systemName: "checkmark.circle.fill")
-                .resizable()
-                .frame(width: 64, height: 64)
-                .foregroundStyle(.green)
-                .padding(.top, 24)
-
-            Text("Sent!")
-                .zFont(.bold, size: 28, style: Design.Text.primary)
-
-            Text("Your ZEC has moved to the Ironwood pool.")
-                .zFont(.regular, size: 16, style: Design.Text.tertiary)
-
-            if !store.txId.isEmpty {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Transaction ID")
-                        .zFont(.medium, size: 14, style: Design.Text.support)
-                    Text(store.txId)
-                        .zFont(.regular, size: 12, style: Design.Text.tertiary)
+                        transferRow
+                    }
                 }
-                .padding(.top, 8)
+                .padding(.top, 24)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            Spacer()
+            Spacer(minLength: 0)
 
-            ZashiButton("Close") {
-                store.send(.doneTapped)
+            privacyDisclaimer
+                .padding(.bottom, 16)
+
+            ZashiButton("Confirm") {
+                store.send(.confirmTapped)
             }
             .padding(.bottom, 24)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .screenHorizontalPadding()
+        .applyScreenBackground()
     }
 
-    @ViewBuilder private func failedContent() -> some View {
+    @ViewBuilder private var transferRow: some View {
+        HStack(alignment: .center, spacing: 12) {
+            MigrationStepBadge(number: 1, style: .active)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Transfer 1 of 1")
+                    .zFont(.medium, size: 16, style: Design.Text.primary)
+                Text("Send immediately")
+                    .zFont(.regular, size: 13, style: Design.Text.tertiary)
+            }
+
+            Spacer(minLength: 8)
+
+            VStack(alignment: .trailing, spacing: 2) {
+                Text("\(store.amount.decimalString()) \(tokenName)")
+                    .zFont(.semiBold, size: 16, style: Design.Text.primary)
+                Text(MigrationFiat.string(for: store.amount))
+                    .zFont(.regular, size: 13, style: Design.Text.tertiary)
+            }
+        }
+        .padding(.vertical, 12)
+        .padding(.horizontal, 16)
+        .background {
+            RoundedRectangle(cornerRadius: Design.Radius._xl)
+                .fill(Design.Surfaces.bgSecondary.color(colorScheme))
+        }
+    }
+
+    @ViewBuilder private var privacyDisclaimer: some View {
+        HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Privacy Disclaimer")
+                    .zFont(.semiBold, size: 14, style: Design.Text.primary)
+                    .foregroundColor(.orange)
+                Text("Your full balance will be revealed — crossing the pool boundary reveals the transaction amount. We recommend going back and selecting Migrate with Privacy instead.")
+                    .zFont(.regular, size: 13, style: Design.Text.tertiary)
+                    .foregroundColor(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 8)
+
+            Image(systemName: "info.circle")
+                .foregroundStyle(.orange)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background {
+            RoundedRectangle(cornerRadius: Design.Radius._xl)
+                .fill(Color.orange.opacity(0.12))
+        }
+    }
+
+    // MARK: - Sending
+
+    @ViewBuilder private var sendingContent: some View {
+        VStack(spacing: 16) {
+            ProgressView()
+                .scaleEffect(1.5)
+            Text("Sending…")
+                .zFont(.semiBold, size: 20, style: Design.Text.primary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .applyScreenBackground()
+    }
+
+    // MARK: - Failed
+
+    @ViewBuilder private var failedContent: some View {
         VStack(alignment: .leading, spacing: 16) {
             Image(systemName: "exclamationmark.triangle.fill")
                 .resizable()
-                .frame(width: 64, height: 64)
+                .scaledToFit()
+                .frame(width: 56, height: 56)
                 .foregroundStyle(.orange)
                 .padding(.top, 24)
 
             Text("Transfer failed")
-                .zFont(.bold, size: 28, style: Design.Text.primary)
+                .zFont(.semiBold, size: 28, style: Design.Text.primary)
 
             Text("Something went wrong. Please try again from the migration screen.")
                 .zFont(.regular, size: 16, style: Design.Text.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
 
             Spacer()
 
@@ -130,17 +185,7 @@ struct MigrationImmediateReviewView: View {
             .padding(.bottom, 24)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    @ViewBuilder private func detailRow(_ title: String, value: String) -> some View {
-        HStack {
-            Text(title)
-                .zFont(.medium, size: 16, style: Design.Text.tertiary)
-            Spacer()
-            Text(value)
-                .zFont(.semiBold, size: 16, style: Design.Text.primary)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 12)
+        .screenHorizontalPadding()
+        .applyScreenBackground()
     }
 }

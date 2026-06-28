@@ -31,11 +31,14 @@ struct MigrationRecovery {
             case recreate
             case sendNow
             case reschedule
+            /// Leading back control — close the whole flow back to Home.
+            case close
         }
 
         case sendNowTapped
         case rescheduleTapped
         case recreateTapped
+        case closeTapped
         case delegate(Delegate)
     }
 
@@ -50,6 +53,9 @@ struct MigrationRecovery {
 
             case .recreateTapped:
                 return .send(.delegate(.recreate))
+
+            case .closeTapped:
+                return .send(.delegate(.close))
 
             case .delegate:
                 return .none

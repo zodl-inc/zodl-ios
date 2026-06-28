@@ -34,6 +34,8 @@ extension MigrationSDKClient: DependencyKey {
             initializePostUpgrade: { engine.initializePostUpgrade() },
             selectMigrationMode: { engine.selectMode($0) },
             simulatedOrchardBalance: { engine.orchardBalance() },
+            migrationSummary: { engine.summary() },
+            migrationTransfers: { engine.transferRows() },
             debug: MigrationDebugControls(
                 reset: { await engine.debugReset() },
                 seed: { await engine.debugSeed(orchard: $0, noteCount: $1) },
