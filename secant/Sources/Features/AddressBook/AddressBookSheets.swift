@@ -128,7 +128,8 @@ extension AddressBookContactView {
                             }
                         }
                     }
-                    .background(Asset.Colors.background.color)
+                    // No solid background on macOS — let the sheet's Liquid Glass card surface show
+                    // through the (transparent) rows. iOS keeps its list-row background below.
 #else
                     List {
                         WithPerceptionTracking {

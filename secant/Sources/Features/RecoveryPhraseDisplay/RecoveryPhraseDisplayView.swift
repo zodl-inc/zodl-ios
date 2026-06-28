@@ -35,7 +35,7 @@ struct RecoveryPhraseDisplayView: View {
         WithPerceptionTracking {
             VStack(alignment: .leading, spacing: 0) {
                 Text(localizable: .recoveryPhraseDisplayTitle)
-                #if os(macos)
+                #if os(macOS)
                     .padding(.top, 24)
                 #endif
                 

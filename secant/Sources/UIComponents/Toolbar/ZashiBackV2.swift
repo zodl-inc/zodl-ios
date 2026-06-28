@@ -33,6 +33,21 @@ struct ZashiBackV2Modifier: ViewModifier {
                                 dismiss()
                             }
                         } label: {
+#if os(macOS)
+                            // macOS: widen the close icon so its Liquid Glass capsule matches `.zashiBack`'s
+                            // width — a bare 24pt icon makes macOS 26 size the capsule to that narrow width
+                            // (a tall pill). Same `.horizontal, 6` as `.zashiBack`'s macOS branch.
+                            Group {
+                                if invertedColors {
+                                    Asset.Assets.buttonCloseX.image
+                                        .zImage(size: 24, color: Asset.Colors.ZDesign.shark100.color)
+                                } else {
+                                    Asset.Assets.buttonCloseX.image
+                                        .zImage(size: 24, style: Design.Btns.Tertiary.fg)
+                                }
+                            }
+                            .padding(.horizontal, 6)
+#else
                             if #available(iOS 26.0, *) {
                                 if invertedColors {
                                     Asset.Assets.buttonCloseX.image
@@ -62,6 +77,7 @@ struct ZashiBackV2Modifier: ViewModifier {
                                         }
                                 }
                             }
+#endif
                         }
                         .disabled(disabled)
                     }

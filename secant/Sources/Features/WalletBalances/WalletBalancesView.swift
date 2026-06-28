@@ -93,6 +93,8 @@ struct WalletBalancesView: View {
             if shortened {
                 ZatoshiText(store.totalBalance, .abbreviated)
                     .zFont(.semiBold, size: 48, style: Design.Text.primary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.5)
             } else {
                 ZatoshiRepresentationView(
                     balance: store.totalBalance,
@@ -192,7 +194,9 @@ struct WalletBalancesView: View {
                                 }
                             }
                             .padding(8)
+                            #if !os(macOS)
                             .padding(.horizontal, 6)
+                            #endif
                         }
                     }
                     .frame(height: 36)
