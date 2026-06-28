@@ -79,9 +79,18 @@ extension MigrationCoordFlow {
 
             // ── Terminal screens ──
             case .path(.element(id: _, action: .status(.delegate(.done)))):
+                // Done on the "Migration Complete" (C6) screen acknowledges completion so the Home
+                // SmartBanner stops showing the completion state.
+                if migrationSDK.getMigrationState() == .complete {
+                    migrationSDK.acknowledgeMigrationComplete()
+                }
                 return .send(.dismiss)
 
             case .path(.element(id: _, action: .immediateReview(.delegate(.finished)))):
+                // The immediate path also ends in `.complete` — acknowledge so the banner stops showing.
+                if migrationSDK.getMigrationState() == .complete {
+                    migrationSDK.acknowledgeMigrationComplete()
+                }
                 return .send(.dismiss)
 
             // ── Resume Migration (stalled) actions, on the status screen ──

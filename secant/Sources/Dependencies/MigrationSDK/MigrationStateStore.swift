@@ -51,6 +51,9 @@ struct MigrationSnapshot: Equatable, Sendable, Codable {
     // PROTOTYPE debug-only display state.
     var bannerVisible: Bool
     var bannerVariant: Int
+    /// PROTOTYPE: set when the user taps Done on the "Migration Complete" (C6) screen, so the Home
+    /// SmartBanner stops showing the completion state. Persisted; cleared by debug Reset (reseed).
+    var completionAcknowledged: Bool
 
     /// Seeded default ≈ 12.458 ZEC in a single Orchard note (matches the Figma), so a split is needed.
     static var seededDefault: MigrationSnapshot {
@@ -68,7 +71,8 @@ struct MigrationSnapshot: Equatable, Sendable, Codable {
             dustThreshold: Zatoshi(10_000),
             noteCountOverride: nil,
             bannerVisible: true,
-            bannerVariant: 0
+            bannerVariant: 0,
+            completionAcknowledged: false
         )
     }
 
@@ -86,7 +90,8 @@ struct MigrationSnapshot: Equatable, Sendable, Codable {
         dustThreshold: Zatoshi,
         noteCountOverride: Int?,
         bannerVisible: Bool,
-        bannerVariant: Int
+        bannerVariant: Int,
+        completionAcknowledged: Bool = false
     ) {
         self.orchard = orchard
         self.notes = notes
@@ -102,6 +107,7 @@ struct MigrationSnapshot: Equatable, Sendable, Codable {
         self.noteCountOverride = noteCountOverride
         self.bannerVisible = bannerVisible
         self.bannerVariant = bannerVariant
+        self.completionAcknowledged = completionAcknowledged
     }
 }
 

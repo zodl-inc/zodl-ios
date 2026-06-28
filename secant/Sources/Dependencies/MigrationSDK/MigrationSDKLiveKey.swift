@@ -38,6 +38,8 @@ extension MigrationSDKClient: DependencyKey {
             simulatedOrchardBalance: { engine.orchardBalance() },
             migrationSummary: { engine.summary() },
             migrationTransfers: { engine.transferRows() },
+            isMigrationCompleteAcknowledged: { engine.isCompletionAcknowledged() },
+            acknowledgeMigrationComplete: { engine.acknowledgeCompletion() },
             debug: MigrationDebugControls(
                 reset: { await engine.debugReset() },
                 seed: { await engine.debugSeed(orchard: $0, noteCount: $1) },

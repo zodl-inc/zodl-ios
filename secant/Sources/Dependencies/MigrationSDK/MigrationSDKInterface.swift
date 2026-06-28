@@ -67,6 +67,11 @@ struct MigrationSDKClient: Sendable {
     var migrationSummary: @Sendable () -> MigrationSummary = { MigrationSummary.zero }
     /// PROTOTYPE: per-transfer rows for the in-progress status list (Figma B8).
     var migrationTransfers: @Sendable () -> [MigrationTransferRow] = { [] }
+    /// PROTOTYPE: whether the user dismissed the "Migration Complete" (C6) screen — the SmartBanner
+    /// stops showing the completion state once true.
+    var isMigrationCompleteAcknowledged: @Sendable () -> Bool = { false }
+    /// PROTOTYPE: called when the user taps Done on C6, so the completion banner stops showing.
+    var acknowledgeMigrationComplete: @Sendable () -> Void = {}
     /// Debug surface driven by the MigrationDebug panel (DEBUG builds only).
     var debug: MigrationDebugControls = .noOp
 }

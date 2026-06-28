@@ -72,6 +72,16 @@ final class DummyMigrationEngine: @unchecked Sendable {
         }
     }
 
+    /// PROTOTYPE: whether the user has dismissed the "Migration Complete" (C6) screen. The Home
+    /// SmartBanner uses this to stop showing the completion state once acknowledged.
+    func isCompletionAcknowledged() -> Bool { read { $0.completionAcknowledged } }
+
+    /// PROTOTYPE: mark the completion as acknowledged (Done on C6). Persists and re-emits the current
+    /// state so the SmartBanner re-evaluates and closes the completion banner.
+    func acknowledgeCompletion() {
+        mutate { $0.completionAcknowledged = true }
+    }
+
     func noteSplitNeeded() -> Bool {
         read { $0.mode == .privateScheduled && $0.state == .notStarted }
     }

@@ -17,6 +17,7 @@ import ComposableArchitecture
     private func makeStore(
         orchardBalance: Zatoshi,
         dust: Zatoshi,
+        acknowledged: Bool = false,
         priorityContent: SmartBanner.State.PriorityContent? = nil
     ) -> TestStore<SmartBanner.State, SmartBanner.Action> {
         var initialState = SmartBanner.State()
@@ -32,6 +33,7 @@ import ComposableArchitecture
             $0.mainQueue = .immediate
             $0.migrationSDK = .live(store: .ephemeral())
             $0.migrationSDK.simulatedOrchardBalance = { orchardBalance }
+            $0.migrationSDK.isMigrationCompleteAcknowledged = { acknowledged }
             $0.migrationSDK.migrationSummary = {
                 MigrationSummary(
                     transferred: Zatoshi(1_245_800_000),
@@ -71,6 +73,22 @@ import ComposableArchitecture
         await store.receive(\.triggerPriority)
 
         #expect(store.state.migrationDust.amount == 31_000)
+    }
+
+    /// Once the user has tapped Done on C6 (acknowledged), `.complete` no longer shows the banner — it
+    /// closes if it was already open.
+    @Test func acknowledgedCompleteClosesBanner() async {
+        let store = makeStore(
+            orchardBalance: .zero,
+            dust: .zero,
+            acknowledged: true,
+            priorityContent: .priorityMigration
+        )
+
+        await store.send(.migrationStateUpdated(.complete)) {
+            $0.migrationState = .complete
+        }
+        await store.receive(\.closeAndCleanupBanner)
     }
 
     /// Regression guard: nothing to migrate (not complete, no Orchard balance) still HIDES the banner.

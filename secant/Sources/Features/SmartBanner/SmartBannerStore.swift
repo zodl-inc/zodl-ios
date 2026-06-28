@@ -564,12 +564,16 @@ struct SmartBanner {
 
             case let .migrationStateUpdated(migrationState):
                 state.migrationState = migrationState
-                // `.complete` is shown as a celebratory / dust-info banner that persists until the
-                // debug Reset; tapping "More" reopens the C6 summary. Otherwise show only while Orchard
-                // funds remain. migrationState/migrationDust are set before any early return so the copy
-                // re-renders even when triggerPriority is a no-op (banner already open from in-progress).
-                let hasBalance = migrationSDK.simulatedOrchardBalance().amount > 0
-                let shouldShow = migrationState == .complete || hasBalance
+                // `.complete` shows a celebratory / dust-info banner until the user taps Done on C6
+                // (acknowledged) or runs the debug Reset; otherwise show only while Orchard funds remain.
+                // migrationState/migrationDust are set before any early return so the copy re-renders
+                // even when triggerPriority is a no-op (banner already open from in-progress).
+                let shouldShow: Bool
+                if migrationState == .complete {
+                    shouldShow = !migrationSDK.isMigrationCompleteAcknowledged()
+                } else {
+                    shouldShow = migrationSDK.simulatedOrchardBalance().amount > 0
+                }
                 if shouldShow {
                     state.migrationDust = migrationSDK.migrationSummary().dust
                     return .send(.triggerPriority(.priorityMigration))

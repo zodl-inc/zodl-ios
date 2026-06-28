@@ -110,6 +110,21 @@ struct DummyMigrationEngineTests {
         #expect(engine.currentState() == .complete)
     }
 
+    @Test func acknowledgeCompletionMarksAndPersistsFlag() async {
+        let engine = makeEngine()
+        await engine.debugSeed(orchard: Zatoshi(100_000_000), noteCount: 0) // 1 ZEC → single immediate transfer
+        engine.selectMode(.immediate)
+        await engine.signAndStore(await engine.propose())
+        _ = await engine.executeNext(NetworkPrivacyOptions(useTor: false))
+        #expect(engine.currentState() == .complete)
+        #expect(!engine.isCompletionAcknowledged())
+
+        engine.acknowledgeCompletion()
+        #expect(engine.isCompletionAcknowledged())
+        // Acknowledgment doesn't change the migration state, only the banner gate.
+        #expect(engine.currentState() == .complete)
+    }
+
     @Test func armedInvalidNoteRequiresAttentionThenRestart() async {
         let engine = makeEngine()
         await engine.debugSeed(orchard: Zatoshi(1_000_000_000), noteCount: 3)
