@@ -66,6 +66,8 @@ struct SmartBanner {
         var priorityContentRequested: PriorityContent? = nil
         /// PROTOTYPE: latest migration state, drives the migration banner copy.
         var migrationState: MigrationState = .notStarted
+        /// PROTOTYPE: residual Orchard dust at completion — drives the complete banner's subtitle.
+        var migrationDust: Zatoshi = .zero
         var remindMeShieldedPhaseCounter = 0
         var remindMeWalletBackupPhaseCounter = 0
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
@@ -562,9 +564,14 @@ struct SmartBanner {
 
             case let .migrationStateUpdated(migrationState):
                 state.migrationState = migrationState
+                // `.complete` is shown as a celebratory / dust-info banner that persists until the
+                // debug Reset; tapping "More" reopens the C6 summary. Otherwise show only while Orchard
+                // funds remain. migrationState/migrationDust are set before any early return so the copy
+                // re-renders even when triggerPriority is a no-op (banner already open from in-progress).
                 let hasBalance = migrationSDK.simulatedOrchardBalance().amount > 0
-                let shouldShow = hasBalance && migrationState != .complete
+                let shouldShow = migrationState == .complete || hasBalance
                 if shouldShow {
+                    state.migrationDust = migrationSDK.migrationSummary().dust
                     return .send(.triggerPriority(.priorityMigration))
                 } else if state.priorityContent == .priorityMigration {
                     return .send(.closeAndCleanupBanner)

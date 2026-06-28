@@ -40,6 +40,7 @@ extension SmartBannerView {
     // PROTOTYPE: Ironwood migration CTA. Tapping the banner (or its button) opens the migration flow.
     var migrationBannerTitle: String {
         switch store.migrationState {
+        case .complete: return "Migration complete"
         case let .requiresAttention(.transferStalled(transferNumber)): return "Transfer \(transferNumber) waiting"
         case .inProgress: return "Migration in Progress"
         case .requiresAttention: return "Action Needed"
@@ -49,6 +50,10 @@ extension SmartBannerView {
 
     var migrationBannerInfo: String {
         switch store.migrationState {
+        case .complete:
+            return store.migrationDust.amount > 0
+                ? "Dust balance stays in Orchard for now"
+                : "Your funds are now in Ironwood"
         case .requiresAttention(.transferStalled): return "Tap to reschedule or send now"
         case .inProgress: return "Transfers are sending in the background"
         case .requiresAttention: return "A transfer needs your attention"
@@ -58,6 +63,7 @@ extension SmartBannerView {
 
     var migrationBannerButton: String {
         switch store.migrationState {
+        case .complete: return "More"
         case .requiresAttention(.transferStalled): return "More"
         case .inProgress: return "View"
         case .requiresAttention: return "Resolve"

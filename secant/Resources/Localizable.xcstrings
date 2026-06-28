@@ -56,6 +56,16 @@
         }
       }
     },
+    "%@ of %@ transfers done; migration will continue." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ of %2$@ transfers done; migration will continue."
+          }
+        }
+      }
+    },
     "%@ ZEC" : {
 
     },
@@ -84,9 +94,6 @@
           }
         }
       }
-    },
-    "A transfer is no longer valid" : {
-
     },
     "about.additionalInfo" : {
       "extractionState" : "manual",
@@ -829,9 +836,6 @@
 
     },
     "Background delivery is best-effort, not guaranteed." : {
-
-    },
-    "Background delivery was delayed — this can happen on some devices. Send the pending transfers now, or reschedule them for later." : {
 
     },
     "balance.availableTitle" : {
@@ -11266,6 +11270,9 @@
         }
       }
     },
+    "Resume Migration" : {
+
+    },
     "resyncEstimatedBlockHeightInfo" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -11853,6 +11860,9 @@
       }
     },
     "Send immediately" : {
+
+    },
+    "Send now or reschedule to the next window." : {
 
     },
     "send.addressNotInBook" : {
@@ -13716,6 +13726,16 @@
         }
       }
     },
+    "Signed for %@ %@. Your balance has changed since pre-signing." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Signed for %1$@ %2$@. Your balance has changed since pre-signing."
+          }
+        }
+      }
+    },
     "smartBanner.content.autoShielding.button" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -14657,9 +14677,6 @@
         }
       }
     },
-    "Some funds were spent, so a scheduled transfer can't go through. We'll create a new transfer for your remaining Orchard balance." : {
-
-    },
     "Something went wrong. Please try again from the migration screen." : {
 
     },
@@ -14736,6 +14753,9 @@
 
     },
     "Splitting your balance into transfer-sized notes. This is a send-to-self — your %@ stays in Orchard." : {
+
+    },
+    "Stale transfer detected" : {
 
     },
     "supportData.appVersionItem.bundleIdentifier" : {
@@ -18670,16 +18690,22 @@
     "Transfer %@" : {
 
     },
+    "Transfer %@ was pre-signed for a balance that has since changed. It needs to be re-created for the remaining amount." : {
+
+    },
     "Transfer 1 of 1" : {
 
     },
     "Transfer failed" : {
 
     },
+    "Transfer No Longer Valid" : {
+
+    },
     "Transfer Plan" : {
 
     },
-    "Transfers ready to send" : {
+    "Transfer window missed" : {
 
     },
     "Transfers send automatically in the background. Keep ZODL installed." : {
