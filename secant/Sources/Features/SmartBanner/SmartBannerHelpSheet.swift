@@ -110,9 +110,15 @@ struct SmartBannerHelpSheetView: View {
                 .padding(.bottom, 12)
                 .fixedSize(horizontal: false, vertical: true)
             
+#if os(macOS)
+            bulletpoint(String(localizable: .smartBannerHelpRestorePoint1Mac))
+            bulletpoint(String(localizable: .smartBannerHelpRestorePoint2Mac))
+                .padding(.bottom, 32)
+#else
             bulletpoint(String(localizable: .smartBannerHelpRestorePoint1))
             bulletpoint(String(localizable: .smartBannerHelpRestorePoint2))
                 .padding(.bottom, 32)
+#endif
 
             if !store.areFundsSpendable {
                 note(String(localizable: .smartBannerHelpRestoreWarning))
@@ -134,10 +140,17 @@ struct SmartBannerHelpSheetView: View {
                 .padding(.bottom, 12)
                 .fixedSize(horizontal: false, vertical: true)
 
+#if os(macOS)
+            Text(localizable: .smartBannerHelpSyncInfoMac)
+                .zFont(size: 16, style: Design.Text.tertiary)
+                .padding(.bottom, 12)
+                .fixedSize(horizontal: false, vertical: true)
+#else
             Text(localizable: .smartBannerHelpSyncInfo)
                 .zFont(size: 16, style: Design.Text.tertiary)
                 .padding(.bottom, 12)
                 .fixedSize(horizontal: false, vertical: true)
+#endif
 
             ZashiButton(String(localizable: .generalOk).uppercased()) {
                 store.send(.closeSheetTapped)
@@ -154,10 +167,17 @@ struct SmartBannerHelpSheetView: View {
                 .padding(.bottom, 12)
                 .fixedSize(horizontal: false, vertical: true)
 
+#if os(macOS)
+            Text(localizable: .smartBannerHelpSyncInfoMac)
+                .zFont(size: 16, style: Design.Text.tertiary)
+                .padding(.bottom, 32)
+                .fixedSize(horizontal: false, vertical: true)
+#else
             Text(localizable: .smartBannerHelpSyncInfo)
                 .zFont(size: 16, style: Design.Text.tertiary)
                 .padding(.bottom, 32)
                 .fixedSize(horizontal: false, vertical: true)
+#endif
             
             ZashiButton(String(localizable: .generalOk).uppercased()) {
                 store.send(.closeSheetTapped)

@@ -94,7 +94,15 @@ struct WalletStorage {
 
     /// Generic reason shown in the Secure-Enclave auth prompt when the seed is read.
     // TODO: [#1755] localize + thread a per-operation reason (send / export / …) in a later step.
-    private var seedAuthenticationReason: String { "Authenticate to access your Zodl wallet" }
+    private var seedAuthenticationReason: String {
+#if os(macOS)
+        // macOS composes the prompt as "{app} is trying to {reason}", so the reason must be a verb
+        // phrase; reuse the localized macOS reason ("unlock your wallet"). iOS keeps its sentence.
+        String(localizable: .localAuthenticationReasonMac)
+#else
+        "Authenticate to access your Zodl wallet"
+#endif
+    }
 
     func importWallet(
         bip39 phrase: String,

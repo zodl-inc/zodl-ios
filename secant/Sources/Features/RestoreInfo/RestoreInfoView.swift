@@ -51,9 +51,15 @@ struct RestoreInfoView: View {
                 .zFont(size: 14, style: Design.Text.primary)
                 .padding(.bottom, 16)
 
+#if os(macOS)
+                bulletpoint(String(localizable: .restoreInfoTip1Mac))
+                bulletpoint(String(localizable: .restoreInfoTip2Mac))
+                    .padding(.bottom, Design.Spacing._lg)
+#else
                 bulletpoint(String(localizable: .restoreInfoTip1))
                 bulletpoint(String(localizable: .restoreInfoTip2))
                     .padding(.bottom, Design.Spacing._lg)
+#endif
 
                 if let attrText = try? AttributedString(
                     markdown: String(

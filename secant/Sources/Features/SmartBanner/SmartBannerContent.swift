@@ -136,11 +136,19 @@ extension SmartBannerView {
                 Text(localizable: .smartBannerContentRestoreTitle(String(format: "%0.1f%%", store.lastKnownSyncPercentage * 100)))
                     .zFont(.medium, size: 14, color: titleStyle())
 
+#if os(macOS)
+                Text(store.areFundsSpendable
+                     ? String(localizable: .smartBannerContentRestoreInfoSpendable)
+                     : String(localizable: .smartBannerContentRestoreInfoMac)
+                )
+                .zFont(.medium, size: 12, color: infoStyle())
+#else
                 Text(store.areFundsSpendable
                      ? String(localizable: .smartBannerContentRestoreInfoSpendable)
                      : String(localizable: .smartBannerContentRestoreInfo)
                 )
                 .zFont(.medium, size: 12, color: infoStyle())
+#endif
             }
         }
     }
@@ -155,8 +163,13 @@ extension SmartBannerView {
                 Text(localizable: .smartBannerContentResyncing)
                     .zFont(.medium, size: 14, color: titleStyle())
 
+#if os(macOS)
+                Text(localizable: .smartBannerContentRestoreInfoMac)
+                    .zFont(.medium, size: 12, color: infoStyle())
+#else
                 Text(localizable: .smartBannerContentRestoreInfo)
                     .zFont(.medium, size: 12, color: infoStyle())
+#endif
             }
         }
     }

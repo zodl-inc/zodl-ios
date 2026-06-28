@@ -360,10 +360,11 @@ struct MacSplitView: View {
                         Text(account.vendor.name())
                             .zFont(.semiBold, size: 18, style: Design.Text.primary)
                             .padding(.leading, 14)
+                        
                         Spacer(minLength: 12)
-                        Image(systemName: "chevron.up.chevron.down")
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundStyle(Design.Text.primary.color(colorScheme))
+                        
+                        Asset.Assets.chevronRight.image
+                            .zImage(size: 20, style: Design.Text.primary)
                     }
                     .padding(.vertical, 12)
                     .padding(.horizontal, 14)

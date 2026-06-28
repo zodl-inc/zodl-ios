@@ -39,7 +39,11 @@ struct RecoveryPhraseSecurityView: View {
                         .zImage(size: 20, style: Design.Utility.WarningYellow._500)
                         .padding(.trailing, 12)
 
+#if os(macOS)
+                    Text(localizable: .recoveryPhraseDisplayProceedWarningMac)
+#else
                     Text(localizable: .recoveryPhraseDisplayProceedWarning)
+#endif
                 }
                 .zFont(size: 12, style: Design.Utility.WarningYellow._700)
                 .padding(.bottom, 20)
