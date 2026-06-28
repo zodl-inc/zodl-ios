@@ -7,6 +7,7 @@
 
 import Testing
 import Foundation
+import ComposableArchitecture
 @testable import zodl_internal
 @preconcurrency import ZcashLightClientKit
 
@@ -29,14 +30,14 @@ struct DummyMigrationEngineTests {
         #expect(sum <= 1_000_000_000)
     }
 
-    @Test func prepareSplitProducesFiveToEightNotesSummingToNet() async {
+    @Test func prepareSplitProducesThreeToFiveNotesSummingToNet() async {
         let engine = makeEngine()
         await engine.debugSeed(orchard: Zatoshi(1_245_800_000), noteCount: 0) // ≈12.458 ZEC, no override
         engine.selectMode(.privateScheduled)
 
         let proposal = await engine.prepareSplit()
 
-        #expect((5...8).contains(proposal.outputNotes.count))
+        #expect((3...5).contains(proposal.outputNotes.count))
         #expect(proposal.outputNotes.allSatisfy { $0.amount > 0 })
         let sum = proposal.outputNotes.reduce(Int64(0)) { $0 + $1.amount }
         let net = 1_245_800_000 - proposal.fee.amount
@@ -164,5 +165,41 @@ struct DummyMigrationEngineTests {
         await engine.debugJump(.completeWithDust)
         #expect(engine.currentState() == .complete)
         #expect(engine.orchardBalance().amount > 0)
+    }
+}
+
+@Suite(.serialized)
+struct MigrationBackgroundWorkerTests {
+    /// Regression for the debug "arm Network error → run background task" path: the step must report a
+    /// concrete outcome (it changes nothing on screen by design), so the panel can surface it.
+    @Test func reportsNothingPendingThenNetworkError() async {
+        let store = MigrationStateStore.ephemeral()
+        let client = MigrationSDKClient.live(store: store)
+
+        await withDependencies {
+            $0.migrationSDK = client
+            $0.localNotification.post = { _, _, _ in }
+            $0.migrationBGScheduler.scheduleNextRun = { _ in }
+        } operation: {
+            let worker = MigrationBackgroundWorker()
+
+            // No transfers yet → nothing to execute.
+            await client.debug.seed(Zatoshi(1_000_000_000), 3)
+            let idle = await worker.runMigrationStep()
+            #expect(idle == .nothingPending)
+
+            // Commit a schedule, arm a network error, then run: the transfer stays pending and the
+            // outcome reports the (silent, retryable) network error.
+            client.selectMigrationMode(.privateScheduled)
+            let proposal = await client.prepareNoteSplit()
+            _ = await client.submitNoteSplit(proposal)
+            await client.debug.confirmSplitNow()
+            let schedule = await client.proposeMigrationTransfers()
+            await client.signAndStoreMigrationSchedule(schedule)
+
+            await client.debug.armNextTransferResult(.networkError(retryable: true))
+            let armed = await worker.runMigrationStep()
+            #expect(armed == .result(.networkError(retryable: true)))
+        }
     }
 }

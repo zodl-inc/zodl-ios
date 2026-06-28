@@ -78,11 +78,12 @@ struct MigrationRecoveryView: View {
             .screenHorizontalPadding()
             .navigationBarBackButtonHidden(true)
             .toolbar {
+                // Deep entry from the Home banner — the leading control closes the whole flow → Home.
                 ToolbarItem(placement: .topBarLeading) {
                     Button {
                         store.send(.closeTapped)
                     } label: {
-                        Image(systemName: "chevron.backward")
+                        Image(systemName: "xmark")
                             .foregroundStyle(Design.Text.primary.color(colorScheme))
                     }
                 }

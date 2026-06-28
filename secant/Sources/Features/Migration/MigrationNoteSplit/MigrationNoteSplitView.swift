@@ -2,8 +2,10 @@
 //  MigrationNoteSplitView.swift
 //  zodl
 //
-//  Figma B3a (Splitting Funds…) / B3b (Split Confirmed!). The send-to-self runs automatically on
-//  appear; the user waits ~15s for the simulated confirmation, then taps Continue.
+//  Figma "Notes Splitting_Explainer_A" (confirm) → B3a (Splitting Funds…) → B3b (Split Confirmed!).
+//  The user confirms on the explainer; the send-to-self then runs and the user waits ~15s for the
+//  simulated confirmation before tapping Continue. The back control shows only on the explainer (the
+//  broadcast is irreversible once started).
 //
 
 import ComposableArchitecture
@@ -22,40 +24,88 @@ struct MigrationNoteSplitView: View {
 
     var body: some View {
         WithPerceptionTracking {
-            VStack(alignment: .leading, spacing: 0) {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 24) {
-                        statusHeader
-
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text(title)
-                                .zFont(.semiBold, size: 28, style: Design.Text.primary)
-                                .fixedSize(horizontal: false, vertical: true)
-
-                            Text("Splitting your balance into transfer-sized notes. This is a send-to-self — your \(tokenName) stays in Orchard.")
-                                .zFont(.regular, size: 14, style: Design.Text.tertiary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-
-                        detailsCard
-                    }
-                    .padding(.top, 24)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+            Group {
+                if store.step == .explainer {
+                    explainerContent
+                } else {
+                    progressContent
                 }
-
-                Spacer(minLength: 0)
-
-                footer
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .screenHorizontalPadding()
-            .navigationBarBackButtonHidden(true)
+            .navigationBarBackButtonHidden(store.step != .explainer)
             .onAppear { store.send(.onAppear) }
         }
         .applyScreenBackground()
     }
 
-    private var title: String {
+    // MARK: - Explainer (confirm before split)
+
+    @ViewBuilder private var explainerContent: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 24) {
+                    VStack(alignment: .leading, spacing: 16) {
+                        MigrationPairedIcons()
+                            .padding(.top, 4)
+
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Split Your Wallet Funds")
+                                .zFont(.semiBold, size: 24, style: Design.Text.primary)
+                                .fixedSize(horizontal: false, vertical: true)
+
+                            Text("This sends a transaction to yourself, breaking your balance into smaller notes. Each Ironwood migration transfer then settles independently — no waiting for change.")
+                                .zFont(.regular, size: 14, style: Design.Text.tertiary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+
+                    detailsCard
+                }
+                .padding(.top, 24)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            ZashiButton("Confirm") {
+                store.send(.confirmTapped)
+            }
+            .padding(.bottom, 24)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .screenHorizontalPadding()
+    }
+
+    // MARK: - Splitting / Confirmed (Figma B3a / B3b)
+
+    @ViewBuilder private var progressContent: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 24) {
+                    statusHeader
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(progressTitle)
+                            .zFont(.semiBold, size: 28, style: Design.Text.primary)
+                            .fixedSize(horizontal: false, vertical: true)
+
+                        Text("Splitting your balance into transfer-sized notes. This is a send-to-self — your \(tokenName) stays in Orchard.")
+                            .zFont(.regular, size: 14, style: Design.Text.tertiary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    detailsCard
+                }
+                .padding(.top, 24)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            Spacer(minLength: 0)
+
+            footer
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .screenHorizontalPadding()
+    }
+
+    private var progressTitle: String {
         store.step == .confirmed ? "Split Confirmed!" : "Splitting Funds…"
     }
 

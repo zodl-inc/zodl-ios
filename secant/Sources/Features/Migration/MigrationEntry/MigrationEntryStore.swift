@@ -15,8 +15,11 @@ struct MigrationEntry {
     @ObservableState
     struct State: Equatable {
         var orchardBalance: Zatoshi = .zero
-        var selectedMode: MigrationMode = .privateScheduled
+        /// No option is pre-selected (Figma B1) — Next stays disabled until the user picks one.
+        var selectedMode: MigrationMode?
         var balanceLoadFailed = false
+
+        var nextEnabled: Bool { selectedMode != nil }
 
         init() { }
     }
@@ -55,8 +58,9 @@ struct MigrationEntry {
                 return .none
 
             case .nextTapped:
-                migrationSDK.selectMigrationMode(state.selectedMode)
-                return .send(.delegate(.chose(state.selectedMode)))
+                guard let mode = state.selectedMode else { return .none }
+                migrationSDK.selectMigrationMode(mode)
+                return .send(.delegate(.chose(mode)))
 
             case .retryTapped:
                 return .send(.onAppear)

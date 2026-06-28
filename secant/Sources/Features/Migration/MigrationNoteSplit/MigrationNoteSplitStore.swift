@@ -2,9 +2,10 @@
 //  MigrationNoteSplitStore.swift
 //  zodl
 //
-//  Phase 1 — the note-split send-to-self that breaks the balance into transfer-sized notes. The split
-//  is submitted automatically when the screen appears (Figma B3a lands already in progress), then the
-//  user waits ~15s for the simulated on-chain confirmation before continuing (Figma B3b).
+//  Phase 1 — the note-split send-to-self that breaks the balance into transfer-sized notes. The user
+//  first sees an explainer (Figma "Notes Splitting_Explainer_A") and must Confirm; the send-to-self is
+//  submitted only then. After that the user waits ~15s for the simulated on-chain confirmation before
+//  continuing (Figma B3a → B3b).
 //
 
 import ComposableArchitecture
@@ -16,16 +17,19 @@ struct MigrationNoteSplit {
     @ObservableState
     struct State: Equatable {
         enum Step: Equatable {
+            /// Pre-split explainer — the user confirms before the send-to-self is broadcast.
+            case explainer
             /// Send-to-self broadcast, waiting for confirmation.
             case splitting
             /// Confirmed — ready to continue to the schedule.
             case confirmed
         }
 
-        var step: Step = .splitting
+        var step: Step = .explainer
         var totalAmount: Zatoshi = .zero
         var fee: Zatoshi = .zero
         var txId = ""
+        var proposal: NoteSplitProposal?
 
         init() { }
     }
@@ -37,6 +41,7 @@ struct MigrationNoteSplit {
 
         case onAppear
         case proposalLoaded(NoteSplitProposal)
+        case confirmTapped
         case submitResult(TransferResult)
         case stateChanged(MigrationState)
         case continueTapped
@@ -77,12 +82,29 @@ struct MigrationNoteSplit {
                     )
                 }
 
-                // Fresh: prepare and submit the split now, then wait for confirmation.
+                // Fresh: show the explainer with the prepared amounts. The split runs on Confirm.
+                state.step = .explainer
+                return .run { send in
+                    await send(.proposalLoaded(migrationSDK.prepareNoteSplit()))
+                }
+
+            case let .proposalLoaded(proposal):
+                state.proposal = proposal
+                state.fee = proposal.fee
+                return .none
+
+            case .confirmTapped:
+                guard state.step == .explainer else { return .none }
                 state.step = .splitting
+                let prepared = state.proposal
                 return .merge(
                     .run { send in
-                        let proposal = await migrationSDK.prepareNoteSplit()
-                        await send(.proposalLoaded(proposal))
+                        let proposal: NoteSplitProposal
+                        if let prepared {
+                            proposal = prepared
+                        } else {
+                            proposal = await migrationSDK.prepareNoteSplit()
+                        }
                         let result = await migrationSDK.submitNoteSplit(proposal)
                         await send(.submitResult(result))
                     },
@@ -91,10 +113,6 @@ struct MigrationNoteSplit {
                     }
                     .cancellable(id: CancelID.stateStream, cancelInFlight: true)
                 )
-
-            case let .proposalLoaded(proposal):
-                state.fee = proposal.fee
-                return .none
 
             case let .submitResult(result):
                 if case let .success(txId) = result {

@@ -36,22 +36,22 @@
         }
       }
     },
-    "%@ %@ remaining in Orchard" : {
+    "%@ %@ stayed in Orchard — below the transfer threshold. It will migrate in a future batch." : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "%1$@ %2$@ remaining in Orchard"
+            "value" : "%1$@ %2$@ stayed in Orchard — below the transfer threshold. It will migrate in a future batch."
           }
         }
       }
     },
-    "%@ of %@ transfers complete" : {
+    "%@ of %@ transfers complete · %@%% complete" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "%1$@ of %2$@ transfers complete"
+            "value" : "%1$@ of %2$@ transfers complete · %3$@%% complete"
           }
         }
       }
@@ -84,9 +84,6 @@
           }
         }
       }
-    },
-    "A negligible amount remains in Orchard — no action needed." : {
-
     },
     "A transfer is no longer valid" : {
 
@@ -7245,6 +7242,9 @@
         }
       }
     },
+    "Dust balance remaining" : {
+
+    },
     "Enable Tor to broadcast privately through the Tor network. This prevents your IP address from being linked to the transfer." : {
 
     },
@@ -8582,6 +8582,9 @@
         }
       }
     },
+    "Keep your phone on and the app open until this step completes." : {
+
+    },
     "keepScreenOnRestoring" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -9521,13 +9524,16 @@
         }
       }
     },
+    "Migration Complete" : {
+
+    },
+    "Migration in Progress" : {
+
+    },
     "Migration Progress" : {
 
     },
     "Migration Scheduled" : {
-
-    },
-    "More" : {
 
     },
     "Move to Ironwood" : {
@@ -9621,6 +9627,9 @@
           }
         }
       }
+    },
+    "Once confirmed, this transfer cannot be cancelled." : {
+
     },
     "ORCHARD BALANCE" : {
 
@@ -9781,6 +9790,9 @@
       }
     },
     "Pool-crossing transfer amounts are visible on-chain." : {
+
+    },
+    "Privacy Disclaimer" : {
 
     },
     "privateDataConsent.confirmation" : {
@@ -11837,6 +11849,9 @@
         }
       }
     },
+    "Send immediately" : {
+
+    },
     "send.addressNotInBook" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -12896,9 +12911,6 @@
           }
         }
       }
-    },
-    "Sent!" : {
-
     },
     "serverSetup.active" : {
       "extractionState" : "manual",
@@ -14716,6 +14728,12 @@
           }
         }
       }
+    },
+    "Splitting your balance into transfer-sized notes. This is a send-to-self — your %@ stays in Orchard." : {
+
+    },
+    "SUMMARY" : {
+
     },
     "supportData.appVersionItem.bundleIdentifier" : {
       "extractionState" : "manual",
@@ -17734,9 +17752,6 @@
     "The latest Zcash network upgrade requires moving your ZEC from the Orchard pool to the new Ironwood pool. Your funds are safe." : {
 
     },
-    "This sends a transaction to yourself, breaking your balance into smaller notes. Each Ironwood migration transfer can then send independently — no waiting for change." : {
-
-    },
     "tokenOnChain" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -18237,6 +18252,9 @@
     "Transaction ID" : {
 
     },
+    "Transaction in Progress" : {
+
+    },
     "transaction.failedReceive" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -18649,6 +18667,9 @@
     "Transfer %@" : {
 
     },
+    "Transfer 1 of 1" : {
+
+    },
     "Transfer failed" : {
 
     },
@@ -18656,6 +18677,9 @@
 
     },
     "Transfers ready to send" : {
+
+    },
+    "Transfers send automatically in the background. Keep ZODL installed." : {
 
     },
     "Use Tor for transaction submission" : {
@@ -18768,10 +18792,22 @@
         }
       }
     },
-    "Your ZEC has moved to the Ironwood pool." : {
+    "Your %@ is now in the Ironwood pool." : {
 
     },
-    "Your ZEC will be migrated to the Ironwood pool based on the schedule you approved." : {
+    "Your %@ will be migrated to the Ironwood pool based on the schedule you approved." : {
+
+    },
+    "Your balance will be split into" : {
+
+    },
+    "Your full balance will be revealed — crossing the pool boundary reveals the transaction amount. We recommend going back and selecting Migrate with Privacy instead." : {
+
+    },
+    "Your full Orchard balance will be transferred to Ironwood in a single on-chain transfer." : {
+
+    },
+    "Your Transfer" : {
 
     },
     "Zcash" : {

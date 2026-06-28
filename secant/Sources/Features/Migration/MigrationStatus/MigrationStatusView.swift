@@ -44,14 +44,15 @@ struct MigrationStatusView: View {
             }
             .navigationBarBackButtonHidden(true)
             .toolbar {
-                // Only the live-progress screen (entered from the Home banner) gets a back control —
-                // it closes the whole flow back to Home. Success/complete use their Done button.
-                if showsBackButton {
+                // The live-progress screen is entered from the Home banner (a deep entry, no previous
+                // screen), so its leading control is a close (X) that dismisses the whole flow back to
+                // Home — not a back chevron. Success/complete use their Done button.
+                if showsCloseButton {
                     ToolbarItem(placement: .topBarLeading) {
                         Button {
                             store.send(.doneTapped)
                         } label: {
-                            Image(systemName: "chevron.backward")
+                            Image(systemName: "xmark")
                                 .foregroundStyle(Design.Text.primary.color(colorScheme))
                         }
                     }
@@ -61,7 +62,7 @@ struct MigrationStatusView: View {
         }
     }
 
-    private var showsBackButton: Bool {
+    private var showsCloseButton: Bool {
         !store.isComplete && store.presentation == .progress
     }
 

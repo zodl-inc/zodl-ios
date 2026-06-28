@@ -2,7 +2,8 @@
 //  MigrationEntryView.swift
 //  zodl
 //
-//  "Move to Ironwood" entry screen. Figma node 2630:11744 / 2539:63191.
+//  "Move to Ironwood" entry screen (Figma B1 · 2630:11744). Root of the migration flow — the leading
+//  control is a close (X) that dismisses the whole flow back to Home.
 //
 
 import ComposableArchitecture
@@ -20,30 +21,29 @@ struct MigrationEntryView: View {
 
     var body: some View {
         WithPerceptionTracking {
-            VStack(spacing: 0) {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 16) {
-                        Text("Move to Ironwood")
-                            .zFont(.semiBold, size: 28, style: Design.Text.primary)
-                            .padding(.top, 24)
+            VStack(alignment: .leading, spacing: 0) {
+                topBar
 
-                        Text("The latest Zcash network upgrade requires moving your ZEC from the Orchard pool to the new Ironwood pool. Your funds are safe.")
-                            .zFont(.regular, size: 16, style: Design.Text.tertiary)
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 24) {
+                        VStack(alignment: .leading, spacing: 16) {
+                            pairedIcons
+                                .padding(.top, 4)
+
+                            Text("Move to Ironwood")
+                                .zFont(.semiBold, size: 24, style: Design.Text.primary)
+                        }
+
+                        Text("Latest Zcash network upgrade requires moving your \(tokenName) from the Orchard pool to the new Ironwood pool. Your funds are safe.")
+                            .zFont(.regular, size: 14, style: Design.Text.tertiary)
                             .fixedSize(horizontal: false, vertical: true)
 
-                        balanceBlock()
-                            .padding(.top, 8)
+                        balanceCard
 
                         if store.balanceLoadFailed {
-                            failureBlock()
-                                .padding(.top, 8)
+                            failureBlock
                         } else {
-                            optionsBlock()
-                                .padding(.top, 8)
-
-                            Text("Pool-crossing transfer amounts are visible on-chain.")
-                                .zFont(.regular, size: 12, style: Design.Text.support)
-                                .fixedSize(horizontal: false, vertical: true)
+                            optionsBlock
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -51,11 +51,16 @@ struct MigrationEntryView: View {
                 }
 
                 if !store.balanceLoadFailed {
+                    Spacer(minLength: 16)
+
+                    disclaimerRow
+                        .padding(.bottom, 16)
+
                     ZashiButton("Next") {
                         store.send(.nextTapped)
                     }
+                    .disabled(!store.nextEnabled)
                     .padding(.bottom, 24)
-                    .padding(.top, 8)
                 }
             }
             .screenHorizontalPadding()
@@ -64,28 +69,61 @@ struct MigrationEntryView: View {
         .applyScreenBackground()
     }
 
-    @ViewBuilder
-    private func balanceBlock() -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("ORCHARD BALANCE")
-                .zFont(.medium, size: 12, style: Design.Text.support)
+    // MARK: - Top bar
 
-            Text("\(store.orchardBalance.decimalString()) \(tokenName)")
-                .zFont(.semiBold, size: 36, style: Design.Text.primary)
-                .minimumScaleFactor(0.5)
-                .lineLimit(1)
+    @ViewBuilder private var topBar: some View {
+        HStack {
+            Button {
+                store.send(.closeTapped)
+            } label: {
+                Asset.Assets.Icons.xClose.image
+                    .zImage(size: 24, style: Design.Text.primary)
+            }
+
+            Spacer()
+        }
+        .padding(.top, 8)
+        .padding(.bottom, 4)
+    }
+
+    // MARK: - Header icons
+
+    @ViewBuilder private var pairedIcons: some View {
+        MigrationPairedIcons()
+    }
+
+    // MARK: - Balance card
+
+    @ViewBuilder private var balanceCard: some View {
+        HStack(alignment: .bottom, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Orchard balance")
+                    .zFont(.regular, size: 12, style: Design.Text.tertiary)
+
+                Text("\(store.orchardBalance.decimalString()) \(tokenName)")
+                    .zFont(.semiBold, size: 18, style: Design.Text.primary)
+                    .minimumScaleFactor(0.6)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 8)
+
+            Text(MigrationFiat.string(for: store.orchardBalance))
+                .zFont(.regular, size: 12, style: Design.Text.tertiary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(20)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
         .background {
             RoundedRectangle(cornerRadius: Design.Radius._2xl)
                 .fill(Design.Surfaces.bgSecondary.color(colorScheme))
         }
     }
 
-    @ViewBuilder
-    private func optionsBlock() -> some View {
-        VStack(spacing: 12) {
+    // MARK: - Options
+
+    @ViewBuilder private var optionsBlock: some View {
+        VStack(spacing: 8) {
             optionCard(
                 mode: .immediate,
                 title: "Migrate Immediately",
@@ -100,8 +138,7 @@ struct MigrationEntryView: View {
         }
     }
 
-    @ViewBuilder
-    private func optionCard(mode: MigrationMode, title: String, subtitle: String) -> some View {
+    @ViewBuilder private func optionCard(mode: MigrationMode, title: String, subtitle: String) -> some View {
         let isSelected = store.selectedMode == mode
 
         Button {
@@ -111,12 +148,12 @@ struct MigrationEntryView: View {
                 radioIndicator(isSelected: isSelected)
                     .padding(.top, 2)
 
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 2) {
                     Text(title)
-                        .zFont(.semiBold, size: 16, style: Design.Text.primary)
+                        .zFont(.medium, size: 16, style: Design.Text.primary)
 
                     Text(subtitle)
-                        .zFont(.regular, size: 13, style: Design.Text.tertiary)
+                        .zFont(.regular, size: 14, style: Design.Text.tertiary)
                         .multilineTextAlignment(.leading)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -124,46 +161,68 @@ struct MigrationEntryView: View {
                 Spacer(minLength: 0)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(16)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 16)
             .background {
                 RoundedRectangle(cornerRadius: Design.Radius._2xl)
                     .fill(Design.Surfaces.bgSecondary.color(colorScheme))
-                    .background {
-                        RoundedRectangle(cornerRadius: Design.Radius._2xl)
-                            .stroke(
-                                isSelected
-                                    ? Design.Surfaces.brandPrimary.color(colorScheme)
-                                    : Design.Surfaces.strokePrimary.color(colorScheme),
-                                lineWidth: isSelected ? 2 : 1
-                            )
-                    }
+            }
+            .overlay {
+                if isSelected {
+                    RoundedRectangle(cornerRadius: Design.Radius._2xl)
+                        .stroke(Design.Checkboxes.onBg.color(colorScheme), lineWidth: 1.5)
+                }
             }
         }
         .buttonStyle(.plain)
     }
 
-    @ViewBuilder
-    private func radioIndicator(isSelected: Bool) -> some View {
+    @ViewBuilder private func radioIndicator(isSelected: Bool) -> some View {
         ZStack {
             Circle()
-                .stroke(
+                .fill(
                     isSelected
-                        ? Design.Surfaces.brandPrimary.color(colorScheme)
-                        : Design.Surfaces.strokePrimary.color(colorScheme),
-                    lineWidth: 2
+                        ? Design.Checkboxes.onBg.color(colorScheme)
+                        : Design.Checkboxes.offBg.color(colorScheme)
                 )
                 .frame(width: 20, height: 20)
+                .overlay {
+                    Circle()
+                        .stroke(
+                            isSelected
+                                ? Design.Checkboxes.onBg.color(colorScheme)
+                                : Design.Checkboxes.offStroke.color(colorScheme),
+                            lineWidth: 1
+                        )
+                }
 
             if isSelected {
                 Circle()
-                    .fill(Design.Surfaces.brandPrimary.color(colorScheme))
-                    .frame(width: 10, height: 10)
+                    .fill(Design.Checkboxes.onFg.color(colorScheme))
+                    .frame(width: 7, height: 7)
             }
         }
     }
 
-    @ViewBuilder
-    private func failureBlock() -> some View {
+    // MARK: - Disclaimer
+
+    @ViewBuilder private var disclaimerRow: some View {
+        HStack(alignment: .center, spacing: 12) {
+            Asset.Assets.infoOutline.image
+                .zImage(size: 16, style: Design.Text.tertiary)
+
+            Text("Pool-crossing transfer amounts are visible on-chain.")
+                .zFont(.medium, size: 12, style: Design.Text.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    // MARK: - Failure
+
+    @ViewBuilder private var failureBlock: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Couldn't load your Orchard balance")
                 .zFont(.medium, size: 16, style: Design.Text.tertiary)

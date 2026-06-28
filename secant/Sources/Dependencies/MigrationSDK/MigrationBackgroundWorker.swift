@@ -12,6 +12,17 @@
 import ComposableArchitecture
 import Foundation
 
+/// What a single background migration step did — surfaced to the DEBUG panel so an armed result
+/// (especially a silent network-error retry) is observable. The production caller ignores it.
+enum MigrationStepOutcome: Equatable, Sendable {
+    /// `isSyncRequiredBeforeNextTransfer` was true — the step bailed without broadcasting.
+    case syncRequired
+    /// No pending transfer — migration is finished or not started.
+    case nothingPending
+    /// A transfer was attempted; carries the broadcast result.
+    case result(TransferResult)
+}
+
 struct MigrationBackgroundWorker: Sendable {
     @Dependency(\.migrationSDK) var migrationSDK
     @Dependency(\.localNotification) var localNotification
@@ -20,15 +31,16 @@ struct MigrationBackgroundWorker: Sendable {
     /// Reschedule delay for the next pending transfer (seconds). Short for the prototype.
     private let rescheduleDelay: TimeInterval = 60
 
-    func runMigrationStep() async {
+    @discardableResult
+    func runMigrationStep() async -> MigrationStepOutcome {
         // Sync must not run inside the background task. If the next transfer needs a sync first, bail
         // out and let the foreground app handle the sync, decoupled in time from the broadcast.
-        guard !migrationSDK.isSyncRequiredBeforeNextTransfer() else { return }
+        guard !migrationSDK.isSyncRequiredBeforeNextTransfer() else { return .syncRequired }
 
         let options = NetworkPrivacyOptions(useTor: false)
         guard let result = await migrationSDK.executeNextPendingTransfer(options) else {
             // Nothing pending — migration is finished or not started.
-            return
+            return .nothingPending
         }
 
         switch result {
@@ -46,6 +58,7 @@ struct MigrationBackgroundWorker: Sendable {
                 "ironwood-migration-error"
             )
         }
+        return .result(result)
     }
 
     private func postSuccessNotification(txId: String) async {

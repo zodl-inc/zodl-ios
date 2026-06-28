@@ -20,9 +20,9 @@ final class DummyMigrationEngine: @unchecked Sendable {
         /// Simulates the ~288-block / 6h anchor bucket, compressed for the prototype.
         static let bucketBlocks: BlockHeight = 50
         static let expiryWindowBlocks: BlockHeight = 200
-        /// Private/scheduled migrations split the balance into a random 5...8 transfers.
-        static let minNotes = 5
-        static let maxNotes = 8
+        /// Private/scheduled migrations split the balance into a random 3...5 transfers.
+        static let minNotes = 3
+        static let maxNotes = 5
         /// Cosmetic per-transfer fee (0.0001 ZEC).
         static let fee = Zatoshi(10_000)
         /// Simulated note-split confirmation wait (~1 block). The user watches this on the split screen.
@@ -270,7 +270,7 @@ final class DummyMigrationEngine: @unchecked Sendable {
             snapshot.transfers.removeAll {
                 $0.status == .invalid || $0.status == .expired || $0.status == .pending
             }
-            // Re-split the remaining Orchard balance into a fresh 5...8-transfer plan.
+            // Re-split the remaining Orchard balance into a fresh 3...5-transfer plan.
             let net = max(0, snapshot.orchard.amount - Const.fee.amount)
             if net > 0 {
                 let count = snapshot.noteCountOverride ?? Int.random(in: Const.minNotes...Const.maxNotes)
@@ -395,7 +395,7 @@ final class DummyMigrationEngine: @unchecked Sendable {
         }
 
         // Private/scheduled: one transfer per split note. If the split was somehow skipped (notes
-        // empty), fall back to a fresh 5...8-way random division so the plan is never a single transfer.
+        // empty), fall back to a fresh 3...5-way random division so the plan is never a single transfer.
         let notes: [Zatoshi]
         if snapshot.notes.count >= 2 {
             notes = snapshot.notes
