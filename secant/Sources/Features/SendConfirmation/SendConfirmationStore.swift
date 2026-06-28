@@ -410,13 +410,21 @@ struct SendConfirmation {
 
                 \(state.failedPcztMsg ?? "")
                 """
+#if os(macOS)
+                // macOS has no in-app composer; UIMailDialogView opens the default mail client via a
+                // `mailto:` URL and MailSupport.canSendMail() is always true here. The failure screen is a
+                // separate CoordFlow destination that never runs the confirmation screen's canSendMail probe,
+                // so route the report straight to mail. iOS keeps its canSendMail-gated share fallback.
+                state.supportData = supportData
+#else
                 if state.canSendMail {
                     state.supportData = supportData
                 } else {
                     state.messageToBeShared = supportData.message
                 }
+#endif
                 return .none
-                
+
             case .sendSupportMailFinished:
                 state.supportData = nil
                 return .none
