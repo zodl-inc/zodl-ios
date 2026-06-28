@@ -693,9 +693,6 @@
         }
       }
     },
-    "Allow Background Delivery" : {
-
-    },
     "annotation.add" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -833,9 +830,6 @@
       }
     },
     "autoShieldingHelpContent" : {
-
-    },
-    "Background delivery is best-effort, not guaranteed." : {
 
     },
     "balance.availableTitle" : {
@@ -6134,9 +6128,6 @@
         }
       }
     },
-    "Couldn't load your Orchard balance" : {
-
-    },
     "crosspay.help.desc1" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -7245,12 +7236,6 @@
           }
         }
       }
-    },
-    "Dust balance remaining" : {
-
-    },
-    "Enable Tor to broadcast privately through the Tor network. This prevents your IP address from being linked to the transfer." : {
-
     },
     "enhanceTransaction.btn" : {
       "extractionState" : "manual",
@@ -8586,9 +8571,6 @@
         }
       }
     },
-    "Keep your phone on and the app open until this step completes." : {
-
-    },
     "keepScreenOnRestoring" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -9531,24 +9513,6 @@
         }
       }
     },
-    "Migration Complete" : {
-
-    },
-    "Migration in Progress" : {
-
-    },
-    "Migration Progress" : {
-
-    },
-    "Migration Scheduled" : {
-
-    },
-    "Move to Ironwood" : {
-
-    },
-    "Network Privacy" : {
-
-    },
     "notEnoughFreeSpace.dataAvailable" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -9634,12 +9598,6 @@
           }
         }
       }
-    },
-    "Once confirmed, this transfer cannot be cancelled." : {
-
-    },
-    "Orchard balance" : {
-
     },
     "osStatusError.error" : {
       "extractionState" : "manual",
@@ -9795,12 +9753,6 @@
           }
         }
       }
-    },
-    "Pool-crossing transfer amounts are visible on-chain." : {
-
-    },
-    "Privacy Disclaimer" : {
-
     },
     "privateDataConsent.confirmation" : {
       "extractionState" : "manual",
@@ -11270,9 +11222,6 @@
         }
       }
     },
-    "Resume Migration" : {
-
-    },
     "resyncEstimatedBlockHeightInfo" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -11442,9 +11391,6 @@
           }
         }
       }
-    },
-    "Review Transfer" : {
-
     },
     "root.destination.alert.failedToProcessDeeplink.message" : {
       "extractionState" : "manual",
@@ -11770,9 +11716,6 @@
         }
       }
     },
-    "Route via Tor" : {
-
-    },
     "scan.cameraSettings" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -11858,12 +11801,6 @@
           }
         }
       }
-    },
-    "Send immediately" : {
-
-    },
-    "Send now or reschedule to the next window." : {
-
     },
     "send.addressNotInBook" : {
       "extractionState" : "manual",
@@ -12818,9 +12755,6 @@
           }
         }
       }
-    },
-    "Sending…" : {
-
     },
     "sendSelect.payWithNear" : {
       "comment" : "CrossPay",
@@ -14677,9 +14611,6 @@
         }
       }
     },
-    "Something went wrong. Please try again from the migration screen." : {
-
-    },
     "splash.authFaceID" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -14749,13 +14680,7 @@
         }
       }
     },
-    "Split Your Wallet Funds" : {
-
-    },
     "Splitting your balance into transfer-sized notes. This is a send-to-self — your %@ stays in Orchard." : {
-
-    },
-    "Stale transfer detected" : {
 
     },
     "supportData.appVersionItem.bundleIdentifier" : {
@@ -17772,9 +17697,6 @@
         }
       }
     },
-    "This sends a transaction to yourself, breaking your balance into smaller notes. Each Ironwood migration transfer then settles independently — no waiting for change." : {
-
-    },
     "tokenOnChain" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -17826,9 +17748,6 @@
           }
         }
       }
-    },
-    "Tor is not available on this network. Consider a trusted VPN, or continue without." : {
-
     },
     "torSettingsSheet.desc" : {
       "extractionState" : "manual",
@@ -18272,12 +18191,6 @@
         }
       }
     },
-    "Transaction ID" : {
-
-    },
-    "Transaction in Progress" : {
-
-    },
     "transaction.failedReceive" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -18693,27 +18606,6 @@
     "Transfer %@ was pre-signed for a balance that has since changed. It needs to be re-created for the remaining amount." : {
 
     },
-    "Transfer 1 of 1" : {
-
-    },
-    "Transfer failed" : {
-
-    },
-    "Transfer No Longer Valid" : {
-
-    },
-    "Transfer Plan" : {
-
-    },
-    "Transfer window missed" : {
-
-    },
-    "Transfers send automatically in the background. Keep ZODL installed." : {
-
-    },
-    "Use Tor for transaction submission" : {
-
-    },
     "walletBirthdayHeightSubtitle" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -18800,9 +18692,6 @@
         }
       }
     },
-    "What Happens Next" : {
-
-    },
     "whatsNew.version" : {
       "comment" : "MARK: - What's new",
       "extractionState" : "manual",
@@ -18825,18 +18714,6 @@
 
     },
     "Your %@ will be migrated to the Ironwood pool based on the schedule you approved." : {
-
-    },
-    "Your balance will be split into" : {
-
-    },
-    "Your full balance will be revealed — crossing the pool boundary reveals the transaction amount. We recommend going back and selecting Migrate with Privacy instead." : {
-
-    },
-    "Your full Orchard balance will be transferred to Ironwood in a single on-chain transfer." : {
-
-    },
-    "Your Transfer" : {
 
     },
     "Zcash" : {
@@ -18863,6 +18740,1414 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Este monto de transacción no es válido."
+          }
+        }
+      }
+    },
+    "migration.entry.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Move to Ironwood"
+          }
+        }
+      }
+    },
+    "migration.entry.description" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Latest Zcash network upgrade requires moving your %@ from the Orchard pool to the new Ironwood pool. Your funds are safe."
+          }
+        }
+      }
+    },
+    "migration.entry.orchard.balance.label" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Orchard balance"
+          }
+        }
+      }
+    },
+    "migration.entry.option.immediate.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Migrate Immediately"
+          }
+        }
+      }
+    },
+    "migration.entry.option.immediate.subtitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Single transfer · Sends now · No privacy"
+          }
+        }
+      }
+    },
+    "migration.entry.option.private.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Migrate with Privacy"
+          }
+        }
+      }
+    },
+    "migration.entry.option.private.subtitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Split transfers over time · Scheduled in background · Maximum privacy"
+          }
+        }
+      }
+    },
+    "migration.entry.disclaimer" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pool-crossing transfer amounts are visible on-chain."
+          }
+        }
+      }
+    },
+    "migration.entry.balance.load.failed" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn't load your Orchard balance"
+          }
+        }
+      }
+    },
+    "migration.entry.try.again.button" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Try again"
+          }
+        }
+      }
+    },
+    "migration.note.split.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Split Your Wallet Funds"
+          }
+        }
+      }
+    },
+    "migration.note.split.explainer.body" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This sends a transaction to yourself, breaking your balance into smaller notes. Each Ironwood migration transfer then settles independently — no waiting for change."
+          }
+        }
+      }
+    },
+    "migration.note.split.confirmed.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Split Confirmed!"
+          }
+        }
+      }
+    },
+    "migration.note.split.splitting.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Splitting Funds…"
+          }
+        }
+      }
+    },
+    "migration.note.split.progress.body" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Splitting your balance into transfer-sized notes. This is a send-to-self — your %@ stays in Orchard."
+          }
+        }
+      }
+    },
+    "migration.note.split.detail.transaction.id" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transaction ID"
+          }
+        }
+      }
+    },
+    "migration.note.split.detail.amount" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Amount"
+          }
+        }
+      }
+    },
+    "migration.note.split.detail.fee" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fee"
+          }
+        }
+      }
+    },
+    "migration.note.split.continue.button" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Continue"
+          }
+        }
+      }
+    },
+    "migration.note.split.in.progress.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transaction in Progress"
+          }
+        }
+      }
+    },
+    "migration.note.split.in.progress.body" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Keep your phone on and the app open until this step completes."
+          }
+        }
+      }
+    },
+    "migration.status.scheduled.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Migration Scheduled"
+          }
+        }
+      }
+    },
+    "migration.status.scheduled.subtitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your %@ will be migrated to the Ironwood pool based on the schedule you approved."
+          }
+        }
+      }
+    },
+    "migration.status.summary.total.to.transfer" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Total to transfer"
+          }
+        }
+      }
+    },
+    "migration.status.summary.pool" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pool"
+          }
+        }
+      }
+    },
+    "migration.status.summary.pool.value" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Orchard → Ironwood"
+          }
+        }
+      }
+    },
+    "migration.status.summary.transfers" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transfers"
+          }
+        }
+      }
+    },
+    "migration.status.summary.transfers.value" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$lld of %2$lld"
+          }
+        }
+      }
+    },
+    "migration.status.summary.duration" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Duration"
+          }
+        }
+      }
+    },
+    "migration.status.summary.duration.value" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "~%lld hours"
+          }
+        }
+      }
+    },
+    "migration.status.resume.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Resume Migration"
+          }
+        }
+      }
+    },
+    "migration.status.resume.subtitle.ago" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transfer %1$lld of %2$lld was scheduled %3$lldh ago but wasn't sent. Reschedule and send now."
+          }
+        }
+      }
+    },
+    "migration.status.resume.subtitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transfer %1$lld of %2$lld was scheduled but wasn't sent. Reschedule and send now."
+          }
+        }
+      }
+    },
+    "migration.status.send.now.button" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Send now"
+          }
+        }
+      }
+    },
+    "migration.status.reschedule.button" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reschedule"
+          }
+        }
+      }
+    },
+    "migration.status.window.missed.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transfer window missed"
+          }
+        }
+      }
+    },
+    "migration.status.window.missed.body" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Send now or reschedule to the next window."
+          }
+        }
+      }
+    },
+    "migration.status.in.progress.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Migration in Progress"
+          }
+        }
+      }
+    },
+    "migration.status.in.progress.subtitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transfers send automatically in the background. Keep ZODL installed."
+          }
+        }
+      }
+    },
+    "migration.status.transfer.row.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transfer %lld"
+          }
+        }
+      }
+    },
+    "migration.status.progress.card.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Migration Progress"
+          }
+        }
+      }
+    },
+    "migration.status.progress.card.detail" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$lld of %2$lld transfers complete · %3$lld%% complete"
+          }
+        }
+      }
+    },
+    "migration.status.row.sent" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sent"
+          }
+        }
+      }
+    },
+    "migration.status.row.ready.now" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ready now"
+          }
+        }
+      }
+    },
+    "migration.status.row.overdue.ago" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Overdue · %lldh ago"
+          }
+        }
+      }
+    },
+    "migration.status.row.overdue" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Overdue"
+          }
+        }
+      }
+    },
+    "migration.status.row.ready.soon" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ready soon"
+          }
+        }
+      }
+    },
+    "migration.status.row.hours" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "~%lld hours"
+          }
+        }
+      }
+    },
+    "migration.status.row.invalid" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Invalid"
+          }
+        }
+      }
+    },
+    "migration.status.row.expired" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Expired"
+          }
+        }
+      }
+    },
+    "migration.recovery.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transfer No Longer Valid"
+          }
+        }
+      }
+    },
+    "migration.recovery.subtitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transfer %lld was pre-signed for a balance that has since changed. It needs to be re-created for the remaining amount."
+          }
+        }
+      }
+    },
+    "migration.recovery.learn.more.button" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Learn more"
+          }
+        }
+      }
+    },
+    "migration.recovery.recreate.button" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Re-create Transfer"
+          }
+        }
+      }
+    },
+    "migration.recovery.stale.card.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Stale transfer detected"
+          }
+        }
+      }
+    },
+    "migration.recovery.stale.card.body" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Signed for %1$@ %2$@. Your balance has changed since pre-signing."
+          }
+        }
+      }
+    },
+    "migration.recovery.what.next.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "What Happens Next"
+          }
+        }
+      }
+    },
+    "migration.recovery.what.next.bullet1" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "A new transfer is created for Transfer %lld"
+          }
+        }
+      }
+    },
+    "migration.recovery.what.next.bullet2" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Remaining transfers are re-scheduled"
+          }
+        }
+      }
+    },
+    "migration.recovery.what.next.bullet3" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No funds are lost — only the pre-signed key is discarded"
+          }
+        }
+      }
+    },
+    "migration.recovery.continues.note" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$lld of %2$lld transfers done; migration will continue."
+          }
+        }
+      }
+    },
+    "migration.immediate.review.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Review Transfer"
+          }
+        }
+      }
+    },
+    "migration.immediate.review.subtitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your full Orchard balance will be transferred to Ironwood in a single on-chain transfer."
+          }
+        }
+      }
+    },
+    "migration.immediate.review.your.transfer" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your Transfer"
+          }
+        }
+      }
+    },
+    "migration.immediate.review.cannot.cancel" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Once confirmed, this transfer cannot be cancelled."
+          }
+        }
+      }
+    },
+    "migration.immediate.review.transfer.one.of.one" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transfer 1 of 1"
+          }
+        }
+      }
+    },
+    "migration.immediate.review.send.immediately" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Send immediately"
+          }
+        }
+      }
+    },
+    "migration.immediate.review.privacy.disclaimer.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Privacy Disclaimer"
+          }
+        }
+      }
+    },
+    "migration.immediate.review.privacy.disclaimer.body" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your full balance will be revealed — crossing the pool boundary reveals the transaction amount. We recommend going back and selecting Migrate with Privacy instead."
+          }
+        }
+      }
+    },
+    "migration.immediate.review.sending" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sending…"
+          }
+        }
+      }
+    },
+    "migration.immediate.review.failed.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transfer failed"
+          }
+        }
+      }
+    },
+    "migration.immediate.review.failed.body" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Something went wrong. Please try again from the migration screen."
+          }
+        }
+      }
+    },
+    "migration.transfer.plan.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transfer Plan"
+          }
+        }
+      }
+    },
+    "migration.transfer.plan.body" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your balance splits into %1$lld transfers over ~%2$lld hours. Approve once and ZODL handles the rest — just keep the app installed. Amounts are randomized for privacy."
+          }
+        }
+      }
+    },
+    "migration.transfer.plan.destination" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Destination"
+          }
+        }
+      }
+    },
+    "migration.transfer.plan.destination.value" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ironwood"
+          }
+        }
+      }
+    },
+    "migration.transfer.plan.summary" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Summary"
+          }
+        }
+      }
+    },
+    "migration.transfer.plan.summary.value" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$lld transfers · ~%2$lld hours"
+          }
+        }
+      }
+    },
+    "migration.transfer.plan.split.header" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your balance will be split into"
+          }
+        }
+      }
+    },
+    "migration.transfer.plan.transfer.number" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transfer %lld"
+          }
+        }
+      }
+    },
+    "migration.transfer.plan.ready.now" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ready now"
+          }
+        }
+      }
+    },
+    "migration.transfer.plan.hours.away" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "~%lld hours"
+          }
+        }
+      }
+    },
+    "migration.network.privacy.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Network Privacy"
+          }
+        }
+      }
+    },
+    "migration.network.privacy.subtitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enable Tor to broadcast privately through the Tor network. This prevents your IP address from being linked to the transfer."
+          }
+        }
+      }
+    },
+    "migration.network.privacy.what.happens.next" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "What Happens Next"
+          }
+        }
+      }
+    },
+    "migration.network.privacy.with.tor.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "With Tor"
+          }
+        }
+      }
+    },
+    "migration.network.privacy.with.tor.detail" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "IP hidden from the network."
+          }
+        }
+      }
+    },
+    "migration.network.privacy.without.tor.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Without Tor or a VPN"
+          }
+        }
+      }
+    },
+    "migration.network.privacy.without.tor.detail" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transfers are still de-correlated in time, but your IP is visible to network operators."
+          }
+        }
+      }
+    },
+    "migration.network.privacy.route.via.tor" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Route via Tor"
+          }
+        }
+      }
+    },
+    "migration.network.privacy.route.via.tor.detail" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Use Tor for transaction submission"
+          }
+        }
+      }
+    },
+    "migration.network.privacy.tor.unavailable" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tor is not available on this network. Consider a trusted VPN, or continue without."
+          }
+        }
+      }
+    },
+    "migration.complete.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Migration Complete"
+          }
+        }
+      }
+    },
+    "migration.complete.subtitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your %@ is now in the Ironwood pool."
+          }
+        }
+      }
+    },
+    "migration.complete.total.transferred" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Total transferred"
+          }
+        }
+      }
+    },
+    "migration.complete.remaining.dust" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Remaining dust"
+          }
+        }
+      }
+    },
+    "migration.complete.transfers" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transfers"
+          }
+        }
+      }
+    },
+    "migration.complete.transfers.value" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$lld of %2$lld sent"
+          }
+        }
+      }
+    },
+    "migration.complete.duration" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Duration"
+          }
+        }
+      }
+    },
+    "migration.complete.duration.instant" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Instant"
+          }
+        }
+      }
+    },
+    "migration.complete.duration.hours" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "~%lld hours"
+          }
+        }
+      }
+    },
+    "migration.complete.dust.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dust balance remaining"
+          }
+        }
+      }
+    },
+    "migration.complete.dust.body" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ %2$@ stayed in Orchard — below the transfer threshold. It will migrate in a future batch."
+          }
+        }
+      }
+    },
+    "migration.bg.delivery.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Allow Background Delivery"
+          }
+        }
+      }
+    },
+    "migration.bg.delivery.bullet1.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transfers send automatically"
+          }
+        }
+      }
+    },
+    "migration.bg.delivery.bullet1.subtitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your device wakes up and broadcasts each transfer at its scheduled window."
+          }
+        }
+      }
+    },
+    "migration.bg.delivery.bullet2.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No need to open the app for each send"
+          }
+        }
+      }
+    },
+    "migration.bg.delivery.bullet2.subtitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Once committed, transfers broadcast in the background over the next ~24 hours."
+          }
+        }
+      }
+    },
+    "migration.bg.delivery.bullet3.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sends de-correlated from your activity"
+          }
+        }
+      }
+    },
+    "migration.bg.delivery.bullet3.subtitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transfers go out on fixed-ish windows, not tied to when you open ZODL."
+          }
+        }
+      }
+    },
+    "migration.bg.delivery.disclaimer" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Background delivery is best-effort, not guaranteed."
+          }
+        }
+      }
+    },
+    "migration.bg.delivery.skip" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Skip — I'll open the app"
+          }
+        }
+      }
+    },
+    "migration.bg.delivery.allow" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Allow Background Access"
+          }
+        }
+      }
+    },
+    "smartBanner.content.migration.complete.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Migration complete"
+          }
+        }
+      }
+    },
+    "smartBanner.content.migration.stalled.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transfer %lld waiting"
+          }
+        }
+      }
+    },
+    "smartBanner.content.migration.in.progress.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Migration in Progress"
+          }
+        }
+      }
+    },
+    "smartBanner.content.migration.attention.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Action Needed"
+          }
+        }
+      }
+    },
+    "smartBanner.content.migration.required.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Migration Required"
+          }
+        }
+      }
+    },
+    "smartBanner.content.migration.complete.info.dust" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dust balance stays in Orchard for now"
+          }
+        }
+      }
+    },
+    "smartBanner.content.migration.complete.info" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your funds are now in Ironwood"
+          }
+        }
+      }
+    },
+    "smartBanner.content.migration.stalled.info" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tap to reschedule or send now"
+          }
+        }
+      }
+    },
+    "smartBanner.content.migration.in.progress.info" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transfers are sending in the background"
+          }
+        }
+      }
+    },
+    "smartBanner.content.migration.attention.info" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "A transfer needs your attention"
+          }
+        }
+      }
+    },
+    "smartBanner.content.migration.required.info" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Move your funds to Ironwood"
+          }
+        }
+      }
+    },
+    "smartBanner.content.migration.button.more" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "More"
+          }
+        }
+      }
+    },
+    "smartBanner.content.migration.button.view" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "View"
+          }
+        }
+      }
+    },
+    "smartBanner.content.migration.button.resolve" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Resolve"
+          }
+        }
+      }
+    },
+    "smartBanner.content.migration.button.migrate" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Migrate"
           }
         }
       }

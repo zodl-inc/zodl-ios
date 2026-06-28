@@ -54,8 +54,8 @@ struct MigrationStatusView: View {
                         Button {
                             store.send(.doneTapped)
                         } label: {
-                            Image(systemName: "xmark")
-                                .foregroundStyle(Design.Text.primary.color(colorScheme))
+                            Asset.Assets.Icons.xClose.image
+                                .zImage(size: 24, style: Design.Text.primary)
                         }
                     }
                 }
@@ -76,17 +76,14 @@ struct MigrationStatusView: View {
                 VStack(alignment: .center, spacing: 20) {
                     Spacer(minLength: 24)
 
-                    Image(systemName: "checkmark.seal.fill")
-                        .resizable()
-                        .scaledToFit()
-                        .frame(width: 88, height: 88)
-                        .foregroundStyle(Design.Utility.SuccessGreen._500.color(colorScheme))
+                    Asset.Assets.Icons.checkVerifiedFilled.image
+                        .zImage(size: 88, style: Design.Utility.SuccessGreen._500)
 
-                    Text("Migration Scheduled")
+                    Text(localizable: .migrationStatusScheduledTitle)
                         .zFont(.semiBold, size: 28, style: Design.Text.primary)
                         .multilineTextAlignment(.center)
 
-                    Text("Your \(tokenName) will be migrated to the Ironwood pool based on the schedule you approved.")
+                    Text(localizable: .migrationStatusScheduledSubtitle(tokenName))
                         .zFont(.regular, size: 16, style: Design.Text.tertiary)
                         .multilineTextAlignment(.center)
                         .fixedSize(horizontal: false, vertical: true)
@@ -99,7 +96,7 @@ struct MigrationStatusView: View {
                 .padding(.bottom, 24)
             }
 
-            ZashiButton("Done") {
+            ZashiButton(String(localizable: .generalDone)) {
                 store.send(.doneTapped)
             }
             .padding(.bottom, 24)
@@ -111,13 +108,19 @@ struct MigrationStatusView: View {
 
     @ViewBuilder private var scheduledSummaryCard: some View {
         VStack(spacing: 0) {
-            summaryRow(title: "Total to transfer", value: "\(store.orchardRemaining.decimalString()) \(tokenName)")
+            summaryRow(title: String(localizable: .migrationStatusSummaryTotalToTransfer), value: "\(store.orchardRemaining.decimalString()) \(tokenName)")
             divider()
-            summaryRow(title: "Pool", value: "Orchard → Ironwood")
+            summaryRow(title: String(localizable: .migrationStatusSummaryPool), value: String(localizable: .migrationStatusSummaryPoolValue))
             divider()
-            summaryRow(title: "Transfers", value: "\(store.summary.transfersSent) of \(store.summary.transfersTotal)")
+            summaryRow(
+                title: String(localizable: .migrationStatusSummaryTransfers),
+                value: String(localizable: .migrationStatusSummaryTransfersValue(store.summary.transfersSent, store.summary.transfersTotal))
+            )
             divider()
-            summaryRow(title: "Duration", value: "~\(store.summary.estimatedDurationHours) hours")
+            summaryRow(
+                title: String(localizable: .migrationStatusSummaryDuration),
+                value: String(localizable: .migrationStatusSummaryDurationValue(store.summary.estimatedDurationHours))
+            )
         }
         .padding(.horizontal, 16)
         .background {
@@ -133,7 +136,7 @@ struct MigrationStatusView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("Resume Migration")
+                        Text(localizable: .migrationStatusResumeTitle)
                             .zFont(.semiBold, size: 28, style: Design.Text.primary)
 
                         Text(resumeSubtitle)
@@ -154,11 +157,11 @@ struct MigrationStatusView: View {
                 windowMissedNote
 
                 VStack(spacing: 12) {
-                    ZashiButton("Send now") {
+                    ZashiButton(String(localizable: .migrationStatusSendNowButton)) {
                         store.send(.sendNowTapped)
                     }
 
-                    ZashiButton("Reschedule", type: .secondary) {
+                    ZashiButton(String(localizable: .migrationStatusRescheduleButton), type: .secondary) {
                         store.send(.rescheduleTapped)
                     }
                 }
@@ -175,21 +178,21 @@ struct MigrationStatusView: View {
         let number = store.stalledTransferNumber
         let hoursAgo = store.transfers.first { $0.status == .overdue }.map { abs($0.hoursFromNow) } ?? 0
         if hoursAgo > 0 {
-            return "Transfer \(number) of \(total) was scheduled \(hoursAgo)h ago but wasn't sent. Reschedule and send now."
+            return String(localizable: .migrationStatusResumeSubtitleAgo(number, total, hoursAgo))
         }
-        return "Transfer \(number) of \(total) was scheduled but wasn't sent. Reschedule and send now."
+        return String(localizable: .migrationStatusResumeSubtitle(number, total))
     }
 
     @ViewBuilder private var windowMissedNote: some View {
         HStack(alignment: .top, spacing: 12) {
-            Image(systemName: "info.circle")
-                .foregroundStyle(Design.Text.tertiary.color(colorScheme))
+            Asset.Assets.infoOutline.image
+                .zImage(size: 16, style: Design.Text.tertiary)
 
             VStack(alignment: .leading, spacing: 4) {
-                Text("Transfer window missed")
+                Text(localizable: .migrationStatusWindowMissedTitle)
                     .zFont(.semiBold, size: 14, style: Design.Text.primary)
 
-                Text("Send now or reschedule to the next window.")
+                Text(localizable: .migrationStatusWindowMissedBody)
                     .zFont(.regular, size: 13, style: Design.Text.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -206,10 +209,10 @@ struct MigrationStatusView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("Migration in Progress")
+                        Text(localizable: .migrationStatusInProgressTitle)
                             .zFont(.semiBold, size: 28, style: Design.Text.primary)
 
-                        Text("Transfers send automatically in the background. Keep ZODL installed.")
+                        Text(localizable: .migrationStatusInProgressSubtitle)
                             .zFont(.regular, size: 14, style: Design.Text.tertiary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -223,7 +226,7 @@ struct MigrationStatusView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            ZashiButton("Done") {
+            ZashiButton(String(localizable: .generalDone)) {
                 store.send(.doneTapped)
             }
             .padding(.bottom, 24)
@@ -247,7 +250,7 @@ struct MigrationStatusView: View {
                     }
 
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Transfer \(index + 1)")
+                        Text(localizable: .migrationStatusTransferRowTitle(index + 1))
                             .zFont(.medium, size: 16, style: Design.Text.primary)
                         Text(statusLabel(row))
                             .zFont(.regular, size: 13, style: Design.Text.tertiary)
@@ -274,13 +277,13 @@ struct MigrationStatusView: View {
         let percent = Int((Double(completed) / Double(total) * 100).rounded())
 
         VStack(alignment: .leading, spacing: 12) {
-            Text("Migration Progress")
+            Text(localizable: .migrationStatusProgressCardTitle)
                 .zFont(.semiBold, size: 16, style: Design.Text.primary)
 
             ProgressView(value: Double(completed), total: Double(total))
                 .tint(Design.Utility.SuccessGreen._500.color(colorScheme))
 
-            Text("\(completed) of \(total) transfers complete · \(percent)% complete")
+            Text(localizable: .migrationStatusProgressCardDetail(completed, total, percent))
                 .zFont(.regular, size: 13, style: Design.Text.tertiary)
         }
         .padding(16)
@@ -305,14 +308,19 @@ struct MigrationStatusView: View {
 
     private func statusLabel(_ row: MigrationTransferRow) -> String {
         switch row.status {
-        case .sent: return "Sent"
-        case .active: return "Ready now"
+        case .sent: return String(localizable: .migrationStatusRowSent)
+        case .active: return String(localizable: .migrationStatusRowReadyNow)
         case .overdue:
             let agoHours = abs(row.hoursFromNow)
-            return agoHours > 0 ? "Overdue · \(agoHours)h ago" : "Overdue"
-        case .pending: return row.hoursFromNow == 0 ? "Ready soon" : "~\(row.hoursFromNow) hours"
-        case .invalid: return "Invalid"
-        case .expired: return "Expired"
+            return agoHours > 0
+                ? String(localizable: .migrationStatusRowOverdueAgo(agoHours))
+                : String(localizable: .migrationStatusRowOverdue)
+        case .pending:
+            return row.hoursFromNow == 0
+                ? String(localizable: .migrationStatusRowReadySoon)
+                : String(localizable: .migrationStatusRowHours(row.hoursFromNow))
+        case .invalid: return String(localizable: .migrationStatusRowInvalid)
+        case .expired: return String(localizable: .migrationStatusRowExpired)
         }
     }
 

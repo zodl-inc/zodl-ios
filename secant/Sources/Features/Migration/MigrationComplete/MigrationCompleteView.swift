@@ -38,11 +38,11 @@ struct MigrationCompleteView: View {
                         .padding(.top, 32)
 
                     VStack(spacing: 8) {
-                        Text("Migration Complete")
+                        Text(localizable: .migrationCompleteTitle)
                             .zFont(.semiBold, size: 28, style: Design.Text.primary)
                             .multilineTextAlignment(.center)
 
-                        Text("Your \(tokenName) is now in the Ironwood pool.")
+                        Text(localizable: .migrationCompleteSubtitle(tokenName))
                             .zFont(.regular, size: 16, style: Design.Text.tertiary)
                             .multilineTextAlignment(.center)
                             .fixedSize(horizontal: false, vertical: true)
@@ -59,7 +59,7 @@ struct MigrationCompleteView: View {
                 .padding(.bottom, 24)
             }
 
-            ZashiButton("Done") {
+            ZashiButton(String(localizable: .generalDone)) {
                 onDone()
             }
             .screenHorizontalPadding()
@@ -87,15 +87,18 @@ struct MigrationCompleteView: View {
 
     @ViewBuilder private var summaryCard: some View {
         VStack(spacing: 0) {
-            summaryRow(title: "Total transferred", value: "\(transferred.decimalString()) \(tokenName)")
+            summaryRow(title: String(localizable: .migrationCompleteTotalTransferred), value: "\(transferred.decimalString()) \(tokenName)")
             if hasDust {
                 divider()
-                summaryRow(title: "Remaining dust", value: "\(dust.decimalString()) \(tokenName)")
+                summaryRow(title: String(localizable: .migrationCompleteRemainingDust), value: "\(dust.decimalString()) \(tokenName)")
             }
             divider()
-            summaryRow(title: "Transfers", value: "\(transfersSent) of \(transfersTotal) sent")
+            summaryRow(
+                title: String(localizable: .migrationCompleteTransfers),
+                value: String(localizable: .migrationCompleteTransfersValue(transfersSent, transfersTotal))
+            )
             divider()
-            summaryRow(title: "Duration", value: durationText)
+            summaryRow(title: String(localizable: .migrationCompleteDuration), value: durationText)
         }
         .padding(.horizontal, 16)
         .background {
@@ -105,7 +108,9 @@ struct MigrationCompleteView: View {
     }
 
     private var durationText: String {
-        durationHours <= 0 ? "Instant" : "~\(durationHours) hours"
+        durationHours <= 0
+            ? String(localizable: .migrationCompleteDurationInstant)
+            : String(localizable: .migrationCompleteDurationHours(durationHours))
     }
 
     @ViewBuilder private func summaryRow(title: String, value: String) -> some View {
@@ -127,18 +132,18 @@ struct MigrationCompleteView: View {
     @ViewBuilder private var dustCard: some View {
         HStack(alignment: .top, spacing: 12) {
             VStack(alignment: .leading, spacing: 6) {
-                Text("Dust balance remaining")
+                Text(localizable: .migrationCompleteDustTitle)
                     .zFont(.semiBold, size: 14, style: Design.Text.primary)
 
-                Text("\(dust.decimalString()) \(tokenName) stayed in Orchard — below the transfer threshold. It will migrate in a future batch.")
+                Text(localizable: .migrationCompleteDustBody(dust.decimalString(), tokenName))
                     .zFont(.regular, size: 13, style: Design.Text.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
             Spacer(minLength: 8)
 
-            Image(systemName: "info.circle")
-                .foregroundStyle(Design.Text.tertiary.color(colorScheme))
+            Asset.Assets.infoOutline.image
+                .zImage(size: 20, style: Design.Text.tertiary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)

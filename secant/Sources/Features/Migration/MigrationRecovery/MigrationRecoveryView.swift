@@ -31,11 +31,11 @@ struct MigrationRecoveryView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 20) {
                         VStack(alignment: .leading, spacing: 8) {
-                            Text("Transfer No Longer Valid")
+                            Text(localizable: .migrationRecoveryTitle)
                                 .zFont(.semiBold, size: 24, style: Design.Text.primary)
                                 .fixedSize(horizontal: false, vertical: true)
 
-                            Text("Transfer \(transferNumber) was pre-signed for a balance that has since changed. It needs to be re-created for the remaining amount.")
+                            Text(localizable: .migrationRecoverySubtitle(transferNumber))
                                 .zFont(.regular, size: 14, style: Design.Text.tertiary)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
@@ -53,11 +53,11 @@ struct MigrationRecoveryView: View {
                     continuesNote
 
                     VStack(spacing: 12) {
-                        ZashiButton("Learn more", type: .secondary) {
+                        ZashiButton(String(localizable: .migrationRecoveryLearnMoreButton), type: .secondary) {
                             store.send(.learnMoreTapped)
                         }
 
-                        ZashiButton("Re-create Transfer") {
+                        ZashiButton(String(localizable: .migrationRecoveryRecreateButton)) {
                             store.send(.recreateTapped)
                         }
                     }
@@ -72,8 +72,8 @@ struct MigrationRecoveryView: View {
                     Button {
                         store.send(.closeTapped)
                     } label: {
-                        Image(systemName: "xmark")
-                            .foregroundStyle(Design.Text.primary.color(colorScheme))
+                        Asset.Assets.Icons.xClose.image
+                            .zImage(size: 24, style: Design.Text.primary)
                     }
                 }
             }
@@ -87,18 +87,18 @@ struct MigrationRecoveryView: View {
     @ViewBuilder private var staleCard: some View {
         HStack(alignment: .top, spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
-                Text("Stale transfer detected")
+                Text(localizable: .migrationRecoveryStaleCardTitle)
                     .zFont(.medium, size: 14, style: Design.Text.primary)
 
-                Text("Signed for \(store.invalidAmount.decimalString()) \(tokenName). Your balance has changed since pre-signing.")
+                Text(localizable: .migrationRecoveryStaleCardBody(store.invalidAmount.decimalString(), tokenName))
                     .zFont(.regular, size: 14, style: Design.Text.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
             Spacer(minLength: 8)
 
-            Image(systemName: "info.circle")
-                .foregroundStyle(Design.Text.tertiary.color(colorScheme))
+            Asset.Assets.infoOutline.image
+                .zImage(size: 20, style: Design.Text.tertiary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
@@ -112,13 +112,13 @@ struct MigrationRecoveryView: View {
 
     @ViewBuilder private var whatHappensNext: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("What Happens Next")
+            Text(localizable: .migrationRecoveryWhatNextTitle)
                 .zFont(.medium, size: 14, style: Design.Text.primary)
 
             VStack(alignment: .leading, spacing: 8) {
-                bulletRow(1, "A new transfer is created for Transfer \(transferNumber)")
-                bulletRow(2, "Remaining transfers are re-scheduled")
-                bulletRow(3, "No funds are lost — only the pre-signed key is discarded")
+                bulletRow(1, String(localizable: .migrationRecoveryWhatNextBullet1(transferNumber)))
+                bulletRow(2, String(localizable: .migrationRecoveryWhatNextBullet2))
+                bulletRow(3, String(localizable: .migrationRecoveryWhatNextBullet3))
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -130,7 +130,7 @@ struct MigrationRecoveryView: View {
                 Circle()
                     .fill(Design.Text.tertiary.color(colorScheme))
                 Text("\(number)")
-                    .font(.system(size: 10, weight: .semibold))
+                    .zFont(.semiBold, size: 10, color: .white)
                     .foregroundStyle(.white)
             }
             .frame(width: 24, height: 24)
@@ -147,10 +147,10 @@ struct MigrationRecoveryView: View {
 
     @ViewBuilder private var continuesNote: some View {
         HStack(alignment: .center, spacing: 12) {
-            Image(systemName: "info.circle")
-                .foregroundStyle(Design.Text.tertiary.color(colorScheme))
+            Asset.Assets.infoOutline.image
+                .zImage(size: 20, style: Design.Text.tertiary)
 
-            Text("\(store.summary.transfersSent) of \(store.summary.transfersTotal) transfers done; migration will continue.")
+            Text(localizable: .migrationRecoveryContinuesNote(store.summary.transfersSent, store.summary.transfersTotal))
                 .zFont(.regular, size: 12, style: Design.Text.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
 

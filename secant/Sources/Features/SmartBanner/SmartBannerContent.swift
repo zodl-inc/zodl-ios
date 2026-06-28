@@ -40,11 +40,11 @@ extension SmartBannerView {
     // PROTOTYPE: Ironwood migration CTA. Tapping the banner (or its button) opens the migration flow.
     var migrationBannerTitle: String {
         switch store.migrationState {
-        case .complete: return "Migration complete"
-        case let .requiresAttention(.transferStalled(transferNumber)): return "Transfer \(transferNumber) waiting"
-        case .inProgress: return "Migration in Progress"
-        case .requiresAttention: return "Action Needed"
-        default: return "Migration Required"
+        case .complete: return String(localizable: .smartBannerContentMigrationCompleteTitle)
+        case let .requiresAttention(.transferStalled(transferNumber)): return String(localizable: .smartBannerContentMigrationStalledTitle(transferNumber))
+        case .inProgress: return String(localizable: .smartBannerContentMigrationInProgressTitle)
+        case .requiresAttention: return String(localizable: .smartBannerContentMigrationAttentionTitle)
+        default: return String(localizable: .smartBannerContentMigrationRequiredTitle)
         }
     }
 
@@ -52,22 +52,22 @@ extension SmartBannerView {
         switch store.migrationState {
         case .complete:
             return store.migrationDust.amount > 0
-                ? "Dust balance stays in Orchard for now"
-                : "Your funds are now in Ironwood"
-        case .requiresAttention(.transferStalled): return "Tap to reschedule or send now"
-        case .inProgress: return "Transfers are sending in the background"
-        case .requiresAttention: return "A transfer needs your attention"
-        default: return "Move your funds to Ironwood"
+                ? String(localizable: .smartBannerContentMigrationCompleteInfoDust)
+                : String(localizable: .smartBannerContentMigrationCompleteInfo)
+        case .requiresAttention(.transferStalled): return String(localizable: .smartBannerContentMigrationStalledInfo)
+        case .inProgress: return String(localizable: .smartBannerContentMigrationInProgressInfo)
+        case .requiresAttention: return String(localizable: .smartBannerContentMigrationAttentionInfo)
+        default: return String(localizable: .smartBannerContentMigrationRequiredInfo)
         }
     }
 
     var migrationBannerButton: String {
         switch store.migrationState {
-        case .complete: return "More"
-        case .requiresAttention(.transferStalled): return "More"
-        case .inProgress: return "View"
-        case .requiresAttention: return "Resolve"
-        default: return "Migrate"
+        case .complete: return String(localizable: .smartBannerContentMigrationButtonMore)
+        case .requiresAttention(.transferStalled): return String(localizable: .smartBannerContentMigrationButtonMore)
+        case .inProgress: return String(localizable: .smartBannerContentMigrationButtonView)
+        case .requiresAttention: return String(localizable: .smartBannerContentMigrationButtonResolve)
+        default: return String(localizable: .smartBannerContentMigrationButtonMigrate)
         }
     }
 

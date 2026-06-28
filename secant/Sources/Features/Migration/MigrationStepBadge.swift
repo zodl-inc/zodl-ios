@@ -30,24 +30,22 @@ struct MigrationStepBadge: View {
             switch style {
             case .sent:
                 Circle().fill(Design.Utility.SuccessGreen._500.color(colorScheme))
-                Image(systemName: "checkmark")
-                    .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(.white)
+                Asset.Assets.check.image
+                    .zImage(size: 12, color: .white)
             case .active:
                 Circle().fill(Design.Text.primary.color(colorScheme))
                 Text("\(number)")
-                    .font(.system(size: 13, weight: .semibold))
+                    .zFont(.semiBold, size: 13, style: Design.Surfaces.bgPrimary)
                     .foregroundStyle(Design.Surfaces.bgPrimary.color(colorScheme))
             case .pending:
                 Circle().stroke(Design.Surfaces.strokeSecondary.color(colorScheme), lineWidth: 1.5)
                 Text("\(number)")
-                    .font(.system(size: 13, weight: .medium))
+                    .zFont(.medium, size: 13, style: Design.Text.tertiary)
                     .foregroundStyle(Design.Text.tertiary.color(colorScheme))
             case .warning:
-                Circle().fill(Color.orange)
-                Image(systemName: "exclamationmark")
-                    .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(.white)
+                Circle().fill(Design.Utility.WarningYellow._500.color(colorScheme))
+                Asset.Assets.Icons.alertCircle.image
+                    .zImage(size: 12, color: .white)
             }
         }
         .frame(width: 28, height: 28)

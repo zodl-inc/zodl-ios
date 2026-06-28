@@ -30,11 +30,11 @@ struct MigrationEntryView: View {
                             pairedIcons
                                 .padding(.top, 4)
 
-                            Text("Move to Ironwood")
+                            Text(localizable: .migrationEntryTitle)
                                 .zFont(.semiBold, size: 24, style: Design.Text.primary)
                         }
 
-                        Text("Latest Zcash network upgrade requires moving your \(tokenName) from the Orchard pool to the new Ironwood pool. Your funds are safe.")
+                        Text(localizable: .migrationEntryDescription(tokenName))
                             .zFont(.regular, size: 14, style: Design.Text.tertiary)
                             .fixedSize(horizontal: false, vertical: true)
 
@@ -56,7 +56,7 @@ struct MigrationEntryView: View {
                     disclaimerRow
                         .padding(.bottom, 16)
 
-                    ZashiButton("Next") {
+                    ZashiButton(String(localizable: .generalNext)) {
                         store.send(.nextTapped)
                     }
                     .disabled(!store.nextEnabled)
@@ -97,7 +97,7 @@ struct MigrationEntryView: View {
     @ViewBuilder private var balanceCard: some View {
         HStack(alignment: .bottom, spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
-                Text("Orchard balance")
+                Text(localizable: .migrationEntryOrchardBalanceLabel)
                     .zFont(.regular, size: 12, style: Design.Text.tertiary)
 
                 Text("\(store.orchardBalance.decimalString()) \(tokenName)")
@@ -126,14 +126,14 @@ struct MigrationEntryView: View {
         VStack(spacing: 8) {
             optionCard(
                 mode: .immediate,
-                title: "Migrate Immediately",
-                subtitle: "Single transfer · Sends now · No privacy"
+                title: String(localizable: .migrationEntryOptionImmediateTitle),
+                subtitle: String(localizable: .migrationEntryOptionImmediateSubtitle)
             )
 
             optionCard(
                 mode: .privateScheduled,
-                title: "Migrate with Privacy",
-                subtitle: "Split transfers over time · Scheduled in background · Maximum privacy"
+                title: String(localizable: .migrationEntryOptionPrivateTitle),
+                subtitle: String(localizable: .migrationEntryOptionPrivateSubtitle)
             )
         }
     }
@@ -211,7 +211,7 @@ struct MigrationEntryView: View {
             Asset.Assets.infoOutline.image
                 .zImage(size: 16, style: Design.Text.tertiary)
 
-            Text("Pool-crossing transfer amounts are visible on-chain.")
+            Text(localizable: .migrationEntryDisclaimer)
                 .zFont(.medium, size: 12, style: Design.Text.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
 
@@ -224,11 +224,11 @@ struct MigrationEntryView: View {
 
     @ViewBuilder private var failureBlock: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Couldn't load your Orchard balance")
+            Text(localizable: .migrationEntryBalanceLoadFailed)
                 .zFont(.medium, size: 16, style: Design.Text.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
 
-            ZashiButton("Try again") {
+            ZashiButton(String(localizable: .migrationEntryTryAgainButton)) {
                 store.send(.retryTapped)
             }
         }

@@ -22,31 +22,31 @@ struct MigrationBackgroundDeliveryView: View {
             VStack(spacing: 0) {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 24) {
-                        Text("Allow Background Delivery")
+                        Text(localizable: .migrationBgDeliveryTitle)
                             .zFont(.semiBold, size: 24, style: Design.Text.primary)
                             .padding(.top, 24)
 
                         VStack(alignment: .leading, spacing: 20) {
                             bulletRow(
-                                icon: "bolt.fill",
-                                title: "Transfers send automatically",
-                                subtitle: "Your device wakes up and broadcasts each transfer at its scheduled window."
+                                icon: Asset.Assets.Icons.flashOn.image,
+                                title: String(localizable: .migrationBgDeliveryBullet1Title),
+                                subtitle: String(localizable: .migrationBgDeliveryBullet1Subtitle)
                             )
 
                             bulletRow(
-                                icon: "app.badge",
-                                title: "No need to open the app for each send",
-                                subtitle: "Once committed, transfers broadcast in the background over the next ~24 hours."
+                                icon: Asset.Assets.Icons.checkVerified.image,
+                                title: String(localizable: .migrationBgDeliveryBullet2Title),
+                                subtitle: String(localizable: .migrationBgDeliveryBullet2Subtitle)
                             )
 
                             bulletRow(
-                                icon: "shuffle",
-                                title: "Sends de-correlated from your activity",
-                                subtitle: "Transfers go out on fixed-ish windows, not tied to when you open ZODL."
+                                icon: Asset.Assets.Icons.swapArrows.image,
+                                title: String(localizable: .migrationBgDeliveryBullet3Title),
+                                subtitle: String(localizable: .migrationBgDeliveryBullet3Subtitle)
                             )
                         }
 
-                        Text("Background delivery is best-effort, not guaranteed.")
+                        Text(localizable: .migrationBgDeliveryDisclaimer)
                             .zFont(.regular, size: 13, style: Design.Text.tertiary)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -54,11 +54,11 @@ struct MigrationBackgroundDeliveryView: View {
                 }
 
                 VStack(spacing: 8) {
-                    ZashiButton("Skip — I'll open the app", type: .secondary) {
+                    ZashiButton(String(localizable: .migrationBgDeliverySkip), type: .secondary) {
                         store.send(.skipTapped)
                     }
-                    
-                    ZashiButton("Allow Background Access") {
+
+                    ZashiButton(String(localizable: .migrationBgDeliveryAllow)) {
                         store.send(.allowTapped)
                     }
                 }
@@ -70,11 +70,10 @@ struct MigrationBackgroundDeliveryView: View {
         .applyScreenBackground()
     }
 
-    private func bulletRow(icon: String, title: String, subtitle: String) -> some View {
+    private func bulletRow(icon: Image, title: String, subtitle: String) -> some View {
         HStack(alignment: .top, spacing: 16) {
-            Image(systemName: icon)
-                .font(.system(size: 20, weight: .semibold))
-                .zForegroundColor(Design.Text.primary)
+            icon
+                .zImage(size: 20, style: Design.Text.primary)
                 .frame(width: 28, height: 28, alignment: .center)
 
             VStack(alignment: .leading, spacing: 4) {

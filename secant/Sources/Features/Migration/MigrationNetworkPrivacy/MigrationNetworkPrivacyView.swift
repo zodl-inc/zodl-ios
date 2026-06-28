@@ -9,6 +9,8 @@ import ComposableArchitecture
 import SwiftUI
 
 struct MigrationNetworkPrivacyView: View {
+    @Environment(\.colorScheme) private var colorScheme
+
     @Perception.Bindable var store: StoreOf<MigrationNetworkPrivacy>
     let tokenName: String
 
@@ -23,37 +25,37 @@ struct MigrationNetworkPrivacyView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 24) {
                         VStack(alignment: .leading, spacing: 8) {
-                            Text("Network Privacy")
+                            Text(localizable: .migrationNetworkPrivacyTitle)
                                 .zFont(.semiBold, size: 24, style: Design.Text.primary)
 
-                            Text("Enable Tor to broadcast privately through the Tor network. This prevents your IP address from being linked to the transfer.")
+                            Text(localizable: .migrationNetworkPrivacySubtitle)
                                 .zFont(.regular, size: 14, style: Design.Text.tertiary)
                         }
 
                         VStack(alignment: .leading, spacing: 16) {
-                            Text("What Happens Next")
+                            Text(localizable: .migrationNetworkPrivacyWhatHappensNext)
                                 .zFont(.semiBold, size: 16, style: Design.Text.primary)
 
                             outcomeRow(
-                                icon: "lock.shield",
-                                title: "With Tor",
-                                detail: "IP hidden from the network."
+                                icon: Asset.Assets.Icons.shieldTick.image,
+                                title: String(localizable: .migrationNetworkPrivacyWithTorTitle),
+                                detail: String(localizable: .migrationNetworkPrivacyWithTorDetail)
                             )
 
                             outcomeRow(
-                                icon: "eye",
-                                title: "Without Tor or a VPN",
-                                detail: "Transfers are still de-correlated in time, but your IP is visible to network operators."
+                                icon: Asset.Assets.eyeOn.image,
+                                title: String(localizable: .migrationNetworkPrivacyWithoutTorTitle),
+                                detail: String(localizable: .migrationNetworkPrivacyWithoutTorDetail)
                             )
                         }
 
                         VStack(alignment: .leading, spacing: 12) {
                             HStack(alignment: .center, spacing: 12) {
                                 VStack(alignment: .leading, spacing: 4) {
-                                    Text("Route via Tor")
+                                    Text(localizable: .migrationNetworkPrivacyRouteViaTor)
                                         .zFont(.semiBold, size: 16, style: Design.Text.primary)
 
-                                    Text("Use Tor for transaction submission")
+                                    Text(localizable: .migrationNetworkPrivacyRouteViaTorDetail)
                                         .zFont(.regular, size: 14, style: Design.Text.tertiary)
                                 }
 
@@ -64,9 +66,9 @@ struct MigrationNetworkPrivacyView: View {
                             }
 
                             if store.torUnavailable {
-                                Text("Tor is not available on this network. Consider a trusted VPN, or continue without.")
+                                Text(localizable: .migrationNetworkPrivacyTorUnavailable)
                                     .zFont(.regular, size: 13, style: Design.Text.tertiary)
-                                    .foregroundStyle(Color.orange)
+                                    .foregroundStyle(Design.Utility.WarningYellow._500.color(colorScheme))
                             }
                         }
                     }
@@ -75,7 +77,7 @@ struct MigrationNetworkPrivacyView: View {
 
                 Spacer(minLength: 0)
 
-                ZashiButton("Next") {
+                ZashiButton(String(localizable: .generalNext)) {
                     store.send(.nextTapped)
                 }
                 .padding(.bottom, 24)
@@ -86,11 +88,10 @@ struct MigrationNetworkPrivacyView: View {
         .applyScreenBackground()
     }
 
-    private func outcomeRow(icon: String, title: String, detail: String) -> some View {
+    private func outcomeRow(icon: Image, title: String, detail: String) -> some View {
         HStack(alignment: .top, spacing: 12) {
-            Image(systemName: icon)
-                .font(.system(size: 18))
-                .foregroundStyle(Design.Text.primary.color(.light))
+            icon
+                .zImage(size: 18, style: Design.Text.primary)
                 .frame(width: 24)
 
             VStack(alignment: .leading, spacing: 4) {

@@ -48,11 +48,11 @@ struct MigrationNoteSplitView: View {
                             .padding(.top, 4)
 
                         VStack(alignment: .leading, spacing: 8) {
-                            Text("Split Your Wallet Funds")
+                            Text(localizable: .migrationNoteSplitTitle)
                                 .zFont(.semiBold, size: 24, style: Design.Text.primary)
                                 .fixedSize(horizontal: false, vertical: true)
 
-                            Text("This sends a transaction to yourself, breaking your balance into smaller notes. Each Ironwood migration transfer then settles independently — no waiting for change.")
+                            Text(localizable: .migrationNoteSplitExplainerBody)
                                 .zFont(.regular, size: 14, style: Design.Text.tertiary)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
@@ -64,7 +64,7 @@ struct MigrationNoteSplitView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            ZashiButton("Confirm") {
+            ZashiButton(String(localizable: .generalConfirm)) {
                 store.send(.confirmTapped)
             }
             .padding(.bottom, 24)
@@ -82,11 +82,11 @@ struct MigrationNoteSplitView: View {
                     statusHeader
 
                     VStack(alignment: .leading, spacing: 8) {
-                        Text(progressTitle)
+                        Text(localizable: store.step == .confirmed ? .migrationNoteSplitConfirmedTitle : .migrationNoteSplitSplittingTitle)
                             .zFont(.semiBold, size: 28, style: Design.Text.primary)
                             .fixedSize(horizontal: false, vertical: true)
 
-                        Text("Splitting your balance into transfer-sized notes. This is a send-to-self — your \(tokenName) stays in Orchard.")
+                        Text(localizable: .migrationNoteSplitProgressBody(tokenName))
                             .zFont(.regular, size: 14, style: Design.Text.tertiary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -105,10 +105,6 @@ struct MigrationNoteSplitView: View {
         .screenHorizontalPadding()
     }
 
-    private var progressTitle: String {
-        store.step == .confirmed ? "Split Confirmed!" : "Splitting Funds…"
-    }
-
     @ViewBuilder private var statusHeader: some View {
         HStack {
             ZStack {
@@ -121,11 +117,8 @@ struct MigrationNoteSplitView: View {
                     .frame(width: 64, height: 64)
 
                 if store.step == .confirmed {
-                    Image(systemName: "checkmark.seal.fill")
-                        .resizable()
-                        .scaledToFit()
-                        .frame(width: 32, height: 32)
-                        .foregroundStyle(Design.Utility.SuccessGreen._500.color(colorScheme))
+                    Asset.Assets.Icons.checkVerifiedFilled.image
+                        .zImage(size: 32, style: Design.Utility.SuccessGreen._500)
                 } else {
                     ProgressView()
                         .scaleEffect(1.2)
@@ -139,12 +132,12 @@ struct MigrationNoteSplitView: View {
     @ViewBuilder private var detailsCard: some View {
         VStack(spacing: 0) {
             if !store.txId.isEmpty {
-                detailRow(title: "Transaction ID", value: store.txId)
+                detailRow(title: String(localizable: .migrationNoteSplitDetailTransactionId), value: store.txId)
                 divider()
             }
-            detailRow(title: "Amount", value: "\(store.totalAmount.decimalString()) \(tokenName)")
+            detailRow(title: String(localizable: .migrationNoteSplitDetailAmount), value: "\(store.totalAmount.decimalString()) \(tokenName)")
             divider()
-            detailRow(title: "Fee", value: "\(store.fee.decimalString()) \(tokenName)")
+            detailRow(title: String(localizable: .migrationNoteSplitDetailFee), value: "\(store.fee.decimalString()) \(tokenName)")
         }
         .padding(.horizontal, 16)
         .background {
@@ -157,10 +150,10 @@ struct MigrationNoteSplitView: View {
         VStack(spacing: 16) {
             if store.step == .splitting {
                 progressInfoCard
-                ZashiButton("Splitting Funds…") { }
+                ZashiButton(String(localizable: .migrationNoteSplitSplittingTitle)) { }
                     .disabled(true)
             } else {
-                ZashiButton("Continue") {
+                ZashiButton(String(localizable: .migrationNoteSplitContinueButton)) {
                     store.send(.continueTapped)
                 }
             }
@@ -170,13 +163,13 @@ struct MigrationNoteSplitView: View {
 
     @ViewBuilder private var progressInfoCard: some View {
         HStack(alignment: .top, spacing: 12) {
-            Image(systemName: "info.circle")
-                .foregroundStyle(Design.Text.tertiary.color(colorScheme))
+            Asset.Assets.infoOutline.image
+                .zImage(size: 16, style: Design.Text.tertiary)
 
             VStack(alignment: .leading, spacing: 4) {
-                Text("Transaction in Progress")
+                Text(localizable: .migrationNoteSplitInProgressTitle)
                     .zFont(.semiBold, size: 14, style: Design.Text.primary)
-                Text("Keep your phone on and the app open until this step completes.")
+                Text(localizable: .migrationNoteSplitInProgressBody)
                     .zFont(.regular, size: 13, style: Design.Text.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
             }

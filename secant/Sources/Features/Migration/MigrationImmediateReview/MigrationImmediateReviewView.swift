@@ -55,19 +55,19 @@ struct MigrationImmediateReviewView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("Review Transfer")
+                        Text(localizable: .migrationImmediateReviewTitle)
                             .zFont(.semiBold, size: 28, style: Design.Text.primary)
 
-                        Text("Your full Orchard balance will be transferred to Ironwood in a single on-chain transfer.")
+                        Text(localizable: .migrationImmediateReviewSubtitle)
                             .zFont(.regular, size: 14, style: Design.Text.tertiary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
 
                     VStack(alignment: .leading, spacing: 12) {
                         VStack(alignment: .leading, spacing: 4) {
-                            Text("Your Transfer")
+                            Text(localizable: .migrationImmediateReviewYourTransfer)
                                 .zFont(.semiBold, size: 16, style: Design.Text.primary)
-                            Text("Once confirmed, this transfer cannot be cancelled.")
+                            Text(localizable: .migrationImmediateReviewCannotCancel)
                                 .zFont(.regular, size: 13, style: Design.Text.tertiary)
                         }
 
@@ -83,7 +83,7 @@ struct MigrationImmediateReviewView: View {
             privacyDisclaimer
                 .padding(.bottom, 16)
 
-            ZashiButton("Confirm") {
+            ZashiButton(String(localizable: .generalConfirm)) {
                 store.send(.confirmTapped)
             }
             .padding(.bottom, 24)
@@ -98,9 +98,9 @@ struct MigrationImmediateReviewView: View {
             MigrationStepBadge(number: 1, style: .active)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text("Transfer 1 of 1")
+                Text(localizable: .migrationImmediateReviewTransferOneOfOne)
                     .zFont(.medium, size: 16, style: Design.Text.primary)
-                Text("Send immediately")
+                Text(localizable: .migrationImmediateReviewSendImmediately)
                     .zFont(.regular, size: 13, style: Design.Text.tertiary)
             }
 
@@ -124,25 +124,25 @@ struct MigrationImmediateReviewView: View {
     @ViewBuilder private var privacyDisclaimer: some View {
         HStack(alignment: .top, spacing: 12) {
             VStack(alignment: .leading, spacing: 6) {
-                Text("Privacy Disclaimer")
+                Text(localizable: .migrationImmediateReviewPrivacyDisclaimerTitle)
                     .zFont(.semiBold, size: 14, style: Design.Text.primary)
-                    .foregroundColor(.orange)
-                Text("Your full balance will be revealed — crossing the pool boundary reveals the transaction amount. We recommend going back and selecting Migrate with Privacy instead.")
+                    .foregroundColor(Design.Utility.WarningYellow._500.color(colorScheme))
+                Text(localizable: .migrationImmediateReviewPrivacyDisclaimerBody)
                     .zFont(.regular, size: 13, style: Design.Text.tertiary)
-                    .foregroundColor(.orange)
+                    .foregroundColor(Design.Utility.WarningYellow._500.color(colorScheme))
                     .fixedSize(horizontal: false, vertical: true)
             }
 
             Spacer(minLength: 8)
 
-            Image(systemName: "info.circle")
-                .foregroundStyle(.orange)
+            Asset.Assets.infoOutline.image
+                .zImage(size: 20, color: Design.Utility.WarningYellow._500.color(colorScheme))
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background {
             RoundedRectangle(cornerRadius: Design.Radius._xl)
-                .fill(Color.orange.opacity(0.12))
+                .fill(Design.Utility.WarningYellow._500.color(colorScheme).opacity(0.12))
         }
     }
 
@@ -152,7 +152,7 @@ struct MigrationImmediateReviewView: View {
         VStack(spacing: 16) {
             ProgressView()
                 .scaleEffect(1.5)
-            Text("Sending…")
+            Text(localizable: .migrationImmediateReviewSending)
                 .zFont(.semiBold, size: 20, style: Design.Text.primary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -163,23 +163,20 @@ struct MigrationImmediateReviewView: View {
 
     @ViewBuilder private var failedContent: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .resizable()
-                .scaledToFit()
-                .frame(width: 56, height: 56)
-                .foregroundStyle(.orange)
+            Asset.Assets.Icons.alertTriangle.image
+                .zImage(size: 56, color: Design.Utility.WarningYellow._500.color(colorScheme))
                 .padding(.top, 24)
 
-            Text("Transfer failed")
+            Text(localizable: .migrationImmediateReviewFailedTitle)
                 .zFont(.semiBold, size: 28, style: Design.Text.primary)
 
-            Text("Something went wrong. Please try again from the migration screen.")
+            Text(localizable: .migrationImmediateReviewFailedBody)
                 .zFont(.regular, size: 16, style: Design.Text.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
 
             Spacer()
 
-            ZashiButton("Close", type: .secondary) {
+            ZashiButton(String(localizable: .generalClose), type: .secondary) {
                 store.send(.doneTapped)
             }
             .padding(.bottom, 24)

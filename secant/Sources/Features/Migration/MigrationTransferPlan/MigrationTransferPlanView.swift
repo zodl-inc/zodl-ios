@@ -26,10 +26,13 @@ struct MigrationTransferPlanView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 24) {
                         VStack(alignment: .leading, spacing: 8) {
-                            Text("Transfer Plan")
+                            let count = store.schedule?.transfers.count ?? 0
+                            let hours = store.schedule?.estimatedDurationHours ?? 0
+
+                            Text(localizable: .migrationTransferPlanTitle)
                                 .zFont(.semiBold, size: 28, style: Design.Text.primary)
 
-                            Text(bodyText)
+                            Text(localizable: .migrationTransferPlanBody(count, hours))
                                 .zFont(.regular, size: 14, style: Design.Text.tertiary)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
@@ -51,7 +54,7 @@ struct MigrationTransferPlanView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
-                ZashiButton("Confirm") {
+                ZashiButton(String(localizable: .generalConfirm)) {
                     store.send(.confirmTapped)
                 }
                 .disabled(store.isCommitting || store.schedule == nil)
@@ -64,23 +67,18 @@ struct MigrationTransferPlanView: View {
         .applyScreenBackground()
     }
 
-    private var bodyText: String {
-        let count = store.schedule?.transfers.count ?? 0
-        let hours = store.schedule?.estimatedDurationHours ?? 0
-        return "Your balance splits into \(count) transfers over ~\(hours) hours. "
-            + "Approve once and ZODL handles the rest — just keep the app installed. "
-            + "Amounts are randomized for privacy."
-    }
-
     // MARK: - Summary
 
     @ViewBuilder private func summarySection(_ schedule: MigrationSchedule) -> some View {
         VStack(spacing: 0) {
-            summaryRow(title: "Destination", value: "Ironwood")
+            summaryRow(
+                title: String(localizable: .migrationTransferPlanDestination),
+                value: String(localizable: .migrationTransferPlanDestinationValue)
+            )
             divider()
             summaryRow(
-                title: "Summary",
-                value: "\(schedule.transfers.count) transfers · ~\(schedule.estimatedDurationHours) hours"
+                title: String(localizable: .migrationTransferPlanSummary),
+                value: String(localizable: .migrationTransferPlanSummaryValue(schedule.transfers.count, schedule.estimatedDurationHours))
             )
         }
         .padding(.horizontal, 16)
@@ -94,7 +92,7 @@ struct MigrationTransferPlanView: View {
 
     @ViewBuilder private func transfersSection(_ schedule: MigrationSchedule) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Your balance will be split into")
+            Text(localizable: .migrationTransferPlanSplitHeader)
                 .zFont(.semiBold, size: 16, style: Design.Text.primary)
 
             VStack(alignment: .leading, spacing: 0) {
@@ -110,7 +108,7 @@ struct MigrationTransferPlanView: View {
                         }
 
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("Transfer \(index + 1)")
+                            Text(localizable: .migrationTransferPlanTransferNumber(index + 1))
                                 .zFont(.medium, size: 16, style: Design.Text.primary)
                             Text(timeLabel(for: index))
                                 .zFont(.regular, size: 13, style: Design.Text.tertiary)
@@ -133,7 +131,9 @@ struct MigrationTransferPlanView: View {
     }
 
     private func timeLabel(for index: Int) -> String {
-        index == 0 ? "Ready now" : "~\(index * 6) hours"
+        index == 0
+            ? String(localizable: .migrationTransferPlanReadyNow)
+            : String(localizable: .migrationTransferPlanHoursAway(index * 6))
     }
 
     // MARK: - Helpers
