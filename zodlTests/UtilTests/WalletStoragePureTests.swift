@@ -9,6 +9,7 @@
 
 import Testing
 import Foundation
+import Security
 @testable @preconcurrency import ZcashLightClientKit
 @testable import zodl_internal
 
@@ -37,6 +38,28 @@ import Foundation
     func swapAPIAccessCodableRoundTrip(_ value: WalletStorage.SwapAPIAccess) throws {
         let data = try JSONEncoder().encode(value)
         #expect(try JSONDecoder().decode(WalletStorage.SwapAPIAccess.self, from: data) == value)
+    }
+
+    @Test func deleteDataMatchQueryOmitsAccessibilityAttribute() throws {
+        // Regression (macOS reset bug): including kSecAttrAccessible in a SecItemDelete query makes it match
+        // nothing on the macOS login keychain, so resetZashi() silently left every keychain item behind and
+        // surfaced "Wallet deletion failed — Keychain keys are still present". The delete match query must
+        // carry only the identity attributes (service, account, class), never the accessibility class.
+        final class Box: @unchecked Sendable { var query: [String: Any]? }
+        let box = Box()
+        let storage = WalletStorage(
+            secItem: SecItemClient(delete: { query in
+                box.query = query as? [String: Any]
+                return errSecSuccess
+            })
+        )
+
+        try storage.deleteData(forKey: WalletStorage.Constants.zcashStoredWalletSeed)
+
+        let query = try #require(box.query)
+        #expect(query[kSecAttrAccessible as String] == nil)
+        #expect(query[kSecAttrService as String] as? String == WalletStorage.Constants.zcashStoredWalletSeed)
+        #expect(query[kSecClass as String] != nil)
     }
 
     private func account(name: String) -> Account {

@@ -87,6 +87,40 @@ struct WalletStorage {
     private let secureEnclave: SecureEnclaveClient?
     var zcashStoredWalletPrefix = ""
 
+    /// Restore/create primes the just-supplied seed here (macOS / Secure-Enclave only) so the first-init
+    /// burst — `prepare` plus the seed-derived metadata / address-book keys — reuses it instead of
+    /// re-decrypting the SE-wrapped seed 2–3 times (each a biometric prompt). Consumed by the first
+    /// `exportWallet()`, never persisted; a timestamp backstop prevents stale reuse. iOS / spends are
+    /// unaffected (nil unless just stored). Held in a reference box because `WalletStorage` is a value
+    /// type shared by-copy across the dependency closures. See docs/macos/KEYCHAIN_SE_HARDENING.md.
+    private let primedSeedBox = PrimedSeedBox()
+
+    /// Thread-safe single-use holder for the primed seed (see `primedSeedBox`).
+    private final class PrimedSeedBox: @unchecked Sendable {
+        private let lock = NSLock()
+        private var value: (wallet: StoredWallet, primedAt: Date)?
+        private let maxAge: TimeInterval = 600
+
+        func set(_ wallet: StoredWallet) {
+            lock.lock(); defer { lock.unlock() }
+            value = (wallet, Date())
+        }
+
+        /// Returns and CONSUMES the seed if within the freshness window; otherwise drops it and returns
+        /// nil so the caller decrypts as usual. Single-use: the first first-init read takes it.
+        func consumeIfFresh() -> StoredWallet? {
+            lock.lock(); defer { lock.unlock() }
+            guard let primed = value else { return nil }
+            value = nil
+            return Date().timeIntervalSince(primed.primedAt) < maxAge ? primed.wallet : nil
+        }
+
+        func clear() {
+            lock.lock(); defer { lock.unlock() }
+            value = nil
+        }
+    }
+
     init(secItem: SecItemClient, secureEnclave: SecureEnclaveClient? = nil) {
         self.secItem = secItem
         self.secureEnclave = secureEnclave
@@ -126,6 +160,8 @@ struct WalletStorage {
         do {
             if let secureEnclave {
                 try storeWalletSecurely(wallet, secureEnclave: secureEnclave)
+                // Reuse the just-supplied seed across the first-init burst (no re-decrypt → no prompts).
+                setPrimedSeed(wallet)
             } else {
                 guard let data = try encode(object: wallet) else {
                     throw KeychainError.encoding
@@ -157,11 +193,27 @@ struct WalletStorage {
         try setData(metaData, forKey: Constants.zcashStoredWalletMeta)
     }
 
+    private func setPrimedSeed(_ wallet: StoredWallet) {
+        primedSeedBox.set(wallet)
+    }
+
+    private func consumePrimedSeed() -> StoredWallet? {
+        primedSeedBox.consumeIfFresh()
+    }
+
+    func clearPrimedSeed() {
+        primedSeedBox.clear()
+    }
+
     /// Returns the full wallet INCLUDING the seed. On macOS this decrypts the Secure-Enclave-wrapped
     /// seed and therefore triggers the OS auth prompt — call only when the seed is genuinely needed
     /// (spend / export / first init). For birthday / backup-flag / existence use `exportWalletMetadata`
     /// / `areKeysPresent`, which never decrypt.
     func exportWallet() async throws -> StoredWallet {
+        // Restore/create primed the seed — reuse it once instead of an SE decrypt (and its prompt).
+        if secureEnclave != nil, let primed = consumePrimedSeed() {
+            return primed
+        }
         if let secureEnclave {
             return try await exportWalletSecurely(secureEnclave: secureEnclave)
         }
@@ -359,6 +411,7 @@ struct WalletStorage {
     }
 
     func resetZashi() throws {
+        clearPrimedSeed()
         try? deleteData(forKey: Constants.zcashStorageVersion)
         try? deleteData(forKey: Constants.zcashStoredWalletSeed)
         try? deleteData(forKey: Constants.zcashStoredWalletMeta)
@@ -687,10 +740,29 @@ struct WalletStorage {
             /// Thus, after restoring from a backup of a different device, these items will not be present.
             kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly
         ]
-        
+
         return query
     }
-    
+
+    /// Query for MATCHING an existing item to mutate (delete / update). Deliberately omits
+    /// `kSecAttrAccessible`, unlike `baseQuery`.
+    ///
+    /// On the macOS file (login) keychain, including the accessibility constant in a `SecItemDelete` /
+    /// `SecItemUpdate` query makes it match nothing (`errSecItemNotFound`) — even though `SecItemCopyMatching`
+    /// tolerates the very same query. So `deleteData` / `updateData` silently no-op'd on macOS and items
+    /// lingered: after the Secure-Enclave migration, `resetZashi()` ran to completion yet every
+    /// generic-password item it targeted survived, surfacing as "Wallet deletion failed — Keychain keys are
+    /// still present" (and a half-deleted wallet on next launch). Accessibility is set once at add time and is
+    /// not part of an item's identity, so dropping it from the *match* query is correct on both platforms —
+    /// the item is still uniquely identified by (service, account). See docs/macos/KEYCHAIN_SE_HARDENING.md.
+    func mutationQuery(forAccount account: String = "", andKey forKey: String) -> [String: Any] {
+        [
+            kSecAttrService as String: zcashStoredWalletPrefix + forKey,
+            kSecAttrAccount as String: account,
+            kSecClass as String: kSecClassGenericPassword
+        ]
+    }
+
     func restoreQuery(forAccount account: String = "", andKey forKey: String) -> [String: Any] {
         var query = baseQuery(forAccount: account, andKey: forKey)
         query[kSecMatchLimit as String] = kSecMatchLimitOne
@@ -763,7 +835,7 @@ struct WalletStorage {
         forKey: String,
         account: String = ""
     ) throws {
-        let query = baseQuery(forAccount: account, andKey: forKey)
+        let query = mutationQuery(forAccount: account, andKey: forKey)
 
         let status = secItem.delete(query as CFDictionary)
 
@@ -804,8 +876,8 @@ struct WalletStorage {
         forKey: String,
         account: String = ""
     ) throws {
-        let query = baseQuery(forAccount: account, andKey: forKey)
-        
+        let query = mutationQuery(forAccount: account, andKey: forKey)
+
         let attributes: [String: AnyObject] = [
             kSecValueData as String: data as AnyObject
         ]

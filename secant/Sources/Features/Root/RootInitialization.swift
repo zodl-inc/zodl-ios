@@ -390,6 +390,31 @@ extension Root {
 
                             let walletAccounts = try await sdkSynchronizer.walletAccounts()
                             await send(.initialization(.loadedWalletAccounts(walletAccounts)))
+
+                            // First init only (we still hold the seed): derive the seed-derived metadata
+                            // encryption keys HERE, reusing `seedBytes`, so the async
+                            // resolveMetadataEncryptionKeys below finds them present and never re-decrypts
+                            // the Secure-Enclave seed. Together with WalletStorage's primed-seed reuse,
+                            // restore/create fires ZERO seed prompts (docs/macos/KEYCHAIN_SE_HARDENING.md).
+                            // Existing-wallet launches keep seedBytes == nil, so the standard
+                            // resolveMetadataEncryptionKeys recovery path is unchanged.
+                            if let seedBytes {
+                                for account in walletAccounts
+                                where (try? walletStorage.exportUserMetadataEncryptionKeys(account.account)) == nil {
+                                    do {
+                                        var keys = UserMetadataEncryptionKeys.empty
+                                        try keys.cacheFor(
+                                            seed: seedBytes,
+                                            account: account.account,
+                                            network: zcashSDKEnvironment.network().networkType
+                                        )
+                                        try walletStorage.importUserMetadataEncryptionKeys(keys, account.account)
+                                    } catch {
+                                        LoggerProxy.event("first-init metadata key derivation failed for '\(account.account.name ?? "?")': \(error)")
+                                    }
+                                }
+                            }
+
                             await send(.resolveMetadataEncryptionKeys)
                             await send(.loadUserMetadata)
 
