@@ -10,6 +10,7 @@ require "shellwords"
 # files require each other by name; requiring preflight pulls in the other three.
 $LOAD_PATH.unshift(File.expand_path("lib", __dir__))
 require_relative "lib/zodl/preflight"
+require_relative "lib/zodl/build_paths"
 
 # Refuse to run outside bundler so the pinned gem versions in Gemfile.lock are
 # always used. The Scripts/*.sh wrappers invoke `bundle exec fastlane`.
@@ -17,11 +18,22 @@ unless ENV["BUNDLE_GEMFILE"]
   UI.user_error!("Run through bundler: use ./Scripts/release.sh or ./Scripts/bump.sh (they call `bundle exec fastlane`).")
 end
 
-PROJECT = "secant.xcodeproj"
+PROJECT = Zodl::BuildPaths::PROJECT
 TEST_SCHEME = "zodl-internal"        # only scheme wired to the zodlTests target
 TEST_DEVICE = "iPhone 17 Pro"
 PARTNER_KEYS_REL = "secant/Resources/PartnerKeys.plist"
 FASTLANE_DIR = __dir__
+TEAM_ID = "RLPRR8CPQG"               # Apple Developer team (matches DEVELOPMENT_TEAM in the project)
+
+# Swift macros (TCA, swift-dependencies, swift-perception, swift-case-paths) and
+# SPM build-tool plugins (SwiftGen, SwiftLint, XCStringsTool) must be trusted
+# before use. A fresh build worktree carries no prior approval and this
+# non-interactive CLI build (fastlane → xcodebuild) can't show the trust prompt,
+# so without these flags xcodebuild fails at ComputeTargetDependencyGraph with
+# "Macro … must be enabled before it can be used". Both the test run and the
+# archive go through the same xcodebuild CLI, so both need them — keep the flags
+# here so the two invocations can't drift apart.
+SKIP_VALIDATION_XCARGS = "-skipPackagePluginValidation -skipMacroValidation"
 
 # Don't auto-generate fastlane/README.md on every run; it is maintained by hand.
 skip_docs
@@ -44,6 +56,9 @@ lane :release do |options|
   branch_version = Zodl::Version.from_branch(ref)
   project_version = marketing_version_at(repo_root, sha)
   api_key = asc_api_key
+  # Resolve+verify the signing key path now (cwd is still the real repo), so it's
+  # an absolute path into the real fastlane dir before we chdir into the worktree.
+  auth_xcargs = asc_auth_xcargs(repo_root)
 
   variants.each do |variant|
     cfg = Zodl::Variants.config(variant)
@@ -73,6 +88,10 @@ lane :release do |options|
 
   UI.user_error!("Aborted.") unless truthy(options[:yes]) || UI.confirm("Proceed with the build above?")
 
+  # Create/refresh the App Store distribution profiles up front, so a signing or
+  # API-permission problem fails now instead of after the ~15-minute build.
+  ensure_appstore_profiles(variants, api_key)
+
   worktree = File.join(Dir.tmpdir, "zodl-release-#{sha[0, 8]}")
   begin
     UI.message("Creating a clean build worktree at #{sha[0, 8]}…")
@@ -80,12 +99,16 @@ lane :release do |options|
     FileUtils.cp(File.join(repo_root, PARTNER_KEYS_REL), File.join(worktree, PARTNER_KEYS_REL))
 
     Dir.chdir(worktree) do
+      # Absolute paths, anchored to the worktree: fastlane runs each action inside
+      # `Dir.chdir("..")`, which from here lands in the worktree's PARENT, so any
+      # RELATIVE path passed to run_tests/build_app would resolve there and break.
+      paths = Zodl::BuildPaths.resolve(worktree)
       UI.message("Resolving Swift packages…")
       run("xcodebuild -project #{PROJECT} -scheme #{TEST_SCHEME} -resolvePackageDependencies", must_succeed: true)
-      run_unit_tests unless truthy(options[:skip_tests])
+      run_unit_tests(paths) unless truthy(options[:skip_tests])
       variants.each do |variant|
         UI.message("Building and uploading #{variant}…")
-        build_and_upload(variant, version, build, api_key)
+        build_and_upload(variant, version, build, api_key, paths, auth_xcargs)
       end
     end
   ensure
@@ -143,6 +166,25 @@ def asc_api_key
     issuer_id: ENV.fetch("ASC_ISSUER_ID"),
     key_filepath: File.expand_path(ENV.fetch("ASC_KEY_FILEPATH"), FASTLANE_DIR)
   )
+end
+
+# xcodebuild flags that authenticate automatic signing (-allowProvisioningUpdates)
+# with the App Store Connect API key. gym/build_app has no api_key option, so
+# without these the export step can't reach App Store Connect to create the
+# distribution profile the entitlements need (Associated Domains, iCloud) and
+# falls back to Xcode's stored GUI accounts — failing on a stale one. Same key as
+# asc_api_key. The path is anchored on the absolute repo_root (NOT the cwd-relative
+# FASTLANE_DIR): build_app runs inside Dir.chdir(worktree), so FASTLANE_DIR would
+# resolve into the worktree — which has no .p8 — and xcodebuild would reject the
+# path as non-existent. Checked here so we fail fast, not minutes into the build.
+def asc_auth_xcargs(repo_root)
+  key_path = File.expand_path(ENV.fetch("ASC_KEY_FILEPATH"), File.join(repo_root, "fastlane"))
+  UI.user_error!("ASC API key not found at #{key_path} — set ASC_KEY_FILEPATH in fastlane/.env") unless File.exist?(key_path)
+  [
+    "-authenticationKeyPath #{key_path.shellescape}",
+    "-authenticationKeyID #{ENV.fetch('ASC_KEY_ID').shellescape}",
+    "-authenticationKeyIssuerID #{ENV.fetch('ASC_ISSUER_ID').shellescape}"
+  ].join(" ")
 end
 
 # Latest build number for an app+version on App Store Connect (TestFlight train).
@@ -232,32 +274,60 @@ def signing_identity_ok?
   out.include?("Apple Distribution") || out.include?("iPhone Distribution")
 end
 
-def run_unit_tests
+def run_unit_tests(paths)
   run_tests(
-    project: PROJECT,
+    project: paths[:project],
     scheme: TEST_SCHEME,
     devices: [TEST_DEVICE],
     only_testing: ["zodlTests"],
-    derived_data_path: "build/DerivedData",
+    derived_data_path: paths[:derived_data],
     code_coverage: false,
     clean: false,
-    xcargs: "CODE_SIGNING_ALLOWED=NO -skipPackagePluginValidation -skipMacroValidation"
+    xcargs: "CODE_SIGNING_ALLOWED=NO #{SKIP_VALIDATION_XCARGS}"
   )
 end
 
-def build_and_upload(variant, version, build, api_key)
+# App Store distribution profile name per variant. Used both to create the profile
+# (get_provisioning_profile) and to reference it in gym's export options.
+def appstore_profile_name(variant)
+  "ZODL #{variant} App Store"
+end
+
+# Create or refresh an App Store distribution profile for each variant via the ASC
+# API key. force: true regenerates it so it always carries the App ID's current
+# capabilities (Associated Domains, iCloud) — exportArchive requires a profile with
+# those, and -allowProvisioningUpdates does not mint one. Installed into
+# ~/Library/MobileDevice/Provisioning Profiles for the export step to pick up.
+def ensure_appstore_profiles(variants, api_key)
+  variants.each do |variant|
+    cfg = Zodl::Variants.config(variant)
+    get_provisioning_profile(
+      api_key: api_key,
+      app_identifier: cfg[:app_identifier],
+      provisioning_name: appstore_profile_name(variant),
+      force: true
+    )
+  end
+end
+
+def build_and_upload(variant, version, build, api_key, paths, auth_xcargs)
   cfg = Zodl::Variants.config(variant)
 
   ipa = build_app(
-    project: PROJECT,
+    project: paths[:project],
     scheme: cfg[:scheme],
     configuration: cfg[:configuration],
     export_method: "app-store",
-    output_directory: "build",
+    output_directory: paths[:output_dir],
     output_name: "#{variant}-#{version}-#{build}.ipa",
     clean: true,
-    derived_data_path: "build/DerivedData",
-    xcargs: "CURRENT_PROJECT_VERSION=#{build} -allowProvisioningUpdates"
+    derived_data_path: paths[:derived_data],
+    xcargs: "CURRENT_PROJECT_VERSION=#{build} -allowProvisioningUpdates #{auth_xcargs} #{SKIP_VALIDATION_XCARGS}",
+    export_options: {
+      signingStyle: "manual",
+      teamID: TEAM_ID,
+      provisioningProfiles: { cfg[:app_identifier] => appstore_profile_name(variant) }
+    }
   )
 
   upload_to_testflight(
