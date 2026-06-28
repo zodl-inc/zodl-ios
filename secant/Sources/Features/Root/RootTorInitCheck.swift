@@ -37,6 +37,26 @@ extension Root {
             case .settings(.path(.element(id: _, action: .torSetup(.torInitFailed)))):
                 return .send(.torInitFailed)
 
+            // WalletBalances renders the fiat row only when `isExchangeRateFeatureOn` is true, and that
+            // flag is a one-shot snapshot taken in WalletBalances.onAppear. In the split-view layout the
+            // sidebar balance is always visible and never re-appears, so onAppear can't pick up a change
+            // made on the Settings screen — the value is fetched and stored but stays hidden behind the
+            // stale gate. Mirror the disable poke in `.torDisableTapped` below: push the flag straight onto
+            // homeState when currency conversion is enabled, from either the root-level setup (smart-banner
+            // path) or the Settings stack. Both emit `.torInitSucceeded` once the rate fetch is armed.
+            case .currencyConversionSetup(.torInitSucceeded),
+                .settings(.path(.element(id: _, action: .currencyConversionSetup(.torInitSucceeded)))):
+                state.homeState.walletBalancesState.isExchangeRateFeatureOn = true
+                return .none
+
+            // Symmetric opt-out. Only the Settings layout can disable via `.saveChangesTapped` (the
+            // root-level setup uses skip/enable and never emits `.settingsOptionChanged`), so without this
+            // the gate would stay true after a Settings opt-out and the row would spin on "Loading…"
+            // forever instead of disappearing.
+            case .settings(.path(.element(id: _, action: .currencyConversionSetup(.settingsOptionChanged(.optOut))))):
+                state.homeState.walletBalancesState.isExchangeRateFeatureOn = false
+                return .none
+
             case .torInitFailed:
                 state.alert = AlertState.torInitFailedRequest()
                 return .none
