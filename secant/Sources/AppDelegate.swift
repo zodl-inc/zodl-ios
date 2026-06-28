@@ -102,8 +102,38 @@ extension AppDelegate {
         }
         
         LoggerProxy.event("BGTask SCHEDULER registered \(bcgSchedulerTaskResult)")
+
+        // Ironwood migration: runs one simulated migration transfer per firing. Self-contained — it
+        // does NOT trigger a sync (broadcast and sync are decoupled).
+        let migrationTaskResult = BGTaskScheduler.shared.register(
+            forTaskWithIdentifier: MigrationBGTask.identifier,
+            using: DispatchQueue.main
+        ) { [self] task in
+            LoggerProxy.event("BGTask BGTaskScheduler.shared.register MIGRATION called")
+            guard let task = task as? BGProcessingTask else {
+                return
+            }
+
+            runMigrationBackgroundTask(task)
+        }
+
+        LoggerProxy.event("BGTask MIGRATION registered \(migrationTaskResult)")
     }
-    
+
+    private func runMigrationBackgroundTask(_ task: BGProcessingTask) {
+        LoggerProxy.event("BGTask runMigrationBackgroundTask called")
+        let worker = MigrationBackgroundWorker()
+        let operation = Task {
+            await worker.runMigrationStep()
+            task.setTaskCompleted(success: true)
+        }
+        task.expirationHandler = {
+            LoggerProxy.event("BGTask runMigrationBackgroundTask expirationHandler called")
+            operation.cancel()
+            task.setTaskCompleted(success: false)
+        }
+    }
+
     private func startBackgroundTask(_ task: BGProcessingTask) {
         LoggerProxy.event("BGTask startBackgroundTask called")
         

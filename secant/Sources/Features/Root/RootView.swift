@@ -151,6 +151,16 @@ private extension RootView {
                                 )
                                 .transition(.move(edge: .trailing))
                                 .zIndex(1)
+                            } else if path == .migrationCoordFlow {
+                                MigrationCoordFlowView(
+                                    store:
+                                        store.scope(
+                                            state: \.migrationCoordFlowState,
+                                            action: \.migrationCoordFlow),
+                                    tokenName: tokenName
+                                )
+                                .transition(.move(edge: .trailing))
+                                .zIndex(1)
                             } else if path == .sendCoordFlow {
                                 SendCoordFlowView(
                                     store:

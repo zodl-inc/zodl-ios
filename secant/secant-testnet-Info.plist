@@ -6,6 +6,7 @@
 	<array>
 		<string>co.electriccoin.power_wifi_sync</string>
 		<string>co.electriccoin.scheduler</string>
+		<string>co.electriccoin.ironwood_migration</string>
 	</array>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>

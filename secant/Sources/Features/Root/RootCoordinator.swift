@@ -183,6 +183,15 @@ extension Root {
                 state.path = .receive
                 return .none
 
+            case .migrationCoordFlow(.dismiss):
+                state.path = nil
+                return .none
+
+            case .home(.migrationBannerTapped):
+                state.migrationCoordFlowState = .initial
+                state.path = .migrationCoordFlow
+                return .none
+
             case .home(.sendTapped):
                 state.sendCoordFlowState = .initial
                 state.path = .sendCoordFlow
