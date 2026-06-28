@@ -31,6 +31,8 @@ extension MigrationSDKClient: DependencyKey {
             hasOverdueTransfers: { engine.overdue() },
             hasInvalidTransfers: { engine.invalid() },
             restartCurrentMigrationStep: { await engine.restart() },
+            rescheduleStalledTransfer: { await engine.rescheduleStalled() },
+            recreateInvalidTransfer: { await engine.recreateInvalid() },
             initializePostUpgrade: { engine.initializePostUpgrade() },
             selectMigrationMode: { engine.selectMode($0) },
             simulatedOrchardBalance: { engine.orchardBalance() },

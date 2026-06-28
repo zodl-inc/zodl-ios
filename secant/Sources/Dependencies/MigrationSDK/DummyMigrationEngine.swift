@@ -80,6 +80,7 @@ final class DummyMigrationEngine: @unchecked Sendable {
 
     func overdue() -> Bool {
         read { snapshot in
+            if case .requiresAttention(.transferStalled) = snapshot.state { return true }
             guard case .inProgress = snapshot.state else { return false }
             // A pending transfer is overdue once more than one bucket has elapsed past its window.
             return snapshot.transfers.contains {
@@ -91,7 +92,11 @@ final class DummyMigrationEngine: @unchecked Sendable {
 
     func invalid() -> Bool {
         read { snapshot in
-            if case .requiresAttention = snapshot.state { return true }
+            // Any attention reason except the (retryable) stall — that one routes to the status screen.
+            if case .requiresAttention(let reason) = snapshot.state {
+                if case .transferStalled = reason { return false }
+                return true
+            }
             return snapshot.transfers.contains { $0.status == .invalid || $0.status == .expired }
         }
     }
@@ -126,28 +131,42 @@ final class DummyMigrationEngine: @unchecked Sendable {
     func transferRows() -> [MigrationTransferRow] {
         read { snapshot in
             let height = snapshot.currentHeight
+            let isStalled: Bool = {
+                if case .requiresAttention(.transferStalled) = snapshot.state { return true }
+                return false
+            }()
             var rows: [MigrationTransferRow] = []
             var firstPendingSeen = false
             for (index, transfer) in snapshot.transfers.enumerated() {
                 let status: MigrationTransferRow.Status
+                // Positive = hours until the window; negative = hours since it passed (overdue).
+                let signedBlocks = transfer.proposal.nextExecutableAfterHeight - height
+                var hours = Int((Double(signedBlocks) / Double(Const.bucketBlocks)).rounded()) * 6
                 switch transfer.status {
                 case .sent:
                     status = .sent
+                    hours = 0
                 case .invalid:
                     status = .invalid
+                    hours = 0
                 case .expired:
                     status = .expired
+                    hours = 0
                 case .pending:
-                    let isOverdue = transfer.proposal.nextExecutableAfterHeight + Const.bucketBlocks <= height
+                    let windowPassed = transfer.proposal.nextExecutableAfterHeight + Const.bucketBlocks <= height
                     if firstPendingSeen {
                         status = .pending
+                        hours = max(0, hours)
                     } else {
                         firstPendingSeen = true
-                        status = isOverdue ? .overdue : .active
+                        let overdue = isStalled || windowPassed
+                        status = overdue ? .overdue : .active
+                        // Overdue rows keep the negative magnitude so the UI can show "Overdue · Xh ago".
+                        if !overdue {
+                            hours = max(0, hours)
+                        }
                     }
                 }
-                let blocksAway = max(0, transfer.proposal.nextExecutableAfterHeight - height)
-                let hours = Int((Double(blocksAway) / Double(Const.bucketBlocks)).rounded()) * 6
                 rows.append(
                     MigrationTransferRow(
                         id: transfer.proposal.id,
@@ -241,6 +260,11 @@ final class DummyMigrationEngine: @unchecked Sendable {
                     result = .expired
                     return
                 case let .networkError(retryable):
+                    // Not a silent retry: the scheduled send didn't go through. Slip this transfer's
+                    // window one bucket into the past and enter the stalled attention state, so the
+                    // SmartBanner + status screen surface it (Resume Migration).
+                    snapshot.currentHeight = snapshot.transfers[index].proposal.nextExecutableAfterHeight + Const.bucketBlocks
+                    snapshot.state = .requiresAttention(.transferStalled(transferNumber: index + 1))
                     result = .networkError(retryable: retryable)
                     return
                 case .success:
@@ -285,6 +309,48 @@ final class DummyMigrationEngine: @unchecked Sendable {
         return await propose()
     }
 
+    /// Clears a stalled transfer: bump its window to the next bucket and return to in-progress. The
+    /// caller separately reschedules the background task.
+    func rescheduleStalled() async {
+        mutate { snapshot in
+            guard case .requiresAttention(.transferStalled) = snapshot.state else { return }
+            if let i = snapshot.transfers.firstIndex(where: { $0.status == .pending }) {
+                let nextWindow = snapshot.currentHeight + Const.bucketBlocks
+                var proposal = snapshot.transfers[i].proposal
+                proposal.nextExecutableAfterHeight = nextWindow
+                proposal.anchorHeight = nextWindow - (nextWindow % Const.bucketBlocks)
+                proposal.expiryHeight = nextWindow + Const.expiryWindowBlocks
+                snapshot.transfers[i] = StoredTransfer(proposal: proposal, status: .pending)
+            }
+            snapshot.state = .inProgress(Self.progress(for: snapshot))
+        }
+    }
+
+    /// Re-creates the invalid/expired transfer in place (new proposal, same amount, next-bucket window),
+    /// keeps the other transfers, and returns to in-progress (Figma C5).
+    func recreateInvalid() async {
+        mutate { snapshot in
+            guard let i = snapshot.transfers.firstIndex(where: { $0.status == .invalid || $0.status == .expired }) else {
+                // Nothing marked — just clear the attention state back to in-progress.
+                if case .inProgress = snapshot.state {
+                } else {
+                    snapshot.state = .inProgress(Self.progress(for: snapshot))
+                }
+                return
+            }
+            let nextWindow = snapshot.currentHeight + Const.bucketBlocks
+            let fresh = TransferProposal(
+                id: Self.makeTxId(prefix: "xfer"),
+                amount: snapshot.transfers[i].proposal.amount,
+                anchorHeight: nextWindow - (nextWindow % Const.bucketBlocks),
+                nextExecutableAfterHeight: nextWindow,
+                expiryHeight: nextWindow + Const.expiryWindowBlocks
+            )
+            snapshot.transfers[i] = StoredTransfer(proposal: fresh, status: .pending)
+            snapshot.state = .inProgress(Self.progress(for: snapshot))
+        }
+    }
+
     // ── Debug ────────────────────────────────────────────────────────────────
 
     func debugReset() async {
@@ -314,6 +380,8 @@ final class DummyMigrationEngine: @unchecked Sendable {
             if case .inProgress = snapshot.state {
                 snapshot.state = .inProgress(Self.progress(for: snapshot))
             }
+            // A pending transfer whose window has now passed becomes a stall (background task missed).
+            Self.reconcileStall(&snapshot)
         }
     }
 
@@ -331,10 +399,14 @@ final class DummyMigrationEngine: @unchecked Sendable {
                     let schedule = buildSchedule(from: snapshot)
                     snapshot.transfers = schedule.transfers.map { StoredTransfer(proposal: $0, status: .pending) }
                 }
-                let maxWindow = snapshot.transfers.map { $0.proposal.nextExecutableAfterHeight }.max()
-                    ?? snapshot.currentHeight
-                snapshot.currentHeight = maxWindow + Const.bucketBlocks + 1
-                snapshot.state = .inProgress(Self.progress(for: snapshot))
+                if let i = snapshot.transfers.firstIndex(where: { $0.status == .pending }) {
+                    // Push height one bucket past the first pending transfer's window so it reads as
+                    // ~6h overdue, then enter the stalled attention state (Resume Migration).
+                    snapshot.currentHeight = snapshot.transfers[i].proposal.nextExecutableAfterHeight + Const.bucketBlocks
+                    snapshot.state = .requiresAttention(.transferStalled(transferNumber: i + 1))
+                } else {
+                    snapshot.state = .inProgress(Self.progress(for: snapshot))
+                }
             case .invalidTransfer:
                 if let index = snapshot.transfers.firstIndex(where: { $0.status == .pending }) {
                     snapshot.transfers[index].status = .invalid
@@ -448,6 +520,16 @@ final class DummyMigrationEngine: @unchecked Sendable {
         }
         parts.append(total - allocated)
         return parts
+    }
+
+    /// If the migration is in progress and its next transfer's window has passed, transition to the
+    /// stalled attention state (the scheduled background send didn't run).
+    private static func reconcileStall(_ snapshot: inout MigrationSnapshot) {
+        guard case .inProgress = snapshot.state else { return }
+        if let i = snapshot.transfers.firstIndex(where: { $0.status == .pending }),
+           snapshot.transfers[i].proposal.nextExecutableAfterHeight + Const.bucketBlocks <= snapshot.currentHeight {
+            snapshot.state = .requiresAttention(.transferStalled(transferNumber: i + 1))
+        }
     }
 
     private static func progress(for snapshot: MigrationSnapshot) -> MigrationProgress {

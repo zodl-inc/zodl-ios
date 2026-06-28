@@ -9454,6 +9454,9 @@
         }
       }
     },
+    "Latest Zcash network upgrade requires moving your %@ from the Orchard pool to the new Ironwood pool. Your funds are safe." : {
+
+    },
     "localAuthentication.reason" : {
       "comment" : "MARK: - Local authentication",
       "extractionState" : "manual",
@@ -9631,7 +9634,7 @@
     "Once confirmed, this transfer cannot be cancelled." : {
 
     },
-    "ORCHARD BALANCE" : {
+    "Orchard balance" : {
 
     },
     "osStatusError.error" : {
@@ -14729,10 +14732,10 @@
         }
       }
     },
-    "Splitting your balance into transfer-sized notes. This is a send-to-self — your %@ stays in Orchard." : {
+    "Split Your Wallet Funds" : {
 
     },
-    "SUMMARY" : {
+    "Splitting your balance into transfer-sized notes. This is a send-to-self — your %@ stays in Orchard." : {
 
     },
     "supportData.appVersionItem.bundleIdentifier" : {
@@ -17749,7 +17752,7 @@
         }
       }
     },
-    "The latest Zcash network upgrade requires moving your ZEC from the Orchard pool to the new Ironwood pool. Your funds are safe." : {
+    "This sends a transaction to yourself, breaking your balance into smaller notes. Each Ironwood migration transfer then settles independently — no waiting for change." : {
 
     },
     "tokenOnChain" : {

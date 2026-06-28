@@ -186,6 +186,9 @@ enum AttentionReason: Equatable, Sendable, Codable {
     case transferExpired
     /// A transfer produced change back to Orchard that must be synced before the next transfer.
     case syncRequiredBeforeNext
+    /// A scheduled transfer wasn't sent (network error / the background task didn't run). Retryable:
+    /// the user can send it now or reschedule it. `transferNumber` is the 1-based position in the plan.
+    case transferStalled(transferNumber: Int)
 }
 
 /// Top-level migration state machine.

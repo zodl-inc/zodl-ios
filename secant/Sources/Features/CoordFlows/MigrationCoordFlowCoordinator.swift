@@ -17,9 +17,11 @@ extension MigrationCoordFlow {
             case .start:
                 guard state.path.isEmpty else { return .none }
                 if migrationSDK.hasInvalidTransfers() {
-                    state.path.append(.recovery(MigrationRecovery.State(kind: .invalid)))
+                    // Invalid / expired transfer → C5 "Transfer No Longer Valid" (recreate + reschedule).
+                    state.path.append(.recovery(MigrationRecovery.State()))
                 } else if migrationSDK.hasOverdueTransfers() {
-                    state.path.append(.recovery(MigrationRecovery.State(kind: .overdue)))
+                    // Stalled / overdue (failed or missed send) → the status screen renders "Resume Migration".
+                    state.path.append(.status(MigrationStatus.State(presentation: .progress)))
                 } else {
                     switch migrationSDK.getMigrationState() {
                     case .inProgress, .complete:
@@ -82,34 +84,32 @@ extension MigrationCoordFlow {
             case .path(.element(id: _, action: .immediateReview(.delegate(.finished)))):
                 return .send(.dismiss)
 
-            // ── Recovery ──
+            // ── Resume Migration (stalled) actions, on the status screen ──
+            case .path(.element(id: _, action: .status(.delegate(.sendNow)))):
+                // Broadcast the stalled transfer now; the status screen refreshes from the state stream.
+                return .run { [migrationSDK] _ in
+                    _ = await migrationSDK.executeNextPendingTransfer(NetworkPrivacyOptions(useTor: false))
+                }
+
+            case .path(.element(id: _, action: .status(.delegate(.reschedule)))):
+                return .run { [migrationSDK, migrationBGScheduler] _ in
+                    await migrationSDK.rescheduleStalledTransfer()
+                    migrationBGScheduler.scheduleNextRun(60)
+                }
+
+            // ── Recovery (C5 · invalid) ──
             case .path(.element(id: _, action: .recovery(.delegate(.close)))):
-                // Deep-entry screen: the leading back control closes the whole flow → Home.
+                // Deep-entry screen: the leading close control closes the whole flow → Home.
                 return .send(.dismiss)
 
             case .path(.element(id: _, action: .recovery(.delegate(.recreate)))):
-                return .run { [migrationSDK] send in
-                    _ = await migrationSDK.restartCurrentMigrationStep()
+                return .run { [migrationSDK, migrationBGScheduler] send in
+                    await migrationSDK.recreateInvalidTransfer()
+                    migrationBGScheduler.scheduleNextRun(60)
                     await send(.recoveryRecreated)
                 }
 
             case .recoveryRecreated:
-                state.path.append(.transferPlan(MigrationTransferPlan.State()))
-                return .none
-
-            case .path(.element(id: _, action: .recovery(.delegate(.sendNow)))):
-                return .run { [migrationSDK] send in
-                    _ = await migrationSDK.executeNextPendingTransfer(NetworkPrivacyOptions(useTor: false))
-                    await send(.recoverySent)
-                }
-
-            case .recoverySent:
-                migrationBGScheduler.scheduleNextRun(60)
-                state.path.append(.status(MigrationStatus.State(presentation: .progress)))
-                return .none
-
-            case .path(.element(id: _, action: .recovery(.delegate(.reschedule)))):
-                migrationBGScheduler.scheduleNextRun(60)
                 state.path.append(.status(MigrationStatus.State(presentation: .progress)))
                 return .none
 

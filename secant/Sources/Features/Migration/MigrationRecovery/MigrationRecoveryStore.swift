@@ -2,57 +2,62 @@
 //  MigrationRecoveryStore.swift
 //  zodl
 //
-//  Simplified recovery prompt (per product guidance — no per-cause UI):
-//  - overdue: background delivery was delayed → Send now / Reschedule.
-//  - invalid: a transfer is no longer valid → re-create for the remaining balance.
+//  "Transfer No Longer Valid" (Figma C5). A pre-signed transfer became invalid (its input note was
+//  spent) or expired (anchor too old). The user re-creates it for the remaining amount; the other
+//  transfers are kept and re-scheduled. The retryable "stalled / overdue" case lives on the status
+//  screen ("Resume Migration"), not here.
 //
 
 import ComposableArchitecture
 import SwiftUI
+@preconcurrency import ZcashLightClientKit
 
 @Reducer
 struct MigrationRecovery {
     @ObservableState
     struct State: Equatable {
-        enum Kind: Equatable {
-            case overdue
-            case invalid
-        }
+        var summary: MigrationSummary = .zero
+        /// 1-based number of the invalid/expired transfer (0 if unknown).
+        var invalidTransferNumber = 0
+        var invalidAmount: Zatoshi = .zero
 
-        var kind: Kind = .invalid
-
-        init(kind: Kind = .invalid) {
-            self.kind = kind
-        }
+        init() { }
     }
 
     enum Action {
         enum Delegate: Equatable {
             case recreate
-            case sendNow
-            case reschedule
-            /// Leading back control — close the whole flow back to Home.
+            /// Leading close control — closes the whole flow back to Home.
             case close
         }
 
-        case sendNowTapped
-        case rescheduleTapped
+        case onAppear
         case recreateTapped
+        case learnMoreTapped
         case closeTapped
         case delegate(Delegate)
     }
 
-    var body: some Reducer<State, Action> {
-        Reduce { _, action in
-            switch action {
-            case .sendNowTapped:
-                return .send(.delegate(.sendNow))
+    @Dependency(\.migrationSDK) var migrationSDK
 
-            case .rescheduleTapped:
-                return .send(.delegate(.reschedule))
+    var body: some Reducer<State, Action> {
+        Reduce { state, action in
+            switch action {
+            case .onAppear:
+                state.summary = migrationSDK.migrationSummary()
+                let rows = migrationSDK.migrationTransfers()
+                if let invalid = rows.first(where: { $0.status == .invalid || $0.status == .expired }) {
+                    state.invalidTransferNumber = invalid.index + 1
+                    state.invalidAmount = invalid.amount
+                }
+                return .none
 
             case .recreateTapped:
                 return .send(.delegate(.recreate))
+
+            case .learnMoreTapped:
+                // PROTOTYPE: the design's secondary action has no destination yet.
+                return .none
 
             case .closeTapped:
                 return .send(.delegate(.close))

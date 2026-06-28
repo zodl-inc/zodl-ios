@@ -36,6 +36,8 @@ struct MigrationStatusView: View {
                     ) {
                         store.send(.doneTapped)
                     }
+                } else if store.isStalled {
+                    resumeContent
                 } else if store.presentation == .scheduledSuccess {
                     scheduledSuccessContent
                 } else {
@@ -122,6 +124,79 @@ struct MigrationStatusView: View {
             RoundedRectangle(cornerRadius: Design.Radius._xl)
                 .fill(Design.Surfaces.bgSecondary.color(colorScheme))
         }
+    }
+
+    // MARK: - Resume Migration (stalled — Figma B8 "Resume Migration")
+
+    @ViewBuilder private var resumeContent: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 24) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Resume Migration")
+                            .zFont(.semiBold, size: 28, style: Design.Text.primary)
+
+                        Text(resumeSubtitle)
+                            .zFont(.regular, size: 14, style: Design.Text.tertiary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    transfersList
+
+                    progressCard
+                }
+                .padding(.top, 24)
+                .padding(.bottom, 24)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            VStack(spacing: 16) {
+                windowMissedNote
+
+                VStack(spacing: 12) {
+                    ZashiButton("Send now") {
+                        store.send(.sendNowTapped)
+                    }
+
+                    ZashiButton("Reschedule", type: .secondary) {
+                        store.send(.rescheduleTapped)
+                    }
+                }
+            }
+            .padding(.bottom, 24)
+        }
+        .screenHorizontalPadding()
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .applyScreenBackground()
+    }
+
+    private var resumeSubtitle: String {
+        let total = store.transfers.count
+        let number = store.stalledTransferNumber
+        let hoursAgo = store.transfers.first { $0.status == .overdue }.map { abs($0.hoursFromNow) } ?? 0
+        if hoursAgo > 0 {
+            return "Transfer \(number) of \(total) was scheduled \(hoursAgo)h ago but wasn't sent. Reschedule and send now."
+        }
+        return "Transfer \(number) of \(total) was scheduled but wasn't sent. Reschedule and send now."
+    }
+
+    @ViewBuilder private var windowMissedNote: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "info.circle")
+                .foregroundStyle(Design.Text.tertiary.color(colorScheme))
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Transfer window missed")
+                    .zFont(.semiBold, size: 14, style: Design.Text.primary)
+
+                Text("Send now or reschedule to the next window.")
+                    .zFont(.regular, size: 13, style: Design.Text.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // MARK: - Progress (Figma B8)
@@ -221,8 +296,9 @@ struct MigrationStatusView: View {
     private func badgeStyle(_ status: MigrationTransferRow.Status) -> MigrationStepBadge.Style {
         switch status {
         case .sent: return .sent
-        case .active: return .active
-        case .overdue, .invalid, .expired: return .warning
+        // Overdue is the actionable next step → dark numbered badge (matches the Resume Migration design).
+        case .active, .overdue: return .active
+        case .invalid, .expired: return .warning
         case .pending: return .pending
         }
     }
@@ -231,7 +307,9 @@ struct MigrationStatusView: View {
         switch row.status {
         case .sent: return "Sent"
         case .active: return "Ready now"
-        case .overdue: return "Overdue"
+        case .overdue:
+            let agoHours = abs(row.hoursFromNow)
+            return agoHours > 0 ? "Overdue · \(agoHours)h ago" : "Overdue"
         case .pending: return row.hoursFromNow == 0 ? "Ready soon" : "~\(row.hoursFromNow) hours"
         case .invalid: return "Invalid"
         case .expired: return "Expired"

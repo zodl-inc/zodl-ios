@@ -166,6 +166,93 @@ struct DummyMigrationEngineTests {
         #expect(engine.currentState() == .complete)
         #expect(engine.orchardBalance().amount > 0)
     }
+
+    @Test func networkErrorStallsThenSendNowCompletes() async {
+        let engine = makeEngine()
+        await engine.debugSeed(orchard: Zatoshi(1_000_000_000), noteCount: 3)
+        engine.selectMode(.privateScheduled)
+        let proposal = await engine.prepareSplit()
+        _ = await engine.submitSplit(proposal)
+        engine.confirmSplit()
+        await engine.signAndStore(await engine.propose())
+
+        // A network error stalls the migration (it is NOT a silent retry).
+        await engine.debugArm(.networkError(retryable: true))
+        let stalled = await engine.executeNext(NetworkPrivacyOptions(useTor: false))
+        #expect(stalled == .networkError(retryable: true))
+        if case .requiresAttention(.transferStalled) = engine.currentState() {
+            // expected
+        } else {
+            Issue.record("expected transferStalled, got \(engine.currentState())")
+        }
+        #expect(engine.overdue())
+        #expect(!engine.invalid())
+
+        // "Send now" (no armed failure) broadcasts the stalled transfer and clears the attention state.
+        let sent = await engine.executeNext(NetworkPrivacyOptions(useTor: false))
+        if case .success = sent {
+            // expected
+        } else {
+            Issue.record("expected success, got \(String(describing: sent))")
+        }
+        if case .requiresAttention = engine.currentState() {
+            Issue.record("still requiresAttention after send now")
+        }
+    }
+
+    @Test func rescheduleStalledReturnsToInProgress() async {
+        let engine = makeEngine()
+        await engine.debugSeed(orchard: Zatoshi(1_000_000_000), noteCount: 3)
+        engine.selectMode(.privateScheduled)
+        let proposal = await engine.prepareSplit()
+        _ = await engine.submitSplit(proposal)
+        engine.confirmSplit()
+        await engine.signAndStore(await engine.propose())
+
+        await engine.debugArm(.networkError(retryable: true))
+        _ = await engine.executeNext(NetworkPrivacyOptions(useTor: false))
+        #expect(engine.overdue())
+
+        await engine.rescheduleStalled()
+        if case .inProgress = engine.currentState() {
+            // expected
+        } else {
+            Issue.record("expected inProgress after reschedule, got \(engine.currentState())")
+        }
+        #expect(!engine.overdue())
+    }
+
+    @Test func recreateInvalidReplacesOnlyThatTransfer() async {
+        let engine = makeEngine()
+        await engine.debugSeed(orchard: Zatoshi(1_000_000_000), noteCount: 3)
+        engine.selectMode(.privateScheduled)
+        let proposal = await engine.prepareSplit()
+        _ = await engine.submitSplit(proposal)
+        engine.confirmSplit()
+        let schedule = await engine.propose()
+        await engine.signAndStore(schedule)
+        let countBefore = schedule.transfers.count
+
+        await engine.debugArm(.invalidNote)
+        _ = await engine.executeNext(NetworkPrivacyOptions(useTor: false))
+        #expect(engine.invalid())
+        let invalidRow = engine.transferRows().first { $0.status == .invalid }
+        #expect(invalidRow != nil)
+
+        await engine.recreateInvalid()
+        let rowsAfter = engine.transferRows()
+        #expect(rowsAfter.count == countBefore)
+        #expect(!rowsAfter.contains { $0.status == .invalid })
+        if case .inProgress = engine.currentState() {
+            // expected
+        } else {
+            Issue.record("expected inProgress after recreate, got \(engine.currentState())")
+        }
+        // The recreated transfer keeps the same amount as the invalid one it replaced.
+        if let invalidRow, let recreated = rowsAfter.first(where: { $0.index == invalidRow.index }) {
+            #expect(recreated.amount == invalidRow.amount)
+        }
+    }
 }
 
 @Suite(.serialized)
@@ -200,6 +287,16 @@ struct MigrationBackgroundWorkerTests {
             await client.debug.armNextTransferResult(.networkError(retryable: true))
             let armed = await worker.runMigrationStep()
             #expect(armed == .result(.networkError(retryable: true)))
+
+            // The migration is now visibly stalled (no longer a silent retry) — this is what makes the
+            // SmartBanner switch and the Resume Migration screen appear.
+            if case .requiresAttention(.transferStalled) = client.getMigrationState() {
+                // expected
+            } else {
+                Issue.record("expected requiresAttention(transferStalled), got \(client.getMigrationState())")
+            }
+            #expect(client.hasOverdueTransfers())
+            #expect(!client.hasInvalidTransfers())
         }
     }
 }

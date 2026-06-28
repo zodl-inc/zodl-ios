@@ -38,9 +38,8 @@ struct MigrationCoordFlow {
         case entry(MigrationEntry.Action)
         /// Sent when the flow appears — routes to recovery/progress if a migration is already underway.
         case start
-        /// Internal follow-ups for async recovery handling.
+        /// Internal follow-up for async recovery handling.
         case recoveryRecreated
-        case recoverySent
         /// Bubbles up to Root, which pops the whole flow.
         case dismiss
     }

@@ -157,7 +157,7 @@ struct MigrationDebug {
             case let .success(txId):
                 return "Transfer broadcast ✓\n\(txId)"
             case let .networkError(retryable):
-                return "Network error\(retryable ? " (retryable)" : "") — the transfer stays pending and will retry in the next window. Nothing changes on screen on purpose."
+                return "Network error\(retryable ? " (retryable)" : "") — migration paused. The transfer now needs attention; open the migration flow to resume (Send now / Reschedule)."
             case .invalidNote:
                 return "Invalid note — migration now requires attention."
             case .expired:

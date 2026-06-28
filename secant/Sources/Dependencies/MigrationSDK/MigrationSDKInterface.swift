@@ -49,6 +49,11 @@ struct MigrationSDKClient: Sendable {
 
     // ── Invalidity recovery ────────────────────────────────────────────────
     var restartCurrentMigrationStep: @Sendable () async -> MigrationSchedule = { MigrationSchedule(transfers: [], estimatedDurationHours: 0) }
+    /// PROTOTYPE: clears a stalled transfer (reschedules it to the next window) and returns to in-progress.
+    var rescheduleStalledTransfer: @Sendable () async -> Void = {}
+    /// PROTOTYPE: re-creates the invalid/expired transfer in place, keeping the rest, and returns to
+    /// in-progress (Figma C5).
+    var recreateInvalidTransfer: @Sendable () async -> Void = {}
 
     // ── Lifecycle ──────────────────────────────────────────────────────────
     var initializePostUpgrade: @Sendable () -> Void = {}

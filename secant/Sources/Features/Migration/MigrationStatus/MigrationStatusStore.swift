@@ -32,6 +32,18 @@ struct MigrationStatus {
 
         var isComplete: Bool { migrationState == .complete }
 
+        /// A scheduled transfer failed / missed its window → render "Resume Migration" (Send now / Reschedule).
+        var isStalled: Bool {
+            if case .requiresAttention(.transferStalled) = migrationState { return true }
+            return false
+        }
+
+        /// 1-based number of the stalled transfer (0 when not stalled).
+        var stalledTransferNumber: Int {
+            if case let .requiresAttention(.transferStalled(number)) = migrationState { return number }
+            return 0
+        }
+
         init(presentation: Presentation = .progress) {
             self.presentation = presentation
         }
@@ -40,11 +52,15 @@ struct MigrationStatus {
     enum Action {
         enum Delegate: Equatable {
             case done
+            case sendNow
+            case reschedule
         }
 
         case onAppear
         case stateChanged(MigrationState)
         case doneTapped
+        case sendNowTapped
+        case rescheduleTapped
         case delegate(Delegate)
     }
 
@@ -79,6 +95,13 @@ struct MigrationStatus {
                     .cancel(id: CancelID.stateStream),
                     .send(.delegate(.done))
                 )
+
+            case .sendNowTapped:
+                // Stay on screen — the coordinator broadcasts and the state stream refreshes us.
+                return .send(.delegate(.sendNow))
+
+            case .rescheduleTapped:
+                return .send(.delegate(.reschedule))
 
             case .delegate:
                 return .none
