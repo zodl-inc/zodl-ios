@@ -10,9 +10,7 @@ struct HomeView: View {
 
     @Shared(.appStorage(.sensitiveContent)) var isSensitiveContentHidden = false
     @Shared(.inMemory(.walletStatus)) var walletStatus: WalletStatus = .none
-#if DEBUG
     @State private var showMigrationDebug = false
-#endif
 
     init(store: StoreOf<Home>, tokenName: String) {
         self.store = store
@@ -32,10 +30,11 @@ struct HomeView: View {
                     shortened: true
                 )
                 .padding(.top, 1)
-#if DEBUG
                 // PROTOTYPE: long-press the balance to open the migration simulator debug panel.
                 // Attached to a non-Button view so the gesture fires reliably, and reachable even
                 // after migration completes (the banner is gone by then).
+                // Intentionally available in all build configurations (incl. TestFlight/Release),
+                // not just DEBUG, so the prototype can be exercised from distributed builds.
                 .onLongPressGesture(minimumDuration: 0.6) { showMigrationDebug = true }
                 .sheet(isPresented: $showMigrationDebug) {
                     MigrationDebugView(
@@ -44,7 +43,6 @@ struct HomeView: View {
                         }
                     )
                 }
-#endif
 
                 HStack {
                     button(

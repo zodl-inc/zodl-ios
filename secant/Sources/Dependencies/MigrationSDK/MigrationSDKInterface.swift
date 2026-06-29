@@ -81,7 +81,7 @@ struct MigrationSDKClient: Sendable {
     var backgroundRunLog: @Sendable () -> [MigrationBackgroundRun] = { [] }
     var clearBackgroundRunLog: @Sendable () -> Void = {}
 
-    /// Debug surface driven by the MigrationDebug panel (DEBUG builds only).
+    /// Debug surface driven by the MigrationDebug panel (prototype; enabled in all builds).
     var debug: MigrationDebugControls = .noOp
 }
 
