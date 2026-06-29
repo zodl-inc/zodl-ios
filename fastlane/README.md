@@ -44,6 +44,17 @@ own App Store Connect app), an unpushed ref, a missing/invalid `PartnerKeys.plis
 the wrong Xcode, or no distribution signing identity. Run with `--dry-run` to see
 it without building.
 
+## Notifications
+
+A finished `release` posts a native macOS notification with a sound, so you can
+step away during the build/upload: **Ping** on success (and on a passing
+`--dry-run`), **Basso** on failure. It uses the built-in `osascript`
+(`display notification`) — nothing extra is installed. (`bump` does not notify.)
+
+The first notification may prompt you to allow notifications for your terminal app
+(Terminal, iTerm, …) in System Settings → Notifications — allow it once. Set
+`ZODL_NOTIFY=0` to silence them (they are also skipped automatically when `CI` is set).
+
 ## Tests
 
     bundle exec rake test                 # Ruby preflight logic (minitest)

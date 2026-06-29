@@ -11,6 +11,7 @@ require "shellwords"
 $LOAD_PATH.unshift(File.expand_path("lib", __dir__))
 require_relative "lib/zodl/preflight"
 require_relative "lib/zodl/build_paths"
+require_relative "lib/zodl/notify"
 
 # Refuse to run outside bundler so the pinned gem versions in Gemfile.lock are
 # always used. The Scripts/*.sh wrappers invoke `bundle exec fastlane`.
@@ -47,6 +48,8 @@ lane :release do |options|
   dry_run   = truthy(options[:dry_run])
 
   variants = Zodl::Variants.expand(options.fetch(:variant))
+  # Context for the `error` hook below, which only receives the raised exception.
+  @notify_context = { variants: variants, version: version, build: build }
 
   UI.message("Fetching latest refs from origin…")
   # Fail closed: the preflight reconciles against origin, so a failed fetch must abort
@@ -82,6 +85,7 @@ lane :release do |options|
   end
 
   if dry_run
+    Zodl::Notify.post(event: :dry_run_ok, variants: variants, version: version, build: build)
     UI.success("Dry run complete — preflight passed for: #{variants.join(', ')}. No build performed.")
     next
   end
@@ -118,6 +122,7 @@ lane :release do |options|
     end
   end
 
+  Zodl::Notify.post(event: :success, variants: variants, version: version, build: build)
   UI.success("Done: #{variants.join(', ')} #{version} (#{build}) from #{ref} @ #{sha[0, 8]}")
 end
 
@@ -139,6 +144,25 @@ lane :bump do |options|
   end
 
   UI.success("Bumped to #{version} (#{build}) and committed.")
+end
+
+# Notify on a failed release. The success and dry-run paths post inline (where
+# the full context is in scope); this hook catches every other abort/exception.
+# Posting is failure-safe and never changes the exit status — fastlane still
+# re-raises after this block. `bump` is intentionally not covered.
+error do |lane, exception|
+  next unless lane.to_s == "release"
+  # A declined confirmation prompt is a deliberate user stop, not a failure.
+  next if exception.message.to_s.start_with?("Aborted")
+
+  context = @notify_context || {}
+  Zodl::Notify.post(
+    event: :failure,
+    variants: context[:variants] || [],
+    version: context[:version],
+    build: context[:build],
+    reason: exception.message
+  )
 end
 
 # --- helpers -------------------------------------------------------------
