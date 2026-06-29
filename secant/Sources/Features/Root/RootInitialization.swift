@@ -130,6 +130,29 @@ extension Root {
                     state.$walletStatus.withLock { $0 = state.wasRestoringWhenDisconnected ? .restoring : .none }
                 }
 
+                // [#1755 / slipstream] Drive the restoring/resyncing LABEL from the SDK's durable
+                // `isRecovering` signal (recovery_progress incomplete = a from-birthday backfill is in
+                // progress). It's recomputed from data.db every launch, so a kill mid-restore relaunches
+                // as .restoring with no reliance on a persisted guess, and a stale flag self-corrects.
+                // A user-initiated RESYNC is the same engine operation (isRecovering can't see intent),
+                // so we honor the persisted resync intent for the label. `.disconnected` (set above) is
+                // left untouched; resync completion still clears via the existing up-to-date path.
+                let recovering = latestState.data.isRecovering
+                if state.walletStatus != .disconnected {
+                    if recovering {
+                        if state.walletStatus != .restoring, state.walletStatus != .resyncing {
+                            let resyncing = userDefaults.objectForKey(Constants.udIsResyncingWallet) as? Bool ?? false
+                            state.$walletStatus.withLock { $0 = resyncing ? .resyncing : .restoring }
+                        }
+                        state.isRestoringWallet = true
+                    } else if state.walletStatus == .restoring {
+                        state.isRestoringWallet = false
+                        userDefaults.remove(Constants.udIsRestoringWallet)
+                        userDefaults.remove(Constants.udIsResyncingWallet)
+                        state.$walletStatus.withLock { $0 = .none }
+                    }
+                }
+
                 // handle BCGTask
                 guard state.bgTask != nil else {
                     return .send(.initialization(.checkRestoreWalletFlag(snapshot.syncStatus)))
