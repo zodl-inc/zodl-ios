@@ -74,11 +74,10 @@ extension SDKSynchronizerClient: DependencyKey {
             eventStream: { synchronizer.eventStream },
             exchangeRateUSDStream: { synchronizer.exchangeRateUSDStream },
             latestState: { synchronizer.latestState },
-            prepareWith: { seedBytes, walletBirtday, walletMode, name, keySource in
+            prepareWith: { seedBytes, walletBirtday, name, keySource in
                 let result = try await synchronizer.prepare(
                     with: seedBytes,
                     walletBirthday: walletBirtday,
-                    for: walletMode,
                     name: name,
                     keySource: keySource
                 )

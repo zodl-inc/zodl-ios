@@ -397,10 +397,12 @@ extension Root {
                                 birthday = storedWallet.birthday?.value() ?? zcashSDKEnvironment.latestCheckpoint()
                             }
 
+                            // [#1755] The SDK derives the init flow from the birthday: a brand-new wallet
+                            // passes nil (the SDK picks a reorg-safe recent height), restore/existing pass
+                            // the stored birthday. `walletMode` is no longer handed to the SDK.
                             try await sdkSynchronizer.prepareWith(
                                 seedBytes,
-                                birthday,
-                                walletMode,
+                                walletMode == .newWallet ? nil : birthday,
                                 String(localizable: .accountsZashi),
                                 String(localizable: .accountsZashi).lowercased()
                             )

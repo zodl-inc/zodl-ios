@@ -41,7 +41,7 @@ struct SDKSynchronizerClient: Sendable {
     /// Seed is OPTIONAL: pass it only on first init (account import). Once the wallet exists in
     /// `data.db`, pass `nil` — the SDK prepares from the stored accounts and the seed never needs to
     /// be decrypted at launch (see docs/macos/KEYCHAIN_SE_HARDENING.md).
-    let prepareWith: @Sendable ([UInt8]?, BlockHeight, WalletInitMode, String, String?) async throws -> Void
+    let prepareWith: @Sendable ([UInt8]?, BlockHeight?, String, String?) async throws -> Void
     let start: @Sendable (_ retry: Bool) async throws -> Void
     let stop: @Sendable () -> Void
     let isSyncing: @Sendable () -> Bool
