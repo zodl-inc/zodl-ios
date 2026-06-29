@@ -124,7 +124,7 @@ extension AppDelegate {
         LoggerProxy.event("BGTask runMigrationBackgroundTask called")
         let worker = MigrationBackgroundWorker()
         let operation = Task {
-            await worker.runMigrationStep()
+            await worker.runMigrationStep(trigger: .scheduledTask)
             task.setTaskCompleted(success: true)
         }
         task.expirationHandler = {

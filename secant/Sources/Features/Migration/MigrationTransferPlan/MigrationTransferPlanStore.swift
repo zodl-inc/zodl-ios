@@ -38,9 +38,6 @@ struct MigrationTransferPlan {
     @Dependency(\.migrationBGScheduler) var migrationBGScheduler
     @Dependency(\.localNotification) var localNotification
 
-    /// First background run delay (seconds). Short for the prototype.
-    private let firstRunDelay: TimeInterval = 60
-
     var body: some Reducer<State, Action> {
         Reduce { state, action in
             switch action {
@@ -62,7 +59,7 @@ struct MigrationTransferPlan {
                 return .run { send in
                     await migrationSDK.signAndStoreMigrationSchedule(schedule)
                     _ = await localNotification.requestAuthorization()
-                    migrationBGScheduler.scheduleNextRun(firstRunDelay)
+                    migrationBGScheduler.scheduleFirstRun()
                     _ = options
                     await send(.committed)
                 }

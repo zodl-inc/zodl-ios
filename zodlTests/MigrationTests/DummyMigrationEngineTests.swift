@@ -282,12 +282,14 @@ struct MigrationBackgroundWorkerTests {
             $0.migrationSDK = client
             $0.localNotification.post = { _, _, _ in }
             $0.migrationBGScheduler.scheduleNextRun = { _ in }
+            $0.migrationBGScheduler.scheduleNightlyRun = { }
+            $0.migrationActivity.lastActivity = { nil }
         } operation: {
             let worker = MigrationBackgroundWorker()
 
             // No transfers yet → nothing to execute.
             await client.debug.seed(Zatoshi(1_000_000_000), 3)
-            let idle = await worker.runMigrationStep()
+            let idle = await worker.runMigrationStep(trigger: .scheduledTask)
             #expect(idle == .nothingPending)
 
             // Commit a schedule, arm a network error, then run: the transfer stays pending and the
@@ -300,7 +302,7 @@ struct MigrationBackgroundWorkerTests {
             await client.signAndStoreMigrationSchedule(schedule)
 
             await client.debug.armNextTransferResult(.networkError(retryable: true))
-            let armed = await worker.runMigrationStep()
+            let armed = await worker.runMigrationStep(trigger: .scheduledTask)
             #expect(armed == .result(.networkError(retryable: true)))
 
             // The migration is now visibly stalled (no longer a silent retry) — this is what makes the
@@ -322,12 +324,14 @@ struct MigrationBackgroundWorkerTests {
             $0.migrationSDK = client
             $0.localNotification.post = { _, _, _ in }
             $0.migrationBGScheduler.scheduleNextRun = { _ in }
+            $0.migrationBGScheduler.scheduleNightlyRun = { }
+            $0.migrationActivity.lastActivity = { nil }
         } operation: {
             let worker = MigrationBackgroundWorker()
 
             // No schedule yet → the run records a "nothing pending" entry.
             await client.debug.seed(Zatoshi(1_000_000_000), 3)
-            _ = await worker.runMigrationStep()
+            _ = await worker.runMigrationStep(trigger: .scheduledTask)
             #expect(client.backgroundRunLog().count == 1)
             #expect(client.backgroundRunLog().first?.outcome == .nothingPending)
 
@@ -338,7 +342,7 @@ struct MigrationBackgroundWorkerTests {
             await client.debug.confirmSplitNow()
             let schedule = await client.proposeMigrationTransfers()
             await client.signAndStoreMigrationSchedule(schedule)
-            _ = await worker.runMigrationStep()
+            _ = await worker.runMigrationStep(trigger: .scheduledTask)
 
             let log = client.backgroundRunLog()
             #expect(log.count == 2)

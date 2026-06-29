@@ -294,6 +294,7 @@ struct Root {
     @Dependency(\.flexaHandler) var flexaHandler
     @Dependency(\.localAuthentication) var localAuthentication
     @Dependency(\.mainQueue) var mainQueue
+    @Dependency(\.migrationActivity) var migrationActivity
     @Dependency(\.mnemonic) var mnemonic
     @Dependency(\.numberFormatter) var numberFormatter
     @Dependency(\.pasteboard) var pasteboard

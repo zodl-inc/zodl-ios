@@ -105,7 +105,7 @@ struct MigrationDebug {
             case .runBackgroundTaskTapped:
                 return .run { send in
                     let worker = MigrationBackgroundWorker()
-                    let outcome = await worker.runMigrationStep()
+                    let outcome = await worker.runMigrationStep(trigger: .manual)
                     await send(.refresh)
                     await send(.backgroundTaskFinished(outcome))
                 }
@@ -167,6 +167,8 @@ struct MigrationDebug {
             return "Sync is required before the next transfer — the background task was skipped (by design, sync never runs inside it)."
         case .nothingPending:
             return "No pending transfer to execute. Migration is finished or hasn't started."
+        case .tooSoonAfterActivity:
+            return "Too soon after the last app activity — a scheduled run would skip and reschedule past the 1-hour gap. (The debug button bypasses this and sends immediately.)"
         case let .result(result):
             switch result {
             case let .success(txId):

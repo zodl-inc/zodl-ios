@@ -47,6 +47,7 @@ extension Root {
         Reduce { state, action in
             switch action {
             case .initialization(.appDelegate(.didFinishLaunching)):
+                migrationActivity.recordActivity()
                 state.appStartState = .didFinishLaunching
                 // TODO: [#704], trigger the review request logic when approved by the team,
                 // https://github.com/Electric-Coin-Company/zashi-ios/issues/704
@@ -57,6 +58,7 @@ extension Root {
                     .cancellable(id: state.DidFinishLaunchingId, cancelInFlight: true)
 
             case .initialization(.appDelegate(.willEnterForeground)):
+                migrationActivity.recordActivity()
                 if state.featureFlags.appLaunchBiometric {
                     let now = Date()
                     let before = Date.init(timeIntervalSince1970: TimeInterval(state.lastAuthenticationTimestamp))
@@ -73,6 +75,7 @@ extension Root {
                 }
                 
             case .initialization(.appDelegate(.didEnterBackground)):
+                migrationActivity.recordActivity()
                 sdkSynchronizer.stop()
                 state.bgTask?.setTaskCompleted(success: false)
                 state.bgTask = nil

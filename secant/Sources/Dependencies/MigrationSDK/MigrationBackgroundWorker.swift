@@ -6,11 +6,22 @@
 //  handler in AppDelegate, and also by the DEBUG "Run background task now" control — so the whole
 //  chain (background execution → broadcast → notification → reschedule) is testable on demand.
 //
+//  A real scheduled run (`trigger == .scheduledTask`) refuses to broadcast within one hour of the
+//  user's last app activity and reschedules itself past that gap; the debug "Run now" button
+//  (`trigger == .manual`) bypasses the gap and sends immediately.
+//
 //  Per the proposal, sync is NEVER triggered here — broadcast and sync are decoupled in time.
 //
 
 import ComposableArchitecture
 import Foundation
+
+/// What triggered a background migration step. A real scheduled task enforces the 1-hour idle gap;
+/// the debug "Run now" button bypasses it and sends immediately.
+enum MigrationRunTrigger: Sendable {
+    case scheduledTask
+    case manual
+}
 
 /// What a single background migration step did — surfaced to the DEBUG panel so an armed result
 /// (especially a silent network-error retry) is observable. The production caller ignores it.
@@ -19,6 +30,9 @@ enum MigrationStepOutcome: Equatable, Sendable {
     case syncRequired
     /// No pending transfer — migration is finished or not started.
     case nothingPending
+    /// A scheduled run woke within an hour of the user's last app activity — it skipped without
+    /// broadcasting and rescheduled itself past the gap.
+    case tooSoonAfterActivity
     /// A transfer was attempted; carries the broadcast result.
     case result(TransferResult)
 }
@@ -27,20 +41,33 @@ struct MigrationBackgroundWorker: Sendable {
     @Dependency(\.migrationSDK) var migrationSDK
     @Dependency(\.localNotification) var localNotification
     @Dependency(\.migrationBGScheduler) var migrationBGScheduler
+    @Dependency(\.migrationActivity) var migrationActivity
+    @Dependency(\.date) var date
 
-    /// Reschedule delay for the next pending transfer (seconds). Short for the prototype.
-    private let rescheduleDelay: TimeInterval = 60
+    /// Minimum time since the user's last app activity before a scheduled run may broadcast.
+    private let minActivityGap: TimeInterval = 60 * 60
 
     @discardableResult
-    func runMigrationStep() async -> MigrationStepOutcome {
-        let outcome = await performStep()
+    func runMigrationStep(trigger: MigrationRunTrigger) async -> MigrationStepOutcome {
+        let outcome = await performStep(trigger: trigger)
         // PROTOTYPE: record every run (real BGTask or the debug "Run now") so the debug panel can show
         // when background tasks actually fired and what the transfer send returned.
         migrationSDK.recordBackgroundRun(Self.runLogOutcome(for: outcome))
         return outcome
     }
 
-    private func performStep() async -> MigrationStepOutcome {
+    private func performStep(trigger: MigrationRunTrigger) async -> MigrationStepOutcome {
+        // A scheduled run must not broadcast within an hour of the user last using the app. If it woke
+        // too soon, skip without sending and reschedule just past the gap. The debug "Run now" button
+        // (.manual) bypasses this and sends immediately.
+        if trigger == .scheduledTask, let lastActivity = migrationActivity.lastActivity() {
+            let elapsed = date.now().timeIntervalSince(lastActivity)
+            if elapsed < minActivityGap {
+                migrationBGScheduler.scheduleNextRun(minActivityGap - elapsed)
+                return .tooSoonAfterActivity
+            }
+        }
+
         // Sync must not run inside the background task. If the next transfer needs a sync first, bail
         // out and let the foreground app handle the sync, decoupled in time from the broadcast.
         guard !migrationSDK.isSyncRequiredBeforeNextTransfer() else { return .syncRequired }
@@ -54,9 +81,9 @@ struct MigrationBackgroundWorker: Sendable {
         switch result {
         case let .success(txId):
             await postSuccessNotification(txId: txId)
-            // Schedule the next window while transfers remain.
+            // Schedule the next night's window while transfers remain.
             if migrationSDK.getMigrationState() != .complete {
-                migrationBGScheduler.scheduleNextRun(rescheduleDelay)
+                migrationBGScheduler.scheduleNightlyRun()
             }
         case .networkError, .invalidNote, .expired:
             // Simplified error reporting (per product guidance): one generic notification, no per-cause UI.
@@ -87,6 +114,8 @@ struct MigrationBackgroundWorker: Sendable {
             return .syncRequired
         case .nothingPending:
             return .nothingPending
+        case .tooSoonAfterActivity:
+            return .skippedTooSoon
         case let .result(result):
             switch result {
             case let .success(txId):

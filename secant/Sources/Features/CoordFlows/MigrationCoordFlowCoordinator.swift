@@ -103,7 +103,7 @@ extension MigrationCoordFlow {
             case .path(.element(id: _, action: .status(.delegate(.reschedule)))):
                 return .run { [migrationSDK, migrationBGScheduler] _ in
                     await migrationSDK.rescheduleStalledTransfer()
-                    migrationBGScheduler.scheduleNextRun(60)
+                    migrationBGScheduler.scheduleNightlyRun()
                 }
 
             // ── Recovery (C5 · invalid) ──
@@ -114,7 +114,7 @@ extension MigrationCoordFlow {
             case .path(.element(id: _, action: .recovery(.delegate(.recreate)))):
                 return .run { [migrationSDK, migrationBGScheduler] send in
                     await migrationSDK.recreateInvalidTransfer()
-                    migrationBGScheduler.scheduleNextRun(60)
+                    migrationBGScheduler.scheduleNightlyRun()
                     await send(.recoveryRecreated)
                 }
 

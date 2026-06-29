@@ -175,6 +175,9 @@ struct MigrationBackgroundRun: Equatable, Sendable, Codable, Identifiable {
         case expired
         case nothingPending
         case syncRequired
+        /// A scheduled run woke within an hour of the user's last app activity and skipped without
+        /// broadcasting (the run was rescheduled past the 1-hour gap).
+        case skippedTooSoon
     }
 
     enum Severity: Equatable, Sendable {
@@ -202,6 +205,7 @@ struct MigrationBackgroundRun: Equatable, Sendable, Codable, Identifiable {
         case .expired: return "Expired ✗"
         case .nothingPending: return "Nothing pending"
         case .syncRequired: return "Sync required (skipped)"
+        case .skippedTooSoon: return "Too soon after activity (skipped)"
         }
     }
 
@@ -209,7 +213,7 @@ struct MigrationBackgroundRun: Equatable, Sendable, Codable, Identifiable {
         switch outcome {
         case .sent: return .success
         case .networkError, .invalidNote, .expired: return .failure
-        case .nothingPending, .syncRequired: return .neutral
+        case .nothingPending, .syncRequired, .skippedTooSoon: return .neutral
         }
     }
 }
