@@ -614,14 +614,22 @@ extension Root {
                 guard let wipePublisher = sdkSynchronizer.wipe() else {
                     return .send(.resetZashiSDKFailed)
                 }
-                return .publisher {
-                    wipePublisher
-                        .replaceEmpty(with: Void())
-                        .map { _ in return Root.Action.resetZashiSDKSucceeded }
-                        .replaceError(with: Root.Action.resetZashiSDKFailed)
-                        .receive(on: mainQueue)
-                }
-                .cancellable(id: state.SynchronizerCancelId, cancelInFlight: true)
+                return .merge(
+                    // [#1755] Return the SmartBanner to its initial state at the START of the wipe so a
+                    // stale promo banner (e.g. currency conversion, priority8) doesn't linger through
+                    // reset → restore. iPhone hides Home behind the welcome screen so it's never seen;
+                    // macOS keeps Home mounted in the split view, so without this the old banner stays
+                    // visible until the restoring banner (priority3) finally overrides it.
+                    .send(.home(.smartBanner(.closeAndCleanupBanner))),
+                    .publisher {
+                        wipePublisher
+                            .replaceEmpty(with: Void())
+                            .map { _ in return Root.Action.resetZashiSDKSucceeded }
+                            .replaceError(with: Root.Action.resetZashiSDKFailed)
+                            .receive(on: mainQueue)
+                    }
+                    .cancellable(id: state.SynchronizerCancelId, cancelInFlight: true)
+                )
 
             case .resetZashiSDKSucceeded:
                 state.splashAppeared = true
