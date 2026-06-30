@@ -164,6 +164,14 @@ extension SDKSynchronizerClient: DependencyKey {
             isSeedRelevantToAnyDerivedAccount: { seed in
                 try await synchronizer.isSeedRelevantToAnyDerivedAccount(seed: seed)
             },
+            planOrchardDenominationSplit: { totalInputZatoshi, prepFeeZatoshi, migrationFeeZatoshi, minimumOutputZatoshi in
+                try await synchronizer.planOrchardDenominationSplit(
+                    totalInputZatoshi: totalInputZatoshi,
+                    prepFeeZatoshi: prepFeeZatoshi,
+                    migrationFeeZatoshi: migrationFeeZatoshi,
+                    minimumOutputZatoshi: minimumOutputZatoshi
+                )
+            },
             refreshExchangeRateUSD: {
                 synchronizer.refreshExchangeRateUSD()
             },

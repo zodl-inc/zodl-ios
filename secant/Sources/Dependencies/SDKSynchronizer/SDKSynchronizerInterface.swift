@@ -75,7 +75,9 @@ struct SDKSynchronizerClient: Sendable {
     var proposeShielding: @Sendable (AccountUUID, Zatoshi, Memo, TransparentAddress?) async throws -> Proposal?
     
     var isSeedRelevantToAnyDerivedAccount: @Sendable ([UInt8]) async throws -> Bool
-    
+
+    var planOrchardDenominationSplit: @Sendable (Int64, Int64, Int64, Int64) async throws -> DenominationPlan
+
     var refreshExchangeRateUSD: @Sendable () -> Void
     
     var evaluateBestOf: @Sendable ([LightWalletEndpoint], Double, UInt64, Int, NetworkType) async -> [LightWalletEndpoint] = { _,_,_,_,_ in [] }

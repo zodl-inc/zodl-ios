@@ -2,9 +2,9 @@
 //  MigrationProcessorLiveKey.swift
 //  ZODL
 //
-// TODO: [#MOB-IRONWOOD] Wire all SDK stubs to OrchardMigrationSdk once
-//   zcash-android-wallet-sdk PR #2006 equivalent lands in zcash-swift-wallet-sdk.
-//   Every method below marked "SDK STUB" must be replaced with the real call.
+// TODO: [#MOB-IRONWOOD] `refresh()` calls the real `planOrchardDenominationSplit` SDK method
+//   (zcash-swift-wallet-sdk PR #1791). Methods still marked "SDK STUB" depend on the rest of the
+//   migration transaction-building surface, which is blocked on unstable Ironwood/nu6.3 crate APIs.
 //
 
 import Foundation
@@ -29,6 +29,14 @@ extension MigrationProcessorClient: DependencyKey {
     }
 }
 
+// Placeholder fee/threshold constants pending Core team confirmation (see open security
+// questions in the migration design doc — anchor height window, denomination economics).
+private enum DenominationPlanDefaults {
+    static let prepFeeZatoshi: Int64 = 10_000
+    static let migrationFeeZatoshi: Int64 = 10_000
+    static let minimumOutputZatoshi: Int64 = 50_000
+}
+
 // `@Dependency` property wrappers and the Combine subject are thread-safe.
 private final class MigrationProcessorImpl: @unchecked Sendable {
     @Dependency(\.derivationTool) var derivationTool
@@ -51,14 +59,43 @@ private final class MigrationProcessorImpl: @unchecked Sendable {
     }
 
     func refresh() {
-        Task { [subject] in
-            // TODO: [#MOB-IRONWOOD] SDK STUB — replace with:
-            //   let state = try await sdkSynchronizer.orchardMigration.getMigrationState()
-            //   let progress = try await sdkSynchronizer.orchardMigration.getMigrationProgress()
-            //   Map SDK MigrationState → MigrationProcessorClient.Phase and emit.
-            //
-            // For now, emit .notStarted so the UI doesn't show the banner until SDK is wired.
-            subject.send(.notStarted)
+        Task { [subject, sdkSynchronizer] in
+            guard let account = selectedWalletAccount else {
+                subject.send(.notStarted)
+                return
+            }
+
+            do {
+                let orchardSpendable = try await sdkSynchronizer.getAccountsBalances()[account.id]?.orchardBalance.spendableValue ?? .zero
+
+                guard orchardSpendable.amount > 0 else {
+                    subject.send(.notStarted)
+                    return
+                }
+
+                let plan = try await sdkSynchronizer.planOrchardDenominationSplit(
+                    orchardSpendable.amount,
+                    DenominationPlanDefaults.prepFeeZatoshi,
+                    DenominationPlanDefaults.migrationFeeZatoshi,
+                    DenominationPlanDefaults.minimumOutputZatoshi
+                )
+
+                guard !plan.migrationOutputs.isEmpty else {
+                    subject.send(.notStarted)
+                    return
+                }
+
+                subject.send(
+                    .awaitingNoteSplitConfirm(
+                        MigrationProcessorClient.NoteSplitProposalModel(
+                            outputNotes: plan.migrationOutputs,
+                            feeSatoshi: plan.prepFeeZatoshi
+                        )
+                    )
+                )
+            } catch {
+                subject.send(.failed(error.toZcashError()))
+            }
         }
     }
 
