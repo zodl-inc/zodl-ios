@@ -340,6 +340,11 @@ extension SDKSynchronizerClient: DependencyKey {
             migrationRestartCurrentStep: { account in
                 try await synchronizer.restartCurrentMigrationStep(for: account)
             },
+            // Re-anchors/re-proves/re-signs stale transfers; signs + persists but does NOT broadcast,
+            // so — like migrationSignAndStoreSchedule — it is not wrapped in the transaction guard.
+            migrationRefreshStaleTransfers: { spendingKey, account in
+                try await synchronizer.refreshStaleTransfers(spendingKey: spendingKey, for: account)
+            },
             migrationInitializePostUpgrade: { account in
                 try await synchronizer.initializePostUpgrade(for: account)
             }

@@ -45,6 +45,7 @@ struct LiveMigrationEngineTests {
         hasOverdueTransfers: @escaping @Sendable (AccountUUID) async throws -> Bool = { _ in false },
         hasInvalidTransfers: @escaping @Sendable (AccountUUID) async throws -> Bool = { _ in false },
         restartCurrentStep: @escaping @Sendable (AccountUUID) async throws -> ZcashLightClientKit.MigrationSchedule = { _ in ZcashLightClientKit.MigrationSchedule(transfers: [], estimatedDurationHours: 0) },
+        refreshStale: @escaping @Sendable (AccountUUID) async throws -> UInt32 = { _ in 0 },
         initializePostUpgrade: @escaping @Sendable (AccountUUID) async throws -> Void = { _ in }
     ) -> LiveMigrationEngine.Gateway {
         LiveMigrationEngine.Gateway(
@@ -62,6 +63,7 @@ struct LiveMigrationEngineTests {
             hasOverdueTransfers: hasOverdueTransfers,
             hasInvalidTransfers: hasInvalidTransfers,
             restartCurrentStep: restartCurrentStep,
+            refreshStale: refreshStale,
             initializePostUpgrade: initializePostUpgrade
         )
     }
@@ -77,13 +79,13 @@ struct LiveMigrationEngineTests {
         ZcashLightClientKit.MigrationProgress(
             completedTransfers: completed,
             totalTransfers: total,
-            remainingOrchardZatoshi: remaining,
+            remainingOrchard: remaining,
             nextTransferReadyAtHeight: next
         )
     }
 
     private func sdkTransfer(_ id: String, _ amount: UInt64) -> ZcashLightClientKit.TransferProposal {
-        ZcashLightClientKit.TransferProposal(id: id, amountZatoshi: amount, anchorHeight: 0, nextExecutableAfterHeight: 0, expiryHeight: 0)
+        ZcashLightClientKit.TransferProposal(id: id, amount: amount, anchorHeight: 0, nextExecutableAfterHeight: 0, expiryHeight: 0)
     }
 
     // MARK: - Refresh / cache
@@ -218,6 +220,33 @@ struct LiveMigrationEngineTests {
         ))
         let schedule = await engine.restart()
         #expect(schedule.transfers.first?.amount == Zatoshi(250))
+    }
+
+    @Test func rescheduleStalledRefreshesStaleTransfersInsteadOfRestarting() async {
+        let refreshed = OSAllocatedUnfairLock(initialState: false)
+        let engine = makeEngine(gateway: makeGateway(
+            restartCurrentStep: { _ in
+                Issue.record("rescheduleStalled must use refreshStaleTransfers, not restartCurrentMigrationStep")
+                return ZcashLightClientKit.MigrationSchedule(transfers: [], estimatedDurationHours: 0)
+            },
+            refreshStale: { _ in
+                refreshed.withLock { $0 = true }
+                return 2
+            }
+        ))
+        await engine.rescheduleStalled()
+        #expect(refreshed.withLock { $0 } == true)
+    }
+
+    @Test func rescheduleStalledWithNoAccountIsNoOp() async {
+        let engine = makeEngine(gateway: makeGateway(
+            account: nil,
+            refreshStale: { _ in
+                Issue.record("rescheduleStalled must not call refreshStaleTransfers without an account")
+                return 0
+            }
+        ))
+        await engine.rescheduleStalled()
     }
 
     // MARK: - Derived view models

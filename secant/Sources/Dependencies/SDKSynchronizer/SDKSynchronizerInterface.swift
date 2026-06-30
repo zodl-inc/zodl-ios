@@ -148,6 +148,13 @@ struct SDKSynchronizerClient: Sendable {
     var migrationHasOverdueTransfers: @Sendable (_ account: AccountUUID) async throws -> Bool
     var migrationHasInvalidTransfers: @Sendable (_ account: AccountUUID) async throws -> Bool
     var migrationRestartCurrentStep: @Sendable (_ account: AccountUUID) async throws -> ZcashLightClientKit.MigrationSchedule
+    /// Re-anchors/re-proves/re-signs stale transfers (anchor too old to broadcast), returning how many
+    /// were refreshed. Signs + persists but does NOT broadcast, so — like `migrationSignAndStoreSchedule`
+    /// — its LiveKey closure does not acquire the transaction guard.
+    var migrationRefreshStaleTransfers: @Sendable (
+        _ spendingKey: UnifiedSpendingKey,
+        _ account: AccountUUID
+    ) async throws -> UInt32
     var migrationInitializePostUpgrade: @Sendable (_ account: AccountUUID) async throws -> Void
 }
 

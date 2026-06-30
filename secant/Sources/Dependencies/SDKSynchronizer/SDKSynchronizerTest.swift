@@ -90,6 +90,7 @@ extension SDKSynchronizerClient: TestDependencyKey {
         migrationHasOverdueTransfers: unimplemented("\(Self.self).migrationHasOverdueTransfers", placeholder: false),
         migrationHasInvalidTransfers: unimplemented("\(Self.self).migrationHasInvalidTransfers", placeholder: false),
         migrationRestartCurrentStep: unimplemented("\(Self.self).migrationRestartCurrentStep", placeholder: ZcashLightClientKit.MigrationSchedule(transfers: [], estimatedDurationHours: 0)),
+        migrationRefreshStaleTransfers: unimplemented("\(Self.self).migrationRefreshStaleTransfers", placeholder: UInt32(0)),
         migrationInitializePostUpgrade: unimplemented("\(Self.self).migrationInitializePostUpgrade")
     )
 }
@@ -160,6 +161,7 @@ extension SDKSynchronizerClient {
         migrationHasOverdueTransfers: { _ in false },
         migrationHasInvalidTransfers: { _ in false },
         migrationRestartCurrentStep: { _ in ZcashLightClientKit.MigrationSchedule(transfers: [], estimatedDurationHours: 0) },
+        migrationRefreshStaleTransfers: { _, _ in 0 },
         migrationInitializePostUpgrade: { _ in }
     )
 
@@ -301,6 +303,7 @@ extension SDKSynchronizerClient {
         migrationHasOverdueTransfers: @escaping @Sendable (AccountUUID) async throws -> Bool = { _ in false },
         migrationHasInvalidTransfers: @escaping @Sendable (AccountUUID) async throws -> Bool = { _ in false },
         migrationRestartCurrentStep: @escaping @Sendable (AccountUUID) async throws -> ZcashLightClientKit.MigrationSchedule = { _ in ZcashLightClientKit.MigrationSchedule(transfers: [], estimatedDurationHours: 0) },
+        migrationRefreshStaleTransfers: @escaping @Sendable (UnifiedSpendingKey, AccountUUID) async throws -> UInt32 = { _, _ in 0 },
         migrationInitializePostUpgrade: @escaping @Sendable (AccountUUID) async throws -> Void = { _ in }
     ) -> SDKSynchronizerClient {
         SDKSynchronizerClient(
@@ -366,6 +369,7 @@ extension SDKSynchronizerClient {
             migrationHasOverdueTransfers: migrationHasOverdueTransfers,
             migrationHasInvalidTransfers: migrationHasInvalidTransfers,
             migrationRestartCurrentStep: migrationRestartCurrentStep,
+            migrationRefreshStaleTransfers: migrationRefreshStaleTransfers,
             migrationInitializePostUpgrade: migrationInitializePostUpgrade
         )
     }

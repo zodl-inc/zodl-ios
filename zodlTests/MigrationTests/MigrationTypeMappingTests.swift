@@ -45,7 +45,7 @@ struct MigrationTypeMappingTests {
         )
         let sdk = app.sdk
         #expect(sdk.id == "t1")
-        #expect(sdk.amountZatoshi == 500)
+        #expect(sdk.amount == 500)
         #expect(sdk.anchorHeight == 100)
         #expect(sdk.nextExecutableAfterHeight == 200)
         #expect(sdk.expiryHeight == 300)
@@ -60,7 +60,7 @@ struct MigrationTypeMappingTests {
         )
         let sdk = app.sdk
         #expect(sdk.transfers.count == 1)
-        #expect(sdk.transfers.first?.amountZatoshi == 500)
+        #expect(sdk.transfers.first?.amount == 500)
         #expect(sdk.estimatedDurationHours == 6)
     }
 
@@ -89,7 +89,7 @@ struct MigrationTypeMappingTests {
     @Test func transferProposalSDKToApp() {
         let sdk = ZcashLightClientKit.TransferProposal(
             id: "t1",
-            amountZatoshi: 500,
+            amount: 500,
             anchorHeight: 100,
             nextExecutableAfterHeight: 200,
             expiryHeight: 300
@@ -105,7 +105,7 @@ struct MigrationTypeMappingTests {
     @Test func migrationScheduleSDKToApp() {
         let sdk = ZcashLightClientKit.MigrationSchedule(
             transfers: [
-                ZcashLightClientKit.TransferProposal(id: "t1", amountZatoshi: 500, anchorHeight: 1, nextExecutableAfterHeight: 2, expiryHeight: 3)
+                ZcashLightClientKit.TransferProposal(id: "t1", amount: 500, anchorHeight: 1, nextExecutableAfterHeight: 2, expiryHeight: 3)
             ],
             estimatedDurationHours: 6
         )
@@ -119,7 +119,7 @@ struct MigrationTypeMappingTests {
         let sdk = ZcashLightClientKit.MigrationProgress(
             completedTransfers: 1,
             totalTransfers: 3,
-            remainingOrchardZatoshi: 1_000,
+            remainingOrchard: 1_000,
             nextTransferReadyAtHeight: 250
         )
         let app = sdk.app
@@ -133,7 +133,7 @@ struct MigrationTypeMappingTests {
         let sdk = ZcashLightClientKit.MigrationProgress(
             completedTransfers: 3,
             totalTransfers: 3,
-            remainingOrchardZatoshi: 0,
+            remainingOrchard: 0,
             nextTransferReadyAtHeight: nil
         )
         #expect(sdk.app.nextTransferReadyAtHeight == nil)
@@ -164,7 +164,7 @@ struct MigrationTypeMappingTests {
         let sdkProgress = ZcashLightClientKit.MigrationProgress(
             completedTransfers: 1,
             totalTransfers: 2,
-            remainingOrchardZatoshi: 5,
+            remainingOrchard: 5,
             nextTransferReadyAtHeight: 10
         )
         let state = ZcashLightClientKit.MigrationState.inProgress(sdkProgress).app

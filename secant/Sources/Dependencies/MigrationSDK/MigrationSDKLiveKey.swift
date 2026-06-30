@@ -170,6 +170,11 @@ extension LiveMigrationEngine.Gateway {
                 @Dependency(\.sdkSynchronizer) var sdkSynchronizer
                 return try await sdkSynchronizer.migrationRestartCurrentStep(account)
             },
+            refreshStale: { account in
+                @Dependency(\.sdkSynchronizer) var sdkSynchronizer
+                let spendingKey = try MigrationSDKClient.currentAccountSpendingKey()
+                return try await sdkSynchronizer.migrationRefreshStaleTransfers(spendingKey, account)
+            },
             initializePostUpgrade: { account in
                 @Dependency(\.sdkSynchronizer) var sdkSynchronizer
                 try await sdkSynchronizer.migrationInitializePostUpgrade(account)

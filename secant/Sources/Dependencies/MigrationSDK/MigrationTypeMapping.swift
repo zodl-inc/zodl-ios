@@ -54,7 +54,7 @@ extension TransferProposal {
     var sdk: ZcashLightClientKit.TransferProposal {
         ZcashLightClientKit.TransferProposal(
             id: id,
-            amountZatoshi: migrationZatoshiToUInt64(amount),
+            amount: migrationZatoshiToUInt64(amount),
             anchorHeight: migrationBlockHeightToUInt32(anchorHeight),
             nextExecutableAfterHeight: migrationBlockHeightToUInt32(nextExecutableAfterHeight),
             expiryHeight: migrationBlockHeightToUInt32(expiryHeight)
@@ -95,7 +95,7 @@ extension ZcashLightClientKit.TransferProposal {
     var app: TransferProposal {
         TransferProposal(
             id: id,
-            amount: migrationUInt64ToZatoshi(amountZatoshi),
+            amount: migrationUInt64ToZatoshi(amount),
             anchorHeight: migrationUInt32ToBlockHeight(anchorHeight),
             nextExecutableAfterHeight: migrationUInt32ToBlockHeight(nextExecutableAfterHeight),
             expiryHeight: migrationUInt32ToBlockHeight(expiryHeight)
@@ -117,7 +117,7 @@ extension ZcashLightClientKit.MigrationProgress {
         MigrationProgress(
             completedTransfers: Int(completedTransfers),
             totalTransfers: Int(totalTransfers),
-            remainingOrchard: migrationUInt64ToZatoshi(remainingOrchardZatoshi),
+            remainingOrchard: migrationUInt64ToZatoshi(remainingOrchard),
             nextTransferReadyAtHeight: nextTransferReadyAtHeight.map(migrationUInt32ToBlockHeight)
         )
     }

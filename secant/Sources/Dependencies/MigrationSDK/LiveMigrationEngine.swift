@@ -54,6 +54,9 @@ final class LiveMigrationEngine: @unchecked Sendable {
         var hasOverdueTransfers: @Sendable (AccountUUID) async throws -> Bool
         var hasInvalidTransfers: @Sendable (AccountUUID) async throws -> Bool
         var restartCurrentStep: @Sendable (AccountUUID) async throws -> ZcashLightClientKit.MigrationSchedule
+        /// Re-anchors/re-proves/re-signs the active run's stale transfers; returns how many were
+        /// refreshed. Takes no key — the live gateway derives the `UnifiedSpendingKey` internally.
+        var refreshStale: @Sendable (AccountUUID) async throws -> UInt32
         var initializePostUpgrade: @Sendable (AccountUUID) async throws -> Void
     }
 
@@ -290,10 +293,24 @@ final class LiveMigrationEngine: @unchecked Sendable {
         }
     }
 
-    /// PROTOTYPE recovery hooks: both map to re-proposing the current step (the SDK has no separate
-    /// reschedule/recreate primitive — `restartCurrentMigrationStep` is the recovery path).
-    func rescheduleStalled() async { _ = await restart() }
+    /// Stalled/overdue recovery: re-anchor/re-prove/re-sign the scheduled transfers via the SDK's
+    /// `refreshStaleTransfers`. Lighter than `restart()` (which re-proposes a whole new schedule). The
+    /// refreshed count is logged for observability; the UI's reschedule action needs no return value.
+    func rescheduleStalled() async {
+        guard let account = await gateway.currentAccountID() else {
+            logSkipped("refreshStaleTransfers")
+            return
+        }
+        do {
+            let refreshed = try await gateway.refreshStale(account)
+            logger.info("Migration refreshStaleTransfers refreshed \(refreshed, privacy: .public) transfer(s).")
+            await refresh()
+        } catch {
+            logFailure("refreshStaleTransfers", error)
+        }
+    }
 
+    /// Invalid-note recovery: the SDK has no lighter primitive, so re-propose the current step.
     func recreateInvalid() async { _ = await restart() }
 
     func initializePostUpgrade() {
