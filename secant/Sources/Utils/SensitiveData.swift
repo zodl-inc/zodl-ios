@@ -107,6 +107,7 @@ struct RedactableSynchronizerState: Equatable, Redactable {
         var accountsBalances: [AccountUUID: AccountBalance]
         var syncStatus: SyncStatus
         var latestBlockHeight: BlockHeight
+        var isRecovering: Bool
     }
 
     let data: SynchronizerStateWrapper
@@ -116,7 +117,8 @@ struct RedactableSynchronizerState: Equatable, Redactable {
             syncSessionID: data.syncSessionID,
             accountsBalances: data.accountsBalances,
             syncStatus: data.syncStatus,
-            latestBlockHeight: data.latestBlockHeight
+            latestBlockHeight: data.latestBlockHeight,
+            isRecovering: data.isRecovering
         )
     }
 }
