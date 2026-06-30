@@ -1,3 +1,4 @@
+#if VOTING_ENABLED
 import CryptoKit
 import Foundation
 
@@ -217,3 +218,5 @@ private extension Data {
         static let lowercaseF = UInt8(ascii: "f")
     }
 }
+
+#endif

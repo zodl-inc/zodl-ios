@@ -34,12 +34,14 @@ struct SettingsView: View {
                                 }
                             }
                             
+                            #if VOTING_ENABLED
                             ActionRow(
                                 icon: Asset.Assets.Icons.checkVerified.image,
                                 title: String(localizable: .settingsCoinholderPolling)
                             ) {
                                 store.send(.coinholderPollingTapped)
                             }
+                            #endif
 
                             ActionRow(
                                 icon: Asset.Assets.Icons.settings.image,
@@ -162,6 +164,7 @@ struct SettingsView: View {
             .zashiSheet(isPresented: $store.isResyncHelpSheetPresented) {
                 resyncHelpSheetContent()
             }
+            #if VOTING_ENABLED
             .fullScreenCover(
                 item: $store.scope(state: \.votingCoordFlow, action: \.votingCoordFlow)
             ) { votingStore in
@@ -172,6 +175,7 @@ struct SettingsView: View {
                     VotingCoordFlowView(store: votingStore)
                 }
             }
+            #endif
         }
     }
     

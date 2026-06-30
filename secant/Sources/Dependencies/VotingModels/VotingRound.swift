@@ -1,3 +1,4 @@
+#if VOTING_ENABLED
 import Foundation
 
 struct VotingRound: Equatable {
@@ -37,3 +38,5 @@ struct VotingRound: Equatable {
         Calendar.current.dateComponents([.day], from: Date(), to: votingEnd).day ?? 0
     }
 }
+
+#endif

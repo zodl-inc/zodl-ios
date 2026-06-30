@@ -1,3 +1,4 @@
+#if VOTING_ENABLED
 //
 //  ProposalDetailStore.swift
 //  Zashi
@@ -37,3 +38,5 @@ struct ProposalDetail {
         EmptyReducer()
     }
 }
+
+#endif

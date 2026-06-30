@@ -1,3 +1,4 @@
+#if VOTING_ENABLED
 //
 //  IneligibleView.swift
 //  Zashi
@@ -51,3 +52,5 @@ struct IneligibleView: View {
         }
     }
 }
+
+#endif

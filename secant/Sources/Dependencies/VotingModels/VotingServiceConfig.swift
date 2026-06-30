@@ -1,3 +1,4 @@
+#if VOTING_ENABLED
 import Foundation
 
 /// CDN-hosted voting service configuration as specified in ZIP 1244 §"Vote Discovery".
@@ -188,3 +189,5 @@ extension VotingServiceConfig {
         static let lowercaseF = UInt8(ascii: "f")
     }
 }
+
+#endif
