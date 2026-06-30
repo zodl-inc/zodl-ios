@@ -113,7 +113,7 @@ extension Root {
                     do {
                         // macOS: the SE seed decrypt below is the single biometric gate
                         // (see `authenticateForSeedDecrypt`); iOS prompts here.
-                        if await !localAuthentication.authenticateForSeedDecrypt() {
+                        if await !localAuthentication.authenticateForSeedDecrypt(for: .sendFunds) {
                             return
                         }
 
@@ -122,7 +122,7 @@ extension Root {
                         let proposal = try await sdkSynchronizer.proposeTransfer(account.id, recipient, transaction.amount, nil)
 
                         // make the actual send
-                        let storedWallet = try await walletStorage.exportWallet()
+                        let storedWallet = try await walletStorage.exportWallet(AuthenticationContext.sendFunds.localizedReason)
                         let seedBytes = try mnemonic.toSeed(storedWallet.seedPhrase.value())
                         let network = zcashSDKEnvironment.network().networkType
                         let spendingKey = try derivationTool.deriveSpendingKey(seedBytes, zip32AccountIndex, network)

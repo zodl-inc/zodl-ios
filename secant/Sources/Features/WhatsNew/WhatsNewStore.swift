@@ -69,7 +69,7 @@ struct WhatsNew {
                     return .none
                 }
                 return .run { send in
-                    guard await localAuthentication.authenticate() else {
+                    guard await localAuthentication.authenticate(for: .settings) else {
                         return
                     }
                     

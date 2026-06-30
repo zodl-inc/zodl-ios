@@ -901,7 +901,7 @@ struct SwapAndPay {
 
             case .addressBookRequested:
                 return .run { send in
-                    guard await localAuthentication.authenticate() else {
+                    guard await localAuthentication.authenticate(for: .sendFunds) else {
                         return
                     }
                     

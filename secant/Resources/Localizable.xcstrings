@@ -9636,6 +9636,125 @@
         }
       }
     },
+    "localAuthentication.reason.addressBook" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "open your address book"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "abrir tu libreta de direcciones"
+          }
+        }
+      }
+    },
+    "localAuthentication.reason.exportData" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "export your wallet data"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "exportar los datos de tu billetera"
+          }
+        }
+      }
+    },
+    "localAuthentication.reason.revealPhrase" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "reveal your recovery phrase"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "revelar tu frase de recuperación"
+          }
+        }
+      }
+    },
+    "localAuthentication.reason.send" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "send funds"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "enviar fondos"
+          }
+        }
+      }
+    },
+    "localAuthentication.reason.settings" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "access your wallet settings"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "acceder a la configuración de tu billetera"
+          }
+        }
+      }
+    },
+    "localAuthentication.reason.unlock" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "unlock your wallet"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "desbloquear tu billetera"
+          }
+        }
+      }
+    },
+    "localAuthentication.reason.vote" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "authorize your vote"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "autorizar tu voto"
+          }
+        }
+      }
+    },
     "messageEditor.addUA" : {
       "comment" : "MARK: - Message Editor",
       "extractionState" : "manual",

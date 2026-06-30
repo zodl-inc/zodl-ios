@@ -387,7 +387,7 @@ extension Root {
                             } else {
                                 let storedWallet: StoredWallet
                                 do {
-                                    storedWallet = try await walletStorage.exportWallet()
+                                    storedWallet = try await walletStorage.exportWallet(nil)
                                 } catch {
                                     await send(.destination(.updateDestination(.osStatusError)))
                                     return
@@ -540,7 +540,7 @@ extension Root {
                     guard !accountsMissingKeys.isEmpty else { return }
 
                     guard
-                        let storedWallet = try? await walletStorage.exportWallet(),
+                        let storedWallet = try? await walletStorage.exportWallet(nil),
                         let seedBytes = try? mnemonic.toSeed(storedWallet.seedPhrase.value())
                     else { return }
 
@@ -580,7 +580,7 @@ extension Root {
                     // which uses the freshly-typed seed — no decrypt) already prevents the desync at its
                     // source. Re-checking every launch buys nothing there but a biometric.
                     if databaseFiles.areDbFilesPresentFor(zcashSDKEnvironment.network()),
-                       let storedWallet = try? await walletStorage.exportWallet(),
+                       let storedWallet = try? await walletStorage.exportWallet(nil),
                        let seedBytes = try? mnemonic.toSeed(storedWallet.seedPhrase.value()) {
                         let relevant = (try? await sdkSynchronizer.isSeedRelevantToAnyDerivedAccount(seedBytes)) ?? true
                         if !relevant {

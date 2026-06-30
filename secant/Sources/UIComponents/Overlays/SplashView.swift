@@ -71,7 +71,7 @@ final class SplashManager: ObservableObject {
         authenticationDidntSucceed = false
 
         Task {
-            if await !localAuthentication.authenticate() {
+            if await !localAuthentication.authenticate(for: .appUnlock) {
                 self.authenticationFailed()
             } else {
 #if os(macOS)

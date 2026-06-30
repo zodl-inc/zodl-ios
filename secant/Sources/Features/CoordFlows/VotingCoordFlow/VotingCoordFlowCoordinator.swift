@@ -1659,7 +1659,7 @@ extension VotingCoordFlow {
 
         if !state.isKeystoneUser && !state.pendingBatchSubmission {
             return .run { [localAuthentication] send in
-                guard await localAuthentication.authenticate() else { return }
+                guard await localAuthentication.authenticate(for: .vote) else { return }
                 await send(.authenticationSucceeded(roundId: roundId))
             }
         }
@@ -1773,7 +1773,7 @@ extension VotingCoordFlow {
             // --- Delegation (ZKP #1) — run inline if not already done ---
             if !delegationDone {
                 do {
-                    let senderPhrase = try await walletStorage.exportWallet().seedPhrase.value()
+                    let senderPhrase = try await walletStorage.exportWallet(AuthenticationContext.vote.localizedReason).seedPhrase.value()
                     let senderSeed = try mnemonic.toSeed(senderPhrase)
                     try await Self.runDelegationPipeline(
                         roundId: roundId,
@@ -2830,7 +2830,7 @@ extension VotingCoordFlow {
         return .run { [backgroundTask, votingCrypto, votingAPI, mnemonic, walletStorage] send in
             let bgTaskId = await backgroundTask.beginTask("Keystone delegation proof")
             do {
-                let senderPhrase = try await walletStorage.exportWallet().seedPhrase.value()
+                let senderPhrase = try await walletStorage.exportWallet(AuthenticationContext.vote.localizedReason).seedPhrase.value()
                 let senderSeed = try mnemonic.toSeed(senderPhrase)
                 let hotkeyPhrase = try walletStorage.exportVotingHotkey(accountId).seedPhrase.value()
                 let hotkeySeed = try mnemonic.toSeed(hotkeyPhrase)

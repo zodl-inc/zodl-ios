@@ -126,8 +126,9 @@ struct WalletStorage {
         self.secureEnclave = secureEnclave
     }
 
-    /// Generic reason shown in the Secure-Enclave auth prompt when the seed is read.
-    // TODO: [#1755] localize + thread a per-operation reason (send / export / …) in a later step.
+    /// FALLBACK reason for the Secure-Enclave seed-read prompt when a caller passes no per-action reason
+    /// (first init / background shielding). User-facing seed accesses thread a context reason via
+    /// `exportWallet(reason:)` — see `AuthenticationContext` — so the prompt says what the access is for.
     private var seedAuthenticationReason: String {
 #if os(macOS)
         // macOS composes the prompt as "{app} is trying to {reason}", so the reason must be a verb
@@ -209,18 +210,18 @@ struct WalletStorage {
     /// seed and therefore triggers the OS auth prompt — call only when the seed is genuinely needed
     /// (spend / export / first init). For birthday / backup-flag / existence use `exportWalletMetadata`
     /// / `areKeysPresent`, which never decrypt.
-    func exportWallet() async throws -> StoredWallet {
+    func exportWallet(reason: String? = nil) async throws -> StoredWallet {
         // Restore/create primed the seed — reuse it once instead of an SE decrypt (and its prompt).
         if secureEnclave != nil, let primed = consumePrimedSeed() {
             return primed
         }
         if let secureEnclave {
-            return try await exportWalletSecurely(secureEnclave: secureEnclave)
+            return try await exportWalletSecurely(secureEnclave: secureEnclave, reason: reason)
         }
         return try loadPlaintextWallet()
     }
 
-    private func exportWalletSecurely(secureEnclave: SecureEnclaveClient) async throws -> StoredWallet {
+    private func exportWalletSecurely(secureEnclave: SecureEnclaveClient, reason: String?) async throws -> StoredWallet {
         let meta = try exportWalletMetadata()
         guard meta.version == Constants.zcashKeychainVersion else {
             throw WalletStorageError.unsupportedVersion(meta.version)
@@ -236,7 +237,7 @@ struct WalletStorage {
             throw WalletStorageError.uninitializedWallet
         }
 
-        let seedData = try await secureEnclave.decryptSeed(cipher, seedAuthenticationReason)
+        let seedData = try await secureEnclave.decryptSeed(cipher, reason ?? seedAuthenticationReason)
         guard let seedPhrase = String(data: seedData, encoding: .utf8) else {
             throw WalletStorageError.uninitializedWallet
         }

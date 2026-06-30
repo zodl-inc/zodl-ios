@@ -54,7 +54,7 @@ struct AdvancedSettings {
                     return .send(.operationAccessGranted(operation))
                 case .recoveryPhrase, .exportPrivateData, .exportTaxFile, .resetZashi, .disconnectHWWallet, .resyncWallet:
                     return .run { send in
-                        if await localAuthentication.authenticate() {
+                        if await localAuthentication.authenticate(for: .settings) {
                             await send(.operationAccessGranted(operation))
                         }
                     }

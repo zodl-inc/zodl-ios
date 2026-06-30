@@ -268,7 +268,7 @@ struct SendConfirmation {
                     // macOS: the Secure-Enclave seed decrypt in `.sendTriggered` is itself the biometric
                     // gate, so an app-level prompt here would be a redundant SECOND auth — defer to it
                     // (`authenticateForSeedDecrypt` returns true without prompting on macOS). iOS prompts.
-                    guard await localAuthentication.authenticateForSeedDecrypt() else {
+                    guard await localAuthentication.authenticateForSeedDecrypt(for: .sendFunds) else {
                         await send(.stopSending)
                         return
                     }
@@ -295,7 +295,7 @@ struct SendConfirmation {
                 }
                 return .run { send in
                     do {
-                        let storedWallet = try await walletStorage.exportWallet()
+                        let storedWallet = try await walletStorage.exportWallet(AuthenticationContext.sendFunds.localizedReason)
                         let seedBytes = try mnemonic.toSeed(storedWallet.seedPhrase.value())
                         let network = zcashSDKEnvironment.network().networkType
                         let spendingKey = try derivationTool.deriveSpendingKey(seedBytes, zip32AccountIndex, network)

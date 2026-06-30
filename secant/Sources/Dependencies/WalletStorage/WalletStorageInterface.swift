@@ -48,8 +48,10 @@ struct WalletStorageClient {
     ///
     /// On macOS this decrypts the Secure-Enclave-wrapped seed and triggers an OS auth prompt, hence
     /// `async` — call only when the seed itself is needed (spend / export / first init). For birthday /
-    /// backup-flag, use `exportWalletMetadata` (no prompt).
-    var exportWallet: @Sendable () async throws -> StoredWallet
+    /// backup-flag, use `exportWalletMetadata` (no prompt). `reason` (non-nil) is the macOS prompt wording —
+    /// a verb phrase, typically `AuthenticationContext.X.localizedReason`, so the prompt says what the seed
+    /// access is for; `nil` falls back to a generic reason. Ignored on iOS (no SE seed-wrap).
+    var exportWallet: @Sendable (_ reason: String?) async throws -> StoredWallet
 
     /// Loads the non-secret wallet metadata (version, birthday, backup-flag) WITHOUT decrypting the
     /// seed — never triggers a biometric prompt.

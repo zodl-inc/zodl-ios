@@ -23,8 +23,8 @@ extension WalletStorageClient: DependencyKey {
                     hasUserPassedPhraseBackupTest: hasUserPassedPhraseBackupTest
                 )
             },
-            exportWallet: {
-                try await walletStorage.exportWallet()
+            exportWallet: { reason in
+                try await walletStorage.exportWallet(reason: reason)
             },
             exportWalletMetadata: {
                 try walletStorage.exportWalletMetadata()

@@ -129,7 +129,7 @@ struct RecoveryPhraseDisplay {
                 return .run { send in
                     // macOS: the SE seed decrypt below is the single biometric gate
                     // (see `authenticateForSeedDecrypt`); iOS prompts here.
-                    guard await localAuthentication.authenticateForSeedDecrypt() else {
+                    guard await localAuthentication.authenticateForSeedDecrypt(for: .revealRecoveryPhrase) else {
                         return
                     }
 
@@ -138,7 +138,7 @@ struct RecoveryPhraseDisplay {
                     // reducer. The seed reaches the state only via the action below,
                     // and only after authentication has already succeeded.
                     do {
-                        let storedWallet = try await walletStorage.exportWallet()
+                        let storedWallet = try await walletStorage.exportWallet(AuthenticationContext.revealRecoveryPhrase.localizedReason)
                         await send(.recoveryPhraseRevealed(storedWallet))
                     } catch {
                         await send(.recoveryPhraseRevealFailed(error.toZcashError()))
