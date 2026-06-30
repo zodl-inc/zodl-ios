@@ -8,9 +8,13 @@ directly impact users rather than highlighting other crucial architectural updat
 
 ### Changed
 - QR / payment-request (ZIP-321) codes that contain more than one recipient are now rejected instead of silently processing only the first recipient, so what you review is always exactly what gets signed.
+- The Orchard → Ironwood migration is now driven by the Zcash SDK's on-device migration engine instead of the in-app preview simulation.
 
 ### Fixed
 - Paying with Flexa now requires a Zodl (mobile) account and is blocked for Keystone (hardware) accounts, which have no on-device key to sign with. Switching accounts also ends any open Flexa session so a payment can't bind to the wrong account.
+
+### Removed
+- Coinholder Polling (voting) is temporarily unavailable while its underlying SDK support is being updated; it will return in a future release.
 
 ## 3.7.0 build 1
 

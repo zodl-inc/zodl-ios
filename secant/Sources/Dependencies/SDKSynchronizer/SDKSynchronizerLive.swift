@@ -289,6 +289,59 @@ extension SDKSynchronizerClient: DependencyKey {
                 return try await transactionGuard.withSubmission {
                     try await synchronizer.getTreeState(height: height)
                 }
+            },
+            // MARK: Ironwood migration
+            migrationState: { account in
+                try await synchronizer.migrationState(for: account)
+            },
+            migrationProgress: { account in
+                try await synchronizer.migrationProgress(for: account)
+            },
+            migrationIsNoteSplitNeeded: { account in
+                try await synchronizer.isNoteSplitNeeded(for: account)
+            },
+            migrationPrepareNoteSplit: { account in
+                try await synchronizer.prepareNoteSplit(for: account)
+            },
+            // Broadcasts a tx: acquire the transaction guard here (FIFO mutex, non-reentrant).
+            migrationSubmitNoteSplit: { proposal, spendingKey, options, account in
+                @Dependency(\.transactionGuard) var transactionGuard
+                return try await transactionGuard.withSubmission {
+                    try await synchronizer.submitNoteSplit(
+                        proposal: proposal,
+                        spendingKey: spendingKey,
+                        options: options,
+                        for: account
+                    )
+                }
+            },
+            migrationProposeTransfers: { account in
+                try await synchronizer.proposeMigrationTransfers(for: account)
+            },
+            migrationSignAndStoreSchedule: { schedule, spendingKey, account in
+                try await synchronizer.signAndStoreMigrationSchedule(schedule, spendingKey: spendingKey, for: account)
+            },
+            migrationIsSyncRequiredBeforeNextTransfer: { account in
+                try await synchronizer.isSyncRequiredBeforeNextTransfer(for: account)
+            },
+            // Broadcasts a tx: acquire the transaction guard here (FIFO mutex, non-reentrant).
+            migrationExecuteNextPendingTransfer: { options, account in
+                @Dependency(\.transactionGuard) var transactionGuard
+                return try await transactionGuard.withSubmission {
+                    try await synchronizer.executeNextPendingTransfer(options: options, for: account)
+                }
+            },
+            migrationHasOverdueTransfers: { account in
+                try await synchronizer.hasOverdueTransfers(for: account)
+            },
+            migrationHasInvalidTransfers: { account in
+                try await synchronizer.hasInvalidTransfers(for: account)
+            },
+            migrationRestartCurrentStep: { account in
+                try await synchronizer.restartCurrentMigrationStep(for: account)
+            },
+            migrationInitializePostUpgrade: { account in
+                try await synchronizer.initializePostUpgrade(for: account)
             }
         )
     }

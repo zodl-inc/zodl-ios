@@ -116,5 +116,38 @@ struct SDKSynchronizerClient: Sendable {
     var enhanceTransactionBy: @Sendable (String) async throws -> Void
 
     var getTreeState: @Sendable (_ height: UInt64) async throws -> Data
+
+    // MARK: - Ironwood migration
+    //
+    // Thin wrappers over the SDK `Synchronizer` migration API. SDK migration types are fully qualified
+    // (`ZcashLightClientKit.*`) because the app declares same-named Zatoshi-based mirrors; the
+    // `LiveMigrationEngine` converts at its boundary (see MigrationTypeMapping.swift). The two
+    // broadcasting calls (`migrationSubmitNoteSplit`, `migrationExecuteNextPendingTransfer`) acquire
+    // the transaction guard inside their LiveKey closures — never at call sites, never nested.
+    var migrationState: @Sendable (_ account: AccountUUID) async throws -> ZcashLightClientKit.MigrationState
+    var migrationProgress: @Sendable (_ account: AccountUUID) async throws -> ZcashLightClientKit.MigrationProgress?
+    var migrationIsNoteSplitNeeded: @Sendable (_ account: AccountUUID) async throws -> Bool
+    var migrationPrepareNoteSplit: @Sendable (_ account: AccountUUID) async throws -> ZcashLightClientKit.NoteSplitProposal
+    var migrationSubmitNoteSplit: @Sendable (
+        _ proposal: ZcashLightClientKit.NoteSplitProposal,
+        _ spendingKey: UnifiedSpendingKey,
+        _ options: ZcashLightClientKit.NetworkPrivacyOptions,
+        _ account: AccountUUID
+    ) async throws -> ZcashLightClientKit.TransferResult
+    var migrationProposeTransfers: @Sendable (_ account: AccountUUID) async throws -> ZcashLightClientKit.MigrationSchedule
+    var migrationSignAndStoreSchedule: @Sendable (
+        _ schedule: ZcashLightClientKit.MigrationSchedule,
+        _ spendingKey: UnifiedSpendingKey,
+        _ account: AccountUUID
+    ) async throws -> Void
+    var migrationIsSyncRequiredBeforeNextTransfer: @Sendable (_ account: AccountUUID) async throws -> Bool
+    var migrationExecuteNextPendingTransfer: @Sendable (
+        _ options: ZcashLightClientKit.NetworkPrivacyOptions,
+        _ account: AccountUUID
+    ) async throws -> ZcashLightClientKit.TransferResult?
+    var migrationHasOverdueTransfers: @Sendable (_ account: AccountUUID) async throws -> Bool
+    var migrationHasInvalidTransfers: @Sendable (_ account: AccountUUID) async throws -> Bool
+    var migrationRestartCurrentStep: @Sendable (_ account: AccountUUID) async throws -> ZcashLightClientKit.MigrationSchedule
+    var migrationInitializePostUpgrade: @Sendable (_ account: AccountUUID) async throws -> Void
 }
 

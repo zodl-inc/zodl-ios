@@ -77,7 +77,20 @@ extension SDKSynchronizerClient: TestDependencyKey {
         updateTransparentAddressTransactions: unimplemented("\(Self.self).updateTransparentAddressTransactions", placeholder: .notFound),
         fetchUTXOsByAddress: unimplemented("\(Self.self).fetchUTXOsByAddress", placeholder: .notFound),
         enhanceTransactionBy: unimplemented("\(Self.self).enhanceTransactionBy"),
-        getTreeState: unimplemented("\(Self.self).getTreeState", placeholder: Data())
+        getTreeState: unimplemented("\(Self.self).getTreeState", placeholder: Data()),
+        migrationState: unimplemented("\(Self.self).migrationState", placeholder: ZcashLightClientKit.MigrationState.notStarted),
+        migrationProgress: unimplemented("\(Self.self).migrationProgress", placeholder: nil),
+        migrationIsNoteSplitNeeded: unimplemented("\(Self.self).migrationIsNoteSplitNeeded", placeholder: false),
+        migrationPrepareNoteSplit: unimplemented("\(Self.self).migrationPrepareNoteSplit", placeholder: ZcashLightClientKit.NoteSplitProposal(outputNotes: [], fee: 0)),
+        migrationSubmitNoteSplit: unimplemented("\(Self.self).migrationSubmitNoteSplit", placeholder: ZcashLightClientKit.TransferResult.networkError(retryable: false)),
+        migrationProposeTransfers: unimplemented("\(Self.self).migrationProposeTransfers", placeholder: ZcashLightClientKit.MigrationSchedule(transfers: [], estimatedDurationHours: 0)),
+        migrationSignAndStoreSchedule: unimplemented("\(Self.self).migrationSignAndStoreSchedule"),
+        migrationIsSyncRequiredBeforeNextTransfer: unimplemented("\(Self.self).migrationIsSyncRequiredBeforeNextTransfer", placeholder: false),
+        migrationExecuteNextPendingTransfer: unimplemented("\(Self.self).migrationExecuteNextPendingTransfer", placeholder: nil),
+        migrationHasOverdueTransfers: unimplemented("\(Self.self).migrationHasOverdueTransfers", placeholder: false),
+        migrationHasInvalidTransfers: unimplemented("\(Self.self).migrationHasInvalidTransfers", placeholder: false),
+        migrationRestartCurrentStep: unimplemented("\(Self.self).migrationRestartCurrentStep", placeholder: ZcashLightClientKit.MigrationSchedule(transfers: [], estimatedDurationHours: 0)),
+        migrationInitializePostUpgrade: unimplemented("\(Self.self).migrationInitializePostUpgrade")
     )
 }
 
@@ -134,7 +147,20 @@ extension SDKSynchronizerClient {
         updateTransparentAddressTransactions: { _ in .notFound },
         fetchUTXOsByAddress: { _, _ in .notFound },
         enhanceTransactionBy: { _ in },
-        getTreeState: { _ in Data() }
+        getTreeState: { _ in Data() },
+        migrationState: { _ in ZcashLightClientKit.MigrationState.notStarted },
+        migrationProgress: { _ in nil },
+        migrationIsNoteSplitNeeded: { _ in false },
+        migrationPrepareNoteSplit: { _ in ZcashLightClientKit.NoteSplitProposal(outputNotes: [], fee: 0) },
+        migrationSubmitNoteSplit: { _, _, _, _ in ZcashLightClientKit.TransferResult.networkError(retryable: false) },
+        migrationProposeTransfers: { _ in ZcashLightClientKit.MigrationSchedule(transfers: [], estimatedDurationHours: 0) },
+        migrationSignAndStoreSchedule: { _, _, _ in },
+        migrationIsSyncRequiredBeforeNextTransfer: { _ in false },
+        migrationExecuteNextPendingTransfer: { _, _ in nil },
+        migrationHasOverdueTransfers: { _ in false },
+        migrationHasInvalidTransfers: { _ in false },
+        migrationRestartCurrentStep: { _ in ZcashLightClientKit.MigrationSchedule(transfers: [], estimatedDurationHours: 0) },
+        migrationInitializePostUpgrade: { _ in }
     )
 
     static let mock = Self.mocked()
@@ -262,7 +288,20 @@ extension SDKSynchronizerClient {
         updateTransparentAddressTransactions: @escaping @Sendable (String) async throws -> TransparentAddressCheckResult = { _ in .notFound },
         fetchUTXOsByAddress: @escaping @Sendable (String, AccountUUID) async throws -> TransparentAddressCheckResult = { _, _ in .notFound },
         enhanceTransactionBy: @escaping @Sendable (String) async throws -> Void = { _ in },
-        getTreeState: @escaping @Sendable (UInt64) async throws -> Data = { _ in Data() }
+        getTreeState: @escaping @Sendable (UInt64) async throws -> Data = { _ in Data() },
+        migrationState: @escaping @Sendable (AccountUUID) async throws -> ZcashLightClientKit.MigrationState = { _ in ZcashLightClientKit.MigrationState.notStarted },
+        migrationProgress: @escaping @Sendable (AccountUUID) async throws -> ZcashLightClientKit.MigrationProgress? = { _ in nil },
+        migrationIsNoteSplitNeeded: @escaping @Sendable (AccountUUID) async throws -> Bool = { _ in false },
+        migrationPrepareNoteSplit: @escaping @Sendable (AccountUUID) async throws -> ZcashLightClientKit.NoteSplitProposal = { _ in ZcashLightClientKit.NoteSplitProposal(outputNotes: [], fee: 0) },
+        migrationSubmitNoteSplit: @escaping @Sendable (ZcashLightClientKit.NoteSplitProposal, UnifiedSpendingKey, ZcashLightClientKit.NetworkPrivacyOptions, AccountUUID) async throws -> ZcashLightClientKit.TransferResult = { _, _, _, _ in ZcashLightClientKit.TransferResult.networkError(retryable: false) },
+        migrationProposeTransfers: @escaping @Sendable (AccountUUID) async throws -> ZcashLightClientKit.MigrationSchedule = { _ in ZcashLightClientKit.MigrationSchedule(transfers: [], estimatedDurationHours: 0) },
+        migrationSignAndStoreSchedule: @escaping @Sendable (ZcashLightClientKit.MigrationSchedule, UnifiedSpendingKey, AccountUUID) async throws -> Void = { _, _, _ in },
+        migrationIsSyncRequiredBeforeNextTransfer: @escaping @Sendable (AccountUUID) async throws -> Bool = { _ in false },
+        migrationExecuteNextPendingTransfer: @escaping @Sendable (ZcashLightClientKit.NetworkPrivacyOptions, AccountUUID) async throws -> ZcashLightClientKit.TransferResult? = { _, _ in nil },
+        migrationHasOverdueTransfers: @escaping @Sendable (AccountUUID) async throws -> Bool = { _ in false },
+        migrationHasInvalidTransfers: @escaping @Sendable (AccountUUID) async throws -> Bool = { _ in false },
+        migrationRestartCurrentStep: @escaping @Sendable (AccountUUID) async throws -> ZcashLightClientKit.MigrationSchedule = { _ in ZcashLightClientKit.MigrationSchedule(transfers: [], estimatedDurationHours: 0) },
+        migrationInitializePostUpgrade: @escaping @Sendable (AccountUUID) async throws -> Void = { _ in }
     ) -> SDKSynchronizerClient {
         SDKSynchronizerClient(
             stateStream: stateStream,
@@ -314,7 +353,20 @@ extension SDKSynchronizerClient {
             updateTransparentAddressTransactions: updateTransparentAddressTransactions,
             fetchUTXOsByAddress: fetchUTXOsByAddress,
             enhanceTransactionBy: enhanceTransactionBy,
-            getTreeState: getTreeState
+            getTreeState: getTreeState,
+            migrationState: migrationState,
+            migrationProgress: migrationProgress,
+            migrationIsNoteSplitNeeded: migrationIsNoteSplitNeeded,
+            migrationPrepareNoteSplit: migrationPrepareNoteSplit,
+            migrationSubmitNoteSplit: migrationSubmitNoteSplit,
+            migrationProposeTransfers: migrationProposeTransfers,
+            migrationSignAndStoreSchedule: migrationSignAndStoreSchedule,
+            migrationIsSyncRequiredBeforeNextTransfer: migrationIsSyncRequiredBeforeNextTransfer,
+            migrationExecuteNextPendingTransfer: migrationExecuteNextPendingTransfer,
+            migrationHasOverdueTransfers: migrationHasOverdueTransfers,
+            migrationHasInvalidTransfers: migrationHasInvalidTransfers,
+            migrationRestartCurrentStep: migrationRestartCurrentStep,
+            migrationInitializePostUpgrade: migrationInitializePostUpgrade
         )
     }
 }

@@ -12,9 +12,9 @@ import ComposableArchitecture
 extension MigrationSDKClient {
     static let noOp = MigrationSDKClient()
 
-    /// A client backed by an in-memory engine — handy for previews/tests that DO want real behaviour
-    /// without touching disk.
+    /// A client backed by an in-memory **dummy** engine — handy for previews/tests that DO want
+    /// deterministic simulated behaviour without touching disk or the real SDK.
     static func ephemeral() -> MigrationSDKClient {
-        Self.live(store: .ephemeral())
+        Self.dummy(store: .ephemeral())
     }
 }

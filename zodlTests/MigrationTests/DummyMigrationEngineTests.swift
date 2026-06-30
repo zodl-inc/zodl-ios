@@ -276,7 +276,7 @@ struct MigrationBackgroundWorkerTests {
     /// concrete outcome (it changes nothing on screen by design), so the panel can surface it.
     @Test func reportsNothingPendingThenNetworkError() async {
         let store = MigrationStateStore.ephemeral()
-        let client = MigrationSDKClient.live(store: store)
+        let client = MigrationSDKClient.dummy(store: store)
 
         await withDependencies {
             $0.migrationSDK = client
@@ -318,7 +318,7 @@ struct MigrationBackgroundWorkerTests {
     }
 
     @Test func recordsRunLogEntriesPerRun() async {
-        let client = MigrationSDKClient.live(store: .ephemeral(), runLogStore: .ephemeral())
+        let client = MigrationSDKClient.dummy(store: .ephemeral(), runLogStore: .ephemeral())
 
         await withDependencies {
             $0.migrationSDK = client

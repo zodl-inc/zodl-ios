@@ -31,7 +31,7 @@ import ComposableArchitecture
             SmartBanner()
         } withDependencies: {
             $0.mainQueue = .immediate
-            $0.migrationSDK = .live(store: .ephemeral())
+            $0.migrationSDK = .dummy(store: .ephemeral())
             $0.migrationSDK.simulatedOrchardBalance = { orchardBalance }
             $0.migrationSDK.isMigrationCompleteAcknowledged = { acknowledged }
             $0.migrationSDK.migrationSummary = {
