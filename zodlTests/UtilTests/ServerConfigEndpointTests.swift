@@ -2,7 +2,7 @@
 //  ServerConfigEndpointTests.swift
 //  zodlTests
 //
-//  Batch 4 — dependency logic. Covers UserPreferencesStorage.ServerConfig.endpoint(for:) parsing
+//  Covers UserPreferencesStorage.ServerConfig.endpoint(for:) parsing
 //  (Dependencies/UserPreferencesStorage/UserPreferencesStorage.swift).
 //
 
@@ -35,13 +35,27 @@ import Foundation
         #expect(endpoint("host.example.com") == nil)
     }
 
-    // See docs/testing/coverage-uplift-plan.md §6.3.
-    // Intended: a 3-component "a:b:443" should keep the ':' between the first two segments.
-    // Current impl concatenates them ("ab"), so the intended assertion is a known issue.
     @Test func threeComponentHostKeepsSeparator() {
-        withKnownIssue("Bug coverage-uplift-plan.md §6.3: endpoint(for:) drops the ':' separator for 3-component hosts") {
-            #expect(endpoint("a:b:443")?.host == "a:b")
-        }
+        let result = endpoint("a:b:443")
+        #expect(result?.host == "a:b")
+        #expect(result?.port == 443)
+    }
+
+    @Test func fourComponentHostKeepsAllSeparators() {
+        let result = endpoint("a:b:c:443")
+        #expect(result?.host == "a:b:c")
+        #expect(result?.port == 443)
+    }
+
+    @Test func ipv6HostKeepsAllSeparators() {
+        let result = endpoint("2001:db8::1:9067")
+        #expect(result?.host == "2001:db8::1")
+        #expect(result?.port == 9067)
+    }
+
+    @Test func returnsNilWhenHostMissing() {
+        #expect(endpoint(":443") == nil)
+        #expect(endpoint("443") == nil)
     }
 
     private func endpoint(_ string: String) -> LightWalletEndpoint? {

@@ -311,75 +311,97 @@ import ComposableArchitecture
     }
 
     @Test func missingProposalRoutesToFailureNotPending() async {
-        // No proposal means nothing was created or submitted, so there is no transaction the
-        // "pending" screen could be waiting for — this must land on the failure screen.
-        var initialState = SwapAndPayCoordFlow.State()
-        initialState.swapAndPayState.address = "ztestaddr"
-        initialState.$selectedWalletAccount.withLock { $0 = testWalletAccount }
+        // Isolate shared account storage (see partialSubmissionRoutesToFailureSupportState). This test
+        // reaches failure via the missing-proposal guard regardless of the account, but it still writes
+        // `selectedWalletAccount`, so isolating keeps it from clobbering suites running in parallel.
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            // No proposal means nothing was created or submitted, so there is no transaction the
+            // "pending" screen could be waiting for — this must land on the failure screen.
+            var initialState = SwapAndPayCoordFlow.State()
+            initialState.swapAndPayState.address = "ztestaddr"
+            initialState.$selectedWalletAccount.withLock { $0 = testWalletAccount }
 
-        let store = Store(initialState: initialState) {
-            SwapAndPayCoordFlow()
-        } withDependencies: {
-            $0.mainQueue = .immediate
-        }
+            let store = Store(initialState: initialState) {
+                SwapAndPayCoordFlow()
+            } withDependencies: {
+                $0.mainQueue = .immediate
+            }
 
-        store.send(.swapRequested)
-        await waitForStore {
-            if case .sendResultFailure = store.state.path.last { return true }
-            return false
+            store.send(.swapRequested)
+            await waitForStore {
+                if case .sendResultFailure = store.state.path.last { return true }
+                return false
+            }
         }
     }
 
     @Test func partialSubmissionRoutesToFailureSupportState() async throws {
-        let firstTxId = Data([0xAA]).toHexStringTxId()
-        let secondTxId = Data([0xBB]).toHexStringTxId()
-        let statuses = ["accepted by endpoint 1", "all servers unreachable"]
-        let store = makeStore(result: .partial(txIds: [firstTxId, secondTxId], statuses: statuses))
+        // Pin the process-global `@Shared(.inMemory(.selectedWalletAccount))` storage to a fresh,
+        // isolated `InMemoryStorage` for the duration of the test. Without this, a suite running in
+        // parallel that mutates `selectedWalletAccount` can clobber it before `.swapRequested` reads
+        // it; the reducer's `guard let ... state.selectedWalletAccount` then bails, navigation never
+        // reaches `.sendResultFailure`, and `waitForStore` times out (a flaky CI failure). Mirrors the
+        // isolation already used by `MultiServerSubmitFlexaRoutingTests`.
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let firstTxId = Data([0xAA]).toHexStringTxId()
+            let secondTxId = Data([0xBB]).toHexStringTxId()
+            let statuses = ["accepted by endpoint 1", "all servers unreachable"]
+            let store = makeStore(result: .partial(txIds: [firstTxId, secondTxId], statuses: statuses))
 
-        store.send(.swapRequested)
-        await waitForStore {
-            if case .sendResultFailure = store.state.path.last { return true }
-            return false
+            store.send(.swapRequested)
+            await waitForStore {
+                if case .sendResultFailure = store.state.path.last { return true }
+                return false
+            }
+
+            guard case let .sendResultFailure(resultState) = store.state.path.last else {
+                Issue.record("Expected Swap/Pay partial submission to route to failure")
+                return
+            }
+
+            #expect(store.state.txIdToExpand == firstTxId)
+            #expect(store.state.partialFailureTxIds == [firstTxId, secondTxId])
+            #expect(store.state.partialFailureStatuses == statuses)
+            #expect(store.state.failedCode == -999)
+            #expect(store.state.failedDescription == statuses.joined(separator: ", "))
+            #expect(resultState.txIdToExpand == firstTxId)
+            #expect(resultState.partialFailureTxIds == [firstTxId, secondTxId])
+            #expect(resultState.partialFailureStatuses == statuses)
+            #expect(resultState.failedDescription == statuses.joined(separator: ", "))
         }
-
-        guard case let .sendResultFailure(resultState) = store.state.path.last else {
-            Issue.record("Expected Swap/Pay partial submission to route to failure")
-            return
-        }
-
-        #expect(store.state.txIdToExpand == firstTxId)
-        #expect(store.state.partialFailureTxIds == [firstTxId, secondTxId])
-        #expect(store.state.partialFailureStatuses == statuses)
-        #expect(store.state.failedCode == -999)
-        #expect(store.state.failedDescription == statuses.joined(separator: ", "))
-        #expect(resultState.txIdToExpand == firstTxId)
-        #expect(resultState.partialFailureTxIds == [firstTxId, secondTxId])
-        #expect(resultState.partialFailureStatuses == statuses)
-        #expect(resultState.failedDescription == statuses.joined(separator: ", "))
     }
 
     @Test func timeoutSubmissionRoutesToPendingWithTimeoutCopy() async throws {
-        let txId = Data([0xAA]).toHexStringTxId()
-        let store = makeStore(
-            result: .grpcFailure(txIds: [txId], reason: .timeout),
-            txIdExists: true
-        )
+        // Isolate shared account storage (see partialSubmissionRoutesToFailureSupportState).
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let txId = Data([0xAA]).toHexStringTxId()
+            let store = makeStore(
+                result: .grpcFailure(txIds: [txId], reason: .timeout),
+                txIdExists: true
+            )
 
-        store.send(.swapRequested)
-        await waitForStore {
-            if case .sendResultPending = store.state.path.last { return true }
-            return false
+            store.send(.swapRequested)
+            await waitForStore {
+                if case .sendResultPending = store.state.path.last { return true }
+                return false
+            }
+
+            guard case let .sendResultPending(resultState) = store.state.path.last else {
+                Issue.record("Expected Swap/Pay timeout submission to route to pending")
+                return
+            }
+
+            #expect(store.state.txIdToExpand == txId)
+            #expect(store.state.pendingDescription == String(localizable: .sendPendingTimeoutInfo))
+            #expect(resultState.txIdToExpand == txId)
+            #expect(resultState.pendingDescription == String(localizable: .sendPendingTimeoutInfo))
         }
-
-        guard case let .sendResultPending(resultState) = store.state.path.last else {
-            Issue.record("Expected Swap/Pay timeout submission to route to pending")
-            return
-        }
-
-        #expect(store.state.txIdToExpand == txId)
-        #expect(store.state.pendingDescription == String(localizable: .sendPendingTimeoutInfo))
-        #expect(resultState.txIdToExpand == txId)
-        #expect(resultState.pendingDescription == String(localizable: .sendPendingTimeoutInfo))
     }
 
     @Test func keystonePendingKeepsPendingDescription() async throws {
@@ -623,10 +645,13 @@ import ComposableArchitecture
 
 @MainActor
 private func waitForStore(
-    // Generous deadline: the polling runs on the main actor, which the rest of the test suite
-    // contends for during a full parallel run. The poll exits as soon as the condition holds,
-    // so a healthy test never waits this long.
-    timeoutNanoseconds: UInt64 = 15_000_000_000,
+    // Generous deadline: these live stores deliver `.send`/`.run` effects through the cooperative
+    // pool and `DispatchQueue.main`, both of which are heavily contended during a full parallel run
+    // (the whole test target runs concurrently on a CPU-limited CI runner). The poll pumps the main
+    // queue (via `Task.sleep`) and exits as soon as the condition holds, so a healthy test never
+    // waits anywhere near this long — the deadline only guards against extreme scheduler starvation,
+    // which is what made the 15s deadline flake on CI.
+    timeoutNanoseconds: UInt64 = 60_000_000_000,
     sourceLocation: SourceLocation = #_sourceLocation,
     condition: @escaping @MainActor () -> Bool
 ) async {

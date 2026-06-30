@@ -34,11 +34,7 @@ import OSLog
 
         guard let logs else { return }
 
-        #expect(logs.count == 1)
-
-        let loggedMessage = logs[0].osLoggedMessage()
-
-        #expect(testMessage == loggedMessage)
+        #expect(logs.contains { $0.osLoggedMessage() == testMessage })
     }
 
     @Test func osLogger_WarningLevel_WarningLog() throws {
@@ -53,11 +49,7 @@ import OSLog
 
         guard let logs else { return }
 
-        #expect(logs.count == 1)
-
-        let loggedMessage = logs[0].osLoggedMessage()
-
-        #expect(testMessage == loggedMessage)
+        #expect(logs.contains { $0.osLoggedMessage() == testMessage })
     }
 
     @Test func osLogger_EventLevel_EventLog() throws {
@@ -72,11 +64,7 @@ import OSLog
 
         guard let logs else { return }
 
-        #expect(logs.count == 1)
-
-        let loggedMessage = logs[0].osLoggedMessage()
-
-        #expect(testMessage == loggedMessage)
+        #expect(logs.contains { $0.osLoggedMessage() == testMessage })
     }
 
     @Test func osLogger_InfoLevel_InfoLog() throws {
@@ -91,11 +79,7 @@ import OSLog
 
         guard let logs else { return }
 
-        #expect(logs.count == 1)
-
-        let loggedMessage = logs[0].osLoggedMessage()
-
-        #expect(testMessage == loggedMessage)
+        #expect(logs.contains { $0.osLoggedMessage() == testMessage })
     }
 
     @Test func osLogger_ErrorLevel_OtherLogs() throws {

@@ -1,6 +1,32 @@
 {
     "releases": [
         {
+            "version": "3.7.0",
+            "date": "23-06-2026",
+            "timestamp": 1782214834,
+            "sections": [
+                {
+                    "title": "Added:",
+                    "bulletpoints": [
+                        "When your server selection is set to Automatic, we now broadcast your transactions across several servers at once, so they're more likely to send reliably. You can change this in Advanced Settings."
+                    ]
+                },
+                {
+                    "title": "Changed:",
+                    "bulletpoints": [
+                        "We made a range of security and privacy improvements."
+                    ]
+                },
+                {
+                    "title": "Fixed:",
+                    "bulletpoints": [
+                        "We fixed an issue where some successful transactions briefly showed a failure screen.",
+                        "We fixed an issue where some received transactions could stay marked as pending."
+                    ]
+                }
+            ]
+        },
+        {
             "version": "3.6.0",
             "date": "15-06-2026",
             "timestamp": 1781544911,

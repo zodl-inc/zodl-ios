@@ -27,6 +27,48 @@ import ComposableArchitecture
         #expect(!store.state.isInvalidated)
     }
 
+    @MainActor @Test func transactionTappedMarksUnreadReceivedAsRead() async {
+        let readCalls = LockIsolated<[String]>([])
+        var state = TransactionList.State()
+        state.$transactions.withLock { $0 = IdentifiedArrayOf(uniqueElements: [tx(id: "unread", memoCount: 1)]) }
+
+        let store = TestStore(initialState: state) { TransactionList() } withDependencies: {
+            $0.userMetadataProvider = provider(isRead: false)
+            $0.userMetadataProvider.readTx = { id in readCalls.withValue { $0.append(id) } }
+        }
+        await store.send(.transactionTapped("unread"))
+
+        #expect(readCalls.value == ["unread"])
+    }
+
+    @MainActor @Test func transactionTappedDoesNotMarkAlreadyReadTransaction() async {
+        let readCalls = LockIsolated<[String]>([])
+        var state = TransactionList.State()
+        state.$transactions.withLock { $0 = IdentifiedArrayOf(uniqueElements: [tx(id: "read", memoCount: 1)]) }
+
+        let store = TestStore(initialState: state) { TransactionList() } withDependencies: {
+            $0.userMetadataProvider = provider(isRead: true)
+            $0.userMetadataProvider.readTx = { id in readCalls.withValue { $0.append(id) } }
+        }
+        await store.send(.transactionTapped("read"))
+
+        #expect(readCalls.value.isEmpty)
+    }
+
+    @MainActor @Test func transactionTappedUnknownIdIsNoOp() async {
+        let readCalls = LockIsolated<[String]>([])
+        var state = TransactionList.State()
+        state.$transactions.withLock { $0 = IdentifiedArrayOf(uniqueElements: [tx(id: "present", memoCount: 1)]) }
+
+        let store = TestStore(initialState: state) { TransactionList() } withDependencies: {
+            $0.userMetadataProvider = provider(isRead: false)
+            $0.userMetadataProvider.readTx = { id in readCalls.withValue { $0.append(id) } }
+        }
+        await store.send(.transactionTapped("missing"))
+
+        #expect(readCalls.value.isEmpty)
+    }
+
     @Test func isUnreadGuards() {
         withDependencies {
             $0.userMetadataProvider = provider(isRead: false)

@@ -27,6 +27,6 @@ struct Clamped<Value: Comparable> {
     }
     
     private func clamp(_ value: Value, using range: ClosedRange<Value>) -> Value {
-        min(range.upperBound, max(range.lowerBound, wrappedValue))
+        min(range.upperBound, max(range.lowerBound, value))
     }
 }

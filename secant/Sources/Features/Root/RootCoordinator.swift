@@ -44,7 +44,10 @@ extension Root {
                         .send(.resolveMetadataEncryptionKeys),
                         .send(.loadUserMetadata)
                     ),
-                    .send(.fetchTransactionsForTheSelectedAccount)
+                    .send(.fetchTransactionsForTheSelectedAccount),
+                    // SECURITY (MOB-1352): end any open Flexa session bound to the previous account so a
+                    // pending Flexa transaction request can't bind to the newly-selected account.
+                    .cancel(id: state.CancelFlexaId)
                 )
 
                 // MARK: - Add Keystone HW Wallet Coord Flow

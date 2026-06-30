@@ -46,6 +46,7 @@ struct SendConfirmation {
         var currencyAmount: RedactableString
         var failedCode: Int?
         var failedDescription: String?
+        var isAnchorError = false
         var failedPcztMsg: String?
         @Shared(.inMemory(.featureFlags)) var featureFlags: FeatureFlags = .initial
         var feeRequired: Zatoshi
@@ -338,6 +339,14 @@ struct SendConfirmation {
 
             case let .sendFailed(error, isTxIdPresentInTheDB):
                 state.failedDescription = error?.localizedDescription ?? ""
+                // MOB-385: rustCreateToAddress is the typed SDK case for Rust creation failures.
+                // The anchor string comes from Rust (zcash_client_sqlite) — no typed sub-code exists yet.
+                // If the SDK ever adds one, replace the string check with it and drop the comment.
+                if case let .rustCreateToAddress(rustError) = error {
+                    state.isAnchorError = rustError.localizedCaseInsensitiveContains("Unable to compute anchor")
+                } else {
+                    state.isAnchorError = false
+                }
                 state.isSending = false
                 let diffTime = Date().timeIntervalSince1970 - state.sendingScreenOnAppearTimestamp
                 let waitTimeToPresentScreen = diffTime > 2.0 ? 0.01 : 2.0 - diffTime
@@ -677,9 +686,14 @@ extension SendConfirmation.State {
         : String(localizable: .swapAndPayPendingPayTitle)
     }
     
+
     var failureInfo: String {
         if !partialFailureTxIds.isEmpty {
             return String(localizable: .sendPartialFailureInfo)
+        }
+
+        if isAnchorError {
+            return String(localizable: .sendFailureAnchorInfo)
         }
 
         return isShielding

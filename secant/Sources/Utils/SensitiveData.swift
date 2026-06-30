@@ -108,6 +108,7 @@ struct RedactableSynchronizerState: Equatable, Redactable {
         var syncStatus: SyncStatus
         var latestBlockHeight: BlockHeight
         var isRecovering: Bool
+        var fullyScannedHeight: BlockHeight
     }
 
     let data: SynchronizerStateWrapper
@@ -118,7 +119,8 @@ struct RedactableSynchronizerState: Equatable, Redactable {
             accountsBalances: data.accountsBalances,
             syncStatus: data.syncStatus,
             latestBlockHeight: data.latestBlockHeight,
-            isRecovering: data.isRecovering
+            isRecovering: data.isRecovering,
+            fullyScannedHeight: data.fullyScannedHeight
         )
     }
 }

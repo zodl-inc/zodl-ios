@@ -28,14 +28,20 @@ import ComposableArchitecture
         #expect(TransactionsManager.Filter.swap.applyFilter(received, addressBookContacts: .empty, userMetadataProvider: provider(isSwap: true)))
     }
 
-    @Test func unreadFilterIsBuggyAndMatchesEveryTransaction() {
-        // See coverage-uplift-plan.md §6.1: the `.unread` filter returns `true` unconditionally,
-        // so it never excludes a sent transaction (which can never be unread). Intended behaviour
-        // recorded as a known issue.
-        withKnownIssue("Bug coverage-uplift-plan.md §6.1: .unread filter returns true unconditionally") {
-            let sent = tx(isSent: true, memoCount: 0)
-            #expect(!TransactionsManager.Filter.unread.applyFilter(sent, addressBookContacts: .empty, userMetadataProvider: provider()))
-        }
+    @Test func unreadFilterMatchesOnlyUnreadTransactions() {
+        // Sent and shielding transactions are never "unread".
+        #expect(!unread(tx(isSent: true, memoCount: 1), isRead: false))
+        #expect(!unread(tx(isShielding: true, memoCount: 1), isRead: false))
+        // A received transaction without memos is not unread.
+        #expect(!unread(tx(isSent: false, memoCount: 0), isRead: false))
+        // A received transaction with memos that has already been read is not unread.
+        #expect(!unread(tx(isSent: false, memoCount: 1), isRead: true))
+        // A received transaction with memos that has NOT been read is unread.
+        #expect(unread(tx(isSent: false, memoCount: 1), isRead: false))
+    }
+
+    private func unread(_ transaction: TransactionState, isRead: Bool) -> Bool {
+        TransactionsManager.Filter.unread.applyFilter(transaction, addressBookContacts: .empty, userMetadataProvider: provider(isRead: isRead))
     }
 
     // MARK: - isUnread / isSwap

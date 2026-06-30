@@ -139,4 +139,48 @@ import ComposableArchitecture
 
         await store.finish()
     }
+
+    // MARK: - Birthday formatting / UI toggles / LearnMore
+
+    @MainActor @Test func recoveryPhraseRevealedFormatsNonZeroBirthday() async {
+        var wallet = StoredWallet.placeholder
+        wallet.birthday = Birthday(2_500_000)
+
+        let store = TestStore(initialState: .initial) { RecoveryPhraseDisplay() }
+
+        await store.send(.recoveryPhraseRevealed(wallet)) {
+            $0.birthday = Birthday(2_500_000)
+            $0.birthdayValue = "2500000"
+            $0.phrase = RecoveryPhrase.placeholder
+            $0.isRecoveryPhraseHidden = false
+        }
+
+        await store.finish()
+    }
+
+    @MainActor @Test func tooltipTappedTogglesBirthdayHint() async {
+        let store = TestStore(initialState: .initial) { RecoveryPhraseDisplay() }
+
+        await store.send(.tooltipTapped) { $0.isBirthdayHintVisible = true }
+        await store.send(.tooltipTapped) { $0.isBirthdayHintVisible = false }
+
+        await store.finish()
+    }
+
+    @MainActor @Test func helpSheetRequestedTogglesPresentation() async {
+        let store = TestStore(initialState: .initial) { RecoveryPhraseDisplay() }
+
+        await store.send(.helpSheetRequested) { $0.isHelpSheetPresented = true }
+
+        await store.finish()
+    }
+
+    @Test func learnMoreOptionsProvideTitlesAndSubtitles() {
+        let options = RecoveryPhraseDisplay.State.LearnMoreOptions.allCases
+        #expect(options.count == 4)
+        for option in options {
+            #expect(!option.title().isEmpty)
+            #expect(!option.subtitle().isEmpty)
+        }
+    }
 }

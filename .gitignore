@@ -58,6 +58,10 @@ fastlane/Preview.html
 fastlane/screenshots/**/*.png
 fastlane/test_output
 
+# fastlane local secrets (App Store Connect API key + env)
+fastlane/.env
+*.p8
+
 # Code Injection
 iOSInjectionProject/
 
@@ -77,8 +81,8 @@ GoogleService-info.plist
 # do not commit PartnerKeys.plist
 PartnerKeys.plist
 
-# do not commit generated libraries to this repo
-lib
+# do not commit generated libraries to this repo (root-level only; not fastlane/lib)
+/lib
 *.a
 *.generated.swift
 

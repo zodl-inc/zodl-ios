@@ -20,7 +20,7 @@ env:
 
 jobs:
   unit_tests:
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 30
     steps:
       - name: Checkout
@@ -29,7 +29,7 @@ jobs:
           fetch-depth: 0
 
       - name: Select latest Xcode
-        # macos-15 runners ship multiple Xcodes; default-selected is 16.x
+        # macos-26 runners ship multiple Xcodes; default-selected is 16.x
         # (Swift 6.0). The project is SWIFT_VERSION=6.0, and Swift 6.0 treats
         # some concurrency diagnostics as errors that 6.2+ relaxed back to
         # warnings ("Approachable Concurrency"). Without this step CI fails

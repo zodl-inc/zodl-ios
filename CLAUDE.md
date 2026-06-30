@@ -4,7 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Zodl (formerly Zashi) is an iOS Zcash wallet built with SwiftUI and The Composable Architecture (TCA). It uses the Zcash Swift SDK (`ZcashLightClientKit`) for blockchain operations.
+ZODL (formerly Zashi) is an iOS Zcash wallet built with SwiftUI and The Composable Architecture (TCA). It uses the Zcash Swift SDK (`ZcashLightClientKit`) for blockchain operations.
+
+## App name
+
+The app's name is always written **ZODL** — all uppercase. Whenever generated text refers to the app by name — UI strings (`Localizable.xcstrings`), code, comments, documentation, commit messages, PR titles/descriptions, etc. — it MUST be `ZODL`, never `Zodl` (nor `zodl`/`ZODl`). This rule is about the app name as a word; it does NOT change fixed technical identifiers such as the `zodl_internal` module, the `zodl-ios` repository, scheme names, or bundle IDs. The former name "Zashi" is unaffected.
 
 ## Build & Development
 

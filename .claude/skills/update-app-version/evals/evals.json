@@ -1,0 +1,33 @@
+{
+  "skill_name": "update-app-version",
+  "notes": "Canonical example of bumping to marketing version 3.8.0, build 5. The project currently has three non-test application targets (zodl-testnet, zodl-production, zodl-internal), each with three configurations (Debug, Release-Testflight, Release-AppStore) carrying MARKETING_VERSION and CURRENT_PROJECT_VERSION; the zodlTests unit-test target and the project-level settings carry neither. A correct run rewrites exactly those 9+9 version lines as a minimal diff and leaves everything else byte-for-byte unchanged.",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "/update-app-version 3.8.0 5",
+      "expected_output": "MARKETING_VERSION becomes 3.8.0 and CURRENT_PROJECT_VERSION becomes 5 for every non-test target (all three configurations each), via scripts/set_version.py. The zodlTests target is untouched. A dry-run is shown first, then the change is applied, then `show` and `git diff` confirm only the version value lines changed.",
+      "files": [],
+      "assertions": [
+        "Runs scripts/set_version.py with `set --marketing 3.8.0 --build 5`, not a hand-edit of project.pbxproj or agvtool",
+        "Performs a --dry-run before applying, and stops if it exits non-zero",
+        "All non-test targets (zodl-testnet, zodl-production, zodl-internal) end with MARKETING_VERSION = 3.8.0 and CURRENT_PROJECT_VERSION = 5 in every configuration",
+        "The zodlTests target and project-level build settings are NOT modified",
+        "The git diff of project.pbxproj contains only MARKETING_VERSION / CURRENT_PROJECT_VERSION value lines (18 changed lines) — nothing else moved",
+        "Info.plist files are not edited (they reference $(MARKETING_VERSION) / $(CURRENT_PROJECT_VERSION))",
+        "Verification is shown: `show` reports the new values for all non-test targets and the diff is presented",
+        "No git commit, tag, or build is performed unless the user asks"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "/update-app-version 3.8 five",
+      "expected_output": "The build number 'five' is rejected as not an integer; the skill reports the malformed input and changes nothing, asking the user for a valid build number.",
+      "files": [],
+      "assertions": [
+        "set_version.py exits with code 2 on the malformed build number and writes nothing",
+        "project.pbxproj is left unchanged",
+        "The user is told which argument was invalid and asked to supply a valid value, rather than guessing"
+      ]
+    }
+  ]
+}

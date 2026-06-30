@@ -1,6 +1,32 @@
 {
     "releases": [
         {
+            "version": "3.7.0",
+            "date": "23-06-2026",
+            "timestamp": 1782214834,
+            "sections": [
+                {
+                    "title": "Añadido:",
+                    "bulletpoints": [
+                        "Cuando la selección de servidor está en Automático, ahora transmitimos tus transacciones a través de varios servidores a la vez, para que se envíen de forma más confiable. Puedes cambiarlo en Configuración Avanzada."
+                    ]
+                },
+                {
+                    "title": "Cambiado:",
+                    "bulletpoints": [
+                        "Realizamos varias mejoras de seguridad y privacidad."
+                    ]
+                },
+                {
+                    "title": "Corregido:",
+                    "bulletpoints": [
+                        "Corregimos un problema por el cual algunas transacciones exitosas mostraban brevemente una pantalla de error.",
+                        "Corregimos un problema por el cual algunas transacciones recibidas podían quedar marcadas como pendientes."
+                    ]
+                }
+            ]
+        },
+        {
             "version": "3.6.0",
             "date": "15-06-2026",
             "timestamp": 1781544911,

@@ -6,8 +6,16 @@ directly impact users rather than highlighting other crucial architectural updat
 
 ## [Unreleased]
 
-### Added
-- Server selection now offers an Automatic mode that benchmarks known servers and keeps your wallet on the fastest one; Manual mode still lets you pin a specific server. Automatic switching is paused while sending, swapping, shielding, or voting.
+### Changed
+- QR / payment-request (ZIP-321) codes that contain more than one recipient are now rejected instead of silently processing only the first recipient, so what you review is always exactly what gets signed.
+
+### Fixed
+- Paying with Flexa now requires a Zodl (mobile) account and is blocked for Keystone (hardware) accounts, which have no on-device key to sign with. Switching accounts also ends any open Flexa session so a payment can't bind to the wrong account.
+
+## 3.7.0 build 1
+
+### Fixed
+- When a send fails because the wallet's chain state changed between tapping review and confirm (due to syncing catching up, a reorg, or the app resuming from background), a clear actionable message is now shown instead of the generic error copy.
 
 ### Changed
 - Sending, swapping, shielding, and Flexa payments now broadcast your transaction to multiple servers at once when you're in Automatic server mode (Manual mode still uses the server you selected), so a single slow or unreachable server is less likely to make a submission fail. If a server times out before confirming, you now see a clear message that your transaction may still have been broadcast, rather than an outright failure.
@@ -21,6 +29,11 @@ directly impact users rather than highlighting other crucial architectural updat
 
 ### Removed
 - A hidden legacy debug menu (reachable via a gesture on the splash screen) that could copy the seed phrase to the clipboard without Face ID / Touch ID.
+
+## 3.6.0 build 7 (20026-06-17)
+
+### Added
+- Server selection now offers an Automatic mode that benchmarks known servers and keeps your wallet on the fastest one; Manual mode still lets you pin a specific server. Automatic switching is paused while sending, swapping, shielding, or voting.
 
 ## 3.5.2 build 1 (20026-06-08)
 

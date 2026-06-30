@@ -1,7 +1,12 @@
 {
   "permissions": {
     "deny": [
-      "Read(/secant/Resources/PartnerKeys.plist)"
+      "Read(/secant/Resources/PartnerKeys.plist)",
+      "Edit(/secant/Resources/PartnerKeys.plist)",
+      "Read(/fastlane/.env)",
+      "Edit(/fastlane/.env)",
+      "Read(/fastlane/**/*.p8)",
+      "Edit(/fastlane/**/*.p8)"
     ]
   }
 }

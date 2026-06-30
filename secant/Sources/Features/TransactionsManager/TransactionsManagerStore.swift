@@ -371,7 +371,12 @@ extension TransactionsManager.Filter {
         case .swap:
             return userMetadataProvider.isSwapTransaction(transaction.zAddress ?? "")
         case .unread:
-            return true
+            guard !transaction.isSentTransaction,
+                  !transaction.isShieldingTransaction,
+                  transaction.memoCount > 0 else {
+                return false
+            }
+            return !userMetadataProvider.isRead(transaction.id, transaction.timestamp)
         }
     }
 }

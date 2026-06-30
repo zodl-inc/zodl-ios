@@ -26,7 +26,8 @@ enum NetworkError: Error {
             }
 
         case .httpStatus(let code):
-            return !(501...504).contains(code)
+            // Retry server errors (5xx); client errors (4xx) won't succeed on retry.
+            return (500...599).contains(code)
 
         case .unknown:
             return false

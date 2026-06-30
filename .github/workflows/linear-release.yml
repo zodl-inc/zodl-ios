@@ -1,28 +1,95 @@
 name: Linear release tracking
 
-# Fires on every release tag push (`<major>.<minor>.<patch>`, e.g. `3.5.2`).
-# The single job runs Linear's release action, which scans commits since the
-# previous tag for `MOB-###` references and creates a matching release under
-# the iOS Linear pipeline (Settings → Releases → zodl-ios in Linear).
+# Records a release in Linear when a version tag is pushed. Runs Linear's release
+# action, which scans commits since the previous tag for `MOB-###` references and
+# creates a matching release under the iOS Linear pipeline (Settings → Releases →
+# zodl-ios in Linear), with those issues attached.
 #
-# Requires the LINEAR_ACCESS_KEY repo secret, generated against the iOS
-# pipeline in Linear's UI.
+# The Linear action runs INLINE here — no GitHub Release and no GitHub App token
+# are involved. (We can't use an `on: release: published` trigger like Android:
+# iOS publishes no GitHub Releases, and a release made with the default
+# GITHUB_TOKEN would not cascade to other workflows anyway without an App token.)
+#
+# Two trigger paths:
+#
+#   * push:tags — fires automatically when a `<major>.<minor>.<patch>` tag is
+#     pushed. NOTE: GitHub runs this file *as it exists on the tagged commit*,
+#     not on main. A release branch that forked from main BEFORE this file was
+#     added won't contain it, so the push trigger silently does nothing for that
+#     tag — this is exactly why tag `3.6.0` never fired. Release branches cut
+#     from main after this merges will carry the file and work automatically.
+#
+#   * workflow_dispatch — runs this file *from the selected branch* (default
+#     main), so it works for ANY existing tag regardless of whether the tagged
+#     commit carries this file. Escape hatch for the transition and for tags on
+#     older branches:
+#       gh workflow run linear-release.yml -f tag=3.6.0
+#
+# Requires the LINEAR_ACCESS_KEY repo secret, generated against the iOS pipeline
+# in Linear's UI.
 
 on:
   push:
     tags:
       - '[0-9]+.[0-9]+.[0-9]+'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing version tag to track in Linear (e.g. 3.6.0)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+# Serialize runs for a given tag so a push and a manual dispatch for the same
+# version can't run overlapping Linear syncs. cancel-in-progress: false so the
+# second run waits rather than aborting the first mid-sync.
+concurrency:
+  group: linear-release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  cancel-in-progress: false
 
 jobs:
   linear-release:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Resolve target tag
+        id: tag
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PUSH_REF: ${{ github.ref_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          if [ "${EVENT_NAME}" = "workflow_dispatch" ]; then
+            TAG="${INPUT_TAG}"
+          else
+            TAG="${PUSH_REF}"
+          fi
+          if [[ ! "${TAG}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "ERROR: tag '${TAG}' does not match <major>.<minor>.<patch>." >&2
+            exit 1
+          fi
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout tag
         uses: actions/checkout@v4
         with:
+          ref: ${{ steps.tag.outputs.tag }}
           fetch-depth: 0  # full history so the Linear release action sees every commit since the previous tag
+
+      - name: Find previous tag
+        id: prev
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          prev=$(git tag --sort=-version:refname | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' \
+            | awk -v t="$TAG" 'found{print; exit} $0==t{found=1}')
+          echo "tag=${prev}" >> "$GITHUB_OUTPUT"
 
       - name: Create Linear release
         uses: linear/linear-release-action@v0
         with:
           access_key: ${{ secrets.LINEAR_ACCESS_KEY }}
+          version: ${{ steps.tag.outputs.tag }}
+          base_ref: ${{ steps.prev.outputs.tag }}

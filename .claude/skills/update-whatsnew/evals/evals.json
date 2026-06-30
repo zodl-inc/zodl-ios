@@ -1,0 +1,21 @@
+{
+  "skill_name": "update-whatsnew",
+  "notes": "Canonical example for the 3.7.0 release. The whatsNew files are kept newest-first; running the skill with version 3.7.0 against files topped by 3.6.0 must reproduce the expected entries below exactly, as a minimal diff (existing entries untouched).",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "/update-whatsnew\n\nEnglish\n\nAdded:\n\nWhen your server selection is set to Automatic, we now broadcast your transactions across several servers at once, so they're more likely to send reliably. You can change this in Advanced Settings.\n\nChanged:\n\nWe made a range of security and privacy improvements.\n\nFixed:\n\nWe fixed an issue where some successful transactions briefly showed a failure screen.\n\nWe fixed an issue where some received transactions could stay marked as pending.\n\nEspañol\n\nAñadido:\n\nCuando la selección de servidor está en Automático, ahora transmitimos tus transacciones a través de varios servidores a la vez, para que se envíen de forma más confiable. Puedes cambiarlo en Configuración Avanzada.\n\nCambiado:\n\nRealizamos varias mejoras de seguridad y privacidad.\n\nCorregido:\n\nCorregimos un problema por el cual algunas transacciones exitosas mostraban brevemente una pantalla de error.\n\nCorregimos un problema por el cual algunas transacciones recibidas podían quedar marcadas como pendientes.",
+      "expected_output": "whatsNew.json and whatsNew_es.json each get a new top entry for the version reported by zodl-production (date DD-MM-YYYY, timestamp now), with sections Added/Changed/Fixed (Añadido/Cambiado/Corregido) and the items as bulletpoints — a minimal diff that leaves all existing entries unchanged. Plus two App Store text blocks (EN + ES): each section title on its own line, every item prefixed with '* ', blank line between sections.",
+      "files": [],
+      "assertions": [
+        "Both files updated; the new entry is at index 0 of releases (newest-first)",
+        "version equals zodl-production MARKETING_VERSION; date is DD-MM-YYYY; timestamp is an integer epoch",
+        "Section titles are kept verbatim per language (Added:/Changed:/Fixed: and Añadido:/Cambiado:/Corregido:), not translated",
+        "The 'Fixed:'/'Corregido:' section has two bulletpoints; the others have one",
+        "Existing entries (3.6.0 and older) are byte-for-byte unchanged; output is valid JSON",
+        "App Store text: one block per language, section title line then '* ' bullets, blank line between sections",
+        "If an entry for the version already exists, nothing is written and the user is warned (stop-and-warn)"
+      ]
+    }
+  ]
+}

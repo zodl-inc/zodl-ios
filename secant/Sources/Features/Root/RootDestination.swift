@@ -109,6 +109,13 @@ extension Root {
                     return .none
                 }
                 flexaHandler.clearTransactionRequest()
+                // SECURITY (MOB-1352): Flexa signs with a LOCAL spending key derived from the device
+                // seed, which only exists for Zodl (local-seed) accounts. A Keystone (hardware) account
+                // has no local seed, so this path must never run for it — block and prompt the user to
+                // switch to a Zodl account rather than signing with the wrong key.
+                guard account.vendor == .zcash else {
+                    return .send(.flexaTransactionFailed(String(localizable: .partnersFlexaKeystoneNotSupportedMessage)))
+                }
                 return .run { send in
                     do {
                         // macOS: the SE seed decrypt below is the single biometric gate
@@ -121,7 +128,13 @@ extension Root {
                         let recipient = try Recipient(transaction.address, network: zcashSDKEnvironment.network().networkType)
                         let proposal = try await sdkSynchronizer.proposeTransfer(account.id, recipient, transaction.amount, nil)
 
-                        // make the actual send
+                        // make the actual send — defensive backstop: the vendor guard above already
+                        // blocks non-Zodl accounts; re-assert before touching the seed so a future
+                        // refactor can't reintroduce signing a Keystone payment with the local seed.
+                        guard account.vendor == .zcash else {
+                            assertionFailure("Flexa reached spending-key derivation for a non-Zodl account")
+                            return
+                        }
                         let storedWallet = try await walletStorage.exportWallet(AuthenticationContext.sendFunds.localizedReason)
                         let seedBytes = try mnemonic.toSeed(storedWallet.seedPhrase.value())
                         let network = zcashSDKEnvironment.network().networkType

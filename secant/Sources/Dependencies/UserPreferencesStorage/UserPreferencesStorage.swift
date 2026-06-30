@@ -178,28 +178,26 @@ extension UserPreferencesStorage {
                 input = String(input.dropFirst(http.count))
             }
             
-            let split = input.split(separator: ":")
-            
-            if let portString = split.last, let port = Int(portString) {
-                var host = ""
-                
-                if split.count == 2, let first = split.first {
-                    host = String(first)
-                } else if split.count == 3, let first = split.first {
-                    let second = split[1]
-                    
-                    host = "\(String(first))\(String(second))"
-                }
-                
-                return LightWalletEndpoint(
-                    address: host,
-                    port: port,
-                    secure: true,
-                    streamingCallTimeoutInMillis: streamingCallTimeoutInMillis
-                )
+            // Split on the LAST colon: everything after it is the port, everything before
+            // it is the host taken verbatim. This preserves any colons the host legitimately
+            // contains (e.g. IPv6) and never re-introduces a duplicate separator.
+            guard let separatorIndex = input.lastIndex(of: ":") else {
+                return nil
             }
-            
-            return nil
+
+            let host = String(input[..<separatorIndex])
+            let portString = input[input.index(after: separatorIndex)...]
+
+            guard !host.isEmpty, let port = Int(portString) else {
+                return nil
+            }
+
+            return LightWalletEndpoint(
+                address: host,
+                port: port,
+                secure: true,
+                streamingCallTimeoutInMillis: streamingCallTimeoutInMillis
+            )
         }
         
         static func config(for string: String, isCustom: Bool, streamingCallTimeoutInMillis: Int64) -> ServerConfig? {

@@ -2,9 +2,9 @@
 //  BalancesTests.swift
 //  zodlTests
 //
-//  Batch 3 — balances. Covers Balances reducer computed flags + updateBalance(nil) spendability
-//  (Features/BalanceBreakdown/BalancesStore.swift).
-//  NOTE: the non-nil AccountBalance aggregation path is deferred (needs an SDK PoolBalance fixture).
+//  Batch 3 — balances. Covers Balances reducer computed flags, updateBalance(nil)/non-nil
+//  spendability + sapling/orchard/transparent aggregation, shielding-processor state, and
+//  shieldFunds (Features/BalanceBreakdown/BalancesStore.swift).
 //
 
 import Testing
@@ -68,6 +68,64 @@ import ComposableArchitecture
         #expect(store.state.shieldedBalance == .zero)
         #expect(store.state.totalBalance == .zero)
         #expect(store.state.spendability == .everything)
+    }
+
+    @MainActor @Test func updateBalanceAggregatesSaplingOrchardAndTransparent() async {
+        let store = TestStore(initialState: state(autoShieldingThreshold: Zatoshi(1_000_000))) {
+            Balances()
+        } withDependencies: {
+            $0.zcashSDKEnvironment.shieldingThreshold = { Zatoshi(1_000_000) }
+        }
+        store.exhaustivity = .off
+
+        let balance = AccountBalance(
+            saplingBalance: PoolBalance(spendableValue: Zatoshi(100), changePendingConfirmation: Zatoshi(10), valuePendingSpendability: Zatoshi(20)),
+            orchardBalance: PoolBalance(spendableValue: Zatoshi(200), changePendingConfirmation: Zatoshi(30), valuePendingSpendability: Zatoshi(40)),
+            unshielded: Zatoshi(5),
+            awaitingResolution: Zatoshi(1)
+        )
+
+        await store.send(.updateBalance(balance))
+
+        #expect(store.state.changePending == Zatoshi(40))             // 10 + 30
+        #expect(store.state.pendingTransactions == Zatoshi(60))       // 20 + 40
+        #expect(store.state.shieldedBalance == Zatoshi(300))          // 100 + 200
+        #expect(store.state.transparentBalance == Zatoshi(5))         // unshielded
+        #expect(store.state.shieldedWithPendingBalance == Zatoshi(400)) // 130 + 270 totals
+        #expect(store.state.totalBalance == Zatoshi(406))            // 400 + 5 + 1 awaiting
+        #expect(store.state.spendability == .something)
+    }
+
+    @MainActor @Test func shieldingProcessorRequestedMarksShielding() async {
+        let store = TestStore(initialState: state()) { Balances() }
+
+        await store.send(.shieldingProcessorStateChanged(.requested)) {
+            $0.isShielding = true
+        }
+    }
+
+    @MainActor @Test func shieldingProcessorSucceededClearsShieldingAndRefreshes() async {
+        let store = TestStore(initialState: state(isShielding: true)) { Balances() }
+        store.exhaustivity = .off
+
+        await store.send(.shieldingProcessorStateChanged(.succeeded)) {
+            $0.isShielding = false
+        }
+        // No selected account, so the refresh request is a no-op effect.
+        await store.receive(\.updateBalancesOnAppear)
+    }
+
+    @MainActor @Test func shieldFundsTappedInvokesProcessor() async {
+        let shieldCalled = LockIsolated(false)
+        let store = TestStore(initialState: state()) {
+            Balances()
+        } withDependencies: {
+            $0.shieldingProcessor.shieldFunds = { shieldCalled.setValue(true) }
+        }
+
+        await store.send(.shieldFundsTapped)
+
+        #expect(shieldCalled.value)
     }
 
     private func state(

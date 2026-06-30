@@ -9995,6 +9995,23 @@
         }
       }
     },
+    "partners.flexa.keystoneNotSupportedMessage" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Flexa payments require a ZODL account. Switch to a ZODL account to pay with Flexa."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Los pagos con Flexa requieren una cuenta ZODL. Cambia a una cuenta ZODL para pagar con Flexa."
+          }
+        }
+      }
+    },
     "partners.flexa.transactionFailedMessage" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -12401,6 +12418,23 @@
         }
       }
     },
+    "send.failureAnchorInfo" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your wallet's chain state changed while preparing this transaction. Please wait for sync to complete and try again."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "El estado de la cadena cambió mientras se preparaba la transacción. Por favor, espera a que la sincronización termine e intenta de nuevo."
+          }
+        }
+      }
+    },
     "send.failureInfo" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -13352,6 +13386,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Manual"
+          }
+        }
+      }
+    },
+    "serverSetup.multiServerInfo" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "We may use multiple servers to optimize performance. To reduce metadata exposure, choose Manual connection mode to select your single server of choice, and ensure Tor is enabled in Advanced Settings."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Podemos usar varios servidores para optimizar el rendimiento. Para reducir la exposición de metadatos, selecciona el modo de conexión Manual para elegir un único servidor de tu preferencia y asegúrate de que Tor esté habilitado en Configuración Avanzada."
           }
         }
       }
