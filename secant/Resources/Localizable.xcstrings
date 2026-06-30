@@ -10080,6 +10080,40 @@
         }
       }
     },
+    "plainOnboarding.getStarted" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Get started\nwith Zodl"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Empieza\ncon Zodl"
+          }
+        }
+      }
+    },
+    "plainOnboarding.tagline" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bringing unstoppable private\nmoney to billions"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Llevando dinero privado\nimparable a miles de millones"
+          }
+        }
+      }
+    },
     "plainOnboarding.title" : {
       "comment" : "MARK: - Plain Onboarding Flow",
       "extractionState" : "manual",

@@ -21,6 +21,14 @@ struct RestoreWalletCoordFlowView: View {
     var body: some View {
         WithPerceptionTracking {
             NavigationStack(path: $store.scope(state: \.path, action: \.path)) {
+#if os(macOS)
+                // macOS: the animated sphinx landing IS the onboarding root. It drives the same
+                // RestoreWalletCoordFlow actions (`.importExistingWallet` / `.createNewWalletTapped`),
+                // so the pushed restore/create destinations below are unchanged. iOS keeps the plain
+                // logo/title/CTA root verbatim (Rule #11).
+                MacLandingView(store: store)
+                    .alert($store.scope(state: \.alert, action: \.alert))
+#else
                 VStack {
                     Spacer()
 
@@ -58,6 +66,7 @@ struct RestoreWalletCoordFlowView: View {
                 .screenHorizontalPadding()
                 .applyOnboardingScreenBackground()
                 .alert($store.scope(state: \.alert, action: \.alert))
+#endif
             } destination: { store in
                 switch store.case {
                 case let .estimateBirthdaysDate(store):
