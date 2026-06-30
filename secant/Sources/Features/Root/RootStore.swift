@@ -48,6 +48,8 @@ struct Root {
         var DidFinishLaunchingId = UUID()
         var CancelFlexaId = UUID()
         var shieldingProcessorCancelId = UUID()
+        var orchardMigrationCancelId = UUID()
+        var orchardMigrationState = OrchardMigration.State()
         var automaticServerRefreshCancelId = UUID()
 
         @Shared(.inMemory(.addressBookContacts)) var addressBookContacts: AddressBookContacts = .empty
@@ -254,6 +256,11 @@ struct Root {
         case shareFinished
         case shieldingProcessorStateChanged(ShieldingProcessorClient.State)
 
+        // Orchard migration
+        case observeOrchardMigration
+        case orchardMigrationStateChanged(MigrationProcessorClient.Phase)
+        case orchardMigrationKeystoneProposalReady(Proposal)
+
         // Tor
         case observeTorInit
         case torInitFailed
@@ -295,6 +302,7 @@ struct Root {
     @Dependency(\.pasteboard) var pasteboard
     @Dependency(\.sdkSynchronizer) var sdkSynchronizer
     @Dependency(\.shieldingProcessor) var shieldingProcessor
+    @Dependency(\.migrationProcessor) var migrationProcessor
     @Dependency(\.swapAndPay) var swapAndPay
     @Dependency(\.autoServerSelection) var autoServerSelection
     @Dependency(\.uriParser) var uriParser
@@ -410,7 +418,9 @@ struct Root {
         coordinatorReduce()
         
         shieldingProcessorReduce()
-        
+
+        orchardMigrationReduce()
+
         torInitCheckReduce()
         
         swapsReduce()
