@@ -45,8 +45,12 @@ enum IronwoodRegtestConfig {
     /// Token name shown in the UI for the regtest build.
     static let tokenName = "TAZ"
 
-    /// The regtest ``ZcashNetwork`` carrying the custom activation heights.
+    /// The custom ``ZcashNetwork``: **mainnet identity** (so addresses are `u1…` and the server's
+    /// `chainName "main"` matches) combined with the Ironwood custom activation heights. It routes
+    /// through the SDK's regtest slot on-disk and over the FFI, so it never collides with a real mainnet
+    /// wallet, but the Rust core derives mainnet-encoded addresses and runs mainnet consensus at these
+    /// heights.
     static var network: ZcashNetwork {
-        ZcashNetworkBuilder.regtest(activationHeights: activationHeights)
+        ZcashNetworkBuilder.custom(base: .mainnet, activationHeights: activationHeights)
     }
 }
