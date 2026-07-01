@@ -129,10 +129,14 @@ struct MacSplitView: View {
         // fighting SwiftUI's window ownership at the view level crashes or gets overridden.
         NavigationSplitView(columnVisibility: $columnVisibility) {
             sidebar
-                // RULE #4: seed the initial width; `FixedSidebarWidth` pins the underlying
-                // NSSplitViewItem (single-value column width still lets the divider drag) and re-pins
-                // on every section switch (SwiftUI re-asserts a resizable width on each body re-run).
-                .navigationSplitViewColumnWidth(sidebarWidth)
+                // RULE #4: hold a HARD width (min == ideal == max) so SwiftUI lays the sidebar out at
+                // exactly `sidebarWidth` on the FIRST frame. The single-value form only seeds a
+                // *preferred* width and lets SwiftUI render a narrower content-hugging column for one
+                // frame until `FixedSidebarWidth`'s async pin slams it to width — that one frame is the
+                // visible startup "pop". A hard min/ideal/max leaves nothing to correct after frame 1.
+                // `FixedSidebarWidth` still pins the underlying NSSplitViewItem (kills the divider drag,
+                // purges the remembered width) and re-pins on every section switch.
+                .navigationSplitViewColumnWidth(min: sidebarWidth, ideal: sidebarWidth, max: sidebarWidth)
                 .toolbar(removing: .sidebarToggle)
                 .background(FixedSidebarWidth(width: sidebarWidth, trigger: selectedSection))
         } detail: {
@@ -285,21 +289,22 @@ struct MacSplitView: View {
                 accountSwitcher
                     .padding(.bottom, 24)
 
-                // Balance label + hide-balances eye.
-                HStack(spacing: 0) {
-                    Text(localizable: .generalBalance)
-                        .zFont(.medium, size: 16, style: Design.Text.tertiary)
-                    Spacer()
-                    hideEyeButton
-                }
+                // Balance label (the eye moved to the value row below).
+                Text(localizable: .generalBalance)
+                    .zFont(.medium, size: 16, style: Design.Text.tertiary)
 
-                // Leading ZEC amount + currency.
+                // Leading ZEC amount + currency, with the hide-balances eye passed as a TRAILING ACCESSORY
+                // so it renders INSIDE the amount row ("3.567 ZEC  <eye>") and tracks the balance width as
+                // the digits change (per the mockup). It must live in the amount row — NOT wrapped around
+                // the whole WalletBalancesView — because the exchange-rate row below is full-width; wrapping
+                // made that row fight the eye for width and blow up the header height during restore.
                 WalletBalancesView(
                     store: store.scope(state: \.homeState.walletBalancesState, action: \.home.walletBalances),
                     tokenName: tokenName,
                     couldBeHidden: true,
                     shortened: true,
-                    leadingAligned: true
+                    leadingAligned: true,
+                    trailingAccessory: AnyView(hideEyeButton)
                 )
 
                 Divider()
@@ -381,7 +386,7 @@ struct MacSplitView: View {
             Button {
                 $isSensitiveContentHidden.withLock { $0.toggle() }
             } label: {
-                // Plain eye in the Balance row (per the mockup) — no glass capsule here.
+                // Plain eye next to the balance value (per the mockup) — no glass capsule here.
                 (isSensitiveContentHidden ? Asset.Assets.eyeOff.image : Asset.Assets.eyeOn.image)
                     .zImage(size: 22, color: Asset.Colors.primary.color)
             }
