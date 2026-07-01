@@ -49,9 +49,11 @@ extension MigrationSDKClient: DependencyKey {
             recordBackgroundRun: { runLogStore.append(MigrationBackgroundRun(timestamp: Date(), outcome: $0)) },
             backgroundRunLog: { runLogStore.load() },
             clearBackgroundRunLog: { runLogStore.clear() },
-            // Debug controls don't apply to real funds — the MigrationDebug panel goes inert in live.
+            // The simulation controls don't apply to real funds, but the read-only snapshot does: it
+            // surfaces the live cache (state + the Orchard balance that gates the migration offer) so
+            // the MigrationDebug panel can confirm what the SDK is actually reporting.
             debug: MigrationDebugControls(
-                snapshotDescription: { "Live migration engine — debug controls are disabled." }
+                snapshotDescription: { engine.liveSnapshotDescription() }
             )
         )
     }

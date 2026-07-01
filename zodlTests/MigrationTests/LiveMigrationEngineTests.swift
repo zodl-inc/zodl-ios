@@ -107,6 +107,62 @@ struct LiveMigrationEngineTests {
         #expect(collected.withLock { $0 }.contains(AppMigrationState.readyToPropose))
     }
 
+    /// REGRESSION: the Home SmartBanner offers migration when `orchardBalance > 0` while the migration
+    /// state is still `.notStarted`, and that offer is driven purely by `statePublisher()` emissions.
+    /// A wallet finishing sync moves the Orchard balance 0 -> positive with NO migration-state change,
+    /// so the publisher MUST emit on that threshold crossing — otherwise the banner (which subscribed
+    /// while the balance was still zero) never re-evaluates and the migration offer never appears.
+    @Test func refreshEmitsWhenOrchardBecomesPositiveEvenIfStateUnchanged() async {
+        let balance = OSAllocatedUnfairLock(initialState: Zatoshi(0))
+        let engine = makeEngine(gateway: makeGateway(
+            orchardBalance: { _ in balance.withLock { $0 } },
+            state: { _ in ZcashLightClientKit.MigrationState.notStarted }
+        ))
+
+        // Subscribe while the balance is still zero (mirrors the SmartBanner subscribing during sync).
+        // The CurrentValueSubject replays the initial `.notStarted`.
+        let emissions = OSAllocatedUnfairLock(initialState: [AppMigrationState]())
+        let cancellable = engine.statePublisher().sink { state in
+            emissions.withLock { $0.append(state) }
+        }
+
+        await engine.refresh()                              // balance 0, state notStarted
+        balance.withLock { $0 = Zatoshi(1_000_000_000) }    // 10 ZEC arrive on Orchard
+        await engine.refresh()                              // 0 -> positive, state still notStarted
+
+        cancellable.cancel()
+
+        // Initial replay + the threshold-crossing emission.
+        #expect(emissions.withLock { $0 }.count >= 2)
+        #expect(engine.orchardBalance() == Zatoshi(1_000_000_000))
+    }
+
+    /// The emission above fires on the 0 <-> positive *threshold*, not on every balance delta: a
+    /// 5 -> 10 ZEC change while already positive and still `.notStarted` must NOT re-emit, so the
+    /// in-progress migration screens (MigrationStatus / MigrationNoteSplit) that also observe this
+    /// stream aren't churned.
+    @Test func refreshDoesNotReEmitWhenOrchardStaysPositiveAndStateUnchanged() async {
+        let balance = OSAllocatedUnfairLock(initialState: Zatoshi(500_000_000))
+        let engine = makeEngine(gateway: makeGateway(
+            orchardBalance: { _ in balance.withLock { $0 } },
+            state: { _ in ZcashLightClientKit.MigrationState.notStarted }
+        ))
+        await engine.refresh()   // establish the positive baseline in the cache
+
+        // Subscribe after the balance is already positive; only the replay should arrive.
+        let emissions = OSAllocatedUnfairLock(initialState: [AppMigrationState]())
+        let cancellable = engine.statePublisher().sink { state in
+            emissions.withLock { $0.append(state) }
+        }
+
+        balance.withLock { $0 = Zatoshi(1_000_000_000) }   // 5 -> 10 ZEC, both positive
+        await engine.refresh()                             // no threshold crossing, state unchanged
+
+        cancellable.cancel()
+
+        #expect(emissions.withLock { $0 }.count == 1)   // CurrentValueSubject replay only
+    }
+
     @Test func syncGettersReflectCacheAfterRefresh() async {
         let engine = makeEngine(gateway: makeGateway(
             orchardBalance: { _ in Zatoshi(123) },

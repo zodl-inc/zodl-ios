@@ -212,6 +212,23 @@ final class LiveMigrationEngine: @unchecked Sendable {
         }
     }
 
+    /// PROTOTYPE diagnostics: a human-readable dump of the live cache, surfaced by the MigrationDebug
+    /// panel (whose simulation controls are inert against real funds). Chiefly lets us confirm whether
+    /// the SDK is reporting a non-zero **Orchard** balance — the SmartBanner's migration-offer trigger,
+    /// which the normal UI hides by folding every shielded pool into one total.
+    func liveSnapshotDescription() -> String {
+        read { cache in
+            """
+            Live migration engine (real funds)
+            state: \(cache.state)
+            orchard spendable: \(cache.orchard.amount) zats (offer shows when > 0)
+            noteSplitNeeded: \(cache.noteSplitNeeded)
+            syncRequired: \(cache.syncRequired)
+            overdue: \(cache.overdue)   invalid: \(cache.invalid)
+            """
+        }
+    }
+
     // MARK: - Mutating operations
 
     func prepareSplit() async -> NoteSplitProposal {
@@ -393,8 +410,17 @@ final class LiveMigrationEngine: @unchecked Sendable {
     // MARK: - Private
 
     private func apply(_ fields: SDKFields) {
-        let stateChanged = protected.withLockUnchecked { cache -> Bool in
-            let changed = cache.state != fields.state
+        let shouldEmit = protected.withLockUnchecked { cache -> Bool in
+            let stateChanged = cache.state != fields.state
+            // The Home SmartBanner offers migration when `orchard > 0` while the state is still
+            // `.notStarted`, and it re-evaluates only on a `statePublisher()` emission. A wallet
+            // finishing sync moves the Orchard balance 0 -> positive with NO migration-state change,
+            // so emit on that threshold crossing too — otherwise the offer never appears (the banner
+            // subscribed while the balance was still zero and the state never leaves `.notStarted`).
+            // Gate on the `orchard > 0` predicate, not every balance delta, so the in-progress
+            // migration screens that also observe this stream aren't churned; both migration-flow
+            // consumers are idempotent to a repeated state value.
+            let offerAvailabilityChanged = (cache.orchard.amount > 0) != (fields.orchard.amount > 0)
             cache.state = fields.state
             cache.progress = fields.progress
             cache.noteSplitNeeded = fields.noteSplitNeeded
@@ -402,9 +428,9 @@ final class LiveMigrationEngine: @unchecked Sendable {
             cache.overdue = fields.overdue
             cache.invalid = fields.invalid
             cache.orchard = fields.orchard
-            return changed
+            return stateChanged || offerAvailabilityChanged
         }
-        if stateChanged {
+        if shouldEmit {
             stateSubject.send(fields.state)
         }
     }
