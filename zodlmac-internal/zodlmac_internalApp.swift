@@ -78,6 +78,10 @@ struct zodlmac_internalApp: App {
             }
         }
         .windowResizability(.contentSize)
+        // Center on the FIRST launch only (no saved frame); afterwards macOS restores the window's last
+        // position via SwiftUI's standard frame autosave. No forced re-centering on every open — that was
+        // the visible startup jump (see FixedWindowConfigurator).
+        .defaultPosition(.center)
         // Single-window app: remove the "New Window" command (and its ⌘N) so neither the menu nor the
         // shortcut can spawn a confusing second Zodl window. The File menu itself (which otherwise lingers
         // with just "Close") is dropped in MacMenuSimplifier.
@@ -170,18 +174,13 @@ private struct FixedWindowConfigurator: NSViewRepresentable {
             let fixedContent = NSSize(width: WindowSize.width, height: WindowSize.height)
             window.contentMinSize = fixedContent
             window.contentMaxSize = fixedContent
-            // Always open CENTERED on the active screen — never restore a remembered (often too-low /
-            // partially-offscreen) position. Disable frame autosave, then center within `visibleFrame`
-            // (which excludes the menu bar + Dock). Deferred so we win against SwiftUI's restore.
-            window.setFrameAutosaveName("")
-            DispatchQueue.main.async { [weak window] in
-                guard let window, let screen = window.screen ?? NSScreen.main else { return }
-                let visible = screen.visibleFrame
-                let size = window.frame.size
-                window.setFrameOrigin(
-                    NSPoint(x: visible.midX - size.width / 2, y: visible.midY - size.height / 2)
-                )
-            }
+            // Window POSITION is left to macOS — standard best-practice behavior. SwiftUI's WindowGroup
+            // restores the last frame across launches, and `.defaultPosition(.center)` on the scene centers
+            // it on the very first launch (no saved frame). The previous code disabled frame autosave and
+            // re-centered on EVERY open, deferred to run after SwiftUI's restore — which yanked the window
+            // from its restored spot to center, a visible jump. macOS already constrains a restored frame to
+            // the visible area, so the old "too-low / offscreen" worry is handled by the system. Only the
+            // size stays locked (above); the origin is the user's / system's to remember.
         }
     }
 }
