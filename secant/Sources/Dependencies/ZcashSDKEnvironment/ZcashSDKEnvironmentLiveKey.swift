@@ -30,13 +30,25 @@ extension ZcashSDKEnvironment: DependencyKey {
             serverConfig: { ZcashSDKEnvironment.serverConfig(for: network.networkType) },
             servers: { ZcashSDKEnvironment.servers(for: network.networkType) },
             shieldingThreshold: { Zatoshi(100_000) },
-            tokenName: { network.networkType == .testnet ? "TAZ" : "ZEC" }
+            tokenName: {
+                switch network.networkType {
+                case .mainnet: "ZEC"
+                case .testnet: "TAZ"
+                case .regtest: IronwoodRegtestConfig.tokenName
+                }
+            }
         )
     }
 }
 
 extension ZcashSDKEnvironment {
     static func serverConfig(for network: NetworkType) -> UserPreferencesStorage.ServerConfig {
+        // Regtest uses a single fixed endpoint and its own on-disk namespace; bypass the stored/custom
+        // server logic and the mainnet/testnet migrations so a previously-stored server is never reused.
+        if network == .regtest {
+            return defaultEndpoint(for: .regtest).serverConfig()
+        }
+
         migrateVersion1IfNeeded()
         migrateDecommissionedServersIfNeeded(for: network)
         initializeAutomaticServerSelectionIfNeeded(for: network)

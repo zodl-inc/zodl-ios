@@ -16,6 +16,10 @@ extension AutoServerSelectionClient: DependencyKey {
             guard userStoredPreferences.automaticServerSelection() == true else { return nil }
 
             let network = zcashSDKEnvironment.network().networkType
+
+            // Regtest uses a single fixed endpoint; never benchmark or switch away from it.
+            guard network != .regtest else { return nil }
+
             let endpoints = ZcashSDKEnvironment.endpoints(for: network)
 
             let ranked = await sdkSynchronizer.evaluateBestOf(

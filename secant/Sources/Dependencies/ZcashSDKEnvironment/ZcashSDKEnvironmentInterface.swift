@@ -73,6 +73,10 @@ extension ZcashSDKEnvironment {
     }
     
     static func defaultEndpoint(for network: NetworkType) -> LightWalletEndpoint {
+        if network == .regtest {
+            return IronwoodRegtestConfig.endpoint
+        }
+
         let defaultHost = network == .mainnet ? ZcashSDKConstants.endpointMainnetAddress : ZcashSDKConstants.endpointTestnetAddress
         let defaultPort = network == .mainnet ? ZcashSDKConstants.endpointMainnetPort : ZcashSDKConstants.endpointTestnetPort
 
@@ -85,8 +89,8 @@ extension ZcashSDKEnvironment {
     }
     
     static func endpoints(for network: NetworkType, skipDefault: Bool = false) -> [LightWalletEndpoint] {
-        // Testnet has a single endpoint, so there is nothing to benchmark.
-        if network == .testnet {
+        // Regtest and testnet each have a single endpoint, so there is nothing to benchmark.
+        if network == .testnet || network == .regtest {
             return skipDefault ? [] : [defaultEndpoint(for: network)]
         }
 

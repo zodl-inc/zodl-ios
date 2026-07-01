@@ -54,11 +54,16 @@ struct SecantApp: App {
 /// network type suitable for the present target.
 
 enum TargetConstants {
+    /// Dev hook: flip to `true` to point a **testnet build** at the Ironwood regtest backend
+    /// (see ``IronwoodRegtestConfig``). Honored only under `SECANT_TESTNET`; mainnet/distribution
+    /// builds ignore it and can never select regtest.
+    static let useIronwoodRegtest = false
+
     static var zcashNetwork: ZcashNetwork {
 #if SECANT_MAINNET
     return ZcashNetworkBuilder.network(for: .mainnet)
 #elseif SECANT_TESTNET
-    return ZcashNetworkBuilder.network(for: .testnet)
+    return useIronwoodRegtest ? IronwoodRegtestConfig.network : ZcashNetworkBuilder.network(for: .testnet)
 #else
     fatalError("SECANT_MAINNET or SECANT_TESTNET flags not defined on Swift Compiler custom flags of your build target.")
 #endif
@@ -68,7 +73,7 @@ enum TargetConstants {
 #if SECANT_MAINNET
     return "ZEC"
 #elseif SECANT_TESTNET
-    return "TAZ"
+    return useIronwoodRegtest ? IronwoodRegtestConfig.tokenName : "TAZ"
 #else
     fatalError("SECANT_MAINNET or SECANT_TESTNET flags not defined on Swift Compiler custom flags of your build target.")
 #endif
