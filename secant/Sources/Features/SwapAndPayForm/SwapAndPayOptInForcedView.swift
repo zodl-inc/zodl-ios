@@ -28,15 +28,8 @@ struct SwapAndPayOptInForcedView: View {
                 
                 Spacer()
                 
-                HStack(alignment: .top, spacing: 0) {
-                    Asset.Assets.infoCircle.image
-                        .zImage(size: 20, style: Design.Text.primary)
-                        .padding(.trailing, 12)
-                    
-                    Text(localizable: .swapAndPayOptInWarn)
-                        .zFont(size: 12, style: Design.Text.tertiary)
-                }
-                .padding(.bottom, 20)
+                HintBox(String(localizable: .swapAndPayOptInWarn))
+                    .padding(.bottom, 20)
                 
                 ZashiButton(
                     String(localizable: .keystoneTransactionRejectGoBack),

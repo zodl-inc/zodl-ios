@@ -3,8 +3,6 @@ import Combine
 import ComposableArchitecture
 
 struct SettingsView: View {
-    @Environment(\.colorScheme) var colorScheme
-    
     @PlatformBindable var store: StoreOf<Settings>
     
     init(store: StoreOf<Settings>) {
@@ -233,20 +231,8 @@ struct SettingsView: View {
                 .padding(.top, 24)
                 .padding(.bottom, 12)
 
-            HStack(alignment: .top, spacing: 8) {
-                Asset.Assets.infoCircle.image
-                    .zImage(size: 20, style: Design.Text.primary)
-
-                if let attrText = try? AttributedString(
-                    markdown: String(localizable: .walletBirthdayHelpDesc),
-                    including: \.zashiApp
-                ) {
-                    ZashiText(withAttributedString: attrText, colorScheme: colorScheme)
-                        .zFont(size: 14, style: Design.Text.tertiary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            .padding(.bottom, 32)
+            HintBox(String(localizable: .walletBirthdayHelpDesc), style: .markdown)
+                .padding(.bottom, 32)
             
             ZashiButton(String(localizable: .restoreInfoGotIt)) {
                 store.send(.closeResyncHelpSheetTapped)

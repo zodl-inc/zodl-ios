@@ -160,15 +160,8 @@ extension TorSetupView {
     }
     
     private func note() -> some View {
-        HStack(alignment: .top, spacing: 0) {
-            Asset.Assets.infoCircle.image
-                .zImage(size: 20, style: Design.Text.primary)
-                .padding(.trailing, 12)
-
-            Text(localizable: .currencyConversionNote)
-                .zFont(size: 12, style: Design.Text.tertiary)
-        }
-        .screenHorizontalPadding()
+        HintBox(String(localizable: .currencyConversionNote))
+            .screenHorizontalPadding()
     }
     
     private func optionVStack(_ title: String, subtitle: String) -> some View {

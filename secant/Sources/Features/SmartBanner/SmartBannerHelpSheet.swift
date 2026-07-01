@@ -386,17 +386,6 @@ struct SmartBannerHelpSheetView: View {
     }
     
     @ViewBuilder private func note(_ text: String) -> some View {
-        VStack {
-            HStack(alignment: .top, spacing: 0) {
-                Asset.Assets.infoCircle.image
-                    .zImage(size: 20, style: Design.Text.tertiary)
-                    .padding(.trailing, 12)
-                
-                Text(text)
-                    .zFont(size: 12, style: Design.Text.tertiary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .frame(maxWidth: .infinity)
+        HintBox(text, iconStyle: Design.Text.tertiary)
     }
 }
