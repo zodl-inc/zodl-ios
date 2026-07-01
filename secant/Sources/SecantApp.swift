@@ -57,7 +57,7 @@ enum TargetConstants {
     /// Dev hook: flip to `true` to point a **testnet build** at the Ironwood regtest backend
     /// (see ``IronwoodRegtestConfig``). Honored only under `SECANT_TESTNET`; mainnet/distribution
     /// builds ignore it and can never select regtest.
-    static let useIronwoodRegtest = false
+    static let useIronwoodRegtest = true
 
     static var zcashNetwork: ZcashNetwork {
 #if SECANT_MAINNET
