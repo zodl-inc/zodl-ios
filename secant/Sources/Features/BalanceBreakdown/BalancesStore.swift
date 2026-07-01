@@ -18,6 +18,7 @@ struct Balances {
 
         var autoShieldingThreshold: Zatoshi
         var changePending: Zatoshi
+        var ironwoodBalance: Zatoshi = .zero
         var isShielding: Bool
         var pendingTransactions: Zatoshi
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
@@ -46,6 +47,12 @@ struct Balances {
         
         var isShieldableBalanceAvailable: Bool {
             transparentBalance.amount >= autoShieldingThreshold.amount
+        }
+
+        /// Ironwood (Orchard V3 / NU6.3) holdings are `.zero` for every wallet until NU6.3 activates,
+        /// so the explicit Ironwood row stays hidden until a wallet actually holds Ironwood funds.
+        var hasIronwoodBalance: Bool {
+            ironwoodBalance.amount > 0
         }
 
         var isShieldingButtonDisabled: Bool {
@@ -171,14 +178,13 @@ struct Balances {
                 return .send(.updateBalance(accountsBalances[account.id]))
 
             case .updateBalance(let accountBalance):
-                state.changePending = (accountBalance?.saplingBalance.changePendingConfirmation ?? .zero) +
-                    (accountBalance?.orchardBalance.changePendingConfirmation ?? .zero)
-                state.pendingTransactions = (accountBalance?.saplingBalance.valuePendingSpendability ?? .zero) +
-                    (accountBalance?.orchardBalance.valuePendingSpendability ?? .zero)
-                state.shieldedBalance = (accountBalance?.saplingBalance.spendableValue ?? .zero) + (accountBalance?.orchardBalance.spendableValue ?? .zero)
+                state.changePending = accountBalance?.shieldedChangePending ?? .zero
+                state.pendingTransactions = accountBalance?.shieldedValuePendingSpendability ?? .zero
+                state.shieldedBalance = accountBalance?.shieldedSpendableValue ?? .zero
                 state.transparentBalance = accountBalance?.unshielded ?? .zero
+                state.ironwoodBalance = accountBalance?.ironwoodBalance.total() ?? .zero
 
-                state.shieldedWithPendingBalance = (accountBalance?.saplingBalance.total() ?? .zero) + (accountBalance?.orchardBalance.total() ?? .zero)
+                state.shieldedWithPendingBalance = accountBalance?.shieldedTotalIncludingPending ?? .zero
                 state.totalBalance = state.shieldedWithPendingBalance + state.transparentBalance + (accountBalance?.awaitingResolution ?? .zero)
 
                 let everythingCondition = state.shieldedBalance.amount > 0 && ((state.shieldedBalance == state.totalBalance)

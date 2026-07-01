@@ -2,9 +2,9 @@
 //  BalancesTests.swift
 //  zodlTests
 //
-//  Batch 3 — balances. Covers Balances reducer computed flags + updateBalance(nil) spendability
-//  (Features/BalanceBreakdown/BalancesStore.swift).
-//  NOTE: the non-nil AccountBalance aggregation path is deferred (needs an SDK PoolBalance fixture).
+//  Batch 3 — balances. Covers Balances reducer computed flags + updateBalance spendability
+//  (Features/BalanceBreakdown/BalancesStore.swift), including the non-nil AccountBalance
+//  aggregation path across all shielded pools (Sapling + Orchard + Ironwood).
 //
 
 import Testing
@@ -68,6 +68,30 @@ import ComposableArchitecture
         #expect(store.state.shieldedBalance == .zero)
         #expect(store.state.totalBalance == .zero)
         #expect(store.state.spendability == .everything)
+    }
+
+    @MainActor @Test func updateBalanceAggregatesAllShieldedPoolsIncludingIronwood() async {
+        // sapling: 1 / 2 / 4   orchard: 8 / 16 / 32   ironwood: 64 / 128 / 256
+        let accountBalance = AccountBalance(
+            saplingBalance: PoolBalance(spendableValue: Zatoshi(1), changePendingConfirmation: Zatoshi(2), valuePendingSpendability: Zatoshi(4)),
+            orchardBalance: PoolBalance(spendableValue: Zatoshi(8), changePendingConfirmation: Zatoshi(16), valuePendingSpendability: Zatoshi(32)),
+            ironwoodBalance: PoolBalance(spendableValue: Zatoshi(64), changePendingConfirmation: Zatoshi(128), valuePendingSpendability: Zatoshi(256)),
+            unshielded: .zero
+        )
+        let store = TestStore(initialState: state(autoShieldingThreshold: Zatoshi(1_000_000))) {
+            Balances()
+        } withDependencies: {
+            $0.zcashSDKEnvironment.shieldingThreshold = { Zatoshi(1_000_000) }
+        }
+        store.exhaustivity = .off
+        await store.send(.updateBalance(accountBalance))
+        #expect(store.state.shieldedBalance == Zatoshi(1 + 8 + 64))
+        #expect(store.state.changePending == Zatoshi(2 + 16 + 128))
+        #expect(store.state.pendingTransactions == Zatoshi(4 + 32 + 256))
+        #expect(store.state.shieldedWithPendingBalance == Zatoshi((1 + 2 + 4) + (8 + 16 + 32) + (64 + 128 + 256)))
+        #expect(store.state.ironwoodBalance == Zatoshi(64 + 128 + 256))
+        #expect(store.state.totalBalance == Zatoshi((1 + 2 + 4) + (8 + 16 + 32) + (64 + 128 + 256)))
+        #expect(store.state.hasIronwoodBalance)
     }
 
     private func state(

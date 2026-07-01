@@ -904,6 +904,23 @@
         }
       }
     },
+    "balances.ironwoodBalance" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ironwood"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ironwood"
+          }
+        }
+      }
+    },
     "balances.pending" : {
       "extractionState" : "manual",
       "localizations" : {

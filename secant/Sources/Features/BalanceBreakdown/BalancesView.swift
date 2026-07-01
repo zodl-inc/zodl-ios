@@ -87,7 +87,23 @@ extension BalancesView {
                 ZatoshiText(store.shieldedBalance, .expanded, tokenName)
                     .zFont(.medium, size: 14, style: Design.Text.primary)
             }
-            
+
+            if store.hasIronwoodBalance {
+                HStack(spacing: 0) {
+                    Text(localizable: .balancesIronwoodBalance)
+                        .zFont(size: 14, style: Design.Text.tertiary)
+
+                    Spacer()
+
+                    Asset.Assets.shield.image
+                        .zImage(width: 11, height: 14, color: Asset.Colors.primary.color)
+                        .padding(.trailing, 10)
+
+                    ZatoshiText(store.ironwoodBalance, .expanded, tokenName)
+                        .zFont(.medium, size: 14, style: Design.Text.primary)
+                }
+            }
+
             if store.isPendingInProcess {
                 HStack(spacing: 0) {
                     Text(localizable: .balancesPending)
