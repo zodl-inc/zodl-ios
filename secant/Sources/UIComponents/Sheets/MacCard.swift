@@ -131,6 +131,11 @@ private struct MacCardOverlay: View {
                 .onTapGesture { entry.dismiss() }
 
             cardWithChrome
+                // macOS: every ZashiButton inside a MacCard renders full-bleed (bypassing Rule #7's
+                // maxButtonWidth cap) — a fixed-width card is exactly where a capped, centered pill
+                // looks wrong. This is the rule for cards; the `fillsWidth` param does the same for a
+                // full-width button OUTSIDE a card.
+                .environment(\.zashiButtonFillsWidth, true)
         }
     }
 

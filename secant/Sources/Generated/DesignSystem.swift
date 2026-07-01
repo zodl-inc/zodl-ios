@@ -407,9 +407,9 @@ public enum Design: Colorable {
 
         // Root-hosted overlay cards (MODALS.md Rule #5).
         /// `.zashiSheet` content-hug card max width (`MacCard`).
-        public static let cardMaxWidth: CGFloat = 480
+        public static let cardMaxWidth: CGFloat = 364
         /// `.zashiSelectorSheet` definite-size card width.
-        public static let selectorCardWidth: CGFloat = 460
+        public static let selectorCardWidth: CGFloat = 364
         /// `.zashiSelectorSheet` definite-size card height range (so its inner List can fill + scroll).
         public static let selectorCardHeightRange: ClosedRange<CGFloat> = 320...600
 
