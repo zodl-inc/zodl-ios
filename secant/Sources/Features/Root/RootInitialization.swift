@@ -155,6 +155,25 @@ extension Root {
 
                 // handle BCGTask
                 guard state.bgTask != nil else {
+                    // [#1755 / slipstream] Kick the banner priority chain HERE — on the first DETERMINATE
+                    // sync state — not at synchronizer registration. By now the isRecovering block above has
+                    // settled walletStatus (restoring vs not), so evaluatePriority3 (restoring) is decided
+                    // correctly; firing at registration ran the chain while walletStatus was still `.none`
+                    // (isRecovering arrives async) and a restore flashed the currency-conversion banner
+                    // before the restoring one replaced it. One-shot per registration (re-armed there);
+                    // gated on syncing/upToDate so we never kick during `.unprepared`/error.
+                    var launchModeKnown = false
+                    switch snapshot.syncStatus {
+                    case .syncing, .upToDate: launchModeKnown = true
+                    default: break
+                    }
+                    if !state.initialBannerEvaluationFired, launchModeKnown {
+                        state.initialBannerEvaluationFired = true
+                        return .merge(
+                            .send(.home(.smartBanner(.evaluatePriority1))),
+                            .send(.initialization(.checkRestoreWalletFlag(snapshot.syncStatus)))
+                        )
+                    }
                     return .send(.initialization(.checkRestoreWalletFlag(snapshot.syncStatus)))
                 }
                 
@@ -253,14 +272,15 @@ extension Root {
                         .map(Root.Action.synchronizerStateChanged)
                 }
                 .cancellable(id: state.CancelStateId, cancelInFlight: true)
-                if state.bgTask != nil {
-                    return stateStreamEffect
-                } else {
-                    return .merge(
-                        stateStreamEffect,
-                        .send(.home(.smartBanner(.evaluatePriority1)))
-                    )
-                }
+                // [#1755 / slipstream] Re-arm the one-shot banner-priority kick. The chain (evaluatePriority1)
+                // used to fire HERE, at registration — but that raced the async isRecovering signal, so a
+                // restore briefly showed the currency-conversion banner before the restoring one replaced it.
+                // It now fires from synchronizerStateChanged on the first determinate state, once walletStatus
+                // (restoring vs not) is settled. Same once-per-registration cadence, just deferred until the
+                // launch mode is known. Firing is foreground-only (guarded there), matching the old bgTask
+                // suppression, so no explicit branch is needed here.
+                state.initialBannerEvaluationFired = false
+                return stateStreamEffect
 
             case .initialization(.checkWalletConfig):
                 return .run { send in

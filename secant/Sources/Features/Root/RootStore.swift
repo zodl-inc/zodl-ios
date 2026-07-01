@@ -66,6 +66,12 @@ struct Root {
         var homeState: Home.State = .initial
         var isLockedInKeychainUnavailableState = false
         var isRestoringWallet = false
+        // [#1755 / slipstream] One-shot guard: the banner priority chain (SmartBanner.evaluatePriority1) is
+        // kicked once per stream registration, from synchronizerStateChanged, AFTER the launch mode
+        // (restoring vs not) is known — see RootInitialization. Re-armed in registerForSynchronizersUpdate.
+        // Prevents the currency-conversion banner flashing over a restore when the chain ran before the
+        // async isRecovering signal had set walletStatus.
+        var initialBannerEvaluationFired = false
         @Shared(.appStorage(.lastAuthenticationTimestamp)) var lastAuthenticationTimestamp: Int = 0
         var maxResetZashiAppAttempts = ResetZashiConstants.maxResetZashiAppAttempts
         var maxResetZashiSDKAttempts = ResetZashiConstants.maxResetZashiSDKAttempts
