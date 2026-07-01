@@ -37,6 +37,9 @@ struct MigrationSDKClient: Sendable {
 
     // ── Migration proposal ─────────────────────────────────────────────────
     var proposeMigrationTransfers: @Sendable () async -> MigrationSchedule = { MigrationSchedule(transfers: [], estimatedDurationHours: 0) }
+    /// Immediate (single-transaction) path: sweep the whole spendable Orchard balance into one
+    /// Ironwood output, executable now (no denomination, no note split).
+    var proposeImmediateMigrationTransfers: @Sendable () async -> MigrationSchedule = { MigrationSchedule(transfers: [], estimatedDurationHours: 0) }
     var signAndStoreMigrationSchedule: @Sendable (MigrationSchedule) async -> Void = { _ in }
 
     // ── Background execution ───────────────────────────────────────────────

@@ -238,6 +238,22 @@ final class DummyMigrationEngine: @unchecked Sendable {
         read { buildSchedule(from: $0) }
     }
 
+    /// Immediate path: a single transfer of the whole Orchard balance, executable now — regardless of
+    /// the stored mode. Mirrors the live engine's `proposeImmediate`.
+    func proposeImmediate() async -> MigrationSchedule {
+        read { snapshot in
+            let height = snapshot.currentHeight
+            let transfer = TransferProposal(
+                id: Self.makeTxId(prefix: "xfer"),
+                amount: snapshot.orchard,
+                anchorHeight: height,
+                nextExecutableAfterHeight: height,
+                expiryHeight: height + Const.expiryWindowBlocks
+            )
+            return MigrationSchedule(transfers: [transfer], estimatedDurationHours: 0)
+        }
+    }
+
     func signAndStore(_ schedule: MigrationSchedule) async {
         mutate { snapshot in
             snapshot.transfers = schedule.transfers.map { StoredTransfer(proposal: $0, status: .pending) }

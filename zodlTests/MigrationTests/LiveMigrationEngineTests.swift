@@ -39,6 +39,7 @@ struct LiveMigrationEngineTests {
         prepareNoteSplit: @escaping @Sendable (AccountUUID) async throws -> ZcashLightClientKit.NoteSplitProposal = { _ in ZcashLightClientKit.NoteSplitProposal(outputNotes: [], fee: 0) },
         submitNoteSplit: @escaping @Sendable (ZcashLightClientKit.NoteSplitProposal, ZcashLightClientKit.NetworkPrivacyOptions, AccountUUID) async throws -> ZcashLightClientKit.TransferResult = { _, _, _ in ZcashLightClientKit.TransferResult.success(txid: "split") },
         proposeTransfers: @escaping @Sendable (AccountUUID) async throws -> ZcashLightClientKit.MigrationSchedule = { _ in ZcashLightClientKit.MigrationSchedule(transfers: [], estimatedDurationHours: 0) },
+        proposeImmediateTransfers: @escaping @Sendable (AccountUUID) async throws -> ZcashLightClientKit.MigrationSchedule = { _ in ZcashLightClientKit.MigrationSchedule(transfers: [], estimatedDurationHours: 0) },
         signAndStore: @escaping @Sendable (ZcashLightClientKit.MigrationSchedule, AccountUUID) async throws -> Void = { _, _ in },
         isSyncRequiredBeforeNextTransfer: @escaping @Sendable (AccountUUID) async throws -> Bool = { _ in false },
         executeNext: @escaping @Sendable (ZcashLightClientKit.NetworkPrivacyOptions, AccountUUID) async throws -> ZcashLightClientKit.TransferResult? = { _, _ in nil },
@@ -57,6 +58,7 @@ struct LiveMigrationEngineTests {
             prepareNoteSplit: prepareNoteSplit,
             submitNoteSplit: submitNoteSplit,
             proposeTransfers: proposeTransfers,
+            proposeImmediateTransfers: proposeImmediateTransfers,
             signAndStore: signAndStore,
             isSyncRequiredBeforeNextTransfer: isSyncRequiredBeforeNextTransfer,
             executeNext: executeNext,
@@ -268,6 +270,23 @@ struct LiveMigrationEngineTests {
         #expect(schedule.transfers.count == 1)
         #expect(schedule.transfers.first?.amount == Zatoshi(500))
         #expect(schedule.estimatedDurationHours == 6)
+    }
+
+    @Test func proposeImmediateMapsGatewaySchedule() async {
+        let engine = makeEngine(gateway: makeGateway(
+            proposeImmediateTransfers: { _ in
+                ZcashLightClientKit.MigrationSchedule(transfers: [self.sdkTransfer("sweep", 999)], estimatedDurationHours: 0)
+            }
+        ))
+        let schedule = await engine.proposeImmediate()
+        #expect(schedule.transfers.count == 1)
+        #expect(schedule.transfers.first?.amount == Zatoshi(999))
+    }
+
+    @Test func proposeImmediateWithNoAccountReturnsEmpty() async {
+        let engine = makeEngine(gateway: makeGateway(account: nil))
+        let schedule = await engine.proposeImmediate()
+        #expect(schedule.transfers.isEmpty)
     }
 
     @Test func restartReturnsMappedSchedule() async {

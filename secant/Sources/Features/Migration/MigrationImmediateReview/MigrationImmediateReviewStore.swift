@@ -51,7 +51,7 @@ struct MigrationImmediateReview {
             switch action {
             case .onAppear:
                 return .run { send in
-                    await send(.scheduleLoaded(migrationSDK.proposeMigrationTransfers()))
+                    await send(.scheduleLoaded(migrationSDK.proposeImmediateMigrationTransfers()))
                 }
 
             case let .scheduleLoaded(schedule):

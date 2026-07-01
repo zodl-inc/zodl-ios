@@ -135,6 +135,7 @@ struct SDKSynchronizerClient: Sendable {
         _ account: AccountUUID
     ) async throws -> ZcashLightClientKit.TransferResult
     var migrationProposeTransfers: @Sendable (_ account: AccountUUID) async throws -> ZcashLightClientKit.MigrationSchedule
+    var migrationProposeImmediateTransfers: @Sendable (_ account: AccountUUID) async throws -> ZcashLightClientKit.MigrationSchedule
     var migrationSignAndStoreSchedule: @Sendable (
         _ schedule: ZcashLightClientKit.MigrationSchedule,
         _ spendingKey: UnifiedSpendingKey,

@@ -60,6 +60,20 @@ struct DummyMigrationEngineTests {
         #expect(schedule.estimatedDurationHours == 30) // 6 * (6 - 1)
     }
 
+    @Test func proposeImmediateReturnsSingleWholeBalanceTransfer() async {
+        let engine = makeEngine()
+        await engine.debugSeed(orchard: Zatoshi(1_000_000_000), noteCount: 0) // 10 ZEC
+        // Even with a private mode selected, the immediate propose sweeps the whole balance in ONE
+        // transfer, executable now — no denomination.
+        engine.selectMode(.privateScheduled)
+
+        let schedule = await engine.proposeImmediate()
+
+        #expect(schedule.transfers.count == 1)
+        #expect(schedule.transfers.first?.amount == Zatoshi(1_000_000_000))
+        #expect(schedule.estimatedDurationHours == 0)
+    }
+
     @Test func privateFlowProgressesToComplete() async {
         let engine = makeEngine()
         await engine.debugSeed(orchard: Zatoshi(1_000_000_000), noteCount: 0)

@@ -318,6 +318,9 @@ extension SDKSynchronizerClient: DependencyKey {
             migrationProposeTransfers: { account in
                 try await synchronizer.proposeMigrationTransfers(for: account)
             },
+            migrationProposeImmediateTransfers: { account in
+                try await synchronizer.proposeImmediateMigrationTransfers(for: account)
+            },
             migrationSignAndStoreSchedule: { schedule, spendingKey, account in
                 try await synchronizer.signAndStoreMigrationSchedule(schedule, spendingKey: spendingKey, for: account)
             },

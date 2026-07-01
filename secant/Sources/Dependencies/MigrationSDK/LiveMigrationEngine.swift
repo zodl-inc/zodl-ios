@@ -45,6 +45,7 @@ final class LiveMigrationEngine: @unchecked Sendable {
             AccountUUID
         ) async throws -> ZcashLightClientKit.TransferResult
         var proposeTransfers: @Sendable (AccountUUID) async throws -> ZcashLightClientKit.MigrationSchedule
+        var proposeImmediateTransfers: @Sendable (AccountUUID) async throws -> ZcashLightClientKit.MigrationSchedule
         var signAndStore: @Sendable (ZcashLightClientKit.MigrationSchedule, AccountUUID) async throws -> Void
         var isSyncRequiredBeforeNextTransfer: @Sendable (AccountUUID) async throws -> Bool
         var executeNext: @Sendable (
@@ -268,6 +269,20 @@ final class LiveMigrationEngine: @unchecked Sendable {
         }
     }
 
+    /// Immediate path: sweep the whole spendable Orchard balance in a single transfer (no
+    /// denomination, no note split).
+    func proposeImmediate() async -> MigrationSchedule {
+        guard let account = await gateway.currentAccountID() else { return Self.emptySchedule }
+        do {
+            let schedule = try await gateway.proposeImmediateTransfers(account).app
+            setSchedule(schedule)
+            return schedule
+        } catch {
+            logFailure("proposeImmediateMigrationTransfers", error)
+            return Self.emptySchedule
+        }
+    }
+
     func signAndStore(_ schedule: MigrationSchedule) async {
         guard let account = await gateway.currentAccountID() else {
             logSkipped("signAndStoreMigrationSchedule")
@@ -459,7 +474,13 @@ final class LiveMigrationEngine: @unchecked Sendable {
     }
 
     private func logFailure(_ operation: String, _ error: Error) {
-        logger.error("Migration \(operation, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
+        // `ZcashError.localizedDescription` is the generic "ZRUSTxxxx: ..." string and drops the
+        // associated rust-layer detail. `String(describing:)` on the enum includes that associated
+        // value — the real FFI error (e.g. "sign_and_store_migration_schedule: orchard proof: ...") —
+        // which is what actually pinpoints a proving / PCZT / anchor failure.
+        logger.error(
+            "Migration \(operation, privacy: .public) failed: \(error.localizedDescription, privacy: .public) — detail: \(String(describing: error), privacy: .public)"
+        )
     }
 
     private func logSkipped(_ operation: String) {

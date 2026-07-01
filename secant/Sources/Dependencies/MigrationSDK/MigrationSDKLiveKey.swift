@@ -31,6 +31,7 @@ extension MigrationSDKClient: DependencyKey {
             prepareNoteSplit: { await engine.prepareSplit() },
             submitNoteSplit: { await engine.submitSplit($0) },
             proposeMigrationTransfers: { await engine.propose() },
+            proposeImmediateMigrationTransfers: { await engine.proposeImmediate() },
             signAndStoreMigrationSchedule: { await engine.signAndStore($0) },
             isSyncRequiredBeforeNextTransfer: { engine.syncRequiredBeforeNext() },
             executeNextPendingTransfer: { await engine.executeNext($0) },
@@ -73,6 +74,7 @@ extension MigrationSDKClient: DependencyKey {
             prepareNoteSplit: { await engine.prepareSplit() },
             submitNoteSplit: { await engine.submitSplit($0) },
             proposeMigrationTransfers: { await engine.propose() },
+            proposeImmediateMigrationTransfers: { await engine.proposeImmediate() },
             signAndStoreMigrationSchedule: { await engine.signAndStore($0) },
             isSyncRequiredBeforeNextTransfer: { engine.syncRequiredBeforeNext() },
             executeNextPendingTransfer: { await engine.executeNext($0) },
@@ -146,6 +148,10 @@ extension LiveMigrationEngine.Gateway {
             proposeTransfers: { account in
                 @Dependency(\.sdkSynchronizer) var sdkSynchronizer
                 return try await sdkSynchronizer.migrationProposeTransfers(account)
+            },
+            proposeImmediateTransfers: { account in
+                @Dependency(\.sdkSynchronizer) var sdkSynchronizer
+                return try await sdkSynchronizer.migrationProposeImmediateTransfers(account)
             },
             signAndStore: { schedule, account in
                 @Dependency(\.sdkSynchronizer) var sdkSynchronizer
