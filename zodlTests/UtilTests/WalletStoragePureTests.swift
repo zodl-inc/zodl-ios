@@ -62,6 +62,35 @@ import Security
         #expect(query[kSecClass as String] != nil)
     }
 
+    @Test func deleteDataMatchQueryDropsEmptyAccountButKeepsRealOne() throws {
+        // Regression (macOS reset → stuck wallet, confirmed on a live wallet): an item ADDED with
+        // account "" persists on the macOS login keychain with a NULL account, and a SecItemDelete
+        // carrying account "" then matches it on NOTHING — so the SE-wrapped seed survived resetZashi()
+        // ("Keychain keys are still present") and the half-wiped wallet hung at the launch logo.
+        // `security delete-generic-password -s zcashStoredWalletSeed` (service only) removed exactly that
+        // item, proving the empty account was the blocker. The delete/update match query must therefore
+        // drop account when empty (match by service alone) while still carrying a real per-account value.
+        final class Box: @unchecked Sendable { var query: [String: Any]? }
+
+        // Empty account → no account attribute in the match query (single-instance items).
+        let empty = Box()
+        let s1 = WalletStorage(secItem: SecItemClient(delete: { q in
+            empty.query = q as? [String: Any]
+            return errSecSuccess
+        }))
+        try s1.deleteData(forKey: WalletStorage.Constants.zcashStoredWalletSeed)
+        #expect(try #require(empty.query)[kSecAttrAccount as String] == nil)
+
+        // Real per-account value → preserved (so per-account items still target the right row).
+        let real = Box()
+        let s2 = WalletStorage(secItem: SecItemClient(delete: { q in
+            real.query = q as? [String: Any]
+            return errSecSuccess
+        }))
+        try s2.deleteData(forKey: WalletStorage.Constants.zcashStoredWalletSeed, account: "acc-1")
+        #expect(try #require(real.query)[kSecAttrAccount as String] as? String == "acc-1")
+    }
+
     private func account(name: String) -> Account {
         Account(
             id: AccountUUID(id: [UInt8](repeating: 0x01, count: 16)),

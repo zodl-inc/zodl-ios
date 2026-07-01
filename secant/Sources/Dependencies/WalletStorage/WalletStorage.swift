@@ -745,23 +745,33 @@ struct WalletStorage {
         return query
     }
 
-    /// Query for MATCHING an existing item to mutate (delete / update). Deliberately omits
-    /// `kSecAttrAccessible`, unlike `baseQuery`.
+    /// Query for MATCHING an existing item to mutate (delete / update). Deliberately omits BOTH
+    /// `kSecAttrAccessible` AND — for the single-instance items (empty `account`) — `kSecAttrAccount`,
+    /// unlike `baseQuery`.
     ///
-    /// On the macOS file (login) keychain, including the accessibility constant in a `SecItemDelete` /
-    /// `SecItemUpdate` query makes it match nothing (`errSecItemNotFound`) — even though `SecItemCopyMatching`
-    /// tolerates the very same query. So `deleteData` / `updateData` silently no-op'd on macOS and items
-    /// lingered: after the Secure-Enclave migration, `resetZashi()` ran to completion yet every
-    /// generic-password item it targeted survived, surfacing as "Wallet deletion failed — Keychain keys are
-    /// still present" (and a half-deleted wallet on next launch). Accessibility is set once at add time and is
-    /// not part of an item's identity, so dropping it from the *match* query is correct on both platforms —
-    /// the item is still uniquely identified by (service, account). See docs/macos/KEYCHAIN_SE_HARDENING.md.
+    /// Two distinct macOS file (login) keychain quirks made `SecItemDelete` / `SecItemUpdate` silently
+    /// match nothing while `SecItemCopyMatching` tolerated the very same query — so `deleteData` /
+    /// `updateData` no-op'd, items survived a `resetZashi()`, and the wallet ended up half-wiped and
+    /// stuck at launch ("Keychain keys are still present"):
+    ///   1. Including the accessibility constant in the mutate query → no match. (Fixed earlier.)
+    ///   2. An item ADDED with `kSecAttrAccount: ""` persists with a NULL account, and a mutate query
+    ///      carrying account "" then matches that NULL-account item on NOTHING — even though copy-match
+    ///      with the same "" still finds it. (This is what kept the SE-wrapped seed undeletable; proven
+    ///      on a stuck wallet — `security delete-generic-password -s zcashStoredWalletSeed`, matching by
+    ///      service alone, removed exactly the item the app's `account: ""` delete couldn't.)
+    /// The single-instance items (seed / meta / version / wallet) use account "" and are uniquely
+    /// identified by service alone, so we match by service for them; per-account items pass a real
+    /// account and keep it. Neither omission affects correctness on iOS. See
+    /// docs/macos/KEYCHAIN_SE_HARDENING.md.
     func mutationQuery(forAccount account: String = "", andKey forKey: String) -> [String: Any] {
-        [
+        var query: [String: Any] = [
             kSecAttrService as String: zcashStoredWalletPrefix + forKey,
-            kSecAttrAccount as String: account,
             kSecClass as String: kSecClassGenericPassword
         ]
+        if !account.isEmpty {
+            query[kSecAttrAccount as String] = account
+        }
+        return query
     }
 
     func restoreQuery(forAccount account: String = "", andKey forKey: String) -> [String: Any] {
