@@ -117,6 +117,12 @@ struct MigrationNoteSplit {
             case let .submitResult(result):
                 if case let .success(txId) = result {
                     state.txId = txId
+                } else {
+                    // The split broadcast/sign failed. Don't hang forever on the "Splitting Funds…"
+                    // spinner — return to the confirm step so the user can retry. The failure detail
+                    // is captured in the migration logs (`LiveMigrationEngine.logFailure`). A dedicated
+                    // error screen is a follow-up.
+                    state.step = .explainer
                 }
                 return .none
 
