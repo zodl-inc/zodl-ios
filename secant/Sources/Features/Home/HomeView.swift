@@ -1,6 +1,7 @@
 import SwiftUI
 import ComposableArchitecture
 import StoreKit
+@preconcurrency import ZcashLightClientKit
 
 struct HomeView: View {
     @Environment(\.colorScheme) var colorScheme
@@ -42,6 +43,17 @@ struct HomeView: View {
                             MigrationDebug()
                         }
                     )
+                }
+
+                // PROTOTYPE (Ironwood): Orchard vs Ironwood pool totals, so the migration is visible on
+                // Home. Shown only on the Ironwood custom network (see `showPoolBreakdown`).
+                if store.walletBalancesState.showPoolBreakdown {
+                    HStack(spacing: 8) {
+                        poolBalanceView(title: "Orchard", amount: store.walletBalancesState.orchardBalance)
+                        poolBalanceView(title: "Ironwood", amount: store.walletBalancesState.ironwoodBalance)
+                    }
+                    .padding(.top, 12)
+                    .screenHorizontalPadding()
                 }
 
                 HStack {
@@ -180,6 +192,23 @@ struct HomeView: View {
                         action: \.alert
                     )
             )
+        }
+    }
+
+    // PROTOTYPE (Ironwood): one labelled pool total (Orchard / Ironwood) for the Home breakdown.
+    @ViewBuilder func poolBalanceView(title: String, amount: Zatoshi) -> some View {
+        VStack(spacing: 2) {
+            Text(title)
+                .zFont(.medium, size: 12, style: Design.Text.tertiary)
+
+            Text("\(amount.decimalString()) \(tokenName)")
+                .zFont(.semiBold, size: 15, style: Design.Text.primary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 10)
+        .background {
+            RoundedRectangle(cornerRadius: Design.Radius._2xl)
+                .fill(Design.Btns.Tertiary.bg.color(colorScheme))
         }
     }
 

@@ -30,6 +30,11 @@ struct WalletBalances {
         var spendability: Spendability = .everything
         var totalBalance: Zatoshi
         var transparentBalance: Zatoshi
+        // PROTOTYPE (Ironwood): per-pool totals surfaced on Home so the Orchard→Ironwood migration is
+        // visible at a glance. Only shown on the Ironwood custom network (see `showPoolBreakdown`).
+        var orchardBalance: Zatoshi = .zero
+        var ironwoodBalance: Zatoshi = .zero
+        var showPoolBreakdown = false
 
         var isExchangeRateUSDInFlight: Bool {
             fiatCurrencyResult?.state == .fetching
@@ -98,6 +103,9 @@ struct WalletBalances {
             case .onAppear:
                 // __LD TESTED
                  state.autoShieldingThreshold = zcashSDKEnvironment.shieldingThreshold()
+                // Ironwood custom network routes through the SDK's regtest slot; show the pool
+                // breakdown there only, keeping mainnet/testnet Home unchanged.
+                state.showPoolBreakdown = zcashSDKEnvironment.network().networkType == .regtest
                 if let exchangeRate = userStoredPreferences.exchangeRate(), exchangeRate.automatic {
                     state.isExchangeRateFeatureOn = true
                 } else {
@@ -190,6 +198,8 @@ struct WalletBalances {
                 state.shieldedBalance = accountBalance?.shieldedSpendableValue ?? .zero
                 state.shieldedWithPendingBalance = accountBalance?.shieldedTotalIncludingPending ?? .zero
                 state.transparentBalance = accountBalance?.unshielded ?? .zero
+                state.orchardBalance = accountBalance?.orchardBalance.total() ?? .zero
+                state.ironwoodBalance = accountBalance?.ironwoodBalance.total() ?? .zero
                 state.totalBalance = state.shieldedWithPendingBalance + state.transparentBalance + (accountBalance?.awaitingResolution ?? .zero)
                
                 let everythingCondition = state.shieldedBalance.amount > 0 && ((state.shieldedBalance == state.totalBalance)
