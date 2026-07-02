@@ -26,7 +26,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         initialState: .initial
     ) {
         Root()
-            .logging()
+//            .logging()
     }
 
     func application(
