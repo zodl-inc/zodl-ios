@@ -37,11 +37,15 @@ struct zodlmac_internalApp: App {
     }
 
     var body: some Scene {
-        // Empty window title: macOS uses the window title as the navigation fallback, which surfaced as a
-        // non-contextual "← Zodl" on every back button. Blank it for Beta (screens can set their own
-        // contextual navigationTitle later — e.g. "← Vote"). The app name in the dock/menu is the bundle
-        // name, unaffected.
-        WindowGroup("") {
+        // App Review Guideline 4 (external-testing finding, 2026-07-02): closing the main window
+        // left NO menu item to reopen it (single fixed window, ⌘N removed, File menu dropped).
+        // `Window` — SwiftUI's single-window scene — is the by-the-book remedy: it adds a
+        // persistent "Zodl" item to the Window menu (which MacMenuSimplifier deliberately KEEPS)
+        // that reopens the window after close; the Dock icon reopens it too. The app keeps
+        // running while closed (sync pauses via scenePhase.background, resumes on reopen).
+        // The SCENE title feeds that Window-menu item; the on-screen NSWindow title stays blank
+        // (FixedWindowConfigurator) so the old "← Zodl" navigation-fallback papercut stays fixed.
+        Window("Zodl", id: "main") {
             RootView(
                 store: rootStore,
                 tokenName: TargetConstants.tokenName,
@@ -191,6 +195,15 @@ private struct FixedWindowConfigurator: NSViewRepresentable {
             // A single fixed-size window needs no state restoration; SwiftUI's frame autosave
             // (which applies BEFORE display) remains the one position-persistence channel.
             window.isRestorable = false
+            // Guideline-4 companion: the SCENE is titled "Zodl" purely to name the Window-menu
+            // reopen item — on screen the title bar must stay EMPTY, or macOS uses it as the
+            // navigation back-button fallback ("← Zodl" on every screen, the old papercut).
+            window.title = ""
+            // …but the Window menu labels a LIVE (open/minimized) window by its title, so with a
+            // blank title the window's own menu entry rendered as an unlabeled line — plausibly
+            // the reviewer's actual sighting when minimized. Name the menu entry independently
+            // of the on-screen title (selecting it also deminiaturizes).
+            NSApp.changeWindowsItem(window, title: "Zodl", filename: false)
             // Window POSITION is left to macOS — standard best-practice behavior. SwiftUI's WindowGroup
             // restores the last frame across launches, and `.defaultPosition(.center)` on the scene centers
             // it on the very first launch (no saved frame). The previous code disabled frame autosave and

@@ -7,8 +7,9 @@ Cross-refs: TRACKS.md (SDK repo) track 1 · FOUNDATIONS_F1_VERDICTS.md · MODALS
 ## STATUS 2026-07-02 (autonomous fix wave) — ALL 11 IMPLEMENTED, awaiting Lukas's visual pass
 - B4-1 ScanView: progress bar was rendering OFF-SCREEN in the sign flow (larger cutout ⇒
   `topLeft.y − 56` above the window) — clamped to stay visible.
-- B4-2 SendFormView: disabled memo now hugs content on macOS (`fixedSize(vertical:)` — the
-  no-scroll form was offering height and the info box's inner Spacer ate it).
+- B4-2 SendFormView (round 2, field-tested): the info box's inner `VStack { icon; Spacer }` was
+  the height-stretcher — replaced with `HStack(alignment: .top)`; box hugs its text. (Round 1's
+  whole-box fixedSize broke the form layout — reverted.)
 - B4-3 MacSplitView: account switch (compared by account id, launch transition skipped) →
   `selectSection(.activity)` (resets all section paths).
 - B4-4 AddHWWalletStore/KeystoneDeviceReadyView: `isImportInFlight` — Connect shows a spinner +
@@ -18,8 +19,10 @@ Cross-refs: TRACKS.md (SDK repo) track 1 · FOUNDATIONS_F1_VERDICTS.md · MODALS
 - B4-6 AddressBookView: invisible 14pt tail row — the offset chain circle no longer clips.
 - B4-7 SuccessView + PendingView: View-transaction is regular-only (mutually exclusive with
   Check-status).
-- B4-8 SwapForm: PROPER fix — `fixedSize(vertical:)` on the AppKit-backed fields removes the
-  vertical slack so prompt AND typed value center; the placeholder overlay patch is deleted.
+- B4-8 SwapForm (round 3, field-tested): fixed 32pt line box on macOS too (`frame(height: 32)`
+  now unconditional — same geometry as iOS and as the row's non-editing Text state); prompt and
+  typed value share the box. Placeholder overlay patch deleted; round 2's fixedSize (floating
+  glyph) reverted.
 - B4-9 SwapForm: kept the `writingToolsBehavior(.disabled)` suppression (was already in the
   working tree); if the bubble still flashes on device it is a different affordance — retest.
 - B4-10 RootTorInitCheck: Settings-path currency-conversion enable (and Tor enable — the class
@@ -145,3 +148,12 @@ class. Recommend (a) for Beta4, (b) stays on the Foundations track.
 3. Navigation design (decided): **B4-3** reset-to-root on account switch.
 4. Investigation-first (SDK/engine lane): **B4-4** (import-during-restore contract) ·
    **B4-5** (offline spendable + Harry's 14–30 s network stall).
+
+## B4-13 · App Review Guideline 4 (external testing): no menu item to reopen the closed main window
+**FIXED `f8970b6d`.** `WindowGroup("")` → `Window("Zodl", id: "main")` — the single-window scene
+adds a persistent "Zodl" reopen item to the Window menu (MacMenuSimplifier keeps that menu);
+Dock click reopens too. Keep-running behavior preserved (sync pauses on close via
+scenePhase.background, resumes on reopen); NSWindow title blanked in FixedWindowConfigurator so
+the "← Zodl" nav-fallback fix stays. ALTERNATIVE (if closed-means-quit is preferred): 3-line
+NSApplicationDelegateAdaptor with `applicationShouldTerminateAfterLastWindowClosed = true` —
+Apple sanctions either. Verify: close → Window menu → Zodl reopens; startup pops still gone.
