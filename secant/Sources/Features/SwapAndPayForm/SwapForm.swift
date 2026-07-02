@@ -336,7 +336,7 @@ extension SwapAndPayForm {
                                 "",
                                 text: $store.amountText,
                                 prompt:
-                                    Text(store.localePlaceholder)
+                                    Text(isAmountFocused ? "" : store.localePlaceholder)
                                     .font(.custom(FontFamily.Inter.semiBold.name, size: 24))
                                     .foregroundColor(Design.Text.tertiary.color(colorScheme))
                             )
@@ -489,7 +489,7 @@ extension SwapAndPayForm {
                             "",
                             text: $store.amountText,
                             prompt:
-                                Text(store.localePlaceholder)
+                                Text(isAmountFocused ? "" : store.localePlaceholder)
                                     .font(.custom(FontFamily.Inter.semiBold.name, size: 24))
                                     .foregroundColor(Design.Text.tertiary.color(colorScheme))
                         )

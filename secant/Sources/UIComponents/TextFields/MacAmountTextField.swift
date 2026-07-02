@@ -21,6 +21,40 @@ import SwiftUI
 /// one switch that fixes layout. SwiftUI exposes no way to reach it, hence this
 /// representable. The quirk is sub-pixel at ~14pt (broken box ≈ correct box), so
 /// `ZashiTextField` and other small fields stay on the SwiftUI `TextField`.
+/// Amount-field focus ergonomics (round 4.1, field feedback):
+/// - the placeholder dismisses while the field is focused (like the iOS focus-conditional
+///   prompt) and returns on blur;
+/// - acquiring focus puts the caret at the END of the value. The text is right-aligned in a
+///   full-width field, so a click usually lands in the empty area LEFT of the glyphs and AppKit
+///   snaps the caret to the nearest position — the string START ("|122", typing prepends).
+///   Amount entry appends. Subsequent clicks while already focused reposition normally, so
+///   mid-value edits stay possible.
+private final class MacAmountNSTextField: NSTextField {
+    /// The placeholder to show while idle; `placeholderAttributedString` itself is nil'd
+    /// during editing.
+    var idlePlaceholder: NSAttributedString?
+
+    override func becomeFirstResponder() -> Bool {
+        let ok = super.becomeFirstResponder()
+        if ok {
+            placeholderAttributedString = nil
+            // After the current event finishes: the click that focused the field places the
+            // caret at the click point AFTER this method runs, so the end-caret must be
+            // applied on the next runloop turn to win.
+            DispatchQueue.main.async { [weak self] in
+                guard let self, let editor = self.currentEditor() else { return }
+                editor.selectedRange = NSRange(location: (self.stringValue as NSString).length, length: 0)
+            }
+        }
+        return ok
+    }
+
+    override func textDidEndEditing(_ notification: Notification) {
+        super.textDidEndEditing(notification)
+        placeholderAttributedString = idlePlaceholder
+    }
+}
+
 struct MacAmountTextField: NSViewRepresentable {
     @Environment(\.colorScheme) private var colorScheme
     @Binding var text: String
@@ -31,7 +65,7 @@ struct MacAmountTextField: NSViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
     func makeNSView(context: Context) -> NSTextField {
-        let field = NSTextField()
+        let field = MacAmountNSTextField()
         field.isBezeled = false
         field.isBordered = false
         field.drawsBackground = false
@@ -62,7 +96,7 @@ struct MacAmountTextField: NSViewRepresentable {
         field.textColor = NSColor(Design.Text.primary.color(colorScheme))
         let paragraph = NSMutableParagraphStyle()
         paragraph.alignment = .right
-        field.placeholderAttributedString = NSAttributedString(
+        let idlePlaceholder = NSAttributedString(
             string: placeholder,
             attributes: [
                 .font: NSFont(name: FontFamily.Inter.semiBold.name, size: fontSize) as Any,
@@ -70,6 +104,11 @@ struct MacAmountTextField: NSViewRepresentable {
                 .paragraphStyle: paragraph
             ]
         )
+        (field as? MacAmountNSTextField)?.idlePlaceholder = idlePlaceholder
+        // The placeholder is dismissed while editing — don't resurrect it mid-edit.
+        if field.currentEditor() == nil {
+            field.placeholderAttributedString = idlePlaceholder
+        }
     }
 
     final class Coordinator: NSObject, NSTextFieldDelegate {
