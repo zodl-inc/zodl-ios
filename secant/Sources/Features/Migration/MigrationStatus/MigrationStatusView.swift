@@ -226,6 +226,15 @@ struct MigrationStatusView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
 
+            // DEBUG/TESTING: broadcast the next transfer as soon as its send window allows,
+            // without waiting for the background scheduler. Reuses the resume path's wiring
+            // (`sendNowTapped` → coordinator → `executeNextPendingTransfer`), which only sends a
+            // transfer that is actually due. TODO: [MOB-1455] remove before release.
+            ZashiButton(String(localizable: .migrationStatusSendNowButton), type: .secondary) {
+                store.send(.sendNowTapped)
+            }
+            .padding(.bottom, 12)
+
             ZashiButton(String(localizable: .generalDone)) {
                 store.send(.doneTapped)
             }
