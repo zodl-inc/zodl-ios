@@ -167,3 +167,53 @@ for the whole session. Fix: `autoUpdateSwapStatusFetchFailed` releases the slot 
 loop (existing 5–15 s pacing). The FAILED mapping itself was always correct ("Payment failed",
 warning styling). Related, still open: Near-side refund for the failed swap (fee 47,000 zats,
 deadline 2026-07-05) should arrive as a receive — user-watch item, not an app bug.
+
+---
+
+# ROUND 2 — Lukas's post-first-build findings (2026-07-02, his numbering 12–17)
+
+## B4-14 (STILL OPEN after fix): row still "Paying…", status still pending
+User read: "Near API either doesn't return status or doesn't fire the request." Two hypotheses
+to instrument: (a) the in-app Near status transport fails silently (if it routes via
+Tor/swapAPIAccess and the Tor client is unhealthy, every request throws → try? → endless polite
+retries, never a flip); (b) the candidate's `address` used for the lookup isn't the DEPOSIT
+address the API keys on. NEXT: read SwapAndPayClient.status transport + add a visible log of
+(address, result/error) per poll.
+
+## B4-15 (his 12) · Custom slippage % label is white `[app]`
+The custom-slippage input's label/value renders white (unreadable). Suspect the macOS
+FocusableTextField/label styling in SwapComponents (slippage sheet).
+
+## B4-16 (his 13) · Disconnect Keystone while it's restoring → error + "try again" `[app+SDK]`
+deleteAccount during an active restore pass — same shared-data.db write-contention family as
+B4-12 (the engine's busy_timeout fix may already help; deleteAccount goes through the Swift-side
+DBActor connection, which needs the same wait-not-die posture). Decide contract: allow (wait +
+spinner) or gate disconnect while that account is recovering.
+
+## B4-17 (his 14) · Shielding SmartBanner for KS survives KS disconnect `[app] [class: stale gate]`
+Waited for 100% KS restore → shielding banner appeared → disconnected KS → banner stayed.
+Account removal must re-evaluate/dismiss account-scoped banners (same poke pattern as B4-10;
+sweep: any banner keyed to an account must dismiss on that account's removal/switch).
+
+## B4-18 (his 15) · Add-HW-wallet: "Restoring" state not rendered at all `[app+SDK]` — ENGINE-LANE
+First add: no restoring UI, 0 balance, 0 txs. Disconnect+reconnect: restore clearly RUNNING
+(balance>0, tx count>0) but the restoring SmartBanner still missing. Suspects: (a) Zodl's
+restoring banner derives from walletStatus/isRecovering — check it consumes
+SynchronizerState.isRecovering post-import (the engine flag flips on the first suggest round
+after the import-restart); (b) the first-add path may have hit the pre-B4-12 wedge (pass died →
+no recovery state at all). Re-test on the busy_timeout build FIRST, then instrument
+isRecovering through the import path.
+
+## B4-19 (his 16) · Check status → detail (x) lands back in Swap/Pay, not Activity `[app]`
+The single-view transaction detail opened from "Check status" closes back to the split view but
+stays on the Swap/Pay section. Expected: land on Activity. Pattern exists —
+`macRedirectToActivityAfterClose` (used by Result-screen closes); set it on this close path too.
+
+## B4-20 (his 17) · REGRESSION: back arrow renders a trailing "Zodl" label again `[app]`
+Cause: B4-13 set the SCENE title to "Zodl" (for the Window-menu reopen item); SwiftUI
+RE-ASSERTS the scene title onto the NSWindow on navigation pushes, so the one-time
+`window.title = ""` blank doesn't stick → the nav-fallback "Zodl" is back next to every back
+arrow. FIX: scene title back to "" + rename the (then blank) persistent Window-menu item to
+"Zodl" post-hoc in MacMenuSimplifier (it already rewrites menus), keeping
+`NSApp.changeWindowsItem` for the live/minimized entry. Guideline-4 compliance preserved,
+title bar permanently blank again.

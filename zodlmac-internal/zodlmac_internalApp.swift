@@ -39,13 +39,15 @@ struct zodlmac_internalApp: App {
     var body: some Scene {
         // App Review Guideline 4 (external-testing finding, 2026-07-02): closing the main window
         // left NO menu item to reopen it (single fixed window, ⌘N removed, File menu dropped).
-        // `Window` — SwiftUI's single-window scene — is the by-the-book remedy: it adds a
-        // persistent "Zodl" item to the Window menu (which MacMenuSimplifier deliberately KEEPS)
-        // that reopens the window after close; the Dock icon reopens it too. The app keeps
-        // running while closed (sync pauses via scenePhase.background, resumes on reopen).
-        // The SCENE title feeds that Window-menu item; the on-screen NSWindow title stays blank
-        // (FixedWindowConfigurator) so the old "← Zodl" navigation-fallback papercut stays fixed.
-        Window("Zodl", id: "main") {
+        // `Window` — SwiftUI's single-window scene — is the remedy: reopenable via the Window
+        // menu + Dock icon; the app keeps running while closed (sync pauses via
+        // scenePhase.background, resumes on reopen).
+        // B4-20: the scene title MUST stay EMPTY — SwiftUI re-asserts it onto the NSWindow on
+        // every navigation push, and a non-empty title becomes the "← Zodl" back-button fallback
+        // on every pushed screen (a one-time title blank does NOT stick). The Window-menu reopen
+        // item is therefore provided EXPLICITLY (ZodlWindowCommands below) instead of relying on
+        // the scene-title-derived automatic item.
+        Window("", id: "main") {
             RootView(
                 store: rootStore,
                 tokenName: TargetConstants.tokenName,
@@ -102,6 +104,20 @@ struct zodlmac_internalApp: App {
         // with just "Close") is dropped in MacMenuSimplifier.
         .commands {
             CommandGroup(replacing: .newItem) { }
+            ZodlWindowCommands()
+        }
+    }
+}
+
+/// Guideline 4: an EXPLICIT "Zodl" item in the Window menu that reopens (or focuses) the main
+/// window after the user closes it. Explicit because the scene's automatic item is derived from
+/// the scene title, which must stay empty (see the `Window("")` comment — B4-20).
+private struct ZodlWindowCommands: Commands {
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some Commands {
+        CommandGroup(after: .windowList) {
+            Button("Zodl") { openWindow(id: "main") }
         }
     }
 }
@@ -150,6 +166,16 @@ private enum MacMenuSimplifier {
             removable.append(item)
         }
         removable.forEach { mainMenu.removeItem($0) }
+
+        // B4-20 companion: the scene title must stay EMPTY (see the `Window("")` comment), so
+        // SwiftUI's AUTOMATIC scene item in the Window menu would render as a blank row next to
+        // the explicit "Zodl" command (ZodlWindowCommands). Scrub empty-titled rows; the live
+        // window's own list entry is named via `changeWindowsItem` in FixedWindowConfigurator.
+        if let windows = windowsMenu {
+            windows.items
+                .filter { $0.title.isEmpty && !$0.isSeparatorItem }
+                .forEach { windows.removeItem($0) }
+        }
 
         // App menu → "Zodl" with exactly "About Zodl" + "Quit Zodl" (drop Settings / Services /
         // Hide …). About uses the STANDARD system panel — icon, name, version — the most
