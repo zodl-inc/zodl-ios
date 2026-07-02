@@ -217,3 +217,13 @@ arrow. FIX: scene title back to "" + rename the (then blank) persistent Window-m
 "Zodl" post-hoc in MacMenuSimplifier (it already rewrites menus), keeping
 `NSApp.changeWindowsItem` for the live/minimized entry. Guideline-4 compliance preserved,
 title bar permanently blank again.
+
+## B4-14 — ROOT CAUSE CONFIRMED (found by Lukas): status-parser missed terminal cases
+Tor was OFF (transport hypothesis refuted — requests fired and returned fine). The from-ZEC/
+crosspay branch of Near1Click's status switch was MISSING `FAILED` → fell to `default:
+.pending` → the flip gate (`!status.isPending`) could never fire → "Paying…" forever, detail
+screen agreeing. Lukas added `failed` to the else branch; completion of the class: `EXPIRED`
+was missing from BOTH branches (same forever-pending failure), `processing` added to the else
+for parity. Earlier loop-death fix (`56a9ca3b`) stands as adjacent hardening (a dropped request
+really did kill the loop permanently). Re-test: relaunch → the stuck row must flip to
+"Payment failed" on the first poll.

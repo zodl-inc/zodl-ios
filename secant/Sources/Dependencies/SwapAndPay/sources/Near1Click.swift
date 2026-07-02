@@ -341,6 +341,13 @@ extension Near1Click {
             
             var status: SwapDetails.Status
             
+            // [B4-14 root cause — Lukas, 2026-07-02] Any TERMINAL status missing from these
+            // switches falls into `default: .pending` and the swap stays "Paying…/Swapping…"
+            // FOREVER (the auto-update flip gate requires `!status.isPending`). The from-ZEC
+            // branch was missing FAILED — a crosspay whose Near fill failed never terminated.
+            // EXPIRED was missing from BOTH branches (same forever-pending class). Every status
+            // the API documents is now mapped explicitly in both branches; `default` remains
+            // only for statuses Near may add in the future (deliberately non-terminal).
             if isSwapToZec {
                 status = switch statusStr {
                 case SwapConstants.pendingDeposit: .pendingDeposit
@@ -349,6 +356,7 @@ extension Near1Click {
                 case SwapConstants.failed: .failed
                 case SwapConstants.incompleteDeposit: .incompleteDeposit
                 case SwapConstants.processing: .processing
+                case SwapConstants.expired: .expired
                 default: .pending
                 }
             } else {
@@ -357,6 +365,9 @@ extension Near1Click {
                 case SwapConstants.pendingDeposit: .pending
                 case SwapConstants.refunded: .refunded
                 case SwapConstants.success: .success
+                case SwapConstants.failed: .failed
+                case SwapConstants.processing: .processing
+                case SwapConstants.expired: .expired
                 default: .pending
                 }
             }
