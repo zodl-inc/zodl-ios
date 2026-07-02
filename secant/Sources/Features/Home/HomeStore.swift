@@ -328,7 +328,14 @@ struct Home {
             case .keystoneBannerTapped:
                 state.accountSwitchRequest = false
                 return .run { send in
+#if os(macOS)
+                    // [B4-11] Only needs to outlast the account-switch card's CLOSE animation —
+                    // the macOS sheet host (MacSplitView) has no presentation conflict with the
+                    // closing overlay, so this is purely visual pacing. Field: 1 s felt long.
+                    try? await mainQueue.sleep(for: .seconds(0.35))
+#else
                     try? await mainQueue.sleep(for: .seconds(1))
+#endif
                     await send(.presentKeystoneWeb)
                 }
 
