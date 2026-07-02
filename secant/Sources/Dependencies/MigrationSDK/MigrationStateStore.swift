@@ -54,6 +54,10 @@ struct MigrationSnapshot: Equatable, Sendable, Codable {
     /// PROTOTYPE: set when the user taps Done on the "Migration Complete" (C6) screen, so the Home
     /// SmartBanner stops showing the completion state. Persisted; cleared by debug Reset (reseed).
     var completionAcknowledged: Bool
+    /// The committed schedule's estimated duration (hours), persisted alongside `transfers` so the
+    /// live engine can rehydrate its schedule cache after a relaunch. Optional for backward
+    /// compatibility with snapshots written before this field existed.
+    var scheduleDurationHours: Int?
 
     /// Seeded default ≈ 12.458 ZEC in a single Orchard note (matches the Figma), so a split is needed.
     static var seededDefault: MigrationSnapshot {
@@ -91,7 +95,8 @@ struct MigrationSnapshot: Equatable, Sendable, Codable {
         noteCountOverride: Int?,
         bannerVisible: Bool,
         bannerVariant: Int,
-        completionAcknowledged: Bool = false
+        completionAcknowledged: Bool = false,
+        scheduleDurationHours: Int? = nil
     ) {
         self.orchard = orchard
         self.notes = notes
@@ -108,6 +113,7 @@ struct MigrationSnapshot: Equatable, Sendable, Codable {
         self.bannerVisible = bannerVisible
         self.bannerVariant = bannerVariant
         self.completionAcknowledged = completionAcknowledged
+        self.scheduleDurationHours = scheduleDurationHours
     }
 }
 

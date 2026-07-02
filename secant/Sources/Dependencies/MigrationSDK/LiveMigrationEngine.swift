@@ -125,6 +125,15 @@ final class LiveMigrationEngine: @unchecked Sendable {
         var initial = Cache()
         initial.mode = persisted.mode
         initial.completionAcknowledged = persisted.completionAcknowledged
+        // Rehydrate the committed schedule so a relaunch mid-migration still renders the transfer
+        // rows (progress/totals come live from the SDK either way; without this the status screen
+        // showed "0 of N" with an empty list after every restart).
+        if !persisted.transfers.isEmpty {
+            initial.schedule = MigrationSchedule(
+                transfers: persisted.transfers.map(\.proposal),
+                estimatedDurationHours: persisted.scheduleDurationHours ?? 0
+            )
+        }
 
         self.protected = OSAllocatedUnfairLock(initialState: initial)
         self.stateSubject = CurrentValueSubject<MigrationState, Never>(initial.state)
@@ -452,6 +461,11 @@ final class LiveMigrationEngine: @unchecked Sendable {
 
     private func setSchedule(_ schedule: MigrationSchedule) {
         protected.withLockUnchecked { $0.schedule = schedule }
+        // Persist the rows so a relaunch mid-migration can rehydrate them (see init).
+        var snapshot = store.load()
+        snapshot.transfers = schedule.transfers.map { StoredTransfer(proposal: $0, status: .pending) }
+        snapshot.scheduleDurationHours = schedule.estimatedDurationHours
+        store.save(snapshot)
     }
 
     private func persistAppState() {
