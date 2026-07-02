@@ -208,6 +208,16 @@ struct MacSplitView: View {
             store.send(.macRedirectToActivityHandled)
             selectSection(.activity)
         }
+        // [B4-3] Account switch resets navigation to the Activity root (Lukas's decision). macOS
+        // keeps the sidebar switcher always available (iOS switches accounts only from Home), so a
+        // pushed per-account screen — e.g. Receive → address QR — would otherwise keep showing the
+        // PREVIOUS account's content after a switch. Compare by account id (the value's balance
+        // fields churn) and skip the launch transition (nil → first account) so startup never
+        // blanks the detail column.
+        .onChange(of: store.homeState.selectedWalletAccount?.id) { old, new in
+            guard old != nil, old != new else { return }
+            selectSection(.activity)
+        }
         // RULE #9 (scan) + RULE #10 (Send/Pay/Swap broadcast lock): collapse to detail-only so the sidebar
         // is hidden and the flow owns the whole window — the user can't switch sections (so can't cancel an
         // in-flight broadcast). Restores to .all when the flow ends (scan dismissed / result closed).

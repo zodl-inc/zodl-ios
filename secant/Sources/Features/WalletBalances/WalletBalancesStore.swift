@@ -180,9 +180,16 @@ struct WalletBalances {
                     return .none
                 }
                 return .run { send in
+                    // [B4-5] Offline-first: surface the SDK's already-known balances IMMEDIATELY
+                    // (latestState is a synchronous snapshot — no DB query, no network), so the
+                    // spendable component doesn't spin on every Send/Pay entry. The authoritative
+                    // refresh below still runs and updates the figures when it lands — under
+                    // sync-time DB contention that call can take many seconds (QA saw 14–30 s),
+                    // and it must never gate the display.
+                    if let instantBalance = sdkSynchronizer.latestState().accountsBalances[account.id] {
+                        await send(.balanceUpdated(instantBalance))
+                    }
                     if let accountBalance = try? await sdkSynchronizer.getAccountsBalances()[account.id] {
-                        await send(.balanceUpdated(accountBalance))
-                    } else if let accountBalance = sdkSynchronizer.latestState().accountsBalances[account.id] {
                         await send(.balanceUpdated(accountBalance))
                     }
                 }

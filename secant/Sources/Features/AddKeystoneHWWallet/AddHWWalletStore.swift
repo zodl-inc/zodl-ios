@@ -61,6 +61,11 @@ struct AddKeystoneHWWallet {
             
         }
         
+        // [B4-4] `importAccount` can legitimately block for a long time while a restore is
+        // syncing (the import write waits on the shared data.db behind the scan pass, and the
+        // SDK restarts the sync pass afterwards). Surface the wait instead of a dead button.
+        var isImportInFlight = false
+
         init() { }
     }
 
@@ -98,6 +103,7 @@ struct AddKeystoneHWWallet {
                 state.isKSAccountSelected = false
                 state.zcashAccounts = nil
                 state.randomSuccessIconIndex = Int.random(in: 1...2)
+                state.isImportInFlight = false
                 return .none
             
             case .backToHomeTapped:
@@ -121,9 +127,13 @@ struct AddKeystoneHWWallet {
                 return .none
 
             case .unlockTapped(let birthday):
+                // [B4-4] Re-entry guard: repeated clicks while the import is waiting on the
+                // busy data.db must not queue additional imports.
+                guard !state.isImportInFlight else { return .none }
                 guard let account = state.zcashAccounts, let firstAccount = account.accounts.first else {
                     return .none
                 }
+                state.isImportInFlight = true
                 return .run { send in
                     do {
                         let uuid = try await sdkSynchronizer.importAccount(
@@ -152,9 +162,11 @@ struct AddKeystoneHWWallet {
                 }
                 
             case .accountImportFailed:
+                state.isImportInFlight = false
                 return .none
-                
+
             case .accountImportSucceeded:
+                state.isImportInFlight = false
                 return .none
 
             case let .loadedWalletAccounts(walletAccounts, uuid):

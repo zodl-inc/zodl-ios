@@ -303,6 +303,15 @@ struct AddressBookView: View {
                 .listRowBackground(Asset.Colors.background.color)
                 .listRowSeparator(.hidden)
             }
+
+            // [B4-6] Tail inset: the chain-ticker circle is drawn OFFSET (+12 y) past the avatar,
+            // so on the LAST row it extends below the row's layout bounds and the plain List
+            // clipped it. An invisible tail row gives the overhang room to render.
+            Color.clear
+                .frame(height: 14)
+                .listRowInsets(EdgeInsets())
+                .listRowBackground(Asset.Colors.background.color)
+                .listRowSeparator(.hidden)
         }
         .padding(.vertical, 1)
         .background(Asset.Colors.background.color)

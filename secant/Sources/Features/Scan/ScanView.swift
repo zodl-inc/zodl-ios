@@ -246,7 +246,12 @@ struct ScanView: View {
         .tint(Asset.Colors.ZDesign.Base.brand.color)
         .position(
             x: topLeft.x + frameSize.width * 0.5,
-            y: topLeft.y - 56
+            // [B4-1] The sign flow's larger cutout (popoverRatio 1.075) starts so close to the
+            // window top that `topLeft.y - 56` landed ABOVE the visible bounds — the gold bar was
+            // rendering, just off-screen (the account-import scan's smaller cutout kept it
+            // visible). Clamp so the bar stays on-screen; with no headroom it overlaps the
+            // cutout's top edge instead of vanishing.
+            y: max(topLeft.y - 56, 36)
         )
     }
 }

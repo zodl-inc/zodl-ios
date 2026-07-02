@@ -187,6 +187,13 @@ struct SendFormView: View {
                                                         .fill(Design.Utility.Gray._100.color(colorScheme))
                                                 }
                                             }
+#if os(macOS)
+                                            // B4-2: the macOS form doesn't scroll, so it OFFERS vertical
+                                            // space and the info box's inner Spacer EATS it — the disabled
+                                            // memo rendered as tall as the real editor. Hug content height
+                                            // (the compact iOS look); the page Spacer below takes the slack.
+                                            .fixedSize(horizontal: false, vertical: true)
+#endif
                                         }
                                         
 #if os(macOS)

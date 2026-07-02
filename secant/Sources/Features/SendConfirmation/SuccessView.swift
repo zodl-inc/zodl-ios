@@ -45,7 +45,10 @@ struct SuccessView: View {
                         .padding(.top, 4)
                 }
 
-                if store.txIdToExpand != nil || store.type == .regular {
+                // B4-7: "View transaction" and "Check status" are mutually exclusive — every
+                // non-regular (Near Intents swap/pay) flow shows Check status below, so View
+                // transaction is regular-only (previously both rendered for swaps with a txid).
+                if store.type == .regular {
                     ZashiButton(
                         String(localizable: .sendViewTransaction),
                         type: .tertiary,

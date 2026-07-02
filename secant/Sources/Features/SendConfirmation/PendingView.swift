@@ -53,7 +53,9 @@ struct PendingView: View {
                     .padding(.top, 8)
                     .screenHorizontalPadding()
 
-                if store.txIdToExpand != nil {
+                // B4-7: mutually exclusive with "Check status" (shown below for non-regular
+                // flows) — View transaction is regular-only here too.
+                if store.type == .regular && store.txIdToExpand != nil {
                     ZashiButton(
                         String(localizable: .sendViewTransaction),
                         type: .tertiary,

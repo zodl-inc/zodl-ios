@@ -324,38 +324,27 @@ extension SwapAndPayForm {
                                 "",
                                 text: $store.amountText,
                                 prompt:
-                                    Text({
-#if os(macOS)
-                                        // macOS shows the placeholder via the centered overlay below; the
-                                        // native prompt renders top-aligned with no way to center it, so
-                                        // keep it empty here.
-                                        ""
-#else
-                                        isAmountFocused ? "" : store.localePlaceholder
-#endif
-                                    }())
+                                    Text(isAmountFocused ? "" : store.localePlaceholder)
                                     .font(.custom(FontFamily.Inter.semiBold.name, size: 24))
                                     .foregroundColor(Design.Text.tertiary.color(colorScheme))
                             )
                             .disabled(store.isQuoteRequestInFlight)
                             .frame(maxWidth: .infinity)
 #if os(macOS)
-                            // Overlay our own placeholder Text (Text DOES vertically center, unlike the
-                            // native prompt), trailing-aligned to match the input position.
-                            .overlay(alignment: .trailing) {
-                                if store.amountText.isEmpty && !isAmountFocused {
-                                    Text(store.localePlaceholder)
-                                        .font(.custom(FontFamily.Inter.semiBold.name, size: 24))
-                                        .foregroundColor(Design.Text.tertiary.color(colorScheme))
-                                        .allowsHitTesting(false)
-                                }
-                            }
+                            // B4-8 proper fix: the AppKit-backed field TOP-ALIGNS its text whenever the
+                            // SwiftUI frame gives it vertical slack — the previous workaround centered only
+                            // the PLACEHOLDER (empty native prompt + a centered overlay Text) and typed
+                            // values still jumped to the top. Sizing the field to its intrinsic height
+                            // removes the slack entirely, so prompt AND value center; the overlay and the
+                            // empty-prompt special case are dropped.
+                            .fixedSize(horizontal: false, vertical: true)
 #endif
 #if os(iOS)
                             .frame(height: 32)
                             .autocapitalization(.none)
 #endif
                             .autocorrectionDisabled()
+                            .macSuppressInputAffordances()
 #if os(iOS)
                             .keyboardType(.decimalPad)
 #endif
@@ -491,38 +480,23 @@ extension SwapAndPayForm {
                             "",
                             text: $store.amountText,
                             prompt:
-                                Text({
-#if os(macOS)
-                                    // macOS shows the placeholder via the centered overlay below; the
-                                    // native prompt renders top-aligned with no way to center it, so keep
-                                    // it empty here.
-                                    ""
-#else
-                                    isAmountFocused ? "" : store.localePlaceholder
-#endif
-                                }())
+                                Text(isAmountFocused ? "" : store.localePlaceholder)
                                     .font(.custom(FontFamily.Inter.semiBold.name, size: 24))
                                     .foregroundColor(Design.Text.tertiary.color(colorScheme))
                         )
                         .disabled(store.isQuoteRequestInFlight)
                         .frame(maxWidth: .infinity)
 #if os(macOS)
-                        // Overlay our own placeholder Text (Text DOES vertically center, unlike the native
-                        // prompt), trailing-aligned to match the input position.
-                        .overlay(alignment: .trailing) {
-                            if store.amountText.isEmpty && !isAmountFocused {
-                                Text(store.localePlaceholder)
-                                    .font(.custom(FontFamily.Inter.semiBold.name, size: 24))
-                                    .foregroundColor(Design.Text.tertiary.color(colorScheme))
-                                    .allowsHitTesting(false)
-                            }
-                        }
+                        // B4-8: see the matching fix on the swap-from field above — intrinsic height
+                        // removes the vertical slack, so prompt and typed value both center.
+                        .fixedSize(horizontal: false, vertical: true)
 #endif
 #if os(iOS)
                         .frame(height: 32)
                         .autocapitalization(.none)
 #endif
                         .autocorrectionDisabled()
+                        .macSuppressInputAffordances()
 #if os(iOS)
                         .keyboardType(.decimalPad)
 #endif
@@ -620,5 +594,22 @@ extension SwapAndPayForm {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 16)
+    }
+}
+
+private extension View {
+    /// Disable the macOS system text affordances (Writing Tools) that can flash a one-frame
+    /// suggestion bubble when the numeric amount field auto-focuses on appear. They're useless on a
+    /// number field, so turning them off costs nothing. No-op on iOS and below macOS 15.
+    @ViewBuilder func macSuppressInputAffordances() -> some View {
+#if os(macOS)
+        if #available(macOS 15.0, *) {
+            self.writingToolsBehavior(.disabled)
+        } else {
+            self
+        }
+#else
+        self
+#endif
     }
 }
