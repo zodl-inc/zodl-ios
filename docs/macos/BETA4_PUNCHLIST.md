@@ -19,10 +19,13 @@ Cross-refs: TRACKS.md (SDK repo) track 1 · FOUNDATIONS_F1_VERDICTS.md · MODALS
 - B4-6 AddressBookView: invisible 14pt tail row — the offset chain circle no longer clips.
 - B4-7 SuccessView + PendingView: View-transaction is regular-only (mutually exclusive with
   Check-status).
-- B4-8 SwapForm (round 3, field-tested): fixed 32pt line box on macOS too (`frame(height: 32)`
-  now unconditional — same geometry as iOS and as the row's non-editing Text state); prompt and
-  typed value share the box. Placeholder overlay patch deleted; round 2's fixedSize (floating
-  glyph) reverted.
+- B4-8 SwapForm (round 4 — ROOT CAUSE, rig-verified): SwiftUI's macOS TextField cell runs in
+  `usesSingleLineMode`, whose fixed-baseline EDITING layout uses default-system-font metrics —
+  typed Inter@24 lands in a 16.0pt line box (exactly 13pt-system line height): top-clipped,
+  rides high, snaps right on blur ("2 Y positions"). Sub-pixel at 14pt (16≈17) ⇒ every other
+  field in the app looks fine. macOS now renders `MacAmountTextField` (NSViewRepresentable,
+  `usesSingleLineMode=false`) at both swap-field sites; iOS chain untouched. Rounds 1–3 were
+  symptom-level and are superseded — details in the B4-8 section below.
 - B4-9 SwapForm: kept the `writingToolsBehavior(.disabled)` suppression (was already in the
   working tree); if the bubble still flashes on device it is a different affordance — retest.
 - B4-10 RootTorInitCheck: Settings-path currency-conversion enable (and Tor enable — the class
@@ -112,6 +115,25 @@ Placeholder "0.00" is fixed (Opus's patch), but an entered value ("1") jumps to 
 **Lukas's direction: proper fix; DROP the placeholder-only patch.**
 **Triage:** native macOS TextField vertical alignment in the styled container — fix the
 field's vertical centering for all content states, not per-state.
+
+**RESOLVED (round 4, 2026-07-02) — root cause found via isolated AppKit rig** (6 field variants,
+programmatic focus/typing, bitmap captures + NSLayoutManager measurements):
+`NSTextFieldCell.usesSingleLineMode` — which SwiftUI's macOS TextField enables with no opt-out —
+lays EDITING text on a fixed baseline computed from default-system-font metrics. With the
+process-registered Inter at 24pt, the typed line gets a 16.0pt box (exactly the 13pt-system line
+height) while glyphs draw at 24pt into it: top-clipped and riding high while editing; the static
+cell draw uses correct metrics (29pt) ⇒ the focus-dependent jump Lukas described as "2 Y
+positions". Measured facts: paragraph-style min/max line-height pins are IGNORED in that mode
+(pin present on the run, layout still 16.0); `.plain` vs bezeled, frames, and trailing-alignment
+are all irrelevant (each isolated); the bug reproduces in pure AppKit (not SwiftUI); the system
+font is immune (its metrics ARE the defaults the fixed-baseline path uses); at 14pt broken ≈
+correct (16 vs 17) ⇒ ZashiTextField et al. unaffected in practice (latent ~1pt). Lukas's
+font-size hunch was exactly right. Bonus finding: the default (non-`.plain`) style also draws a
+37pt bezel that ignores the 32pt frame. FIX: `MacAmountTextField` (NSViewRepresentable:
+`usesSingleLineMode=false`, `wraps=false` + `isScrollable=true`, right-aligned, native
+right-aligned placeholder, Writing Tools disabled in-editor for B4-9 parity) swapped in at both
+SwapForm sites macOS-only; iOS chain untouched; Opus's focus-conditional prompt dropped
+(constant placeholder restored on iOS).
 
 ## B4-9 · Swap amount field: 1-frame system bubble flash on focus `[app]`
 On form appear + autofocus, a system bubble (empty) renders for ~1 frame and vanishes.
@@ -227,3 +249,20 @@ was missing from BOTH branches (same forever-pending failure), `processing` adde
 for parity. Earlier loop-death fix (`56a9ca3b`) stands as adjacent hardening (a dropped request
 really did kill the loop permanently). Re-test: relaunch → the stuck row must flip to
 "Payment failed" on the first poll.
+
+---
+
+# ROUND 3 — (2026-07-02, his numbering continues)
+
+## B4-21 (his 18) · Activity filter icon resets to outline after a section round-trip `[app] [class: peer-root reset]`
+Filled filter icon (= active filters) reverts to not-filled after switching to Send/Receive and
+back to Activity.
+**ROOT CAUSE (code-confirmed):** macOS section re-entry funnels through
+`.home(.seeAllTransactionsTapped)` → RootCoordinator sets `transactionsCoordFlowState = .initial`
+(the peer-root "fresh section" semantics). The FILTERS (and search term) are wiped with the rest
+of the flow state — the icon is honest; the whole filter state died, not just the glyph. iOS is
+unaffected (there the action means a genuine fresh "See all" visit from Home).
+**FIX:** on macOS the reset carries over `activeFilters` + `searchTerm` (navigation still resets
+to the section root — the B4-3 / B4-19 behaviors are preserved); the existing
+`transactionsUpdated → search → filters` pipeline re-applies them on entry. A sidebar section
+keeps its view configuration, like every Mac app.

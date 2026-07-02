@@ -320,29 +320,32 @@ extension SwapAndPayForm {
                             
                             Spacer()
                             
+#if os(macOS)
+                            // B4-8: SwiftUI's macOS TextField edits large custom fonts on a broken
+                            // fixed baseline (usesSingleLineMode) — see MacAmountTextField.
+                            MacAmountTextField(
+                                text: $store.amountText,
+                                placeholder: store.localePlaceholder,
+                                autoFocusOnAppear: true
+                            )
+                            .disabled(store.isQuoteRequestInFlight)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 32)
+#else
                             TextField(
                                 "",
                                 text: $store.amountText,
                                 prompt:
-                                    Text(isAmountFocused ? "" : store.localePlaceholder)
+                                    Text(store.localePlaceholder)
                                     .font(.custom(FontFamily.Inter.semiBold.name, size: 24))
                                     .foregroundColor(Design.Text.tertiary.color(colorScheme))
                             )
                             .disabled(store.isQuoteRequestInFlight)
                             .frame(maxWidth: .infinity)
-                            // B4-8: the macOS field ACCEPTS the row's taller proposed height and AppKit
-                            // top-draws the text in the slack (prompt and typed value alike). Propose the
-                            // same fixed 32pt line box iOS already uses — it is also exactly what the
-                            // row's non-editing Text state uses, so editing and display geometry match.
                             .frame(height: 32)
-#if os(iOS)
                             .autocapitalization(.none)
-#endif
                             .autocorrectionDisabled()
-                            .macSuppressInputAffordances()
-#if os(iOS)
                             .keyboardType(.decimalPad)
-#endif
                             .zFont(.semiBold, size: 24, style: Design.Text.primary)
                             .lineLimit(1)
                             .multilineTextAlignment(.trailing)
@@ -353,6 +356,7 @@ extension SwapAndPayForm {
                                     isAmountFocused = true
                                 }
                             }
+#endif
                         }
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
@@ -471,32 +475,36 @@ extension SwapAndPayForm {
                         
                         Spacer()
                         
+#if os(macOS)
+                        // B4-8: same broken-baseline class as the field above — see MacAmountTextField.
+                        MacAmountTextField(
+                            text: $store.amountText,
+                            placeholder: store.localePlaceholder
+                        )
+                        .disabled(store.isQuoteRequestInFlight)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 32)
+#else
                         TextField(
                             "",
                             text: $store.amountText,
                             prompt:
-                                Text(isAmountFocused ? "" : store.localePlaceholder)
+                                Text(store.localePlaceholder)
                                     .font(.custom(FontFamily.Inter.semiBold.name, size: 24))
                                     .foregroundColor(Design.Text.tertiary.color(colorScheme))
                         )
                         .disabled(store.isQuoteRequestInFlight)
                         .frame(maxWidth: .infinity)
-                        // B4-8: same fixed 32pt line box as the field above (and as the row's
-                        // non-editing Text state) — no slack for AppKit to top-draw into.
                         .frame(height: 32)
-#if os(iOS)
                         .autocapitalization(.none)
-#endif
                         .autocorrectionDisabled()
-                        .macSuppressInputAffordances()
-#if os(iOS)
                         .keyboardType(.decimalPad)
-#endif
                         .zFont(.semiBold, size: 24, style: Design.Text.primary)
                         .lineLimit(1)
                         .multilineTextAlignment(.trailing)
                         .accentColor(Design.Text.primary.color(colorScheme))
                         .focused($isAmountFocused)
+#endif
                     }
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
@@ -586,22 +594,5 @@ extension SwapAndPayForm {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 16)
-    }
-}
-
-private extension View {
-    /// Disable the macOS system text affordances (Writing Tools) that can flash a one-frame
-    /// suggestion bubble when the numeric amount field auto-focuses on appear. They're useless on a
-    /// number field, so turning them off costs nothing. No-op on iOS and below macOS 15.
-    @ViewBuilder func macSuppressInputAffordances() -> some View {
-#if os(macOS)
-        if #available(macOS 15.0, *) {
-            self.writingToolsBehavior(.disabled)
-        } else {
-            self
-        }
-#else
-        self
-#endif
     }
 }
