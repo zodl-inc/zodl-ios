@@ -240,6 +240,26 @@ struct MacSplitView: View {
         ) {
             WalletAccountsSheetView(store: store.scope(state: \.homeState, action: \.home))
         }
+        // [B4-11 in-app experiment] The Keystone-advert browser. The iOS host (HomeView.sheet) is
+        // NOT in the macOS view tree, so the flag used to flip with NOBODY listening — very likely
+        // the real reason "nothing happened" (the About→Privacy sheet proves macOS presents these
+        // fine). Hosted here like the sheets above; the store's existing close-card→1s→present
+        // sequencing is unchanged. If the present-after-MacCard trap still bites, revert
+        // HomeStore's presentKeystoneWeb to the NSWorkspace external-browser path.
+        .sheet(
+            isPresented: Binding(
+                get: { store.homeState.isInAppBrowserKeystoneOn },
+                set: { newValue in
+                    if !newValue && store.homeState.isInAppBrowserKeystoneOn {
+                        store.send(.home(.binding(.set(\.isInAppBrowserKeystoneOn, false))))
+                    }
+                }
+            )
+        ) {
+            if let url = URL(string: store.homeState.inAppBrowserURLKeystone) {
+                InAppBrowserView(url: url)
+            }
+        }
         // Smart-banner help sheet (shielding / sync error / …). Hosted here on macOS (MODALS.md Rule #5):
         // the banner lives in the sidebar, so a `.zashiSheet` on it would clamp the card to the sidebar
         // width. At the window root it covers the whole window. iOS presents it inline from SmartBannerView.

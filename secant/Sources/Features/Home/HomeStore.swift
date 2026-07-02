@@ -1,9 +1,6 @@
 #if canImport(UIKit)
 import UIKit
 #endif
-#if os(macOS)
-import AppKit
-#endif
 import Combine
 import SwiftUI
 @preconcurrency import AVFoundation
@@ -336,19 +333,13 @@ struct Home {
                 }
 
             case .presentKeystoneWeb:
-#if os(macOS)
-                // [B4-11] Presenting anything over/after the account-switcher MacCard fails silently
-                // (the present-after-MacCard trap — timing ruled out earlier), so the in-app browser
-                // never opened. On desktop the DEFAULT browser is the better UX anyway — open the
-                // link externally. The structural fix for the trap class stays with F-2(a).
-                if let url = URL(string: state.inAppBrowserURLKeystone) {
-                    NSWorkspace.shared.open(url)
-                }
-                return .none
-#else
+                // [B4-11] In-app on both platforms. The old macOS failure was (very likely) NOT the
+                // present-after-MacCard trap: the sheet host lived on HomeView, which is absent from
+                // the macOS view tree — the flag flipped with nobody listening. macOS now hosts the
+                // sheet in MacSplitView (like the account-switch card). If the trap does still bite,
+                // fall back to NSWorkspace.shared.open (external browser) here.
                 state.isInAppBrowserKeystoneOn = true
                 return .none
-#endif
 
             case .walletAccountTapped:
                 state.accountSwitchRequest = false
