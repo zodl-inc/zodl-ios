@@ -659,12 +659,12 @@ Expected: ends with `Rebuilt ios-sim (arm64) in LocalPackages/libzcashlc.xcframe
 
 - [ ] **Step 2: Build the app from the CLI**
 
-Run:
+Run (NOTE: the repo has `secant.xcodeproj`, no workspace; the destination must be a **concrete arm64 simulator** because `rebuild-local-ffi.sh` produces an arm64-only xcframework slice — `generic/platform=iOS Simulator` fails at link on x86_64):
 ```bash
 cd /Users/chlup/Developing/zec/work/ironwood/zodl-ios
-xcodebuild build -workspace secant.xcworkspace -scheme zodl-internal -destination 'generic/platform=iOS Simulator' -skipMacroValidation -quiet
+xcodebuild build -project secant.xcodeproj -scheme zodl-internal -destination "platform=iOS Simulator,id=$(xcrun simctl list devices available | grep -m1 -oE '[0-9A-F-]{36}')" -skipMacroValidation
 ```
-Expected: `BUILD SUCCEEDED` (warnings tolerated). If the build fails with a stale-dependency-graph error after the xcframework swap, delete the DerivedData `Intermediates.noindex` for this workspace and retry once; if it still fails, STOP and fall back per the global CLI-first rule.
+Expected: `** BUILD SUCCEEDED **` (warnings tolerated). If the build fails with a stale-dependency-graph error after the xcframework swap, delete the DerivedData `Intermediates.noindex` for this workspace and retry once; if it still fails, STOP and fall back per the global CLI-first rule.
 
 - [ ] **Step 3: No commit** — nothing changed in this task; it gates the handoff.
 
