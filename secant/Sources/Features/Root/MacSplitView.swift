@@ -35,6 +35,8 @@ struct MacSplitView: View {
     // it goes selected -> nil (a one-frame blank) -> new, so the popped root never renders: the user sees
     // B -> blank -> C, not B -> A -> C. The nil frame also breaks SwiftUI's path reconcile (the crash).
     @State private var detailSection: MacSection? = .activity
+    // Custom sidebar rows (no List): the row the pointer is over, for the hover wash.
+    @State private var hoveredSection: MacSection?
     @State private var hasInitialized = false
     // RULE #9: hide the sidebar while scan is showing (scan must be a full-window single view).
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
@@ -298,25 +300,19 @@ struct MacSplitView: View {
 
     // MARK: - Left rail (native NavigationSplitView sidebar — material + lights inside come for free)
 
-    // CRASH FIX (AnyNavigationPath.comparisonTypeMismatch): intercept the sidebar selection to pop EVERY
+    // CRASH FIX (AnyNavigationPath.comparisonTypeMismatch): every section switch must pop EVERY
     // section's NavigationStack to root BEFORE switching. SwiftUI's NavigationSplitView reconciles the
     // detail column's nav state across a section switch; a PUSHED path (e.g. a transaction detail open in
     // Activity) of a different type than the incoming section triggers a try! crash in NavigationColumnState
     // — the `.id(selectedSection)` resets the CONTENT but not that column nav state. Clearing the paths
-    // first = nothing to reconcile. We keep the native split layout; the trade-off is the outgoing section
-    // resets to root (the intended pop-to-root behaviour).
-    private var sectionSelection: Binding<MacSection> {
-        Binding(
-            get: { selectedSection },
-            set: { newSection in selectSection(newSection) }
-        )
-    }
-
+    // first = nothing to reconcile. The trade-off is the outgoing section resets to root (the intended
+    // pop-to-root behaviour).
+    //
     // Switch the macOS sidebar to `newSection` with the THREE-PHASE blank-then-reveal: clear paths + move
     // the sidebar highlight + BLANK the detail (detailSection = nil) THIS frame, then reveal the new
     // section NEXT runloop. The one-frame blank both (a) breaks SwiftUI's path reconcile (the crash) and
     // (b) HIDES the pop-to-root, so the user sees B -> blank -> C, never the popped root A. Shared by the
-    // sidebar selection binding and the post-transaction redirect to Activity.
+    // custom sidebar rows and the post-transaction redirect to Activity.
     private func selectSection(_ newSection: MacSection) {
         guard newSection != selectedSection else { return }
         LoggerProxy.event("[macOS nav] section \(selectedSection) -> \(newSection): blank-then-reveal (avoid comparisonTypeMismatch + hide pop-to-root)")
@@ -370,26 +366,22 @@ struct MacSplitView: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 16)
 
-            // Navigation — native selectable rows. The native (system-accent) selection highlight is
-            // fine for Beta; the custom-grey attempts were wider than native and had render latency.
-            List(selection: sectionSelection) {
-                ForEach(MacSection.allCases, id: \.self) { section in
-                    HStack {
-                        section.sectionIcon
-                            .zImage(size: 16, style: Design.Text.primary)
-                        
-                        Text(section.title)
-                            .zFont(.medium, size: 14, style: Design.Text.primary)
+            // Navigation — CUSTOM rows, no List. The earlier tint attempts failed because the
+            // native selection highlight is AppKit-owned (accent blue focused, grey unfocused,
+            // drawn ON TOP of any row background) — unwinnable from SwiftUI. Selection here is
+            // plain view state: one color from OUR tokens, identical whether or not the sidebar
+            // has focus, plus a subtle hover wash. Trade-off: List's arrow-key row navigation is
+            // gone (section switching is click/⌘-driven; nothing relied on arrows).
+            // RULE #4: rows keep scrolling if they ever overflow the window height.
+            ScrollView {
+                VStack(spacing: 2) {
+                    ForEach(MacSection.allCases, id: \.self) { section in
+                        sidebarRow(section)
                     }
-                    .tag(section)
                 }
+                .padding(.horizontal, 10)
             }
-            .listStyle(.sidebar)
-            // Let the sidebar vibrancy material show through uniformly (header + list share one
-            // material) instead of the List drawing its own opaque background.
-            .scrollContentBackground(.hidden)
-            // RULE #4: do NOT disable scrolling — the list must scroll if rows ever overflow so the
-            // sidebar fits any window height (today there are few rows, so it won't scroll).
+            .scrollBounceBehavior(.basedOnSize)
         }
         .onChange(of: selectedSection) { _, section in
             store.send(section.action)
@@ -402,6 +394,49 @@ struct MacSplitView: View {
         // frame makes the first layout 240 by construction, independent of the column metrics'
         // timing; the column triple + pin remain as the divider/drag enforcement.
         .frame(width: sidebarWidth)
+    }
+
+    /// One sidebar navigation row. The SELECTED pill uses the app's canonical selected pair
+    /// (`Switcher.selectedBg`/`selectedText` — the slippage-chip tokens: guaranteed contrast,
+    /// themed for both schemes, focus-independent). To restyle the selection, change ONLY the
+    /// two `isSelected ?` branches below.
+    @ViewBuilder private func sidebarRow(_ section: MacSection) -> some View {
+        let isSelected = selectedSection == section
+        Button {
+            selectSection(section)
+        } label: {
+            HStack(spacing: 8) {
+                section.sectionIcon
+                    .zImage(size: 16, style: isSelected ? Design.Switcher.selectedText : Design.Text.primary)
+
+                Text(section.title)
+                    .zFont(.medium, size: 14, style: isSelected ? Design.Switcher.selectedText : Design.Text.primary)
+
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background {
+                RoundedRectangle(cornerRadius: Design.Radius._md)
+                    .fill(
+                        isSelected
+                        ? Design.Switcher.selectedBg.color(colorScheme)
+                        : hoveredSection == section
+                            ? Design.Switcher.surfacePrimary.color(colorScheme).opacity(0.6)
+                            : Color.clear
+                    )
+            }
+            .contentShape(RoundedRectangle(cornerRadius: Design.Radius._md))
+        }
+        .zashiPlainButtonStyle()
+        .onHover { isHovering in
+            if isHovering {
+                hoveredSection = section
+            } else if hoveredSection == section {
+                hoveredSection = nil
+            }
+        }
     }
 
     @ViewBuilder private var accountSwitcher: some View {

@@ -300,6 +300,30 @@ Activity (outline icon AND full content). The carry-over was reverted; the origi
 so the "bug" isn't re-fixed later. Within-section navigation (tx detail push/pop) never fires
 this action, so filters DO survive while working inside Activity — which is the intended scope.
 
+## B4-23 · Sidebar selection color: custom rows replace the native List (Lukas's direction)
+The native sidebar selection is AppKit-owned — accent blue when focused, grey when the sidebar
+loses focus, and the highlight draws ON TOP of any row background, which is why every earlier
+tint attempt failed. Lukas's call (correct): stop tinting the native selection; disable it and
+draw our own. Implemented: the sidebar `List` is GONE — `ScrollView` + custom Button rows
+(7 fixed rows never needed a List). Selection = plain view state: a rounded-rect pill in the
+app's canonical selected pair (`Switcher.selectedBg`/`selectedText` — guaranteed contrast,
+themed both schemes, focus-INDEPENDENT) + a subtle hover wash; the crash-fix switching path
+(`selectSection`) is reused verbatim; RULE #4 width machinery untouched; rows still scroll on
+overflow. Restyle point = the two `isSelected ?` branches in `sidebarRow`. Accepted trade-off:
+List's arrow-key row navigation is gone (nothing relied on it).
+
+## FINDING · SwiftUI `prompt:` foreground styling is IGNORED on macOS (rig-proven, 4th AppKit-input trap)
+A styled prompt (`Text(...).foregroundColor(near-black)`) still renders in the SYSTEM
+placeholder color (white-ish in dark mode) — pixel-proven in the isolated rig. Consequence:
+B4-15's white "%" was NEVER fixable via `prompt:`; `5426df58` fixed the bezel + focus but not
+the color. REAL fix (held while Lukas is in these files): route the slippage field through
+`MacAmountTextField` (add alignment/fontSize/color params) — its AppKit
+`placeholderAttributedString` renders colors correctly, and it brings dismiss-on-focus +
+caret-to-end + the single-line-mode fix along. Rule extended: styled placeholders on macOS
+require the AppKit path, never `prompt:`. ALSO rig-proven the same run: round-4.1 caret-to-end
+mechanics WORK in isolation (click left of "122", type "3" → "1223") — if the app still
+prepends on a ≥`80c322ba` build, instrument the in-app focus path.
+
 ## B4-22 · Slippage warning box (red) not full-width in the MacCard `[app]`
 Screenshot-confirmed: the "<2% slippage" warning box hugs its wrapped text and falls short of
 the card's content width. Cause: the sibling info box above it has an explicit
