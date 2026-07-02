@@ -44,7 +44,10 @@ struct MigrationTransferPlan {
             case .onAppear:
                 state.isLoading = true
                 return .run { send in
-                    await send(.scheduleLoaded(migrationSDK.proposeMigrationTransfers()))
+                    // The private path skips the (turnstile-blocked) note split, so there are no
+                    // denomination notes to spend — migrate the whole spendable balance as a single
+                    // transfer, which is fundable from the existing note(s).
+                    await send(.scheduleLoaded(migrationSDK.proposeImmediateMigrationTransfers()))
                 }
 
             case let .scheduleLoaded(schedule):

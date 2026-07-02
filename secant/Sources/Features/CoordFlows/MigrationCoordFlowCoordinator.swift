@@ -42,9 +42,11 @@ extension MigrationCoordFlow {
                 migrationSDK.selectMigrationMode(mode)
                 if mode == .immediate {
                     state.path.append(.networkPrivacy(MigrationNetworkPrivacy.State()))
-                } else if migrationSDK.isNoteSplitNeeded() {
-                    state.path.append(.noteSplit(MigrationNoteSplit.State()))
                 } else {
+                    // The note split (Orchard V2 -> smaller V2 notes) can't be broadcast against a
+                    // turnstile-enforcing NU6.3 server — the server rejects new legacy-Orchard outputs
+                    // ("could not validate orchard proof"). So the private path skips the split for now
+                    // and migrates the whole balance as a single scheduled transfer.
                     state.path.append(.backgroundDelivery(MigrationBackgroundDelivery.State()))
                 }
                 return .none
