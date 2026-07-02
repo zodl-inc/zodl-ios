@@ -29,6 +29,11 @@ struct zodlmac_internalApp: App {
         FontFamily.registerAllCustomFonts()
         NSDecimalNumber.defaultBehavior = Zatoshi.decimalHandler
         setupFeatureFlags()
+        // Startup-pop fix (sidebar): delete any NSSplitView width remembered by a PREVIOUS launch
+        // BEFORE any window exists. The old purge ran inside FixedSidebarWidth's async pin — after
+        // the split view had already restored the stale width on frame 1 — so launch showed
+        // remembered-width → slam-to-240, the visible sidebar pop.
+        MacSidebarDefaults.purgeRememberedWidths()
     }
 
     var body: some Scene {
@@ -78,6 +83,12 @@ struct zodlmac_internalApp: App {
             }
         }
         .windowResizability(.contentSize)
+        // Startup-pop fix (window size): tell the SCENE the window size up front. Without this the
+        // window is born at a system-default frame and only resizes once the content's
+        // `.frame(width:height:)` lays out (via `.contentSize` resizability) — a visible
+        // size/position correction AFTER first display. With the scene-level default the window is
+        // CREATED at 900×720, so `.defaultPosition(.center)` below can place it correctly on frame 1.
+        .defaultSize(width: WindowSize.width, height: WindowSize.height)
         // Center on the FIRST launch only (no saved frame); afterwards macOS restores the window's last
         // position via SwiftUI's standard frame autosave. No forced re-centering on every open — that was
         // the visible startup jump (see FixedWindowConfigurator).
@@ -174,6 +185,12 @@ private struct FixedWindowConfigurator: NSViewRepresentable {
             let fixedContent = NSSize(width: WindowSize.width, height: WindowSize.height)
             window.contentMinSize = fixedContent
             window.contentMaxSize = fixedContent
+            // Startup-pop fix (competing geometry sources): macOS window STATE RESTORATION (the
+            // secure-coding mechanism, separate from frame autosave) re-applies stored geometry
+            // AFTER first display — a second restore source that can yank a just-placed window.
+            // A single fixed-size window needs no state restoration; SwiftUI's frame autosave
+            // (which applies BEFORE display) remains the one position-persistence channel.
+            window.isRestorable = false
             // Window POSITION is left to macOS — standard best-practice behavior. SwiftUI's WindowGroup
             // restores the last frame across launches, and `.defaultPosition(.center)` on the scene centers
             // it on the very first launch (no saved frame). The previous code disabled frame autosave and

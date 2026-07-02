@@ -364,6 +364,14 @@ struct MacSplitView: View {
         .onChange(of: selectedSection) { _, section in
             store.send(section.action)
         }
+        // RULE #4 (startup-pop, round 2): pin the CONTENT to the constant width, not just the
+        // column. Field evidence (2026-07-02): with window state-restoration disabled (the fix
+        // for the centering pop), the sidebar rendered content-hugging-narrow on frame 1 and
+        // STAYED there — restoration had been the thing that late-corrected it (the old width
+        // pop), and `FixedSidebarWidth`'s async pin can miss its window. A fixed-width content
+        // frame makes the first layout 240 by construction, independent of the column metrics'
+        // timing; the column triple + pin remain as the divider/drag enforcement.
+        .frame(width: sidebarWidth)
     }
 
     @ViewBuilder private var accountSwitcher: some View {
@@ -588,10 +596,21 @@ private struct FixedSidebarWidth: NSViewRepresentable {
         private static func purgeRememberedWidthsOnce() {
             guard !didPurgeRememberedWidths else { return }
             didPurgeRememberedWidths = true
-            let defaults = UserDefaults.standard
-            for key in defaults.dictionaryRepresentation().keys where key.hasPrefix("NSSplitView Subview Frames") {
-                defaults.removeObject(forKey: key)
-            }
+            MacSidebarDefaults.purgeRememberedWidths()
+        }
+    }
+}
+
+/// RULE #4 companion — the startup-pop fix: `FixedSidebarWidth`'s async pin purged these defaults
+/// TOO LATE (the current window's NSSplitView had already restored the remembered width on frame 1,
+/// then the pin slammed it to `sidebarWidth` → the visible X→240 width pop at launch). The app entry
+/// calls this in `init()` — BEFORE any window exists — so the restore source is gone and frame 1
+/// lays out at the SwiftUI hard width. The in-pin purge stays as insurance for the same process.
+enum MacSidebarDefaults {
+    static func purgeRememberedWidths() {
+        let defaults = UserDefaults.standard
+        for key in defaults.dictionaryRepresentation().keys where key.hasPrefix("NSSplitView Subview Frames") {
+            defaults.removeObject(forKey: key)
         }
     }
 }
