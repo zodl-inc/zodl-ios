@@ -228,7 +228,18 @@ extension Root {
                 return .none
 
             case .home(.seeAllTransactionsTapped):
+#if os(macOS)
+                // [B4-21] On macOS this action is ALSO the section-switch re-entry into Activity
+                // (peer-root reset). The reset must return navigation to the section root, but a
+                // sidebar section keeps its view configuration — filter + search survive.
+                let activeFilters = state.transactionsCoordFlowState.transactionsManagerState.activeFilters
+                let searchTerm = state.transactionsCoordFlowState.transactionsManagerState.searchTerm
                 state.transactionsCoordFlowState = .initial
+                state.transactionsCoordFlowState.transactionsManagerState.activeFilters = activeFilters
+                state.transactionsCoordFlowState.transactionsManagerState.searchTerm = searchTerm
+#else
+                state.transactionsCoordFlowState = .initial
+#endif
                 state.path = .transactionsCoordFlow
                 return .none
                 
