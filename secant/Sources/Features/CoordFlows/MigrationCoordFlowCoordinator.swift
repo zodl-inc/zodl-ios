@@ -44,10 +44,9 @@ extension MigrationCoordFlow {
                     state.path.append(.networkPrivacy(MigrationNetworkPrivacy.State()))
                 } else if migrationSDK.isNoteSplitNeeded() {
                     // Private path denominates the balance into multiple transfers, which requires a
-                    // note split (one Orchard note per denomination) first. NOTE: against a
-                    // turnstile-enforcing NU6.3 server the split is rejected at consensus ("could not
-                    // validate orchard proof"); the multi-transfer design itself is correct and works
-                    // where creating Orchard V2 notes is permitted.
+                    // note split (one Orchard note per denomination) first. The split fans the balance
+                    // into same-address V2 change outputs — the one V2-retaining operation the
+                    // post-NU6.3 cross-address restriction sanctions.
                     state.path.append(.noteSplit(MigrationNoteSplit.State()))
                 } else {
                     state.path.append(.backgroundDelivery(MigrationBackgroundDelivery.State()))
