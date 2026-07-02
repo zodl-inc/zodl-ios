@@ -330,17 +330,12 @@ extension SwapAndPayForm {
                             )
                             .disabled(store.isQuoteRequestInFlight)
                             .frame(maxWidth: .infinity)
-#if os(macOS)
-                            // B4-8 proper fix: the AppKit-backed field TOP-ALIGNS its text whenever the
-                            // SwiftUI frame gives it vertical slack — the previous workaround centered only
-                            // the PLACEHOLDER (empty native prompt + a centered overlay Text) and typed
-                            // values still jumped to the top. Sizing the field to its intrinsic height
-                            // removes the slack entirely, so prompt AND value center; the overlay and the
-                            // empty-prompt special case are dropped.
-                            .fixedSize(horizontal: false, vertical: true)
-#endif
-#if os(iOS)
+                            // B4-8: the macOS field ACCEPTS the row's taller proposed height and AppKit
+                            // top-draws the text in the slack (prompt and typed value alike). Propose the
+                            // same fixed 32pt line box iOS already uses — it is also exactly what the
+                            // row's non-editing Text state uses, so editing and display geometry match.
                             .frame(height: 32)
+#if os(iOS)
                             .autocapitalization(.none)
 #endif
                             .autocorrectionDisabled()
@@ -486,13 +481,10 @@ extension SwapAndPayForm {
                         )
                         .disabled(store.isQuoteRequestInFlight)
                         .frame(maxWidth: .infinity)
-#if os(macOS)
-                        // B4-8: see the matching fix on the swap-from field above — intrinsic height
-                        // removes the vertical slack, so prompt and typed value both center.
-                        .fixedSize(horizontal: false, vertical: true)
-#endif
-#if os(iOS)
+                        // B4-8: same fixed 32pt line box as the field above (and as the row's
+                        // non-editing Text state) — no slack for AppKit to top-draw into.
                         .frame(height: 32)
+#if os(iOS)
                         .autocapitalization(.none)
 #endif
                         .autocorrectionDisabled()

@@ -167,18 +167,20 @@ struct SendFormView: View {
                                                     .zFont(.medium, size: 14, style: Design.Inputs.Filled.label)
                                                     .padding(.bottom, 6)
                                                 
-                                                HStack(spacing: 0) {
-                                                    VStack {
-                                                        Asset.Assets.infoOutline.image
-                                                            .zImage(size: 20, style: Design.Utility.Gray._500)
-                                                            .padding(.trailing, 12)
-                                                        
-                                                        Spacer(minLength: 0)
-                                                    }
-                                                    
+                                                // B4-2: `alignment: .top` replaces the old inner
+                                                // `VStack { icon; Spacer(minLength: 0) }` — that spacer made
+                                                // the box GREEDY for height, and the no-scroll macOS form
+                                                // offered it all the slack (the disabled memo rendered as
+                                                // tall as the real editor). Top-aligning the icon directly
+                                                // keeps the identical look while the box hugs its text.
+                                                HStack(alignment: .top, spacing: 0) {
+                                                    Asset.Assets.infoOutline.image
+                                                        .zImage(size: 20, style: Design.Utility.Gray._500)
+                                                        .padding(.trailing, 12)
+
                                                     Text(localizable: .sendInfoMemo)
                                                         .zFont(size: 12, style: Design.Utility.Gray._700)
-                                                    
+
                                                     Spacer()
                                                 }
                                                 .padding(10)
@@ -187,13 +189,6 @@ struct SendFormView: View {
                                                         .fill(Design.Utility.Gray._100.color(colorScheme))
                                                 }
                                             }
-#if os(macOS)
-                                            // B4-2: the macOS form doesn't scroll, so it OFFERS vertical
-                                            // space and the info box's inner Spacer EATS it — the disabled
-                                            // memo rendered as tall as the real editor. Hug content height
-                                            // (the compact iOS look); the page Spacer below takes the slack.
-                                            .fixedSize(horizontal: false, vertical: true)
-#endif
                                         }
                                         
 #if os(macOS)

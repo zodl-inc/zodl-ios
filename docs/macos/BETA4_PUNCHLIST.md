@@ -26,6 +26,17 @@ Cross-refs: TRACKS.md (SDK repo) track 1 · FOUNDATIONS_F1_VERDICTS.md · MODALS
   sweep) now sends `.home(.smartBanner(.closeAndCleanupBanner))`.
 - B4-11 HomeStore: on macOS the Keystone advert opens the link in the DEFAULT browser
   (NSWorkspace) — sidesteps the present-after-MacCard trap; structural fix stays with F-2(a).
+- **B4-12 (NEW, found during Lukas's pass): disconnect→re-add Keystone → instant ZRUST0096,
+  sync wedged.** Diagnosed via a CLI run on a snapshot of the wedged data.db (it syncs CLEANLY —
+  wallet state healthy): importAccount's pass restart aborts the old pass, but its in-flight
+  write-behind commit runs in `spawn_blocking` (abort can't cancel it) and overlaps the new
+  pass's writes; the MAIN wallet connection had NO busy_timeout (upstream `for_path` sets none)
+  → instant SQLITE_BUSY → non-transient error → Error state; a dead pass never auto-restarts =
+  the wedge. **ENGINE FIX committed SDK-side (`22add7cd`): main connection opened with a 15 s
+  busy_timeout** (mirrors for_path otherwise). Re-test: disconnect → re-add w/ old birthday —
+  expect no dialog, Keystone re-scans. Follow-up candidates (not Beta4-blocking): drain the
+  orphan commit across restarts; auto-retry policy after Error state; carry the Rust error
+  detail across the FFI so the dialog isn't detail-less.
 
 Legend: `[app]` Zodl-only · `[app+SDK]` needs SDK/engine understanding · `[class:X]` a known
 failure class with an existing pattern/fix precedent.
