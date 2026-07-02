@@ -201,18 +201,41 @@ struct FocusableTextField: UIViewRepresentable {
     }
 }
 #else
-// macOS: native text field (advanced focus handling deferred to goal #3). Match the iOS field's styling —
-// centered, Inter medium 16, Design.Switcher.selectedText — so the typed slippage value is legible. The
-// bare TextField had no foreground set, so on the card surface the value rendered near-invisible (white-ish).
+// macOS: native text field styled to match iOS. Two system-default traps fixed here (B4-15):
+// (1) the DEFAULT macOS textFieldStyle draws a bezel + its own background box inside the
+//     switcher pill (white in light mode, dark in dark) — `.plain` removes it;
+// (2) a placeholder passed as the TextField TITLE renders in the system placeholder color
+//     (white-ish in dark mode) regardless of any foreground modifier — the "%" that read as
+//     white. Style the prompt explicitly, like iOS's attributedPlaceholder above.
+// Focus: bridge the isFirstResponder binding to @FocusState so the auto-focus that fires on
+// selecting the Custom chip works on macOS too.
 struct FocusableTextField: View {
     @Binding var text: String
     @Binding var isFirstResponder: Bool
     var placeholder: String = ""
     let colorScheme: ColorScheme
+
+    @FocusState private var focused: Bool
+
     var body: some View {
-        TextField(placeholder, text: $text)
-            .multilineTextAlignment(.center)
-            .zFont(.medium, size: 16, color: Design.Switcher.selectedText.color(colorScheme))
+        TextField(
+            "",
+            text: $text,
+            prompt:
+                Text(placeholder)
+                .font(.custom(FontFamily.Inter.medium.name, size: 16))
+                .foregroundColor(Design.Switcher.selectedText.color(colorScheme))
+        )
+        .textFieldStyle(.plain)
+        .multilineTextAlignment(.center)
+        .zFont(.medium, size: 16, color: Design.Switcher.selectedText.color(colorScheme))
+        .focused($focused)
+        .onChange(of: isFirstResponder) { _, newValue in
+            focused = newValue
+        }
+        .onChange(of: focused) { _, newValue in
+            isFirstResponder = newValue
+        }
     }
 }
 #endif

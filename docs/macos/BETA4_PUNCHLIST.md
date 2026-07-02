@@ -206,6 +206,19 @@ address the API keys on. NEXT: read SwapAndPayClient.status transport + add a vi
 The custom-slippage input's label/value renders white (unreadable). Suspect the macOS
 FocusableTextField/label styling in SwapComponents (slippage sheet).
 
+**RESOLVED (2026-07-02) — unblocked by the B4-8 rig findings.** The macOS `FocusableTextField`
+was a DEFAULT-styled bare `TextField`, which on macOS means two system defaults leak through:
+(1) the default style draws a bezel + its own background box inside the switcher pill (the rig
+measured this: `bezel=true`, ignores the proposed frame); (2) the placeholder was passed as the
+TextField TITLE, which renders in the SYSTEM placeholder color — white-ish in dark mode — no
+foreground modifier reaches it. That unstyled "%" is the white label. (The typed value itself
+was already tinted — `zFont(color:)` → `.foregroundColor`.) FIX: `.textFieldStyle(.plain)` +
+explicitly styled `prompt:` (Inter medium 16, `Switcher.selectedText`, matching iOS's
+`attributedPlaceholder`) + an `@FocusState` bridge for the `isFirstResponder` binding so the
+auto-focus on selecting the Custom chip now works on macOS too. Residual (watch on device): at
+16pt the B4-8 single-line-mode metric quirk is ~4pt (20 vs 16 box) — if a small edit-time jump
+is visible on this field, extend `MacAmountTextField` with alignment/size params and swap it in.
+
 ## B4-16 (his 13) · Disconnect Keystone while it's restoring → error + "try again" `[app+SDK]`
 deleteAccount during an active restore pass — same shared-data.db write-contention family as
 B4-12 (the engine's busy_timeout fix may already help; deleteAccount goes through the Swift-side
