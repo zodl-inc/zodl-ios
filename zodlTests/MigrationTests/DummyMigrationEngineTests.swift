@@ -296,7 +296,7 @@ struct MigrationBackgroundWorkerTests {
             $0.migrationSDK = client
             $0.localNotification.post = { _, _, _ in }
             $0.migrationBGScheduler.scheduleNextRun = { _ in }
-            $0.migrationBGScheduler.scheduleNightlyRun = { }
+            $0.migrationBGScheduler.scheduleSubsequentRun = { }
             $0.migrationActivity.lastActivity = { nil }
         } operation: {
             let worker = MigrationBackgroundWorker()
@@ -338,7 +338,7 @@ struct MigrationBackgroundWorkerTests {
             $0.migrationSDK = client
             $0.localNotification.post = { _, _, _ in }
             $0.migrationBGScheduler.scheduleNextRun = { _ in }
-            $0.migrationBGScheduler.scheduleNightlyRun = { }
+            $0.migrationBGScheduler.scheduleSubsequentRun = { }
             $0.migrationActivity.lastActivity = { nil }
         } operation: {
             let worker = MigrationBackgroundWorker()

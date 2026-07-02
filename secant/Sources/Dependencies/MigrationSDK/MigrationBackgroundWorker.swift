@@ -81,9 +81,9 @@ struct MigrationBackgroundWorker: Sendable {
         switch result {
         case let .success(txId):
             await postSuccessNotification(txId: txId)
-            // Schedule the next night's window while transfers remain.
+            // Chain the next run (~6.5 h) while transfers remain.
             if migrationSDK.getMigrationState() != .complete {
-                migrationBGScheduler.scheduleNightlyRun()
+                migrationBGScheduler.scheduleSubsequentRun()
             }
         case .networkError, .invalidNote, .expired:
             // Simplified error reporting (per product guidance): one generic notification, no per-cause UI.
@@ -92,6 +92,10 @@ struct MigrationBackgroundWorker: Sendable {
                 "There was a problem with a migration transfer. Open ZODL to continue.",
                 "ironwood-migration-error"
             )
+            // Keep the cadence alive — a failed run must not end background delivery. The next run
+            // retries (network errors) or finds the recreated schedule (the app resets the cadence
+            // via scheduleFirstRun when the user recovers in-app first).
+            migrationBGScheduler.scheduleSubsequentRun()
         }
         return .result(result)
     }

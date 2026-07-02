@@ -13,10 +13,10 @@ extension MigrationBGScheduler: DependencyKey {
             submit(earliestBeginDate: Date(timeIntervalSinceNow: earliestInSeconds))
         },
         scheduleFirstRun: {
-            submit(earliestBeginDate: MigrationNightlyWindow.firstRunBegin(after: Date()))
+            submit(earliestBeginDate: Date(timeIntervalSinceNow: MigrationBGRunPolicy.firstRunDelay))
         },
-        scheduleNightlyRun: {
-            submit(earliestBeginDate: MigrationNightlyWindow.nextNightBegin(after: Date()))
+        scheduleSubsequentRun: {
+            submit(earliestBeginDate: Date(timeIntervalSinceNow: MigrationBGRunPolicy.subsequentRunDelay))
         },
         cancel: {
             BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: MigrationBGTask.identifier)
@@ -26,7 +26,7 @@ extension MigrationBGScheduler: DependencyKey {
     static let noOp = MigrationBGScheduler(
         scheduleNextRun: { _ in },
         scheduleFirstRun: { },
-        scheduleNightlyRun: { },
+        scheduleSubsequentRun: { },
         cancel: { }
     )
 

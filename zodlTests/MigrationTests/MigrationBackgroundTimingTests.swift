@@ -2,8 +2,8 @@
 //  MigrationBackgroundTimingTests.swift
 //  zodlTests
 //
-//  Nightly-window scheduling math (`MigrationNightlyWindow`) and the background worker's 1-hour
-//  idle guard (`MigrationBackgroundWorker`).
+//  Background-run cadence policy (`MigrationBGRunPolicy`) and the background worker's 1-hour
+//  idle guard + run chaining (`MigrationBackgroundWorker`).
 //
 
 import Testing
@@ -14,61 +14,16 @@ import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
 
 @Suite
-struct MigrationNightlyWindowTests {
-    /// Fixed UTC calendar so the hour math is deterministic regardless of the machine's timezone.
-    private var calendar: Calendar {
-        var cal = Calendar(identifier: .gregorian)
-        cal.timeZone = TimeZone(identifier: "UTC") ?? .current
-        return cal
+struct MigrationBGRunPolicyTests {
+    // The requested cadence: first run ~1 h after the schedule is (re)created, then one run every
+    // ~6.5 h — deliberately past the 288-block ≈ 6-hour transfer window offset.
+    @Test func firstRunIsOneHourOut() {
+        #expect(MigrationBGRunPolicy.firstRunDelay == 60 * 60)
     }
 
-    /// A date on 2026-06-15 at the given local (UTC) time.
-    private func at(hour: Int, minute: Int = 0) -> Date {
-        var comps = DateComponents()
-        comps.year = 2026
-        comps.month = 6
-        comps.day = 15
-        comps.hour = hour
-        comps.minute = minute
-        return calendar.date(from: comps) ?? Date(timeIntervalSince1970: 0)
-    }
-
-    @Test func isWithinNightTrueInsideWindow() {
-        #expect(MigrationNightlyWindow.isWithinNight(at(hour: 21), calendar: calendar))
-        #expect(MigrationNightlyWindow.isWithinNight(at(hour: 23, minute: 30), calendar: calendar))
-        #expect(MigrationNightlyWindow.isWithinNight(at(hour: 3, minute: 30), calendar: calendar))
-        #expect(MigrationNightlyWindow.isWithinNight(at(hour: 5, minute: 59), calendar: calendar))
-    }
-
-    @Test func isWithinNightFalseOutsideWindow() {
-        #expect(!MigrationNightlyWindow.isWithinNight(at(hour: 6), calendar: calendar))
-        #expect(!MigrationNightlyWindow.isWithinNight(at(hour: 12), calendar: calendar))
-        #expect(!MigrationNightlyWindow.isWithinNight(at(hour: 20, minute: 59), calendar: calendar))
-    }
-
-    @Test func firstRunBeginUsesNowWhenInsideNight() {
-        let earlyMorning = at(hour: 3, minute: 30)
-        #expect(MigrationNightlyWindow.firstRunBegin(after: earlyMorning, calendar: calendar) == earlyMorning)
-        let lateEvening = at(hour: 23)
-        #expect(MigrationNightlyWindow.firstRunBegin(after: lateEvening, calendar: calendar) == lateEvening)
-    }
-
-    @Test func firstRunBeginUsesTonightNinePMWhenDaytime() {
-        #expect(MigrationNightlyWindow.firstRunBegin(after: at(hour: 14), calendar: calendar) == at(hour: 21))
-        // 7 AM is just past the night window — wait for tonight's 9 PM.
-        #expect(MigrationNightlyWindow.firstRunBegin(after: at(hour: 7), calendar: calendar) == at(hour: 21))
-    }
-
-    @Test func nextNightBeginIsTonightNinePMBeforeNinePM() {
-        // An early-morning run's next night is tonight 9 PM.
-        #expect(MigrationNightlyWindow.nextNightBegin(after: at(hour: 3), calendar: calendar) == at(hour: 21))
-        #expect(MigrationNightlyWindow.nextNightBegin(after: at(hour: 14), calendar: calendar) == at(hour: 21))
-    }
-
-    @Test func nextNightBeginIsTomorrowNinePMAtOrAfterNinePM() {
-        let tomorrowNinePM = calendar.date(byAdding: .day, value: 1, to: at(hour: 21)) ?? Date(timeIntervalSince1970: 0)
-        #expect(MigrationNightlyWindow.nextNightBegin(after: at(hour: 23), calendar: calendar) == tomorrowNinePM)
-        #expect(MigrationNightlyWindow.nextNightBegin(after: at(hour: 21), calendar: calendar) == tomorrowNinePM)
+    @Test func subsequentRunsClearTheSixHourWindowOffset() {
+        #expect(MigrationBGRunPolicy.subsequentRunDelay == 6.5 * 60 * 60)
+        #expect(MigrationBGRunPolicy.subsequentRunDelay > 6 * 60 * 60)
     }
 }
 
@@ -81,7 +36,7 @@ struct MigrationBackgroundWorkerIdleGuardTests {
     @Test func scheduledRunSkipsWhenWithinOneHourOfActivity() async {
         let now = Date(timeIntervalSince1970: 1_750_000_000)
         let executeCalls = OSAllocatedUnfairLock(initialState: 0)
-        let nightlyCalls = OSAllocatedUnfairLock(initialState: 0)
+        let subsequentCalls = OSAllocatedUnfairLock(initialState: 0)
         let scheduledSeconds = OSAllocatedUnfairLock<TimeInterval?>(initialState: nil)
         let recordedOutcome = OSAllocatedUnfairLock<MigrationBackgroundRun.Outcome?>(initialState: nil)
 
@@ -101,7 +56,7 @@ struct MigrationBackgroundWorkerIdleGuardTests {
             $0.migrationBGScheduler.scheduleNextRun = { seconds in
                 scheduledSeconds.withLock { $0 = seconds }
             }
-            $0.migrationBGScheduler.scheduleNightlyRun = { nightlyCalls.withLock { $0 += 1 } }
+            $0.migrationBGScheduler.scheduleSubsequentRun = { subsequentCalls.withLock { $0 += 1 } }
             $0.localNotification.post = { _, _, _ in }
         } operation: {
             let worker = MigrationBackgroundWorker()
@@ -110,7 +65,7 @@ struct MigrationBackgroundWorkerIdleGuardTests {
 
         #expect(outcome == .tooSoonAfterActivity)
         #expect(executeCalls.withLock { $0 } == 0)
-        #expect(nightlyCalls.withLock { $0 } == 0)
+        #expect(subsequentCalls.withLock { $0 } == 0)
         #expect(recordedOutcome.withLock { $0 } == .skippedTooSoon)
         // Rescheduled to lastActivity + 1h → 30 minutes from `now`.
         let seconds = scheduledSeconds.withLock { $0 }
@@ -120,9 +75,10 @@ struct MigrationBackgroundWorkerIdleGuardTests {
         }
     }
 
-    @Test func scheduledRunSendsWhenGapSatisfied() async {
+    @Test func scheduledRunSendsAndChainsTheNextRun() async {
         let now = Date(timeIntervalSince1970: 1_750_000_000)
         let executeCalls = OSAllocatedUnfairLock(initialState: 0)
+        let subsequentCalls = OSAllocatedUnfairLock(initialState: 0)
 
         let outcome = await withDependencies {
             $0.date.now = { now }
@@ -136,7 +92,7 @@ struct MigrationBackgroundWorkerIdleGuardTests {
             $0.migrationSDK.getMigrationProgress = { nil }
             $0.migrationSDK.recordBackgroundRun = { _ in }
             $0.migrationBGScheduler.scheduleNextRun = { _ in }
-            $0.migrationBGScheduler.scheduleNightlyRun = { }
+            $0.migrationBGScheduler.scheduleSubsequentRun = { subsequentCalls.withLock { $0 += 1 } }
             $0.localNotification.post = { _, _, _ in }
         } operation: {
             let worker = MigrationBackgroundWorker()
@@ -145,6 +101,37 @@ struct MigrationBackgroundWorkerIdleGuardTests {
 
         #expect(executeCalls.withLock { $0 } == 1)
         #expect(outcome == .result(.success(txId: "tx-1")))
+        // While transfers remain, each run chains the next one (~6.5 h out).
+        #expect(subsequentCalls.withLock { $0 } == 1)
+    }
+
+    @Test func failedRunStillChainsTheNextRun() async {
+        let now = Date(timeIntervalSince1970: 1_750_000_000)
+        let subsequentCalls = OSAllocatedUnfairLock(initialState: 0)
+        let notifications = OSAllocatedUnfairLock(initialState: 0)
+
+        let outcome = await withDependencies {
+            $0.date.now = { now }
+            $0.migrationActivity.lastActivity = { nil }
+            $0.migrationSDK.isSyncRequiredBeforeNextTransfer = { false }
+            $0.migrationSDK.executeNextPendingTransfer = { _ in
+                TransferResult.networkError(retryable: true)
+            }
+            $0.migrationSDK.getMigrationState = { Self.inProgress }
+            $0.migrationSDK.getMigrationProgress = { nil }
+            $0.migrationSDK.recordBackgroundRun = { _ in }
+            $0.migrationBGScheduler.scheduleSubsequentRun = { subsequentCalls.withLock { $0 += 1 } }
+            $0.localNotification.post = { _, _, _ in notifications.withLock { $0 += 1 } }
+        } operation: {
+            let worker = MigrationBackgroundWorker()
+            return await worker.runMigrationStep(trigger: .scheduledTask)
+        }
+
+        #expect(outcome == .result(.networkError(retryable: true)))
+        #expect(notifications.withLock { $0 } == 1)
+        // A failed run must not end the background cadence — the next run retries or finds the
+        // schedule the user recreated in-app.
+        #expect(subsequentCalls.withLock { $0 } == 1)
     }
 
     @Test func scheduledRunSendsWhenNoActivityRecorded() async {
@@ -162,7 +149,7 @@ struct MigrationBackgroundWorkerIdleGuardTests {
             $0.migrationSDK.getMigrationState = { Self.inProgress }
             $0.migrationSDK.getMigrationProgress = { nil }
             $0.migrationSDK.recordBackgroundRun = { _ in }
-            $0.migrationBGScheduler.scheduleNightlyRun = { }
+            $0.migrationBGScheduler.scheduleSubsequentRun = { }
             $0.localNotification.post = { _, _, _ in }
         } operation: {
             let worker = MigrationBackgroundWorker()
@@ -188,7 +175,7 @@ struct MigrationBackgroundWorkerIdleGuardTests {
             $0.migrationSDK.getMigrationState = { Self.inProgress }
             $0.migrationSDK.getMigrationProgress = { nil }
             $0.migrationSDK.recordBackgroundRun = { _ in }
-            $0.migrationBGScheduler.scheduleNightlyRun = { }
+            $0.migrationBGScheduler.scheduleSubsequentRun = { }
             $0.localNotification.post = { _, _, _ in }
         } operation: {
             let worker = MigrationBackgroundWorker()
