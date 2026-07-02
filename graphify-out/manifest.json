@@ -1,0 +1,2787 @@
+{
+  "secant/Sources/AppDelegate.swift": {
+    "mtime": 1780381519.443971,
+    "ast_hash": "ed7663c83c3f0dcb0a8a3d596fd69a48",
+    "semantic_hash": "ed7663c83c3f0dcb0a8a3d596fd69a48"
+  },
+  "secant/Sources/Dependencies/AddressBookClient/AddressBookContacts.swift": {
+    "mtime": 1780381519.444154,
+    "ast_hash": "8c13e8000484044102d07cc71218e8b9",
+    "semantic_hash": "8c13e8000484044102d07cc71218e8b9"
+  },
+  "secant/Sources/Dependencies/AddressBookClient/AddressBookEncryption.swift": {
+    "mtime": 1780381519.444417,
+    "ast_hash": "9e910bbe79d5a3844ba23b5317bc3ce8",
+    "semantic_hash": "9e910bbe79d5a3844ba23b5317bc3ce8"
+  },
+  "secant/Sources/Dependencies/AddressBookClient/AddressBookInterface.swift": {
+    "mtime": 1780381519.4445014,
+    "ast_hash": "c0f88371c500cca6446ceeff9273213e",
+    "semantic_hash": "c0f88371c500cca6446ceeff9273213e"
+  },
+  "secant/Sources/Dependencies/AddressBookClient/AddressBookLiveKey.swift": {
+    "mtime": 1780989106.2849374,
+    "ast_hash": "119995848b762f272f12541e514fff0a",
+    "semantic_hash": "119995848b762f272f12541e514fff0a"
+  },
+  "secant/Sources/Dependencies/AddressBookClient/Contact.swift": {
+    "mtime": 1780381519.444781,
+    "ast_hash": "a612adf31231b1d1b56e3fa13877534d",
+    "semantic_hash": "a612adf31231b1d1b56e3fa13877534d"
+  },
+  "secant/Sources/Dependencies/AddressBookClient/Migration/ABv1.swift": {
+    "mtime": 1780381519.444901,
+    "ast_hash": "d3195679a4c1ce958dd7096c914ab4dd",
+    "semantic_hash": "d3195679a4c1ce958dd7096c914ab4dd"
+  },
+  "secant/Sources/Dependencies/AppVersion/AppVersionInterface.swift": {
+    "mtime": 1780381519.4450243,
+    "ast_hash": "93ed5013d7d380f86051a86816700893",
+    "semantic_hash": "93ed5013d7d380f86051a86816700893"
+  },
+  "secant/Sources/Dependencies/AppVersion/AppVersionLiveKey.swift": {
+    "mtime": 1780381519.4450972,
+    "ast_hash": "b231b6105f25272bf7d64e799dbaf244",
+    "semantic_hash": "b231b6105f25272bf7d64e799dbaf244"
+  },
+  "secant/Sources/Dependencies/AppVersion/AppVersionMocks.swift": {
+    "mtime": 1780381519.4451752,
+    "ast_hash": "e0a81ac824c06c12e6e9e8113fc65626",
+    "semantic_hash": "e0a81ac824c06c12e6e9e8113fc65626"
+  },
+  "secant/Sources/Dependencies/AudioServices/AudioServicesInterface.swift": {
+    "mtime": 1780381519.4453032,
+    "ast_hash": "3d1de45ca06d71c8d4752e42e4ff50d5",
+    "semantic_hash": "3d1de45ca06d71c8d4752e42e4ff50d5"
+  },
+  "secant/Sources/Dependencies/AudioServices/AudioServicesLiveKey.swift": {
+    "mtime": 1780381519.4453933,
+    "ast_hash": "df2a68d56f493b397bd6c11cb50e81d9",
+    "semantic_hash": "df2a68d56f493b397bd6c11cb50e81d9"
+  },
+  "secant/Sources/Dependencies/AutoServerSelection/AutoServerSelectionInterface.swift": {
+    "mtime": 1781700961.9355922,
+    "ast_hash": "a9ddd3098a69ca09ba6b4f6504b5fcf1",
+    "semantic_hash": "a9ddd3098a69ca09ba6b4f6504b5fcf1"
+  },
+  "secant/Sources/Dependencies/AutoServerSelection/AutoServerSelectionLiveKey.swift": {
+    "mtime": 1781700961.9357553,
+    "ast_hash": "545cdefd03a8f1a95489f8a0660a8ab5",
+    "semantic_hash": "545cdefd03a8f1a95489f8a0660a8ab5"
+  },
+  "secant/Sources/Dependencies/AutoServerSelection/AutoServerSelectionTestKey.swift": {
+    "mtime": 1781700961.9359295,
+    "ast_hash": "1be236118a6aa3c3fc9b9deb388e5a85",
+    "semantic_hash": "1be236118a6aa3c3fc9b9deb388e5a85"
+  },
+  "secant/Sources/Dependencies/AutolockHandler/AutolockHandlerInterface.swift": {
+    "mtime": 1780381519.4455159,
+    "ast_hash": "3a02d43f64ef8ebc18a0620669bafa3b",
+    "semantic_hash": "3a02d43f64ef8ebc18a0620669bafa3b"
+  },
+  "secant/Sources/Dependencies/AutolockHandler/AutolockHandlerLiveKey.swift": {
+    "mtime": 1780381519.4455945,
+    "ast_hash": "b60ab94ee4d751f12a79382c29859aed",
+    "semantic_hash": "b60ab94ee4d751f12a79382c29859aed"
+  },
+  "secant/Sources/Dependencies/AutolockHandler/AutolockHandlerTestKey.swift": {
+    "mtime": 1780381519.4456701,
+    "ast_hash": "2888347476c19d05edd6f7c12e0adb0b",
+    "semantic_hash": "2888347476c19d05edd6f7c12e0adb0b"
+  },
+  "secant/Sources/Dependencies/BackgroundTaskClient/BackgroundTaskClientInterface.swift": {
+    "mtime": 1780381519.4457836,
+    "ast_hash": "e4e11a98e7171d43f22b2267454903b3",
+    "semantic_hash": "e4e11a98e7171d43f22b2267454903b3"
+  },
+  "secant/Sources/Dependencies/BackgroundTaskClient/BackgroundTaskClientLiveKey.swift": {
+    "mtime": 1780989106.2851431,
+    "ast_hash": "a96ed7c179b6a88e522c460d7544ed1d",
+    "semantic_hash": "a96ed7c179b6a88e522c460d7544ed1d"
+  },
+  "secant/Sources/Dependencies/BackgroundTaskClient/BackgroundTaskClientTestKey.swift": {
+    "mtime": 1780381519.4459414,
+    "ast_hash": "79c1d71329a8e7a880daf87605e8e7e9",
+    "semantic_hash": "79c1d71329a8e7a880daf87605e8e7e9"
+  },
+  "secant/Sources/Dependencies/BalanceFormatter/BalanceFormatterInterface.swift": {
+    "mtime": 1780381519.4460626,
+    "ast_hash": "3754463b7bb694cd7bc0eee126bcbf9a",
+    "semantic_hash": "3754463b7bb694cd7bc0eee126bcbf9a"
+  },
+  "secant/Sources/Dependencies/BalanceFormatter/BalanceFormatterLiveKey.swift": {
+    "mtime": 1780381519.4461477,
+    "ast_hash": "b7c63c2ff31ba7beae2f6b9ccc00e1b1",
+    "semantic_hash": "b7c63c2ff31ba7beae2f6b9ccc00e1b1"
+  },
+  "secant/Sources/Dependencies/BalanceFormatter/BalanceFormatterTestKey.swift": {
+    "mtime": 1780381519.446247,
+    "ast_hash": "676dc23e718249f5b26097142374ef70",
+    "semantic_hash": "676dc23e718249f5b26097142374ef70"
+  },
+  "secant/Sources/Dependencies/BalanceFormatter/ZatoshiStringRepresentation.swift": {
+    "mtime": 1780381519.4463327,
+    "ast_hash": "fffdc6a5f5d938694320d6046c810471",
+    "semantic_hash": "fffdc6a5f5d938694320d6046c810471"
+  },
+  "secant/Sources/Dependencies/CaptureDevice/CaptureDeviceInterface.swift": {
+    "mtime": 1780381519.4464715,
+    "ast_hash": "1286eabb04b553e3a9cb5db9e9f64b1f",
+    "semantic_hash": "1286eabb04b553e3a9cb5db9e9f64b1f"
+  },
+  "secant/Sources/Dependencies/CaptureDevice/CaptureDeviceLiveKey.swift": {
+    "mtime": 1780381519.446564,
+    "ast_hash": "98dd07882bcb1ea3977cdf0e5633c497",
+    "semantic_hash": "98dd07882bcb1ea3977cdf0e5633c497"
+  },
+  "secant/Sources/Dependencies/CaptureDevice/CaptureDeviceTestKey.swift": {
+    "mtime": 1780381519.4466622,
+    "ast_hash": "74300d1710db7b3db2abeb2f69089f00",
+    "semantic_hash": "74300d1710db7b3db2abeb2f69089f00"
+  },
+  "secant/Sources/Dependencies/DatabaseFiles/DatabaseFiles.swift": {
+    "mtime": 1781700249.6979814,
+    "ast_hash": "faf7b1adf5da33780c75b8e171d0ad04",
+    "semantic_hash": "faf7b1adf5da33780c75b8e171d0ad04"
+  },
+  "secant/Sources/Dependencies/DatabaseFiles/DatabaseFilesInterface.swift": {
+    "mtime": 1780381519.4469197,
+    "ast_hash": "d219c900387486bd5e2bb29e5ec21709",
+    "semantic_hash": "d219c900387486bd5e2bb29e5ec21709"
+  },
+  "secant/Sources/Dependencies/DatabaseFiles/DatabaseFilesLiveKey.swift": {
+    "mtime": 1780381519.44702,
+    "ast_hash": "2c9a9c443c6ff4115338fe0909a97d9e",
+    "semantic_hash": "2c9a9c443c6ff4115338fe0909a97d9e"
+  },
+  "secant/Sources/Dependencies/DatabaseFiles/DatabaseFilesTestKey.swift": {
+    "mtime": 1780381519.4471002,
+    "ast_hash": "5b9743f91fdf940bffe7aec12793c157",
+    "semantic_hash": "5b9743f91fdf940bffe7aec12793c157"
+  },
+  "secant/Sources/Dependencies/Date/DateInterface.swift": {
+    "mtime": 1780381519.447228,
+    "ast_hash": "f8fc3db1e33a7ac96e5f0c454f9874a2",
+    "semantic_hash": "f8fc3db1e33a7ac96e5f0c454f9874a2"
+  },
+  "secant/Sources/Dependencies/Date/DateLiveKey.swift": {
+    "mtime": 1780381519.447298,
+    "ast_hash": "73eb206ab3c4ff182f86f65474e0a688",
+    "semantic_hash": "73eb206ab3c4ff182f86f65474e0a688"
+  },
+  "secant/Sources/Dependencies/Deeplink/Deeplink.swift": {
+    "mtime": 1780381519.4474401,
+    "ast_hash": "e29b560cda62cddb337d6cb06af3e6d7",
+    "semantic_hash": "e29b560cda62cddb337d6cb06af3e6d7"
+  },
+  "secant/Sources/Dependencies/Deeplink/DeeplinkInterface.swift": {
+    "mtime": 1780381519.447514,
+    "ast_hash": "cfdfbba57422db05608948cb2a249682",
+    "semantic_hash": "cfdfbba57422db05608948cb2a249682"
+  },
+  "secant/Sources/Dependencies/Deeplink/DeeplinkLiveKey.swift": {
+    "mtime": 1780381519.4476,
+    "ast_hash": "9fbfabdd103e15920c86b901a19019ca",
+    "semantic_hash": "9fbfabdd103e15920c86b901a19019ca"
+  },
+  "secant/Sources/Dependencies/DerivationTool/DerivationToolInterface.swift": {
+    "mtime": 1780381519.4477355,
+    "ast_hash": "1caac55187f53accf0c6560302514720",
+    "semantic_hash": "1caac55187f53accf0c6560302514720"
+  },
+  "secant/Sources/Dependencies/DerivationTool/DerivationToolLiveKey.swift": {
+    "mtime": 1780381519.4478154,
+    "ast_hash": "8012c52d27ed5876ac183c5419721c6f",
+    "semantic_hash": "8012c52d27ed5876ac183c5419721c6f"
+  },
+  "secant/Sources/Dependencies/DerivationTool/DerivationToolTestKey.swift": {
+    "mtime": 1780381519.44792,
+    "ast_hash": "5a270fc15712352c3c89c75f627e1cd0",
+    "semantic_hash": "5a270fc15712352c3c89c75f627e1cd0"
+  },
+  "secant/Sources/Dependencies/DiskSpaceChecker/DiskSpaceChecker.swift": {
+    "mtime": 1780381519.4480495,
+    "ast_hash": "d248fb52ade13c813c1d243e510617e3",
+    "semantic_hash": "d248fb52ade13c813c1d243e510617e3"
+  },
+  "secant/Sources/Dependencies/DiskSpaceChecker/DiskSpaceCheckerInterface.swift": {
+    "mtime": 1780381519.448124,
+    "ast_hash": "3769e4a059deef540a6a04a61c912d88",
+    "semantic_hash": "3769e4a059deef540a6a04a61c912d88"
+  },
+  "secant/Sources/Dependencies/DiskSpaceChecker/DiskSpaceCheckerLiveKey.swift": {
+    "mtime": 1780381519.4482112,
+    "ast_hash": "47095ebb71c0ed56711d223343933a25",
+    "semantic_hash": "47095ebb71c0ed56711d223343933a25"
+  },
+  "secant/Sources/Dependencies/DiskSpaceChecker/DiskSpaceCheckerMocks.swift": {
+    "mtime": 1780381519.4482837,
+    "ast_hash": "43db40f6fb92e3dd822e95c87406b563",
+    "semantic_hash": "43db40f6fb92e3dd822e95c87406b563"
+  },
+  "secant/Sources/Dependencies/ExchangeRate/ExchangeRateInterface.swift": {
+    "mtime": 1781700961.936086,
+    "ast_hash": "a0fb48d31436ba38359f57e4cf8526f6",
+    "semantic_hash": "a0fb48d31436ba38359f57e4cf8526f6"
+  },
+  "secant/Sources/Dependencies/ExchangeRate/ExchangeRateLiveKey.swift": {
+    "mtime": 1781700961.936273,
+    "ast_hash": "814d430ce13cf077587562073617d885",
+    "semantic_hash": "814d430ce13cf077587562073617d885"
+  },
+  "secant/Sources/Dependencies/ExchangeRate/ExchangeRateTestKey.swift": {
+    "mtime": 1781700961.9364,
+    "ast_hash": "687ced83b79969c06b84ca35ffe7d374",
+    "semantic_hash": "687ced83b79969c06b84ca35ffe7d374"
+  },
+  "secant/Sources/Dependencies/FeedbackGenerator/FeedbackGeneratorInterface.swift": {
+    "mtime": 1780381519.4487493,
+    "ast_hash": "d29830107efe8d8b80aa7d15a46ff1b1",
+    "semantic_hash": "d29830107efe8d8b80aa7d15a46ff1b1"
+  },
+  "secant/Sources/Dependencies/FeedbackGenerator/FeedbackGeneratorLiveKey.swift": {
+    "mtime": 1780381519.4488378,
+    "ast_hash": "c00c9e0d0f242604a334cb40b4002da2",
+    "semantic_hash": "c00c9e0d0f242604a334cb40b4002da2"
+  },
+  "secant/Sources/Dependencies/FeedbackGenerator/FeedbackGeneratorTestKey.swift": {
+    "mtime": 1780381519.4489129,
+    "ast_hash": "6cc752f57a0268ff50388d63baab019c",
+    "semantic_hash": "6cc752f57a0268ff50388d63baab019c"
+  },
+  "secant/Sources/Dependencies/FileManager/FileManagerInterface.swift": {
+    "mtime": 1780381519.449039,
+    "ast_hash": "02b0f4a499266a744e79ae048e457c28",
+    "semantic_hash": "02b0f4a499266a744e79ae048e457c28"
+  },
+  "secant/Sources/Dependencies/FileManager/FileManagerLiveKey.swift": {
+    "mtime": 1780381519.4491184,
+    "ast_hash": "dfe4ea6064b7a3b5f05bd92ef49a1b86",
+    "semantic_hash": "dfe4ea6064b7a3b5f05bd92ef49a1b86"
+  },
+  "secant/Sources/Dependencies/FlexaHandler/FlexaHandlerInterface.swift": {
+    "mtime": 1780381519.4492393,
+    "ast_hash": "9f53c9be96159a466f4b23f0fbe13daf",
+    "semantic_hash": "9f53c9be96159a466f4b23f0fbe13daf"
+  },
+  "secant/Sources/Dependencies/FlexaHandler/FlexaHandlerLiveKey.swift": {
+    "mtime": 1780381519.4493327,
+    "ast_hash": "f02a4611433fffa37aff23c4945ff979",
+    "semantic_hash": "f02a4611433fffa37aff23c4945ff979"
+  },
+  "secant/Sources/Dependencies/FlexaHandler/FlexaHandlerTestKey.swift": {
+    "mtime": 1780381519.449415,
+    "ast_hash": "431c762661a2e803bed2b13eec7be24b",
+    "semantic_hash": "431c762661a2e803bed2b13eec7be24b"
+  },
+  "secant/Sources/Dependencies/KeystoneHandler/KeystoneHandlerInterface.swift": {
+    "mtime": 1780381519.449561,
+    "ast_hash": "d0a8739c243bf69f077a1af01da41542",
+    "semantic_hash": "d0a8739c243bf69f077a1af01da41542"
+  },
+  "secant/Sources/Dependencies/KeystoneHandler/KeystoneHandlerLiveKey.swift": {
+    "mtime": 1780381519.4496586,
+    "ast_hash": "4d87538f5d2b59a4b134526ba1d140ef",
+    "semantic_hash": "4d87538f5d2b59a4b134526ba1d140ef"
+  },
+  "secant/Sources/Dependencies/KeystoneHandler/KeystoneHandlerTestKey.swift": {
+    "mtime": 1780381519.4497604,
+    "ast_hash": "6fc4d5b99d998b7bd9b91ddebf2f8195",
+    "semantic_hash": "6fc4d5b99d998b7bd9b91ddebf2f8195"
+  },
+  "secant/Sources/Dependencies/LocalAuthenticationHandler/LocalAuthenticationInterface.swift": {
+    "mtime": 1780381519.4499006,
+    "ast_hash": "2f8860eb75a82c7737c355a541d926c0",
+    "semantic_hash": "2f8860eb75a82c7737c355a541d926c0"
+  },
+  "secant/Sources/Dependencies/LocalAuthenticationHandler/LocalAuthenticationLiveKey.swift": {
+    "mtime": 1780910251.9285922,
+    "ast_hash": "d5cad52b1a2849755a7eafa68d170708",
+    "semantic_hash": "d5cad52b1a2849755a7eafa68d170708"
+  },
+  "secant/Sources/Dependencies/LocalAuthenticationHandler/LocalAuthenticationMocks.swift": {
+    "mtime": 1780381519.4500551,
+    "ast_hash": "1b030dc119d67525ee81935d146af53d",
+    "semantic_hash": "1b030dc119d67525ee81935d146af53d"
+  },
+  "secant/Sources/Dependencies/LogsHandler/LogsHandlerInterface.swift": {
+    "mtime": 1781700249.6989226,
+    "ast_hash": "efaa792c730b078889e5346706c64f36",
+    "semantic_hash": "efaa792c730b078889e5346706c64f36"
+  },
+  "secant/Sources/Dependencies/LogsHandler/LogsHandlerLive.swift": {
+    "mtime": 1781700249.6991076,
+    "ast_hash": "fcd2d9ec906ecb2301d1d39857f9ba43",
+    "semantic_hash": "fcd2d9ec906ecb2301d1d39857f9ba43"
+  },
+  "secant/Sources/Dependencies/LogsHandler/LogsHandlerTest.swift": {
+    "mtime": 1781700249.6992471,
+    "ast_hash": "400e23bdb5bee4f58861252edd896840",
+    "semantic_hash": "400e23bdb5bee4f58861252edd896840"
+  },
+  "secant/Sources/Dependencies/MnemonicClient/MnemonicInterface.swift": {
+    "mtime": 1780381519.45044,
+    "ast_hash": "b55b29fde51703cccc0f6250b6d3651b",
+    "semantic_hash": "b55b29fde51703cccc0f6250b6d3651b"
+  },
+  "secant/Sources/Dependencies/MnemonicClient/MnemonicLiveKey.swift": {
+    "mtime": 1780381519.4505198,
+    "ast_hash": "885353ee289486f27e9149dfbd42296f",
+    "semantic_hash": "885353ee289486f27e9149dfbd42296f"
+  },
+  "secant/Sources/Dependencies/MnemonicClient/MnemonicMocks.swift": {
+    "mtime": 1780381519.4505908,
+    "ast_hash": "3ed337704f5216113f830e00084754d3",
+    "semantic_hash": "3ed337704f5216113f830e00084754d3"
+  },
+  "secant/Sources/Dependencies/MnemonicClient/MnemonicTestKey.swift": {
+    "mtime": 1780381519.4506586,
+    "ast_hash": "3a2aef4463334436ff240a7680b184dd",
+    "semantic_hash": "3a2aef4463334436ff240a7680b184dd"
+  },
+  "secant/Sources/Dependencies/NetworkMonitor/NetworkMonitorInterface.swift": {
+    "mtime": 1780381519.4507778,
+    "ast_hash": "b93765cffcdff37c09eb448f22c00981",
+    "semantic_hash": "b93765cffcdff37c09eb448f22c00981"
+  },
+  "secant/Sources/Dependencies/NetworkMonitor/NetworkMonitorLiveKey.swift": {
+    "mtime": 1780381519.450857,
+    "ast_hash": "19c57108ba2601153fb5ab8c79fa769f",
+    "semantic_hash": "19c57108ba2601153fb5ab8c79fa769f"
+  },
+  "secant/Sources/Dependencies/NumberFormatter/NumberFormatterInterface.swift": {
+    "mtime": 1780381519.4509768,
+    "ast_hash": "5511da1ee83a4c0451598e3524f7d53d",
+    "semantic_hash": "5511da1ee83a4c0451598e3524f7d53d"
+  },
+  "secant/Sources/Dependencies/NumberFormatter/NumberFormatterLiveKey.swift": {
+    "mtime": 1780381519.4510508,
+    "ast_hash": "0701787175cd59226ddf82bed4ea7882",
+    "semantic_hash": "0701787175cd59226ddf82bed4ea7882"
+  },
+  "secant/Sources/Dependencies/NumberFormatter/NumberFormatterTestKey.swift": {
+    "mtime": 1780381519.4511588,
+    "ast_hash": "e82d91b2680ea8109aa5545f1f1089d7",
+    "semantic_hash": "e82d91b2680ea8109aa5545f1f1089d7"
+  },
+  "secant/Sources/Dependencies/PartnerKeys/PartnerKeys.swift": {
+    "mtime": 1781700249.699936,
+    "ast_hash": "60d0c6fd761c481de822d937f4bf0129",
+    "semantic_hash": "60d0c6fd761c481de822d937f4bf0129"
+  },
+  "secant/Sources/Dependencies/Pasteboard/PasteboardInterface.swift": {
+    "mtime": 1780381519.4513936,
+    "ast_hash": "eb3bd31ff26d9879fc62f1646f567dc0",
+    "semantic_hash": "eb3bd31ff26d9879fc62f1646f567dc0"
+  },
+  "secant/Sources/Dependencies/Pasteboard/PasteboardLiveKey.swift": {
+    "mtime": 1780381519.451471,
+    "ast_hash": "880645b2a5720e51862e834e54fe2e89",
+    "semantic_hash": "880645b2a5720e51862e834e54fe2e89"
+  },
+  "secant/Sources/Dependencies/QRImageDetector/QRImageDetectorInterface.swift": {
+    "mtime": 1780381519.4515944,
+    "ast_hash": "ed1378c433561554f3a62847db40cc53",
+    "semantic_hash": "ed1378c433561554f3a62847db40cc53"
+  },
+  "secant/Sources/Dependencies/QRImageDetector/QRImageDetectorLiveKey.swift": {
+    "mtime": 1780381519.45168,
+    "ast_hash": "f12906c7de0ce231426efebd7335f2db",
+    "semantic_hash": "f12906c7de0ce231426efebd7335f2db"
+  },
+  "secant/Sources/Dependencies/QRImageDetector/QRImageDetectorTestKey.swift": {
+    "mtime": 1780381519.451748,
+    "ast_hash": "9c68b96baf972399d77b4f22b6cb54ea",
+    "semantic_hash": "9c68b96baf972399d77b4f22b6cb54ea"
+  },
+  "secant/Sources/Dependencies/ReadTransactionsStorage/ReadTransactionsStorageInterface.swift": {
+    "mtime": 1780381519.4518836,
+    "ast_hash": "a03885f4e994693bbd1e6f69c4f9006f",
+    "semantic_hash": "a03885f4e994693bbd1e6f69c4f9006f"
+  },
+  "secant/Sources/Dependencies/ReadTransactionsStorage/ReadTransactionsStorageLiveKey.swift": {
+    "mtime": 1780381519.4519837,
+    "ast_hash": "12f7eae846c6d9a73875fa253a33ae2d",
+    "semantic_hash": "12f7eae846c6d9a73875fa253a33ae2d"
+  },
+  "secant/Sources/Dependencies/ReadTransactionsStorage/ReadTransactionsStorageTestKey.swift": {
+    "mtime": 1780381519.4520867,
+    "ast_hash": "4bc1f3665462af2e65ce7843870f6e6e",
+    "semantic_hash": "4bc1f3665462af2e65ce7843870f6e6e"
+  },
+  "secant/Sources/Dependencies/RemoteStorage/RemoteStorageInterface.swift": {
+    "mtime": 1780381519.4522285,
+    "ast_hash": "862634194492c09e6c831b6b95d7f3dc",
+    "semantic_hash": "862634194492c09e6c831b6b95d7f3dc"
+  },
+  "secant/Sources/Dependencies/RemoteStorage/RemoteStorageLiveKey.swift": {
+    "mtime": 1780381519.4523196,
+    "ast_hash": "c1532d731283c2173f1c2a597ba1d379",
+    "semantic_hash": "c1532d731283c2173f1c2a597ba1d379"
+  },
+  "secant/Sources/Dependencies/ReviewRequest/ReviewRequestInterface.swift": {
+    "mtime": 1780381519.452436,
+    "ast_hash": "65dff452926eabd106f55a2623107c2b",
+    "semantic_hash": "65dff452926eabd106f55a2623107c2b"
+  },
+  "secant/Sources/Dependencies/ReviewRequest/ReviewRequestLiveKey.swift": {
+    "mtime": 1780381519.452536,
+    "ast_hash": "c28daf09ed03c670432d415912993613",
+    "semantic_hash": "c28daf09ed03c670432d415912993613"
+  },
+  "secant/Sources/Dependencies/ReviewRequest/ReviewRequestTestKey.swift": {
+    "mtime": 1780381519.4526026,
+    "ast_hash": "17f08ec35c35d2970c75ac7d72de4f24",
+    "semantic_hash": "17f08ec35c35d2970c75ac7d72de4f24"
+  },
+  "secant/Sources/Dependencies/SDKSynchronizer/SDKSynchronizerInterface.swift": {
+    "mtime": 1781700249.7001786,
+    "ast_hash": "ceb1356c7731cd712751f94cf9b83060",
+    "semantic_hash": "ceb1356c7731cd712751f94cf9b83060"
+  },
+  "secant/Sources/Dependencies/SDKSynchronizer/SDKSynchronizerLive.swift": {
+    "mtime": 1781700961.9368677,
+    "ast_hash": "c3360acdc3be793e61f9a7aefb0825f0",
+    "semantic_hash": "c3360acdc3be793e61f9a7aefb0825f0"
+  },
+  "secant/Sources/Dependencies/SDKSynchronizer/SDKSynchronizerTest.swift": {
+    "mtime": 1781700249.7006125,
+    "ast_hash": "a138f18e1675393fbb9d197a15b4a083",
+    "semantic_hash": "a138f18e1675393fbb9d197a15b4a083"
+  },
+  "secant/Sources/Dependencies/SecItem/SecItemInterface.swift": {
+    "mtime": 1780381519.453181,
+    "ast_hash": "117880324fd382a418d9a1891498b71a",
+    "semantic_hash": "117880324fd382a418d9a1891498b71a"
+  },
+  "secant/Sources/Dependencies/SecItem/SecItemLive.swift": {
+    "mtime": 1780381519.453258,
+    "ast_hash": "9c24b7fccf9fe404826734991ad6a276",
+    "semantic_hash": "9c24b7fccf9fe404826734991ad6a276"
+  },
+  "secant/Sources/Dependencies/ShieldingProcessor/ShieldingProcessorInterface.swift": {
+    "mtime": 1780381519.4533832,
+    "ast_hash": "e3843606efc8007e48c77c851513b34f",
+    "semantic_hash": "e3843606efc8007e48c77c851513b34f"
+  },
+  "secant/Sources/Dependencies/ShieldingProcessor/ShieldingProcessorLiveKey.swift": {
+    "mtime": 1781700961.9373868,
+    "ast_hash": "22339299c65670a517e8f4fcc49a863c",
+    "semantic_hash": "22339299c65670a517e8f4fcc49a863c"
+  },
+  "secant/Sources/Dependencies/SupportDataGenerator/SupportDataGenerator.swift": {
+    "mtime": 1781700249.701064,
+    "ast_hash": "e5321acfd5f40daaa6f92120b71b06d6",
+    "semantic_hash": "e5321acfd5f40daaa6f92120b71b06d6"
+  },
+  "secant/Sources/Dependencies/SupportDataGenerator/SupportDataGeneratorInterface.swift": {
+    "mtime": 1780381519.453714,
+    "ast_hash": "f7b42b2bdc530b1bbd26579b6a4c070f",
+    "semantic_hash": "f7b42b2bdc530b1bbd26579b6a4c070f"
+  },
+  "secant/Sources/Dependencies/SupportDataGenerator/SupportDataGeneratorLiveKey.swift": {
+    "mtime": 1780381519.4537952,
+    "ast_hash": "9767df36a9fc71e21823745abb279210",
+    "semantic_hash": "9767df36a9fc71e21823745abb279210"
+  },
+  "secant/Sources/Dependencies/SupportDataGenerator/SupportDataGeneratorTestKey.swift": {
+    "mtime": 1780381519.4538648,
+    "ast_hash": "85149b10ee3458e86f0cca33001f9cbe",
+    "semantic_hash": "85149b10ee3458e86f0cca33001f9cbe"
+  },
+  "secant/Sources/Dependencies/SwapAndPay/SwapAndPayInterface.swift": {
+    "mtime": 1780381519.4539833,
+    "ast_hash": "a298e2f0f9bc173587b38aaea52a6d87",
+    "semantic_hash": "a298e2f0f9bc173587b38aaea52a6d87"
+  },
+  "secant/Sources/Dependencies/SwapAndPay/SwapAndPayLiveKey.swift": {
+    "mtime": 1780381519.4540572,
+    "ast_hash": "8f56447a3c95c8bbae7773708bfabed8",
+    "semantic_hash": "8f56447a3c95c8bbae7773708bfabed8"
+  },
+  "secant/Sources/Dependencies/SwapAndPay/models/SwapDetails.swift": {
+    "mtime": 1780381519.4541743,
+    "ast_hash": "23581211b0ee4aef1f24b4981da5ae57",
+    "semantic_hash": "23581211b0ee4aef1f24b4981da5ae57"
+  },
+  "secant/Sources/Dependencies/SwapAndPay/models/SwapQuote.swift": {
+    "mtime": 1780381519.454254,
+    "ast_hash": "b1fe56754c49ac197130807fbf0a2d20",
+    "semantic_hash": "b1fe56754c49ac197130807fbf0a2d20"
+  },
+  "secant/Sources/Dependencies/SwapAndPay/models/SwapQuoteRequest.swift": {
+    "mtime": 1780381519.4543269,
+    "ast_hash": "024487b354ea2582d6d923a95b3b2b8e",
+    "semantic_hash": "024487b354ea2582d6d923a95b3b2b8e"
+  },
+  "secant/Sources/Dependencies/SwapAndPay/models/SwapSubmitHash.swift": {
+    "mtime": 1780381519.4544039,
+    "ast_hash": "257d51622f698b7e51561821c79be459",
+    "semantic_hash": "257d51622f698b7e51561821c79be459"
+  },
+  "secant/Sources/Dependencies/SwapAndPay/sources/Near1Click.swift": {
+    "mtime": 1780381519.4545991,
+    "ast_hash": "7ca8acf371169da9ac06fb207503db17",
+    "semantic_hash": "7ca8acf371169da9ac06fb207503db17"
+  },
+  "secant/Sources/Dependencies/TaxExporter/TaxExporterInterface.swift": {
+    "mtime": 1781700249.7012181,
+    "ast_hash": "13904fd49e4e245cadf21db43f7cc921",
+    "semantic_hash": "13904fd49e4e245cadf21db43f7cc921"
+  },
+  "secant/Sources/Dependencies/TaxExporter/TaxExporterLiveKey.swift": {
+    "mtime": 1781700249.7013845,
+    "ast_hash": "d769e2b9e3b39e2eb91f5f405f9b59ec",
+    "semantic_hash": "d769e2b9e3b39e2eb91f5f405f9b59ec"
+  },
+  "secant/Sources/Dependencies/TransactionGuard/TransactionGuard.swift": {
+    "mtime": 1781009199.890961,
+    "ast_hash": "bf9a04ad50737a65d22623c8903f89af",
+    "semantic_hash": "bf9a04ad50737a65d22623c8903f89af"
+  },
+  "secant/Sources/Dependencies/TransactionGuard/TransactionGuardInterface.swift": {
+    "mtime": 1781009199.8910608,
+    "ast_hash": "c373c73f96e48d69367cdca6c1c79a10",
+    "semantic_hash": "c373c73f96e48d69367cdca6c1c79a10"
+  },
+  "secant/Sources/Dependencies/TransactionGuard/TransactionGuardLiveKey.swift": {
+    "mtime": 1781009199.8911564,
+    "ast_hash": "53a33540f9377e82f466d093a3604534",
+    "semantic_hash": "53a33540f9377e82f466d093a3604534"
+  },
+  "secant/Sources/Dependencies/TransactionGuard/TransactionGuardTestKey.swift": {
+    "mtime": 1781009199.8912385,
+    "ast_hash": "445c6c848bb568a8e6ae6894b92e0963",
+    "semantic_hash": "445c6c848bb568a8e6ae6894b92e0963"
+  },
+  "secant/Sources/Dependencies/URIParser/RequestPaymentParser.swift": {
+    "mtime": 1780381519.4549165,
+    "ast_hash": "045ef8c995634afe84bc9eeaf5295fa5",
+    "semantic_hash": "045ef8c995634afe84bc9eeaf5295fa5"
+  },
+  "secant/Sources/Dependencies/URIParser/URIParser.swift": {
+    "mtime": 1780381519.4549901,
+    "ast_hash": "3e70a526ce6445e0c5e07a61f5385947",
+    "semantic_hash": "3e70a526ce6445e0c5e07a61f5385947"
+  },
+  "secant/Sources/Dependencies/URIParser/URIParserInterface.swift": {
+    "mtime": 1780381519.4550605,
+    "ast_hash": "da3d831b846fb2be99efa2b4111ad21d",
+    "semantic_hash": "da3d831b846fb2be99efa2b4111ad21d"
+  },
+  "secant/Sources/Dependencies/URIParser/URIParserLive.swift": {
+    "mtime": 1780381519.455134,
+    "ast_hash": "9ff37f17ca2896e75c31857c407944f8",
+    "semantic_hash": "9ff37f17ca2896e75c31857c407944f8"
+  },
+  "secant/Sources/Dependencies/UserDefaults/UserDefaultsInterface.swift": {
+    "mtime": 1780381519.4552586,
+    "ast_hash": "f1a8938d987e6fd7d1601b94a28cf56f",
+    "semantic_hash": "f1a8938d987e6fd7d1601b94a28cf56f"
+  },
+  "secant/Sources/Dependencies/UserDefaults/UserDefaultsLiveKey.swift": {
+    "mtime": 1780381519.4553356,
+    "ast_hash": "72da645c2e09ac2c72712de86ec7a738",
+    "semantic_hash": "72da645c2e09ac2c72712de86ec7a738"
+  },
+  "secant/Sources/Dependencies/UserDefaults/UserDefaultsTestKey.swift": {
+    "mtime": 1780381519.455404,
+    "ast_hash": "a1aec1fd16e60ad49ac92f1e856221f8",
+    "semantic_hash": "a1aec1fd16e60ad49ac92f1e856221f8"
+  },
+  "secant/Sources/Dependencies/UserMetadataProvider/Migration/UMv1.swift": {
+    "mtime": 1780381519.4555867,
+    "ast_hash": "5c1a3450ae8c1bb1c5daa152114faf22",
+    "semantic_hash": "5c1a3450ae8c1bb1c5daa152114faf22"
+  },
+  "secant/Sources/Dependencies/UserMetadataProvider/Migration/UMv2.swift": {
+    "mtime": 1780381519.4556687,
+    "ast_hash": "0a5a3d88fdb38b6ff9f2d959e8ca9836",
+    "semantic_hash": "0a5a3d88fdb38b6ff9f2d959e8ca9836"
+  },
+  "secant/Sources/Dependencies/UserMetadataProvider/UMSerialization.swift": {
+    "mtime": 1780381519.4557638,
+    "ast_hash": "fe9503e560601f20b470e6bde3e48d9b",
+    "semantic_hash": "fe9503e560601f20b470e6bde3e48d9b"
+  },
+  "secant/Sources/Dependencies/UserMetadataProvider/UserMetadataProviderInterface.swift": {
+    "mtime": 1780381519.4558344,
+    "ast_hash": "560f8ff57cf0a572f779ab635f4554a1",
+    "semantic_hash": "560f8ff57cf0a572f779ab635f4554a1"
+  },
+  "secant/Sources/Dependencies/UserMetadataProvider/UserMetadataProviderLiveKey.swift": {
+    "mtime": 1780381519.4559085,
+    "ast_hash": "17db15e827c7ccfe2541cb9447c24e10",
+    "semantic_hash": "17db15e827c7ccfe2541cb9447c24e10"
+  },
+  "secant/Sources/Dependencies/UserMetadataProvider/UserMetadataStorage.swift": {
+    "mtime": 1780381519.4561682,
+    "ast_hash": "976e19ba22c1e485b19ec21a496073f8",
+    "semantic_hash": "976e19ba22c1e485b19ec21a496073f8"
+  },
+  "secant/Sources/Dependencies/UserPreferencesStorage/UserPreferencesStorage.swift": {
+    "mtime": 1782478748.6339483,
+    "ast_hash": "a6ee06a19a9697f481be9c4eafc29b3d",
+    "semantic_hash": "a6ee06a19a9697f481be9c4eafc29b3d"
+  },
+  "secant/Sources/Dependencies/UserPreferencesStorage/UserPreferencesStorageInterface.swift": {
+    "mtime": 1781009199.8916712,
+    "ast_hash": "dfecd40937e5d8692eb5ff175569790f",
+    "semantic_hash": "dfecd40937e5d8692eb5ff175569790f"
+  },
+  "secant/Sources/Dependencies/UserPreferencesStorage/UserPreferencesStorageLive.swift": {
+    "mtime": 1781009199.891796,
+    "ast_hash": "e1b5c09b696dde2de7461d53b7e08ab3",
+    "semantic_hash": "e1b5c09b696dde2de7461d53b7e08ab3"
+  },
+  "secant/Sources/Dependencies/UserPreferencesStorage/UserPreferencesStorageMocks.swift": {
+    "mtime": 1781009199.8919122,
+    "ast_hash": "1b63cd8faf399e7fed1562109a9a2db8",
+    "semantic_hash": "1b63cd8faf399e7fed1562109a9a2db8"
+  },
+  "secant/Sources/Dependencies/VotingAPIClient/RoundAuthenticator.swift": {
+    "mtime": 1780381519.4566348,
+    "ast_hash": "a57418fbdbaa4b1cb799f260ff05455e",
+    "semantic_hash": "a57418fbdbaa4b1cb799f260ff05455e"
+  },
+  "secant/Sources/Dependencies/VotingAPIClient/ServerHealthTracker.swift": {
+    "mtime": 1780381519.4567318,
+    "ast_hash": "69ffe9d307f6d0017d5855785abcb068",
+    "semantic_hash": "69ffe9d307f6d0017d5855785abcb068"
+  },
+  "secant/Sources/Dependencies/VotingAPIClient/VotingAPIClientInterface.swift": {
+    "mtime": 1780381519.4568107,
+    "ast_hash": "30fa09c686c702661460d286d68ab9ab",
+    "semantic_hash": "30fa09c686c702661460d286d68ab9ab"
+  },
+  "secant/Sources/Dependencies/VotingAPIClient/VotingAPIClientLiveKey.swift": {
+    "mtime": 1781700961.937841,
+    "ast_hash": "e0d68a586f4fe0a55ccc1a37a106402e",
+    "semantic_hash": "e0d68a586f4fe0a55ccc1a37a106402e"
+  },
+  "secant/Sources/Dependencies/VotingAPIClient/VotingAPIClientTestKey.swift": {
+    "mtime": 1780381519.4570467,
+    "ast_hash": "c17d10ab49c6b76224063cdfe75b58a0",
+    "semantic_hash": "c17d10ab49c6b76224063cdfe75b58a0"
+  },
+  "secant/Sources/Dependencies/VotingCryptoClient/VotingCryptoClientInterface.swift": {
+    "mtime": 1780381519.4572592,
+    "ast_hash": "f63cce89fad10c1bf9680376e593adce",
+    "semantic_hash": "f63cce89fad10c1bf9680376e593adce"
+  },
+  "secant/Sources/Dependencies/VotingCryptoClient/VotingCryptoClientLiveKey.swift": {
+    "mtime": 1780989106.286849,
+    "ast_hash": "f0639093e26d0ed24909556c08f506a2",
+    "semantic_hash": "f0639093e26d0ed24909556c08f506a2"
+  },
+  "secant/Sources/Dependencies/VotingCryptoClient/VotingCryptoClientTestKey.swift": {
+    "mtime": 1780381519.4574754,
+    "ast_hash": "5fa3f05762446617a4f3a3ad4269ced3",
+    "semantic_hash": "5fa3f05762446617a4f3a3ad4269ced3"
+  },
+  "secant/Sources/Dependencies/VotingMetadataProvider/VotingMetadataProviderInterface.swift": {
+    "mtime": 1780381519.4575992,
+    "ast_hash": "63a237bb4940d2c08d24711d948288e3",
+    "semantic_hash": "63a237bb4940d2c08d24711d948288e3"
+  },
+  "secant/Sources/Dependencies/VotingMetadataProvider/VotingMetadataProviderLiveKey.swift": {
+    "mtime": 1780381519.457672,
+    "ast_hash": "71ee6725d8a44403d7deb313cafb417d",
+    "semantic_hash": "71ee6725d8a44403d7deb313cafb417d"
+  },
+  "secant/Sources/Dependencies/VotingMetadataProvider/VotingMetadataStorage.swift": {
+    "mtime": 1780381519.4579096,
+    "ast_hash": "3ba720fbc8c26b3ae6a57fda1e5da415",
+    "semantic_hash": "3ba720fbc8c26b3ae6a57fda1e5da415"
+  },
+  "secant/Sources/Dependencies/VotingModels/Proposal.swift": {
+    "mtime": 1780381519.458027,
+    "ast_hash": "a6ebffd8d2a74d27a9ff99ada39e1bdf",
+    "semantic_hash": "a6ebffd8d2a74d27a9ff99ada39e1bdf"
+  },
+  "secant/Sources/Dependencies/VotingModels/StaticVotingConfig.swift": {
+    "mtime": 1780381519.4582691,
+    "ast_hash": "5a69c82620f51cd7affc8bb676c91b78",
+    "semantic_hash": "5a69c82620f51cd7affc8bb676c91b78"
+  },
+  "secant/Sources/Dependencies/VotingModels/VoteChoice.swift": {
+    "mtime": 1780381519.458334,
+    "ast_hash": "f8e751e4ac1b5636e6c3e7b2c9a1c8b7",
+    "semantic_hash": "f8e751e4ac1b5636e6c3e7b2c9a1c8b7"
+  },
+  "secant/Sources/Dependencies/VotingModels/VotingModels.swift": {
+    "mtime": 1780381519.4584467,
+    "ast_hash": "6e44456d11dddcfd6016acc580461edf",
+    "semantic_hash": "6e44456d11dddcfd6016acc580461edf"
+  },
+  "secant/Sources/Dependencies/VotingModels/VotingRound.swift": {
+    "mtime": 1780381519.4585326,
+    "ast_hash": "34567d063e2935ef73cc34a637d3f9ff",
+    "semantic_hash": "34567d063e2935ef73cc34a637d3f9ff"
+  },
+  "secant/Sources/Dependencies/VotingModels/VotingServiceConfig.swift": {
+    "mtime": 1780381519.4586363,
+    "ast_hash": "8dafa7493ebb1a77d50b9987e35a5138",
+    "semantic_hash": "8dafa7493ebb1a77d50b9987e35a5138"
+  },
+  "secant/Sources/Dependencies/VotingModels/VotingSessionState.swift": {
+    "mtime": 1780381519.458703,
+    "ast_hash": "fe8b5aab7d5f49f0378f60e1934418ba",
+    "semantic_hash": "fe8b5aab7d5f49f0378f60e1934418ba"
+  },
+  "secant/Sources/Dependencies/VotingStorageClient/VotingStorageClientInterface.swift": {
+    "mtime": 1780381519.4588397,
+    "ast_hash": "f1a3a57c8365afa3708c7bcab00a0608",
+    "semantic_hash": "f1a3a57c8365afa3708c7bcab00a0608"
+  },
+  "secant/Sources/Dependencies/VotingStorageClient/VotingStorageClientLiveKey.swift": {
+    "mtime": 1780381519.4589076,
+    "ast_hash": "4653b21e439ea2e182d540d93c638ed7",
+    "semantic_hash": "4653b21e439ea2e182d540d93c638ed7"
+  },
+  "secant/Sources/Dependencies/VotingStorageClient/VotingStorageClientTestKey.swift": {
+    "mtime": 1780381519.4589868,
+    "ast_hash": "3dd522b1df3ee405e9012523397f263c",
+    "semantic_hash": "3dd522b1df3ee405e9012523397f263c"
+  },
+  "secant/Sources/Dependencies/WalletConfigProvider/UserDefaultsWalletConfigStorage.swift": {
+    "mtime": 1780381519.4591014,
+    "ast_hash": "c2ef0ee92fef2fa7aa448b4cd2f2da38",
+    "semantic_hash": "c2ef0ee92fef2fa7aa448b4cd2f2da38"
+  },
+  "secant/Sources/Dependencies/WalletConfigProvider/WalletConfigProvider.swift": {
+    "mtime": 1780381519.459175,
+    "ast_hash": "6dd27cef79e55390d2ee0a072f7e7bde",
+    "semantic_hash": "6dd27cef79e55390d2ee0a072f7e7bde"
+  },
+  "secant/Sources/Dependencies/WalletConfigProvider/WalletConfigProviderInterface.swift": {
+    "mtime": 1780381519.459248,
+    "ast_hash": "9e0aeaf085f39718082194ec73f03b31",
+    "semantic_hash": "9e0aeaf085f39718082194ec73f03b31"
+  },
+  "secant/Sources/Dependencies/WalletConfigProvider/WalletConfigProviderLiveKey.swift": {
+    "mtime": 1780381519.4593165,
+    "ast_hash": "8347ad3a52a700db30f558c191a1b9ef",
+    "semantic_hash": "8347ad3a52a700db30f558c191a1b9ef"
+  },
+  "secant/Sources/Dependencies/WalletConfigProvider/WalletConfigProviderTestKey.swift": {
+    "mtime": 1780381519.4593866,
+    "ast_hash": "3ffe864c07a9159923e93c75f4114ae9",
+    "semantic_hash": "3ffe864c07a9159923e93c75f4114ae9"
+  },
+  "secant/Sources/Dependencies/WalletStorage/StoredVotingHotkey.swift": {
+    "mtime": 1780381519.4594998,
+    "ast_hash": "24a08ddd3b240c1f9d426b90034f8e38",
+    "semantic_hash": "24a08ddd3b240c1f9d426b90034f8e38"
+  },
+  "secant/Sources/Dependencies/WalletStorage/WalletStorage.swift": {
+    "mtime": 1780381519.4596207,
+    "ast_hash": "c1d9c0b83da9f703978af018d0339a64",
+    "semantic_hash": "c1d9c0b83da9f703978af018d0339a64"
+  },
+  "secant/Sources/Dependencies/WalletStorage/WalletStorageInterface.swift": {
+    "mtime": 1780381519.4597313,
+    "ast_hash": "e362a267ec94e7fbfeab9af375e7e41a",
+    "semantic_hash": "e362a267ec94e7fbfeab9af375e7e41a"
+  },
+  "secant/Sources/Dependencies/WalletStorage/WalletStorageLiveKey.swift": {
+    "mtime": 1780381519.4598086,
+    "ast_hash": "2e0a659eb9a442ad8547e5104823d95e",
+    "semantic_hash": "2e0a659eb9a442ad8547e5104823d95e"
+  },
+  "secant/Sources/Dependencies/WalletStorage/WalletStorageTestKey.swift": {
+    "mtime": 1780381519.459877,
+    "ast_hash": "2388436f20316a4513fa5af2551ef754",
+    "semantic_hash": "2388436f20316a4513fa5af2551ef754"
+  },
+  "secant/Sources/Dependencies/WhatsNewProvider/WhatsNewProviderInterface.swift": {
+    "mtime": 1780381519.4602041,
+    "ast_hash": "5e835ad7ac32a429910b8c0eab582c92",
+    "semantic_hash": "5e835ad7ac32a429910b8c0eab582c92"
+  },
+  "secant/Sources/Dependencies/WhatsNewProvider/WhatsNewProviderLiveKey.swift": {
+    "mtime": 1780381519.460301,
+    "ast_hash": "83dc7650568619e116220a133f439c12",
+    "semantic_hash": "83dc7650568619e116220a133f439c12"
+  },
+  "secant/Sources/Dependencies/WhatsNewProvider/WhatsNewProviderTestKey.swift": {
+    "mtime": 1780381519.4603765,
+    "ast_hash": "307f9da2b1fe07042f289010b5b485c4",
+    "semantic_hash": "307f9da2b1fe07042f289010b5b485c4"
+  },
+  "secant/Sources/Dependencies/ZcashSDKEnvironment/ZcashSDKEnvironmentInterface.swift": {
+    "mtime": 1781009199.8921106,
+    "ast_hash": "4983c2dccb772e5a5383dc7984e2836b",
+    "semantic_hash": "4983c2dccb772e5a5383dc7984e2836b"
+  },
+  "secant/Sources/Dependencies/ZcashSDKEnvironment/ZcashSDKEnvironmentLiveKey.swift": {
+    "mtime": 1781700961.9384606,
+    "ast_hash": "fe5bbcfa531e0227ee860c6dec475e5b",
+    "semantic_hash": "fe5bbcfa531e0227ee860c6dec475e5b"
+  },
+  "secant/Sources/Dependencies/ZcashSDKEnvironment/ZcashSDKEnvironmentTestKey.swift": {
+    "mtime": 1780381519.4606977,
+    "ast_hash": "49b6638eddac076b39331d3e56be2314",
+    "semantic_hash": "49b6638eddac076b39331d3e56be2314"
+  },
+  "secant/Sources/Features/About/AboutStore.swift": {
+    "mtime": 1780381519.4609416,
+    "ast_hash": "70acaf8a67e2762eceffd6cc27034338",
+    "semantic_hash": "70acaf8a67e2762eceffd6cc27034338"
+  },
+  "secant/Sources/Features/About/AboutView.swift": {
+    "mtime": 1780989106.2869914,
+    "ast_hash": "b96f26a7d2c1f863437106265b283c79",
+    "semantic_hash": "b96f26a7d2c1f863437106265b283c79"
+  },
+  "secant/Sources/Features/AddKeystoneHWWallet/AccountsSelectionView.swift": {
+    "mtime": 1780381519.461277,
+    "ast_hash": "7549757c5c2147995ce44cade977d039",
+    "semantic_hash": "7549757c5c2147995ce44cade977d039"
+  },
+  "secant/Sources/Features/AddKeystoneHWWallet/AddHWWalletStore.swift": {
+    "mtime": 1780381519.4613771,
+    "ast_hash": "dcfeba310abba08ccb43304bd9eb2875",
+    "semantic_hash": "dcfeba310abba08ccb43304bd9eb2875"
+  },
+  "secant/Sources/Features/AddKeystoneHWWallet/AddHWWalletView.swift": {
+    "mtime": 1780989106.287216,
+    "ast_hash": "0d99df07922f88caa3f2dad4136545a7",
+    "semantic_hash": "0d99df07922f88caa3f2dad4136545a7"
+  },
+  "secant/Sources/Features/AddKeystoneHWWallet/KeystoneConnectedView.swift": {
+    "mtime": 1780381519.461802,
+    "ast_hash": "84eb978ff4000a323b2ce85d120dcb96",
+    "semantic_hash": "84eb978ff4000a323b2ce85d120dcb96"
+  },
+  "secant/Sources/Features/AddKeystoneHWWallet/KeystoneDeviceReadyView.swift": {
+    "mtime": 1780381519.461988,
+    "ast_hash": "084810092d919a132e0b65bb28ce3f9a",
+    "semantic_hash": "084810092d919a132e0b65bb28ce3f9a"
+  },
+  "secant/Sources/Features/AddressBook/AddressBookContactView.swift": {
+    "mtime": 1780649729.600735,
+    "ast_hash": "91b37f941bfa25be926bc5019f3ae07e",
+    "semantic_hash": "91b37f941bfa25be926bc5019f3ae07e"
+  },
+  "secant/Sources/Features/AddressBook/AddressBookSheets.swift": {
+    "mtime": 1780381519.4622214,
+    "ast_hash": "89a5f957dfcc05ec53bdf4e0043171e2",
+    "semantic_hash": "89a5f957dfcc05ec53bdf4e0043171e2"
+  },
+  "secant/Sources/Features/AddressBook/AddressBookStore.swift": {
+    "mtime": 1780989109.1743205,
+    "ast_hash": "c27d1d1442d80b9d4667908da64899d2",
+    "semantic_hash": "c27d1d1442d80b9d4667908da64899d2"
+  },
+  "secant/Sources/Features/AddressBook/AddressBookView.swift": {
+    "mtime": 1780989106.2873907,
+    "ast_hash": "87dfdac4d5dd9006e5845a1026ca3fd4",
+    "semantic_hash": "87dfdac4d5dd9006e5845a1026ca3fd4"
+  },
+  "secant/Sources/Features/AddressDetails/AddressDetailsStore.swift": {
+    "mtime": 1780989109.1750362,
+    "ast_hash": "8b0e12feceb8f46e01c6637d75e2ec01",
+    "semantic_hash": "8b0e12feceb8f46e01c6637d75e2ec01"
+  },
+  "secant/Sources/Features/AddressDetails/AddressDetailsView.swift": {
+    "mtime": 1780989106.2875524,
+    "ast_hash": "f5d32219a23900cd069c1ed725ee6417",
+    "semantic_hash": "f5d32219a23900cd069c1ed725ee6417"
+  },
+  "secant/Sources/Features/BalanceBreakdown/BalancesStore.swift": {
+    "mtime": 1780381519.4634101,
+    "ast_hash": "c86d2df147c7b4d444b92e4891246d7d",
+    "semantic_hash": "c86d2df147c7b4d444b92e4891246d7d"
+  },
+  "secant/Sources/Features/BalanceBreakdown/BalancesView.swift": {
+    "mtime": 1780381519.4635046,
+    "ast_hash": "f5427fbf7b6b3e272f44f768a9edc254",
+    "semantic_hash": "f5427fbf7b6b3e272f44f768a9edc254"
+  },
+  "secant/Sources/Features/CoordFlows/AddKeystoneHWWalletCoordFlowCoordinator.swift": {
+    "mtime": 1780381519.4637132,
+    "ast_hash": "247ad027c30fc870666c7889203a5579",
+    "semantic_hash": "247ad027c30fc870666c7889203a5579"
+  },
+  "secant/Sources/Features/CoordFlows/AddKeystoneHWWalletCoordFlowStore.swift": {
+    "mtime": 1780381519.4638076,
+    "ast_hash": "df0ff075c6df767a782155fe4b07b155",
+    "semantic_hash": "df0ff075c6df767a782155fe4b07b155"
+  },
+  "secant/Sources/Features/CoordFlows/AddKeystoneHWWalletCoordFlowView.swift": {
+    "mtime": 1780989106.2877102,
+    "ast_hash": "e57b5a0ae4b203f833943f730bbef2d5",
+    "semantic_hash": "e57b5a0ae4b203f833943f730bbef2d5"
+  },
+  "secant/Sources/Features/CoordFlows/RequestZecCoordFlowCoordinator.swift": {
+    "mtime": 1780381519.46397,
+    "ast_hash": "f21f502d52be5b04525c5cfe3d80efcb",
+    "semantic_hash": "f21f502d52be5b04525c5cfe3d80efcb"
+  },
+  "secant/Sources/Features/CoordFlows/RequestZecCoordFlowStore.swift": {
+    "mtime": 1780381519.4640596,
+    "ast_hash": "5e5ceb98af824aa7fd68587ea2c3df3c",
+    "semantic_hash": "5e5ceb98af824aa7fd68587ea2c3df3c"
+  },
+  "secant/Sources/Features/CoordFlows/RequestZecCoordFlowView.swift": {
+    "mtime": 1780989106.288017,
+    "ast_hash": "234872e9a23bbe9fd239fa2b28cef343",
+    "semantic_hash": "234872e9a23bbe9fd239fa2b28cef343"
+  },
+  "secant/Sources/Features/CoordFlows/RestoreWalletCoordFlowCoordinator.swift": {
+    "mtime": 1780381519.4642487,
+    "ast_hash": "93a174cfba2ff15e674da38614123a4a",
+    "semantic_hash": "93a174cfba2ff15e674da38614123a4a"
+  },
+  "secant/Sources/Features/CoordFlows/RestoreWalletCoordFlowStore.swift": {
+    "mtime": 1780381519.4643543,
+    "ast_hash": "560c4211338553f3536142fd7c3d7e4e",
+    "semantic_hash": "560c4211338553f3536142fd7c3d7e4e"
+  },
+  "secant/Sources/Features/CoordFlows/RestoreWalletCoordFlowView.swift": {
+    "mtime": 1780989106.2881784,
+    "ast_hash": "d8d4fb0647de44baae0bd26985fc3176",
+    "semantic_hash": "d8d4fb0647de44baae0bd26985fc3176"
+  },
+  "secant/Sources/Features/CoordFlows/ScanCoordFlowCoordinator.swift": {
+    "mtime": 1782478748.6345012,
+    "ast_hash": "36e8bd67c7ffbfcfd619d6a7ca5e35e6",
+    "semantic_hash": "36e8bd67c7ffbfcfd619d6a7ca5e35e6"
+  },
+  "secant/Sources/Features/CoordFlows/ScanCoordFlowStore.swift": {
+    "mtime": 1780381519.464817,
+    "ast_hash": "a57cb16915ed4a3c8d01962761527afd",
+    "semantic_hash": "a57cb16915ed4a3c8d01962761527afd"
+  },
+  "secant/Sources/Features/CoordFlows/ScanCoordFlowView.swift": {
+    "mtime": 1780989106.2883348,
+    "ast_hash": "856dc09a44320e711efa4ed5e68702ef",
+    "semantic_hash": "856dc09a44320e711efa4ed5e68702ef"
+  },
+  "secant/Sources/Features/CoordFlows/SendCoordFlowCoordinator.swift": {
+    "mtime": 1780381519.4650779,
+    "ast_hash": "ac857c7eebe472b1f043661a823ca145",
+    "semantic_hash": "ac857c7eebe472b1f043661a823ca145"
+  },
+  "secant/Sources/Features/CoordFlows/SendCoordFlowStore.swift": {
+    "mtime": 1780381519.4651542,
+    "ast_hash": "aac8f9f22e999db5967f654bd560c1e5",
+    "semantic_hash": "aac8f9f22e999db5967f654bd560c1e5"
+  },
+  "secant/Sources/Features/CoordFlows/SendCoordFlowView.swift": {
+    "mtime": 1780989106.2884555,
+    "ast_hash": "8e33337642cc44b15989ed93c9d7a5dc",
+    "semantic_hash": "8e33337642cc44b15989ed93c9d7a5dc"
+  },
+  "secant/Sources/Features/CoordFlows/SignWithKeystoneCoordFlowCoordinator.swift": {
+    "mtime": 1780381519.465325,
+    "ast_hash": "b04ea3909107389e8b500c8f78e216d4",
+    "semantic_hash": "b04ea3909107389e8b500c8f78e216d4"
+  },
+  "secant/Sources/Features/CoordFlows/SignWithKeystoneCoordFlowStore.swift": {
+    "mtime": 1780381519.4653924,
+    "ast_hash": "8589742937658a1f5bce6a533a34c645",
+    "semantic_hash": "8589742937658a1f5bce6a533a34c645"
+  },
+  "secant/Sources/Features/CoordFlows/SignWithKeystoneCoordFlowView.swift": {
+    "mtime": 1780989106.2885687,
+    "ast_hash": "8fe3c37e9127c69ffff97b67167afe2b",
+    "semantic_hash": "8fe3c37e9127c69ffff97b67167afe2b"
+  },
+  "secant/Sources/Features/CoordFlows/SwapAndPayCoordFlowCoordinator.swift": {
+    "mtime": 1781700961.9388978,
+    "ast_hash": "9361a127dbd1907fb00be0d0da5b2adf",
+    "semantic_hash": "9361a127dbd1907fb00be0d0da5b2adf"
+  },
+  "secant/Sources/Features/CoordFlows/SwapAndPayCoordFlowStore.swift": {
+    "mtime": 1781700961.9395823,
+    "ast_hash": "c7774ff7dfa7fdff041e203d115dc20d",
+    "semantic_hash": "c7774ff7dfa7fdff041e203d115dc20d"
+  },
+  "secant/Sources/Features/CoordFlows/SwapAndPayCoordFlowView.swift": {
+    "mtime": 1780989106.2889595,
+    "ast_hash": "af0db7893b651ed7cf3192d609cec247",
+    "semantic_hash": "af0db7893b651ed7cf3192d609cec247"
+  },
+  "secant/Sources/Features/CoordFlows/TransactionsCoordFlowCoordinator.swift": {
+    "mtime": 1780381519.465816,
+    "ast_hash": "085862e60bb58e27a76dd84a432ef40b",
+    "semantic_hash": "085862e60bb58e27a76dd84a432ef40b"
+  },
+  "secant/Sources/Features/CoordFlows/TransactionsCoordFlowStore.swift": {
+    "mtime": 1780381519.4658828,
+    "ast_hash": "591e52322f1f94d55a5535f18aafdb47",
+    "semantic_hash": "591e52322f1f94d55a5535f18aafdb47"
+  },
+  "secant/Sources/Features/CoordFlows/TransactionsCoordFlowView.swift": {
+    "mtime": 1780989106.2892208,
+    "ast_hash": "04fbded0eb55fc5164b86eaf2b7eeac7",
+    "semantic_hash": "04fbded0eb55fc5164b86eaf2b7eeac7"
+  },
+  "secant/Sources/Features/CoordFlows/VotingCoordFlow/RoundSession.swift": {
+    "mtime": 1780381519.4662454,
+    "ast_hash": "3d37493115ea796d88c63e25f6aeaaf5",
+    "semantic_hash": "3d37493115ea796d88c63e25f6aeaaf5"
+  },
+  "secant/Sources/Features/CoordFlows/VotingCoordFlow/VotingCoordFlowCoordinator.swift": {
+    "mtime": 1781700961.9403493,
+    "ast_hash": "a5af9206a97a34c355c8462b66851b78",
+    "semantic_hash": "a5af9206a97a34c355c8462b66851b78"
+  },
+  "secant/Sources/Features/CoordFlows/VotingCoordFlow/VotingCoordFlowStore.swift": {
+    "mtime": 1781700961.940708,
+    "ast_hash": "63c36bd9b008f3e17ee7a4ba745f1e08",
+    "semantic_hash": "63c36bd9b008f3e17ee7a4ba745f1e08"
+  },
+  "secant/Sources/Features/CoordFlows/VotingCoordFlow/VotingCoordFlowView.swift": {
+    "mtime": 1780381519.466769,
+    "ast_hash": "881d5e6816ca1669d77b25cf1b0f17b8",
+    "semantic_hash": "881d5e6816ca1669d77b25cf1b0f17b8"
+  },
+  "secant/Sources/Features/CoordFlows/WalletBackupCoordFlowCoordinator.swift": {
+    "mtime": 1780381519.4668486,
+    "ast_hash": "5441d26ce92bf12be010e5669cff6091",
+    "semantic_hash": "5441d26ce92bf12be010e5669cff6091"
+  },
+  "secant/Sources/Features/CoordFlows/WalletBackupCoordFlowStore.swift": {
+    "mtime": 1780381519.466926,
+    "ast_hash": "dd19cf2ad0c215cc5d33359b6de6744e",
+    "semantic_hash": "dd19cf2ad0c215cc5d33359b6de6744e"
+  },
+  "secant/Sources/Features/CoordFlows/WalletBackupCoordFlowView.swift": {
+    "mtime": 1780989106.2894135,
+    "ast_hash": "52ddcab821910d588e8726bebd582a7b",
+    "semantic_hash": "52ddcab821910d588e8726bebd582a7b"
+  },
+  "secant/Sources/Features/CurrencyConversionSetup/CurrencyConversionSetupStore.swift": {
+    "mtime": 1781700961.940932,
+    "ast_hash": "71684905fe7ffd9ca83707481006a87a",
+    "semantic_hash": "71684905fe7ffd9ca83707481006a87a"
+  },
+  "secant/Sources/Features/CurrencyConversionSetup/CurrencyConversionSetupView.swift": {
+    "mtime": 1781700961.9411895,
+    "ast_hash": "d1ac275e83e3fa80ada43f090099c2c3",
+    "semantic_hash": "d1ac275e83e3fa80ada43f090099c2c3"
+  },
+  "secant/Sources/Features/DeeplinkWarning/DeeplinkWarningStore.swift": {
+    "mtime": 1780381519.4675567,
+    "ast_hash": "1e99e050d517ada9a6f6fe0f45baa013",
+    "semantic_hash": "1e99e050d517ada9a6f6fe0f45baa013"
+  },
+  "secant/Sources/Features/DeeplinkWarning/DeeplinkWarningView.swift": {
+    "mtime": 1780989106.2899227,
+    "ast_hash": "2052dc715dc3c1a55de29f75bd651ded",
+    "semantic_hash": "2052dc715dc3c1a55de29f75bd651ded"
+  },
+  "secant/Sources/Features/DeleteWallet/DeleteWalletStore.swift": {
+    "mtime": 1780381519.4678292,
+    "ast_hash": "049618efe8905646c23d710a2cbef6bd",
+    "semantic_hash": "049618efe8905646c23d710a2cbef6bd"
+  },
+  "secant/Sources/Features/DeleteWallet/DeleteWalletView.swift": {
+    "mtime": 1780989106.2901568,
+    "ast_hash": "3d9416318bfc083b196e48eaecb0d499",
+    "semantic_hash": "3d9416318bfc083b196e48eaecb0d499"
+  },
+  "secant/Sources/Features/DisconnectHWWallet/DisconnectHWWalletStore.swift": {
+    "mtime": 1780989109.175892,
+    "ast_hash": "2ed57b91b118541d60b9c9159ada058d",
+    "semantic_hash": "2ed57b91b118541d60b9c9159ada058d"
+  },
+  "secant/Sources/Features/DisconnectHWWallet/DisconnectHWWalletView.swift": {
+    "mtime": 1780381519.468401,
+    "ast_hash": "e9aa7f502173ba765be2f379679197be",
+    "semantic_hash": "e9aa7f502173ba765be2f379679197be"
+  },
+  "secant/Sources/Features/ExportLogs/ExportLogs.swift": {
+    "mtime": 1780381519.4685197,
+    "ast_hash": "3f5fe02e5c70174fa9b56983a8b5352c",
+    "semantic_hash": "3f5fe02e5c70174fa9b56983a8b5352c"
+  },
+  "secant/Sources/Features/ExportLogs/ExportLogsStore.swift": {
+    "mtime": 1781700249.703897,
+    "ast_hash": "ef71bf928ce89d2a8febbecccc3eec94",
+    "semantic_hash": "ef71bf928ce89d2a8febbecccc3eec94"
+  },
+  "secant/Sources/Features/ExportTransactionHistory/ExportTransactionHistoryStore.swift": {
+    "mtime": 1781700249.7040296,
+    "ast_hash": "8739f55eb28131248a866095167fe3f2",
+    "semantic_hash": "8739f55eb28131248a866095167fe3f2"
+  },
+  "secant/Sources/Features/ExportTransactionHistory/ExportTransactionHistoryView.swift": {
+    "mtime": 1781700249.7041664,
+    "ast_hash": "4ef5b033e59a9887b7cedb68dc49f4a9",
+    "semantic_hash": "4ef5b033e59a9887b7cedb68dc49f4a9"
+  },
+  "secant/Sources/Features/Home/GlobalNavBar.swift": {
+    "mtime": 1780649729.6022882,
+    "ast_hash": "366cdd85b4cbb6a8f6cf10274da13479",
+    "semantic_hash": "366cdd85b4cbb6a8f6cf10274da13479"
+  },
+  "secant/Sources/Features/Home/HomeStore.swift": {
+    "mtime": 1781700961.9415915,
+    "ast_hash": "4b84af907580b5da4750e9bc947d5450",
+    "semantic_hash": "4b84af907580b5da4750e9bc947d5450"
+  },
+  "secant/Sources/Features/Home/HomeView.swift": {
+    "mtime": 1780989109.1765144,
+    "ast_hash": "c9352a7e84e39a689352433b384a1c0f",
+    "semantic_hash": "c9352a7e84e39a689352433b384a1c0f"
+  },
+  "secant/Sources/Features/Home/MoreSheet.swift": {
+    "mtime": 1780649729.602656,
+    "ast_hash": "89a4a7bc9426eecb63b1441d9bda93ef",
+    "semantic_hash": "89a4a7bc9426eecb63b1441d9bda93ef"
+  },
+  "secant/Sources/Features/Home/SendSelectSheet.swift": {
+    "mtime": 1780381519.4697344,
+    "ast_hash": "a531228e7fadd17c94f132d8e8a708fd",
+    "semantic_hash": "a531228e7fadd17c94f132d8e8a708fd"
+  },
+  "secant/Sources/Features/Home/WalletAccountsSheet.swift": {
+    "mtime": 1780381519.4698179,
+    "ast_hash": "b638859ca7e44a32fba80e93968a1342",
+    "semantic_hash": "b638859ca7e44a32fba80e93968a1342"
+  },
+  "secant/Sources/Features/NotEnoughFreeSpace/NotEnoughFreeSpaceStore.swift": {
+    "mtime": 1780381519.4699335,
+    "ast_hash": "e730ab45fbd1738f7c62247605aa854b",
+    "semantic_hash": "e730ab45fbd1738f7c62247605aa854b"
+  },
+  "secant/Sources/Features/NotEnoughFreeSpace/NotEnoughFreeSpaceView.swift": {
+    "mtime": 1780989106.2905512,
+    "ast_hash": "be1b0b441eec97f4e895a48ba386cba5",
+    "semantic_hash": "be1b0b441eec97f4e895a48ba386cba5"
+  },
+  "secant/Sources/Features/OSStatusError/OSStatusErrorStore.swift": {
+    "mtime": 1780989109.1769152,
+    "ast_hash": "de3e5ebd466fddae012a3f7d2c16055e",
+    "semantic_hash": "de3e5ebd466fddae012a3f7d2c16055e"
+  },
+  "secant/Sources/Features/OSStatusError/OSStatusErrorView.swift": {
+    "mtime": 1780989106.2907007,
+    "ast_hash": "8e6f6f63b962adc099cf14e3263ea102",
+    "semantic_hash": "8e6f6f63b962adc099cf14e3263ea102"
+  },
+  "secant/Sources/Features/PrivateDataConsent/PrivateDataConsentStore.swift": {
+    "mtime": 1780381519.4704006,
+    "ast_hash": "c277978425739345820c21ddc5b37989",
+    "semantic_hash": "c277978425739345820c21ddc5b37989"
+  },
+  "secant/Sources/Features/PrivateDataConsent/PrivateDataConsentView.swift": {
+    "mtime": 1781700249.7047906,
+    "ast_hash": "49bf6eae69e24933a6fdb857fd6d2802",
+    "semantic_hash": "49bf6eae69e24933a6fdb857fd6d2802"
+  },
+  "secant/Sources/Features/Receive/ReceiveCoordinator.swift": {
+    "mtime": 1780381519.4707174,
+    "ast_hash": "124270150cf37ad189883beefdd9158d",
+    "semantic_hash": "124270150cf37ad189883beefdd9158d"
+  },
+  "secant/Sources/Features/Receive/ReceiveStore.swift": {
+    "mtime": 1780381519.470812,
+    "ast_hash": "639584df7e3fe3afe1f94a700096f153",
+    "semantic_hash": "639584df7e3fe3afe1f94a700096f153"
+  },
+  "secant/Sources/Features/Receive/ReceiveView.swift": {
+    "mtime": 1780989106.290924,
+    "ast_hash": "988d7ce3cdf84158ae2b53562d18bb97",
+    "semantic_hash": "988d7ce3cdf84158ae2b53562d18bb97"
+  },
+  "secant/Sources/Features/RecoveryPhraseDisplay/RecoveryPhraseDisplayStore.swift": {
+    "mtime": 1781700249.7049706,
+    "ast_hash": "5ada58765ae20ca39ccbb0a18e96ce69",
+    "semantic_hash": "5ada58765ae20ca39ccbb0a18e96ce69"
+  },
+  "secant/Sources/Features/RecoveryPhraseDisplay/RecoveryPhraseDisplayView.swift": {
+    "mtime": 1781700249.7051544,
+    "ast_hash": "9fbd30f55fb79de307f9f502e51e0f08",
+    "semantic_hash": "9fbd30f55fb79de307f9f502e51e0f08"
+  },
+  "secant/Sources/Features/RecoveryPhraseDisplay/RecoveryPhraseSecurityView.swift": {
+    "mtime": 1780381519.4714372,
+    "ast_hash": "434640f0bc44a9c166623afb39548038",
+    "semantic_hash": "434640f0bc44a9c166623afb39548038"
+  },
+  "secant/Sources/Features/RequestZec/RequestZecStore.swift": {
+    "mtime": 1780989109.177286,
+    "ast_hash": "347e66db86ca04ba85ca9d1b710ccd65",
+    "semantic_hash": "347e66db86ca04ba85ca9d1b710ccd65"
+  },
+  "secant/Sources/Features/RequestZec/RequestZecSummaryView.swift": {
+    "mtime": 1780381519.4716542,
+    "ast_hash": "bd6ede1d2e25c63ab8eca537eeb4cdb1",
+    "semantic_hash": "bd6ede1d2e25c63ab8eca537eeb4cdb1"
+  },
+  "secant/Sources/Features/RequestZec/RequestZecView.swift": {
+    "mtime": 1780989106.291323,
+    "ast_hash": "0f7ce76b457e7a74c4182cf1e551dac2",
+    "semantic_hash": "0f7ce76b457e7a74c4182cf1e551dac2"
+  },
+  "secant/Sources/Features/RestoreInfo/RestoreInfoStore.swift": {
+    "mtime": 1780381519.471877,
+    "ast_hash": "2afcd3307d9524a10c351e96d17aae09",
+    "semantic_hash": "2afcd3307d9524a10c351e96d17aae09"
+  },
+  "secant/Sources/Features/RestoreInfo/RestoreInfoView.swift": {
+    "mtime": 1780989106.2915409,
+    "ast_hash": "98d69e7b6eb139d1797bc271b2f552e3",
+    "semantic_hash": "98d69e7b6eb139d1797bc271b2f552e3"
+  },
+  "secant/Sources/Features/ResyncWallet/ResyncWalletStore.swift": {
+    "mtime": 1780989109.1777093,
+    "ast_hash": "adc4b7b07c625c0cd10a42611311dae6",
+    "semantic_hash": "adc4b7b07c625c0cd10a42611311dae6"
+  },
+  "secant/Sources/Features/ResyncWallet/ResyncWalletView.swift": {
+    "mtime": 1780989106.2917628,
+    "ast_hash": "804cb2b426ccad313954c074499e8975",
+    "semantic_hash": "804cb2b426ccad313954c074499e8975"
+  },
+  "secant/Sources/Features/Root/RootAddressBook.swift": {
+    "mtime": 1780381519.4724507,
+    "ast_hash": "05745963eb6448bfb94ecd01ee074876",
+    "semantic_hash": "05745963eb6448bfb94ecd01ee074876"
+  },
+  "secant/Sources/Features/Root/RootCheckFunds.swift": {
+    "mtime": 1780381519.472539,
+    "ast_hash": "752705feb24422f0c9b0d933c2b9fe50",
+    "semantic_hash": "752705feb24422f0c9b0d933c2b9fe50"
+  },
+  "secant/Sources/Features/Root/RootCoordinator.swift": {
+    "mtime": 1782478748.6347914,
+    "ast_hash": "805141de1149d748c0870ab98037ca84",
+    "semantic_hash": "805141de1149d748c0870ab98037ca84"
+  },
+  "secant/Sources/Features/Root/RootDestination.swift": {
+    "mtime": 1782478748.6350317,
+    "ast_hash": "41c14c0c91708d4a6e0a51ab8e3b1b72",
+    "semantic_hash": "41c14c0c91708d4a6e0a51ab8e3b1b72"
+  },
+  "secant/Sources/Features/Root/RootInitialization.swift": {
+    "mtime": 1781700249.7057226,
+    "ast_hash": "f5be4fd1afdb47b45dea1aa08d879035",
+    "semantic_hash": "f5be4fd1afdb47b45dea1aa08d879035"
+  },
+  "secant/Sources/Features/Root/RootShieldingProcessor.swift": {
+    "mtime": 1780989109.1780956,
+    "ast_hash": "ae59a792ccbdd0d4932b0bff8080e076",
+    "semantic_hash": "ae59a792ccbdd0d4932b0bff8080e076"
+  },
+  "secant/Sources/Features/Root/RootStore.swift": {
+    "mtime": 1781700961.942396,
+    "ast_hash": "62711a14daeea509e5fcc0683c71b070",
+    "semantic_hash": "62711a14daeea509e5fcc0683c71b070"
+  },
+  "secant/Sources/Features/Root/RootSwaps.swift": {
+    "mtime": 1780381519.4733274,
+    "ast_hash": "da77d5295347bfb6177f57d37c02b171",
+    "semantic_hash": "da77d5295347bfb6177f57d37c02b171"
+  },
+  "secant/Sources/Features/Root/RootTorInitCheck.swift": {
+    "mtime": 1781700249.7060707,
+    "ast_hash": "3a3b4799cf1d2595420c48b6b9dd0cc7",
+    "semantic_hash": "3a3b4799cf1d2595420c48b6b9dd0cc7"
+  },
+  "secant/Sources/Features/Root/RootTransactions.swift": {
+    "mtime": 1780381519.4734855,
+    "ast_hash": "6387e9991be9cb334cad6ece238e9b99",
+    "semantic_hash": "6387e9991be9cb334cad6ece238e9b99"
+  },
+  "secant/Sources/Features/Root/RootUserMetadata.swift": {
+    "mtime": 1780381519.4735563,
+    "ast_hash": "28517ce6565826a5b2798ac392e36e16",
+    "semantic_hash": "28517ce6565826a5b2798ac392e36e16"
+  },
+  "secant/Sources/Features/Root/RootView.swift": {
+    "mtime": 1781700249.706207,
+    "ast_hash": "87fe25a3ad8972e93853c51c880656c8",
+    "semantic_hash": "87fe25a3ad8972e93853c51c880656c8"
+  },
+  "secant/Sources/Features/Scan/ScanChecker.swift": {
+    "mtime": 1780989106.2922213,
+    "ast_hash": "f29f921d632bbb5181a3231c036daa63",
+    "semantic_hash": "f29f921d632bbb5181a3231c036daa63"
+  },
+  "secant/Sources/Features/Scan/ScanStore.swift": {
+    "mtime": 1780381519.473857,
+    "ast_hash": "6a32ee95cddc53e9a1be4bbb222d53e3",
+    "semantic_hash": "6a32ee95cddc53e9a1be4bbb222d53e3"
+  },
+  "secant/Sources/Features/Scan/ScanView.swift": {
+    "mtime": 1780989106.292402,
+    "ast_hash": "7833dbedb8517f70bce92fd13e70f7e4",
+    "semantic_hash": "7833dbedb8517f70bce92fd13e70f7e4"
+  },
+  "secant/Sources/Features/Scan/UIKitBridge/QRCodeScanView.swift": {
+    "mtime": 1780381519.4741457,
+    "ast_hash": "6b00722d3be9bf4eb05fa4155c561076",
+    "semantic_hash": "6b00722d3be9bf4eb05fa4155c561076"
+  },
+  "secant/Sources/Features/Scan/UIKitBridge/ScanUIView.swift": {
+    "mtime": 1780989106.2925646,
+    "ast_hash": "b604187bed25fb1ff6fd5ee583f678d6",
+    "semantic_hash": "b604187bed25fb1ff6fd5ee583f678d6"
+  },
+  "secant/Sources/Features/Scan/UIKitBridge/ZashiImagePicker.swift": {
+    "mtime": 1780381519.4743023,
+    "ast_hash": "62c2189fe5cb4d568c6dbe093b1a0d00",
+    "semantic_hash": "62c2189fe5cb4d568c6dbe093b1a0d00"
+  },
+  "secant/Sources/Features/SendConfirmation/FailedView.swift": {
+    "mtime": 1780381519.474434,
+    "ast_hash": "c7db45b536a88dbbde9316d488a8d52c",
+    "semantic_hash": "c7db45b536a88dbbde9316d488a8d52c"
+  },
+  "secant/Sources/Features/SendConfirmation/PendingView.swift": {
+    "mtime": 1780381519.4745362,
+    "ast_hash": "9085dc7743fc68b986b687a568fcf35c",
+    "semantic_hash": "9085dc7743fc68b986b687a568fcf35c"
+  },
+  "secant/Sources/Features/SendConfirmation/PreSendingFailureView.swift": {
+    "mtime": 1780381519.4746037,
+    "ast_hash": "bd71028ae3954112a785c01988b43b7b",
+    "semantic_hash": "bd71028ae3954112a785c01988b43b7b"
+  },
+  "secant/Sources/Features/SendConfirmation/RequestPaymentConfirmationView.swift": {
+    "mtime": 1780381519.4748392,
+    "ast_hash": "12411b7be2c6e16d30e7583f8da00729",
+    "semantic_hash": "12411b7be2c6e16d30e7583f8da00729"
+  },
+  "secant/Sources/Features/SendConfirmation/SendConfirmationStore.swift": {
+    "mtime": 1782548981.9980307,
+    "ast_hash": "3c753af204ebef3f018d19b046df79dd",
+    "semantic_hash": "3c753af204ebef3f018d19b046df79dd"
+  },
+  "secant/Sources/Features/SendConfirmation/SendConfirmationView.swift": {
+    "mtime": 1780989106.29279,
+    "ast_hash": "48b6a2acb1fbde0d2169df03aeadc7cf",
+    "semantic_hash": "48b6a2acb1fbde0d2169df03aeadc7cf"
+  },
+  "secant/Sources/Features/SendConfirmation/SendRejectSheet.swift": {
+    "mtime": 1780381519.4752944,
+    "ast_hash": "690fc186357ef72a52963824f0f1e73e",
+    "semantic_hash": "690fc186357ef72a52963824f0f1e73e"
+  },
+  "secant/Sources/Features/SendConfirmation/SendingView.swift": {
+    "mtime": 1780381519.4753835,
+    "ast_hash": "a1bd4ee393134fd040cc143c7d7ac68c",
+    "semantic_hash": "a1bd4ee393134fd040cc143c7d7ac68c"
+  },
+  "secant/Sources/Features/SendConfirmation/SignWithKeystoneView.swift": {
+    "mtime": 1780381519.4754763,
+    "ast_hash": "c5dab431bcc061d4d2a0e350de8660dc",
+    "semantic_hash": "c5dab431bcc061d4d2a0e350de8660dc"
+  },
+  "secant/Sources/Features/SendConfirmation/SuccessView.swift": {
+    "mtime": 1780381519.4755566,
+    "ast_hash": "417bb1e7c04e2b12e28629deb4e8e816",
+    "semantic_hash": "417bb1e7c04e2b12e28629deb4e8e816"
+  },
+  "secant/Sources/Features/SendFeedback/SendFeedbackStore.swift": {
+    "mtime": 1780989109.1795063,
+    "ast_hash": "9b3db9c3427ae1cec7989bca83d14694",
+    "semantic_hash": "9b3db9c3427ae1cec7989bca83d14694"
+  },
+  "secant/Sources/Features/SendFeedback/SendFeedbackView.swift": {
+    "mtime": 1780989106.2929888,
+    "ast_hash": "92c4d0a80b4e5670b2c42624ea9bd597",
+    "semantic_hash": "92c4d0a80b4e5670b2c42624ea9bd597"
+  },
+  "secant/Sources/Features/SendForm/SendFormSheets.swift": {
+    "mtime": 1780381519.4760094,
+    "ast_hash": "899f3665672128c2a1a7f50f4f1afed1",
+    "semantic_hash": "899f3665672128c2a1a7f50f4f1afed1"
+  },
+  "secant/Sources/Features/SendForm/SendFormStore.swift": {
+    "mtime": 1782799492.0925322,
+    "ast_hash": "4ffad331ecb13aa365d294c9c375abaf",
+    "semantic_hash": "4ffad331ecb13aa365d294c9c375abaf"
+  },
+  "secant/Sources/Features/SendForm/SendFormView.swift": {
+    "mtime": 1781700961.9434233,
+    "ast_hash": "b6232ccc7c890ab642366c351f8ff42d",
+    "semantic_hash": "b6232ccc7c890ab642366c351f8ff42d"
+  },
+  "secant/Sources/Features/ServerSetup/ServerSetupStore.swift": {
+    "mtime": 1781700249.7072363,
+    "ast_hash": "215b19c09dcf77e26a799cbcb2dbf884",
+    "semantic_hash": "215b19c09dcf77e26a799cbcb2dbf884"
+  },
+  "secant/Sources/Features/ServerSetup/ServerSetupView.swift": {
+    "mtime": 1781903082.6040158,
+    "ast_hash": "10bf87629e0eab4d6bb7673af59f4424",
+    "semantic_hash": "10bf87629e0eab4d6bb7673af59f4424"
+  },
+  "secant/Sources/Features/Settings/AdvancedSettingsStore.swift": {
+    "mtime": 1780381519.4768631,
+    "ast_hash": "933a38996ecc95c8dc0b20ffa2707783",
+    "semantic_hash": "933a38996ecc95c8dc0b20ffa2707783"
+  },
+  "secant/Sources/Features/Settings/AdvancedSettingsView.swift": {
+    "mtime": 1781700249.7074487,
+    "ast_hash": "6c4cd46ce5ff2857860f0862b3c18bce",
+    "semantic_hash": "6c4cd46ce5ff2857860f0862b3c18bce"
+  },
+  "secant/Sources/Features/Settings/SettingsCoordinator.swift": {
+    "mtime": 1780381519.4771287,
+    "ast_hash": "103f5a95f974ba7bbe26684d358af018",
+    "semantic_hash": "103f5a95f974ba7bbe26684d358af018"
+  },
+  "secant/Sources/Features/Settings/SettingsStore.swift": {
+    "mtime": 1780381519.47721,
+    "ast_hash": "d22ab83ef24d9e2ecff1dc9b03f06f6f",
+    "semantic_hash": "d22ab83ef24d9e2ecff1dc9b03f06f6f"
+  },
+  "secant/Sources/Features/Settings/SettingsView.swift": {
+    "mtime": 1780989106.2933588,
+    "ast_hash": "d62d5981c48e74ac2022fb4e12049f36",
+    "semantic_hash": "d62d5981c48e74ac2022fb4e12049f36"
+  },
+  "secant/Sources/Features/SmartBanner/SmartBannerContent.swift": {
+    "mtime": 1780907507.0260184,
+    "ast_hash": "eb9ce0282bf4ad1a342af1b7b2ac5f18",
+    "semantic_hash": "eb9ce0282bf4ad1a342af1b7b2ac5f18"
+  },
+  "secant/Sources/Features/SmartBanner/SmartBannerHelpSheet.swift": {
+    "mtime": 1780381519.477887,
+    "ast_hash": "78c619f0e9f10d298e94c87b203780d0",
+    "semantic_hash": "78c619f0e9f10d298e94c87b203780d0"
+  },
+  "secant/Sources/Features/SmartBanner/SmartBannerStore.swift": {
+    "mtime": 1782478748.6352444,
+    "ast_hash": "d5c9ff5c9218a84cd2ac54626eae84d0",
+    "semantic_hash": "d5c9ff5c9218a84cd2ac54626eae84d0"
+  },
+  "secant/Sources/Features/SmartBanner/SmartBannerView.swift": {
+    "mtime": 1780989106.2935827,
+    "ast_hash": "732eea16771b51808ff941cee56360bc",
+    "semantic_hash": "732eea16771b51808ff941cee56360bc"
+  },
+  "secant/Sources/Features/SwapAndPayForm/CrossPayConfirmationView.swift": {
+    "mtime": 1780381519.4785328,
+    "ast_hash": "8234c2c4784cb0d71f62a2ac98c67d28",
+    "semantic_hash": "8234c2c4784cb0d71f62a2ac98c67d28"
+  },
+  "secant/Sources/Features/SwapAndPayForm/CrossPayForm.swift": {
+    "mtime": 1780649729.6036592,
+    "ast_hash": "b2eb6b4774d20f2ca7ae46a603b11843",
+    "semantic_hash": "b2eb6b4774d20f2ca7ae46a603b11843"
+  },
+  "secant/Sources/Features/SwapAndPayForm/SwapAndPayForm.swift": {
+    "mtime": 1780989106.2937598,
+    "ast_hash": "3eaed831037662623c05bbfbf519a073",
+    "semantic_hash": "3eaed831037662623c05bbfbf519a073"
+  },
+  "secant/Sources/Features/SwapAndPayForm/SwapAndPayOptInForcedView.swift": {
+    "mtime": 1780381519.4791677,
+    "ast_hash": "6afeeab06bd8369dfa9e8a0453f3082e",
+    "semantic_hash": "6afeeab06bd8369dfa9e8a0453f3082e"
+  },
+  "secant/Sources/Features/SwapAndPayForm/SwapAndPayOptInView.swift": {
+    "mtime": 1780381519.4792693,
+    "ast_hash": "cd34c27e8ff5e34b09ae47219f4d313d",
+    "semantic_hash": "cd34c27e8ff5e34b09ae47219f4d313d"
+  },
+  "secant/Sources/Features/SwapAndPayForm/SwapAndPaySheets.swift": {
+    "mtime": 1780381519.479355,
+    "ast_hash": "99da12ede2549bc9bfabaa75daa2cbb3",
+    "semantic_hash": "99da12ede2549bc9bfabaa75daa2cbb3"
+  },
+  "secant/Sources/Features/SwapAndPayForm/SwapAndPayStore.swift": {
+    "mtime": 1782799492.0927958,
+    "ast_hash": "abcc0b66c38708fdf7a8a0a9ab160eba",
+    "semantic_hash": "abcc0b66c38708fdf7a8a0a9ab160eba"
+  },
+  "secant/Sources/Features/SwapAndPayForm/SwapComponents.swift": {
+    "mtime": 1780381519.479598,
+    "ast_hash": "fc2be86792a3d2a47ef624bbd5d307b9",
+    "semantic_hash": "fc2be86792a3d2a47ef624bbd5d307b9"
+  },
+  "secant/Sources/Features/SwapAndPayForm/SwapForm.swift": {
+    "mtime": 1780649729.6042185,
+    "ast_hash": "e0108a0e107fe6eebb0274e5ac1a955f",
+    "semantic_hash": "e0108a0e107fe6eebb0274e5ac1a955f"
+  },
+  "secant/Sources/Features/SwapAndPayForm/SwapToZecSummaryView.swift": {
+    "mtime": 1780381519.4799168,
+    "ast_hash": "07dadad60ff344a1049c2c59a8fd31e7",
+    "semantic_hash": "07dadad60ff344a1049c2c59a8fd31e7"
+  },
+  "secant/Sources/Features/TorSetup/TorSetupStore.swift": {
+    "mtime": 1781700249.7076528,
+    "ast_hash": "3f56fb3d90c6271e90b74cafe5d3fd7e",
+    "semantic_hash": "3f56fb3d90c6271e90b74cafe5d3fd7e"
+  },
+  "secant/Sources/Features/TorSetup/TorSetupView.swift": {
+    "mtime": 1780989106.294013,
+    "ast_hash": "87b8b1cc832e39a627172b8f02088a13",
+    "semantic_hash": "87b8b1cc832e39a627172b8f02088a13"
+  },
+  "secant/Sources/Features/TransactionDetails/AnnotationSheet.swift": {
+    "mtime": 1780381519.480336,
+    "ast_hash": "d3cf4d394a8c1a3f23f7c8b41ef3e6f0",
+    "semantic_hash": "d3cf4d394a8c1a3f23f7c8b41ef3e6f0"
+  },
+  "secant/Sources/Features/TransactionDetails/TransactionDetailsStore.swift": {
+    "mtime": 1780989109.1810472,
+    "ast_hash": "60431f0b426e232760c9de9b0f1b7ee2",
+    "semantic_hash": "60431f0b426e232760c9de9b0f1b7ee2"
+  },
+  "secant/Sources/Features/TransactionDetails/TransactionDetailsView.swift": {
+    "mtime": 1780989106.294173,
+    "ast_hash": "ea0e21035a671206692a0c062ee395b2",
+    "semantic_hash": "ea0e21035a671206692a0c062ee395b2"
+  },
+  "secant/Sources/Features/TransactionDetails/TransactionSwapComponents.swift": {
+    "mtime": 1780381519.4807353,
+    "ast_hash": "fcf721cef73e1842316a621cf442e544",
+    "semantic_hash": "fcf721cef73e1842316a621cf442e544"
+  },
+  "secant/Sources/Features/TransactionList/TransactionListStore.swift": {
+    "mtime": 1780381519.4808924,
+    "ast_hash": "d3202de1ec12d1b3a180dd0874bddfca",
+    "semantic_hash": "d3202de1ec12d1b3a180dd0874bddfca"
+  },
+  "secant/Sources/Features/TransactionList/TransactionListView.swift": {
+    "mtime": 1780381519.4809957,
+    "ast_hash": "2b69e320be683d938116be2698526e04",
+    "semantic_hash": "2b69e320be683d938116be2698526e04"
+  },
+  "secant/Sources/Features/TransactionsManager/FiltersSheet.swift": {
+    "mtime": 1780381519.4811423,
+    "ast_hash": "4c30c337ad35b75530a520e4f95ef662",
+    "semantic_hash": "4c30c337ad35b75530a520e4f95ef662"
+  },
+  "secant/Sources/Features/TransactionsManager/TransactionsManagerStore.swift": {
+    "mtime": 1782478748.6355762,
+    "ast_hash": "0172a73ca900851a554107df10631b4e",
+    "semantic_hash": "0172a73ca900851a554107df10631b4e"
+  },
+  "secant/Sources/Features/TransactionsManager/TransactionsManagerView.swift": {
+    "mtime": 1780989106.2943945,
+    "ast_hash": "0b29626d33d966e9b833d3825c0bf7f6",
+    "semantic_hash": "0b29626d33d966e9b833d3825c0bf7f6"
+  },
+  "secant/Sources/Features/Voting/ConfirmSubmission/ConfirmSubmissionStore.swift": {
+    "mtime": 1780381519.4817743,
+    "ast_hash": "e90f27084073a6a6d21196f393a41afd",
+    "semantic_hash": "e90f27084073a6a6d21196f393a41afd"
+  },
+  "secant/Sources/Features/Voting/ConfirmSubmission/ConfirmSubmissionView.swift": {
+    "mtime": 1780649729.6046474,
+    "ast_hash": "207490f48ee98df7db54c19613ff2daf",
+    "semantic_hash": "207490f48ee98df7db54c19613ff2daf"
+  },
+  "secant/Sources/Features/Voting/DelegationSigning/DelegationSigningStore.swift": {
+    "mtime": 1780649729.6050816,
+    "ast_hash": "26ef9dd8d7e87417a8ec7e862f76b7b4",
+    "semantic_hash": "26ef9dd8d7e87417a8ec7e862f76b7b4"
+  },
+  "secant/Sources/Features/Voting/HowToVote/HowToVoteView.swift": {
+    "mtime": 1780381519.4822628,
+    "ast_hash": "99c27b1bf9b97e10109f0e71dca50491",
+    "semantic_hash": "99c27b1bf9b97e10109f0e71dca50491"
+  },
+  "secant/Sources/Features/Voting/Ineligible/IneligibleStore.swift": {
+    "mtime": 1780381519.4823968,
+    "ast_hash": "0e407a7af71ad6ae6b5ab702c54b678e",
+    "semantic_hash": "0e407a7af71ad6ae6b5ab702c54b678e"
+  },
+  "secant/Sources/Features/Voting/Ineligible/IneligibleView.swift": {
+    "mtime": 1780381519.4824872,
+    "ast_hash": "c35a88c323883f5c29c55addb6005ca4",
+    "semantic_hash": "c35a88c323883f5c29c55addb6005ca4"
+  },
+  "secant/Sources/Features/Voting/NoRounds/NoRoundsView.swift": {
+    "mtime": 1780381519.4826963,
+    "ast_hash": "f8015faf5ae8bb0f145e7b9262e6d23b",
+    "semantic_hash": "f8015faf5ae8bb0f145e7b9262e6d23b"
+  },
+  "secant/Sources/Features/Voting/PollsList/PollsListView.swift": {
+    "mtime": 1780649729.6055777,
+    "ast_hash": "65b5e6d5f6104513503105a9f340bfd8",
+    "semantic_hash": "65b5e6d5f6104513503105a9f340bfd8"
+  },
+  "secant/Sources/Features/Voting/ProposalDetail/ProposalDetailStore.swift": {
+    "mtime": 1780381519.483037,
+    "ast_hash": "6302675b7c7751a00af6508806ee39ac",
+    "semantic_hash": "6302675b7c7751a00af6508806ee39ac"
+  },
+  "secant/Sources/Features/Voting/ProposalDetail/ProposalDetailView.swift": {
+    "mtime": 1780381519.4833128,
+    "ast_hash": "49aca669eb41132cba18b4603bf4e58f",
+    "semantic_hash": "49aca669eb41132cba18b4603bf4e58f"
+  },
+  "secant/Sources/Features/Voting/ProposalList/ProposalListStore.swift": {
+    "mtime": 1780381519.48347,
+    "ast_hash": "d272bb51d2471656c5734b7b7edcb3f6",
+    "semantic_hash": "d272bb51d2471656c5734b7b7edcb3f6"
+  },
+  "secant/Sources/Features/Voting/ProposalList/ProposalListView.swift": {
+    "mtime": 1780989106.2945812,
+    "ast_hash": "e828ff18ef5aa69f9cd0c74e9dca25c0",
+    "semantic_hash": "e828ff18ef5aa69f9cd0c74e9dca25c0"
+  },
+  "secant/Sources/Features/Voting/Results/ResultsStore.swift": {
+    "mtime": 1780381519.4837537,
+    "ast_hash": "ff8997d6ae5589ce05effc01f25f423c",
+    "semantic_hash": "ff8997d6ae5589ce05effc01f25f423c"
+  },
+  "secant/Sources/Features/Voting/Results/ResultsView.swift": {
+    "mtime": 1780989106.294762,
+    "ast_hash": "03c2cd9bfcd47364f67a8cb13db82c04",
+    "semantic_hash": "03c2cd9bfcd47364f67a8cb13db82c04"
+  },
+  "secant/Sources/Features/Voting/ReviewVotes/ReviewVotesStore.swift": {
+    "mtime": 1780381519.484026,
+    "ast_hash": "a65a71a27dee9b0ea0c1e1270e3c3b42",
+    "semantic_hash": "a65a71a27dee9b0ea0c1e1270e3c3b42"
+  },
+  "secant/Sources/Features/Voting/Tallying/TallyingStore.swift": {
+    "mtime": 1780381519.4841528,
+    "ast_hash": "4c189954e8cc7bc23748bd3d0e740e3a",
+    "semantic_hash": "4c189954e8cc7bc23748bd3d0e740e3a"
+  },
+  "secant/Sources/Features/Voting/Tallying/TallyingView.swift": {
+    "mtime": 1780381519.4842873,
+    "ast_hash": "0701fbeb563fd45b15365cfa76e1cba0",
+    "semantic_hash": "0701fbeb563fd45b15365cfa76e1cba0"
+  },
+  "secant/Sources/Features/Voting/VotingConfigSettings.swift": {
+    "mtime": 1780381519.4844074,
+    "ast_hash": "5cbc32ac1ac614672770653f54689a40",
+    "semantic_hash": "5cbc32ac1ac614672770653f54689a40"
+  },
+  "secant/Sources/Features/Voting/VotingConfigSettingsView.swift": {
+    "mtime": 1780381519.48457,
+    "ast_hash": "b74a4214232ff1011fd0d4c861c5ed0d",
+    "semantic_hash": "b74a4214232ff1011fd0d4c861c5ed0d"
+  },
+  "secant/Sources/Features/Voting/VotingError/VotingErrorView.swift": {
+    "mtime": 1780381519.4847121,
+    "ast_hash": "256f2279b24253380bd261656b04f61b",
+    "semantic_hash": "256f2279b24253380bd261656b04f61b"
+  },
+  "secant/Sources/Features/Voting/VotingErrorSheet.swift": {
+    "mtime": 1780381519.484964,
+    "ast_hash": "e818505218013e1775d14444777a6593",
+    "semantic_hash": "e818505218013e1775d14444777a6593"
+  },
+  "secant/Sources/Features/Voting/VotingHelpers.swift": {
+    "mtime": 1780649729.6069288,
+    "ast_hash": "77ec0579578b6c5c787d71ea5ac20de6",
+    "semantic_hash": "77ec0579578b6c5c787d71ea5ac20de6"
+  },
+  "secant/Sources/Features/Voting/WalletSyncing/WalletSyncingView.swift": {
+    "mtime": 1780381519.4852395,
+    "ast_hash": "58af13f596e902e27e87845bc109d23f",
+    "semantic_hash": "58af13f596e902e27e87845bc109d23f"
+  },
+  "secant/Sources/Features/WalletBalances/WalletBalancesStore.swift": {
+    "mtime": 1781700961.9438338,
+    "ast_hash": "d590114bc65a17ea456ce1c424348473",
+    "semantic_hash": "d590114bc65a17ea456ce1c424348473"
+  },
+  "secant/Sources/Features/WalletBalances/WalletBalancesView.swift": {
+    "mtime": 1781700961.9442892,
+    "ast_hash": "921f6cc8afbeb3453bce156744b02e81",
+    "semantic_hash": "921f6cc8afbeb3453bce156744b02e81"
+  },
+  "secant/Sources/Features/WalletBirthday/WalletBirthdayEstimateDateView.swift": {
+    "mtime": 1780381519.4857802,
+    "ast_hash": "ab6d6238a66995566833f4e16b9d81ea",
+    "semantic_hash": "ab6d6238a66995566833f4e16b9d81ea"
+  },
+  "secant/Sources/Features/WalletBirthday/WalletBirthdayEstimatedHeightView.swift": {
+    "mtime": 1780381519.4858718,
+    "ast_hash": "6d11e2de407a83d3b8d808d7c567f427",
+    "semantic_hash": "6d11e2de407a83d3b8d808d7c567f427"
+  },
+  "secant/Sources/Features/WalletBirthday/WalletBirthdayStore.swift": {
+    "mtime": 1780381519.4859684,
+    "ast_hash": "71c43d172142d827af46b67f9ad7ebbc",
+    "semantic_hash": "71c43d172142d827af46b67f9ad7ebbc"
+  },
+  "secant/Sources/Features/WalletBirthday/WalletBirthdayView.swift": {
+    "mtime": 1780989106.2951386,
+    "ast_hash": "ddc560fcdcd18e86ad67f2875cc2019f",
+    "semantic_hash": "ddc560fcdcd18e86ad67f2875cc2019f"
+  },
+  "secant/Sources/Features/Welcome/WelcomeStore.swift": {
+    "mtime": 1781700249.7081242,
+    "ast_hash": "86d086386e6c8c75c2c80509a4037fb4",
+    "semantic_hash": "86d086386e6c8c75c2c80509a4037fb4"
+  },
+  "secant/Sources/Features/Welcome/WelcomeView.swift": {
+    "mtime": 1781700249.7082422,
+    "ast_hash": "1b52e828cfeb8fe431783ab4b35d33fe",
+    "semantic_hash": "1b52e828cfeb8fe431783ab4b35d33fe"
+  },
+  "secant/Sources/Features/WhatsNew/WhatsNewStore.swift": {
+    "mtime": 1780381519.4864345,
+    "ast_hash": "165c9f3895e4e294ebd9fcf8c8233761",
+    "semantic_hash": "165c9f3895e4e294ebd9fcf8c8233761"
+  },
+  "secant/Sources/Features/WhatsNew/WhatsNewView.swift": {
+    "mtime": 1780989106.2953217,
+    "ast_hash": "ca913823d97127fa51b79b5554fa8d3d",
+    "semantic_hash": "ca913823d97127fa51b79b5554fa8d3d"
+  },
+  "secant/Sources/Features/ZecKeyboard/ZecKeyboardStore.swift": {
+    "mtime": 1781700961.944595,
+    "ast_hash": "80c74c36bb0c4a7adf00e24c2d44ba46",
+    "semantic_hash": "80c74c36bb0c4a7adf00e24c2d44ba46"
+  },
+  "secant/Sources/Features/ZecKeyboard/ZecKeyboardView.swift": {
+    "mtime": 1781700961.9447956,
+    "ast_hash": "e9c6adac911ad610dc7a7e0c6f8b4f1b",
+    "semantic_hash": "e9c6adac911ad610dc7a7e0c6f8b4f1b"
+  },
+  "secant/Sources/Generated/DesignSystem.swift": {
+    "mtime": 1781700961.945007,
+    "ast_hash": "da60f424a41972f4640cb0e53f3de99b",
+    "semantic_hash": "da60f424a41972f4640cb0e53f3de99b"
+  },
+  "secant/Sources/Generated/Fonts+Generated.swift": {
+    "mtime": 1780381519.4871025,
+    "ast_hash": "12dab5ec27ea216c8e7b22677af59fd8",
+    "semantic_hash": "12dab5ec27ea216c8e7b22677af59fd8"
+  },
+  "secant/Sources/Generated/SharedStateKeys.swift": {
+    "mtime": 1780381519.4871871,
+    "ast_hash": "8330480571a1ef1088f7d270191f8c5e",
+    "semantic_hash": "8330480571a1ef1088f7d270191f8c5e"
+  },
+  "secant/Sources/Generated/XCAssets+Generated.swift": {
+    "mtime": 1780381519.4873223,
+    "ast_hash": "66f2986a2f9a322dc0cc65e8574ef785",
+    "semantic_hash": "66f2986a2f9a322dc0cc65e8574ef785"
+  },
+  "secant/Sources/Models/AddressBookEncryptionKeys.swift": {
+    "mtime": 1780381519.4875653,
+    "ast_hash": "5062b45d2cecd2c4916c96b49360ca44",
+    "semantic_hash": "5062b45d2cecd2c4916c96b49360ca44"
+  },
+  "secant/Sources/Models/AppDelegateAction.swift": {
+    "mtime": 1780381519.4876456,
+    "ast_hash": "b81a6d0df0599a2f3c67f0069f53e497",
+    "semantic_hash": "b81a6d0df0599a2f3c67f0069f53e497"
+  },
+  "secant/Sources/Models/CMCRate.swift": {
+    "mtime": 1781700961.9451604,
+    "ast_hash": "e3455d9eaeeea023fc08089af65057a8",
+    "semantic_hash": "e3455d9eaeeea023fc08089af65057a8"
+  },
+  "secant/Sources/Models/ChainToken.swift": {
+    "mtime": 1780381519.4878201,
+    "ast_hash": "83df877c1e694edca75ba6d530c82e57",
+    "semantic_hash": "83df877c1e694edca75ba6d530c82e57"
+  },
+  "secant/Sources/Models/Currency.swift": {
+    "mtime": 1781700961.9453146,
+    "ast_hash": "576295e4bd6d9019689c81d4f37475a0",
+    "semantic_hash": "576295e4bd6d9019689c81d4f37475a0"
+  },
+  "secant/Sources/Models/FeatureFlags.swift": {
+    "mtime": 1780381519.4880068,
+    "ast_hash": "6e9c99ae7e4112251276b3f712b1b27f",
+    "semantic_hash": "6e9c99ae7e4112251276b3f712b1b27f"
+  },
+  "secant/Sources/Models/InitializationState.swift": {
+    "mtime": 1780381519.4880972,
+    "ast_hash": "ab2f01631267b27261a0c2b6f40e4d2b",
+    "semantic_hash": "ab2f01631267b27261a0c2b6f40e4d2b"
+  },
+  "secant/Sources/Models/RecoveryPhrase.swift": {
+    "mtime": 1780381519.4881856,
+    "ast_hash": "6047dda51b367eccabad4105612c694e",
+    "semantic_hash": "6047dda51b367eccabad4105612c694e"
+  },
+  "secant/Sources/Models/ReminedMeTimestamp.swift": {
+    "mtime": 1780381519.48826,
+    "ast_hash": "83035307701e11c7915bff4011c5b5d3",
+    "semantic_hash": "83035307701e11c7915bff4011c5b5d3"
+  },
+  "secant/Sources/Models/RoundListItem.swift": {
+    "mtime": 1780381519.4883296,
+    "ast_hash": "b7d9487082f9546ec4eebf52b2b06544",
+    "semantic_hash": "b7d9487082f9546ec4eebf52b2b06544"
+  },
+  "secant/Sources/Models/Spendability.swift": {
+    "mtime": 1780381519.488399,
+    "ast_hash": "98bebd42b699925352f4f729d2c062b0",
+    "semantic_hash": "98bebd42b699925352f4f729d2c062b0"
+  },
+  "secant/Sources/Models/StoredWallet.swift": {
+    "mtime": 1780381519.488474,
+    "ast_hash": "f8f0a5d798665e0a92d7dce76e59395e",
+    "semantic_hash": "f8f0a5d798665e0a92d7dce76e59395e"
+  },
+  "secant/Sources/Models/SwapAsset.swift": {
+    "mtime": 1780381519.4885504,
+    "ast_hash": "0d215505d90703056fb9433c8acf8481",
+    "semantic_hash": "0d215505d90703056fb9433c8acf8481"
+  },
+  "secant/Sources/Models/Swaps.swift": {
+    "mtime": 1780381519.4886281,
+    "ast_hash": "71ae457bf2a0e4a5d17bf750f13ba4d3",
+    "semantic_hash": "71ae457bf2a0e4a5d17bf750f13ba4d3"
+  },
+  "secant/Sources/Models/SyncStatusSnapshot.swift": {
+    "mtime": 1780381519.4887123,
+    "ast_hash": "f4381952f30d16101bbdbd920419e137",
+    "semantic_hash": "f4381952f30d16101bbdbd920419e137"
+  },
+  "secant/Sources/Models/TransactionState.swift": {
+    "mtime": 1781700249.709611,
+    "ast_hash": "b65e7ffa30e65c469b138038f43f3d4e",
+    "semantic_hash": "b65e7ffa30e65c469b138038f43f3d4e"
+  },
+  "secant/Sources/Models/UserMetadataEncryptionKeys.swift": {
+    "mtime": 1780381519.4889615,
+    "ast_hash": "615f74ce3584998edf5657f2499a8509",
+    "semantic_hash": "615f74ce3584998edf5657f2499a8509"
+  },
+  "secant/Sources/Models/ValidationWord.swift": {
+    "mtime": 1780381519.4890296,
+    "ast_hash": "610255ecd4d6878cba0f0a930f392d92",
+    "semantic_hash": "610255ecd4d6878cba0f0a930f392d92"
+  },
+  "secant/Sources/Models/VotingMetadata.swift": {
+    "mtime": 1780381519.4891026,
+    "ast_hash": "d4dbf79e946dc9ff62d70f1c1f6a797b",
+    "semantic_hash": "d4dbf79e946dc9ff62d70f1c1f6a797b"
+  },
+  "secant/Sources/Models/WalletAccount.swift": {
+    "mtime": 1780381519.4891753,
+    "ast_hash": "8fc90c5296a959ac043c934862c54b69",
+    "semantic_hash": "8fc90c5296a959ac043c934862c54b69"
+  },
+  "secant/Sources/Models/WalletConfig.swift": {
+    "mtime": 1780989106.2956538,
+    "ast_hash": "4d7cea0b83c02c5c1f76a45a511452e9",
+    "semantic_hash": "4d7cea0b83c02c5c1f76a45a511452e9"
+  },
+  "secant/Sources/Models/WalletStatus.swift": {
+    "mtime": 1780381519.4893398,
+    "ast_hash": "6c9ea97f04725b7ce550b0b0ac5dcfb9",
+    "semantic_hash": "6c9ea97f04725b7ce550b0b0ac5dcfb9"
+  },
+  "secant/Sources/SecantApp.swift": {
+    "mtime": 1780381519.4894269,
+    "ast_hash": "fcd41c742da3b336d9a7123ddc4ffadd",
+    "semantic_hash": "fcd41c742da3b336d9a7123ddc4ffadd"
+  },
+  "secant/Sources/UIComponents/Backgrounds/CustomRoundedRectangle.swift": {
+    "mtime": 1780381519.4896119,
+    "ast_hash": "ec43b1a0e79d40bce3453451507ccb31",
+    "semantic_hash": "ec43b1a0e79d40bce3453451507ccb31"
+  },
+  "secant/Sources/UIComponents/Backgrounds/ListBackground.swift": {
+    "mtime": 1780381519.4896934,
+    "ast_hash": "cce942ee524a83abcf5932b817fbd628",
+    "semantic_hash": "cce942ee524a83abcf5932b817fbd628"
+  },
+  "secant/Sources/UIComponents/Backgrounds/NoChainPlaceholder.swift": {
+    "mtime": 1780381519.4897788,
+    "ast_hash": "0435b6c3a8f18b4637443d7b76cdcb2c",
+    "semantic_hash": "0435b6c3a8f18b4637443d7b76cdcb2c"
+  },
+  "secant/Sources/UIComponents/Backgrounds/NoTransactionPlaceholder.swift": {
+    "mtime": 1780381519.4900107,
+    "ast_hash": "10df7ac22d066dde8c8e0c2bdf8a4cc2",
+    "semantic_hash": "10df7ac22d066dde8c8e0c2bdf8a4cc2"
+  },
+  "secant/Sources/UIComponents/Backgrounds/ScreenBackground.swift": {
+    "mtime": 1780381519.4901073,
+    "ast_hash": "80c9586962b85b4684700496bcede188",
+    "semantic_hash": "80c9586962b85b4684700496bcede188"
+  },
+  "secant/Sources/UIComponents/Backgrounds/VisualEffectBlur.swift": {
+    "mtime": 1780381519.4903011,
+    "ast_hash": "aaa16294ca69fe5bde72c5e447932ac1",
+    "semantic_hash": "aaa16294ca69fe5bde72c5e447932ac1"
+  },
+  "secant/Sources/UIComponents/Badges/FloatingArrow.swift": {
+    "mtime": 1780381519.4905236,
+    "ast_hash": "f117b803106205461d3aa6d737aad5e1",
+    "semantic_hash": "f117b803106205461d3aa6d737aad5e1"
+  },
+  "secant/Sources/UIComponents/Badges/PrivacyBadge.swift": {
+    "mtime": 1780381519.4906216,
+    "ast_hash": "e4fb04bf4b13ba1a23e537ce146588b7",
+    "semantic_hash": "e4fb04bf4b13ba1a23e537ce146588b7"
+  },
+  "secant/Sources/UIComponents/Badges/SwapBadge.swift": {
+    "mtime": 1780381519.490711,
+    "ast_hash": "b25eb36d2ba0163698245c9b4a5353de",
+    "semantic_hash": "b25eb36d2ba0163698245c9b4a5353de"
+  },
+  "secant/Sources/UIComponents/Balance/AvailableBalanceView.swift": {
+    "mtime": 1780381519.4908433,
+    "ast_hash": "aea472e96554aff327028f41abe22e2a",
+    "semantic_hash": "aea472e96554aff327028f41abe22e2a"
+  },
+  "secant/Sources/UIComponents/Balance/BalanceWithIconView.swift": {
+    "mtime": 1780381519.4909282,
+    "ast_hash": "3d254bfbc0db7d1531df8d6dfa844471",
+    "semantic_hash": "3d254bfbc0db7d1531df8d6dfa844471"
+  },
+  "secant/Sources/UIComponents/Balance/Picker/ZashiPicker.swift": {
+    "mtime": 1780381519.4910607,
+    "ast_hash": "f9378cd602bd2ff0854ae3a57d026091",
+    "semantic_hash": "f9378cd602bd2ff0854ae3a57d026091"
+  },
+  "secant/Sources/UIComponents/Balance/ZatoshiRepresentationView.swift": {
+    "mtime": 1780381519.4912603,
+    "ast_hash": "d2a65b08db2deddcec788ee8fc953c7b",
+    "semantic_hash": "d2a65b08db2deddcec788ee8fc953c7b"
+  },
+  "secant/Sources/UIComponents/Buttons/ActionRow.swift": {
+    "mtime": 1780381519.491421,
+    "ast_hash": "1d722bfe664bbf002c51c0b2f097361b",
+    "semantic_hash": "1d722bfe664bbf002c51c0b2f097361b"
+  },
+  "secant/Sources/UIComponents/Buttons/CheckboxToggleStyle.swift": {
+    "mtime": 1780381519.4915414,
+    "ast_hash": "823a0acaddf26bddbc74e6728f2275c1",
+    "semantic_hash": "823a0acaddf26bddbc74e6728f2275c1"
+  },
+  "secant/Sources/UIComponents/Buttons/ZashiButton.swift": {
+    "mtime": 1780989109.1817882,
+    "ast_hash": "9bf6dd5ae2d5eb586f82eac400f85422",
+    "semantic_hash": "9bf6dd5ae2d5eb586f82eac400f85422"
+  },
+  "secant/Sources/UIComponents/Contact/ContactView.swift": {
+    "mtime": 1780381519.491861,
+    "ast_hash": "3b322776369e9f6142a74820d03fbccc",
+    "semantic_hash": "3b322776369e9f6142a74820d03fbccc"
+  },
+  "secant/Sources/UIComponents/Extensions/ConditionalModifier.swift": {
+    "mtime": 1780381519.49209,
+    "ast_hash": "04b7e90a71e6c9eb7bcd35eef5754bde",
+    "semantic_hash": "04b7e90a71e6c9eb7bcd35eef5754bde"
+  },
+  "secant/Sources/UIComponents/Extensions/View+InnerShadow.swift": {
+    "mtime": 1780381519.4921677,
+    "ast_hash": "ddcc2bbb5169eb1a2a2aefce3048eddc",
+    "semantic_hash": "ddcc2bbb5169eb1a2a2aefce3048eddc"
+  },
+  "secant/Sources/UIComponents/FontStyles/SecantTextStyles.swift": {
+    "mtime": 1780381519.4923081,
+    "ast_hash": "5d857ed4181a73a7bf46f71e71ebe184",
+    "semantic_hash": "5d857ed4181a73a7bf46f71e71ebe184"
+  },
+  "secant/Sources/UIComponents/HiddenIfSet/HiddenIfSet.swift": {
+    "mtime": 1780381519.4924467,
+    "ast_hash": "31bfbd698dd2c08bfa1f09c28c64297d",
+    "semantic_hash": "31bfbd698dd2c08bfa1f09c28c64297d"
+  },
+  "secant/Sources/UIComponents/Hintbox/HintBoxShape.swift": {
+    "mtime": 1780381519.4925716,
+    "ast_hash": "9375f3eef1587854ca3e33c45582c7c5",
+    "semantic_hash": "9375f3eef1587854ca3e33c45582c7c5"
+  },
+  "secant/Sources/UIComponents/Images/ZashiImage.swift": {
+    "mtime": 1780989106.295799,
+    "ast_hash": "2a0de504c2c63d1683be2e4ec732cb4a",
+    "semantic_hash": "2a0de504c2c63d1683be2e4ec732cb4a"
+  },
+  "secant/Sources/UIComponents/Info/InfoRow.swift": {
+    "mtime": 1780381519.4928424,
+    "ast_hash": "238e3b42ed89fe632acec916b454af9b",
+    "semantic_hash": "238e3b42ed89fe632acec916b454af9b"
+  },
+  "secant/Sources/UIComponents/KeyboardVisibility/KeyboardVisibilityModifier.swift": {
+    "mtime": 1780381519.4929945,
+    "ast_hash": "b55005d50a5082cada2816b2ad5226b4",
+    "semantic_hash": "b55005d50a5082cada2816b2ad5226b4"
+  },
+  "secant/Sources/UIComponents/Overlays/EnlargeQRView.swift": {
+    "mtime": 1780381519.4931915,
+    "ast_hash": "6332642c0a3a54bbc6351a4c904fe81a",
+    "semantic_hash": "6332642c0a3a54bbc6351a4c904fe81a"
+  },
+  "secant/Sources/UIComponents/Overlays/SplashView.swift": {
+    "mtime": 1780989109.1822295,
+    "ast_hash": "91505b64e00f16c786ece36c50df5e66",
+    "semantic_hash": "91505b64e00f16c786ece36c50df5e66"
+  },
+  "secant/Sources/UIComponents/PreferenceKeys/BirthdayPreferenceKey.swift": {
+    "mtime": 1780989106.296145,
+    "ast_hash": "4c58e750ad3e6735755ec7ad6df0ae30",
+    "semantic_hash": "4c58e750ad3e6735755ec7ad6df0ae30"
+  },
+  "secant/Sources/UIComponents/PreferenceKeys/ExchangeRateFeaturePreferenceKey.swift": {
+    "mtime": 1780989106.2963006,
+    "ast_hash": "aa3eb7ea18e66cbeeb97df0e887567f0",
+    "semantic_hash": "aa3eb7ea18e66cbeeb97df0e887567f0"
+  },
+  "secant/Sources/UIComponents/PreferenceKeys/ExchangeRateStaleTooltipPreferenceKey.swift": {
+    "mtime": 1780989106.296441,
+    "ast_hash": "c34b4bdab7eaa2f4a19bf91091f854b7",
+    "semantic_hash": "c34b4bdab7eaa2f4a19bf91091f854b7"
+  },
+  "secant/Sources/UIComponents/PreferenceKeys/SizePreferenceKey.swift": {
+    "mtime": 1780989106.29658,
+    "ast_hash": "78918820aadd8052bb05fabd51866c43",
+    "semantic_hash": "78918820aadd8052bb05fabd51866c43"
+  },
+  "secant/Sources/UIComponents/PreferenceKeys/UnknownAddressPreferenceKey.swift": {
+    "mtime": 1780989106.296713,
+    "ast_hash": "acde9fe959f2afb21e582b748c41326f",
+    "semantic_hash": "acde9fe959f2afb21e582b748c41326f"
+  },
+  "secant/Sources/UIComponents/Progress/CircularProgressView.swift": {
+    "mtime": 1780381519.4941802,
+    "ast_hash": "02b23ad4d2a9060681bcf57f78fa2579",
+    "semantic_hash": "02b23ad4d2a9060681bcf57f78fa2579"
+  },
+  "secant/Sources/UIComponents/Progress/ZashiSyncingProgressStyle.swift": {
+    "mtime": 1780381519.4942632,
+    "ast_hash": "ec360dbedd604225a2066536bacf2433",
+    "semantic_hash": "ec360dbedd604225a2066536bacf2433"
+  },
+  "secant/Sources/UIComponents/Screen/ScreenHorizontalPadding.swift": {
+    "mtime": 1780381519.494398,
+    "ast_hash": "b1c6496f501c2ed9dbdecc3d9bc75486",
+    "semantic_hash": "b1c6496f501c2ed9dbdecc3d9bc75486"
+  },
+  "secant/Sources/UIComponents/Shapes/MessageShape.swift": {
+    "mtime": 1780381519.494537,
+    "ast_hash": "2bb446b79d839bae8056feb30693e35d",
+    "semantic_hash": "2bb446b79d839bae8056feb30693e35d"
+  },
+  "secant/Sources/UIComponents/Shapes/Wedge.swift": {
+    "mtime": 1780381519.4946127,
+    "ast_hash": "396456e1b6b14506756034d01b82091b",
+    "semantic_hash": "396456e1b6b14506756034d01b82091b"
+  },
+  "secant/Sources/UIComponents/Shapes/ZcashSymbol.swift": {
+    "mtime": 1780381519.494693,
+    "ast_hash": "7ec0dc946a2234314fcc7cb6f286a5c6",
+    "semantic_hash": "7ec0dc946a2234314fcc7cb6f286a5c6"
+  },
+  "secant/Sources/UIComponents/Sheets/InsufficientFundsSheet.swift": {
+    "mtime": 1780381519.4948397,
+    "ast_hash": "0e6e446d1f97c34a66b41891d24c7093",
+    "semantic_hash": "0e6e446d1f97c34a66b41891d24c7093"
+  },
+  "secant/Sources/UIComponents/Sheets/ZashiSheet.swift": {
+    "mtime": 1780989106.296868,
+    "ast_hash": "d2265e023f9e58cd286996a90a00826b",
+    "semantic_hash": "d2265e023f9e58cd286996a90a00826b"
+  },
+  "secant/Sources/UIComponents/StateWrapper/StateWrapper.swift": {
+    "mtime": 1780381519.4950624,
+    "ast_hash": "9a996ed929fd5b63d8c9f4fc484aa342",
+    "semantic_hash": "9a996ed929fd5b63d8c9f4fc484aa342"
+  },
+  "secant/Sources/UIComponents/Swaps/SwapFromToView.swift": {
+    "mtime": 1780381519.4953392,
+    "ast_hash": "45eda58eecea0e91279431d7a4a227e7",
+    "semantic_hash": "45eda58eecea0e91279431d7a4a227e7"
+  },
+  "secant/Sources/UIComponents/Text/ConditionalFont.swift": {
+    "mtime": 1780381519.4954648,
+    "ast_hash": "6c571a419b57a6c72026e4ad65cb79d1",
+    "semantic_hash": "6c571a419b57a6c72026e4ad65cb79d1"
+  },
+  "secant/Sources/UIComponents/Text/ConditionalStrikethrough.swift": {
+    "mtime": 1780381519.495544,
+    "ast_hash": "203aa3a8836defb73c93ee7707846200",
+    "semantic_hash": "203aa3a8836defb73c93ee7707846200"
+  },
+  "secant/Sources/UIComponents/Text/ZashiFont.swift": {
+    "mtime": 1780381519.4956317,
+    "ast_hash": "8d61cc82c34cf0f344f2b6ae88f989bc",
+    "semantic_hash": "8d61cc82c34cf0f344f2b6ae88f989bc"
+  },
+  "secant/Sources/UIComponents/Text/ZashiText.swift": {
+    "mtime": 1780989106.2969892,
+    "ast_hash": "7d21e92e315d474b875d13db1a6c8189",
+    "semantic_hash": "7d21e92e315d474b875d13db1a6c8189"
+  },
+  "secant/Sources/UIComponents/TextFields/MessageEditor/MessageEditor.swift": {
+    "mtime": 1780381519.4959197,
+    "ast_hash": "000a11fa4aa4d5d28ab600904d2fc4e6",
+    "semantic_hash": "000a11fa4aa4d5d28ab600904d2fc4e6"
+  },
+  "secant/Sources/UIComponents/TextFields/MessageEditor/MessageEditorStore.swift": {
+    "mtime": 1780381519.4960203,
+    "ast_hash": "85a5e24b6e52dd68ada486bcdb1e334a",
+    "semantic_hash": "85a5e24b6e52dd68ada486bcdb1e334a"
+  },
+  "secant/Sources/UIComponents/TextFields/ZashiTextField.swift": {
+    "mtime": 1781700961.9455023,
+    "ast_hash": "c56f592e5a0a1be21e0b3563f916d9ec",
+    "semantic_hash": "c56f592e5a0a1be21e0b3563f916d9ec"
+  },
+  "secant/Sources/UIComponents/Toast/Toast.swift": {
+    "mtime": 1780989106.2971017,
+    "ast_hash": "938f1883c3a415b1252931357e85916e",
+    "semantic_hash": "938f1883c3a415b1252931357e85916e"
+  },
+  "secant/Sources/UIComponents/Toggle/DescriptiveToggle.swift": {
+    "mtime": 1780381519.496369,
+    "ast_hash": "b61db55ae2fd8011a05edaa0711d6424",
+    "semantic_hash": "b61db55ae2fd8011a05edaa0711d6424"
+  },
+  "secant/Sources/UIComponents/Toggle/ZashiToggle.swift": {
+    "mtime": 1780381519.496453,
+    "ast_hash": "ece0450749dfc5d07356770d3ca9ba4b",
+    "semantic_hash": "ece0450749dfc5d07356770d3ca9ba4b"
+  },
+  "secant/Sources/UIComponents/Toolbar/ToolbarAction.swift": {
+    "mtime": 1780381519.496575,
+    "ast_hash": "d289d7e22dae193665231d5458ddf4c3",
+    "semantic_hash": "d289d7e22dae193665231d5458ddf4c3"
+  },
+  "secant/Sources/UIComponents/Toolbar/ZashiBack.swift": {
+    "mtime": 1780649729.6072032,
+    "ast_hash": "cec060281840c1cb30845c5121fe34bb",
+    "semantic_hash": "cec060281840c1cb30845c5121fe34bb"
+  },
+  "secant/Sources/UIComponents/Toolbar/ZashiBackV2.swift": {
+    "mtime": 1780381519.4967244,
+    "ast_hash": "90d534227f6659d9f24bd80924e288fc",
+    "semantic_hash": "90d534227f6659d9f24bd80924e288fc"
+  },
+  "secant/Sources/UIComponents/Toolbar/ZashiTitle.swift": {
+    "mtime": 1780381519.496799,
+    "ast_hash": "d6b43ca262b7a2d1373361f3739c7ed6",
+    "semantic_hash": "d6b43ca262b7a2d1373361f3739c7ed6"
+  },
+  "secant/Sources/UIComponents/Tooltip/Tooltip.swift": {
+    "mtime": 1780381519.496911,
+    "ast_hash": "f3a926e0b2a24e6e72edc0f24daf36ce",
+    "semantic_hash": "f3a926e0b2a24e6e72edc0f24daf36ce"
+  },
+  "secant/Sources/UIComponents/Transactions/TransactionRowView.swift": {
+    "mtime": 1780381519.4970317,
+    "ast_hash": "f999b6c85b0a614c5bdf39233501e17e",
+    "semantic_hash": "f999b6c85b0a614c5bdf39233501e17e"
+  },
+  "secant/Sources/UIComponents/UIKitBridge/InAppBrowser.swift": {
+    "mtime": 1780381519.497148,
+    "ast_hash": "7655b70246d7a06f1a07791915d35a45",
+    "semantic_hash": "7655b70246d7a06f1a07791915d35a45"
+  },
+  "secant/Sources/UIComponents/UIKitBridge/UIMailDialog.swift": {
+    "mtime": 1780989106.2972264,
+    "ast_hash": "d9adc2906dd434ec3a33263cbcacd209",
+    "semantic_hash": "d9adc2906dd434ec3a33263cbcacd209"
+  },
+  "secant/Sources/UIComponents/UIKitBridge/UIShareDialog.swift": {
+    "mtime": 1781700249.7097874,
+    "ast_hash": "e34ac62540cf71982371d8e77f398422",
+    "semantic_hash": "e34ac62540cf71982371d8e77f398422"
+  },
+  "secant/Sources/UIComponents/ZashiLogo/ZashiLogo.swift": {
+    "mtime": 1780381519.4974124,
+    "ast_hash": "c084f5fcb9248b7f8cc0d6fc93ec60bf",
+    "semantic_hash": "c084f5fcb9248b7f8cc0d6fc93ec60bf"
+  },
+  "secant/Sources/UIComponents/ZcashBadge/ZcashBadge.swift": {
+    "mtime": 1780381519.497526,
+    "ast_hash": "65fb2a5064d08d127d98c93c203fffd7",
+    "semantic_hash": "65fb2a5064d08d127d98c93c203fffd7"
+  },
+  "secant/Sources/Utils/AccessibilityID.swift": {
+    "mtime": 1781700961.9456291,
+    "ast_hash": "6d4b1947779a84496fa78220a94fced4",
+    "semantic_hash": "6d4b1947779a84496fa78220a94fced4"
+  },
+  "secant/Sources/Utils/AnyDecodable.swift": {
+    "mtime": 1780381519.4976385,
+    "ast_hash": "419d35cf23885143f6dc719dca975614",
+    "semantic_hash": "419d35cf23885143f6dc719dca975614"
+  },
+  "secant/Sources/Utils/Array+Chunked.swift": {
+    "mtime": 1780381519.497712,
+    "ast_hash": "3463a25415f7569e61315555fbc7b937",
+    "semantic_hash": "3463a25415f7569e61315555fbc7b937"
+  },
+  "secant/Sources/Utils/BalanceFormatter.swift": {
+    "mtime": 1780381519.4978065,
+    "ast_hash": "04bda7b5d89de95756019065040d867f",
+    "semantic_hash": "04bda7b5d89de95756019065040d867f"
+  },
+  "secant/Sources/Utils/Bindings.swift": {
+    "mtime": 1780989109.1825259,
+    "ast_hash": "e8e3dee484feb6f1a7ba1a82bc553979",
+    "semantic_hash": "e8e3dee484feb6f1a7ba1a82bc553979"
+  },
+  "secant/Sources/Utils/Clamped.swift": {
+    "mtime": 1782478748.635739,
+    "ast_hash": "d94b35fa6f51a8b326778d9673731021",
+    "semantic_hash": "d94b35fa6f51a8b326778d9673731021"
+  },
+  "secant/Sources/Utils/Data+Serialization.swift": {
+    "mtime": 1780381519.4980514,
+    "ast_hash": "80ca26ea930b2ab05e614983f548a78b",
+    "semantic_hash": "80ca26ea930b2ab05e614983f548a78b"
+  },
+  "secant/Sources/Utils/Date+Readable.swift": {
+    "mtime": 1780381519.498123,
+    "ast_hash": "5eb79ab952fe31f52b066c4988497822",
+    "semantic_hash": "5eb79ab952fe31f52b066c4988497822"
+  },
+  "secant/Sources/Utils/Decimals.swift": {
+    "mtime": 1780381519.4982104,
+    "ast_hash": "add2e5e8964ff6b4ae9cb8fec6ffb23b",
+    "semantic_hash": "add2e5e8964ff6b4ae9cb8fec6ffb23b"
+  },
+  "secant/Sources/Utils/LogStore.swift": {
+    "mtime": 1780381519.4982827,
+    "ast_hash": "2378d802e81bc93238c6978f9bb02f8a",
+    "semantic_hash": "2378d802e81bc93238c6978f9bb02f8a"
+  },
+  "secant/Sources/Utils/Logging/TCALoggerReducer.swift": {
+    "mtime": 1780989106.2973576,
+    "ast_hash": "14d559fc3058b36be0be491750611493",
+    "semantic_hash": "14d559fc3058b36be0be491750611493"
+  },
+  "secant/Sources/Utils/Logging/TCALogging.swift": {
+    "mtime": 1780381519.4984667,
+    "ast_hash": "24cd7260871b40d8fd687e7bc040ba65",
+    "semantic_hash": "24cd7260871b40d8fd687e7bc040ba65"
+  },
+  "secant/Sources/Utils/NavigationLinks.swift": {
+    "mtime": 1780381519.4985676,
+    "ast_hash": "90259e0814d8eea9d1ccb86babb4cc9b",
+    "semantic_hash": "90259e0814d8eea9d1ccb86babb4cc9b"
+  },
+  "secant/Sources/Utils/Network.swift": {
+    "mtime": 1782478748.635879,
+    "ast_hash": "d5b9fd089a42bfd4075c90930e754d98",
+    "semantic_hash": "d5b9fd089a42bfd4075c90930e754d98"
+  },
+  "secant/Sources/Utils/NumberFormatter+zcash.swift": {
+    "mtime": 1780381519.49873,
+    "ast_hash": "f2c47ecfc2f5d9c7b8481fad952ab143",
+    "semantic_hash": "f2c47ecfc2f5d9c7b8481fad952ab143"
+  },
+  "secant/Sources/Utils/Previews.swift": {
+    "mtime": 1780381519.4988031,
+    "ast_hash": "10b8c3b3ce0042f5ee971074881b172e",
+    "semantic_hash": "10b8c3b3ce0042f5ee971074881b172e"
+  },
+  "secant/Sources/Utils/QRCodeGenerator.swift": {
+    "mtime": 1780989109.1828442,
+    "ast_hash": "40af42435a85f124b40b28fec30ec956",
+    "semantic_hash": "40af42435a85f124b40b28fec30ec956"
+  },
+  "secant/Sources/Utils/ScrollableWhenScaled.swift": {
+    "mtime": 1780381519.4989777,
+    "ast_hash": "7be81e7ed3ab2f4165de7c0d94b29859",
+    "semantic_hash": "7be81e7ed3ab2f4165de7c0d94b29859"
+  },
+  "secant/Sources/Utils/SensitiveData.swift": {
+    "mtime": 1782478748.6363661,
+    "ast_hash": "fe52704c2ff79db172ced4d4f6123ebc",
+    "semantic_hash": "fe52704c2ff79db172ced4d4f6123ebc"
+  },
+  "secant/Sources/Utils/Strings.swift": {
+    "mtime": 1780381519.4991298,
+    "ast_hash": "23bcc39378c115228b5fcea2bd436e0a",
+    "semantic_hash": "23bcc39378c115228b5fcea2bd436e0a"
+  },
+  "secant/Sources/Utils/URL+empty.swift": {
+    "mtime": 1780381519.4992042,
+    "ast_hash": "a7f9441d711f65eff19cd98c8c7aa45d",
+    "semantic_hash": "a7f9441d711f65eff19cd98c8c7aa45d"
+  },
+  "secant/Sources/Utils/WalletLogger.swift": {
+    "mtime": 1780989106.297586,
+    "ast_hash": "c3968b992e6de63c562a66a827f02aa1",
+    "semantic_hash": "c3968b992e6de63c562a66a827f02aa1"
+  },
+  "secant/Sources/Utils/ZcashError+DetailedMessage.swift": {
+    "mtime": 1780381519.4993463,
+    "ast_hash": "44de638744b48354c2ef62cb2aed9576",
+    "semantic_hash": "44de638744b48354c2ef62cb2aed9576"
+  },
+  "secant/Sources/Vendors/Keystone/AnimatedQRCode.swift": {
+    "mtime": 1780381519.4995005,
+    "ast_hash": "e50bccc7bb43d97a7b6bceb77974c1cb",
+    "semantic_hash": "e50bccc7bb43d97a7b6bceb77974c1cb"
+  },
+  "zodlTests/AboutTests/AboutTests.swift": {
+    "mtime": 1782799492.0929523,
+    "ast_hash": "9170f6113ee872184bcbe5bf8ab5322d",
+    "semantic_hash": "9170f6113ee872184bcbe5bf8ab5322d"
+  },
+  "zodlTests/AddKeystoneHWWalletTests/AddKeystoneHWWalletTests.swift": {
+    "mtime": 1782799492.0931344,
+    "ast_hash": "787a99fec2491938052b007ab71e44a8",
+    "semantic_hash": "787a99fec2491938052b007ab71e44a8"
+  },
+  "zodlTests/AddressBookTests/AddressBookLogicTests.swift": {
+    "mtime": 1781700961.9457686,
+    "ast_hash": "6e0318f8f53d3c2549e7bb7955667cd0",
+    "semantic_hash": "6e0318f8f53d3c2549e7bb7955667cd0"
+  },
+  "zodlTests/AddressBookTests/AddressBookSerializationTests.swift": {
+    "mtime": 1781700961.945883,
+    "ast_hash": "9dd3e6e29cb88b3a0c3ca40a4e9a98dc",
+    "semantic_hash": "9dd3e6e29cb88b3a0c3ca40a4e9a98dc"
+  },
+  "zodlTests/AddressDetailsTests/AddressDetailsTests.swift": {
+    "mtime": 1782799492.0932932,
+    "ast_hash": "6d0d42d87c3e33b7989c86b75ee7bbc4",
+    "semantic_hash": "6d0d42d87c3e33b7989c86b75ee7bbc4"
+  },
+  "zodlTests/BackupFlowTests/RecoveryPhraseBackupTests.swift": {
+    "mtime": 1781700249.7102673,
+    "ast_hash": "91bb555ae3813b25f0bbccbbf943f6b6",
+    "semantic_hash": "91bb555ae3813b25f0bbccbbf943f6b6"
+  },
+  "zodlTests/BackupFlowTests/RecoveryPhraseDisplayTests.swift": {
+    "mtime": 1782799492.0935109,
+    "ast_hash": "a6872a4e6d2e62c50b4fc7a934d5252f",
+    "semantic_hash": "a6872a4e6d2e62c50b4fc7a934d5252f"
+  },
+  "zodlTests/BalancesTests/BalancesTests.swift": {
+    "mtime": 1782799492.093741,
+    "ast_hash": "9fb3a8327cdce516e4395766a5199be4",
+    "semantic_hash": "9fb3a8327cdce516e4395766a5199be4"
+  },
+  "zodlTests/CurrencyConversionSetupTests/CurrencyConversionSetupTests.swift": {
+    "mtime": 1782799492.093919,
+    "ast_hash": "a52d22d7aee722eb916837d583cfffa3",
+    "semantic_hash": "a52d22d7aee722eb916837d583cfffa3"
+  },
+  "zodlTests/CurrencyConversionTests/CurrencyConversionTests.swift": {
+    "mtime": 1781700961.946188,
+    "ast_hash": "0ee00fe31e457ce0c7f041a4a6537795",
+    "semantic_hash": "0ee00fe31e457ce0c7f041a4a6537795"
+  },
+  "zodlTests/DeeplinkTests/DeeplinkURLParsingTests.swift": {
+    "mtime": 1781700249.7114565,
+    "ast_hash": "2c3a960535bf8da963625b4cbb14e481",
+    "semantic_hash": "2c3a960535bf8da963625b4cbb14e481"
+  },
+  "zodlTests/DeleteWalletTests/DeleteWalletTests.swift": {
+    "mtime": 1782799492.0940697,
+    "ast_hash": "f1a5d0e636d00608ac975e68e599f671",
+    "semantic_hash": "f1a5d0e636d00608ac975e68e599f671"
+  },
+  "zodlTests/DisconnectHWWalletTests/DisconnectHWWalletTests.swift": {
+    "mtime": 1782799492.0942113,
+    "ast_hash": "baac6923356decd248b16b8a2bda598d",
+    "semantic_hash": "baac6923356decd248b16b8a2bda598d"
+  },
+  "zodlTests/EncryptionTests/EncryptionKeysTests.swift": {
+    "mtime": 1781700961.946374,
+    "ast_hash": "371dd1fd211e8cad305e37023bd92157",
+    "semantic_hash": "371dd1fd211e8cad305e37023bd92157"
+  },
+  "zodlTests/ExportLogsTests/ExportLogsReducerTests.swift": {
+    "mtime": 1782799492.0943139,
+    "ast_hash": "c9e49de4fb6eb0101a2e10478531cceb",
+    "semantic_hash": "c9e49de4fb6eb0101a2e10478531cceb"
+  },
+  "zodlTests/ExportLogsTests/ExportLogsTests.swift": {
+    "mtime": 1781700249.7116313,
+    "ast_hash": "5c114d971a65bbb23b8bf3b59c87d264",
+    "semantic_hash": "5c114d971a65bbb23b8bf3b59c87d264"
+  },
+  "zodlTests/ExportTransactionHistoryTests/ExportTransactionHistoryReducerTests.swift": {
+    "mtime": 1782799492.0944133,
+    "ast_hash": "175e9e6b8f3551d10d7afb7dd05b0a6f",
+    "semantic_hash": "175e9e6b8f3551d10d7afb7dd05b0a6f"
+  },
+  "zodlTests/ExportTransactionHistoryTests/ExportTransactionHistoryTests.swift": {
+    "mtime": 1781700249.7117527,
+    "ast_hash": "2dbc734bb8dcb104b8f2378a022ea4b9",
+    "semantic_hash": "2dbc734bb8dcb104b8f2378a022ea4b9"
+  },
+  "zodlTests/FlexaTests/FlexaSecurityTests.swift": {
+    "mtime": 1782478748.6369147,
+    "ast_hash": "b3fb0adc21493460486a90b308ff2a5d",
+    "semantic_hash": "b3fb0adc21493460486a90b308ff2a5d"
+  },
+  "zodlTests/HomeTests/HomeTests.swift": {
+    "mtime": 1781700249.7121518,
+    "ast_hash": "4e1bfd0614cb09750892c2892dae0bd1",
+    "semantic_hash": "4e1bfd0614cb09750892c2892dae0bd1"
+  },
+  "zodlTests/MemoByteCountingTests/MemoByteCountingTests.swift": {
+    "mtime": 1781700249.7126327,
+    "ast_hash": "aa47219068272d204e68dbcb1d79c6e7",
+    "semantic_hash": "aa47219068272d204e68dbcb1d79c6e7"
+  },
+  "zodlTests/ModelsTests/CMCRateTests.swift": {
+    "mtime": 1781725545.3367612,
+    "ast_hash": "681fddb9094177d7ba421978a64e5943",
+    "semantic_hash": "681fddb9094177d7ba421978a64e5943"
+  },
+  "zodlTests/ModelsTests/ChainTokenTests.swift": {
+    "mtime": 1781700961.9465656,
+    "ast_hash": "d5a15f0b3acc1706227ec34bcf734f4b",
+    "semantic_hash": "d5a15f0b3acc1706227ec34bcf734f4b"
+  },
+  "zodlTests/ModelsTests/FeatureFlagsTests.swift": {
+    "mtime": 1781700961.9466486,
+    "ast_hash": "b0b85ed3a35a887ea6e036053fff3093",
+    "semantic_hash": "b0b85ed3a35a887ea6e036053fff3093"
+  },
+  "zodlTests/ModelsTests/RecoveryPhraseTests.swift": {
+    "mtime": 1781700961.9467351,
+    "ast_hash": "308e54227c0e04ff7914b8711522f158",
+    "semantic_hash": "308e54227c0e04ff7914b8711522f158"
+  },
+  "zodlTests/ModelsTests/SpendabilityTests.swift": {
+    "mtime": 1781700961.9468224,
+    "ast_hash": "3e284133a756c00ac0dd2f355f9cbb4b",
+    "semantic_hash": "3e284133a756c00ac0dd2f355f9cbb4b"
+  },
+  "zodlTests/ModelsTests/StoredWalletTests.swift": {
+    "mtime": 1781700961.9469097,
+    "ast_hash": "da06c0145284d7660e2f51e3242c7c6a",
+    "semantic_hash": "da06c0145284d7660e2f51e3242c7c6a"
+  },
+  "zodlTests/ModelsTests/SyncStatusSnapshotTests.swift": {
+    "mtime": 1781700961.9470117,
+    "ast_hash": "1dec674a876049faa49d54237b8f69db",
+    "semantic_hash": "1dec674a876049faa49d54237b8f69db"
+  },
+  "zodlTests/ModelsTests/WalletAccountTests.swift": {
+    "mtime": 1781700961.9471102,
+    "ast_hash": "ffdb489f18a643852d733dce62106aad",
+    "semantic_hash": "ffdb489f18a643852d733dce62106aad"
+  },
+  "zodlTests/ModelsTests/WalletConfigTests.swift": {
+    "mtime": 1781700961.9472127,
+    "ast_hash": "cc6f3305bdefcf65e37462856591d5ec",
+    "semantic_hash": "cc6f3305bdefcf65e37462856591d5ec"
+  },
+  "zodlTests/ModelsTests/WalletStatusTests.swift": {
+    "mtime": 1781700961.947303,
+    "ast_hash": "fdd32fb0a553854649daa8c40969d0d4",
+    "semantic_hash": "fdd32fb0a553854649daa8c40969d0d4"
+  },
+  "zodlTests/OSStatusErrorTests/OSStatusErrorTests.swift": {
+    "mtime": 1782799492.0945404,
+    "ast_hash": "ef2b3d48fe7c012803bdb9a0219a8687",
+    "semantic_hash": "ef2b3d48fe7c012803bdb9a0219a8687"
+  },
+  "zodlTests/PrivateDataConsentTests/PrivateDataConsentTests.swift": {
+    "mtime": 1781700249.7129264,
+    "ast_hash": "70510b28c5db20c8cbbf5f9cff5452d4",
+    "semantic_hash": "70510b28c5db20c8cbbf5f9cff5452d4"
+  },
+  "zodlTests/QRCodeGeneratorTests/QRCodeGeneratorTests.swift": {
+    "mtime": 1781700249.7134323,
+    "ast_hash": "430b81c01e83c7da1949cbdd3d01d844",
+    "semantic_hash": "430b81c01e83c7da1949cbdd3d01d844"
+  },
+  "zodlTests/RequestZecTests/RequestZecTests.swift": {
+    "mtime": 1781700961.9474683,
+    "ast_hash": "5719928155dff41dd24a64b862ac7da1",
+    "semantic_hash": "5719928155dff41dd24a64b862ac7da1"
+  },
+  "zodlTests/ResyncWalletTests/ResyncWalletTests.swift": {
+    "mtime": 1782799492.0946743,
+    "ast_hash": "9c627a0f56299d027c5098654ad4da0e",
+    "semantic_hash": "9c627a0f56299d027c5098654ad4da0e"
+  },
+  "zodlTests/ReviewRequestTests/ReviewRequestTests.swift": {
+    "mtime": 1781700249.7138956,
+    "ast_hash": "d2c27d4d9a3eea4e31043943d71d2af8",
+    "semantic_hash": "d2c27d4d9a3eea4e31043943d71d2af8"
+  },
+  "zodlTests/ScanTests/ScanCoordFlowZip321Tests.swift": {
+    "mtime": 1782478748.63732,
+    "ast_hash": "851bdcd4d082361aa3b883498a81d82f",
+    "semantic_hash": "851bdcd4d082361aa3b883498a81d82f"
+  },
+  "zodlTests/SendFeedbackTests/SendFeedbackTests.swift": {
+    "mtime": 1782799492.0948198,
+    "ast_hash": "e71512b62a774ff2de881b558b710b54",
+    "semantic_hash": "e71512b62a774ff2de881b558b710b54"
+  },
+  "zodlTests/SendFormTests/SendFormAddressValidationTests.swift": {
+    "mtime": 1782799492.0949776,
+    "ast_hash": "ac434ce75677d88d3c91d8e38976f24a",
+    "semantic_hash": "ac434ce75677d88d3c91d8e38976f24a"
+  },
+  "zodlTests/SendTests/MultiServerSubmissionTests.swift": {
+    "mtime": 1781700249.71405,
+    "ast_hash": "761b49f2483fae923cc0a5744cf352e1",
+    "semantic_hash": "761b49f2483fae923cc0a5744cf352e1"
+  },
+  "zodlTests/SendTests/MultiServerSubmitRoutingTests.swift": {
+    "mtime": 1782478748.6379728,
+    "ast_hash": "92caafe99af7077871945b0c9f4885d8",
+    "semantic_hash": "92caafe99af7077871945b0c9f4885d8"
+  },
+  "zodlTests/SensitiveDataTests/SensitiveDataTests.swift": {
+    "mtime": 1781700249.7145314,
+    "ast_hash": "08a68653c2a6cd52e96506da91cf8cbf",
+    "semantic_hash": "08a68653c2a6cd52e96506da91cf8cbf"
+  },
+  "zodlTests/ServerSetupTests/ServerSetupHasChangesTests.swift": {
+    "mtime": 1782799492.0951335,
+    "ast_hash": "2a505fe09e55d2acc91fb6f297567ad0",
+    "semantic_hash": "2a505fe09e55d2acc91fb6f297567ad0"
+  },
+  "zodlTests/SettingsTests/AdvancedSettingsAuthGateTests.swift": {
+    "mtime": 1781700961.9475772,
+    "ast_hash": "08c98daa578887926f3eb642df84700e",
+    "semantic_hash": "08c98daa578887926f3eb642df84700e"
+  },
+  "zodlTests/SettingsTests/AdvancedSettingsTests.swift": {
+    "mtime": 1781700249.7146535,
+    "ast_hash": "72615059f83653ffc8e68bbca3fb47f0",
+    "semantic_hash": "72615059f83653ffc8e68bbca3fb47f0"
+  },
+  "zodlTests/SmartBannerTests/SmartBannerSyncThresholdTests.swift": {
+    "mtime": 1782478748.6384485,
+    "ast_hash": "f554e9e10e25dd0330dbbbfe653295d3",
+    "semantic_hash": "f554e9e10e25dd0330dbbbfe653295d3"
+  },
+  "zodlTests/SmartBannerTests/SmartBannerTests.swift": {
+    "mtime": 1782799492.0952322,
+    "ast_hash": "4148d36e0bd50bb646894a7592a14c81",
+    "semantic_hash": "4148d36e0bd50bb646894a7592a14c81"
+  },
+  "zodlTests/SwapAndPayTests/SwapAndPayAssetFilterTests.swift": {
+    "mtime": 1782799492.0953681,
+    "ast_hash": "aebcdfcf3389115c7cde233ecd2e0306",
+    "semantic_hash": "aebcdfcf3389115c7cde233ecd2e0306"
+  },
+  "zodlTests/SwapTests/Near1ClickTests.swift": {
+    "mtime": 1781700961.9477072,
+    "ast_hash": "4695ef4e0862574300aefbcaaff8f9e1",
+    "semantic_hash": "4695ef4e0862574300aefbcaaff8f9e1"
+  },
+  "zodlTests/SwapTests/SwapMetadataTests.swift": {
+    "mtime": 1781700961.9478147,
+    "ast_hash": "7719ec477102d4b439338ada8df04eab",
+    "semantic_hash": "7719ec477102d4b439338ada8df04eab"
+  },
+  "zodlTests/TorSetupTests/TorSetupGapsTests.swift": {
+    "mtime": 1781700961.9479008,
+    "ast_hash": "3bf7af96f6bb7dc49e44c31d25fea23c",
+    "semantic_hash": "3bf7af96f6bb7dc49e44c31d25fea23c"
+  },
+  "zodlTests/TorSetupTests/TorSetupTests.swift": {
+    "mtime": 1781700249.7147708,
+    "ast_hash": "9ef2db53357159b4277d1ba7811b7729",
+    "semantic_hash": "9ef2db53357159b4277d1ba7811b7729"
+  },
+  "zodlTests/TransactionDetailsTests/TransactionDetailsLogicTests.swift": {
+    "mtime": 1781700961.9480774,
+    "ast_hash": "42c8318f6350e2d90d7c2876270b46d9",
+    "semantic_hash": "42c8318f6350e2d90d7c2876270b46d9"
+  },
+  "zodlTests/TransactionsManagerTests/TransactionListTests.swift": {
+    "mtime": 1782799492.0957463,
+    "ast_hash": "952ab73452f0b5d37a57f6ecbb5e1ad4",
+    "semantic_hash": "952ab73452f0b5d37a57f6ecbb5e1ad4"
+  },
+  "zodlTests/TransactionsManagerTests/TransactionsCoordFlowCoordinatorTests.swift": {
+    "mtime": 1781700961.94832,
+    "ast_hash": "a8ccc752c8d845cd20eb90e35d593f2d",
+    "semantic_hash": "a8ccc752c8d845cd20eb90e35d593f2d"
+  },
+  "zodlTests/TransactionsManagerTests/TransactionsManagerLogicTests.swift": {
+    "mtime": 1782478748.6386702,
+    "ast_hash": "9221920da310635cc9bde444ed4a9ef9",
+    "semantic_hash": "9221920da310635cc9bde444ed4a9ef9"
+  },
+  "zodlTests/UserMetadataTests/UMSerializationTests.swift": {
+    "mtime": 1781700961.948598,
+    "ast_hash": "142ebeb68745144d5f441d83f90dc3ae",
+    "semantic_hash": "142ebeb68745144d5f441d83f90dc3ae"
+  },
+  "zodlTests/UtilTests/AnyDecodableTests.swift": {
+    "mtime": 1781700961.9486914,
+    "ast_hash": "432aa1ef17cb3b4ba807970511b42987",
+    "semantic_hash": "432aa1ef17cb3b4ba807970511b42987"
+  },
+  "zodlTests/UtilTests/ArrayChunkedTests.swift": {
+    "mtime": 1781700961.9487796,
+    "ast_hash": "497c879096a086f16dc8fac96609650e",
+    "semantic_hash": "497c879096a086f16dc8fac96609650e"
+  },
+  "zodlTests/UtilTests/AutoServerSelectionClientTests.swift": {
+    "mtime": 1781700961.9489677,
+    "ast_hash": "6503c9acfa966445d34ecbbc391d2bda",
+    "semantic_hash": "6503c9acfa966445d34ecbbc391d2bda"
+  },
+  "zodlTests/UtilTests/AutomaticServerSelectionMigrationTests.swift": {
+    "mtime": 1781700961.949328,
+    "ast_hash": "68531fc09bb9637963b559eb31102972",
+    "semantic_hash": "68531fc09bb9637963b559eb31102972"
+  },
+  "zodlTests/UtilTests/AutomaticServerSelectionStorageTests.swift": {
+    "mtime": 1781700249.7162023,
+    "ast_hash": "4e0c84a73dae7c9b057711cbc7c6a8f0",
+    "semantic_hash": "4e0c84a73dae7c9b057711cbc7c6a8f0"
+  },
+  "zodlTests/UtilTests/BalanceFormatterTests.swift": {
+    "mtime": 1781700961.9494648,
+    "ast_hash": "71002517c741843db2b6a397d2684f37",
+    "semantic_hash": "71002517c741843db2b6a397d2684f37"
+  },
+  "zodlTests/UtilTests/ClampedTests.swift": {
+    "mtime": 1782478748.6388412,
+    "ast_hash": "ee6d225d485bf20010e6cd1d7391249c",
+    "semantic_hash": "ee6d225d485bf20010e6cd1d7391249c"
+  },
+  "zodlTests/UtilTests/DatabaseFilesTests.swift": {
+    "mtime": 1781700249.7165184,
+    "ast_hash": "cedac0f35bb973adf29a2fc1ab915593",
+    "semantic_hash": "cedac0f35bb973adf29a2fc1ab915593"
+  },
+  "zodlTests/UtilTests/DateReadableTests.swift": {
+    "mtime": 1781700961.9497056,
+    "ast_hash": "0c7c25ebeb4bea1c8f3c906b2914f869",
+    "semantic_hash": "0c7c25ebeb4bea1c8f3c906b2914f869"
+  },
+  "zodlTests/UtilTests/DecimalsTests.swift": {
+    "mtime": 1781700961.949807,
+    "ast_hash": "29f796d02691d5ec425d0b47b6a34b56",
+    "semantic_hash": "29f796d02691d5ec425d0b47b6a34b56"
+  },
+  "zodlTests/UtilTests/DecommissionedServerMigrationTests.swift": {
+    "mtime": 1781700249.7168157,
+    "ast_hash": "7e47bc03bc09554e81e4a915ec27927c",
+    "semantic_hash": "7e47bc03bc09554e81e4a915ec27927c"
+  },
+  "zodlTests/UtilTests/DerivationToolTests.swift": {
+    "mtime": 1781700961.949937,
+    "ast_hash": "cd9dbdd3e21314ee50c49b41eadda051",
+    "semantic_hash": "cd9dbdd3e21314ee50c49b41eadda051"
+  },
+  "zodlTests/UtilTests/LoggerTests.swift": {
+    "mtime": 1782478748.6392937,
+    "ast_hash": "2877cdb6168c6cc897686057b03a7354",
+    "semantic_hash": "2877cdb6168c6cc897686057b03a7354"
+  },
+  "zodlTests/UtilTests/MnemonicClientTests.swift": {
+    "mtime": 1781700961.9502037,
+    "ast_hash": "6463a7ff09685f79aa16d3d78bce53cb",
+    "semantic_hash": "6463a7ff09685f79aa16d3d78bce53cb"
+  },
+  "zodlTests/UtilTests/NetworkErrorTests.swift": {
+    "mtime": 1782478748.6394377,
+    "ast_hash": "d4a36c261a77bfde2e1da1dc8b754175",
+    "semantic_hash": "d4a36c261a77bfde2e1da1dc8b754175"
+  },
+  "zodlTests/UtilTests/SecItemClientTests.swift": {
+    "mtime": 1781700249.7175498,
+    "ast_hash": "f0344d3257ee14388a96b5178012fd13",
+    "semantic_hash": "f0344d3257ee14388a96b5178012fd13"
+  },
+  "zodlTests/UtilTests/SerializerTests.swift": {
+    "mtime": 1781700961.950362,
+    "ast_hash": "8c8a24b3eb48d97e728408fb21110894",
+    "semantic_hash": "8c8a24b3eb48d97e728408fb21110894"
+  },
+  "zodlTests/UtilTests/ServerConfigEndpointTests.swift": {
+    "mtime": 1782478748.6400313,
+    "ast_hash": "f1ad9b82f2f909fbf6e2ee0c8707a0b1",
+    "semantic_hash": "f1ad9b82f2f909fbf6e2ee0c8707a0b1"
+  },
+  "zodlTests/UtilTests/ServerEndpointsTests.swift": {
+    "mtime": 1781700249.717895,
+    "ast_hash": "36b38dc5ceac57f598cdd051d28c73c5",
+    "semantic_hash": "36b38dc5ceac57f598cdd051d28c73c5"
+  },
+  "zodlTests/UtilTests/ServerSetupStoreTests.swift": {
+    "mtime": 1781700249.7180676,
+    "ast_hash": "e7b70186217cf6b28295498ec280c112",
+    "semantic_hash": "e7b70186217cf6b28295498ec280c112"
+  },
+  "zodlTests/UtilTests/StringsTests.swift": {
+    "mtime": 1781700961.950508,
+    "ast_hash": "3e24fdec33327e864c11461d08eb83fc",
+    "semantic_hash": "3e24fdec33327e864c11461d08eb83fc"
+  },
+  "zodlTests/UtilTests/TransactionGuardTests.swift": {
+    "mtime": 1781700249.7183347,
+    "ast_hash": "a019c381867b1547f4a50d40e5140fa3",
+    "semantic_hash": "a019c381867b1547f4a50d40e5140fa3"
+  },
+  "zodlTests/UtilTests/UserPreferencesStorageTests.swift": {
+    "mtime": 1781700249.7185764,
+    "ast_hash": "1c8174c946b84436684c354154e934f8",
+    "semantic_hash": "1c8174c946b84436684c354154e934f8"
+  },
+  "zodlTests/UtilTests/WalletStoragePureTests.swift": {
+    "mtime": 1781700961.9505823,
+    "ast_hash": "c579d2731a274f0d97a8922dbd0eeb1a",
+    "semantic_hash": "c579d2731a274f0d97a8922dbd0eeb1a"
+  },
+  "zodlTests/UtilTests/ZatoshiTests.swift": {
+    "mtime": 1781700249.7189436,
+    "ast_hash": "20b4f5b6ae0da17bfe61c00c21096def",
+    "semantic_hash": "20b4f5b6ae0da17bfe61c00c21096def"
+  },
+  "zodlTests/VotingTests/VotingAPIResponseParserTests.swift": {
+    "mtime": 1781700249.719393,
+    "ast_hash": "d8453f8f354dd8498b2732fbcb92a78d",
+    "semantic_hash": "d8453f8f354dd8498b2732fbcb92a78d"
+  },
+  "zodlTests/VotingTests/VotingCoordFlowCoordinatorTests.swift": {
+    "mtime": 1781700249.719794,
+    "ast_hash": "e837c4d47f639b715e635c1f9da0d317",
+    "semantic_hash": "e837c4d47f639b715e635c1f9da0d317"
+  },
+  "zodlTests/VotingTests/VotingHelpersTests.swift": {
+    "mtime": 1781700249.720257,
+    "ast_hash": "b573cf2439411d52f41e78a065bd1e27",
+    "semantic_hash": "b573cf2439411d52f41e78a065bd1e27"
+  },
+  "zodlTests/VotingTests/VotingServiceConfigTests.swift": {
+    "mtime": 1781700249.7206233,
+    "ast_hash": "af9aabccf8fe1f080c44dc4dae61f95e",
+    "semantic_hash": "af9aabccf8fe1f080c44dc4dae61f95e"
+  },
+  "zodlTests/VotingTests/VotingSessionTests.swift": {
+    "mtime": 1781700249.7209918,
+    "ast_hash": "d289411ee6d6cdb69d5778e46682aab6",
+    "semantic_hash": "d289411ee6d6cdb69d5778e46682aab6"
+  },
+  "zodlTests/WalletBalancesTests/WalletBalancesTests.swift": {
+    "mtime": 1781725545.3377573,
+    "ast_hash": "450bcf7c04af056d2ed0351c60ac95b1",
+    "semantic_hash": "450bcf7c04af056d2ed0351c60ac95b1"
+  },
+  "zodlTests/WalletBirthdayTests/WalletBirthdayTests.swift": {
+    "mtime": 1782799492.0959134,
+    "ast_hash": "962f9b7262e17e4b7d49e701ceb807d4",
+    "semantic_hash": "962f9b7262e17e4b7d49e701ceb807d4"
+  },
+  "zodlTests/WhatsNewTests/WhatsNewTests.swift": {
+    "mtime": 1782799492.0960448,
+    "ast_hash": "5625b6134bbcddfe0eafa9a57a9c6e05",
+    "semantic_hash": "5625b6134bbcddfe0eafa9a57a9c6e05"
+  },
+  "zodlTests/ZatoshiStringRepresentation/ZatoshiStringRepresentationCommaTests.swift": {
+    "mtime": 1781700249.7213528,
+    "ast_hash": "6f7c878f522c46cd290fa85ce58ee43a",
+    "semantic_hash": "6f7c878f522c46cd290fa85ce58ee43a"
+  },
+  "zodlTests/ZatoshiStringRepresentation/ZatoshiStringRepresentationTests.swift": {
+    "mtime": 1781700249.7215872,
+    "ast_hash": "0a45859d86add8a9bf02dcfd0b057e85",
+    "semantic_hash": "0a45859d86add8a9bf02dcfd0b057e85"
+  },
+  "zodlTests/ZecKeyboardTests/ZecKeyboardTests.swift": {
+    "mtime": 1781700961.9508517,
+    "ast_hash": "056ff2a3b57d445dde140ce9c6e79094",
+    "semantic_hash": "056ff2a3b57d445dde140ce9c6e79094"
+  },
+  "secant/Sources/Generated/xcstrings-tool-config.yaml": {
+    "mtime": 1780381519.4874034,
+    "ast_hash": "6ec333963db0e9b18e1e4b369fb9f1a9",
+    "semantic_hash": "6ec333963db0e9b18e1e4b369fb9f1a9"
+  }
+}
