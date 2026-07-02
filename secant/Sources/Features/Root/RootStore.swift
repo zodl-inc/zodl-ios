@@ -301,6 +301,7 @@ struct Root {
         // Auto-update Swaps
         case attemptToCheckSwapStatus(Bool)
         case autoUpdateCandidatesSwapDetails(SwapDetails)
+        case autoUpdateSwapStatusFetchFailed
         case compareAndUpdateMetadataOfSwap(SwapDetails)
         
         // Check funds

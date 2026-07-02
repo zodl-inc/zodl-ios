@@ -65,10 +65,24 @@ extension Root {
                     return .run { send in
                         if let swapDetails = try? await swapAndPay.status(candidate.address, candidate.isSwapToZec) {
                             await send(.autoUpdateCandidatesSwapDetails(swapDetails))
+                        } else {
+                            // [B4-14] A dropped status request must NOT kill the loop: with no
+                            // response action, `autoUpdateCandidate` stayed occupied forever and
+                            // every later attempt bailed on its guard — one network/Tor blip froze
+                            // every pending swap at "Paying…/Swapping…" for the whole session
+                            // (field: Near reported FAILED at 13:35Z, the row never updated).
+                            await send(.autoUpdateSwapStatusFetchFailed)
                         }
                     }
                 }
                 return .none
+
+            case .autoUpdateSwapStatusFetchFailed:
+                // [B4-14] Release the in-flight slot and re-arm the loop; the attempt's own
+                // top-side pacing (5–15 s randomized) keeps retries polite.
+                state.autoUpdateCandidate = nil
+                state.autoUpdateRefreshScheduled = false
+                return .send(.attemptToCheckSwapStatus(false))
                 
             case .autoUpdateCandidatesSwapDetails(let swapDetails):
                 guard let candidate = state.autoUpdateCandidate else {

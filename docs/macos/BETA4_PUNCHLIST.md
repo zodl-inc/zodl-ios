@@ -157,3 +157,13 @@ scenePhase.background, resumes on reopen); NSWindow title blanked in FixedWindow
 the "← Zodl" nav-fallback fix stays. ALTERNATIVE (if closed-means-quit is preferred): 3-line
 NSApplicationDelegateAdaptor with `applicationShouldTerminateAfterLastWindowClosed = true` —
 Apple sanctions either. Verify: close → Window menu → Zodl reopens; startup pops still gone.
+
+## B4-14 · Swap/Pay auto-status loop dies on one dropped request (row stuck "Paying…")
+**FIXED.** Field case: crosspay deposit mined (17 confs, amounts correct — 57,557 ≥ minAmountIn
+56,405), Near reported FAILED at 13:35Z, row stayed "Paying…". The RootSwaps status fetch was
+`try?` with NO failure branch: a single network/Tor blip left `autoUpdateCandidate` occupied
+forever → every later poll bailed on its guard without rescheduling → metadata frozen pending
+for the whole session. Fix: `autoUpdateSwapStatusFetchFailed` releases the slot + re-arms the
+loop (existing 5–15 s pacing). The FAILED mapping itself was always correct ("Payment failed",
+warning styling). Related, still open: Near-side refund for the failed swap (fee 47,000 zats,
+deadline 2026-07-05) should arrive as a receive — user-watch item, not an app bug.
