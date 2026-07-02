@@ -57,7 +57,9 @@ struct MigrationTransferPlanView: View {
                 ZashiButton(String(localizable: .generalConfirm)) {
                     store.send(.confirmTapped)
                 }
-                .disabled(store.isCommitting || store.schedule == nil)
+                // Empty schedule = the split's notes aren't spendable yet (or nothing to migrate);
+                // confirming would sign nothing. The crate also rejects an empty schedule.
+                .disabled(store.isCommitting || (store.schedule?.transfers.isEmpty ?? true))
                 .padding(.bottom, 20)
             }
             .screenHorizontalPadding()
