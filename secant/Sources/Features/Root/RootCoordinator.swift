@@ -256,9 +256,22 @@ extension Root {
                 // MARK: - Keystone
 
             case .sendCoordFlow(.path(.element(id: _, action: .confirmWithKeystone(.rejectTapped)))),
-                    .signWithKeystoneCoordFlow(.sendConfirmation(.rejectTapped)),
                     .swapAndPayCoordFlow(.path(.element(id: _, action: .confirmWithKeystone(.rejectTapped)))):
                 state.path = nil
+                return .none
+
+            case .signWithKeystoneCoordFlow(.sendConfirmation(.rejectTapped)):
+                // The standalone Keystone sign flow (shield-from-Keystone) is presented via the
+                // `signWithKeystoneCoordFlowBinding` binding, not `path`, so the shared `path = nil` above
+                // was a no-op for it: on iOS only the popover's interactive swipe dismissed it, and the
+                // macOS full-window takeover would have no way out at all. Flip the binding so Reject
+                // actually closes the flow on both platforms.
+                state.signWithKeystoneCoordFlowBinding = false
+                // Clear the processor's replayed `.proposal` (CurrentValueSubject) so a later
+                // SmartBanner re-subscription can't receive the stale state and instantly close a
+                // freshly-opened shield banner (field bug: banner dismissed on every account switch
+                // AFTER one rejected Keystone shield).
+                shieldingProcessor.reset()
                 return .none
 
             case .signWithKeystoneRequested:
@@ -378,10 +391,13 @@ extension Root {
                     .signWithKeystoneCoordFlow(.path(.element(id: _, action: .sendResultPending(.closeTapped)))):
                 state.signWithKeystoneCoordFlowBinding = false
                 state.macRedirectToActivityAfterClose = true
+                // See the reject case above — clear the processor's replayed terminal state.
+                shieldingProcessor.reset()
                 return .send(.fetchTransactionsForTheSelectedAccount)
 
             case .signWithKeystoneCoordFlow(.path(.element(id: _, action: .transactionDetails(.closeDetailTapped)))):
                 state.signWithKeystoneCoordFlowBinding = false
+                shieldingProcessor.reset()
                 return .none
 
                 // MARK: - Tor Setup

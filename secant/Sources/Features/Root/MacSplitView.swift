@@ -89,7 +89,26 @@ struct MacSplitView: View {
                     }
                 }
             default:
-                splitView
+                // Keystone PCZT signing (shield-from-Keystone) is hoisted to Root and driven by the
+                // `signWithKeystoneCoordFlowBinding` Bool — NOT `store.path` — so it lands in this default
+                // branch (path is nil at every shield entry point: the sidebar smart banner and the
+                // Send-screen balances card). iOS presents it via `.popover` in RootView; the macOS branch
+                // had no presenter, so shielding a Keystone account silently did nothing (the banner
+                // opened then handed off into the void; the balances-card button was dead). Present it
+                // full-window here, like the addKeystone / scan `store.path` takeovers above — the
+                // single-view animated-QR PCZT exchange + scan. It closes when the binding flips false:
+                // transaction result close or reject (see RootCoordinator).
+                if store.signWithKeystoneCoordFlowBinding {
+                    SignWithKeystoneCoordFlowView(
+                        store: store.scope(
+                            state: \.signWithKeystoneCoordFlowState,
+                            action: \.signWithKeystoneCoordFlow
+                        ),
+                        tokenName: tokenName
+                    )
+                } else {
+                    splitView
+                }
             }
         }
     }

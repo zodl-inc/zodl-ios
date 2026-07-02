@@ -53,7 +53,11 @@ struct SignWithKeystoneCoordFlowView: View {
             .zashiNavigationBarHidden(!store.path.isEmpty)
         }
         .applyScreenBackground()
-        .zashiBack()
+        // macOS: this flow is a full-window takeover (MacSplitView), so there is nothing to go "back"
+        // to at its root — and a `.zashiBack()` there renders a toolbar button whose `dismiss()` acts on
+        // the window itself (looked like Zodl minimizing). `zashiSectionRootBack` renders nothing on
+        // macOS; Reject is the escape. iOS is unchanged (still `.zashiBack()`).
+        .zashiSectionRootBack()
     }
 }
 

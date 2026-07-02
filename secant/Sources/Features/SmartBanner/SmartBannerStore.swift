@@ -396,10 +396,20 @@ struct SmartBanner {
                             if accountBalance.unshielded > zcashSDKEnvironment.shieldingThreshold() {
                                 return .send(.transparentBalanceUpdated(accountBalance.unshielded))
                             } else {
-                                return .merge(
-                                    .send(.closeAndCleanupBanner),
-                                    .send(.closeSheetTapped)
-                                )
+                                // The streamed `latestState` balance can lag right after an account
+                                // switch, transiently reading <= threshold and tearing down a shield
+                                // banner that `walletAccountChanged`'s re-eval just revealed for the new
+                                // (Keystone) account. Re-confirm against the authoritative balance — as
+                                // `evaluatePriority7` does — before closing; only close if it too is below.
+                                return .run { [account] send in
+                                    let fresh = try? await sdkSynchronizer.getAccountsBalances()[account.id]
+                                    if let fresh, fresh.unshielded > zcashSDKEnvironment.shieldingThreshold() {
+                                        await send(.transparentBalanceUpdated(fresh.unshielded))
+                                    } else {
+                                        await send(.closeAndCleanupBanner)
+                                        await send(.closeSheetTapped)
+                                    }
+                                }
                             }
                         } else if state.transparentBalance < zcashSDKEnvironment.shieldingThreshold() && accountBalance.unshielded > zcashSDKEnvironment.shieldingThreshold() {
                             return .merge(

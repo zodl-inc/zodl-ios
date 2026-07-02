@@ -205,7 +205,11 @@ struct SendConfirmation {
             switch action {
             case .onAppear:
                 // __LD TESTED
-                state.pcztForUI = nil
+                // NB: do NOT reset `pcztForUI` here. It is produced once by `.resolvePCZT` and cleared
+                // only by `.resetPCZTs` (reject / completion). macOS re-fires `onAppear` on a window
+                // minimize/restore; clearing it here wiped the live Keystone signing QR mid-flow (the
+                // screen fell back to a spinner). Each flow already enters with a fresh `.initial` state
+                // (pcztForUI == nil), so the reset was redundant for fresh entry anyway.
                 state.partialFailureTxIds = []
                 state.partialFailureStatuses = []
                 state.pendingDescription = nil

@@ -21,7 +21,8 @@ extension ShieldingProcessorClient: DependencyKey {
 
         return ShieldingProcessorClient(
             observe: { impl.observe() },
-            shieldFunds: { impl.shieldFunds() }
+            shieldFunds: { impl.shieldFunds() },
+            reset: { impl.reset() }
         )
     }
 }
@@ -42,6 +43,11 @@ private final class ShieldingProcessorImpl: @unchecked Sendable {
 
     func observe() -> AnyPublisher<ShieldingProcessorClient.State, Never> {
         subject.eraseToAnyPublisher()
+    }
+
+    // See `ShieldingProcessorClient.reset` — clears the replayed terminal state on flow teardown.
+    func reset() {
+        subject.send(.unknown)
     }
 
     func shieldFunds() {
