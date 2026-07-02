@@ -270,6 +270,9 @@ extension SwapAndPayForm {
                         )
                         .zFont(size: 12, style: Design.Utility.WarningYellow._900)
                         .fixedSize(horizontal: false, vertical: true)
+                        // Span the card like the info box above (B4-22) — without this the box
+                        // hugs its wrapped text and falls short of the MacCard's content width.
+                        .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 20)
                         .padding(.vertical, 16)
                         .background {

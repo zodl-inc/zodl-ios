@@ -135,6 +135,15 @@ right-aligned placeholder, Writing Tools disabled in-editor for B4-9 parity) swa
 SwapForm sites macOS-only; iOS chain untouched; Opus's focus-conditional prompt dropped
 (constant placeholder restored on iOS).
 
+**Round 4.1 (field feedback, 2026-07-02):** two ergonomics amendments to MacAmountTextField —
+(1) the placeholder dismisses while focused and returns on blur (and the iOS focus-conditional
+prompt is RESTORED — it was the branch's shipped behavior, not part of the Opus overlay patch);
+(2) acquiring focus places the caret at the END of the value: the text is right-aligned in a
+full-width field, so clicks land in the empty area LEFT of the glyphs and AppKit snapped the
+caret to the string start ("|122", then typing 3 made "3122"). Applied on the next runloop turn
+so it wins over the click's own caret placement; clicks while ALREADY focused reposition
+normally, so mid-value edits stay possible.
+
 ## B4-9 · Swap amount field: 1-frame system bubble flash on focus `[app]`
 On form appear + autofocus, a system bubble (empty) renders for ~1 frame and vanishes.
 **Triage:** AppKit text-input suggestion/inline-prediction UI firing on focus. Prevent it from
@@ -218,6 +227,14 @@ explicitly styled `prompt:` (Inter medium 16, `Switcher.selectedText`, matching 
 auto-focus on selecting the Custom chip now works on macOS too. Residual (watch on device): at
 16pt the B4-8 single-line-mode metric quirk is ~4pt (20 vs 16 box) — if a small edit-time jump
 is visible on this field, extend `MacAmountTextField` with alignment/size params and swap it in.
+NOTE: Lukas's "still white" re-report (2026-07-02) came from a build cut BEFORE `5426df58`
+(that build had B4-8/B4-21 but not this fix) — re-verify on the next build before reopening.
+**Round 2 (screenshot, 2026-07-02):** the shot confirmed BOTH already-fixed layers (grey box in
+the pill = the default-style bezel; white "%" = system placeholder color) AND exposed one more:
+the caret renders CROSSING the centered "%" glyph while focused-empty — even a correctly-dark
+placeholder looks broken under the caret. Fix: the prompt now dismisses while focused (the
+`@FocusState` bridge made it a one-line conditional), mirroring the amount field's round-4.1
+behavior.
 
 ## B4-16 (his 13) · Disconnect Keystone while it's restoring → error + "try again" `[app+SDK]`
 deleteAccount during an active restore pass — same shared-data.db write-contention family as
@@ -275,7 +292,17 @@ back to Activity.
 (the peer-root "fresh section" semantics). The FILTERS (and search term) are wiped with the rest
 of the flow state — the icon is honest; the whole filter state died, not just the glyph. iOS is
 unaffected (there the action means a genuine fresh "See all" visit from Home).
-**FIX:** on macOS the reset carries over `activeFilters` + `searchTerm` (navigation still resets
-to the section root — the B4-3 / B4-19 behaviors are preserved); the existing
-`transactionsUpdated → search → filters` pipeline re-applies them on entry. A sidebar section
-keeps its view configuration, like every Mac app.
+**FIX (v1, reverted):** carried `activeFilters` + `searchTerm` across the reset.
+**PRODUCT DECISION (2026-07-02, supersedes v1):** full reset is INTENDED — filters/search live
+only while the user stays on Activity; leaving to Send/Receive and back = clean unfiltered
+Activity (outline icon AND full content). The carry-over was reverted; the original
+`state.transactionsCoordFlowState = .initial` stands, now with a comment recording the decision
+so the "bug" isn't re-fixed later. Within-section navigation (tx detail push/pop) never fires
+this action, so filters DO survive while working inside Activity — which is the intended scope.
+
+## B4-22 · Slippage warning box (red) not full-width in the MacCard `[app]`
+Screenshot-confirmed: the "<2% slippage" warning box hugs its wrapped text and falls short of
+the card's content width. Cause: the sibling info box above it has an explicit
+`.frame(maxWidth: .infinity, alignment: .leading)`; the warning box never got one — iOS masks
+it because the narrow sheet makes the wrapped text fill the width anyway. FIX: same frame
+added (cross-platform; on iOS it's a no-op-to-improvement, matching the sibling box).

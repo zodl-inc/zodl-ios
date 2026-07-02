@@ -222,7 +222,9 @@ struct FocusableTextField: View {
             "",
             text: $text,
             prompt:
-                Text(placeholder)
+                // Dismiss the placeholder while focused: the field is centered, so the caret
+                // otherwise renders crossing the "%" glyph.
+                Text(focused ? "" : placeholder)
                 .font(.custom(FontFamily.Inter.medium.name, size: 16))
                 .foregroundColor(Design.Switcher.selectedText.color(colorScheme))
         )
