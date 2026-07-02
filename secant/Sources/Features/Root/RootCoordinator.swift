@@ -290,6 +290,12 @@ extension Root {
                 state.path = nil
                 state.$selectedWalletAccount.withLock { $0 = nil }
                 return .run { send in
+                    // [B4-17] The disconnected account's SmartBanners (e.g. the Keystone shielding
+                    // offer) must not survive it — macOS's always-visible banner host never
+                    // re-evaluates on its own (the split-view stale-gate class). Close-and-cleanup
+                    // re-runs the priority chain against the remaining accounts; fires AFTER the
+                    // deletion completed, so the re-evaluation can't resurrect the stale offer.
+                    await send(.home(.smartBanner(.closeAndCleanupBanner)))
                     let walletAccounts = try await sdkSynchronizer.walletAccounts()
                     await send(.initialization(.loadedWalletAccounts(walletAccounts)))
                     await send(.fetchTransactionsForTheSelectedAccount)
@@ -437,6 +443,10 @@ extension Root {
 
             case .swapAndPayCoordFlow(.path(.element(id: _, action: .transactionDetails(.closeDetailTapped)))):
                 state.path = nil
+                // [B4-19] This detail is reached via "Check status" on a Result screen; closing it
+                // ends the whole Swap/Pay flow, so land on Activity — where the transaction lives —
+                // instead of the stale Swap/Pay form. Same redirect the Result closes use.
+                state.macRedirectToActivityAfterClose = true
                 return .none
 
                 // MARK: - Transactions Coord Flow
