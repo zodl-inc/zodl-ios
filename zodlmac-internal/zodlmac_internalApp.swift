@@ -151,15 +151,25 @@ private enum MacMenuSimplifier {
         }
         removable.forEach { mainMenu.removeItem($0) }
 
-        // App menu → "Zodl" with a single "Quit Zodl" item (drop About / Settings / Services / Hide …).
+        // App menu → "Zodl" with exactly "About Zodl" + "Quit Zodl" (drop Settings / Services /
+        // Hide …). About uses the STANDARD system panel — icon, name, version — the most
+        // minimal native design there is, and cheap App Review insurance (reviewers nit a
+        // missing About).
         guard let appItem = mainMenu.items.first, let appMenu = appItem.submenu else { return }
         appItem.title = "Zodl"
         appMenu.title = "Zodl"
         let terminate = #selector(NSApplication.terminate(_:))
+        let about = #selector(NSApplication.orderFrontStandardAboutPanel(_:))
+        let kept: Set<Selector> = [terminate, about]
         appMenu.items
-            .filter { $0.action != terminate }
+            .filter { item in item.action.map { !kept.contains($0) } ?? true }
             .forEach { appMenu.removeItem($0) }
+        appMenu.items.first { $0.action == about }?.title = "About Zodl"
         appMenu.items.first { $0.action == terminate }?.title = "Quit Zodl"
+        // Standard grouping: About ─ separator ─ Quit.
+        if appMenu.items.count == 2 {
+            appMenu.insertItem(.separator(), at: 1)
+        }
     }
 }
 
