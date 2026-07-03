@@ -2,10 +2,10 @@
 //  MigrationBGSchedulerInterface.swift
 //  Zashi
 //
-//  Background-refresh status check + scheduling seams for the Orchard -> Ironwood migration's
-//  background execution (MOB-1467). Only `backgroundRefreshStatus` is live in this ticket
-//  (MOB-1466); the scheduling members are inert stubs the coordinator calls at the right cadence
-//  points so MOB-1467 only has to fill the `LiveKey`, never touch call sites.
+//  Background-refresh status check + scheduling seam for the Orchard -> Ironwood migration's
+//  background execution (MOB-1467): the `co.electriccoin.migration_transfer` `BGProcessingTask`
+//  cadence (§8.3) in scheduled mode, or a pre-scheduled "ready to send" local notification in
+//  manual mode — see `MigrationBGSchedulerLiveKey`'s `WakeupAction` decision function.
 //
 
 import UIKit
@@ -21,10 +21,20 @@ extension DependencyValues {
 @DependencyClient
 struct MigrationBGSchedulerClient: Sendable {
     var backgroundRefreshStatus: @Sendable () async -> UIBackgroundRefreshStatus = { .available }
-    // +30 min rule — no-op until MOB-1467
-    var scheduleFirstWindow: @Sendable () -> Void
-    // +6.5 h rule — no-op until MOB-1467
-    var scheduleNextWindow: @Sendable () -> Void
-    // no-op until MOB-1467
-    var cancelAll: @Sendable () -> Void
+    // Arms the next wakeup (+30 min rule): BG task request in scheduled mode, pre-scheduled
+    // "ready to send" notification in manual mode. First-check: no-ops (cancels) if migration is
+    // already `.complete`.
+    var scheduleFirstWindow: @Sendable () async -> Void
+    // Arms the next wakeup (+6.5 h rule), same branching as scheduleFirstWindow. Also the reset
+    // point after a manual/immediate foreground send.
+    var scheduleNextWindow: @Sendable () async -> Void
+    // Cancels the pending BG task request and every migration-prefixed notification (pending +
+    // delivered).
+    var cancelAll: @Sendable () async -> Void
+}
+
+/// Background-task identifier for the migration transfer wakeup (AppDelegate registers with it;
+/// prototype precedent).
+enum MigrationBGTask {
+    static let identifier = "co.electriccoin.migration_transfer"
 }

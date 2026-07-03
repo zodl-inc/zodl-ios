@@ -2,9 +2,9 @@
 //  UserNotificationsInterface.swift
 //  Zashi
 //
-//  Authorization-only seam over `UNUserNotificationCenter` for the Orchard -> Ironwood
-//  migration's Notifications permission screen (MOB-1466). MOB-1467 extends this client with
-//  local-notification scheduling (§4.4 matrix) — do not add those members here yet.
+//  Seam over `UNUserNotificationCenter` for the Orchard -> Ironwood migration: authorization
+//  (MOB-1466's Notifications permission screen) plus local-notification scheduling (MOB-1467,
+//  §4.4 matrix).
 //
 
 import UserNotifications
@@ -21,4 +21,10 @@ extension DependencyValues {
 struct UserNotificationsClient: Sendable {
     var authorizationStatus: @Sendable () async -> UNAuthorizationStatus = { .notDetermined }
     var requestAuthorization: @Sendable () async -> Bool = { false }   // .alert, .sound, .badge
+    // nil date = deliver now
+    var scheduleMigrationNotification: @Sendable (MigrationNotification, Date?) async -> Void
+    // pending + delivered, "migration." prefix
+    var cancelMigrationNotifications: @Sendable () async -> Void
+    // delivered ONLY — pending (manual ready reminder) must survive
+    var clearDeliveredMigrationNotifications: @Sendable () async -> Void
 }

@@ -14,6 +14,7 @@ directly impact users rather than highlighting other crucial architectural updat
 - [MOB-1463] Ironwood migration screens: transfer plan, transfer review, sending states, and migration scheduled. Not reachable in the app yet.
 - [MOB-1464] Ironwood migration screens: progress status, plan recovery, migration complete, and the home widget states. Not reachable in the app yet.
 - [MOB-1466] Ironwood migration screens are wired into a complete guided flow (entry, scheduling, status, recovery) driven by migration state, with a Home banner entry point — dormant until the migration SDK ships.
+- [MOB-1467] Scheduled Ironwood migration transfers can now send from background tasks, with local notifications for progress, required actions, and manual-mode send reminders — dormant until the migration SDK ships.
 
 ### Changed
 - [MOB-1472] The assets you can swap are now a curated set of major coins and stablecoins across the supported chains (plus swapping to ZEC), instead of the full list from the swap provider, and the address-book chain picker is limited to those chains. Existing swaps in your history (including assets no longer offered) still display normally, and existing contacts on other chains are preserved.
