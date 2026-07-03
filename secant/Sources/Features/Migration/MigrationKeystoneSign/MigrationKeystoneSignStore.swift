@@ -12,8 +12,8 @@
 //  non-`Equatable`, non-`Sendable` class that cannot live in an `@ObservableState` `Equatable`
 //  struct. Stubbed today: the batch encoder returns `nil`, so the QR area renders the same
 //  empty/loading treatment `SignWithKeystoneView` shows while `pcztForUI == nil` — dormant, by
-//  design, until the SDK + Keystone batch support land (MOB-1455). Coordinator wiring
-//  (`.getSignature` -> scan -> submit/store) is MOB-1468 phase 2's job.
+//  design, until the SDK + Keystone batch support land (MOB-1455). The coordinator consumes both
+//  delegates (`.getSignature` -> scan -> submit/store, `.rejected` -> deferred pop) — MOB-1468.
 //
 
 import ComposableArchitecture
