@@ -18685,6 +18685,397 @@
           }
         }
       }
+    },
+    "migrationEntry.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Move to Ironwood"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Migrar a Ironwood"
+          }
+        }
+      }
+    },
+    "migrationEntry.desc" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The latest Zcash network upgrade requires moving your %1$@ (%2$@) from the Orchard pool to the new Ironwood pool. Your funds are safe."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "La última actualización de la red Zcash requiere mover tus %1$@ (%2$@) del pool Orchard al nuevo pool Ironwood. Tus fondos están seguros."
+          }
+        }
+      }
+    },
+    "migrationEntry.descNoFiat" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The latest Zcash network upgrade requires moving your %1$@ from the Orchard pool to the new Ironwood pool. Your funds are safe."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "La última actualización de la red Zcash requiere mover tus %1$@ del pool Orchard al nuevo pool Ironwood. Tus fondos están seguros."
+          }
+        }
+      }
+    },
+    "migrationEntry.findOutMore" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Find out more"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Más información"
+          }
+        }
+      }
+    },
+    "migrationEntry.privacyTitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Migrate with Privacy"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Migrar con privacidad"
+          }
+        }
+      }
+    },
+    "migrationEntry.privacyDesc" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Split transfers over time · Scheduled in background · Maximum privacy"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transferencias divididas en el tiempo · Programadas en segundo plano · Máxima privacidad"
+          }
+        }
+      }
+    },
+    "migrationEntry.immediateTitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Migrate Immediately"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Migrar inmediatamente"
+          }
+        }
+      }
+    },
+    "migrationEntry.immediateDesc" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Single transfer · Sends now · Less privacy"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transferencia única · Se envía ahora · Menos privacidad"
+          }
+        }
+      }
+    },
+    "migrationEntry.disclaimerTitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Privacy Disclaimer"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aviso de privacidad"
+          }
+        }
+      }
+    },
+    "migrationEntry.disclaimerDesc" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your full balance will be revealed on-chain — crossing the pool boundary exposes the transaction amount. We recommend selecting Migrate with Privacy instead."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tu saldo completo quedará expuesto en cadena (on-chain): cruzar el límite entre pools revela el monto de la transacción. Te recomendamos seleccionar Migrar con privacidad."
+          }
+        }
+      }
+    },
+    "migrationEntry.footerNote" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pool-crossing transfer amounts are visible on-chain."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Los montos de las transferencias entre pools son visibles en cadena (on-chain)."
+          }
+        }
+      }
+    },
+    "migrationNetworkPrivacy.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Network Privacy"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Privacidad de red"
+          }
+        }
+      }
+    },
+    "migrationNetworkPrivacy.desc" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enable Tor to route this transfer privately through the Tor network. This prevents your IP address from being linked to the transfer."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Activa Tor para enrutar esta transferencia de forma privada a través de la red Tor. Esto evita que tu dirección IP quede vinculada a la transferencia."
+          }
+        }
+      }
+    },
+    "migrationNetworkPrivacy.vpnNote" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "You can use a trusted VPN if Tor is unavailable in your region."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Puedes usar una VPN confiable si Tor no está disponible en tu región."
+          }
+        }
+      }
+    },
+    "migrationNetworkPrivacy.whatNext" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "What Happens Next"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Qué sucede a continuación"
+          }
+        }
+      }
+    },
+    "migrationNetworkPrivacy.withTorTitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "With Tor"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Con Tor"
+          }
+        }
+      }
+    },
+    "migrationNetworkPrivacy.withTorImmediate" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "IP hidden · Transfer unlinkable to your device"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "IP oculta · Transferencia no vinculable a tu dispositivo"
+          }
+        }
+      }
+    },
+    "migrationNetworkPrivacy.withTorScheduled" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "IP hidden · All %1$lld transfers unlinkable to your device"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "IP oculta · Las %1$lld transferencias no son vinculables a tu dispositivo"
+          }
+        }
+      }
+    },
+    "migrationNetworkPrivacy.withoutTorTitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Without Tor or VPN"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sin Tor ni VPN"
+          }
+        }
+      }
+    },
+    "migrationNetworkPrivacy.withoutTorImmediate" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "IP visible to network operators"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "IP visible para los operadores de red"
+          }
+        }
+      }
+    },
+    "migrationNetworkPrivacy.withoutTorScheduled" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transfers still de-correlated in time · IP visible to network operators"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Las transferencias siguen desvinculadas en el tiempo · IP visible para los operadores de red"
+          }
+        }
+      }
+    },
+    "migrationNetworkPrivacy.toggleTitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Route via Tor"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enrutar mediante Tor"
+          }
+        }
+      }
+    },
+    "migrationNetworkPrivacy.toggleDesc" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Use Tor for transaction submission."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Usa Tor para el envío de transacciones."
+          }
+        }
+      }
     }
   },
   "version" : "1.1"
