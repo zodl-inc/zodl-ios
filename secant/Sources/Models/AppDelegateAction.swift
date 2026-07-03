@@ -13,4 +13,7 @@ enum AppDelegateAction: Equatable {
     case didEnterBackground
     case willEnterForeground
     case backgroundTask(BGProcessingTask)
+    case migrationBackgroundTask(BGProcessingTask)
+    case migrationBackgroundTaskExpired
+    case migrationNotificationTapped
 }

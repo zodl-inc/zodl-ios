@@ -122,8 +122,6 @@ extension MigrationCoordFlow {
                     return .send(.flowFinished)
                 }
 
-                migrationBGScheduler.scheduleFirstWindow()
-
                 switch planState.variant {
                 case .scheduled, .recreated:
                     state.path.append(.scheduled(MigrationScheduled.State()))
@@ -132,7 +130,7 @@ extension MigrationCoordFlow {
                     sendingState.networkPrivacyOptions = state.networkPrivacyOptions
                     state.path.append(.sending(sendingState))
                 }
-                return .none
+                return .run { [migrationBGScheduler] _ in await migrationBGScheduler.scheduleFirstWindow() }
 
                 // MARK: - ReviewTransfer
 
@@ -201,7 +199,7 @@ extension MigrationCoordFlow {
                 }
                 return .run { [migrationBGScheduler, sdkSynchronizer] send in
                     await sdkSynchronizer.rescheduleStalledMigrationTransfer()
-                    migrationBGScheduler.scheduleFirstWindow()
+                    await migrationBGScheduler.scheduleFirstWindow()
                     let rows = sdkSynchronizer.migrationTransfers()
                     let planState = rescheduledPlanState(rows: rows)
                     await send(.pushHydratedPathState(.transferPlan(planState)))

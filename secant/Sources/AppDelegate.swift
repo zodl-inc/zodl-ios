@@ -22,6 +22,10 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
     private let workerQueue = DispatchQueue(label: "Monitor")
     private let isConnectedToWifi = ManagedAtomic(false)
 
+    // Owned strongly so it outlives this method scope — `UNUserNotificationCenter.current()`
+    // only holds its delegate weakly.
+    private let notificationDelegate = MigrationNotificationCenterDelegate()
+
     let rootStore = StoreOf<Root>(
         initialState: .initial
     ) {
@@ -40,9 +44,14 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
 #endif
         handleBackgroundTask()
 
+        // Synchronous, before anything else touches notifications — required to catch cold-start
+        // taps (the app can be launched directly by a notification tap).
+        notificationDelegate.rootStore = rootStore
+        UNUserNotificationCenter.current().delegate = notificationDelegate
+
         // set the default behavior for the NSDecimalNumber
         NSDecimalNumber.defaultBehavior = Zatoshi.decimalHandler
-        
+
         rootStore.send(.initialization(.appDelegate(.didFinishLaunching)))
 
         return true
@@ -97,11 +106,41 @@ extension AppDelegate {
 
             scheduleSchedulerBackgroundTask()
             scheduleBackgroundTask()
-            
+
             task.setTaskCompleted(success: true)
         }
-        
+
         LoggerProxy.event("BGTask SCHEDULER registered \(bcgSchedulerTaskResult)")
+
+        let bcgMigrationTaskResult = BGTaskScheduler.shared.register(
+            forTaskWithIdentifier: MigrationBGTask.identifier,
+            using: DispatchQueue.main
+        ) { [self] task in
+            LoggerProxy.event("BGTask BGTaskScheduler.shared.register MIGRATION called")
+            guard let task = task as? BGProcessingTask else {
+                return
+            }
+
+            startMigrationBackgroundTask(task)
+        }
+
+        LoggerProxy.event("BGTask MIGRATION registered \(bcgMigrationTaskResult)")
+    }
+
+    /// Unlike `startBackgroundTask` (the `power_wifi_sync` handler above), there is deliberately
+    /// NO WiFi gate here: migration's `BGProcessingTaskRequest.requiresNetworkConnectivity` already
+    /// covers the network requirement, and migration must not additionally demand WiFi/power.
+    private func startMigrationBackgroundTask(_ task: BGProcessingTask) {
+        LoggerProxy.event("BGTask startMigrationBackgroundTask called")
+
+        rootStore.send(.initialization(.appDelegate(.migrationBackgroundTask(task))))
+
+        task.expirationHandler = { [rootStore] in
+            LoggerProxy.event("BGTask startMigrationBackgroundTask expirationHandler called")
+            DispatchQueue.main.async {
+                rootStore.send(.initialization(.appDelegate(.migrationBackgroundTaskExpired)))
+            }
+        }
     }
     
     private func startBackgroundTask(_ task: BGProcessingTask) {
@@ -180,6 +219,47 @@ extension AppDelegate {
             LoggerProxy.event("BGTask scheduleSchedulerBackgroundTask succeeded to submit")
         } catch {
             LoggerProxy.event("BGTask scheduleSchedulerBackgroundTask failed to submit, error: \(error)")
+        }
+    }
+}
+
+// MARK: - UNUserNotificationCenterDelegate (MOB-1467)
+
+/// Routes migration notification taps into the app (`.migrationNotificationTapped`) and controls
+/// foreground presentation of migration notifications (the SmartBanner already covers live state,
+/// so migration notifications present nothing while the app is in the foreground). `rootStore` is
+/// injected by `AppDelegate` rather than held here at construction time, since this delegate is
+/// set on `UNUserNotificationCenter.current()` synchronously in `didFinishLaunching`, before
+/// `AppDelegate`'s own `rootStore` would otherwise be considered "ready" — it's a stored property
+/// on `AppDelegate` either way, so both are initialized together in practice.
+final class MigrationNotificationCenterDelegate: NSObject, UNUserNotificationCenterDelegate {
+    var rootStore: StoreOf<Root>?
+
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse,
+        withCompletionHandler completionHandler: @escaping () -> Void
+    ) {
+        if response.notification.request.identifier.hasPrefix(MigrationNotification.identifierPrefix) {
+            let rootStore = self.rootStore
+            DispatchQueue.main.async {
+                rootStore?.send(.initialization(.appDelegate(.migrationNotificationTapped)))
+            }
+        }
+
+        completionHandler()
+    }
+
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification,
+        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+    ) {
+        if notification.request.identifier.hasPrefix(MigrationNotification.identifierPrefix) {
+            // The SmartBanner already covers live migration state while the app is foregrounded.
+            completionHandler([])
+        } else {
+            completionHandler([.banner, .list, .sound])
         }
     }
 }
