@@ -3,9 +3,10 @@
 //  zodl
 //
 //  "Migration Progress" / "Resume Migration" / "Re-scheduling…" screen (MOB-1464, Figma S10 ·
-//  progress 2709:3350 / resume 2696:7133 / re-scheduling 2840:3656). Visually complete per Figma;
-//  every delegate emitted here is consumed by nobody yet — wiring the real reschedule/send-now
-//  behavior and chaining into the rest of the migration flow lands in MOB-1466.
+//  progress 2709:3350 / resume 2696:7133 / re-scheduling 2840:3656). `onAppear` loads live rows via
+//  the store; every other delegate emitted here is consumed by nobody yet — chaining is the
+//  coordinator's job (phase 3). When `isFlowRoot` is set, the back control closes the flow instead
+//  of popping (MOB-1466).
 //
 
 import ComposableArchitecture
@@ -56,6 +57,9 @@ struct MigrationStatusView: View {
             .applyPresentationModifier(store: store)
         }
         .applyScreenBackground()
+        .onAppear {
+            store.send(.onAppear)
+        }
     }
 
     // MARK: - Title + description
@@ -145,6 +149,7 @@ struct MigrationStatusView: View {
                 ZashiButton(String(localizable: .migrationStatusSendNow)) {
                     store.send(.sendNowTapped)
                 }
+                .disabled(store.isSendNowDisabled)
             }
         }
     }
@@ -153,10 +158,18 @@ struct MigrationStatusView: View {
 // MARK: - Presentation modifier
 
 private extension View {
+    /// `.progress`'s back was already close-like (`zashiBackV2` sending `.gotItTapped`) before
+    /// `isFlowRoot` existed — that stands unconditionally. `.resume`'s back is a plain pop unless
+    /// this screen is the coordinator's re-entry root, in which case it closes the flow instead
+    /// (MOB-1466 back-semantics: "when `isFlowRoot == false`, current behavior stands").
     @ViewBuilder func applyPresentationModifier(store: StoreOf<MigrationStatus>) -> some View {
         if store.presentation == .progress {
             zashiBackV2 {
                 store.send(.gotItTapped)
+            }
+        } else if store.isFlowRoot {
+            zashiBackV2 {
+                store.send(.closeTapped)
             }
         } else {
             zashiBack()

@@ -3,10 +3,13 @@
 //  zodl
 //
 //  "Sending" / "Sent" screen (MOB-1463, Figma S8 · sending 2618:6858 / sent 2618:6895). Shown while
-//  a migration transfer broadcasts, then flips to a success state. Visual-only: `txId` is a
-//  placeholder and `result` is declared but inert — resubmitting after a failure and wiring the
-//  real broadcast result land in MOB-1466. The `closeTapped` / `viewTransactionTapped` delegates
-//  are emitted but consumed by nobody yet.
+//  migration transfers broadcast — one for immediate/manual/plan-first sends, or a sequential batch
+//  for "send now" — then flips to a success state once every transfer in `totalCount` has been
+//  executed. `onAppear` runs `executeNextPendingMigrationTransfer` strictly in sequence, recording a
+//  broadcast and scheduling the next background window after each success; a failure/`nil` result
+//  stops the sequence and presents the failure sheet, and `retryTapped` re-runs only the failed step
+//  (MOB-1466). The `closeTapped` / `viewTransactionTapped` delegates are emitted but consumed by
+//  nobody yet — chaining is the coordinator's job (phase 3).
 //
 
 import ComposableArchitecture
@@ -24,30 +27,46 @@ struct MigrationSending {
         var phase = Phase.sending
         /// Failure sheet presented over the sending phase.
         var isFailurePresented = false
-        /// Placeholder; real tx id lands in MOB-1466 (wires up View Transaction).
+        /// The most recently broadcast transfer's tx id (wires up View Transaction).
         var txId = ""
+        /// How many transfers this screen instance is responsible for: 1 for immediate/manual/
+        /// plan-first sends, N for a sequential "send now" batch. Coordinator-configured.
+        var totalCount = 1
+        /// How many of `totalCount` have been successfully broadcast so far.
+        var sentCount = 0
+        /// Submission options for `executeNextPendingMigrationTransfer`, injected by the coordinator.
+        var networkPrivacyOptions = NetworkPrivacyOptions(useTor: false, submissionEndpoint: nil)
 
         init(
             phase: Phase = .sending,
             isFailurePresented: Bool = false,
-            txId: String = ""
+            txId: String = "",
+            totalCount: Int = 1,
+            sentCount: Int = 0,
+            networkPrivacyOptions: NetworkPrivacyOptions = NetworkPrivacyOptions(useTor: false, submissionEndpoint: nil)
         ) {
             self.phase = phase
             self.isFailurePresented = isFailurePresented
             self.txId = txId
+            self.totalCount = totalCount
+            self.sentCount = sentCount
+            self.networkPrivacyOptions = networkPrivacyOptions
         }
     }
 
     enum Action: BindableAction, Equatable {
+        /// All `totalCount` transfers have been successfully broadcast.
+        case allTransfersSent
         case binding(BindingAction<State>)
         /// Failure sheet: dismiss (stay on screen).
         case cancelTapped
         case closeTapped
         case delegate(Delegate)
-        /// Declared for MOB-1466 (SDK-driven) — inert.
-        case result(TransferResult)
-        /// Failure sheet: dismiss — inert re-submit (MOB-1466).
+        case onAppear
+        /// Failure sheet: dismiss, then re-run the failed step.
         case retryTapped
+        /// `executeNextPendingMigrationTransfer` result for the current step; `nil` on a stub/no-op.
+        case transferResult(TransferResult?)
         case viewTransactionTapped
 
         enum Delegate: Equatable {
@@ -56,6 +75,10 @@ struct MigrationSending {
         }
     }
 
+    @Dependency(\.migrationBGScheduler) var migrationBGScheduler
+    @Dependency(\.migrationManager) var migrationManager
+    @Dependency(\.sdkSynchronizer) var sdkSynchronizer
+
     init() { }
 
     var body: some Reducer<State, Action> {
@@ -63,6 +86,10 @@ struct MigrationSending {
 
         Reduce { state, action in
             switch action {
+            case .allTransfersSent:
+                state.phase = .success
+                return .none
+
             case .binding:
                 return .none
 
@@ -76,16 +103,41 @@ struct MigrationSending {
             case .delegate:
                 return .none
 
-            case .result:
-                return .none
+            case .onAppear:
+                return executeNextTransfer(options: state.networkPrivacyOptions)
 
             case .retryTapped:
                 state.isFailurePresented = false
-                return .none
+                return executeNextTransfer(options: state.networkPrivacyOptions)
+
+            case .transferResult(let result):
+                switch result {
+                case .success(let txId):
+                    state.txId = txId
+                    state.sentCount += 1
+                    // Both are synchronous, non-throwing dependency closures — no effect needed.
+                    migrationManager.recordMigrationBroadcast()
+                    migrationBGScheduler.scheduleNextWindow()
+
+                    return state.sentCount >= state.totalCount
+                        ? .send(.allTransfersSent)
+                        : executeNextTransfer(options: state.networkPrivacyOptions)
+
+                case .networkError, .invalidNote, .expired, nil:
+                    state.isFailurePresented = true
+                    return .none
+                }
 
             case .viewTransactionTapped:
                 return .send(.delegate(.viewTransaction))
             }
+        }
+    }
+
+    private func executeNextTransfer(options: NetworkPrivacyOptions) -> Effect<Action> {
+        .run { send in
+            let result = await sdkSynchronizer.executeNextPendingMigrationTransfer(options)
+            await send(.transferResult(result))
         }
     }
 }

@@ -16,6 +16,7 @@ struct Root {
         enum Path {
             case addKeystoneHWWalletCoordFlow
             case currencyConversionSetup
+            case migrationCoordFlow
             case receive
             case requestZecCoordFlow
             case scanCoordFlow
@@ -103,6 +104,7 @@ struct Root {
 
         var addKeystoneHWWalletCoordFlowState = AddKeystoneHWWalletCoordFlow.State.initial
         var currencyConversionSetupState = CurrencyConversionSetup.State.initial
+        var migrationCoordFlowState = MigrationCoordFlow.State.initial
         var receiveState = Receive.State.initial
         var requestZecCoordFlowState = RequestZecCoordFlow.State.initial
         var scanCoordFlowState = ScanCoordFlow.State.initial
@@ -139,7 +141,7 @@ struct Root {
             // it; if voting ever gets its own `Path` case, move the sensitivity there.
             case .settings:
                 return true
-            case .sendCoordFlow, .scanCoordFlow, .swapAndPayCoordFlow, .transactionsCoordFlow:
+            case .migrationCoordFlow, .sendCoordFlow, .scanCoordFlow, .swapAndPayCoordFlow, .transactionsCoordFlow:
                 return true
             case .addKeystoneHWWalletCoordFlow, .currencyConversionSetup, .receive,
                  .requestZecCoordFlow, .serverSwitch, .torSetup, .walletBackup:
@@ -218,6 +220,7 @@ struct Root {
 
         case addKeystoneHWWalletCoordFlow(AddKeystoneHWWalletCoordFlow.Action)
         case currencyConversionSetup(CurrencyConversionSetup.Action)
+        case migrationCoordFlow(MigrationCoordFlow.Action)
         case receive(Receive.Action)
         case requestZecCoordFlow(RequestZecCoordFlow.Action)
         case scanCoordFlow(ScanCoordFlow.Action)
@@ -292,6 +295,7 @@ struct Root {
     @Dependency(\.flexaHandler) var flexaHandler
     @Dependency(\.localAuthentication) var localAuthentication
     @Dependency(\.mainQueue) var mainQueue
+    @Dependency(\.migrationManager) var migrationManager
     @Dependency(\.mnemonic) var mnemonic
     @Dependency(\.numberFormatter) var numberFormatter
     @Dependency(\.pasteboard) var pasteboard
@@ -373,6 +377,10 @@ struct Root {
         
         Scope(state: \.addKeystoneHWWalletCoordFlowState, action: \.addKeystoneHWWalletCoordFlow) {
             AddKeystoneHWWalletCoordFlow()
+        }
+
+        Scope(state: \.migrationCoordFlowState, action: \.migrationCoordFlow) {
+            MigrationCoordFlow()
         }
 
         Scope(state: \.transactionsCoordFlowState, action: \.transactionsCoordFlow) {

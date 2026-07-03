@@ -2,10 +2,10 @@
 //  MigrationSendingView.swift
 //  zodl
 //
-//  "Sending" / "Sent" screen (MOB-1463, Figma S8 · sending 2618:6858 / sent 2618:6895). Visually
-//  complete per Figma; `result` is declared but inert — wiring the real broadcast result and
-//  resubmission after a failure lands in MOB-1466. The `closeTapped` / `viewTransactionTapped`
-//  delegates are emitted but consumed by nobody yet.
+//  "Sending" / "Sent" screen (MOB-1463, Figma S8 · sending 2618:6858 / sent 2618:6895). `onAppear`
+//  drives the store's sequential transfer execution (MOB-1466). The `closeTapped` /
+//  `viewTransactionTapped` delegates are emitted but consumed by nobody yet — chaining is the
+//  coordinator's job (phase 3).
 //
 
 import ComposableArchitecture
@@ -34,6 +34,9 @@ struct MigrationSendingView: View {
                 .zashiSheet(isPresented: $store.isFailurePresented) {
                     failureSheetContent
                 }
+        }
+        .onAppear {
+            store.send(.onAppear)
         }
     }
 

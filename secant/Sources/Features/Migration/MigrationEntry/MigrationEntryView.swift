@@ -67,6 +67,9 @@ struct MigrationEntryView: View {
             .zashiBack()
         }
         .applyScreenBackground()
+        .onAppear {
+            store.send(.onAppear)
+        }
     }
 
     // MARK: - Description
