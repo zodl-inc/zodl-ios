@@ -19314,6 +19314,397 @@
           }
         }
       }
+    },
+    "migrationBackgroundDelivery.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Allow Background Delivery"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Permitir entrega en segundo plano"
+          }
+        }
+      }
+    },
+    "migrationBackgroundDelivery.desc" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "To send migration transfers at their scheduled times, ZODL needs permission to run in the background. Turn on Background App Refresh for ZODL in your device settings."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Para enviar las transferencias de migración en sus horarios programados, ZODL necesita permiso para ejecutarse en segundo plano. Activa la actualización en segundo plano para ZODL en los ajustes de tu dispositivo."
+          }
+        }
+      }
+    },
+    "migrationBackgroundDelivery.bullet1Title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transfers send at their scheduled windows"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Las transferencias se envían en sus ventanas programadas"
+          }
+        }
+      }
+    },
+    "migrationBackgroundDelivery.bullet1Desc" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ZODL wakes up and sends each transfer at its scheduled time — no action needed."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ZODL se activa y envía cada transferencia en su horario programado; no necesitas hacer nada."
+          }
+        }
+      }
+    },
+    "migrationBackgroundDelivery.bullet2Title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No need to open the app for each send"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No es necesario abrir la app para cada envío"
+          }
+        }
+      }
+    },
+    "migrationBackgroundDelivery.bullet2Desc" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Once the schedule is committed, all transfers are sent in the background."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Una vez confirmado el calendario, todas las transferencias se envían en segundo plano."
+          }
+        }
+      }
+    },
+    "migrationBackgroundDelivery.bullet3Title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sends on a fixed schedule, not your activity"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Se envían según un horario fijo, no según tu actividad"
+          }
+        }
+      }
+    },
+    "migrationBackgroundDelivery.bullet3Desc" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transfers go out at set network-wide times, so they're not linked to when you open ZODL."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Las transferencias salen en horarios fijos de toda la red, por lo que no están vinculadas al momento en que abres ZODL."
+          }
+        }
+      }
+    },
+    "migrationBackgroundDelivery.footer" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Without this permission, you'll need to open ZODL manually at each scheduled time to send."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sin este permiso, deberás abrir ZODL manualmente en cada horario programado para enviar."
+          }
+        }
+      }
+    },
+    "migrationNotifications.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Allow Notifications"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Permitir notificaciones"
+          }
+        }
+      }
+    },
+    "migrationNotifications.descScheduled" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "If a scheduled transfer is missed or a background submission fails, we can send you a local notification and prompt you to open ZODL. Get notified about:"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Si se omite una transferencia programada o falla un envío en segundo plano, podemos enviarte una notificación local y pedirte que abras ZODL. Recibe notificaciones sobre:"
+          }
+        }
+      }
+    },
+    "migrationNotifications.descManual" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "We'll notify you when it's time to send each transfer, following a schedule designed to protect your privacy. Get notified about:"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Te avisaremos cuando sea el momento de enviar cada transferencia, siguiendo un calendario diseñado para proteger tu privacidad. Recibe notificaciones sobre:"
+          }
+        }
+      }
+    },
+    "migrationNotifications.statusTitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Migration Status"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Estado de la migración"
+          }
+        }
+      }
+    },
+    "migrationNotifications.statusDesc" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "We will inform you whenever your funds are fully migrated to Ironwood."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Te avisaremos cuando tus fondos se hayan migrado por completo a Ironwood."
+          }
+        }
+      }
+    },
+    "migrationNotifications.actionTitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Action Needed"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Acción necesaria"
+          }
+        }
+      }
+    },
+    "migrationNotifications.actionDescScheduled" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "If we miss a window, we will prompt you to open the app and send a transfer manually."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Si se pasa una ventana de envío, te pediremos que abras la app y envíes una transferencia manualmente."
+          }
+        }
+      }
+    },
+    "migrationNotifications.actionDescManual" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "We will prompt you when it's time to send a transfer."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Te avisaremos cuando sea el momento de enviar una transferencia."
+          }
+        }
+      }
+    },
+    "migrationNotifications.planTitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transfer Plan Changes"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cambios en el plan de transferencias"
+          }
+        }
+      }
+    },
+    "migrationNotifications.planDesc" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "If allocated funds are spent or a scheduled transfer can no longer be sent, we'll let you know."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Si los fondos asignados se gastan o una transferencia programada ya no se puede enviar, te lo haremos saber."
+          }
+        }
+      }
+    },
+    "migrationNotifications.footerScheduled" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Without notifications, you'll need to open ZODL to check migration progress and approve any manual transfers yourself."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sin notificaciones, deberás abrir ZODL para revisar el progreso de la migración y aprobar tú mismo cualquier transferencia manual."
+          }
+        }
+      }
+    },
+    "migrationNotifications.footerManual" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Without notifications, we can't tell you when it's time to send your next transfer, which may delay your migration."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sin notificaciones, no podemos avisarte cuándo es momento de enviar tu próxima transferencia, lo que podría retrasar tu migración."
+          }
+        }
+      }
+    },
+    "migration.skipOpenApp" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Skip — I'll open the app"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Omitir: yo abriré la app"
+          }
+        }
+      }
+    },
+    "migration.allow" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Allow"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Permitir"
+          }
+        }
+      }
     }
   },
   "version" : "1.1"
