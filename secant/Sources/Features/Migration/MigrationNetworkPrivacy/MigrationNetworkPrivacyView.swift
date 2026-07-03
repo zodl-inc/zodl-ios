@@ -158,7 +158,7 @@ struct MigrationNetworkPrivacyView: View {
                 .fill(Design.Surfaces.bgPrimary.color(colorScheme))
                 .overlay {
                     RoundedRectangle(cornerRadius: Design.Radius._2xl)
-                        .stroke(Design.Surfaces.strokeSecondary.color(colorScheme))
+                        .strokeBorder(Design.Surfaces.strokeSecondary.color(colorScheme))
                 }
         }
     }

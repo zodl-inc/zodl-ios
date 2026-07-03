@@ -378,8 +378,8 @@ struct MigrationDebugGalleryView: View {
             .background {
                 LinearGradient(
                     stops: [
-                        Gradient.Stop(color: Design.Utility.Purple._700.color(.light), location: 0.00),
-                        Gradient.Stop(color: Design.Utility.Purple._950.color(.light), location: 1.00)
+                        Gradient.Stop(color: Design.Utility.Gray._700.color(.light), location: 0.00),
+                        Gradient.Stop(color: Design.Utility.Gray._950.color(.light), location: 1.00)
                     ],
                     startPoint: UnitPoint(x: 0.5, y: 0.0),
                     endPoint: UnitPoint(x: 0.5, y: 1.0)

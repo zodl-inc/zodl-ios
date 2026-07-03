@@ -91,18 +91,20 @@ extension SmartBannerView {
 /// Standalone rendering of the `priorityMigration` banner content, extracted from
 /// `SmartBannerView.migrationContent()` (MOB-1465) so the DEBUG migration gallery can render every
 /// `MigrationBannerVariant` without hosting a live `SmartBannerView` (whose `onAppear` starts real
-/// dependency subscriptions). Colors mirror `SmartBannerView.titleStyle()` / `infoStyle()`
-/// (`SmartBannerContent.swift`) inlined here since those helpers are `SmartBannerView` members.
+/// dependency subscriptions). Tints use the Gray ramp (`utility-gray-50`/`-200`), matching the
+/// Figma migration-banner tokens — deliberately NOT `SmartBannerView.titleStyle()`/`infoStyle()`,
+/// which still use the pre-rebrand Purple ramp. When MOB-1466 hosts this content inside the live
+/// banner, the shared banner gradient (Purple._700 → ._950) likely needs the same Gray swap.
 struct MigrationBannerContentView: View {
     let variant: MigrationBannerVariant
     let onButtonTap: () -> Void
 
     private var titleStyle: Color {
-        Design.Utility.Purple._50.color(.light)
+        Design.Utility.Gray._50.color(.light)
     }
 
     private var infoStyle: Color {
-        Design.Utility.Purple._200.color(.light)
+        Design.Utility.Gray._200.color(.light)
     }
 
     var body: some View {

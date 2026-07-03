@@ -197,7 +197,7 @@ struct MigrationNoteSplitView: View {
                 ZashiButton(
                     String(localizable: .migrationNoteSplitSplittingTitle),
                     type: .secondary,
-                    accessoryView: ProgressView()
+                    prefixView: ProgressView()
                 ) { }
                 .disabled(true)
             }

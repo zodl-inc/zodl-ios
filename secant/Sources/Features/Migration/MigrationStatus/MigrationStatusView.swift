@@ -131,13 +131,13 @@ struct MigrationStatusView: View {
                     ZashiButton(
                         String(localizable: .migrationStatusReschedulingTitle),
                         type: .tertiary,
-                        accessoryView: ProgressView()
+                        prefixView: ProgressView()
                     ) {
                         store.send(.rescheduleTapped)
                     }
                     .disabled(true)
                 } else {
-                    ZashiButton(String(localizable: .migrationStatusReschedule), type: .ghost) {
+                    ZashiButton(String(localizable: .migrationStatusReschedule), type: .secondary) {
                         store.send(.rescheduleTapped)
                     }
                 }
