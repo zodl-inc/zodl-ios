@@ -7,7 +7,7 @@
 //  the Settings deep-link from the view (`@Environment(\.openURL)`) — the action here is just the
 //  tap signal. `scenePhaseActive` re-checks Background App Refresh on return and auto-advances via
 //  `.continued(backgroundAllowed: true)` once it becomes available (MOB-1466). The `skipTapped`
-//  delegate is emitted but consumed by nobody yet — chaining is the coordinator's job (phase 3).
+//  delegate is consumed by `MigrationCoordFlowCoordinator` (MOB-1466).
 //
 
 import ComposableArchitecture

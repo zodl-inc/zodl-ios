@@ -7,8 +7,8 @@
 //  via `migrationTransfers()`/`migrationSummary()`, derives `isSendNowDisabled` from
 //  `manager.sendGate()`, and subscribes `migrationStateStream()` to refresh rows live (MOB-1466).
 //  When this screen is a flow re-entry root (`isFlowRoot`), its back control closes the flow
-//  (`.done`) instead of popping — every other delegate is emitted but consumed by nobody yet;
-//  chaining is the coordinator's job (phase 3).
+//  (`.done`) instead of popping — every other delegate is consumed by
+//  `MigrationCoordFlowCoordinator` (MOB-1466).
 //
 
 import Foundation
@@ -37,7 +37,7 @@ struct MigrationStatus {
         var isFlowRoot = false
         /// Send-now CTA disabled per `manager.sendGate()` (`.syncRequired`/`.waitUntil` -> disabled).
         var isSendNowDisabled = false
-        var CancelStateStreamId = UUID()
+        var cancelStateStreamId = UUID()
 
         var remainingCount: Int {
             rows.filter { $0.status != .sent }.count
@@ -110,7 +110,7 @@ struct MigrationStatus {
                         sdkSynchronizer.migrationStateStream()
                             .map { _ in Action.migrationStateChanged }
                     }
-                    .cancellable(id: state.CancelStateStreamId, cancelInFlight: true)
+                    .cancellable(id: state.cancelStateStreamId, cancelInFlight: true)
                 )
 
             case .rescheduleTapped:
