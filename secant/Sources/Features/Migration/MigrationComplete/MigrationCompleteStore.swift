@@ -6,8 +6,7 @@
 //  injected by the coordinator (MOB-1466). This screen has no back control at all
 //  (`.navigationBarBackButtonHidden()`); `isFlowRoot` is carried in State for coordinator-injection
 //  consistency with the other re-entry roots even though there's no back-control behavior to gate
-//  here. The `gotItTapped` delegate is emitted but consumed by nobody yet — wiring is the
-//  coordinator's job (phase 3).
+//  here. The `gotItTapped` delegate is consumed by `MigrationCoordFlowCoordinator` (MOB-1466).
 //
 
 import ComposableArchitecture

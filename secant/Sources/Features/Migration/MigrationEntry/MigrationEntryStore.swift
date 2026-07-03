@@ -5,8 +5,7 @@
 //  "Move to Ironwood" entry screen (MOB-1460, Figma S1 · 2867:10445 / 2867:5641 / 2867:5731). Lets
 //  the user pick between migrating with privacy (scheduled, split transfers) or immediately (single
 //  transfer, less privacy). `onAppear` loads the orchard-balance-to-migrate for the selected account
-//  (MOB-1466); chaining `nextTapped`'s delegate into the rest of the migration flow is the
-//  coordinator's job (MOB-1466 phase 3).
+//  (MOB-1466); `nextTapped`'s delegate is consumed by `MigrationCoordFlowCoordinator` (MOB-1466).
 //
 
 import ComposableArchitecture

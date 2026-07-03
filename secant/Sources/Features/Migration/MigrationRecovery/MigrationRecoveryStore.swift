@@ -5,8 +5,8 @@
 //  "Reschedule Transfers" / "Transfers No Longer Valid" screen (MOB-1464, Figma S11 · spent
 //  2696:5626 / expired 2973:5698). When this screen is the coordinator's re-entry root
 //  (`isFlowRoot`), its back control closes the flow (`closeTapped` -> `.delegate(.close)`) instead
-//  of popping (MOB-1466). The `continueTapped` delegate is emitted but consumed by nobody yet —
-//  wiring the real plan-recreation flow is the coordinator's job (phase 3).
+//  of popping (MOB-1466). The `continueTapped` delegate (plan-recreation) is consumed by
+//  `MigrationCoordFlowCoordinator` (MOB-1466).
 //
 
 import ComposableArchitecture
