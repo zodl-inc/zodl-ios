@@ -3,9 +3,9 @@
 //  zodl
 //
 //  Shared bullet row for migration permission screens (MOB-1462): a bare icon 20 pt
-//  `Design.Text.primary` in a 24 pt frame, top-aligned, next to a semibold title and a tertiary
-//  caption. Generalizes the `outcomeRow` pattern from MigrationNetworkPrivacyView. Used by
-//  MigrationBackgroundDelivery and MigrationNotifications.
+//  `Design.Text.primary` in a 24 pt frame, top-aligned, next to a medium-weight title and a
+//  tertiary caption. Generalizes the `outcomeRow` pattern from MigrationNetworkPrivacyView. Used
+//  by MigrationBackgroundDelivery and MigrationNotifications.
 //
 
 import SwiftUI
