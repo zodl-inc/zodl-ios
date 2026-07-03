@@ -105,7 +105,7 @@ extension MigrationCoordFlow {
                 if state.mode == .immediate {
                     state.path.append(.reviewTransfer(MigrationReviewTransfer.State(mode: .immediate)))
                 } else {
-                    state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .scheduled)))
+                    state.path.append(.transferPlan(MigrationTransferPlan.State(variant: freshPlanVariant())))
                 }
                 return .none
 
@@ -290,9 +290,15 @@ extension MigrationCoordFlow {
         }
 
         return MigrationCoordFlow.PermissionStepResult(
-            pathState: .transferPlan(MigrationTransferPlan.State(variant: .scheduled)),
+            pathState: .transferPlan(MigrationTransferPlan.State(variant: freshPlanVariant())),
             forcedUseTor: true
         )
+    }
+
+    /// Fresh-entry plan variant: manual delivery (background delivery declined) shows the manual
+    /// copy and its confirm sends the first transfer now (§6.3); otherwise the scheduled variant.
+    private func freshPlanVariant() -> MigrationTransferPlan.State.Variant {
+        migrationManager.isManualDelivery() ? .manual : .scheduled
     }
 
     // MARK: - Reschedule / Recovery: TransferPlan hydration
