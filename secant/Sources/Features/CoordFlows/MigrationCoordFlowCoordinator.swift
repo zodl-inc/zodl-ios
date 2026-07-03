@@ -168,30 +168,21 @@ extension MigrationCoordFlow {
             case .path(.element(id: _, action: .scan(.foundPCZTBatch(let signed)))):
                 guard let context = state.pendingKeystoneSigning else { return .none }
 
+                // Empty batch: nothing decoded to a usable signed PCZT — in EVERY context this
+                // abandons the signing session like a rejection (deferred pop of scan + sign back
+                // to the initiating screen, context cleared) and never submits or stores anything
+                // (no-partial-storage invariant). The user re-initiates from the confirm button.
+                guard !signed.isEmpty else { return .send(.keystoneScanAbandoned) }
+
                 switch context {
                 case .noteSplit:
-                    // Empty batch: nothing decoded to a usable signed PCZT — treat it as a failure
-                    // the same way an unparseable/rejected QR does elsewhere, without ever calling
-                    // `submitSignedNoteSplit` (no-partial-storage invariant).
-                    guard let pczt = signed.first else {
-                        return .send(
-                            .keystoneSigningSubmitted(
-                                context: .noteSplit,
-                                result: .networkError(retryable: true),
-                                signedPczt: nil
-                            )
-                        )
-                    }
+                    guard let pczt = signed.first else { return .none }
                     return .run { [sdkSynchronizer] send in
                         let result = await sdkSynchronizer.submitSignedNoteSplit(pczt)
                         await send(.keystoneSigningSubmitted(context: .noteSplit, result: result, signedPczt: pczt))
                     }
 
                 case .planCommit, .immediateReview:
-                    // Empty batch: nothing to store — no-partial-storage invariant (never call
-                    // `storeSignedMigrationTransactions` with an incomplete/empty set).
-                    guard !signed.isEmpty else { return .none }
-
                     return .run { [sdkSynchronizer] send in
                         await sdkSynchronizer.storeSignedMigrationTransactions(signed)
                         await send(.keystoneSigningSubmitted(context: context, result: nil, signedPczt: nil))
@@ -213,6 +204,12 @@ extension MigrationCoordFlow {
 
             case .keystoneSignRejected:
                 state.pendingKeystoneSigning = nil
+                let _ = state.path.popLast()
+                return .none
+
+            case .keystoneScanAbandoned:
+                state.pendingKeystoneSigning = nil
+                let _ = state.path.popLast()
                 let _ = state.path.popLast()
                 return .none
 

@@ -628,7 +628,7 @@ import ComposableArchitecture
 
     // MARK: - MOB-1468: Keystone signing — empty batch never submits/stores (no-partial-storage)
 
-    @MainActor @Test func foundPCZTBatchWithEmptyArrayForNoteSplitContextNeverCallsSubmitAndPresentsFailure() async {
+    @MainActor @Test func foundPCZTBatchWithEmptyArrayForNoteSplitContextAbandonsSessionWithoutSubmitting() async {
         let submitCalls = LockIsolated<Int>(0)
         var state = MigrationCoordFlow.State()
         state.pendingKeystoneSigning = .noteSplit
@@ -647,18 +647,20 @@ import ComposableArchitecture
         store.exhaustivity = .off
 
         await store.send(.path(.element(id: 2, action: .scan(.foundPCZTBatch([])))))
-        await store.receive(\.keystoneSigningSubmitted)
+        await store.receive(\.keystoneScanAbandoned)
 
         #expect(submitCalls.value == 0)
+        #expect(store.state.pendingKeystoneSigning == nil)
+        #expect(store.state.path.count == 1)
         guard case let .noteSplit(noteSplitState) = try? #require(store.state.path.last) else {
-            Issue.record("Expected .noteSplit remaining on top")
+            Issue.record("Expected pop back to .noteSplit (scan + sign removed)")
             return
         }
-        #expect(noteSplitState.isFailurePresented == true)
+        #expect(noteSplitState.phase == MigrationNoteSplit.State.Phase.explainer)
         #expect(noteSplitState.signedNoteSplitPczt == nil)
     }
 
-    @MainActor @Test func foundPCZTBatchWithEmptyArrayForPlanCommitContextNeverCallsStoreAndStaysOnScan() async {
+    @MainActor @Test func foundPCZTBatchWithEmptyArrayForPlanCommitContextAbandonsSessionWithoutStoring() async {
         let storeCalls = LockIsolated<Int>(0)
         var state = MigrationCoordFlow.State()
         state.pendingKeystoneSigning = .planCommit
@@ -674,14 +676,15 @@ import ComposableArchitecture
         store.exhaustivity = .off
 
         await store.send(.path(.element(id: 2, action: .scan(.foundPCZTBatch([])))))
+        await store.receive(\.keystoneScanAbandoned)
 
         #expect(storeCalls.value == 0)
-        // No pop, no resume — the empty-batch guard is a plain no-op, leaving the user on `scan`
-        // for a re-scan (context stays pending, same as any other unresolved scan).
-        #expect(store.state.pendingKeystoneSigning == MigrationCoordFlow.KeystoneSigningContext.planCommit)
-        #expect(store.state.path.count == 3)
-        guard case .scan = try? #require(store.state.path.last) else {
-            Issue.record("Expected .scan to remain on top (no pop on an empty batch no-op)")
+        // Deferred pop of scan + sign back to the plan, context cleared — the user re-initiates
+        // signing from the confirm button (no-partial-storage invariant: nothing was stored).
+        #expect(store.state.pendingKeystoneSigning == nil)
+        #expect(store.state.path.count == 1)
+        guard case .transferPlan = try? #require(store.state.path.last) else {
+            Issue.record("Expected pop back to .transferPlan (scan + sign removed)")
             return
         }
     }
