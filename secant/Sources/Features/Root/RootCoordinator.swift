@@ -246,10 +246,36 @@ extension Root {
                 state.walletBackupCoordFlowState = .initial
                 state.path = .walletBackup
                 return .none
-                
+
             case .home(.smartBanner(.serverSwitchRequested)):
                 state.serverSetupState = .initial
                 state.path = .serverSwitch
+                return .none
+
+                // MARK: - Migration Coord Flow
+
+            case .home(.smartBanner(.migrationScreenRequested)):
+                state.migrationCoordFlowState = MigrationCoordFlow.State.initial
+                state.path = .migrationCoordFlow
+                return .none
+
+            case .migrationCoordFlow(.flowFinished):
+                state.path = nil
+                return .none
+
+            case .migrationCoordFlow(
+                .path(.element(id: _, action: .sending(.delegate(.viewTransaction))))
+            ):
+                // The migration Sending delegate carries only a bare stub `txId: String`
+                // (`MigrationSending.State.txId`), never a real `TransactionState` — but
+                // `TransactionsCoordFlow`'s existing open-a-transaction plumbing (mirrored from
+                // `.home(.transactionList(.transactionTapped))` above) requires a non-optional
+                // `TransactionState` looked up from `state.transactions`, which a synthetic
+                // migration txid will never be a member of. Until the real SDK (MOB-1455) fills
+                // in migration transfers with transactions the rest of the app can see, treat
+                // View Transaction as a flow close rather than a broken/empty detail screen.
+                // TODO: [MOB-1458] route to transaction detail once real txids exist
+                state.path = nil
                 return .none
 
                 // MARK: - Keystone

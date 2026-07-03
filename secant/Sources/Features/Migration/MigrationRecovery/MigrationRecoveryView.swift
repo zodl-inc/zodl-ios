@@ -3,8 +3,9 @@
 //  zodl
 //
 //  "Reschedule Transfers" / "Transfers No Longer Valid" screen (MOB-1464, Figma S11 · spent
-//  2696:5626 / expired 2973:5698). Visually complete per Figma; the `continueTapped` delegate is
-//  emitted but consumed by nobody yet — wiring the real plan-recreation flow lands in MOB-1466.
+//  2696:5626 / expired 2973:5698). When `isFlowRoot` is set, the back control closes the flow
+//  instead of popping (MOB-1466). The `continueTapped` delegate is emitted but consumed by nobody
+//  yet — wiring the real plan-recreation flow is the coordinator's job (phase 3).
 //
 
 import ComposableArchitecture
@@ -49,7 +50,7 @@ struct MigrationRecoveryView: View {
                 .padding(.bottom, 24)
             }
             .screenHorizontalPadding()
-            .zashiBack()
+            .applyPresentationModifier(store: store)
         }
         .applyScreenBackground()
     }
@@ -122,6 +123,20 @@ struct MigrationRecoveryView: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.top, 2)
                 .padding(.bottom, 12)
+        }
+    }
+}
+
+// MARK: - Presentation modifier
+
+private extension View {
+    @ViewBuilder func applyPresentationModifier(store: StoreOf<MigrationRecovery>) -> some View {
+        if store.isFlowRoot {
+            zashiBackV2 {
+                store.send(.closeTapped)
+            }
+        } else {
+            zashiBack()
         }
     }
 }

@@ -3,9 +3,9 @@
 //  zodl
 //
 //  "Transfer Plan" screen (MOB-1463, Figma S6 · scheduled 2867:10211 / manual 2867:2198 /
-//  re-created 2709:3519). Visually complete per Figma; `rows` is a placeholder and the
-//  `confirmTapped` delegate is emitted but consumed by nobody yet — wiring the real proposal and
-//  chaining into the rest of the migration flow lands in MOB-1466.
+//  re-created 2709:3519). `onAppear` loads a fresh proposal (or leaves an injected schedule alone)
+//  via the store; the `confirmTapped` delegate is emitted but consumed by nobody yet — chaining
+//  into the rest of the migration flow is the coordinator's job (MOB-1466 phase 3).
 //
 
 import ComposableArchitecture
@@ -49,6 +49,9 @@ struct MigrationTransferPlanView: View {
             .zashiBack()
         }
         .applyScreenBackground()
+        .onAppear {
+            store.send(.onAppear)
+        }
     }
 
     // MARK: - Title + description

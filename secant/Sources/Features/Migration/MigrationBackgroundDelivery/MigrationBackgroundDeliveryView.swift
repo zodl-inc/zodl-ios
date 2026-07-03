@@ -2,16 +2,18 @@
 //  MigrationBackgroundDeliveryView.swift
 //  zodl
 //
-//  "Allow Background Delivery" screen (MOB-1462, Figma S3 · 2840:4480). Visually complete per
-//  Figma; `allowTapped` (Settings deep-link) and `scenePhaseActive` (BAR re-check) are declared but
-//  inert — wiring them up lands in MOB-1466. The `skipTapped` delegate is emitted but consumed by
-//  nobody yet.
+//  "Allow Background Delivery" screen (MOB-1462, Figma S3 · 2840:4480). `allowTapped` opens the
+//  Settings deep-link; `scenePhaseActive` re-checks Background App Refresh on return and the store
+//  auto-advances once it's available (MOB-1466). The `skipTapped` delegate is emitted but consumed
+//  by nobody yet — chaining is the coordinator's job (phase 3).
 //
 
 import ComposableArchitecture
 import SwiftUI
 
 struct MigrationBackgroundDeliveryView: View {
+    @Environment(\.openURL) private var openURL
+    @Environment(\.scenePhase) private var scenePhase
     @Perception.Bindable var store: StoreOf<MigrationBackgroundDelivery>
 
     init(store: StoreOf<MigrationBackgroundDelivery>) {
@@ -49,6 +51,9 @@ struct MigrationBackgroundDeliveryView: View {
 
                 ZashiButton(String(localizable: .migrationAllow)) {
                     store.send(.allowTapped)
+                    if let settingsUrl = URL(string: UIApplication.openSettingsURLString) {
+                        openURL(settingsUrl)
+                    }
                 }
                 .padding(.bottom, 24)
             }
@@ -56,6 +61,11 @@ struct MigrationBackgroundDeliveryView: View {
             .zashiBack()
         }
         .applyScreenBackground()
+        .onChange(of: scenePhase) { newPhase in
+            if newPhase == .active {
+                store.send(.scenePhaseActive)
+            }
+        }
     }
 
     // MARK: - Bullet rows

@@ -4,8 +4,9 @@
 //
 //  "Move to Ironwood" entry screen (MOB-1460, Figma S1 · 2867:10445 / 2867:5641 / 2867:5731). Lets
 //  the user pick between migrating with privacy (scheduled, split transfers) or immediately (single
-//  transfer, less privacy). The delegate is emitted but consumed by nobody yet — chaining into the
-//  rest of the migration flow lands in MOB-1466.
+//  transfer, less privacy). `onAppear` loads the orchard-balance-to-migrate for the selected account
+//  (MOB-1466); chaining `nextTapped`'s delegate into the rest of the migration flow is the
+//  coordinator's job (MOB-1466 phase 3).
 //
 
 import ComposableArchitecture
@@ -16,10 +17,10 @@ struct MigrationEntry {
     @ObservableState
     struct State: Equatable {
         var selectedMode = MigrationMode.privateScheduled
-        /// Placeholder; real balance data lands in MOB-1466.
         var orchardBalance = Zatoshi.zero
         /// e.g. `"$4,832.86"`; `nil` omits the parenthesized fiat amount.
         var fiatText: String?
+        @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
 
         var isDisclaimerVisible: Bool {
             selectedMode == .immediate
@@ -37,22 +38,31 @@ struct MigrationEntry {
     }
 
     enum Action: Equatable {
+        /// The orchard balance to migrate for the selected account, loaded on `onAppear`.
+        case balanceLoaded(Zatoshi)
         case delegate(Delegate)
         /// Inert for now; the "Find out more" destination (O-7) is undecided.
         case findOutMoreTapped
         case modeTapped(MigrationMode)
         case nextTapped
+        case onAppear
 
         enum Delegate: Equatable {
             case chose(MigrationMode)
         }
     }
 
+    @Dependency(\.migrationManager) var migrationManager
+
     init() { }
 
     var body: some Reducer<State, Action> {
         Reduce { state, action in
             switch action {
+            case .balanceLoaded(let balance):
+                state.orchardBalance = balance
+                return .none
+
             case .delegate:
                 return .none
 
@@ -65,6 +75,13 @@ struct MigrationEntry {
 
             case .nextTapped:
                 return .send(.delegate(.chose(state.selectedMode)))
+
+            case .onAppear:
+                let accountUUID = state.selectedWalletAccount?.id
+                return .run { send in
+                    let balance = await migrationManager.orchardBalanceToMigrate(accountUUID)
+                    await send(.balanceLoaded(balance))
+                }
             }
         }
     }

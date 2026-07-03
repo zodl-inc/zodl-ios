@@ -3,22 +3,40 @@
 //  zodlTests
 //
 //  Covers the MigrationEntry reducer (Features/Migration/MigrationEntry/MigrationEntryStore.swift)
-//  for MOB-1460: mode selection, the disclaimer-visibility derivation, and the `nextTapped` delegate
-//  contract. No SDK calls, no navigation — chaining lands in MOB-1466. No shared/global state ->
-//  no `.serialized`.
+//  for MOB-1460/1466: mode selection, the disclaimer-visibility derivation, the `nextTapped`
+//  delegate contract, and (MOB-1466) `onAppear` loading the orchard-balance-to-migrate amount for
+//  the selected account via `MigrationManagerClient`. `.serialized`: state mutates the
+//  process-global `@Shared(.inMemory(.selectedWalletAccount))`.
 //
 
 import Testing
 import Foundation
 import ComposableArchitecture
+@testable @preconcurrency import ZcashLightClientKit
 @testable import zodl_internal
 
-@Suite struct MigrationEntryTests {
+@Suite(.serialized) struct MigrationEntryTests {
+    private func walletAccount(idByte: UInt8) -> WalletAccount {
+        WalletAccount(
+            Account(
+                id: AccountUUID(id: [UInt8](repeating: idByte, count: 16)),
+                name: "Zodl",
+                keySource: nil,
+                seedFingerprint: nil,
+                hdAccountIndex: Zip32AccountIndex(0),
+                ufvk: nil,
+                uivk: nil
+            )
+        )
+    }
+
     @MainActor @Test func defaultStateIsPrivateScheduledWithNoDisclaimer() async {
         let state = MigrationEntry.State()
 
         #expect(state.selectedMode == MigrationMode.privateScheduled)
         #expect(state.isDisclaimerVisible == false)
+        #expect(state.orchardBalance == Zatoshi.zero)
+        #expect(state.selectedWalletAccount == nil)
     }
 
     @MainActor @Test func modeTappedImmediateSelectsModeAndRevealsDisclaimer() async {
@@ -85,5 +103,42 @@ import ComposableArchitecture
         }
 
         await store.send(.delegate(.chose(.immediate)))
+    }
+
+    @MainActor @Test func onAppearWithNoSelectedAccountLoadsZeroBalance() async {
+        var state = MigrationEntry.State()
+        state.$selectedWalletAccount.withLock { $0 = nil }
+        let store = TestStore(initialState: state) {
+            MigrationEntry()
+        } withDependencies: {
+            $0.migrationManager.orchardBalanceToMigrate = { accountUUID in
+                #expect(accountUUID == nil)
+                return Zatoshi(999)
+            }
+        }
+
+        await store.send(.onAppear)
+        await store.receive(\.balanceLoaded) {
+            $0.orchardBalance = Zatoshi(999)
+        }
+    }
+
+    @MainActor @Test func onAppearWithSelectedAccountLoadsOrchardBalanceToMigrate() async {
+        let account = walletAccount(idByte: 7)
+        var state = MigrationEntry.State()
+        state.$selectedWalletAccount.withLock { $0 = account }
+        let store = TestStore(initialState: state) {
+            MigrationEntry()
+        } withDependencies: {
+            $0.migrationManager.orchardBalanceToMigrate = { accountUUID in
+                #expect(accountUUID == account.id)
+                return Zatoshi(1_245_800_000)
+            }
+        }
+
+        await store.send(.onAppear)
+        await store.receive(\.balanceLoaded) {
+            $0.orchardBalance = Zatoshi(1_245_800_000)
+        }
     }
 }

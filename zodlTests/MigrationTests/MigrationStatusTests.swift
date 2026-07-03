@@ -3,13 +3,17 @@
 //  zodlTests
 //
 //  Covers the MigrationStatus reducer (Features/Migration/MigrationStatus/MigrationStatusStore.swift)
-//  for MOB-1464: the default `.progress` presentation, the `gotItTapped`/`sendNowTapped`/
-//  `rescheduleTapped` delegate contracts, and the `remainingCount` derivation over a mixed row set.
-//  Visual-only screen — no SDK calls, no navigation. No shared/global state -> no `.serialized`.
+//  for MOB-1464/1466: the default `.progress` presentation, the `gotItTapped`/`sendNowTapped`/
+//  `rescheduleTapped` delegate contracts, the `remainingCount` derivation over a mixed row set, and
+//  (MOB-1466) `onAppear` loading rows/summary via `migrationTransfers()`/`migrationSummary()`,
+//  subscribing `migrationStateStream()` to refresh rows on change, the `isSendNowDisabled`
+//  derivation from `manager.sendGate()`, and the `isFlowRoot`-gated close-instead-of-pop back
+//  action. No shared/global state -> no `.serialized`.
 //
 
 import Testing
 import Foundation
+@preconcurrency import Combine
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
 @testable import zodl_internal
@@ -24,6 +28,8 @@ import ComposableArchitecture
         #expect(state.stalledNumber == 0)
         #expect(state.stalledHoursAgo == 0)
         #expect(state.isRescheduling == false)
+        #expect(state.isFlowRoot == false)
+        #expect(state.isSendNowDisabled == false)
     }
 
     @MainActor @Test func gotItTappedEmitsDelegateDone() async {
@@ -84,5 +90,130 @@ import ComposableArchitecture
         }
 
         await store.send(.delegate(.done))
+    }
+
+    // MARK: - onAppear: load rows/summary + sendGate, subscribe to state stream
+
+    @MainActor @Test func onAppearLoadsRowsSummaryAndSendGate() async {
+        let stateStream = PassthroughSubject<MigrationState, Never>()
+        let rows: [MigrationTransferRow] = [
+            MigrationTransferRow(id: "0", index: 0, amount: Zatoshi(351_220_000), status: .sent, hoursFromNow: 6),
+            MigrationTransferRow(id: "1", index: 1, amount: Zatoshi(287_410_000), status: .active, hoursFromNow: 0)
+        ]
+        let summary = MigrationSummary(
+            transferred: Zatoshi(351_220_000),
+            dust: Zatoshi.zero,
+            transfersSent: 1,
+            transfersTotal: 2,
+            estimatedDurationHours: 24
+        )
+        let store = TestStore(initialState: MigrationStatus.State()) {
+            MigrationStatus()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.migrationTransfers = { rows }
+            $0.sdkSynchronizer.migrationSummary = { summary }
+            $0.sdkSynchronizer.migrationStateStream = { stateStream.eraseToAnyPublisher() }
+            $0.migrationManager.sendGate = { .allowed }
+        }
+
+        await store.send(.onAppear)
+        await store.receive(\.statusLoaded) {
+            $0.rows = IdentifiedArrayOf(uniqueElements: rows)
+            $0.totalDurationHours = 24
+            $0.isSendNowDisabled = false
+        }
+
+        stateStream.send(completion: .finished)
+        await store.finish()
+    }
+
+    @MainActor @Test func onAppearWithSyncRequiredGateDisablesSendNow() async {
+        let stateStream = PassthroughSubject<MigrationState, Never>()
+        let store = TestStore(initialState: MigrationStatus.State(presentation: .resume)) {
+            MigrationStatus()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.migrationStateStream = { stateStream.eraseToAnyPublisher() }
+            $0.migrationManager.sendGate = { .syncRequired }
+        }
+
+        await store.send(.onAppear)
+        await store.receive(\.statusLoaded) {
+            $0.isSendNowDisabled = true
+        }
+
+        stateStream.send(completion: .finished)
+        await store.finish()
+    }
+
+    @MainActor @Test func onAppearWithWaitUntilGateDisablesSendNow() async {
+        let stateStream = PassthroughSubject<MigrationState, Never>()
+        let store = TestStore(initialState: MigrationStatus.State(presentation: .resume)) {
+            MigrationStatus()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.migrationStateStream = { stateStream.eraseToAnyPublisher() }
+            $0.migrationManager.sendGate = { .waitUntil(Date(timeIntervalSince1970: 1_000_000)) }
+        }
+
+        await store.send(.onAppear)
+        await store.receive(\.statusLoaded) {
+            $0.isSendNowDisabled = true
+        }
+
+        stateStream.send(completion: .finished)
+        await store.finish()
+    }
+
+    @MainActor @Test func migrationStateStreamChangeRefreshesRows() async {
+        let stateStream = PassthroughSubject<MigrationState, Never>()
+        let initialRows: [MigrationTransferRow] = [
+            MigrationTransferRow(id: "0", index: 0, amount: Zatoshi(1_000), status: .active, hoursFromNow: 0)
+        ]
+        let refreshedRows: [MigrationTransferRow] = [
+            MigrationTransferRow(id: "0", index: 0, amount: Zatoshi(1_000), status: .sent, hoursFromNow: 0)
+        ]
+        let currentRows = LockIsolated(initialRows)
+        let store = TestStore(initialState: MigrationStatus.State()) {
+            MigrationStatus()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.migrationTransfers = { currentRows.value }
+            $0.sdkSynchronizer.migrationStateStream = { stateStream.eraseToAnyPublisher() }
+            $0.migrationManager.sendGate = { .allowed }
+        }
+
+        await store.send(.onAppear)
+        await store.receive(\.statusLoaded) {
+            $0.rows = IdentifiedArrayOf(uniqueElements: initialRows)
+        }
+
+        currentRows.setValue(refreshedRows)
+        let tickProgress = MigrationProgress(
+            completedTransfers: 1,
+            totalTransfers: 1,
+            remainingOrchard: .zero,
+            nextTransferReadyAtHeight: nil
+        )
+        stateStream.send(.inProgress(tickProgress))
+        await store.receive(\.migrationStateChanged)
+        await store.receive(\.statusLoaded) {
+            $0.rows = IdentifiedArrayOf(uniqueElements: refreshedRows)
+        }
+
+        stateStream.send(completion: .finished)
+        await store.finish()
+    }
+
+    // MARK: - isFlowRoot: close-instead-of-pop back
+
+    @MainActor @Test func closeTappedWhenFlowRootEmitsDelegateDone() async {
+        let store = TestStore(initialState: MigrationStatus.State(isFlowRoot: true)) {
+            MigrationStatus()
+        }
+
+        await store.send(.closeTapped)
+        await store.receive(.delegate(.done))
     }
 }

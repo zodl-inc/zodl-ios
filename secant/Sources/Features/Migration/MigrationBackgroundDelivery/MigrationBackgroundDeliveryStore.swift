@@ -3,10 +3,11 @@
 //  zodl
 //
 //  "Allow Background Delivery" screen (MOB-1462, Figma S3 · 2840:4480). Explains why ZODL needs
-//  Background App Refresh to send migration transfers at their scheduled times. Visual-only:
-//  `allowTapped` (opening the Settings deep-link) and `scenePhaseActive` (re-checking BAR on
-//  return) are declared but inert — wiring them up is MOB-1466's job. The `skipTapped` delegate is
-//  emitted but consumed by nobody yet.
+//  Background App Refresh to send migration transfers at their scheduled times. `allowTapped` opens
+//  the Settings deep-link from the view (`@Environment(\.openURL)`) — the action here is just the
+//  tap signal. `scenePhaseActive` re-checks Background App Refresh on return and auto-advances via
+//  `.continued(backgroundAllowed: true)` once it becomes available (MOB-1466). The `skipTapped`
+//  delegate is emitted but consumed by nobody yet — chaining is the coordinator's job (phase 3).
 //
 
 import ComposableArchitecture
@@ -18,10 +19,10 @@ struct MigrationBackgroundDelivery {
     }
 
     enum Action: Equatable {
-        /// Inert now — MOB-1466 opens the Settings deep-link.
+        /// The Settings deep-link opens from the view; this action is just the tap signal.
         case allowTapped
         case delegate(Delegate)
-        /// Declared for MOB-1466 (re-check Background App Refresh on return) — inert.
+        /// Re-checks Background App Refresh on return; auto-advances when it becomes available.
         case scenePhaseActive
         case skipTapped
 
@@ -29,6 +30,8 @@ struct MigrationBackgroundDelivery {
             case continued(backgroundAllowed: Bool)
         }
     }
+
+    @Dependency(\.migrationBGScheduler) var migrationBGScheduler
 
     init() { }
 
@@ -42,7 +45,11 @@ struct MigrationBackgroundDelivery {
                 return .none
 
             case .scenePhaseActive:
-                return .none
+                return .run { send in
+                    let status = await migrationBGScheduler.backgroundRefreshStatus()
+                    guard status == .available else { return }
+                    await send(.delegate(.continued(backgroundAllowed: true)))
+                }
 
             case .skipTapped:
                 return .send(.delegate(.continued(backgroundAllowed: false)))

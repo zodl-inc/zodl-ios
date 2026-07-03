@@ -35,7 +35,7 @@ struct SmartBanner {
             case priority75 // tor
             case priority8 // currency conversion
             case priority9 // auto-shielding
-            case priorityMigration = -1 // ironwood migration (MOB-1464; not triggered yet — MOB-1466)
+            case priorityMigration = -1 // ironwood migration (MOB-1464; triggered — MOB-1466)
 
             func next() -> PriorityContent {
                 // `priorityMigration` (-1) sits outside the walk-down chain — it is only ever
@@ -43,10 +43,15 @@ struct SmartBanner {
                 guard rawValue > 0 else { return .priority9 }
                 return PriorityContent(rawValue: rawValue - 1) ?? .priority9
             }
+
+            /// Display rank — lower wins. `priorityMigration` slots between `priority2` (sync error)
+            /// and `priority3` (restoring): operational alerts outrank migration; migration outranks the rest.
+            var rank: Double { self == .priorityMigration ? 1.5 : Double(rawValue) }
         }
         
         var CancelNetworkMonitorId = UUID()
         var CancelStateStreamId = UUID()
+        var CancelMigrationStateStreamId = UUID()
         var CancelShieldingProcessorId = UUID()
 
         var isScanProgressComplete = false
@@ -118,6 +123,7 @@ struct SmartBanner {
         case onDisappear
         case evaluatePriority1
         case evaluatePriority2
+        case evaluatePriorityMigration
         case evaluatePriority3
         case evaluatePriority4
         case evaluatePriority45
@@ -127,6 +133,9 @@ struct SmartBanner {
         case evaluatePriority75
         case evaluatePriority8
         case evaluatePriority9
+        case migrationStateChanged(MigrationState)
+        case migrationVariantLoaded(MigrationBannerVariant?)
+        case migrationVariantUpdated(MigrationBannerVariant?)
         case networkMonitorChanged(Bool)
         case openBanner
         case openBannerRequest
@@ -146,6 +155,7 @@ struct SmartBanner {
         case autoShieldingTapped
         case currencyConversionScreenRequested
         case currencyConversionTapped
+        case migrationScreenRequested
         case serverSwitchRequested
         case shieldFundsTapped
         case torSettingsRequested
@@ -155,6 +165,7 @@ struct SmartBanner {
     }
 
     @Dependency(\.mainQueue) var mainQueue
+    @Dependency(\.migrationManager) var migrationManager
     @Dependency(\.networkMonitor) var networkMonitor
     @Dependency(\.sdkSynchronizer) var sdkSynchronizer
     @Dependency(\.shieldingProcessor) var shieldingProcessor
@@ -195,6 +206,12 @@ struct SmartBanner {
                     }
                     .cancellable(id: state.CancelStateStreamId, cancelInFlight: true),
                     .publisher {
+                        sdkSynchronizer.migrationStateStream()
+                            .throttle(for: .seconds(0.2), scheduler: mainQueue, latest: true)
+                            .map(Action.migrationStateChanged)
+                    }
+                    .cancellable(id: state.CancelMigrationStateStreamId, cancelInFlight: true),
+                    .publisher {
                         shieldingProcessor.observe()
                             .map(Action.shieldingProcessorStateChanged)
                     }
@@ -206,6 +223,7 @@ struct SmartBanner {
                 return .merge(
                     .cancel(id: state.CancelNetworkMonitorId),
                     .cancel(id: state.CancelStateStreamId),
+                    .cancel(id: state.CancelMigrationStateStreamId),
                     .cancel(id: state.CancelShieldingProcessorId)
                 )
 
@@ -300,6 +318,8 @@ struct SmartBanner {
                     return .send(.torSetupScreenRequested)
                 } else if state.priorityContent == .priority8 {
                     return .send(.currencyConversionScreenRequested)
+                } else if state.priorityContent == .priorityMigration {
+                    return .send(.migrationScreenRequested)
                 } else if state.isSyncTimedOut {
                     state.isSyncTimedOutSheetPresented = true
                     return .none
@@ -411,7 +431,11 @@ struct SmartBanner {
                     }
                     
                     // return of restoring/syncing
-                    let isSyncingHigherPriority = (state.priorityContent?.rawValue ?? 0) > State.PriorityContent.priority4.rawValue
+                    // `rank` (not `rawValue`) so `priorityMigration`'s rank (1.5, between priority2
+                    // and priority3) correctly keeps this branch from replacing a showing migration
+                    // banner with priority3/priority4 — `rawValue` (-1) would give the same numeric
+                    // answer here today only by coincidence.
+                    let isSyncingHigherPriority = (state.priorityContent?.rank ?? 0) > State.PriorityContent.priority4.rank
                     if isSyncing && (state.priorityContent == nil || isSyncingHigherPriority) {
                         if state.walletStatus == .resyncing {
                             //return .send(.triggerPriority(.priority45))
@@ -425,13 +449,51 @@ struct SmartBanner {
 
                 return .none
 
+            case .migrationStateChanged:
+                // The stream only tells us migration state changed, not what it resolved to — the
+                // manager owns the state->variant derivation (balances, persistence, transfer rows),
+                // so recompute the same way the walk step does, via `migrationManager.bannerVariant`.
+                return .run { [accountUUID = state.selectedWalletAccount?.id] send in
+                    await send(.migrationVariantUpdated(migrationManager.bannerVariant(accountUUID)))
+                }
+
+            case .migrationVariantUpdated(let variant):
+                if let variant {
+                    state.migrationBannerVariant = variant
+                    if state.priorityContent != .priorityMigration {
+                        return .send(.triggerPriority(.priorityMigration))
+                    }
+                    // Already showing migration — content re-renders from the updated variant
+                    // alone; re-triggering would just be rejected by the `openBannerRequest`
+                    // rank guard anyway (equal rank), so skip the round trip.
+                    return .none
+                }
+                if state.priorityContent == .priorityMigration {
+                    // Send `.closeBanner(true)` directly rather than `.closeAndCleanupBanner` —
+                    // the latter wraps its send in its own `.run`, which only schedules that
+                    // nested effect rather than awaiting it, so a second `await send(...)` right
+                    // after it would race the close instead of running after it settles (the same
+                    // reason `.walletAccountChanged` above sends `.closeBanner(true)` directly).
+                    return .run { send in
+                        await send(.closeBanner(true), animation: .easeInOut(duration: Constants.easeInOutDuration))
+                        await send(.evaluatePriority1)
+                    }
+                }
+                return .none
+
                 // disconnected
             case .evaluatePriority1:
                 return .send(.evaluatePriority2)
 
                 // syncing error
             case .evaluatePriority2:
-                return .send(.evaluatePriority3)
+                return .send(.evaluatePriorityMigration)
+
+                // ironwood migration
+            case .evaluatePriorityMigration:
+                return .run { [accountUUID = state.selectedWalletAccount?.id] send in
+                    await send(.migrationVariantLoaded(migrationManager.bannerVariant(accountUUID)))
+                }
 
                 // restoring
             case .evaluatePriority3:
@@ -541,7 +603,14 @@ struct SmartBanner {
                 // auto-shielding
             case .evaluatePriority9:
                 return .none
-                
+
+            case .migrationVariantLoaded(let variant):
+                guard let variant else {
+                    return .send(.evaluatePriority3)
+                }
+                state.migrationBannerVariant = variant
+                return .send(.triggerPriority(.priorityMigration))
+
             case .triggerPriority(let priority):
                 state.priorityContentRequested = priority
                 return .send(.openBannerRequest)
@@ -554,7 +623,7 @@ struct SmartBanner {
                 guard let priorityContentRequested = state.priorityContentRequested else {
                     return .none
                 }
-                if let priorityContent = state.priorityContent, priorityContentRequested.rawValue >= priorityContent.rawValue {
+                if let priorityContent = state.priorityContent, priorityContentRequested.rank >= priorityContent.rank {
                     return .none
                 }
                 if state.isOpen {
@@ -596,6 +665,12 @@ struct SmartBanner {
                 
             case .currencyConversionTapped:
                 return .send(.smartBannerContentTapped)
+
+            case .migrationScreenRequested:
+                // No state change here — Root intercepts this leaf action to open
+                // `MigrationCoordFlow` (MOB-1466 phase 5), the same shape as
+                // `currencyConversionScreenRequested` / `torSetupScreenRequested` above.
+                return .none
 
             case .torSetupScreenRequested:
                 return .none

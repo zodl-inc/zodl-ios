@@ -2,11 +2,10 @@
 //  SmartBannerMigrationContent.swift
 //  zodl
 //
-//  Ironwood migration content for the SmartBanner's `priorityMigration` case (MOB-1464). Visual-only:
-//  the case can never be requested by the running evaluator chain yet — wiring the real
-//  triggering/evaluators/routing is MOB-1466's job. `MigrationBannerVariant` is a pure, testable
-//  mapping (see MigrationBannerVariantTests); `migrationContent()` mirrors `shieldingContent()`'s
-//  structure.
+//  Ironwood migration content for the SmartBanner's `priorityMigration` case (MOB-1464), triggered
+//  live via the `.evaluatePriorityMigration` walk step and the `migrationStateStream()` subscription
+//  (MOB-1466 — see SmartBannerStore.swift). `MigrationBannerVariant` is a pure, testable mapping
+//  (see MigrationBannerVariantTests); `migrationContent()` mirrors `shieldingContent()`'s structure.
 //
 
 import SwiftUI
@@ -93,8 +92,10 @@ extension SmartBannerView {
 /// `MigrationBannerVariant` without hosting a live `SmartBannerView` (whose `onAppear` starts real
 /// dependency subscriptions). Tints use the Gray ramp (`utility-gray-50`/`-200`), matching the
 /// Figma migration-banner tokens — deliberately NOT `SmartBannerView.titleStyle()`/`infoStyle()`,
-/// which still use the pre-rebrand Purple ramp. When MOB-1466 hosts this content inside the live
-/// banner, the shared banner gradient (Purple._700 → ._950) likely needs the same Gray swap.
+/// which still use the pre-rebrand Purple ramp. Resolved by MOB-1466 (per-priority gradient, not an
+/// app-wide restyle): `SmartBannerView`'s background `LinearGradient` swaps to this same Gray._700
+/// → ._950 pair only while `store.priorityContent == .priorityMigration`; every other banner keeps
+/// the Purple._700 → ._950 pair unchanged.
 struct MigrationBannerContentView: View {
     let variant: MigrationBannerVariant
     let onButtonTap: () -> Void
