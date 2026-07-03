@@ -96,7 +96,10 @@ struct MigrationStatusView: View {
             return String(localizable: .migrationStatusOverdueAgo(row.hoursFromNow))
         default:
             // Pending/active rows: "~Nh" ETA per the frames (S10-progress Transfer 3 = "~6 hours").
-            return String(localizable: .migrationPlanEtaHours(row.hoursFromNow))
+            // A ready-now row renders "~10 mins", matching the Transfer Plan screen's treatment.
+            return row.hoursFromNow == 0
+                ? String(localizable: .migrationPlanEtaFirst)
+                : String(localizable: .migrationPlanEtaHours(row.hoursFromNow))
         }
     }
 
