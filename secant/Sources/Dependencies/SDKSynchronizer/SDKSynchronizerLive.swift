@@ -293,9 +293,10 @@ extension SDKSynchronizerClient: DependencyKey {
             // Migration (Orchard → Ironwood) — STUB: the SDK API does not exist yet (MOB-1455).
             // These compile the app against the expected contract and do nothing. When the real
             // SDK lands, replace these closures here — broadcast-capable ones (`submitNoteSplit`,
-            // `executeNextPendingMigrationTransfer`, `storeSignedMigrationTransactions`) must then
-            // acquire the transaction guard inside this LiveKey (same pattern as
-            // `createAndSubmitProposedTransactions`), never at call sites.
+            // `executeNextPendingMigrationTransfer`) must then acquire the transaction guard
+            // inside this LiveKey (same pattern as `createAndSubmitProposedTransactions`),
+            // never at call sites. `storeSignedMigrationTransactions` only stores locally —
+            // it is not a broadcast and must stay unguarded.
             getMigrationState: { .notStarted },
             migrationStateStream: { Just(MigrationState.notStarted).eraseToAnyPublisher() },
             getMigrationProgress: { nil },
