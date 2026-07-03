@@ -6,6 +6,9 @@ directly impact users rather than highlighting other crucial architectural updat
 
 ## [Unreleased]
 
+### Added
+- [MOB-1459] Groundwork for the Orchard → Ironwood migration: data models and the stubbed migration SDK interface. No user-visible changes yet.
+
 ### Fixed
 - [#1920] Connecting a Keystone hardware wallet that fails now shows a clear "Connection Failed" message (with Contact Support and Cancel options) instead of silently doing nothing. Cancel leaves the flow so the user is never stuck on the connection screen. The support message includes a safe error identifier and never exposes any wallet keys.
 - [#1920] The "Connection Failed" sheet no longer appears on top of the success screen when connecting a Keystone device actually succeeds. Tapping the connect/OK button again while the import was still running started a duplicate import whose failure surfaced as a bogus error; the button now shows a progress indicator and extra taps are ignored.
