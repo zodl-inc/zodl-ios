@@ -9,6 +9,7 @@ directly impact users rather than highlighting other crucial architectural updat
 ### Added
 - [MOB-1459] Groundwork for the Orchard → Ironwood migration: data models and the stubbed migration SDK interface. No user-visible changes yet.
 - [MOB-1460] Ironwood migration screens: entry (mode choice) and network privacy (Tor opt-in). Not reachable in the app yet.
+- [MOB-1461] Ironwood migration screen: note split (explainer, progress, confirmation, failure). Not reachable in the app yet.
 
 ### Fixed
 - [PRO-325] Swaps out of ZEC and CrossPays that fail on the swap provider's side now show "Swap Failed" / "Payment Failed" (with the contact-support option) instead of appearing to stay in progress forever. Long-running swaps in this direction also correctly show their processing state.

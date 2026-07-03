@@ -19110,6 +19110,210 @@
           }
         }
       }
+    },
+    "migrationNoteSplit.explainerTitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Split Your Wallet Funds"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Divide los fondos de tu monedero"
+          }
+        }
+      }
+    },
+    "migrationNoteSplit.explainerDesc" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This sends a transaction to yourself, breaking your balance into smaller notes. Each Ironwood migration transfer then settles independently — no waiting for change."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Esto envía una transacción a ti mismo, dividiendo tu saldo en notas más pequeñas. Cada transferencia de migración a Ironwood se liquida entonces de forma independiente, sin esperar el cambio."
+          }
+        }
+      }
+    },
+    "migrationNoteSplit.splittingTitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Splitting Funds…"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dividiendo fondos…"
+          }
+        }
+      }
+    },
+    "migrationNoteSplit.splittingDesc" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Splitting your balance into transfer-sized notes. This is a send-to-self — your ZEC stays in Orchard."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dividiendo tu saldo en notas del tamaño de una transferencia. Esto es un envío a ti mismo: tu ZEC permanece en Orchard."
+          }
+        }
+      }
+    },
+    "migrationNoteSplit.confirmedTitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Split Confirmed!"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "¡División confirmada!"
+          }
+        }
+      }
+    },
+    "migrationNoteSplit.confirmedDesc" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your balance is now split into transfer-sized notes, ready to migrate."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tu saldo ya está dividido en notas del tamaño de una transferencia, listas para migrar."
+          }
+        }
+      }
+    },
+    "migrationNoteSplit.inProgressTitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transaction in Progress"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transacción en curso"
+          }
+        }
+      }
+    },
+    "migrationNoteSplit.inProgressBody" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Keep your phone on and the app open until this step completes."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mantén el teléfono encendido y la app abierta hasta que termine este paso."
+          }
+        }
+      }
+    },
+    "migrationNoteSplit.failedTitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transaction Failed"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transacción fallida"
+          }
+        }
+      }
+    },
+    "migrationNoteSplit.failedBody" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The transaction couldn't be broadcast. Your ZEC is safe — tap below to try again."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No se pudo transmitir la transacción. Tu ZEC está seguro: toca abajo para volver a intentarlo."
+          }
+        }
+      }
+    },
+    "migrationNoteSplit.continue" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Continue"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Continuar"
+          }
+        }
+      }
+    },
+    "migrationNoteSplit.retry" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Retry"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reintentar"
+          }
+        }
+      }
     }
   },
   "version" : "1.1"
