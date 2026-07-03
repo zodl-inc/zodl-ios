@@ -10,6 +10,7 @@
 
 import Testing
 import Foundation
+import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
 @testable import zodl_internal
 
@@ -305,8 +306,9 @@ struct MigrationManagerTests {
     @Test func acknowledgedFlagIsIgnoredOutsideCompleteState() {
         // The acknowledged flag is only consulted while state is `.complete` — a `notStarted`
         // state with a positive balance must still show `.required` even if `isCompleteAcknowledged`
-        // is stale-true from a previous migration (that reset is `reconcile()`'s job, exercised
-        // separately below via `MigrationGateStorage`/manager-level tests, not this pure table).
+        // is stale-true from a previous migration (that reset is `reconcile()`'s job, exercised by
+        // `reconcileClearsAcknowledgedFlagWhenStateIsNotComplete` /
+        // `reconcileKeepsAcknowledgedFlagWhenStateIsComplete` below, not this pure table).
         let variant = MigrationDerivations.bannerVariant(
             state: MigrationState.notStarted,
             hasInvalid: false,
@@ -885,5 +887,62 @@ struct MigrationManagerTests {
 
         storage.clearAcknowledgedComplete()
         #expect(storage.isCompleteAcknowledged() == false)
+    }
+
+    // MARK: - reconcile(): stale-acknowledge reset
+    //
+    // These two exercise the real `MigrationManagerImpl.reconcile()` (MigrationManagerLiveKey.swift)
+    // against an isolated `UserDefaults` suite via the Impl's injectable `gateStorage` seam, with
+    // `getMigrationState` stubbed through `withDependencies` — the stale-acknowledge reset must
+    // clear the flag for any non-`.complete` state and preserve it while `.complete`.
+
+    @Test func reconcileClearsAcknowledgedFlagWhenStateIsNotComplete() throws {
+        let userDefaults = try #require(
+            UserDefaults(suiteName: "testReconcileClearsAcknowledgedFlagWhenStateIsNotComplete"),
+            "MigrationGateStorage: UserDefaults failed to initialize"
+        )
+        defer {
+            userDefaults.removePersistentDomain(forName: "testReconcileClearsAcknowledgedFlagWhenStateIsNotComplete")
+        }
+
+        let storage = MigrationGateStorage(userDefaults: userDefaults)
+        storage.acknowledgeComplete()
+        #expect(storage.isCompleteAcknowledged() == true)
+
+        withDependencies {
+            $0.sdkSynchronizer = SDKSynchronizerClient.noOp
+            $0.sdkSynchronizer.getMigrationState = {
+                MigrationState.inProgress(
+                    MigrationProgress(completedTransfers: 1, totalTransfers: 5, remainingOrchard: Zatoshi(1), nextTransferReadyAtHeight: nil)
+                )
+            }
+        } operation: {
+            let impl = MigrationManagerImpl(gateStorage: storage)
+            impl.reconcile()
+        }
+
+        #expect(storage.isCompleteAcknowledged() == false)
+    }
+
+    @Test func reconcileKeepsAcknowledgedFlagWhenStateIsComplete() throws {
+        let userDefaults = try #require(
+            UserDefaults(suiteName: "testReconcileKeepsAcknowledgedFlagWhenStateIsComplete"),
+            "MigrationGateStorage: UserDefaults failed to initialize"
+        )
+        defer { userDefaults.removePersistentDomain(forName: "testReconcileKeepsAcknowledgedFlagWhenStateIsComplete") }
+
+        let storage = MigrationGateStorage(userDefaults: userDefaults)
+        storage.acknowledgeComplete()
+        #expect(storage.isCompleteAcknowledged() == true)
+
+        withDependencies {
+            $0.sdkSynchronizer = SDKSynchronizerClient.noOp
+            $0.sdkSynchronizer.getMigrationState = { MigrationState.complete }
+        } operation: {
+            let impl = MigrationManagerImpl(gateStorage: storage)
+            impl.reconcile()
+        }
+
+        #expect(storage.isCompleteAcknowledged() == true)
     }
 }
