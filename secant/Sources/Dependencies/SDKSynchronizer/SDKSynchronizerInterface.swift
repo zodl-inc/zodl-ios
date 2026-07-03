@@ -157,6 +157,16 @@ struct SDKSynchronizerClient: Sendable {
     var proposeNoteSplitPCZT: @Sendable () async -> Pczt = { Pczt() }                                         // [ext]
     var proposeMigrationPCZTs: @Sendable (MigrationSchedule) async -> [Pczt] = { _ in [] }                    // [ext]
     var storeSignedMigrationTransactions: @Sendable ([Pczt]) async -> Void = { _ in }                         // [ext]
+    // Keystone note-split broadcast — [ext]: symmetric with submitNoteSplit; SDK must treat this
+    // broadcast as the migration note split (state -> splitPendingConfirmation).
+    var submitSignedNoteSplit: @Sendable (Pczt) async -> TransferResult = { _ in TransferResult.success(txId: "") }
+    // Batch UR encoding of N migration PCZTs into ONE animated-QR session — [ext]: JOINT SDK +
+    // Keystone-team ask; device support unvalidated (feature-spec §14 risk). Stub: nil (screen dormant).
+    var urEncoderForMigrationPCZTBatch: @Sendable ([Pczt]) -> UREncoder? = { _ in nil }
+    // Batch parse of the scanned signed session back into N signed PCZTs — [ext], same ask. Input type
+    // matches the scan-checker plumbing (the accumulated UR; prefer a Data/cbor-based signature if the
+    // URKit type isn't Sendable-friendly — implementer resolves against ScanChecker.swift's shapes).
+    var parseMigrationPCZTBatch: @Sendable (Data) -> [Pczt]? = { _ in nil }
     // Lifecycle — Kotlin: initializePostUpgrade
     var initializeMigrationPostUpgrade: @Sendable () -> Void = { }                                            // [draft]
 }

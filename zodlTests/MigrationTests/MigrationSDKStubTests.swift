@@ -14,6 +14,7 @@
 
 import Testing
 import Foundation
+@preconcurrency import ZcashLightClientKit
 @testable import zodl_internal
 
 @Suite struct MigrationSDKStubTests {
@@ -41,6 +42,12 @@ import Foundation
             MigrationSchedule(transfers: [], estimatedDurationHours: 0)
         )
         #expect(pczts.isEmpty)
+
+        // MOB-1468: Keystone batch-signing stubs.
+        let noteSplitResult = await client.submitSignedNoteSplit(Pczt())
+        #expect(noteSplitResult == TransferResult.success(txId: ""))
+        #expect(client.urEncoderForMigrationPCZTBatch([Pczt()]) == nil)
+        #expect(client.parseMigrationPCZTBatch(Data()) == nil)
     }
 
     @Test func mockedMigrationEndpointsAreInert() async {
@@ -57,5 +64,11 @@ import Foundation
             NetworkPrivacyOptions(useTor: false, submissionEndpoint: nil)
         )
         #expect(executedTransfer == nil)
+
+        // MOB-1468: Keystone batch-signing stubs.
+        let noteSplitResult = await client.submitSignedNoteSplit(Pczt())
+        #expect(noteSplitResult == TransferResult.success(txId: ""))
+        #expect(client.urEncoderForMigrationPCZTBatch([Pczt()]) == nil)
+        #expect(client.parseMigrationPCZTBatch(Data()) == nil)
     }
 }

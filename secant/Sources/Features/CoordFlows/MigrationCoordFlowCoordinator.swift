@@ -7,6 +7,16 @@
 //  Notifications -> NetworkPrivacy -> TransferPlan). See the MOB-1466 implementation spec's
 //  `MigrationCoordFlow` section for the full chaining table this mirrors row by row.
 //
+//  MOB-1468 (Keystone) adds a QR sign/scan round-trip ahead of the three signing sources
+//  (NoteSplit/TransferPlan/ReviewTransfer): each delegates `.keystoneSignRequested(pczts)` instead
+//  of signing locally, which sets `pendingKeystoneSigning` and pushes `keystoneSign`;
+//  `keystoneSign(.delegate(.getSignature))` pushes `scan` configured with the migration batch
+//  checker; `scan(.foundPCZTBatch(signed))` switches on `pendingKeystoneSigning` to submit/store the
+//  signed PCZTs and resume whichever chain the source represents, popping both pushed elements and
+//  clearing the context. `keystoneSign(.delegate(.rejected))` pops back to the signing source with
+//  its state untouched (no partial storage ever happens on that path). See the "Keystone signing"
+//  section below.
+//
 
 import Foundation
 import ComposableArchitecture
@@ -122,15 +132,7 @@ extension MigrationCoordFlow {
                     return .send(.flowFinished)
                 }
 
-                switch planState.variant {
-                case .scheduled, .recreated:
-                    state.path.append(.scheduled(MigrationScheduled.State()))
-                case .manual:
-                    var sendingState = MigrationSending.State(totalCount: 1)
-                    sendingState.networkPrivacyOptions = state.networkPrivacyOptions
-                    state.path.append(.sending(sendingState))
-                }
-                return .run { [migrationBGScheduler] _ in await migrationBGScheduler.scheduleFirstWindow() }
+                return transferPlanPostConfirmChain(variant: planState.variant, state: &state)
 
                 // MARK: - ReviewTransfer
 
@@ -138,6 +140,80 @@ extension MigrationCoordFlow {
                 var sendingState = MigrationSending.State(totalCount: 1)
                 sendingState.networkPrivacyOptions = state.networkPrivacyOptions
                 state.path.append(.sending(sendingState))
+                return .none
+
+                // MARK: - Keystone signing (MOB-1468)
+
+            case .path(.element(id: _, action: .noteSplit(.delegate(.keystoneSignRequested(let pczts))))):
+                state.pendingKeystoneSigning = .noteSplit
+                state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: pczts)))
+                return .none
+
+            case .path(.element(id: _, action: .transferPlan(.delegate(.keystoneSignRequested(let pczts))))):
+                state.pendingKeystoneSigning = .planCommit
+                state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: pczts)))
+                return .none
+
+            case .path(.element(id: _, action: .reviewTransfer(.delegate(.keystoneSignRequested(let pczts))))):
+                state.pendingKeystoneSigning = .immediateReview
+                state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: pczts)))
+                return .none
+
+            case .path(.element(id: _, action: .keystoneSign(.delegate(.getSignature)))):
+                var scanState = Scan.State.initial
+                scanState.checkers = [.keystoneMigrationBatchScanChecker]
+                state.path.append(.scan(scanState))
+                return .none
+
+            case .path(.element(id: _, action: .scan(.foundPCZTBatch(let signed)))):
+                guard let context = state.pendingKeystoneSigning else { return .none }
+
+                switch context {
+                case .noteSplit:
+                    // Empty batch: nothing decoded to a usable signed PCZT — treat it as a failure
+                    // the same way an unparseable/rejected QR does elsewhere, without ever calling
+                    // `submitSignedNoteSplit` (no-partial-storage invariant).
+                    guard let pczt = signed.first else {
+                        return .send(
+                            .keystoneSigningSubmitted(
+                                context: .noteSplit,
+                                result: .networkError(retryable: true),
+                                signedPczt: nil
+                            )
+                        )
+                    }
+                    return .run { [sdkSynchronizer] send in
+                        let result = await sdkSynchronizer.submitSignedNoteSplit(pczt)
+                        await send(.keystoneSigningSubmitted(context: .noteSplit, result: result, signedPczt: pczt))
+                    }
+
+                case .planCommit, .immediateReview:
+                    // Empty batch: nothing to store — no-partial-storage invariant (never call
+                    // `storeSignedMigrationTransactions` with an incomplete/empty set).
+                    guard !signed.isEmpty else { return .none }
+
+                    return .run { [sdkSynchronizer] send in
+                        await sdkSynchronizer.storeSignedMigrationTransactions(signed)
+                        await send(.keystoneSigningSubmitted(context: context, result: nil, signedPczt: nil))
+                    }
+                }
+
+            case .keystoneSigningSubmitted(let context, let result, let signedPczt):
+                return resumeAfterKeystoneSigning(context: context, result: result, signedPczt: signedPczt, state: &state)
+
+            case .path(.element(id: _, action: .keystoneSign(.delegate(.rejected)))):
+                // No-partial-storage invariant: nothing was submitted/stored — just pop back to the
+                // signing source with its state untouched (NoteSplit still explainer, plan/review
+                // still unsigned) and clear the context. The pop is deferred to a follow-up
+                // self-action (mirrors `sendNowCompleted`'s deferred pop) rather than done inline
+                // here: `.forEach(\.path, action:)` still needs to deliver this SAME action to the
+                // `keystoneSign` element after this case returns, and popping it first would leave
+                // `.forEach` with no element to deliver to (a TCA "missing element" runtime error).
+                return .send(.keystoneSignRejected)
+
+            case .keystoneSignRejected:
+                state.pendingKeystoneSigning = nil
+                let _ = state.path.popLast()
                 return .none
 
                 // MARK: - Sending
@@ -228,6 +304,84 @@ extension MigrationCoordFlow {
 
             default: return .none
             }
+        }
+    }
+
+    // MARK: - TransferPlan: shared post-confirm chain (software `.confirmed` + Keystone `planCommit`)
+
+    /// Scheduled/recreated push `.scheduled`; manual pushes `.sending` (totalCount 1, current
+    /// network-privacy options) — then schedules the first background window either way. Shared by
+    /// the software `TransferPlan.delegate(.confirmed)` row and the Keystone `planCommit` resume
+    /// (`resumeAfterKeystoneSigning`), which both reach this point with a signed+stored schedule.
+    private func transferPlanPostConfirmChain(
+        variant: MigrationTransferPlan.State.Variant,
+        state: inout MigrationCoordFlow.State
+    ) -> Effect<MigrationCoordFlow.Action> {
+        switch variant {
+        case .scheduled, .recreated:
+            state.path.append(.scheduled(MigrationScheduled.State()))
+        case .manual:
+            var sendingState = MigrationSending.State(totalCount: 1)
+            sendingState.networkPrivacyOptions = state.networkPrivacyOptions
+            state.path.append(.sending(sendingState))
+        }
+        return .run { [migrationBGScheduler] _ in await migrationBGScheduler.scheduleFirstWindow() }
+    }
+
+    // MARK: - Keystone signing (MOB-1468): resume after submit/store
+
+    /// Pops `scan`+`keystoneSign` (the two elements the QR round-trip pushed) and resumes whichever
+    /// chain `context` represents, mirroring how the equivalent software `.confirmed` row would
+    /// proceed from the now-topmost signing-source element:
+    /// - `.noteSplit`: mutates the `noteSplit` element now on top in place (the `isRescheduling`
+    ///   precedent) — `phase = .splitting`, `signedNoteSplitPczt` set to the PCZT that was
+    ///   submitted — then applies `result` exactly like that element's own `.splitResult` handling
+    ///   (success sets `txId`; failure presents the failure sheet).
+    /// - `.planCommit`: the `transferPlan` element now on top never re-signs again — resumes via
+    ///   `transferPlanPostConfirmChain(variant:state:)`, identical to the software `.confirmed` row.
+    /// - `.immediateReview`: pushes `.sending`, identical to the software `reviewTransfer.confirmed`
+    ///   row.
+    ///
+    /// Clears `pendingKeystoneSigning` in every case.
+    private func resumeAfterKeystoneSigning(
+        context: MigrationCoordFlow.KeystoneSigningContext,
+        result: TransferResult?,
+        signedPczt: Pczt?,
+        state: inout MigrationCoordFlow.State
+    ) -> Effect<MigrationCoordFlow.Action> {
+        state.pendingKeystoneSigning = nil
+        state.path.removeLast(2)
+
+        switch context {
+        case .noteSplit:
+            guard
+                let noteSplitId = state.path.ids.last,
+                case .noteSplit(var noteSplitState) = state.path[id: noteSplitId]
+            else {
+                return .none
+            }
+
+            noteSplitState.phase = .splitting
+            noteSplitState.signedNoteSplitPczt = signedPczt
+            switch result {
+            case .success(let txId):
+                noteSplitState.txId = txId
+                noteSplitState.isFailurePresented = false
+            case .networkError, .invalidNote, .expired, .none:
+                noteSplitState.isFailurePresented = true
+            }
+            state.path[id: noteSplitId] = .noteSplit(noteSplitState)
+            return .none
+
+        case .planCommit:
+            guard case let .transferPlan(planState) = state.path.last else { return .none }
+            return transferPlanPostConfirmChain(variant: planState.variant, state: &state)
+
+        case .immediateReview:
+            var sendingState = MigrationSending.State(totalCount: 1)
+            sendingState.networkPrivacyOptions = state.networkPrivacyOptions
+            state.path.append(.sending(sendingState))
+            return .none
         }
     }
 

@@ -7,18 +7,36 @@
 //  default phase/state, the txid pasteboard copy, the failure sheet dismissal (cancel/retry), the
 //  `continueTapped` delegate contract, and (MOB-1466) `onAppear` load/resume, `confirmTapped`
 //  submission, the `migrationStateStream()` subscription driving `.splitConfirmed`, and retry
-//  re-submission. The copy action writes the shared toast (`@Shared` in-memory state) ->
-//  `.serialized` per the repo rule for suites mutating process-global state.
+//  re-submission. Also covers MOB-1468's Keystone fork: a Keystone-vendor account's `confirmTapped`
+//  proposes the note-split PCZT and delegates `.keystoneSignRequested` instead of submitting locally
+//  (`.zcash` regression unaffected), and `retryTapped` re-broadcasts a coordinator-set
+//  `signedNoteSplitPczt` via `submitSignedNoteSplit` rather than re-submitting the proposal.
+//  `.serialized`: several cases drive the process-global `@Shared(.inMemory(.selectedWalletAccount))`,
+//  and the copy action writes the shared toast.
 //
 
 import Testing
 import Foundation
 @preconcurrency import Combine
 import ComposableArchitecture
-@preconcurrency import ZcashLightClientKit
+@testable @preconcurrency import ZcashLightClientKit
 @testable import zodl_internal
 
 @Suite(.serialized) struct MigrationNoteSplitTests {
+    private func walletAccount(keystone: Bool, idByte: UInt8) -> WalletAccount {
+        WalletAccount(
+            Account(
+                id: AccountUUID(id: [UInt8](repeating: idByte, count: 16)),
+                name: keystone ? "Keystone" : "Zodl",
+                keySource: keystone ? String(localizable: .accountsKeystone).lowercased() : nil,
+                seedFingerprint: nil,
+                hdAccountIndex: Zip32AccountIndex(0),
+                ufvk: nil,
+                uivk: nil
+            )
+        )
+    }
+
     @MainActor @Test func defaultStateIsExplainerWithNoFailureSheet() async {
         let state = MigrationNoteSplit.State()
 
@@ -28,6 +46,8 @@ import ComposableArchitecture
         #expect(state.txId == "")
         #expect(state.isFailurePresented == false)
         #expect(state.isFlowRoot == false)
+        #expect(state.signedNoteSplitPczt == nil)
+        #expect(state.selectedWalletAccount == nil)
     }
 
     @MainActor @Test func closeTappedWhenFlowRootEmitsDelegateContinued() async {
@@ -274,5 +294,152 @@ import ComposableArchitecture
 
         stateStream.send(completion: .finished)
         await store.finish()
+    }
+
+    // MARK: - MOB-1468: Keystone confirmTapped fork
+
+    @MainActor @Test func confirmTappedWithKeystoneAccountProposesPCZTAndDelegatesKeystoneSignRequestedWithoutSubmitting() async {
+        let proposeCalls = LockIsolated<Int>(0)
+        let submitCalls = LockIsolated<Int>(0)
+        let pczt: Pczt = Data([0xAA, 0xBB])
+        var state = MigrationNoteSplit.State(phase: .explainer)
+        state.proposal = NoteSplitProposal(outputNotes: [Zatoshi(500_000_000)], fee: Zatoshi(100_000))
+        state.$selectedWalletAccount.withLock { $0 = walletAccount(keystone: true, idByte: 1) }
+        let store = TestStore(initialState: state) {
+            MigrationNoteSplit()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.proposeNoteSplitPCZT = {
+                proposeCalls.withValue { $0 += 1 }
+                return pczt
+            }
+            $0.sdkSynchronizer.submitNoteSplit = { _ in
+                submitCalls.withValue { $0 += 1 }
+                return .success(txId: "should-not-be-called")
+            }
+        }
+
+        // Keystone confirm doesn't flip the phase locally — the coordinator does that once the QR
+        // round-trip resolves.
+        await store.send(.confirmTapped)
+        await store.receive(.delegate(.keystoneSignRequested([pczt])))
+
+        #expect(proposeCalls.value == 1)
+        #expect(submitCalls.value == 0)
+        #expect(store.state.phase == .explainer)
+    }
+
+    @MainActor @Test func confirmTappedWithZcashAccountUsesSoftwarePathUnchanged() async {
+        let stateStream = PassthroughSubject<MigrationState, Never>()
+        let proposeCalls = LockIsolated<Int>(0)
+        let proposal = NoteSplitProposal(outputNotes: [Zatoshi(500_000_000)], fee: Zatoshi(100_000))
+        var state = MigrationNoteSplit.State(phase: .explainer)
+        state.proposal = proposal
+        state.$selectedWalletAccount.withLock { $0 = walletAccount(keystone: false, idByte: 2) }
+        let store = TestStore(initialState: state) {
+            MigrationNoteSplit()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.migrationStateStream = { stateStream.eraseToAnyPublisher() }
+            $0.sdkSynchronizer.proposeNoteSplitPCZT = {
+                proposeCalls.withValue { $0 += 1 }
+                return Pczt()
+            }
+            $0.sdkSynchronizer.submitNoteSplit = { _ in .success(txId: "e87f1234567890abcdef6f28b") }
+        }
+
+        await store.send(.confirmTapped) {
+            $0.phase = .splitting
+        }
+        await store.receive(\.splitResult) {
+            $0.txId = "e87f1234567890abcdef6f28b"
+        }
+
+        #expect(proposeCalls.value == 0)
+
+        stateStream.send(completion: .finished)
+        await store.finish()
+    }
+
+    // MARK: - MOB-1468: Keystone note-split Retry forks on signedNoteSplitPczt
+
+    @MainActor @Test func retryTappedWithSignedNoteSplitPcztRebroadcastsSamePcztInsteadOfResubmittingProposal() async {
+        let submitSignedCalls = LockIsolated<[Pczt]>([])
+        let submitProposalCalls = LockIsolated<Int>(0)
+        let signedPczt: Pczt = Data([0xCC, 0xDD])
+        var state = MigrationNoteSplit.State(phase: .splitting, isFailurePresented: true, signedNoteSplitPczt: signedPczt)
+        state.proposal = NoteSplitProposal(outputNotes: [Zatoshi(500_000_000)], fee: Zatoshi(100_000))
+        let store = TestStore(initialState: state) {
+            MigrationNoteSplit()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.submitSignedNoteSplit = { pczt in
+                submitSignedCalls.withValue { $0.append(pczt) }
+                return .success(txId: "resubmitted-tx-id")
+            }
+            $0.sdkSynchronizer.submitNoteSplit = { _ in
+                submitProposalCalls.withValue { $0 += 1 }
+                return .success(txId: "should-not-be-called")
+            }
+        }
+
+        await store.send(.retryTapped) {
+            $0.isFailurePresented = false
+        }
+        await store.receive(\.splitResult) {
+            $0.txId = "resubmitted-tx-id"
+        }
+
+        #expect(submitSignedCalls.value == [signedPczt])
+        #expect(submitProposalCalls.value == 0)
+    }
+
+    @MainActor @Test func retryTappedWithNoSignedNoteSplitPcztUsesExistingSoftwareRetry() async {
+        let stateStream = PassthroughSubject<MigrationState, Never>()
+        let submitSignedCalls = LockIsolated<Int>(0)
+        let submitProposalCalls = LockIsolated<Int>(0)
+        let proposal = NoteSplitProposal(outputNotes: [Zatoshi(500_000_000)], fee: Zatoshi(100_000))
+        var state = MigrationNoteSplit.State(phase: .splitting, isFailurePresented: true)
+        state.proposal = proposal
+        let store = TestStore(initialState: state) {
+            MigrationNoteSplit()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.migrationStateStream = { stateStream.eraseToAnyPublisher() }
+            $0.sdkSynchronizer.submitSignedNoteSplit = { _ in
+                submitSignedCalls.withValue { $0 += 1 }
+                return .success(txId: "should-not-be-called")
+            }
+            $0.sdkSynchronizer.submitNoteSplit = { _ in
+                submitProposalCalls.withValue { $0 += 1 }
+                return .success(txId: "retried-tx-id")
+            }
+        }
+
+        await store.send(.retryTapped) {
+            $0.isFailurePresented = false
+        }
+        await store.receive(\.splitResult) {
+            $0.txId = "retried-tx-id"
+        }
+
+        #expect(submitSignedCalls.value == 0)
+        #expect(submitProposalCalls.value == 1)
+
+        stateStream.send(completion: .finished)
+        await store.finish()
+    }
+
+    @MainActor @Test func splitConfirmedClearsSignedNoteSplitPczt() async {
+        let store = TestStore(
+            initialState: MigrationNoteSplit.State(phase: .splitting, signedNoteSplitPczt: Data([0xEE]))
+        ) {
+            MigrationNoteSplit()
+        }
+
+        await store.send(.splitConfirmed) {
+            $0.phase = .confirmed
+            $0.signedNoteSplitPczt = nil
+        }
     }
 }
