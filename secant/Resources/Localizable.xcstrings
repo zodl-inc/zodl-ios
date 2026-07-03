@@ -19671,6 +19671,448 @@
           }
         }
       }
+    },
+    "migrationPlan.titleConfirm" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Confirm Transfer Plan"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Confirmar plan de transferencia"
+          }
+        }
+      }
+    },
+    "migrationPlan.titleManual" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transfer Plan"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Plan de transferencia"
+          }
+        }
+      }
+    },
+    "migrationPlan.descScheduled" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your balance is split into %1$lld transfers over ~%2$lld hours. Approve once and we'll handle the rest — just keep the app running in the background. Amounts are randomized for privacy. If we miss a window, ZODL will prompt you on next open."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tu saldo se divide en %1$lld transferencias a lo largo de ~%2$lld horas. Aprueba una vez y nosotros nos encargamos del resto — solo mantén la app ejecutándose en segundo plano. Los montos son aleatorios por privacidad. Si nos perdemos una ventana, ZODL te lo indicará la próxima vez que abras la app."
+          }
+        }
+      }
+    },
+    "migrationPlan.descManual" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "We recommend following the plan below. Your balance will be split into %1$lld transfers over ~%2$lld hours. Amounts are randomized for privacy. Confirm to send the first transfer now."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Te recomendamos seguir el siguiente plan. Tu saldo se dividirá en %1$lld transferencias a lo largo de ~%2$lld horas. Los montos son aleatorios por privacidad. Confirma para enviar la primera transferencia ahora."
+          }
+        }
+      }
+    },
+    "migrationPlan.descRecreated" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your remaining Orchard balance splits into %1$lld transfers over ~%2$lld hours. Approve once and we'll handle the rest — just keep the app running in the background. If we miss a window, ZODL will prompt you on next open."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tu saldo restante en Orchard se divide en %1$lld transferencias a lo largo de ~%2$lld horas. Aprueba una vez y nosotros nos encargamos del resto — solo mantén la app ejecutándose en segundo plano. Si nos perdemos una ventana, ZODL te lo indicará la próxima vez que abras la app."
+          }
+        }
+      }
+    },
+    "migrationPlan.transferN" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transfer %1$lld"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transferencia %1$lld"
+          }
+        }
+      }
+    },
+    "migrationPlan.etaHours" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "~%1$lld hours"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "~%1$lld horas"
+          }
+        }
+      }
+    },
+    "migrationPlan.etaFirst" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "~10 mins"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "~10 min"
+          }
+        }
+      }
+    },
+    "migrationPlan.sentAgo" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sent %1$lldh ago"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enviado hace %1$lldh"
+          }
+        }
+      }
+    },
+    "migrationPlan.readyNow" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ready now"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Listo ahora"
+          }
+        }
+      }
+    },
+    "migrationReview.titleImmediate" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Review Transfer"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Revisar transferencia"
+          }
+        }
+      }
+    },
+    "migrationReview.titleManual" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Review Transfer %1$lld of %2$lld"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Revisar transferencia %1$lld de %2$lld"
+          }
+        }
+      }
+    },
+    "migrationReview.descImmediate" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your full Orchard balance will be transferred to Ironwood in a single on-chain transfer. Once confirmed, this transfer cannot be cancelled."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tu saldo completo de Orchard se transferirá a Ironwood en una única transferencia en cadena. Una vez confirmada, esta transferencia no se puede cancelar."
+          }
+        }
+      }
+    },
+    "migrationReview.descManual" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This transfer sends part of your Orchard balance to Ironwood as part of your scheduled migration.\n\nReview and confirm to send the transaction. Once confirmed, this cannot be undone."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Esta transferencia envía parte de tu saldo de Orchard a Ironwood como parte de tu migración programada.\n\nRevisa y confirma para enviar la transacción. Una vez confirmada, esto no se puede deshacer."
+          }
+        }
+      }
+    },
+    "migrationSending.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sending…"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enviando…"
+          }
+        }
+      }
+    },
+    "migrationSending.subtitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your ZEC is being sent to Ironwood…"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tu ZEC se está enviando a Ironwood…"
+          }
+        }
+      }
+    },
+    "migrationSending.sentTitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sent!"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "¡Enviado!"
+          }
+        }
+      }
+    },
+    "migrationSending.sentSubtitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your ZEC were successfully sent to Ironwood."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tu ZEC se envió correctamente a Ironwood."
+          }
+        }
+      }
+    },
+    "migrationScheduled.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Migration Scheduled"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Migración programada"
+          }
+        }
+      }
+    },
+    "migrationScheduled.subtitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your ZEC will be migrated to the Ironwood pool based on the schedule you approved."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tu ZEC se migrará al pool de Ironwood según el cronograma que aprobaste."
+          }
+        }
+      }
+    },
+    "migrationScheduled.rowTotal" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Total to transfer"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Total a transferir"
+          }
+        }
+      }
+    },
+    "migrationScheduled.rowPool" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pool"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pool"
+          }
+        }
+      }
+    },
+    "migrationScheduled.rowPoolValue" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Orchard → Ironwood"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Orchard → Ironwood"
+          }
+        }
+      }
+    },
+    "migrationScheduled.rowTransfers" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transfers"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transferencias"
+          }
+        }
+      }
+    },
+    "migrationScheduled.rowTransfersValue" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$lld of %2$lld"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$lld de %2$lld"
+          }
+        }
+      }
+    },
+    "migrationScheduled.rowDuration" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Duration"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Duración"
+          }
+        }
+      }
     }
   },
   "version" : "1.1"

@@ -11,6 +11,7 @@ directly impact users rather than highlighting other crucial architectural updat
 - [MOB-1460] Ironwood migration screens: entry (mode choice) and network privacy (Tor opt-in). Not reachable in the app yet.
 - [MOB-1461] Ironwood migration screen: note split (explainer, progress, confirmation, failure). Not reachable in the app yet.
 - [MOB-1462] Ironwood migration screens: background delivery and notifications permissions. Not reachable in the app yet.
+- [MOB-1463] Ironwood migration screens: transfer plan, transfer review, sending states, and migration scheduled. Not reachable in the app yet.
 
 ## 3.7.2 build 1
 
