@@ -327,6 +327,28 @@ import ComposableArchitecture
         #expect(planState.variant == MigrationTransferPlan.State.Variant.scheduled)
     }
 
+    @MainActor @Test func manualDeliveryFreshPlanUsesManualVariant() async {
+        var state = MigrationCoordFlow.State()
+        state.mode = .privateScheduled
+        state.path.append(.networkPrivacy(MigrationNetworkPrivacy.State(variant: .scheduled(transferCount: 5))))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.migrationManager.setNetworkPrivacyOptions = { _ in }
+            $0.migrationManager.isManualDelivery = { true }
+        }
+        store.exhaustivity = .off
+
+        let options = NetworkPrivacyOptions(useTor: false, submissionEndpoint: nil)
+        await store.send(.path(.element(id: 0, action: .networkPrivacy(.delegate(.confirmed(options))))))
+
+        guard case let .transferPlan(planState) = try? #require(store.state.path.last) else {
+            Issue.record("Expected .transferPlan pushed on top")
+            return
+        }
+        #expect(planState.variant == MigrationTransferPlan.State.Variant.manual)
+    }
+
     @MainActor @Test func reviewTransferConfirmedPushesSending() async {
         var state = MigrationCoordFlow.State()
         state.mode = .immediate
@@ -505,6 +527,7 @@ import ComposableArchitecture
         } withDependencies: {
             $0.migrationBGScheduler.backgroundRefreshStatus = { .available }
             $0.userNotifications.authorizationStatus = { .denied }
+            $0.migrationManager.isManualDelivery = { false }
             $0.sdkSynchronizer = .noOp
             $0.walletStorage = .noOp
             $0.walletStorage.exportTorSetupFlag = { true }
@@ -578,6 +601,34 @@ import ComposableArchitecture
         }
         #expect(sendingState.totalCount == 1)
         #expect(sendingState.networkPrivacyOptions == NetworkPrivacyOptions(useTor: true, submissionEndpoint: nil))
+    }
+
+    @MainActor @Test func manualPlanConfirmPushesSendingWithSingleTransfer() async {
+        let schedule = MigrationSchedule(
+            transfers: [
+                TransferProposal(id: "t0", amount: Zatoshi(500_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
+            ],
+            estimatedDurationHours: 24
+        )
+        var planState = MigrationTransferPlan.State(variant: .manual, requiresSigning: true)
+        planState.schedule = schedule
+        var state = MigrationCoordFlow.State()
+        state.networkPrivacyOptions = NetworkPrivacyOptions(useTor: true, submissionEndpoint: nil)
+        state.path.append(.transferPlan(planState))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.migrationBGScheduler.scheduleFirstWindow = { }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 0, action: .transferPlan(.delegate(.confirmed)))))
+
+        guard case let .sending(sendingState) = try? #require(store.state.path.last) else {
+            Issue.record("Expected .sending pushed")
+            return
+        }
+        #expect(sendingState.totalCount == 1)
     }
 
     @MainActor @Test func sendingClosedInManualModeWithNoStatusBeneathPushesFreshStatus() async {
