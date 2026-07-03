@@ -28,4 +28,10 @@ public extension String {
     static let hasSeenHowToVoteKeystone = "sharedStateKey_hasSeenHowToVoteKeystone"
     static let votingConfigOverrideURL = "sharedStateKey_votingConfigOverrideURL"
     static let votingCustomChains = "sharedStateKey_votingCustomChains"
+    static let migrationMode = "sharedStateKey_migrationMode"
+    static let migrationManualDelivery = "sharedStateKey_migrationManualDelivery"
+    static let migrationNetworkPrivacyOptions = "sharedStateKey_migrationNetworkPrivacyOptions"
+    static let migrationCompleteAcknowledged = "sharedStateKey_migrationCompleteAcknowledged"
+    static let migrationLastBroadcastAt = "sharedStateKey_migrationLastBroadcastAt"
+    static let migrationSyncGateUntil = "sharedStateKey_migrationSyncGateUntil"
 }

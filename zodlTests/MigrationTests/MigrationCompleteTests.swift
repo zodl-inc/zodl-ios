@@ -3,9 +3,12 @@
 //  zodlTests
 //
 //  Covers the MigrationComplete reducer
-//  (Features/Migration/MigrationComplete/MigrationCompleteStore.swift) for MOB-1464: the `hasDust`
-//  derivation at zero/nonzero dust, and the `gotItTapped` delegate contract. Visual-only screen —
-//  no SDK calls, no navigation. No shared/global state -> no `.serialized`.
+//  (Features/Migration/MigrationComplete/MigrationCompleteStore.swift) for MOB-1464/1466: the
+//  `hasDust` derivation at zero/nonzero dust, and the `gotItTapped` delegate contract. This screen
+//  has no back control at all (`.navigationBarBackButtonHidden()`, no custom leading toolbar item)
+//  — `isFlowRoot` is added to State for coordinator-injection consistency with the other re-entry
+//  roots, but there is no back-control behavior to gate here. No SDK calls, no navigation. No
+//  shared/global state -> no `.serialized`.
 //
 
 import Testing
@@ -24,6 +27,7 @@ import ComposableArchitecture
         #expect(state.transfersTotal == 0)
         #expect(state.durationHours == 0)
         #expect(state.hasDust == false)
+        #expect(state.isFlowRoot == false)
     }
 
     @MainActor @Test func hasDustIsFalseWhenDustIsZero() async {

@@ -3,9 +3,10 @@
 //  zodlTests
 //
 //  Covers the MigrationRecovery reducer
-//  (Features/Migration/MigrationRecovery/MigrationRecoveryStore.swift) for MOB-1464: the default
-//  `.notesSpent` reason and the `continueTapped` delegate contract. Visual-only screen — no SDK
-//  calls, no navigation. No shared/global state -> no `.serialized`.
+//  (Features/Migration/MigrationRecovery/MigrationRecoveryStore.swift) for MOB-1464/1466: the
+//  default `.notesSpent` reason, the `continueTapped` delegate contract, and (MOB-1466) the
+//  `isFlowRoot`-gated back control — `closeTapped` emits the new `.delegate(.close)` case when this
+//  screen is the coordinator's re-entry root. No shared/global state -> no `.serialized`.
 //
 
 import Testing
@@ -20,6 +21,7 @@ import ComposableArchitecture
         #expect(state.reason == MigrationRecovery.State.Reason.notesSpent)
         #expect(state.firstTransfer == 3)
         #expect(state.lastTransfer == 5)
+        #expect(state.isFlowRoot == false)
     }
 
     @MainActor @Test func expiredReasonIsPreservedInState() async {
@@ -52,5 +54,22 @@ import ComposableArchitecture
         }
 
         await store.send(.delegate(.recreate))
+    }
+
+    @MainActor @Test func closeTappedEmitsDelegateClose() async {
+        let store = TestStore(initialState: MigrationRecovery.State(isFlowRoot: true)) {
+            MigrationRecovery()
+        }
+
+        await store.send(.closeTapped)
+        await store.receive(.delegate(.close))
+    }
+
+    @MainActor @Test func delegateCloseActionProducesNoStateChangeOrEffects() async {
+        let store = TestStore(initialState: MigrationRecovery.State()) {
+            MigrationRecovery()
+        }
+
+        await store.send(.delegate(.close))
     }
 }

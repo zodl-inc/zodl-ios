@@ -81,7 +81,12 @@ struct SmartBannerView: View {
                         .frame(height: 2)
                         .frame(maxWidth: .infinity)
                     LinearGradient(
-                        stops: [
+                        stops: store.priorityContent == .priorityMigration
+                        ? [
+                            Gradient.Stop(color: Design.Utility.Gray._700.color(.light), location: 0.00),
+                            Gradient.Stop(color: Design.Utility.Gray._950.color(.light), location: 1.00)
+                        ]
+                        : [
                             Gradient.Stop(color: Design.Utility.Purple._700.color(.light), location: 0.00),
                             Gradient.Stop(color: Design.Utility.Purple._950.color(.light), location: 1.00)
                         ],

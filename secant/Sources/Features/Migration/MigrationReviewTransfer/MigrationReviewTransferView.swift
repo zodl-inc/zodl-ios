@@ -3,8 +3,10 @@
 //  zodl
 //
 //  "Review Transfer" screen (MOB-1463, Figma S7 · immediate 2867:5924 / manual "3 of 5"
-//  2729:8544). Visually complete per Figma; `sendResult` is declared but inert — submitting the
-//  transfer lands in MOB-1466. The `confirmTapped` delegate is emitted but consumed by nobody yet.
+//  2729:8544). `onAppear` loads Amount/Fee live (immediate mode) via the store; when the manual-step
+//  variant is a flow re-entry root (`isFlowRoot`), its back control closes the flow instead of
+//  popping (MOB-1466). The `confirmTapped` delegate is emitted but consumed by nobody yet —
+//  chaining is the coordinator's job (phase 3).
 //
 
 import ComposableArchitecture
@@ -50,9 +52,12 @@ struct MigrationReviewTransferView: View {
                 .padding(.bottom, 24)
             }
             .screenHorizontalPadding()
-            .zashiBack()
+            .applyPresentationModifier(store: store)
         }
         .applyScreenBackground()
+        .onAppear {
+            store.send(.onAppear)
+        }
     }
 
     // MARK: - Header
@@ -96,6 +101,22 @@ struct MigrationReviewTransferView: View {
                 value: "\(store.fee.decimalString()) ZEC",
                 rowAppereance: .bottom
             )
+        }
+    }
+}
+
+// MARK: - Presentation modifier
+
+private extension View {
+    /// Only the manual-step variant can be a re-entry root — immediate mode is always reached via
+    /// normal push, so a plain pop stands there regardless of `isFlowRoot`.
+    @ViewBuilder func applyPresentationModifier(store: StoreOf<MigrationReviewTransfer>) -> some View {
+        if store.mode != .immediate && store.isFlowRoot {
+            zashiBackV2 {
+                store.send(.closeTapped)
+            }
+        } else {
+            zashiBack()
         }
     }
 }

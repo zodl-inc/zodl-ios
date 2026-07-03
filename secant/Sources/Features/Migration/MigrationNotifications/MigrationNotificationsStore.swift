@@ -4,10 +4,10 @@
 //
 //  "Allow Notifications" screen (MOB-1462, Figma S4 scheduled · 2840:4728 / manual · 2867:1921).
 //  Explains what migration-related notifications the user will get, with copy that differs by
-//  `variant` (scheduled vs. manual send cadence). Visual-only: `allowTapped` (requesting
-//  `UNUserNotificationCenter` authorization) and `authorizationResult` are declared but inert —
-//  wiring them up is MOB-1466's job. The `skipTapped` delegate is emitted but consumed by nobody
-//  yet.
+//  `variant` (scheduled vs. manual send cadence). `allowTapped` requests `UNUserNotificationCenter`
+//  authorization; either outcome continues the flow — permission is a nice-to-have, not a blocker
+//  (MOB-1466). The `skipTapped`/`.continued` delegate is emitted but consumed by nobody yet —
+//  chaining is the coordinator's job (phase 3).
 //
 
 import ComposableArchitecture
@@ -29,9 +29,9 @@ struct MigrationNotifications {
     }
 
     enum Action: Equatable {
-        /// Inert now — MOB-1466 requests notification authorization.
+        /// Requests notification authorization.
         case allowTapped
-        /// Declared for MOB-1466 — inert.
+        /// `requestAuthorization()` result — either outcome continues the flow.
         case authorizationResult(Bool)
         case delegate(Delegate)
         case skipTapped
@@ -41,16 +41,21 @@ struct MigrationNotifications {
         }
     }
 
+    @Dependency(\.userNotifications) var userNotifications
+
     init() { }
 
     var body: some Reducer<State, Action> {
         Reduce { state, action in
             switch action {
             case .allowTapped:
-                return .none
+                return .run { send in
+                    let isAuthorized = await userNotifications.requestAuthorization()
+                    await send(.authorizationResult(isAuthorized))
+                }
 
             case .authorizationResult:
-                return .none
+                return .send(.delegate(.continued))
 
             case .delegate:
                 return .none
