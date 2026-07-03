@@ -31,6 +31,7 @@ struct MigrationNoteSplit {
         var txId = ""
         /// Failure sheet presented over the splitting phase.
         var isFailurePresented = false
+        @Shared(.inMemory(.toast)) var toast: Toast.Edge? = nil
 
         init(
             phase: Phase = .explainer,
@@ -93,6 +94,7 @@ struct MigrationNoteSplit {
 
             case .copyTxIdTapped:
                 pasteboard.setString(state.txId.redacted)
+                state.$toast.withLock { $0 = .top(String(localizable: .generalCopiedToTheClipboard)) }
                 return .none
 
             case .delegate:
