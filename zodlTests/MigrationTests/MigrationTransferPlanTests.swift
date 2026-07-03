@@ -101,6 +101,32 @@ import ComposableArchitecture
         #expect(proposeCalls.value == 0)
     }
 
+    @MainActor @Test func onAppearWithCoordinatorHydratedRowsDoesNotRePropose() async {
+        let rows: [MigrationTransferRow] = [
+            MigrationTransferRow(id: "0", index: 0, amount: Zatoshi(1_000), status: .active, hoursFromNow: 0)
+        ]
+        let state = MigrationTransferPlan.State(
+            variant: .scheduled,
+            rows: IdentifiedArrayOf(uniqueElements: rows),
+            totalDurationHours: 12,
+            requiresSigning: false
+        )
+        let called = LockIsolated<Bool>(false)
+        let store = TestStore(initialState: state) {
+            MigrationTransferPlan()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.proposeMigrationTransfers = {
+                called.setValue(true)
+                return MigrationSchedule(transfers: [], estimatedDurationHours: 0)
+            }
+        }
+
+        await store.send(.onAppear)
+
+        #expect(called.value == false)
+    }
+
     // MARK: - confirmTapped: sign + store, then delegate
 
     @MainActor @Test func confirmTappedSignsAndStoresScheduleThenEmitsDelegateConfirmed() async {
