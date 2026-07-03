@@ -6,9 +6,17 @@
 //  for MOB-1466: re-entry routing (`.onAppear`), the chaining table from Entry through Complete
 //  for all three modes (immediate/scheduled/manual), the permission-step helper's skip logic,
 //  sendNow/reschedule/recovery orchestration, and every flow-root close path's `.flowFinished`
-//  emission. `.serialized`: every `MigrationCoordFlow.State()` carries a `MigrationEntry.State`
-//  (`entryState`), which reads the process-global `@Shared(.inMemory(.selectedWalletAccount))` on
-//  init — matching the precedent in `MigrationEntryTests`, which mutates the same key directly.
+//  emission. Also covers MOB-1468's Keystone signing round-trip: each of the three signing
+//  sources' `.keystoneSignRequested` delegate sets `pendingKeystoneSigning` and pushes
+//  `keystoneSign`; `keystoneSign(.delegate(.getSignature))` pushes `scan` configured with the
+//  migration batch checker; `scan(.foundPCZTBatch)` routes to the right SDK member per context, pops
+//  `scan`+`keystoneSign`, and resumes the matching chain (noteSplit splitting phase / plan
+//  post-confirm / immediate sending) — verified with order-asserting spies; `.rejected` pops back to
+//  the signing source with its state intact and clears the context; the no-partial-storage invariant
+//  (reject, or an empty scanned batch, never calls submit/store). `.serialized`: every
+//  `MigrationCoordFlow.State()` carries a `MigrationEntry.State` (`entryState`), which reads the
+//  process-global `@Shared(.inMemory(.selectedWalletAccount))` on init — matching the precedent in
+//  `MigrationEntryTests`, which mutates the same key directly.
 //
 
 import Testing
@@ -367,6 +375,387 @@ import ComposableArchitecture
         }
         #expect(sendingState.totalCount == 1)
         #expect(sendingState.networkPrivacyOptions == NetworkPrivacyOptions(useTor: true, submissionEndpoint: nil))
+    }
+
+    // MARK: - MOB-1468: Keystone signing — signRequested sets context + pushes keystoneSign
+
+    @MainActor @Test func noteSplitKeystoneSignRequestedSetsNoteSplitContextAndPushesKeystoneSign() async {
+        var state = MigrationCoordFlow.State()
+        state.path.append(.noteSplit(MigrationNoteSplit.State(phase: .explainer)))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        }
+        store.exhaustivity = .off
+
+        let pczts: [Pczt] = [Data([0xAA])]
+        await store.send(.path(.element(id: 0, action: .noteSplit(.delegate(.keystoneSignRequested(pczts))))))
+
+        #expect(store.state.pendingKeystoneSigning == MigrationCoordFlow.KeystoneSigningContext.noteSplit)
+        guard case let .keystoneSign(signState) = try? #require(store.state.path.last) else {
+            Issue.record("Expected .keystoneSign pushed on top")
+            return
+        }
+        #expect(signState.pczts == pczts)
+    }
+
+    @MainActor @Test func transferPlanKeystoneSignRequestedSetsPlanCommitContextAndPushesKeystoneSign() async {
+        var state = MigrationCoordFlow.State()
+        state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .scheduled)))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        }
+        store.exhaustivity = .off
+
+        let pczts: [Pczt] = [Data([0xAA]), Data([0xBB])]
+        await store.send(.path(.element(id: 0, action: .transferPlan(.delegate(.keystoneSignRequested(pczts))))))
+
+        #expect(store.state.pendingKeystoneSigning == MigrationCoordFlow.KeystoneSigningContext.planCommit)
+        guard case let .keystoneSign(signState) = try? #require(store.state.path.last) else {
+            Issue.record("Expected .keystoneSign pushed on top")
+            return
+        }
+        #expect(signState.pczts == pczts)
+    }
+
+    @MainActor @Test func reviewTransferKeystoneSignRequestedSetsImmediateReviewContextAndPushesKeystoneSign() async {
+        var state = MigrationCoordFlow.State()
+        state.path.append(.reviewTransfer(MigrationReviewTransfer.State(mode: .immediate)))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        }
+        store.exhaustivity = .off
+
+        let pczts: [Pczt] = [Data([0xCC])]
+        await store.send(.path(.element(id: 0, action: .reviewTransfer(.delegate(.keystoneSignRequested(pczts))))))
+
+        #expect(store.state.pendingKeystoneSigning == MigrationCoordFlow.KeystoneSigningContext.immediateReview)
+        guard case let .keystoneSign(signState) = try? #require(store.state.path.last) else {
+            Issue.record("Expected .keystoneSign pushed on top")
+            return
+        }
+        #expect(signState.pczts == pczts)
+    }
+
+    // MARK: - MOB-1468: Keystone signing — getSignature pushes scan with the migration batch checker
+
+    @MainActor @Test func keystoneSignGetSignaturePushesScanConfiguredWithMigrationBatchChecker() async {
+        var state = MigrationCoordFlow.State()
+        state.pendingKeystoneSigning = .noteSplit
+        state.path.append(.noteSplit(MigrationNoteSplit.State(phase: .explainer)))
+        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: [Pczt()])))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 1, action: .keystoneSign(.delegate(.getSignature)))))
+
+        guard case let .scan(scanState) = try? #require(store.state.path.last) else {
+            Issue.record("Expected .scan pushed on top")
+            return
+        }
+        #expect(scanState.checkers == [.keystoneMigrationBatchScanChecker])
+    }
+
+    // MARK: - MOB-1468: Keystone signing — foundPCZTBatch resumes noteSplit
+
+    @MainActor @Test func foundPCZTBatchForNoteSplitContextSubmitsSignedPcztPopsAndMutatesNoteSplitIntoSplittingPhase() async {
+        let callOrder = LockIsolated<[String]>([])
+        let signed: Pczt = Data([0xAA])
+        var state = MigrationCoordFlow.State()
+        state.pendingKeystoneSigning = .noteSplit
+        state.path.append(.noteSplit(MigrationNoteSplit.State(phase: .explainer)))
+        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: [signed])))
+        state.path.append(.scan(Scan.State.initial))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.submitSignedNoteSplit = { pczt in
+                callOrder.withValue { $0.append("submitSignedNoteSplit(\(pczt))") }
+                return .success(txId: "keystone-split-tx-id")
+            }
+            $0.sdkSynchronizer.storeSignedMigrationTransactions = { _ in
+                callOrder.withValue { $0.append("storeSignedMigrationTransactions") }
+            }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 2, action: .scan(.foundPCZTBatch([signed])))))
+        await store.receive(\.keystoneSigningSubmitted)
+
+        #expect(callOrder.value == ["submitSignedNoteSplit(\(signed))"])
+        #expect(store.state.pendingKeystoneSigning == nil)
+        #expect(store.state.path.count == 1)
+        guard case let .noteSplit(noteSplitState) = try? #require(store.state.path.last) else {
+            Issue.record("Expected scan+keystoneSign popped, .noteSplit remaining on top")
+            return
+        }
+        #expect(noteSplitState.phase == MigrationNoteSplit.State.Phase.splitting)
+        #expect(noteSplitState.txId == "keystone-split-tx-id")
+        #expect(noteSplitState.signedNoteSplitPczt == signed)
+        #expect(noteSplitState.isFailurePresented == false)
+    }
+
+    @MainActor @Test func foundPCZTBatchForNoteSplitContextWithFailureResultPresentsFailureSheetAndKeepsSignedPczt() async {
+        let signed: Pczt = Data([0xBB])
+        var state = MigrationCoordFlow.State()
+        state.pendingKeystoneSigning = .noteSplit
+        state.path.append(.noteSplit(MigrationNoteSplit.State(phase: .explainer)))
+        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: [signed])))
+        state.path.append(.scan(Scan.State.initial))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.submitSignedNoteSplit = { _ in .networkError(retryable: true) }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 2, action: .scan(.foundPCZTBatch([signed])))))
+        await store.receive(\.keystoneSigningSubmitted)
+
+        guard case let .noteSplit(noteSplitState) = try? #require(store.state.path.last) else {
+            Issue.record("Expected .noteSplit remaining on top")
+            return
+        }
+        #expect(noteSplitState.phase == MigrationNoteSplit.State.Phase.splitting)
+        #expect(noteSplitState.isFailurePresented == true)
+        #expect(noteSplitState.signedNoteSplitPczt == signed)
+    }
+
+    // MARK: - MOB-1468: Keystone signing — foundPCZTBatch resumes planCommit (shared post-confirm chain)
+
+    @MainActor @Test func foundPCZTBatchForPlanCommitContextStoresPopsAndPushesScheduledForScheduledVariant() async {
+        let callOrder = LockIsolated<[String]>([])
+        let signed: [Pczt] = [Data([0xAA]), Data([0xBB])]
+        var state = MigrationCoordFlow.State()
+        state.pendingKeystoneSigning = .planCommit
+        state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .scheduled)))
+        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: signed)))
+        state.path.append(.scan(Scan.State.initial))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.storeSignedMigrationTransactions = { stored in
+                #expect(stored == signed)
+                callOrder.withValue { $0.append("store") }
+            }
+            $0.migrationBGScheduler.scheduleFirstWindow = { callOrder.withValue { $0.append("scheduleFirstWindow") } }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 2, action: .scan(.foundPCZTBatch(signed)))))
+        await store.receive(\.keystoneSigningSubmitted)
+
+        #expect(callOrder.value == ["store", "scheduleFirstWindow"])
+        #expect(store.state.pendingKeystoneSigning == nil)
+        #expect(store.state.path.count == 2)
+        guard case .scheduled = try? #require(store.state.path.last) else {
+            Issue.record("Expected .scheduled pushed on top of the retained .transferPlan element")
+            return
+        }
+        guard case .transferPlan = try? #require(store.state.path[id: 0]) else {
+            Issue.record("Expected .transferPlan retained at the bottom (never re-signs again)")
+            return
+        }
+    }
+
+    @MainActor @Test func foundPCZTBatchForPlanCommitContextPushesSendingForManualVariant() async {
+        let signed: [Pczt] = [Data([0xCC])]
+        var state = MigrationCoordFlow.State()
+        state.networkPrivacyOptions = NetworkPrivacyOptions(useTor: true, submissionEndpoint: nil)
+        state.pendingKeystoneSigning = .planCommit
+        state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .manual)))
+        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: signed)))
+        state.path.append(.scan(Scan.State.initial))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.storeSignedMigrationTransactions = { _ in }
+            $0.migrationBGScheduler.scheduleFirstWindow = { }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 2, action: .scan(.foundPCZTBatch(signed)))))
+        await store.receive(\.keystoneSigningSubmitted)
+
+        guard case let .sending(sendingState) = try? #require(store.state.path.last) else {
+            Issue.record("Expected .sending pushed on top for the manual variant")
+            return
+        }
+        #expect(sendingState.totalCount == 1)
+        #expect(sendingState.networkPrivacyOptions == NetworkPrivacyOptions(useTor: true, submissionEndpoint: nil))
+    }
+
+    // MARK: - MOB-1468: Keystone signing — foundPCZTBatch resumes immediateReview
+
+    @MainActor @Test func foundPCZTBatchForImmediateReviewContextStoresPopsAndPushesSending() async {
+        let storeCalls = LockIsolated<[[Pczt]]>([])
+        let signed: [Pczt] = [Data([0xDD])]
+        var state = MigrationCoordFlow.State()
+        state.networkPrivacyOptions = NetworkPrivacyOptions(useTor: false, submissionEndpoint: nil)
+        state.pendingKeystoneSigning = .immediateReview
+        state.path.append(.reviewTransfer(MigrationReviewTransfer.State(mode: .immediate)))
+        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: signed)))
+        state.path.append(.scan(Scan.State.initial))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.storeSignedMigrationTransactions = { stored in storeCalls.withValue { $0.append(stored) } }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 2, action: .scan(.foundPCZTBatch(signed)))))
+        await store.receive(\.keystoneSigningSubmitted)
+
+        #expect(storeCalls.value == [signed])
+        #expect(store.state.pendingKeystoneSigning == nil)
+        #expect(store.state.path.count == 2)
+        guard case let .sending(sendingState) = try? #require(store.state.path.last) else {
+            Issue.record("Expected .sending pushed on top of the retained .reviewTransfer element")
+            return
+        }
+        #expect(sendingState.totalCount == 1)
+        guard case .reviewTransfer = try? #require(store.state.path[id: 0]) else {
+            Issue.record("Expected .reviewTransfer retained at the bottom")
+            return
+        }
+    }
+
+    // MARK: - MOB-1468: Keystone signing — empty batch never submits/stores (no-partial-storage)
+
+    @MainActor @Test func foundPCZTBatchWithEmptyArrayForNoteSplitContextNeverCallsSubmitAndPresentsFailure() async {
+        let submitCalls = LockIsolated<Int>(0)
+        var state = MigrationCoordFlow.State()
+        state.pendingKeystoneSigning = .noteSplit
+        state.path.append(.noteSplit(MigrationNoteSplit.State(phase: .explainer)))
+        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: [Pczt()])))
+        state.path.append(.scan(Scan.State.initial))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.submitSignedNoteSplit = { _ in
+                submitCalls.withValue { $0 += 1 }
+                return .success(txId: "should-not-be-called")
+            }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 2, action: .scan(.foundPCZTBatch([])))))
+        await store.receive(\.keystoneSigningSubmitted)
+
+        #expect(submitCalls.value == 0)
+        guard case let .noteSplit(noteSplitState) = try? #require(store.state.path.last) else {
+            Issue.record("Expected .noteSplit remaining on top")
+            return
+        }
+        #expect(noteSplitState.isFailurePresented == true)
+        #expect(noteSplitState.signedNoteSplitPczt == nil)
+    }
+
+    @MainActor @Test func foundPCZTBatchWithEmptyArrayForPlanCommitContextNeverCallsStoreAndStaysOnScan() async {
+        let storeCalls = LockIsolated<Int>(0)
+        var state = MigrationCoordFlow.State()
+        state.pendingKeystoneSigning = .planCommit
+        state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .scheduled)))
+        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: [Pczt()])))
+        state.path.append(.scan(Scan.State.initial))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.storeSignedMigrationTransactions = { _ in storeCalls.withValue { $0 += 1 } }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 2, action: .scan(.foundPCZTBatch([])))))
+
+        #expect(storeCalls.value == 0)
+        // No pop, no resume — the empty-batch guard is a plain no-op, leaving the user on `scan`
+        // for a re-scan (context stays pending, same as any other unresolved scan).
+        #expect(store.state.pendingKeystoneSigning == MigrationCoordFlow.KeystoneSigningContext.planCommit)
+        #expect(store.state.path.count == 3)
+        guard case .scan = try? #require(store.state.path.last) else {
+            Issue.record("Expected .scan to remain on top (no pop on an empty batch no-op)")
+            return
+        }
+    }
+
+    // MARK: - MOB-1468: Keystone signing — rejected pops back with state intact, context cleared
+
+    @MainActor @Test func keystoneSignRejectedPopsBackToNoteSplitWithExplainerStateIntactAndClearsContext() async {
+        var state = MigrationCoordFlow.State()
+        state.pendingKeystoneSigning = .noteSplit
+        state.path.append(.noteSplit(MigrationNoteSplit.State(phase: .explainer)))
+        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: [Pczt()])))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 1, action: .keystoneSign(.delegate(.rejected)))))
+        await store.receive(\.keystoneSignRejected)
+
+        #expect(store.state.pendingKeystoneSigning == nil)
+        #expect(store.state.path.count == 1)
+        guard case let .noteSplit(noteSplitState) = try? #require(store.state.path.last) else {
+            Issue.record("Expected .keystoneSign popped, .noteSplit remaining on top")
+            return
+        }
+        #expect(noteSplitState.phase == MigrationNoteSplit.State.Phase.explainer)
+        #expect(noteSplitState.signedNoteSplitPczt == nil)
+    }
+
+    @MainActor @Test func keystoneSignRejectedPopsBackToUnsignedTransferPlanConfirmingScreenUntouched() async {
+        var state = MigrationCoordFlow.State()
+        state.pendingKeystoneSigning = .planCommit
+        state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .scheduled)))
+        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: [Pczt(), Pczt()])))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 1, action: .keystoneSign(.delegate(.rejected)))))
+        await store.receive(\.keystoneSignRejected)
+
+        #expect(store.state.pendingKeystoneSigning == nil)
+        #expect(store.state.path.count == 1)
+        guard case .transferPlan = try? #require(store.state.path.last) else {
+            Issue.record("Expected .keystoneSign popped, .transferPlan remaining on top, unsigned")
+            return
+        }
+    }
+
+    @MainActor @Test func keystoneSignRejectedNeverCallsSubmitOrStore() async {
+        let submitCalls = LockIsolated<Int>(0)
+        let storeCalls = LockIsolated<Int>(0)
+        var state = MigrationCoordFlow.State()
+        state.pendingKeystoneSigning = .noteSplit
+        state.path.append(.noteSplit(MigrationNoteSplit.State(phase: .explainer)))
+        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: [Pczt()])))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.submitSignedNoteSplit = { _ in
+                submitCalls.withValue { $0 += 1 }
+                return .success(txId: "should-not-be-called")
+            }
+            $0.sdkSynchronizer.storeSignedMigrationTransactions = { _ in storeCalls.withValue { $0 += 1 } }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 1, action: .keystoneSign(.delegate(.rejected)))))
+        await store.receive(\.keystoneSignRejected)
+
+        #expect(submitCalls.value == 0)
+        #expect(storeCalls.value == 0)
     }
 
     @MainActor @Test func sendingClosedInImmediateModeAcknowledgesCompleteAndFinishesFlow() async {

@@ -13,6 +13,13 @@
 //  back-tap would incorrectly signal the transfer was confirmed (MOB-1466). Both delegates are
 //  consumed by `MigrationCoordFlowCoordinator` (MOB-1466).
 //
+//  MOB-1468 (Keystone): a Keystone-vendor account in immediate mode forks `confirmTapped` — instead
+//  of signing+storing `state.schedule` locally (the same schedule `onAppear` proposed via
+//  `proposeMigrationTransfers()` for Amount/Fee), it proposes that schedule's PCZT
+//  (`proposeMigrationPCZTs(schedule)`) and delegates `.keystoneSignRequested([pczt])` for the
+//  coordinator to route through `MigrationKeystoneSign` + `Scan`. The manual-step path (transfers
+//  already signed at plan commit) is unchanged — `signAndStoreMigrationSchedule` never runs there.
+//
 
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
@@ -39,6 +46,7 @@ struct MigrationReviewTransfer {
         /// True when the manual-step variant is the coordinator's re-entry root — its back control
         /// then closes the flow instead of popping.
         var isFlowRoot = false
+        @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
 
         init(
             mode: Mode = .immediate,
@@ -69,6 +77,10 @@ struct MigrationReviewTransfer {
         enum Delegate: Equatable {
             case closed
             case confirmed
+            /// MOB-1468 (Keystone): the immediate-mode schedule's PCZT was proposed and needs QR
+            /// signing — a single-element array (batched-session-of-1), the shared shape across all
+            /// three Keystone signing sources so the coordinator can treat them symmetrically.
+            case keystoneSignRequested([Pczt])
         }
     }
 
@@ -88,10 +100,13 @@ struct MigrationReviewTransfer {
                     return .send(.delegate(.confirmed))
                 }
 
-                return .run { send in
-                    await sdkSynchronizer.signAndStoreMigrationSchedule(schedule)
-                    await send(.scheduleSigned)
+                guard state.selectedWalletAccount?.vendor == .keystone else {
+                    return .run { send in
+                        await sdkSynchronizer.signAndStoreMigrationSchedule(schedule)
+                        await send(.scheduleSigned)
+                    }
                 }
+                return requestKeystoneSignature(for: schedule)
 
             case .delegate:
                 return .none
@@ -113,6 +128,15 @@ struct MigrationReviewTransfer {
                 state.fee = State.standardFee
                 return .none
             }
+        }
+    }
+
+    /// MOB-1468 (Keystone) `confirmTapped` fork: proposes the immediate-mode schedule's PCZT and
+    /// hands it to the coordinator for QR signing.
+    private func requestKeystoneSignature(for schedule: MigrationSchedule) -> Effect<Action> {
+        .run { send in
+            let pczts = await sdkSynchronizer.proposeMigrationPCZTs(schedule)
+            await send(.delegate(.keystoneSignRequested(pczts)))
         }
     }
 }

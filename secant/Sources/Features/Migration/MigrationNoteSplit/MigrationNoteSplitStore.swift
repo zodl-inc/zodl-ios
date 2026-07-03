@@ -11,6 +11,14 @@
 //  its back control closes the flow (`closeTapped` -> `.delegate(.continued)`) instead of popping
 //  (MOB-1466). The `.continued` delegate is consumed by `MigrationCoordFlowCoordinator` (MOB-1466).
 //
+//  MOB-1468 (Keystone): a Keystone-vendor account forks `confirmTapped` — instead of submitting a
+//  proposal locally, it proposes the note-split PCZT (`proposeNoteSplitPCZT()`) and delegates
+//  `.keystoneSignRequested([pczt])` for the coordinator to route through `MigrationKeystoneSign` +
+//  `Scan`. The software (`.zcash`) path is unchanged. Once the coordinator completes the QR
+//  round-trip it mutates this element in place into `.splitting` phase with `signedNoteSplitPczt`
+//  set — `retryTapped` then forks too: a signed PCZT present means re-broadcast the SAME PCZT via
+//  `submitSignedNoteSplit` (never a new signing round); `nil` keeps the existing software retry.
+//
 
 import Foundation
 import ComposableArchitecture
@@ -39,7 +47,13 @@ struct MigrationNoteSplit {
         /// True when the splitting phase is the coordinator's re-entry root — its back control then
         /// closes the flow instead of popping.
         var isFlowRoot = false
+        @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
         @Shared(.inMemory(.toast)) var toast: Toast.Edge? = nil
+        /// MOB-1468 (Keystone): set by the coordinator once the QR round-trip signs the note-split
+        /// PCZT, alongside mutating `phase` to `.splitting`. Non-`nil` forks `retryTapped` to
+        /// re-broadcast this SAME signed PCZT via `submitSignedNoteSplit` instead of re-preparing.
+        /// Cleared once `.splitConfirmed` lands.
+        var signedNoteSplitPczt: Pczt?
 
         init(
             phase: Phase = .explainer,
@@ -47,7 +61,8 @@ struct MigrationNoteSplit {
             fee: Zatoshi = Zatoshi.zero,
             txId: String = "",
             isFailurePresented: Bool = false,
-            isFlowRoot: Bool = false
+            isFlowRoot: Bool = false,
+            signedNoteSplitPczt: Pczt? = nil
         ) {
             self.phase = phase
             self.amount = amount
@@ -55,6 +70,7 @@ struct MigrationNoteSplit {
             self.txId = txId
             self.isFailurePresented = isFailurePresented
             self.isFlowRoot = isFlowRoot
+            self.signedNoteSplitPczt = signedNoteSplitPczt
         }
     }
 
@@ -81,6 +97,10 @@ struct MigrationNoteSplit {
 
         enum Delegate: Equatable {
             case continued
+            /// MOB-1468 (Keystone): the note-split PCZT was proposed and needs QR signing — a
+            /// single-element array (batched-session-of-1), the shared shape across all three
+            /// Keystone signing sources so the coordinator can treat them symmetrically.
+            case keystoneSignRequested([Pczt])
         }
     }
 
@@ -105,8 +125,11 @@ struct MigrationNoteSplit {
                 return .send(.delegate(.continued))
 
             case .confirmTapped:
-                state.phase = .splitting
-                return submitNoteSplit(state.proposal)
+                guard state.selectedWalletAccount?.vendor == .keystone else {
+                    state.phase = .splitting
+                    return submitNoteSplit(state.proposal)
+                }
+                return requestKeystoneNoteSplitSignature()
 
             case .continueTapped:
                 return .send(.delegate(.continued))
@@ -138,10 +161,14 @@ struct MigrationNoteSplit {
 
             case .retryTapped:
                 state.isFailurePresented = false
+                if let signedNoteSplitPczt = state.signedNoteSplitPczt {
+                    return resubmitSignedNoteSplit(signedNoteSplitPczt)
+                }
                 return submitNoteSplit(state.proposal)
 
             case .splitConfirmed:
                 state.phase = .confirmed
+                state.signedNoteSplitPczt = nil
                 return .none
 
             case .splitResult(let result):
@@ -169,6 +196,25 @@ struct MigrationNoteSplit {
 
         return .run { send in
             let result = await sdkSynchronizer.submitNoteSplit(proposal)
+            await send(.splitResult(result))
+        }
+    }
+
+    /// MOB-1468 (Keystone) `confirmTapped` fork: proposes the note-split PCZT and hands it to the
+    /// coordinator for QR signing. Does not touch `phase` — the coordinator flips it to `.splitting`
+    /// once the signed PCZT comes back from the scan.
+    private func requestKeystoneNoteSplitSignature() -> Effect<Action> {
+        .run { send in
+            let pczt = await sdkSynchronizer.proposeNoteSplitPCZT()
+            await send(.delegate(.keystoneSignRequested([pczt])))
+        }
+    }
+
+    /// MOB-1468 (Keystone) `retryTapped` fork: re-broadcasts the SAME already-signed PCZT — never a
+    /// new signing round.
+    private func resubmitSignedNoteSplit(_ pczt: Pczt) -> Effect<Action> {
+        .run { send in
+            let result = await sdkSynchronizer.submitSignedNoteSplit(pczt)
             await send(.splitResult(result))
         }
     }

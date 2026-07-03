@@ -111,6 +111,9 @@ extension SDKSynchronizerClient: TestDependencyKey {
         proposeNoteSplitPCZT: unimplemented("\(Self.self).proposeNoteSplitPCZT", placeholder: Pczt()),
         proposeMigrationPCZTs: unimplemented("\(Self.self).proposeMigrationPCZTs", placeholder: []),
         storeSignedMigrationTransactions: unimplemented("\(Self.self).storeSignedMigrationTransactions", placeholder: {}()),
+        submitSignedNoteSplit: unimplemented("\(Self.self).submitSignedNoteSplit", placeholder: .success(txId: "")),
+        urEncoderForMigrationPCZTBatch: unimplemented("\(Self.self).urEncoderForMigrationPCZTBatch", placeholder: nil),
+        parseMigrationPCZTBatch: unimplemented("\(Self.self).parseMigrationPCZTBatch", placeholder: nil),
         initializeMigrationPostUpgrade: unimplemented("\(Self.self).initializeMigrationPostUpgrade", placeholder: {}())
     )
 }
@@ -190,6 +193,9 @@ extension SDKSynchronizerClient {
         proposeNoteSplitPCZT: { Pczt() },
         proposeMigrationPCZTs: { _ in [] },
         storeSignedMigrationTransactions: { _ in },
+        submitSignedNoteSplit: { _ in TransferResult.success(txId: "") },
+        urEncoderForMigrationPCZTBatch: { _ in nil },
+        parseMigrationPCZTBatch: { _ in nil },
         initializeMigrationPostUpgrade: { }
     )
 
@@ -318,7 +324,10 @@ extension SDKSynchronizerClient {
         updateTransparentAddressTransactions: @escaping @Sendable (String) async throws -> TransparentAddressCheckResult = { _ in .notFound },
         fetchUTXOsByAddress: @escaping @Sendable (String, AccountUUID) async throws -> TransparentAddressCheckResult = { _, _ in .notFound },
         enhanceTransactionBy: @escaping @Sendable (String) async throws -> Void = { _ in },
-        getTreeState: @escaping @Sendable (UInt64) async throws -> Data = { _ in Data() }
+        getTreeState: @escaping @Sendable (UInt64) async throws -> Data = { _ in Data() },
+        submitSignedNoteSplit: @escaping @Sendable (Pczt) async -> TransferResult = { _ in TransferResult.success(txId: "") },
+        urEncoderForMigrationPCZTBatch: @escaping @Sendable ([Pczt]) -> UREncoder? = { _ in nil },
+        parseMigrationPCZTBatch: @escaping @Sendable (Data) -> [Pczt]? = { _ in nil }
     ) -> SDKSynchronizerClient {
         SDKSynchronizerClient(
             stateStream: stateStream,
@@ -394,6 +403,9 @@ extension SDKSynchronizerClient {
             proposeNoteSplitPCZT: { Pczt() },
             proposeMigrationPCZTs: { _ in [] },
             storeSignedMigrationTransactions: { _ in },
+            submitSignedNoteSplit: submitSignedNoteSplit,
+            urEncoderForMigrationPCZTBatch: urEncoderForMigrationPCZTBatch,
+            parseMigrationPCZTBatch: parseMigrationPCZTBatch,
             initializeMigrationPostUpgrade: { }
         )
     }

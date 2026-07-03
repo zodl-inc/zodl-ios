@@ -32,6 +32,8 @@ struct MigrationCoordFlowView: View {
                     MigrationBackgroundDeliveryView(store: store)
                 case let .complete(store):
                     MigrationCompleteView(store: store)
+                case let .keystoneSign(store):
+                    MigrationKeystoneSignView(store: store)
                 case let .networkPrivacy(store):
                     MigrationNetworkPrivacyView(store: store)
                 case let .noteSplit(store):
@@ -42,6 +44,8 @@ struct MigrationCoordFlowView: View {
                     MigrationRecoveryView(store: store)
                 case let .reviewTransfer(store):
                     MigrationReviewTransferView(store: store)
+                case let .scan(store):
+                    ScanView(store: store)
                 case let .scheduled(store):
                     MigrationScheduledView(store: store)
                 case let .sending(store):
