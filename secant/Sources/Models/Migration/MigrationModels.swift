@@ -95,6 +95,15 @@ struct MigrationProgress: Equatable, Sendable, Codable {
 /// Aggregate summary of the migration for progress UI. Not part of the Kotlin draft.
 /// [ext]
 struct MigrationSummary: Equatable, Sendable, Codable {
+    /// All-zero convenience value, e.g. before any migration data has loaded.
+    static let zero = MigrationSummary(
+        transferred: Zatoshi.zero,
+        dust: Zatoshi.zero,
+        transfersSent: 0,
+        transfersTotal: 0,
+        estimatedDurationHours: 0
+    )
+
     var transferred: Zatoshi
     var dust: Zatoshi
     var transfersSent: Int
@@ -114,15 +123,6 @@ struct MigrationSummary: Equatable, Sendable, Codable {
         self.transfersTotal = transfersTotal
         self.estimatedDurationHours = estimatedDurationHours
     }
-
-    /// All-zero convenience value, e.g. before any migration data has loaded.
-    static let zero = MigrationSummary(
-        transferred: Zatoshi.zero,
-        dust: Zatoshi.zero,
-        transfersSent: 0,
-        transfersTotal: 0,
-        estimatedDurationHours: 0
-    )
 }
 
 /// A single row in the migration transfers list UI. Not part of the Kotlin draft.
