@@ -146,7 +146,7 @@ struct MigrationEntryView: View {
                     .overlay {
                         if isSelected {
                             RoundedRectangle(cornerRadius: Design.Radius._2xl)
-                                .stroke(
+                                .strokeBorder(
                                     isWarning ? Design.Utility.WarningYellow._500.color(colorScheme) : Design.Checkboxes.onBg.color(colorScheme),
                                     lineWidth: 2
                                 )
