@@ -116,5 +116,48 @@ struct SDKSynchronizerClient: Sendable {
     var enhanceTransactionBy: @Sendable (String) async throws -> Void
 
     var getTreeState: @Sendable (_ height: UInt64) async throws -> Data
+
+    // MARK: - Migration (Orchard → Ironwood) — stubs until the SDK API exists (MOB-1455)
+    //
+    // Swift mirror of `interface OrchardMigrationSdk` (`MigrationSdk.kt`). Names are qualified
+    // to fit this client's flat namespace (e.g. `stateStream` is already taken by
+    // `SynchronizerState`). Markers: `[draft]` = Kotlin draft 1:1, `[ext]` = proposed SDK
+    // extension not present in the Kotlin draft.
+
+    // State — Kotlin: getMigrationState / (Flow suggestion) / getMigrationProgress
+    var getMigrationState: @Sendable () -> MigrationState = { .notStarted }                                   // [draft]
+    var migrationStateStream: @Sendable () -> AnyPublisher<MigrationState, Never> = { Empty().eraseToAnyPublisher() }  // [ext]
+    var getMigrationProgress: @Sendable () -> MigrationProgress? = { nil }                                    // [draft]
+    // Note splitting
+    var isNoteSplitNeeded: @Sendable () -> Bool = { false }                                                   // [draft]
+    var prepareNoteSplit: @Sendable () async -> NoteSplitProposal = { NoteSplitProposal(outputNotes: [], fee: Zatoshi.zero) }  // [draft]
+    var submitNoteSplit: @Sendable (NoteSplitProposal) async -> TransferResult = { _ in TransferResult.success(txId: "") }     // [draft]
+    // Proposal
+    var selectMigrationMode: @Sendable (MigrationMode) -> Void = { _ in }                                     // [ext]
+    var proposeMigrationTransfers: @Sendable () async -> MigrationSchedule = {  // [draft]
+        MigrationSchedule(transfers: [], estimatedDurationHours: 0)
+    }
+    var signAndStoreMigrationSchedule: @Sendable (MigrationSchedule) async -> Void = { _ in }                 // [draft]
+    // Background execution — Kotlin: isSyncRequiredBeforeNextTransfer / executeNextPendingTransfer
+    var isSyncRequiredBeforeNextMigrationTransfer: @Sendable () -> Bool = { false }                           // [draft]
+    var executeNextPendingMigrationTransfer: @Sendable (NetworkPrivacyOptions) async -> TransferResult? = { _ in nil }  // [draft]
+    // On-launch reconciliation — Kotlin: hasOverdueTransfers / hasInvalidTransfers
+    var hasOverdueMigrationTransfers: @Sendable () -> Bool = { false }                                        // [draft]
+    var hasInvalidMigrationTransfers: @Sendable () -> Bool = { false }                                        // [draft]
+    // Recovery
+    var restartCurrentMigrationStep: @Sendable () async -> MigrationSchedule = {  // [draft]
+        MigrationSchedule(transfers: [], estimatedDurationHours: 0)
+    }
+    var rescheduleStalledMigrationTransfer: @Sendable () async -> Void = { }                                  // [ext]
+    var recreateInvalidMigrationTransfer: @Sendable () async -> Void = { }                                    // [ext]
+    // Progress UI
+    var migrationSummary: @Sendable () -> MigrationSummary = { MigrationSummary.zero }                        // [ext]
+    var migrationTransfers: @Sendable () -> [MigrationTransferRow] = { [] }                                   // [ext]
+    // Keystone (PCZT)
+    var proposeNoteSplitPCZT: @Sendable () async -> Pczt = { Pczt() }                                         // [ext]
+    var proposeMigrationPCZTs: @Sendable (MigrationSchedule) async -> [Pczt] = { _ in [] }                    // [ext]
+    var storeSignedMigrationTransactions: @Sendable ([Pczt]) async -> Void = { _ in }                         // [ext]
+    // Lifecycle — Kotlin: initializePostUpgrade
+    var initializeMigrationPostUpgrade: @Sendable () -> Void = { }                                            // [draft]
 }
 

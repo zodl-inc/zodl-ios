@@ -6,6 +6,9 @@ directly impact users rather than highlighting other crucial architectural updat
 
 ## [Unreleased]
 
+### Added
+- [MOB-1459] Groundwork for the Orchard → Ironwood migration: data models and the stubbed migration SDK interface. No user-visible changes yet.
+
 ### Changed
 - [MOB-1472] The assets you can swap are now a curated set of major coins and stablecoins across the supported chains (plus swapping to ZEC), instead of the full list from the swap provider, and the address-book chain picker is limited to those chains. Existing swaps in your history (including assets no longer offered) still display normally, and existing contacts on other chains are preserved.
 
