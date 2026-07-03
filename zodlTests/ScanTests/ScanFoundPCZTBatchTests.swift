@@ -11,9 +11,9 @@
 //  `KeystoneSDK.DecodeResult`'s only initializer is `internal` to the `KeystoneSDK` module, so a
 //  `DecodeResult` carrying a real `UR` (the 100%-progress, parse-ready case) cannot be constructed
 //  from this test target — only `KeystoneSDK().decodeQR(_:)` driven by real animated-QR fragment
-//  strings can produce one. The checker's accumulate→parse→action path is exercised by MOB-1468
-//  phase 2's coordinator tests instead, with `sdkSynchronizer.parseMigrationPCZTBatch` stubbed.
-//  No shared/global state -> no `.serialized`.
+//  strings can produce one. The checker's accumulate→parse→action path is exercised by the
+//  MigrationCoordFlowTests Keystone-signing block instead (same PR), with
+//  `sdkSynchronizer.parseMigrationPCZTBatch` stubbed. No shared/global state -> no `.serialized`.
 //
 
 import Testing
