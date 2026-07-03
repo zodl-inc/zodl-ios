@@ -35,10 +35,12 @@ import ComposableArchitecture
         } withDependencies: {
             $0.pasteboard.setString = { copied.setValue($0) }
         }
+        store.exhaustivity = .off
 
         await store.send(.copyTxIdTapped)
 
         #expect(copied.value == "e87f1234567890abcdef6f28b".redacted)
+        #expect(store.state.toast == .top(String(localizable: .generalCopiedToTheClipboard)))
     }
 
     @MainActor @Test func cancelTappedDismissesFailureSheet() async {
