@@ -115,13 +115,21 @@ struct MigrationSending {
                 case .success(let txId):
                     state.txId = txId
                     state.sentCount += 1
-                    // Both are synchronous, non-throwing dependency closures — no effect needed.
+                    // Synchronous, non-throwing dependency closure — no effect needed.
                     migrationManager.recordMigrationBroadcast()
-                    migrationBGScheduler.scheduleNextWindow()
 
-                    return state.sentCount >= state.totalCount
+                    let nextEffect: Effect<Action> = state.sentCount >= state.totalCount
                         ? .send(.allTransfersSent)
                         : executeNextTransfer(options: state.networkPrivacyOptions)
+
+                    // scheduleNextWindow() is async (MOB-1467) — concatenated ahead of the
+                    // follow-up effect so it still runs to completion before the next transfer
+                    // kicks off (or before .allTransfersSent), matching the previous synchronous
+                    // call-then-continue ordering.
+                    return .concatenate(
+                        .run { [migrationBGScheduler] _ in await migrationBGScheduler.scheduleNextWindow() },
+                        nextEffect
+                    )
 
                 case .networkError, .invalidNote, .expired, nil:
                     state.isFailurePresented = true
