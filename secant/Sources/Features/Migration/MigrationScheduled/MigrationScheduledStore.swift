@@ -4,8 +4,8 @@
 //
 //  "Migration Scheduled" screen (MOB-1463, Figma S9 · 2630:11282). Terminal success screen shown
 //  once a scheduled migration plan has been confirmed: a summary card of what's being transferred
-//  and over how long. Visual-only: all fields are placeholders — the real summary data lands in
-//  MOB-1466. The `doneTapped` delegate is emitted but consumed by nobody yet.
+//  and over how long. The coordinator hydrates the summary fields and consumes the `doneTapped`
+//  delegate (MigrationCoordFlowCoordinator, MOB-1466).
 //
 
 import ComposableArchitecture

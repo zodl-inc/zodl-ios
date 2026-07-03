@@ -3,8 +3,8 @@
 //  zodl
 //
 //  "Network Privacy" screen (MOB-1460, Figma S5 · 2867:5801 immediate / 2867:10835 scheduled).
-//  Lets the user opt in to routing migration transfer submission via Tor. The delegate is emitted
-//  but consumed by nobody yet — chaining into the rest of the migration flow lands in MOB-1466.
+//  Lets the user opt in to routing migration transfer submission via Tor. The `confirmed` delegate
+//  is consumed by MigrationCoordFlowCoordinator (MOB-1466), which persists the chosen options.
 //
 
 import ComposableArchitecture
