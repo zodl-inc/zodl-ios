@@ -13,7 +13,6 @@ import ComposableArchitecture
 import SwiftUI
 
 struct MigrationTransferPlanView: View {
-    @Environment(\.colorScheme) private var colorScheme
     @Perception.Bindable var store: StoreOf<MigrationTransferPlan>
 
     init(store: StoreOf<MigrationTransferPlan>) {
@@ -35,7 +34,7 @@ struct MigrationTransferPlanView: View {
                             .fixedSize(horizontal: false, vertical: true)
                             .padding(.bottom, 24)
 
-                        timelineRows
+                        MigrationTransferTimeline(rows: store.rows, caption: caption(for:))
                     }
                     .padding(.vertical, 1)
                 }
@@ -76,74 +75,7 @@ struct MigrationTransferPlanView: View {
         }
     }
 
-    // MARK: - Timeline rows
-
-    @ViewBuilder private var timelineRows: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            ForEach(Array(store.rows.enumerated()), id: \.element.id) { index, row in
-                timelineRow(row, isLast: index == store.rows.count - 1)
-            }
-        }
-    }
-
-    @ViewBuilder private func timelineRow(_ row: MigrationTransferRow, isLast: Bool) -> some View {
-        HStack(alignment: .top, spacing: 12) {
-            VStack(spacing: 4) {
-                MigrationStepBadge(number: row.index + 1, style: badgeStyle(for: row.status))
-
-                if !isLast {
-                    Rectangle()
-                        .fill(connectorColor(for: row.status).color(colorScheme))
-                        .frame(width: 1.5, height: 28)
-                }
-            }
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(String(localizable: .migrationPlanTransferN(row.index + 1)))
-                    .zFont(.semiBold, size: 16, style: Design.Text.primary)
-
-                Text(caption(for: row))
-                    .zFont(size: 14, style: Design.Text.tertiary)
-            }
-            .padding(.top, 2)
-
-            Spacer(minLength: 8)
-
-            VStack(alignment: .trailing, spacing: 2) {
-                Text("\(row.amount.decimalString()) ZEC")
-                    .zFont(.semiBold, size: 16, style: Design.Text.primary)
-
-                if let currencyConversion = store.currencyConversion {
-                    Text(currencyConversion.convert(row.amount))
-                        .zFont(size: 13, style: Design.Text.tertiary)
-                }
-            }
-            .padding(.top, 2)
-            .padding(.bottom, 16)
-        }
-    }
-
-    private func badgeStyle(for status: MigrationTransferRow.Status) -> MigrationStepBadge.Style {
-        switch status {
-        case .sent:
-            return .sent
-        case .active:
-            return .active
-        default:
-            return .pending
-        }
-    }
-
-    private func connectorColor(for status: MigrationTransferRow.Status) -> Colorable {
-        switch status {
-        case .sent:
-            return Design.Utility.SuccessGreen._500
-        case .active:
-            return Design.Text.primary
-        default:
-            return Design.Surfaces.strokeSecondary
-        }
-    }
+    // MARK: - Caption
 
     private func caption(for row: MigrationTransferRow) -> String {
         switch row.status {
