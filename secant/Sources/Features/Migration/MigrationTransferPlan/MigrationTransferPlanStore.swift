@@ -98,6 +98,12 @@ struct MigrationTransferPlan {
                     return .none
                 }
 
+                // Coordinator-hydrated rows (the rescheduled variant — no schedule object exists
+                // for it) must not be overwritten by a fresh proposal.
+                if !state.rows.isEmpty {
+                    return .none
+                }
+
                 return .run { send in
                     let schedule = await sdkSynchronizer.proposeMigrationTransfers()
                     await send(.transfersProposed(schedule))
