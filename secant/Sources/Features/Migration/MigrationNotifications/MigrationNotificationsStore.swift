@@ -6,8 +6,8 @@
 //  Explains what migration-related notifications the user will get, with copy that differs by
 //  `variant` (scheduled vs. manual send cadence). `allowTapped` requests `UNUserNotificationCenter`
 //  authorization; either outcome continues the flow — permission is a nice-to-have, not a blocker
-//  (MOB-1466). The `skipTapped`/`.continued` delegate is emitted but consumed by nobody yet —
-//  chaining is the coordinator's job (phase 3).
+//  (MOB-1466). The `skipTapped`/`.continued` delegate is consumed by `MigrationCoordFlowCoordinator`
+//  (MOB-1466).
 //
 
 import ComposableArchitecture

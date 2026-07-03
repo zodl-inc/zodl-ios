@@ -9,7 +9,7 @@
 //  submit it; a `migrationStateStream()` subscription advances `.splitting` -> `.confirmed` once the
 //  SDK reports `.readyToPropose`. When the splitting phase is a flow re-entry root (`isFlowRoot`),
 //  its back control closes the flow (`closeTapped` -> `.delegate(.continued)`) instead of popping
-//  (MOB-1466). Chaining into the rest of the migration flow is the coordinator's job (phase 3).
+//  (MOB-1466). The `.continued` delegate is consumed by `MigrationCoordFlowCoordinator` (MOB-1466).
 //
 
 import Foundation
@@ -35,7 +35,7 @@ struct MigrationNoteSplit {
         var isFailurePresented = false
         /// The prepared split proposal, held so `retryTapped` can re-submit without re-preparing.
         var proposal: NoteSplitProposal?
-        var CancelStateStreamId = UUID()
+        var cancelStateStreamId = UUID()
         /// True when the splitting phase is the coordinator's re-entry root — its back control then
         /// closes the flow instead of popping.
         var isFlowRoot = false
@@ -132,7 +132,7 @@ struct MigrationNoteSplit {
                 }
 
                 return .merge(
-                    subscribeToMigrationState(cancelId: state.CancelStateStreamId),
+                    subscribeToMigrationState(cancelId: state.cancelStateStreamId),
                     isPendingConfirmation ? .none : prepareNoteSplit()
                 )
 
