@@ -288,7 +288,35 @@ extension SDKSynchronizerClient: DependencyKey {
                 return try await transactionGuard.withSubmission {
                     try await synchronizer.getTreeState(height: height)
                 }
-            }
+            },
+            // Migration (Orchard → Ironwood) — STUB: the SDK API does not exist yet (MOB-1455).
+            // These compile the app against the expected contract and do nothing. When the real
+            // SDK lands, replace these closures here — broadcast-capable ones (`submitNoteSplit`,
+            // `executeNextPendingMigrationTransfer`, `storeSignedMigrationTransactions`) must then
+            // acquire the transaction guard inside this LiveKey (same pattern as
+            // `createAndSubmitProposedTransactions`), never at call sites.
+            getMigrationState: { .notStarted },
+            migrationStateStream: { Just(MigrationState.notStarted).eraseToAnyPublisher() },
+            getMigrationProgress: { nil },
+            isNoteSplitNeeded: { false },
+            prepareNoteSplit: { NoteSplitProposal(outputNotes: [], fee: Zatoshi.zero) },
+            submitNoteSplit: { _ in TransferResult.success(txId: "") },
+            selectMigrationMode: { _ in },
+            proposeMigrationTransfers: { MigrationSchedule(transfers: [], estimatedDurationHours: 0) },
+            signAndStoreMigrationSchedule: { _ in },
+            isSyncRequiredBeforeNextMigrationTransfer: { false },
+            executeNextPendingMigrationTransfer: { _ in nil },
+            hasOverdueMigrationTransfers: { false },
+            hasInvalidMigrationTransfers: { false },
+            restartCurrentMigrationStep: { MigrationSchedule(transfers: [], estimatedDurationHours: 0) },
+            rescheduleStalledMigrationTransfer: { },
+            recreateInvalidMigrationTransfer: { },
+            migrationSummary: { MigrationSummary.zero },
+            migrationTransfers: { [] },
+            proposeNoteSplitPCZT: { Pczt() },
+            proposeMigrationPCZTs: { _ in [] },
+            storeSignedMigrationTransactions: { _ in },
+            initializeMigrationPostUpgrade: { }
         )
     }
 }
