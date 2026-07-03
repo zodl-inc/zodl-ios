@@ -69,10 +69,16 @@ extension Root {
                     }
                 }
                 state.appStartState = .willEnterForeground
+                // MOB-1466: reconcile migration state on every foreground entry (idempotent
+                // `initializeMigrationPostUpgrade()` + the stale-acknowledge reset) so a banner/
+                // re-entry route that changed while backgrounded is picked up promptly. Banner
+                // freshness itself stays reactive (SmartBanner's own subscription + walk) — this
+                // is deliberately the minimal Root-side hook the spec calls for.
+                let reconcileEffect: Effect<Action> = .run { [migrationManager] _ in migrationManager.reconcile() }
                 if state.isLockedInKeychainUnavailableState || !sdkSynchronizer.latestState().syncStatus.isPrepared {
-                    return .send(.initialization(.initialSetups))
+                    return .merge(reconcileEffect, .send(.initialization(.initialSetups)))
                 } else {
-                    return .send(.initialization(.retryStart))
+                    return .merge(reconcileEffect, .send(.initialization(.retryStart)))
                 }
                 
             case .initialization(.appDelegate(.didEnterBackground)):
@@ -256,7 +262,13 @@ extension Root {
                 // TODO: [#524] finish all the wallet events according to definition, https://github.com/Electric-Coin-Company/zashi-ios/issues/524
                 LoggerProxy.event(".appDelegate(.didFinishLaunching)")
                 /// We need to fetch data from keychain, in order to be 100% sure the keychain can be read we delay the check a bit
-                return .send(.initialization(.checkWalletInitialization))
+                return .merge(
+                    // MOB-1466: reconcile migration state once per launch — off the hot path
+                    // (`initializeMigrationPostUpgrade()` is idempotent), so it never blocks or
+                    // reorders the existing wallet-initialization sequence below.
+                    .run { [migrationManager] _ in migrationManager.reconcile() },
+                    .send(.initialization(.checkWalletInitialization))
+                )
 
                 /// Evaluate the wallet's state based on keychain keys and database files presence
             case .initialization(.checkWalletInitialization):

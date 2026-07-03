@@ -3,9 +3,10 @@
 //  zodl
 //
 //  "Split Your Wallet Funds" screen (MOB-1461, Figma S2 · 2867:10535 explainer / 2867:10741
-//  progress / 2867:10645 success / 2670:15570 failure sheet). Visually complete per Figma; phase
-//  transitions and the SDK-driven split submission are declared but inert — wiring them up lands in
-//  MOB-1466. The `continueTapped` delegate is emitted but consumed by nobody yet.
+//  progress / 2867:10645 success / 2670:15570 failure sheet). `onAppear` loads/resumes the split
+//  live via the store (MOB-1466); when the splitting phase is a flow re-entry root (`isFlowRoot`),
+//  its back control closes the flow instead of popping. The `continueTapped` delegate is emitted
+//  but consumed by nobody yet — chaining is the coordinator's job (phase 3).
 //
 
 import ComposableArchitecture
@@ -66,12 +67,15 @@ struct MigrationNoteSplitView: View {
                 footer
             }
             .screenHorizontalPadding()
-            .zashiBack()
+            .applyPresentationModifier(store: store)
             .zashiSheet(isPresented: $store.isFailurePresented) {
                 failureSheetContent
             }
         }
         .applyScreenBackground()
+        .onAppear {
+            store.send(.onAppear)
+        }
     }
 
     // MARK: - Header badge
@@ -272,6 +276,22 @@ struct MigrationNoteSplitView: View {
                 store.send(.retryTapped)
             }
             .padding(.bottom, Design.Spacing.sheetBottomSpace)
+        }
+    }
+}
+
+// MARK: - Presentation modifier
+
+private extension View {
+    /// Only the splitting phase can be a re-entry root — explainer/confirmed are always reached via
+    /// normal push, so a plain pop stands there regardless of `isFlowRoot`.
+    @ViewBuilder func applyPresentationModifier(store: StoreOf<MigrationNoteSplit>) -> some View {
+        if store.phase == .splitting && store.isFlowRoot {
+            zashiBackV2 {
+                store.send(.closeTapped)
+            }
+        } else {
+            zashiBack()
         }
     }
 }

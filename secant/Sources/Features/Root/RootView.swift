@@ -202,6 +202,15 @@ private extension RootView {
                                 )
                                 .transition(.move(edge: .trailing))
                                 .zIndex(1)
+                            } else if path == .migrationCoordFlow {
+                                MigrationCoordFlowView(
+                                    store:
+                                        store.scope(
+                                            state: \.migrationCoordFlowState,
+                                            action: \.migrationCoordFlow)
+                                )
+                                .transition(.move(edge: .trailing))
+                                .zIndex(1)
                             } else if path == .currencyConversionSetup {
                                 NavigationStack {
                                     CurrencyConversionSetupView(
