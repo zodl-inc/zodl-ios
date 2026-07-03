@@ -9,6 +9,12 @@
 //  `sendFormState`); every other screen lives in `path`. Everything here runs against the inert
 //  SDK stubs — it goes live when the real SDK (MOB-1455) fills them in.
 //
+//  MOB-1468 (Keystone) adds `keystoneSign`/`scan` path elements and `pendingKeystoneSigning`: the
+//  three signing sources (NoteSplit/TransferPlan/ReviewTransfer) delegate `.keystoneSignRequested`
+//  instead of signing locally, the coordinator routes through a QR sign/scan round-trip, then
+//  resumes whichever chain the source represents. See `MigrationCoordFlowCoordinator.swift`'s
+//  Keystone rows for the routing table.
+//
 
 import SwiftUI
 import ComposableArchitecture
@@ -16,15 +22,27 @@ import ComposableArchitecture
 
 @Reducer
 struct MigrationCoordFlow {
+    /// MOB-1468 (Keystone): which signing source is awaiting/mid QR round-trip, so
+    /// `scan(.foundPCZTBatch)` knows which chain to resume once the signed PCZTs come back.
+    enum KeystoneSigningContext: Equatable {
+        case noteSplit
+        /// Fresh + re-created plans (`requiresSigning == true`) — the rescheduled variant never
+        /// re-signs, so it never reaches this context.
+        case planCommit
+        case immediateReview
+    }
+
     @Reducer(state: .equatable)
     enum Path {
         case backgroundDelivery(MigrationBackgroundDelivery)
         case complete(MigrationComplete)
+        case keystoneSign(MigrationKeystoneSign)
         case networkPrivacy(MigrationNetworkPrivacy)
         case noteSplit(MigrationNoteSplit)
         case notifications(MigrationNotifications)
         case recovery(MigrationRecovery)
         case reviewTransfer(MigrationReviewTransfer)
+        case scan(Scan)
         case scheduled(MigrationScheduled)
         case sending(MigrationSending)
         case status(MigrationStatus)
@@ -41,6 +59,10 @@ struct MigrationCoordFlow {
         /// Held here once confirmed on the Network Privacy screen (or defaulted when S5 is
         /// skipped) so Sending's coordinator-configured state can inject it.
         var networkPrivacyOptions = NetworkPrivacyOptions(useTor: false, submissionEndpoint: nil)
+        /// MOB-1468 (Keystone): set when a `.keystoneSignRequested` delegate pushes `keystoneSign`,
+        /// cleared once the QR round-trip resolves (either resumed via `foundPCZTBatch` or backed
+        /// out via `.rejected`).
+        var pendingKeystoneSigning: KeystoneSigningContext?
 
         init() { }
     }
@@ -75,6 +97,18 @@ struct MigrationCoordFlow {
         /// Internal: sendNow's Sending screen finished (`.closed`) — refresh the `.status` element
         /// beneath with freshly-read rows and pop back to it.
         case sendNowCompleted(rows: [MigrationTransferRow])
+        /// Internal: MOB-1468 Keystone `scan(.foundPCZTBatch)` finished submitting (noteSplit) or
+        /// storing (planCommit/immediateReview) the signed PCZTs — pops `scan`+`keystoneSign` and
+        /// resumes the chain `context` represents. `result` carries the noteSplit broadcast outcome
+        /// (mirrors the software `.splitResult` handling) and `signedPczt` the PCZT that was
+        /// submitted (so the mutated `noteSplit` element can hold it for `retryTapped`); both `nil`
+        /// for the other two contexts, whose `storeSignedMigrationTransactions` call returns `Void`.
+        case keystoneSigningSubmitted(context: KeystoneSigningContext, result: TransferResult?, signedPczt: Pczt?)
+        /// Internal: MOB-1468 `keystoneSign(.delegate(.rejected))`'s pop, deferred to a follow-up
+        /// self-action for the same reason `sendNowCompleted` defers its pop — popping the
+        /// `keystoneSign` element inline in the `.path(.element(...))` case would race
+        /// `.forEach(\.path, action:)`'s delivery of that same action to the (then-missing) element.
+        case keystoneSignRejected
     }
 
     @Dependency(\.migrationBGScheduler) var migrationBGScheduler
