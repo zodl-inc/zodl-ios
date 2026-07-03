@@ -8,7 +8,43 @@
 import Combine
 import ComposableArchitecture
 import Foundation
+@preconcurrency import BackgroundTasks
 @preconcurrency import ZcashLightClientKit
+
+/// Wraps a `BGProcessingTask` for the migration BG session decision tree (MOB-1467). A bare
+/// `BGProcessingTask` cannot be instantiated in unit tests, so the AppDelegate-facing
+/// `.migrationBackgroundTask(BGProcessingTask)` action is immediately wrapped into this handle
+/// and forwarded to `.migrationBackgroundSession`, the action the reducer's tree — and every
+/// `RootMigrationBackgroundTests` case — actually drives. `rawTask` is `nil` in tests (spy
+/// handles); `complete` is always a real, observable closure (`LockIsolated` spy in tests, real
+/// `task.setTaskCompleted(success:)` in production via the AppDelegate-side `live` initializer).
+/// `@unchecked Sendable`: `BGProcessingTask` (a system framework type, `@preconcurrency`-imported
+/// above) is safe to hand across the effect boundary here the same way the existing
+/// `power_wifi_sync`/`scheduler` tasks already are (`Root.State.bgTask`, `AppDelegate`'s
+/// `task.expirationHandler`) — it is only ever read or completed, never mutated concurrently.
+struct MigrationBGSessionHandle: @unchecked Sendable {
+    let rawTask: BGProcessingTask?
+    let complete: @Sendable (Bool) -> Void
+
+    init(rawTask: BGProcessingTask?, complete: @escaping @Sendable (Bool) -> Void) {
+        self.rawTask = rawTask
+        self.complete = complete
+    }
+
+    /// Production convenience: wraps a live task, completing it via its own
+    /// `setTaskCompleted(success:)` when the session decides it's done.
+    static func live(_ task: BGProcessingTask) -> MigrationBGSessionHandle {
+        MigrationBGSessionHandle(rawTask: task, complete: { task.setTaskCompleted(success: $0) })
+    }
+}
+
+extension MigrationBGSessionHandle: Equatable {
+    /// `complete` is a closure and can't be compared — identity of the wrapped task (or "both
+    /// nil", the spy-handle shape every test uses) is the only meaningful equality here.
+    static func == (lhs: MigrationBGSessionHandle, rhs: MigrationBGSessionHandle) -> Bool {
+        lhs.rawTask === rhs.rawTask
+    }
+}
 
 /// In this file is a collection of helpers that control all state and action related operations
 /// for the `Root` with a connection to the app/wallet initialization and erasure of the wallet.
@@ -32,6 +68,7 @@ extension Root {
         case initializationFailed(ZcashError)
         case initializationSuccessfullyDone
         case loadedWalletAccounts([WalletAccount])
+        case migrationBackgroundSession(MigrationBGSessionHandle)
         case resetZashi
         case resetZashiRequest(Bool)
         case resetZashiRequestCanceled
@@ -74,10 +111,16 @@ extension Root {
                 // freshness itself stays reactive (SmartBanner's own subscription + walk) — this
                 // is deliberately the minimal Root-side hook the spec calls for.
                 let reconcileEffect: Effect<Action> = .run { [migrationManager] _ in migrationManager.reconcile() }
+                // MOB-1467: opening the app clears stale migration notifications from Notification
+                // Center — the banner/re-entry route now carries the current state. Delivered ONLY:
+                // a pending manual-mode "ready to send" reminder must survive foreground entry.
+                let clearDeliveredEffect: Effect<Action> = .run { [userNotifications] _ in
+                    await userNotifications.clearDeliveredMigrationNotifications()
+                }
                 if state.isLockedInKeychainUnavailableState || !sdkSynchronizer.latestState().syncStatus.isPrepared {
-                    return .merge(reconcileEffect, .send(.initialization(.initialSetups)))
+                    return .merge(reconcileEffect, clearDeliveredEffect, .send(.initialization(.initialSetups)))
                 } else {
-                    return .merge(reconcileEffect, .send(.initialization(.retryStart)))
+                    return .merge(reconcileEffect, clearDeliveredEffect, .send(.initialization(.retryStart)))
                 }
                 
             case .initialization(.appDelegate(.didEnterBackground)):
@@ -110,7 +153,40 @@ extension Root {
                         await send(.initialization(.retryStart))
                     }
                 }
-                
+
+            case .initialization(.appDelegate(.migrationBackgroundTask(let task))):
+                // Immediately wrapped so the decision tree below (`.migrationBackgroundSession`)
+                // never touches a raw `BGProcessingTask` directly — that type can't be
+                // instantiated in unit tests, so `RootMigrationBackgroundTests` drives
+                // `.migrationBackgroundSession` with spy handles instead (`rawTask: nil`).
+                return .send(.initialization(.migrationBackgroundSession(MigrationBGSessionHandle.live(task))))
+
+            case .initialization(.migrationBackgroundSession(let handle)):
+                return migrationBackgroundSessionEffect(state: &state, handle: handle)
+
+            case .initialization(.appDelegate(.migrationBackgroundTaskExpired)):
+                // Mirror `didEnterBackground`'s expiration handling for the existing
+                // `power_wifi_sync` task: stop the synchronizer and release `state.bgTask` (a
+                // sync-only session may have set it), then re-arm — an expired session must never
+                // orphan the wakeup chain. Re-submitting with the same identifier REPLACES the
+                // pending request, so this is safe even if branch 2's up-front re-arm already ran
+                // in this same session.
+                sdkSynchronizer.stop()
+                state.bgTask?.setTaskCompleted(success: false)
+                state.bgTask = nil
+                return .run { [migrationBGScheduler] _ in await migrationBGScheduler.scheduleNextWindow() }
+
+            case .initialization(.appDelegate(.migrationNotificationTapped)):
+                // Same gate as `checkBackupPhraseValidation` uses for `isAtDeeplinkWarningScreen`:
+                // `.initialized` is set exactly once, at that checkpoint, so it doubles as "Home
+                // is up" here. If we're not there yet (cold start still in flight), stash the
+                // request — `checkBackupPhraseValidation` fires it once initialization completes.
+                guard state.appInitializationState == .initialized else {
+                    state.pendingMigrationDeepLink = true
+                    return .none
+                }
+                return migrationNotificationTappedRoutingEffect(state: &state)
+
             case .synchronizerStateChanged(let latestState):
                 let snapshot = SyncStatusSnapshot.snapshotFor(state: latestState.data.syncStatus)
 
@@ -542,11 +618,21 @@ extension Root {
                 state.appInitializationState = .initialized
                 let isAtDeeplinkWarningScreen = state.destinationState.destination == .deeplinkWarning
 
+                // MOB-1467: this is the checkpoint that already knows "we just reached Home from
+                // cold start" — mirrors `isAtDeeplinkWarningScreen` immediately above: snapshot +
+                // clear the pending flag now, fire its routing in the same delayed effect that
+                // sends Home, right alongside it.
+                let hasPendingMigrationDeepLink = state.pendingMigrationDeepLink
+                state.pendingMigrationDeepLink = false
+
                 return .run { send in
                     // Delay the splash overlay dismissal
                     try await mainQueue.sleep(for: .seconds(0.5))
                     if !isAtDeeplinkWarningScreen {
                         await send(.destination(.updateDestination(Root.DestinationState.Destination.home)))
+                    }
+                    if hasPendingMigrationDeepLink {
+                        await send(.initialization(.appDelegate(.migrationNotificationTapped)))
                     }
                 }
                 .cancellable(id: state.CancelId, cancelInFlight: true)
@@ -792,5 +878,121 @@ extension Root {
             return true
         default: return false
         }
+    }
+
+    // MARK: - MOB-1467: Migration BG session decision tree
+
+    /// The migration BG session's decision tree (spec "Root: BG session decision tree"), checked
+    /// in this exact order:
+    /// 1. Plan broken (invalid transfer, or expired-attention state) — notify, do NOT re-arm.
+    /// 2. Sync required before the next transfer — either skip (deferred-after-broadcast) or run a
+    ///    sync-only session that never broadcasts, reusing the existing `power_wifi_sync` sync-kick
+    ///    machinery verbatim (`state.bgTask` + `.retryStart`; `synchronizerStateChanged` completes
+    ///    the task on `.upToDate`/`.stopped`/`.error`).
+    /// 3. Otherwise, send: `executeNextPendingMigrationTransfer` and notify/re-arm per outcome.
+    /// Every branch except the sync-only session completes `handle` itself (that session's
+    /// completion is the existing `synchronizerStateChanged` machinery, exactly like the
+    /// `power_wifi_sync` task it mirrors).
+    private func migrationBackgroundSessionEffect(
+        state: inout Root.State,
+        handle: MigrationBGSessionHandle
+    ) -> Effect<Root.Action> {
+        let migrationState = sdkSynchronizer.getMigrationState()
+        let isPlanBroken = sdkSynchronizer.hasInvalidMigrationTransfers()
+            || migrationState == MigrationState.requiresAttention(AttentionReason.transferExpired)
+
+        if isPlanBroken {
+            return .run { [userNotifications] _ in
+                await userNotifications.scheduleMigrationNotification(MigrationNotification.planNeedsUpdate, nil)
+                handle.complete(true)
+            }
+        }
+
+        if sdkSynchronizer.isSyncRequiredBeforeNextMigrationTransfer() {
+            if migrationManager.isSyncDeferredAfterBroadcast() {
+                return .run { [migrationBGScheduler] _ in
+                    await migrationBGScheduler.scheduleNextWindow()
+                    handle.complete(true)
+                }
+            }
+
+            // Sync-only session: never broadcasts. Re-arm up front, then reuse the
+            // `power_wifi_sync` handler's own sync-kick verbatim (`state.bgTask` + `.retryStart`) —
+            // `synchronizerStateChanged` completes `state.bgTask` on `.upToDate`/`.stopped`/`.error`
+            // exactly as it does for that task. `handle.rawTask` may be `nil` in tests (spy
+            // handles); that completion is then a no-op, which is acceptable — this branch is
+            // asserted on the arm + kick + stash, not on task completion.
+            state.bgTask = handle.rawTask
+            return .concatenate(
+                .run { [migrationBGScheduler] _ in await migrationBGScheduler.scheduleNextWindow() },
+                .send(.initialization(.retryStart))
+            )
+        }
+
+        return .run { [migrationManager, sdkSynchronizer, migrationBGScheduler, userNotifications] _ in
+            let options = migrationManager.networkPrivacyOptions()
+            let result = await sdkSynchronizer.executeNextPendingMigrationTransfer(options)
+
+            switch result {
+            case .success:
+                migrationManager.recordMigrationBroadcast()
+
+                if sdkSynchronizer.getMigrationState() == MigrationState.complete {
+                    await userNotifications.scheduleMigrationNotification(MigrationNotification.migrationComplete, nil)
+                    await migrationBGScheduler.cancelAll()
+                } else {
+                    let notification = Self.transferCompleteNotification(sdkSynchronizer: sdkSynchronizer)
+                    await userNotifications.scheduleMigrationNotification(notification, nil)
+                    await migrationBGScheduler.scheduleNextWindow()
+                }
+
+            case .networkError, .invalidNote, .expired:
+                let nextNumber = (sdkSynchronizer.getMigrationProgress()?.completedTransfers ?? 0) + 1
+                await userNotifications.scheduleMigrationNotification(MigrationNotification.transferWaiting(number: nextNumber), nil)
+                await migrationBGScheduler.scheduleNextWindow()
+
+            case nil:
+                await migrationBGScheduler.scheduleNextWindow()
+            }
+
+            handle.complete(true)
+        }
+    }
+
+    /// Builds the `.transferComplete` notification payload from the freshly-updated migration
+    /// state: `number`/`total`/`remaining` from `getMigrationProgress()`, `nextInHours` from the
+    /// same cadence-window derivation `MigrationBGSchedulerClient`'s `arm(margin:)` uses (§8.3's
+    /// next-window margin, `estimateTimestamp` as the preferred source), rounded to hours.
+    private static func transferCompleteNotification(sdkSynchronizer: SDKSynchronizerClient) -> MigrationNotification {
+        let progress = sdkSynchronizer.getMigrationProgress()
+        let preferredExecutableAt = progress?.nextTransferReadyAtHeight.flatMap { height in
+            sdkSynchronizer.estimateTimestamp(height).map { Date(timeIntervalSince1970: $0) }
+        }
+        let now = Date()
+        let window = MigrationCadence.window(
+            margin: MigrationCadence.nextWindowMargin,
+            preferredExecutableAt: preferredExecutableAt,
+            now: now
+        )
+        let nextInHours = Int((window.timeIntervalSince(now) / 3600).rounded())
+
+        return MigrationNotification.transferComplete(
+            number: progress?.completedTransfers ?? 0,
+            total: progress?.totalTransfers ?? 0,
+            nextInHours: nextInHours,
+            remaining: progress?.remainingOrchard ?? Zatoshi.zero
+        )
+    }
+
+    // MARK: - MOB-1467: Migration notification-tap deep link
+
+    /// Exactly the SmartBanner-tap routing (`RootCoordinator`'s
+    /// `.home(.smartBanner(.migrationScreenRequested))`): fresh flow state, open the migration
+    /// path. Shared by the immediate (Home already up) and deferred (fired from
+    /// `checkBackupPhraseValidation` once initialization reaches Home) call sites.
+    private func migrationNotificationTappedRoutingEffect(state: inout Root.State) -> Effect<Root.Action> {
+        state.migrationCoordFlowState = MigrationCoordFlow.State.initial
+        state.path = Root.State.Path.migrationCoordFlow
+        return .none
     }
 }

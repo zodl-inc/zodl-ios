@@ -74,6 +74,12 @@ struct Root {
         var onboardingState: RestoreWalletCoordFlow.State
         var osStatusErrorState: OSStatusError.State
         var path: Path? = nil
+        /// Set by `.migrationNotificationTapped` when it arrives before the app has reached Home
+        /// (`appInitializationState != .initialized`) — mirrors `RootDestination`'s
+        /// `isAtDeeplinkWarningScreen` gating: the routing itself is deferred rather than dropped,
+        /// and fires from `checkBackupPhraseValidation`'s existing "did we just reach Home"
+        /// checkpoint once initialization completes. Cleared immediately after firing.
+        var pendingMigrationDeepLink = false
         var pendingServerCandidate: PendingServerCandidate?
         var phraseDisplayState: RecoveryPhraseDisplay.State
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
@@ -295,6 +301,7 @@ struct Root {
     @Dependency(\.flexaHandler) var flexaHandler
     @Dependency(\.localAuthentication) var localAuthentication
     @Dependency(\.mainQueue) var mainQueue
+    @Dependency(\.migrationBGScheduler) var migrationBGScheduler
     @Dependency(\.migrationManager) var migrationManager
     @Dependency(\.mnemonic) var mnemonic
     @Dependency(\.numberFormatter) var numberFormatter
@@ -306,6 +313,7 @@ struct Root {
     @Dependency(\.uriParser) var uriParser
     @Dependency(\.userDefaults) var userDefaults
     @Dependency(\.userMetadataProvider) var userMetadataProvider
+    @Dependency(\.userNotifications) var userNotifications
     @Dependency(\.userStoredPreferences) var userStoredPreferences
     @Dependency(\.votingMetadata) var votingMetadata
     @Dependency(\.walletConfigProvider) var walletConfigProvider

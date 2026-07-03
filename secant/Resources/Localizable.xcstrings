@@ -19468,6 +19468,142 @@
         }
       }
     },
+    "migrationNotification.transferCompleteTitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Migration update"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Actualización de la migración"
+          }
+        }
+      }
+    },
+    "migrationNotification.transferCompleteBody" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transfer %1$lld of %2$lld complete — next send in ~%3$lld hours. %4$@ ZEC remaining in Orchard."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transferencia %1$lld de %2$lld completada — el próximo envío será en ~%3$lld horas. Quedan %4$@ ZEC en Orchard."
+          }
+        }
+      }
+    },
+    "migrationNotification.actionNeededTitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Action needed"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Acción necesaria"
+          }
+        }
+      }
+    },
+    "migrationNotification.transferWaitingBody" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transfer %1$lld waiting. Open ZODL to send or re-schedule."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transferencia %1$lld en espera. Abre ZODL para enviarla o reprogramarla."
+          }
+        }
+      }
+    },
+    "migrationNotification.planNeedsUpdateBody" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Migration plan needs update. Open ZODL to review the details."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "El plan de migración necesita una actualización. Abre ZODL para revisar los detalles."
+          }
+        }
+      }
+    },
+    "migrationNotification.manualTransferReadyBody" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transfer %1$lld — ready to send. Open ZODL to review the details."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transferencia %1$lld — lista para enviar. Abre ZODL para revisar los detalles."
+          }
+        }
+      }
+    },
+    "migrationNotification.migrationCompleteTitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Migration complete"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Migración completada"
+          }
+        }
+      }
+    },
+    "migrationNotification.migrationCompleteBody" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Migration complete. Open ZODL to review the details."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Migración completada. Abre ZODL para revisar los detalles."
+          }
+        }
+      }
+    },
     "migrationNotifications.title" : {
       "extractionState" : "manual",
       "localizations" : {

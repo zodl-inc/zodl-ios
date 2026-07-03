@@ -14,6 +14,7 @@ directly impact users rather than highlighting other crucial architectural updat
 - [MOB-1463] Ironwood migration screens: transfer plan, transfer review, sending states, and migration scheduled. Not reachable in the app yet.
 - [MOB-1464] Ironwood migration screens: progress status, plan recovery, migration complete, and the home widget states. Not reachable in the app yet.
 - [MOB-1466] Ironwood migration screens are wired into a complete guided flow (entry, scheduling, status, recovery) driven by migration state, with a Home banner entry point — dormant until the migration SDK ships.
+- [MOB-1467] Scheduled Ironwood migration transfers can now send from background tasks, with local notifications for progress, required actions, and manual-mode send reminders — dormant until the migration SDK ships.
 
 ### Fixed
 - [PRO-325] Swaps out of ZEC and CrossPays that fail on the swap provider's side now show "Swap Failed" / "Payment Failed" (with the contact-support option) instead of appearing to stay in progress forever. Long-running swaps in this direction also correctly show their processing state.

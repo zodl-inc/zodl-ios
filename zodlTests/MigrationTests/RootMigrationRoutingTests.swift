@@ -9,6 +9,12 @@
 //  `migrationManager.reconcile()`, and the Sending `.viewTransaction` delegate's Root-level handling
 //  (v1: treated as a flow close — see the `RootCoordinator` doc comment at that case for why).
 //
+//  Also covers MOB-1467's notification-tap deep link (`.appDelegate(.migrationNotificationTapped)`):
+//  immediate routing once Home/initialized, versus the deferred `pendingMigrationDeepLink` path that
+//  mirrors `RootDestination`'s `isAtDeeplinkWarningScreen` gating and fires from
+//  `checkBackupPhraseValidation`'s "just reached Home" checkpoint — plus the `willEnterForeground`
+//  delivered-notifications clear.
+//
 //  `.serialized`: constructing `Root.State` builds `migrationCoordFlowState = MigrationCoordFlow
 //  .State.initial`, which itself builds a `MigrationEntry.State` reading the process-global
 //  `@Shared(.inMemory(.selectedWalletAccount))` key — same precedent as `MigrationCoordFlowTests`.
@@ -173,6 +179,97 @@ import ComposableArchitecture
             await waitForRootStore { store.state.path == nil }
 
             #expect(store.state.path == nil)
+        }
+    }
+
+    // MARK: - MOB-1467: Notification-tap deep link
+
+    /// Tapping a migration notification while Home is already up/initialized must route
+    /// immediately — exactly the SmartBanner-tap routing (fresh flow state, `.migrationCoordFlow`).
+    @Test func migrationNotificationTappedOnInitializedStateRoutesImmediately() async {
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            var initialState = Root.State.initial
+            initialState.appInitializationState = InitializationState.initialized
+            // Poison the pre-existing flow state so a reset is actually observable, same as the
+            // banner-tap test above.
+            initialState.migrationCoordFlowState.mode = MigrationMode.immediate
+            initialState.migrationCoordFlowState.path.append(.complete(MigrationComplete.State()))
+
+            let store = Store(initialState: initialState) {
+                Root()
+            } withDependencies: {
+                baseNoOpDependencies(&$0)
+            }
+
+            store.send(.initialization(.appDelegate(.migrationNotificationTapped)))
+            await waitForRootStore { store.state.path == Root.State.Path.migrationCoordFlow }
+
+            #expect(store.state.path == Root.State.Path.migrationCoordFlow)
+            #expect(store.state.migrationCoordFlowState.mode == nil)
+            #expect(store.state.migrationCoordFlowState.path.isEmpty)
+            #expect(store.state.pendingMigrationDeepLink == false)
+        }
+    }
+
+    /// Tapping a migration notification BEFORE the app has reached Home (cold start still in
+    /// flight) must stash the request rather than drop it — mirrors `RootDestination`'s
+    /// `isAtDeeplinkWarningScreen` gating. It then fires once `checkBackupPhraseValidation` (the
+    /// checkpoint that sets `appInitializationState = .initialized`) runs, exactly like a deferred
+    /// deep link is released there.
+    @Test func migrationNotificationTappedBeforeInitializedStashesThenFiresAtCheckBackupPhraseValidation() async {
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            var initialState = Root.State.initial
+            initialState.appInitializationState = InitializationState.uninitialized
+
+            let store = Store(initialState: initialState) {
+                Root()
+            } withDependencies: {
+                baseNoOpDependencies(&$0)
+            }
+
+            store.send(.initialization(.appDelegate(.migrationNotificationTapped)))
+            await waitForRootStore { store.state.pendingMigrationDeepLink == true }
+
+            #expect(store.state.pendingMigrationDeepLink == true)
+            #expect(store.state.path == nil)
+
+            store.send(.initialization(.checkBackupPhraseValidation))
+            await waitForRootStore { store.state.path == Root.State.Path.migrationCoordFlow }
+
+            #expect(store.state.path == Root.State.Path.migrationCoordFlow)
+            #expect(store.state.pendingMigrationDeepLink == false)
+        }
+    }
+
+    // MARK: - MOB-1467: Foreground-clear of delivered migration notifications
+
+    /// Every foreground entry must clear DELIVERED migration notifications (the banner/re-entry
+    /// route now carries the current state) — but must not cancel PENDING ones (a manual-mode
+    /// "ready to send" reminder must survive), so this only asserts the delivered-clear spy, never
+    /// `cancelMigrationNotifications`.
+    @Test func willEnterForegroundClearsDeliveredMigrationNotifications() async {
+        let clearDeliveredCalls = LockIsolated<Int>(0)
+
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let store = Store(initialState: Root.State.initial) {
+                Root()
+            } withDependencies: {
+                baseNoOpDependencies(&$0)
+                $0.userNotifications.clearDeliveredMigrationNotifications = {
+                    clearDeliveredCalls.withValue { $0 += 1 }
+                }
+            }
+
+            store.send(.initialization(.appDelegate(.willEnterForeground)))
+            await waitForRootStore { clearDeliveredCalls.withValue { $0 } == 1 }
+
+            #expect(clearDeliveredCalls.withValue { $0 } == 1)
         }
     }
 }
