@@ -14,6 +14,7 @@ directly impact users rather than highlighting other crucial architectural updat
 - [MOB-1463] Ironwood migration screens: transfer plan, transfer review, sending states, and migration scheduled. Not reachable in the app yet.
 - [MOB-1464] Ironwood migration screens: progress status, plan recovery, migration complete, and the home widget states. Not reachable in the app yet.
 - [MOB-1465] Internal DEBUG-only gallery of all Ironwood migration screens (long-press the balance on Home). Not present in release builds.
+- [MOB-1466] Ironwood migration screens are wired into a complete guided flow (entry, scheduling, status, recovery) driven by migration state, with a Home banner entry point — dormant until the migration SDK ships.
 
 ## 3.7.2 build 1
 
