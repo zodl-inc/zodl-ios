@@ -12,6 +12,7 @@ directly impact users rather than highlighting other crucial architectural updat
 - [MOB-1461] Ironwood migration screen: note split (explainer, progress, confirmation, failure). Not reachable in the app yet.
 - [MOB-1462] Ironwood migration screens: background delivery and notifications permissions. Not reachable in the app yet.
 - [MOB-1463] Ironwood migration screens: transfer plan, transfer review, sending states, and migration scheduled. Not reachable in the app yet.
+- [MOB-1464] Ironwood migration screens: progress status, plan recovery, migration complete, and the home widget states. Not reachable in the app yet.
 
 ### Fixed
 - [#1920] Connecting a Keystone hardware wallet that fails now shows a clear "Connection Failed" message (with Contact Support and Cancel options) instead of silently doing nothing. Cancel leaves the flow so the user is never stuck on the connection screen. The support message includes a safe error identifier and never exposes any wallet keys.

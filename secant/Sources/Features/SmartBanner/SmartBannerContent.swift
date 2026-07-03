@@ -31,6 +31,7 @@ extension SmartBannerView {
             case .priority75: torSetupContent()
             case .priority8: currencyConversionContent()
             case .priority9: autoShieldingContent()
+            case .priorityMigration: migrationContent()
             default: EmptyView()
             }
         }
