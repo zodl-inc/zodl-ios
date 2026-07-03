@@ -6,7 +6,8 @@
 //  (Features/Migration/MigrationNoteSplit/MigrationNoteSplitStore.swift) for MOB-1461: the default
 //  phase/state, the txid pasteboard copy, the failure sheet dismissal (cancel/retry), and the
 //  `continueTapped` delegate contract. Phase transitions and SDK calls are inert/declared-only —
-//  wiring them up is MOB-1466's job. No shared/global state -> no `.serialized`.
+//  wiring them up is MOB-1466's job. The copy action writes the shared toast (`@Shared` in-memory
+//  state) -> `.serialized` per the repo rule for suites mutating process-global state.
 //
 
 import Testing
@@ -15,7 +16,7 @@ import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
 @testable import zodl_internal
 
-@Suite struct MigrationNoteSplitTests {
+@Suite(.serialized) struct MigrationNoteSplitTests {
     @MainActor @Test func defaultStateIsExplainerWithNoFailureSheet() async {
         let state = MigrationNoteSplit.State()
 
