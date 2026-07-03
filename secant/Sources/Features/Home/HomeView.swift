@@ -11,6 +11,10 @@ struct HomeView: View {
     @Shared(.appStorage(.sensitiveContent)) var isSensitiveContentHidden = false
     @Shared(.inMemory(.walletStatus)) var walletStatus: WalletStatus = .none
 
+    #if DEBUG
+    @State private var isMigrationGalleryPresented = false
+    #endif
+
     init(store: StoreOf<Home>, tokenName: String) {
         self.store = store
         self.tokenName = tokenName
@@ -29,6 +33,12 @@ struct HomeView: View {
                     shortened: true
                 )
                 .padding(.top, 1)
+                #if DEBUG
+                .onLongPressGesture(minimumDuration: 0.6) { isMigrationGalleryPresented = true }
+                .sheet(isPresented: $isMigrationGalleryPresented) {
+                    MigrationDebugGalleryView()
+                }
+                #endif
 
                 HStack {
                     button(
