@@ -35,9 +35,13 @@ struct SmartBanner {
             case priority75 // tor
             case priority8 // currency conversion
             case priority9 // auto-shielding
+            case priorityMigration = -1 // ironwood migration (MOB-1464; not triggered yet — MOB-1466)
 
             func next() -> PriorityContent {
-                PriorityContent.init(rawValue: self.rawValue - 1) ?? .priority9
+                // `priorityMigration` (-1) sits outside the walk-down chain — it is only ever
+                // triggered explicitly, so walking below `priority1` wraps to `priority9` as before.
+                guard rawValue > 0 else { return .priority9 }
+                return PriorityContent(rawValue: rawValue - 1) ?? .priority9
             }
         }
         
@@ -60,6 +64,7 @@ struct SmartBanner {
         var lastKnownErrorMessage = ""
         var lastKnownSyncPercentage = -1.0
         var messageToBeShared: String?
+        var migrationBannerVariant = MigrationBannerVariant.required
         var priorityContent: PriorityContent? = nil
         var priorityContentRequested: PriorityContent? = nil
         var remindMeShieldedPhaseCounter = 0
