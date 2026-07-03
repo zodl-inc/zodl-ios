@@ -292,13 +292,16 @@ extension SDKSynchronizerClient: DependencyKey {
             },
             // Migration (Orchard → Ironwood) — STUB: the SDK API does not exist yet (MOB-1455).
             // These compile the app against the expected contract and do nothing. When the real
-            // SDK lands, replace these closures here. The two broadcast-path stubs
-            // (`submitNoteSplit`, `executeNextPendingMigrationTransfer`) already acquire the
-            // transaction guard below — same `withSubmission` pattern as
+            // SDK lands, replace these closures here. The three broadcast-path stubs
+            // (`submitNoteSplit`, `executeNextPendingMigrationTransfer`, `submitSignedNoteSplit`)
+            // already acquire the transaction guard below — same `withSubmission` pattern as
             // `createAndSubmitProposedTransactions` — so they are correct-by-construction once
             // real broadcasting lands; every other migration stub here is read-only/non-broadcast
-            // and stays unguarded. `storeSignedMigrationTransactions` (Keystone/PCZT path,
-            // MOB-1468) only stores locally — it is not a broadcast and must stay unguarded.
+            // and stays unguarded. `storeSignedMigrationTransactions` (Keystone/PCZT path) is
+            // local storage, not a broadcast, so it stays unguarded too — MOB-1468. The two batch
+            // members (`urEncoderForMigrationPCZTBatch`, `parseMigrationPCZTBatch`) are plain
+            // inert stubs — their real implementations belong to KeystoneSDK/the Zcash SDK when
+            // the batch UR format exists (joint SDK + Keystone-team ask, unvalidated).
             getMigrationState: { .notStarted },
             migrationStateStream: { Just(MigrationState.notStarted).eraseToAnyPublisher() },
             getMigrationProgress: { nil },
@@ -339,6 +342,18 @@ extension SDKSynchronizerClient: DependencyKey {
             proposeNoteSplitPCZT: { Pczt() },
             proposeMigrationPCZTs: { _ in [] },
             storeSignedMigrationTransactions: { _ in },
+            submitSignedNoteSplit: { _ in
+                @Dependency(\.transactionGuard) var transactionGuard
+                do {
+                    return try await transactionGuard.withSubmission {
+                        TransferResult.success(txId: "")
+                    }
+                } catch {
+                    return TransferResult.networkError(retryable: true)
+                }
+            },
+            urEncoderForMigrationPCZTBatch: { _ in nil },
+            parseMigrationPCZTBatch: { _ in nil },
             initializeMigrationPostUpgrade: { }
         )
     }
