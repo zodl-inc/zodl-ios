@@ -109,6 +109,10 @@ struct MigrationCoordFlow {
         /// `keystoneSign` element inline in the `.path(.element(...))` case would race
         /// `.forEach(\.path, action:)`'s delivery of that same action to the (then-missing) element.
         case keystoneSignRejected
+        /// Internal: an empty scanned batch abandons the signing session — pops BOTH the `scan`
+        /// and `keystoneSign` elements back to the initiating screen (deferred like
+        /// `keystoneSignRejected`, since `scan` is the acting element) and clears the context.
+        case keystoneScanAbandoned
     }
 
     @Dependency(\.migrationBGScheduler) var migrationBGScheduler
