@@ -9,6 +9,7 @@ directly impact users rather than highlighting other crucial architectural updat
 ### Added
 - [MOB-1459] Groundwork for the Orchard → Ironwood migration: data models and the stubbed migration SDK interface. No user-visible changes yet.
 - [MOB-1460] Ironwood migration screens: entry (mode choice) and network privacy (Tor opt-in). Not reachable in the app yet.
+- [MOB-1461] Ironwood migration screen: note split (explainer, progress, confirmation, failure). Not reachable in the app yet.
 
 ### Fixed
 - [#1920] Connecting a Keystone hardware wallet that fails now shows a clear "Connection Failed" message (with Contact Support and Cancel options) instead of silently doing nothing. Cancel leaves the flow so the user is never stuck on the connection screen. The support message includes a safe error identifier and never exposes any wallet keys.
