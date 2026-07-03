@@ -5,7 +5,8 @@
 //  Covers the MigrationTransferPlan reducer
 //  (Features/Migration/MigrationTransferPlan/MigrationTransferPlanStore.swift) for MOB-1463: the
 //  default `variant`, and the `confirmTapped` delegate contract. Signing and storing the schedule
-//  is inert for now — wiring it up is MOB-1466's job. No shared/global state -> no `.serialized`.
+//  is inert for now — wiring it up is MOB-1466's job. State carries the shared exchange rate but
+//  only reads it — nothing here mutates process-global state -> no `.serialized`.
 //
 
 import Testing
