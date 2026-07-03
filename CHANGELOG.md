@@ -8,6 +8,7 @@ directly impact users rather than highlighting other crucial architectural updat
 
 ### Added
 - [MOB-1459] Groundwork for the Orchard → Ironwood migration: data models and the stubbed migration SDK interface. No user-visible changes yet.
+- [MOB-1460] Ironwood migration screens: entry (mode choice) and network privacy (Tor opt-in). Not reachable in the app yet.
 
 ## 3.7.2 build 1
 
