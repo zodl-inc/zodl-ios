@@ -5,8 +5,8 @@
 //  Small numbered/checkmark badge used by the migration transfer timelines (MOB-1463, Figma S6 ·
 //  2867:10211 / 2867:2198 / 2709:3519). Rebuilt from the prototype
 //  (`origin/michal/MOB-1451-ironwood-migration-prototype:…/MigrationStepBadge.swift`) so the
-//  Transfer Plan screen renders consistent step indicators. `.warning` isn't used yet — it's
-//  included now so this shared file is touched once; MOB-1464 reaches for it.
+//  Transfer Plan screen renders consistent step indicators. `.warning` is used by
+//  MigrationTransferTimeline for invalid/expired rows (MOB-1464).
 //
 
 import SwiftUI
@@ -19,7 +19,7 @@ struct MigrationStepBadge: View {
         case active
         /// A future step — outlined circle with the number.
         case pending
-        /// Needs attention — amber filled exclamation. Unused until MOB-1464.
+        /// Needs attention — amber filled exclamation (invalid/expired timeline rows).
         case warning
     }
 
