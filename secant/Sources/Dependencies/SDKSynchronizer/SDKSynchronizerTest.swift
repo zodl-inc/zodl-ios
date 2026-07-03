@@ -77,7 +77,41 @@ extension SDKSynchronizerClient: TestDependencyKey {
         updateTransparentAddressTransactions: unimplemented("\(Self.self).updateTransparentAddressTransactions", placeholder: .notFound),
         fetchUTXOsByAddress: unimplemented("\(Self.self).fetchUTXOsByAddress", placeholder: .notFound),
         enhanceTransactionBy: unimplemented("\(Self.self).enhanceTransactionBy"),
-        getTreeState: unimplemented("\(Self.self).getTreeState", placeholder: Data())
+        getTreeState: unimplemented("\(Self.self).getTreeState", placeholder: Data()),
+        getMigrationState: unimplemented("\(Self.self).getMigrationState", placeholder: .notStarted),
+        migrationStateStream: unimplemented("\(Self.self).migrationStateStream", placeholder: Empty().eraseToAnyPublisher()),
+        getMigrationProgress: unimplemented("\(Self.self).getMigrationProgress", placeholder: nil),
+        isNoteSplitNeeded: unimplemented("\(Self.self).isNoteSplitNeeded", placeholder: false),
+        prepareNoteSplit: unimplemented(
+            "\(Self.self).prepareNoteSplit",
+            placeholder: NoteSplitProposal(outputNotes: [], fee: Zatoshi.zero)
+        ),
+        submitNoteSplit: unimplemented("\(Self.self).submitNoteSplit", placeholder: .success(txId: "")),
+        selectMigrationMode: unimplemented("\(Self.self).selectMigrationMode", placeholder: {}()),
+        proposeMigrationTransfers: unimplemented(
+            "\(Self.self).proposeMigrationTransfers",
+            placeholder: MigrationSchedule(transfers: [], estimatedDurationHours: 0)
+        ),
+        signAndStoreMigrationSchedule: unimplemented("\(Self.self).signAndStoreMigrationSchedule", placeholder: {}()),
+        isSyncRequiredBeforeNextMigrationTransfer: unimplemented(
+            "\(Self.self).isSyncRequiredBeforeNextMigrationTransfer",
+            placeholder: false
+        ),
+        executeNextPendingMigrationTransfer: unimplemented("\(Self.self).executeNextPendingMigrationTransfer", placeholder: nil),
+        hasOverdueMigrationTransfers: unimplemented("\(Self.self).hasOverdueMigrationTransfers", placeholder: false),
+        hasInvalidMigrationTransfers: unimplemented("\(Self.self).hasInvalidMigrationTransfers", placeholder: false),
+        restartCurrentMigrationStep: unimplemented(
+            "\(Self.self).restartCurrentMigrationStep",
+            placeholder: MigrationSchedule(transfers: [], estimatedDurationHours: 0)
+        ),
+        rescheduleStalledMigrationTransfer: unimplemented("\(Self.self).rescheduleStalledMigrationTransfer", placeholder: {}()),
+        recreateInvalidMigrationTransfer: unimplemented("\(Self.self).recreateInvalidMigrationTransfer", placeholder: {}()),
+        migrationSummary: unimplemented("\(Self.self).migrationSummary", placeholder: .zero),
+        migrationTransfers: unimplemented("\(Self.self).migrationTransfers", placeholder: []),
+        proposeNoteSplitPCZT: unimplemented("\(Self.self).proposeNoteSplitPCZT", placeholder: Pczt()),
+        proposeMigrationPCZTs: unimplemented("\(Self.self).proposeMigrationPCZTs", placeholder: []),
+        storeSignedMigrationTransactions: unimplemented("\(Self.self).storeSignedMigrationTransactions", placeholder: {}()),
+        initializeMigrationPostUpgrade: unimplemented("\(Self.self).initializeMigrationPostUpgrade", placeholder: {}())
     )
 }
 
@@ -134,7 +168,29 @@ extension SDKSynchronizerClient {
         updateTransparentAddressTransactions: { _ in .notFound },
         fetchUTXOsByAddress: { _, _ in .notFound },
         enhanceTransactionBy: { _ in },
-        getTreeState: { _ in Data() }
+        getTreeState: { _ in Data() },
+        getMigrationState: { .notStarted },
+        migrationStateStream: { Empty().eraseToAnyPublisher() },
+        getMigrationProgress: { nil },
+        isNoteSplitNeeded: { false },
+        prepareNoteSplit: { NoteSplitProposal(outputNotes: [], fee: Zatoshi.zero) },
+        submitNoteSplit: { _ in TransferResult.success(txId: "") },
+        selectMigrationMode: { _ in },
+        proposeMigrationTransfers: { MigrationSchedule(transfers: [], estimatedDurationHours: 0) },
+        signAndStoreMigrationSchedule: { _ in },
+        isSyncRequiredBeforeNextMigrationTransfer: { false },
+        executeNextPendingMigrationTransfer: { _ in nil },
+        hasOverdueMigrationTransfers: { false },
+        hasInvalidMigrationTransfers: { false },
+        restartCurrentMigrationStep: { MigrationSchedule(transfers: [], estimatedDurationHours: 0) },
+        rescheduleStalledMigrationTransfer: { },
+        recreateInvalidMigrationTransfer: { },
+        migrationSummary: { MigrationSummary.zero },
+        migrationTransfers: { [] },
+        proposeNoteSplitPCZT: { Pczt() },
+        proposeMigrationPCZTs: { _ in [] },
+        storeSignedMigrationTransactions: { _ in },
+        initializeMigrationPostUpgrade: { }
     )
 
     static let mock = Self.mocked()
@@ -314,7 +370,31 @@ extension SDKSynchronizerClient {
             updateTransparentAddressTransactions: updateTransparentAddressTransactions,
             fetchUTXOsByAddress: fetchUTXOsByAddress,
             enhanceTransactionBy: enhanceTransactionBy,
-            getTreeState: getTreeState
+            getTreeState: getTreeState,
+            // Migration (Orchard → Ironwood) — inert values; customize via the interface when a
+            // preview/test needs real migration behavior.
+            getMigrationState: { .notStarted },
+            migrationStateStream: { Empty().eraseToAnyPublisher() },
+            getMigrationProgress: { nil },
+            isNoteSplitNeeded: { false },
+            prepareNoteSplit: { NoteSplitProposal(outputNotes: [], fee: Zatoshi.zero) },
+            submitNoteSplit: { _ in TransferResult.success(txId: "") },
+            selectMigrationMode: { _ in },
+            proposeMigrationTransfers: { MigrationSchedule(transfers: [], estimatedDurationHours: 0) },
+            signAndStoreMigrationSchedule: { _ in },
+            isSyncRequiredBeforeNextMigrationTransfer: { false },
+            executeNextPendingMigrationTransfer: { _ in nil },
+            hasOverdueMigrationTransfers: { false },
+            hasInvalidMigrationTransfers: { false },
+            restartCurrentMigrationStep: { MigrationSchedule(transfers: [], estimatedDurationHours: 0) },
+            rescheduleStalledMigrationTransfer: { },
+            recreateInvalidMigrationTransfer: { },
+            migrationSummary: { MigrationSummary.zero },
+            migrationTransfers: { [] },
+            proposeNoteSplitPCZT: { Pczt() },
+            proposeMigrationPCZTs: { _ in [] },
+            storeSignedMigrationTransactions: { _ in },
+            initializeMigrationPostUpgrade: { }
         )
     }
 }
