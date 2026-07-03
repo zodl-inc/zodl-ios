@@ -25,7 +25,7 @@ struct MigrationEntryView: View {
             VStack(spacing: 0) {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
-                        MigrationPairedIcons()
+                        MigrationPairedIcons(vendor: store.selectedWalletAccount?.vendor ?? .zcash)
                             .padding(.bottom, 16)
 
                         Text(localizable: .migrationEntryTitle)

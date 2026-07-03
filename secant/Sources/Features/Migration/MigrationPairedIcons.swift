@@ -2,10 +2,13 @@
 //  MigrationPairedIcons.swift
 //  zodl
 //
-//  Shared header view for migration screens (MOB-1460): the ZODL account badge overlapped by a
+//  Shared header view for migration screens (MOB-1460): the account badge overlapped by a
 //  circular Ironwood ("coins-swap") mark. Used by MigrationEntry and reused by later migration
 //  screens. MOB-1461 parameterizes the trailing badge so MigrationNoteSplit can swap it per phase
 //  (spinner while splitting, success check once confirmed) while MigrationEntry keeps the default.
+//  MOB-1468 parameterizes the leading brandmark by account vendor: `.zcash` (default) keeps the
+//  ZODL brandmark every existing call site already renders; `.keystone` swaps in the Keystone
+//  brandmark `SignWithKeystoneView`'s account card uses — no new assets.
 //
 
 import SwiftUI
@@ -23,10 +26,11 @@ struct MigrationPairedIcons: View {
     @Environment(\.colorScheme) private var colorScheme
     var size: CGFloat = 48
     var badge: Badge = .coinsSwap
+    var vendor: WalletAccount.Vendor = .zcash
 
     var body: some View {
         HStack(spacing: -(size * 0.18)) {
-            Asset.Assets.zashiLogoWithBackground.image
+            leadingBrandmark
                 .resizable()
                 .scaledToFit()
                 .frame(width: size, height: size)
@@ -63,6 +67,18 @@ struct MigrationPairedIcons: View {
             return Design.Utility.SuccessGreen._100
         }
     }
+
+    /// Not `WalletAccount.Vendor.icon()` — that method's `.zcash` case returns a different asset
+    /// (`Icons.zashiLogoSq`) than this view's existing hardcoded brandmark, which would break every
+    /// current call site's pixel-identical `.zcash` default.
+    private var leadingBrandmark: Image {
+        switch vendor {
+        case .keystone:
+            return Asset.Assets.Partners.keystoneLogo.image
+        case .zcash:
+            return Asset.Assets.zashiLogoWithBackground.image
+        }
+    }
 }
 
 // MARK: - Previews
@@ -79,5 +95,10 @@ struct MigrationPairedIcons: View {
 
 #Preview("Success check") {
     MigrationPairedIcons(badge: .successCheck)
+        .padding()
+}
+
+#Preview("Keystone vendor") {
+    MigrationPairedIcons(vendor: .keystone)
         .padding()
 }

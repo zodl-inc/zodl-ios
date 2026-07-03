@@ -10,17 +10,35 @@
 //  the coordinator (no propose) and confirm delegates directly (the transfer was already signed at
 //  plan commit). Also covers the `isFlowRoot`-gated back control for the manual-step variant: a new
 //  `Delegate.closed` case (reusing `.confirmed` for a back-tap would be a correctness bug — that
-//  case means "user confirmed the transfer", not "user backed out"). No shared/global state ->
-//  no `.serialized`.
+//  case means "user confirmed the transfer", not "user backed out"). Also covers MOB-1468's
+//  Keystone fork: a Keystone-vendor account in immediate mode proposes the schedule's PCZT via
+//  `proposeMigrationPCZTs(schedule)` and delegates `.keystoneSignRequested` instead of signing+
+//  storing locally (`.zcash` regression unaffected); the manual-step path never forks, even for a
+//  Keystone account (those transfers were already signed at plan commit). `.serialized`: several
+//  cases drive the process-global `@Shared(.inMemory(.selectedWalletAccount))`.
 //
 
 import Testing
 import Foundation
 import ComposableArchitecture
-@preconcurrency import ZcashLightClientKit
+@testable @preconcurrency import ZcashLightClientKit
 @testable import zodl_internal
 
-@Suite struct MigrationReviewTransferTests {
+@Suite(.serialized) struct MigrationReviewTransferTests {
+    private func walletAccount(keystone: Bool, idByte: UInt8) -> WalletAccount {
+        WalletAccount(
+            Account(
+                id: AccountUUID(id: [UInt8](repeating: idByte, count: 16)),
+                name: keystone ? "Keystone" : "Zodl",
+                keySource: keystone ? String(localizable: .accountsKeystone).lowercased() : nil,
+                seedFingerprint: nil,
+                hdAccountIndex: Zip32AccountIndex(0),
+                ufvk: nil,
+                uivk: nil
+            )
+        )
+    }
+
     @MainActor @Test func defaultStateIsImmediateModeWithZeroAmounts() async {
         let state = MigrationReviewTransfer.State()
 
@@ -28,6 +46,7 @@ import ComposableArchitecture
         #expect(state.amount == Zatoshi.zero)
         #expect(state.fee == Zatoshi.zero)
         #expect(state.isFlowRoot == false)
+        #expect(state.selectedWalletAccount == nil)
     }
 
     @MainActor @Test func closeTappedWhenFlowRootEmitsDelegateClosed() async {
@@ -149,6 +168,91 @@ import ComposableArchitecture
         await store.send(.confirmTapped)
         await store.receive(.delegate(.confirmed))
 
+        #expect(signCalls.value == 0)
+    }
+
+    // MARK: - MOB-1468: Keystone confirmTapped fork
+
+    @MainActor @Test func confirmTappedInImmediateModeWithKeystoneAccountProposesPCZTAndDelegatesKeystoneSignRequestedWithoutSigning() async {
+        let proposeCalls = LockIsolated<[MigrationSchedule]>([])
+        let signCalls = LockIsolated<Int>(0)
+        let schedule = MigrationSchedule(
+            transfers: [
+                TransferProposal(id: "t0", amount: Zatoshi(1_245_800_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
+            ],
+            estimatedDurationHours: 0
+        )
+        let pczts: [Pczt] = [Data([0xAA])]
+        var state = MigrationReviewTransfer.State(mode: .immediate)
+        state.schedule = schedule
+        state.$selectedWalletAccount.withLock { $0 = walletAccount(keystone: true, idByte: 1) }
+        let store = TestStore(initialState: state) {
+            MigrationReviewTransfer()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.proposeMigrationPCZTs = { proposed in
+                proposeCalls.withValue { $0.append(proposed) }
+                return pczts
+            }
+            $0.sdkSynchronizer.signAndStoreMigrationSchedule = { _ in signCalls.withValue { $0 += 1 } }
+        }
+
+        await store.send(.confirmTapped)
+        await store.receive(.delegate(.keystoneSignRequested(pczts)))
+
+        #expect(proposeCalls.value == [schedule])
+        #expect(signCalls.value == 0)
+    }
+
+    @MainActor @Test func confirmTappedInImmediateModeWithZcashAccountUsesSoftwarePathUnchanged() async {
+        let proposeCalls = LockIsolated<Int>(0)
+        let schedule = MigrationSchedule(
+            transfers: [
+                TransferProposal(id: "t0", amount: Zatoshi(1_245_800_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
+            ],
+            estimatedDurationHours: 0
+        )
+        var state = MigrationReviewTransfer.State(mode: .immediate)
+        state.schedule = schedule
+        state.$selectedWalletAccount.withLock { $0 = walletAccount(keystone: false, idByte: 2) }
+        let store = TestStore(initialState: state) {
+            MigrationReviewTransfer()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.proposeMigrationPCZTs = { _ in
+                proposeCalls.withValue { $0 += 1 }
+                return []
+            }
+            $0.sdkSynchronizer.signAndStoreMigrationSchedule = { _ in }
+        }
+
+        await store.send(.confirmTapped)
+        await store.receive(\.scheduleSigned)
+        await store.receive(.delegate(.confirmed))
+
+        #expect(proposeCalls.value == 0)
+    }
+
+    @MainActor @Test func confirmTappedInManualStepModeWithKeystoneAccountNeverForksAndDelegatesConfirmedDirectly() async {
+        let proposeCalls = LockIsolated<Int>(0)
+        let signCalls = LockIsolated<Int>(0)
+        var state = MigrationReviewTransfer.State(mode: .manualStep(number: 3, total: 5))
+        state.$selectedWalletAccount.withLock { $0 = walletAccount(keystone: true, idByte: 3) }
+        let store = TestStore(initialState: state) {
+            MigrationReviewTransfer()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.proposeMigrationPCZTs = { _ in
+                proposeCalls.withValue { $0 += 1 }
+                return []
+            }
+            $0.sdkSynchronizer.signAndStoreMigrationSchedule = { _ in signCalls.withValue { $0 += 1 } }
+        }
+
+        await store.send(.confirmTapped)
+        await store.receive(.delegate(.confirmed))
+
+        #expect(proposeCalls.value == 0)
         #expect(signCalls.value == 0)
     }
 }

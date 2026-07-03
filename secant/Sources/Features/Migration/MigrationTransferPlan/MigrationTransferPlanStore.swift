@@ -11,6 +11,12 @@
 //  already signed), in which case it's a plain acknowledgment (MOB-1466). Chaining the
 //  `confirmTapped` delegate into the rest of the flow is `MigrationCoordFlow`'s job.
 //
+//  MOB-1468 (Keystone): a Keystone-vendor account with `requiresSigning == true` (fresh + re-created
+//  plans) forks `confirmTapped` — instead of signing+storing locally, it proposes the schedule's
+//  PCZTs (`proposeMigrationPCZTs(schedule)`) and delegates `.keystoneSignRequested(pczts)` for the
+//  coordinator to route through `MigrationKeystoneSign` + `Scan` in ONE batched session. The software
+//  path and the rescheduled `requiresSigning == false` variant (never re-signs) are unchanged.
+//
 
 import Foundation
 import ComposableArchitecture
@@ -41,6 +47,7 @@ struct MigrationTransferPlan {
         /// `signAndStoreMigrationSchedule` and delegates `.confirmed` directly. The re-created
         /// (recovery) variant signs a fresh schedule, so it keeps the default `true`.
         var requiresSigning = true
+        @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
 
         init(
             variant: Variant = .scheduled,
@@ -67,6 +74,10 @@ struct MigrationTransferPlan {
 
         enum Delegate: Equatable {
             case confirmed
+            /// MOB-1468 (Keystone): the schedule's PCZTs (ALL N transfers) were proposed and need QR
+            /// signing in ONE batched session — the shared shape across all three Keystone signing
+            /// sources so the coordinator can treat them symmetrically.
+            case keystoneSignRequested([Pczt])
         }
     }
 
@@ -84,10 +95,14 @@ struct MigrationTransferPlan {
                 }
 
                 let schedule = state.schedule ?? MigrationSchedule(transfers: [], estimatedDurationHours: 0)
-                return .run { send in
-                    await sdkSynchronizer.signAndStoreMigrationSchedule(schedule)
-                    await send(.scheduleSigned)
+
+                guard state.selectedWalletAccount?.vendor == .keystone else {
+                    return .run { send in
+                        await sdkSynchronizer.signAndStoreMigrationSchedule(schedule)
+                        await send(.scheduleSigned)
+                    }
                 }
+                return requestKeystoneSignature(for: schedule)
 
             case .delegate:
                 return .none
@@ -116,6 +131,15 @@ struct MigrationTransferPlan {
                 apply(schedule, to: &state)
                 return .none
             }
+        }
+    }
+
+    /// MOB-1468 (Keystone) `confirmTapped` fork: proposes ALL of the schedule's PCZTs and hands them
+    /// to the coordinator for ONE batched QR-signing session.
+    private func requestKeystoneSignature(for schedule: MigrationSchedule) -> Effect<Action> {
+        .run { send in
+            let pczts = await sdkSynchronizer.proposeMigrationPCZTs(schedule)
+            await send(.delegate(.keystoneSignRequested(pczts)))
         }
     }
 

@@ -46,7 +46,7 @@ struct MigrationNoteSplitView: View {
             VStack(spacing: 0) {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
-                        MigrationPairedIcons(badge: headerBadge)
+                        MigrationPairedIcons(badge: headerBadge, vendor: store.selectedWalletAccount?.vendor ?? .zcash)
                             .padding(.bottom, 16)
 
                         Text(title)
