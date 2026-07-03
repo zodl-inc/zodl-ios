@@ -44,10 +44,16 @@ extension MigrationManagerClient: DependencyKey {
 /// subscription that drives the sync<->send gate. `@unchecked Sendable`: the only mutable state
 /// is `gateStorage`'s own `OSAllocatedUnfairLock`-protected storage plus the Combine
 /// subscription handle below, both of which are safe to share across isolation domains.
-private final class MigrationManagerImpl: @unchecked Sendable {
+final class MigrationManagerImpl: @unchecked Sendable {
     @Dependency(\.sdkSynchronizer) var sdkSynchronizer
 
-    let gateStorage = MigrationGateStorage()
+    let gateStorage: MigrationGateStorage
+
+    /// Internal (not private) with injectable storage so unit tests can exercise the real
+    /// `reconcile()` against a scoped `UserDefaults` suite.
+    init(gateStorage: MigrationGateStorage = MigrationGateStorage()) {
+        self.gateStorage = gateStorage
+    }
 
     private let subscriptionState = OSAllocatedUnfairLock<AnyCancellable?>(initialState: nil)
 
