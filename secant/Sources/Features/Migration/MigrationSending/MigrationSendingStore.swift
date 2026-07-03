@@ -8,8 +8,8 @@
 //  executed. `onAppear` runs `executeNextPendingMigrationTransfer` strictly in sequence, recording a
 //  broadcast and scheduling the next background window after each success; a failure/`nil` result
 //  stops the sequence and presents the failure sheet, and `retryTapped` re-runs only the failed step
-//  (MOB-1466). The `closeTapped` / `viewTransactionTapped` delegates are emitted but consumed by
-//  nobody yet — chaining is the coordinator's job (phase 3).
+//  (MOB-1466). The `closeTapped` / `viewTransactionTapped` delegates are consumed by
+//  `MigrationCoordFlowCoordinator` (MOB-1466).
 //
 
 import ComposableArchitecture

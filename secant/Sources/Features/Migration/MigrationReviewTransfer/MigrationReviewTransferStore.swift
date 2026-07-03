@@ -10,8 +10,8 @@
 //  coordinator (no propose) and confirm delegates directly — the transfer was already signed at plan
 //  commit. When the manual-step variant is a flow re-entry root (`isFlowRoot`), its back control
 //  closes the flow via a new `.closed` delegate instead of popping — reusing `.confirmed` for a
-//  back-tap would incorrectly signal the transfer was confirmed (MOB-1466). Chaining is the
-//  coordinator's job (phase 3).
+//  back-tap would incorrectly signal the transfer was confirmed (MOB-1466). Both delegates are
+//  consumed by `MigrationCoordFlowCoordinator` (MOB-1466).
 //
 
 import ComposableArchitecture
