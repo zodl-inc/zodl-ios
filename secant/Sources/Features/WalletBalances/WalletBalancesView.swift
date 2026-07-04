@@ -143,7 +143,7 @@ struct WalletBalancesView: View {
                             .font(.custom(FontFamily.Inter.semiBold.name, size: 14))
                             .foregroundColor(Asset.Colors.primary.color)
 
-                        ProgressView()
+                        ZashiSpinner()
                     }
                     .frame(height: 36)
                     .padding(.top, 10)
@@ -185,7 +185,7 @@ struct WalletBalancesView: View {
                                     .foregroundColor(Asset.Colors.primary.color)
 
                                 if store.isExchangeRateUSDInFlight {
-                                    ProgressView()
+                                    ZashiSpinner()
                                         .scaleEffect(0.7)
                                         .frame(width: 20, height: 20)
                                 } else {
@@ -211,7 +211,7 @@ struct WalletBalancesView: View {
                                     .foregroundColor(Asset.Colors.primary.color)
 
                                 if store.isExchangeRateUSDInFlight {
-                                    ProgressView()
+                                    ZashiSpinner()
                                         .scaleEffect(0.7)
                                         .frame(width: 11, height: 14)
                                 } else {
@@ -219,7 +219,7 @@ struct WalletBalancesView: View {
                                         .zImage(size: 20, color: Asset.Colors.shade72.color)
                                 }
                             }
-                            .padding(8)
+                            .padding(.vertical, 8)
                             #if !os(macOS)
                             .padding(.horizontal, 6)
                             #endif

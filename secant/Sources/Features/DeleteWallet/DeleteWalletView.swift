@@ -67,7 +67,7 @@ struct DeleteWalletView: View {
                     ZashiButton(
                         String(localizable: .deleteWalletActionButtonTitle),
                         type: .destructive1,
-                        accessoryView: ProgressView()
+                        accessoryView: ZashiSpinner(macTint: .buttonAccessory)
                     ) { }
                     .disabled(true)
                     .padding(.bottom, 24)

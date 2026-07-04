@@ -242,7 +242,7 @@ struct DelegationSigningView: View {
     @ViewBuilder
     private func qrStatusView(text: String?) -> some View {
         VStack(spacing: 8) {
-            ProgressView()
+            ZashiSpinner()
             if let text {
                 Text(text)
                     .zFont(.medium, size: 13, style: Design.Text.tertiary)

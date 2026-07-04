@@ -192,7 +192,7 @@ struct ProposalListView: View {
                 .fixedSize(horizontal: false, vertical: false)
             } else {
                 HStack(spacing: 8) {
-                    ProgressView()
+                    ZashiSpinner()
                         .scaleEffect(0.75)
                     Text(localizable: .coinVoteProposalListPreparingVotingPower)
                         .zFont(.medium, size: 14, style: Design.Text.tertiary)

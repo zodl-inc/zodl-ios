@@ -52,7 +52,7 @@ struct PrivateDataConsentView: View {
                     ZashiButton(
                         String(localizable: .settingsExportPrivateData),
                         type: .secondary,
-                        accessoryView: ProgressView()
+                        accessoryView: ZashiSpinner(macTint: .buttonAccessory)
                     ) {
                         store.send(.exportRequested)
                     }
@@ -73,7 +73,7 @@ struct PrivateDataConsentView: View {
                 if store.isExportingLogs {
                     ZashiButton(
                         String(localizable: .settingsExportLogsOnly),
-                        accessoryView: ProgressView()
+                        accessoryView: ZashiSpinner(macTint: .buttonAccessory)
                     ) {
                         store.send(.exportLogsRequested)
                     }

@@ -148,7 +148,7 @@ extension BalancesView {
     }
 
     @ViewBuilder func progressViewLooping() -> some View {
-        ProgressView()
+        ZashiSpinner()
             .scaleEffect(0.7)
             .frame(width: 11, height: 14)
     }

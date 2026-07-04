@@ -32,7 +32,7 @@ struct ExportTransactionHistoryView: View {
                 if store.isExportingData {
                     ZashiButton(
                         String(localizable: .taxExportDownload),
-                        accessoryView: ProgressView()
+                        accessoryView: ZashiSpinner(macTint: .buttonAccessory)
                     ) {
                         store.send(.exportRequested)
                     }

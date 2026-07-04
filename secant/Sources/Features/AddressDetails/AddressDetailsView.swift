@@ -122,7 +122,7 @@ extension AddressDetailsView {
                 Image(storedImg, scale: 1, label: Text(localizable: .qrCodeFor(qrText)))
                     .resizable()
             } else {
-                ProgressView()
+                ZashiSpinner()
             }
         }
     }
@@ -133,7 +133,7 @@ extension AddressDetailsView {
                 Image(storedImg, scale: 1, label: Text(localizable: .qrCodeFor(qrText)))
                     .resizable()
             } else {
-                ProgressView()
+                ZashiSpinner()
             }
         }
     }

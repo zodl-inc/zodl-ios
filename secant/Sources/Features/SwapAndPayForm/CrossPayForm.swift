@@ -133,7 +133,7 @@ extension SwapAndPayForm {
                             if store.isQuoteRequestInFlight {
                                 ZashiButton(
                                     String(localizable: .sendReview),
-                                    accessoryView: ProgressView()
+                                    accessoryView: ZashiSpinner(macTint: .buttonAccessory)
                                 ) { }
                                     .disabled(true)
                                     .padding(.top, keyboardVisible ? 40 : 0)

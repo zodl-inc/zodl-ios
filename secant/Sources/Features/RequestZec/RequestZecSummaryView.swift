@@ -113,7 +113,7 @@ extension RequestZecSummaryView {
                 Image(storedImg, scale: 1, label: Text(localizable: .qrCodeFor(qrText)))
                     .resizable()
             } else {
-                ProgressView()
+                ZashiSpinner()
             }
         }
     }
@@ -124,7 +124,7 @@ extension RequestZecSummaryView {
                 Image(storedImg, scale: 1, label: Text(localizable: .qrCodeFor(qrText)))
                     .resizable()
             } else {
-                ProgressView()
+                ZashiSpinner()
             }
         }
     }

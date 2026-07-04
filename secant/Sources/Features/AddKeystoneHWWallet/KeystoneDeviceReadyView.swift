@@ -50,12 +50,7 @@ struct KeystoneDeviceReadyView: View {
                     ZashiButton(
                         String(localizable: .keystoneAddHWWalletConnectNew),
                         accessoryView:
-                            ProgressView()
-                            .progressViewStyle(
-                                CircularProgressViewStyle(
-                                    tint: Asset.Colors.secondary.color
-                                )
-                            )
+                            ZashiSpinner(iosTint: Asset.Colors.secondary.color, macTint: .buttonAccessory)
                     ) { }
                     .padding(.bottom, 24)
                     .disabled(true)

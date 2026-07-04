@@ -232,7 +232,7 @@ struct SwapToZecSummaryView: View {
                 Image(storedImg, scale: 1, label: Text(localizable: .qrCodeFor(qrText)))
                     .resizable()
             } else {
-                ProgressView()
+                ZashiSpinner()
             }
         }
     }
@@ -243,7 +243,7 @@ struct SwapToZecSummaryView: View {
                 Image(storedImg, scale: 1, label: Text(localizable: .qrCodeFor(qrText)))
                     .resizable()
             } else {
-                ProgressView()
+                ZashiSpinner()
             }
         }
     }

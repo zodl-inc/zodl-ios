@@ -46,7 +46,7 @@ struct ResultsView: View {
                         loadErrorBody(message: tallyError)
                     } else if !loaded {
                         HStack(spacing: 8) {
-                            ProgressView().scaleEffect(0.75)
+                            ZashiSpinner().scaleEffect(0.75)
                             Text(localizable: .coinVoteResultsLoading)
                                 .zFont(.medium, size: 14, style: Design.Text.tertiary)
                         }

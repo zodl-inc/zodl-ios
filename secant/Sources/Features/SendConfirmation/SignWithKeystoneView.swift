@@ -93,7 +93,7 @@ struct SignWithKeystoneView: View {
                                 }
                         } else {
                             VStack {
-                                ProgressView()
+                                ZashiSpinner()
                             }
                             .frame(width: 216, height: 216)
                             .padding(24)

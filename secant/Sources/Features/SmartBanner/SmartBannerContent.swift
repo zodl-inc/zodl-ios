@@ -155,7 +155,7 @@ extension SmartBannerView {
 
     @ViewBuilder func resyncingContent() -> some View {
         bannerStatusLayout {
-            ProgressView()
+            ZashiSpinner()
                 .frame(width: 20, height: 20)
                 .padding(.trailing, 12)
         } content: {

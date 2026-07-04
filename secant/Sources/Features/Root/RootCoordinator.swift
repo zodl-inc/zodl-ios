@@ -404,12 +404,20 @@ extension Root {
                 state.macRedirectToActivityAfterClose = true
                 // See the reject case above — clear the processor's replayed terminal state.
                 shieldingProcessor.reset()
-                return .send(.fetchTransactionsForTheSelectedAccount)
+                // [class: split-view stale gate — B4-10/B4-17 recipe] macOS Home never re-fires
+                // onAppear (always-visible split view), so the "Shield funds" banner survives the
+                // return from this full-window sign flow. Poke the re-evaluation: after a
+                // successful shield it drops; after a failure it legitimately re-opens.
+                return .merge(
+                    .send(.fetchTransactionsForTheSelectedAccount),
+                    .send(.home(.smartBanner(.closeAndCleanupBanner)))
+                )
 
             case .signWithKeystoneCoordFlow(.path(.element(id: _, action: .transactionDetails(.closeDetailTapped)))):
                 state.signWithKeystoneCoordFlowBinding = false
                 shieldingProcessor.reset()
-                return .none
+                // Same stale-gate poke — this close also lands back on Activity post-shield.
+                return .send(.home(.smartBanner(.closeAndCleanupBanner)))
 
                 // MARK: - Tor Setup
                 

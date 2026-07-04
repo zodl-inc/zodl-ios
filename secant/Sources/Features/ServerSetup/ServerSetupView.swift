@@ -427,13 +427,9 @@ struct ServerSetupView: View {
     }
 
     private func progressView(invertTint: Bool = false) -> some View {
-        ProgressView()
-            .progressViewStyle(
-                CircularProgressViewStyle(
-                    tint: colorScheme == .dark
-                    ? (invertTint ? .black : .white) : (invertTint ? .white : .black)
-                )
-            )
+        let tint: Color = colorScheme == .dark
+            ? (invertTint ? .black : .white) : (invertTint ? .white : .black)
+        return ZashiSpinner(iosTint: tint, macTint: .fixed(tint))
     }
 }
 

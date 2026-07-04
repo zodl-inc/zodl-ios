@@ -169,12 +169,7 @@ struct SendConfirmationView: View {
                         ZashiButton(
                             String(localizable: .sendSending),
                             accessoryView:
-                                ProgressView()
-                                .progressViewStyle(
-                                    CircularProgressViewStyle(
-                                        tint: Asset.Colors.secondary.color
-                                    )
-                                )
+                                ZashiSpinner(iosTint: Asset.Colors.secondary.color, macTint: .buttonAccessory)
                         ) { }
                         .screenHorizontalPadding()
                         .padding(.bottom, 24)

@@ -93,7 +93,7 @@ extension SwapAndPayForm {
                             if store.isQuoteRequestInFlight {
                                 ZashiButton(
                                     String(localizable: .swapAndPayGetQuote),
-                                    accessoryView: ProgressView()
+                                    accessoryView: ZashiSpinner(macTint: .buttonAccessory)
                                 ) { }
                                     .disabled(true)
                                     .padding(.bottom, 56)
@@ -286,7 +286,7 @@ extension SwapAndPayForm {
                             )
                             
                             if store.spendability == .nothing {
-                                ProgressView()
+                                ZashiSpinner()
                                     .scaleEffect(0.7)
                                     .frame(width: 11, height: 14)
                             }

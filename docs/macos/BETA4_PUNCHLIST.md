@@ -144,7 +144,53 @@ caret to the string start ("|122", then typing 3 made "3122"). Applied on the ne
 so it wins over the click's own caret placement; clicks while ALREADY focused reposition
 normally, so mid-value edits stay possible.
 
-## B4-9 · Swap amount field: 1-frame system bubble flash on focus `[app]`
+**Round 5 (2026-07-03, RC blocker — placeholder still visible + caret on the LEFT of the
+empty trailing field):** both round-4.1 mechanisms misfired for identifiable AppKit reasons.
+(1) `becomeFirstResponder` nil'd `placeholderAttributedString` but never triggered a repaint —
+a borderless, focus-ring-less field gets no redraw from the focus change itself, so the stale
+placeholder pixels stayed on screen; fix = `needsDisplay = true` on both the dismiss and the
+blur-restore. (2) An EMPTY field editor (`NSTextView`) draws its insertion point from
+`typingAttributes`, NOT from the field's `alignment` (which only reaches the editor's storage
+once text exists) — unconfigured, the caret blinked at the LEFT edge with 13pt-system metrics
+(short caret, high baseline = the "wrong baseline"), jumping right on the first typed char;
+fix = `configureFieldEditor()` at focus: right-aligned `defaultParagraphStyle` + the real
+Inter font + color into `typingAttributes` → caret at the RIGHT edge with correct height and
+baseline from the first frame. (3) The `asyncAfter(0.1)` autofocus could silently no-op when
+the field wasn't in a window yet (leaving all round-4.1 fixes never running) → autofocus now
+fires from `viewDidMoveToWindow`. Native `NSTextField` throughout — no third-party component
+needed; the whole class of problems was the unconfigured field editor. Build green; needs
+Lukas's visual pass (fallback if any residue: 3-variant testApp rig with responder/attribute
+instrumentation, the proven B4-8 method).
+
+**Round 5.1 (2026-07-04, device feedback on round 5):** caret-at-tap-position DROPPED as an
+issue (iOS parity — Lukas's call; caret code left untouched). The one remaining defect —
+placeholder visible for the whole focused-empty session — root-caused to `updateNSView`:
+round 5 DID nil the placeholder on focus, but SwiftUI re-runs `updateNSView` around
+appearance/store changes and its `currentEditor() == nil` guard raced focus acquisition (the
+field editor can install a beat AFTER `becomeFirstResponder`), resurrecting the placeholder;
+once resurrected nothing re-dismissed it (becomeFirstResponder won't re-fire on a focused
+field). Fix = an explicit `isEditingSession` boolean owned by the field (TRUE in
+`becomeFirstResponder`, FALSE in `textDidEndEditing`) + ONE gated write path
+(`setIdlePlaceholder`) that `updateNSView` must use — `placeholderAttributedString` is never
+poked directly from SwiftUI anymore. Localized placeholder ("0.00"/"0,00") preserved — it
+flows from `store.localePlaceholder` unchanged. Build green; awaiting visual confirm.
+
+**Round 5.2 (2026-07-04, Lukas's `__LD` device log = the decisive evidence):** the 5.1 session
+flag desynced because the responder CALLBACKS lie about the net state in the SwiftUI-hosted
+window: `becomeFirstResponder` → transient `textDidEndEditing` (hosting-view focus
+arbitration bounces the responder) → focus lands back on the FIELD EDITOR with no new
+`becomeFirstResponder` → flag ends FALSE while visibly focused (log: become(true) →
+end(false)). Fix = never TRACK, always ASK: `isEffectivelyFocused` reads the live responder
+truth (window.firstResponder === field, or a field editor whose delegate === field) and
+`refreshPlaceholderVisibility()` re-derives the placeholder from it ONE RUNLOOP TURN after
+every responder event — become does an optimistic hide now + truth later; textDidEndEditing
+does NO synchronous restore (it fires as a transient during the bounce), only the deferred
+truth check: genuinely blurred ⇒ "0.00" returns; still focused ⇒ stays hidden. Event order
+can no longer strand either state. Temp `__LD` prints removed (diagnosis served; SwiftLint
+bans print). **CONFIRMED WORKING on device (Lukas, 2026-07-04) — B4-8 CLOSED; the last
+Beta4/RC1 blocker.** Component rule reaffirmed for the design language: on macOS, any
+focus-conditional UI inside an NSViewRepresentable must derive from the LIVE responder
+chain, never from become/end event tracking (the hosting view bounces the responder).
 On form appear + autofocus, a system bubble (empty) renders for ~1 frame and vanishes.
 **Triage:** AppKit text-input suggestion/inline-prediction UI firing on focus. Prevent it from
 appearing at all (disable automatic text completion / inline predictions on that field —
@@ -237,10 +283,27 @@ placeholder looks broken under the caret. Fix: the prompt now dismisses while fo
 behavior.
 
 ## B4-16 (his 13) · Disconnect Keystone while it's restoring → error + "try again" `[app+SDK]`
-deleteAccount during an active restore pass — same shared-data.db write-contention family as
-B4-12 (the engine's busy_timeout fix may already help; deleteAccount goes through the Swift-side
-DBActor connection, which needs the same wait-not-die posture). Decide contract: allow (wait +
-spinner) or gate disconnect while that account is recovering.
+**ROOT-CAUSED + FIXED SDK-side 2026-07-03 (device log confirmed the failure verbatim:
+`write-behind deferred put_blocks [2740001..=2750000]: The account with the given ID does not
+belong to this wallet`).** THREE stacked causes: (1) `SlipstreamSynchronizer.deleteAccount` was
+a raw pass-through — no engine serialization (importAccount got it in `5ee74ee8`) — so the
+in-flight range kept scanning with the per-range façade's CACHED copy of the deleted Keystone
+viewing key and `put_blocks` then wrote its notes for a vanished account → non-transient pass
+error; (2) upstream `delete_account` never touches `scan_queue`, so the deep-birthday import's
+Historic ranges survived → the wallet ground a phantom deep restore for keys that no longer
+exist; (3) a non-transient pass failure KILLED the session permanently (`run_session` returned;
+nothing restarts it — the B4-12 follow-up "a dead pass never auto-restarts", promoted to
+must-fix) → app relaunch was the only recovery. FIXES (SDK `slipstream` branch, crates 0.3.6):
+deleteAccount now serializes (engine.stop → delete → `notifyTxChange` so Activity drops the
+dead rows → restart); new engine `scan_queue.rs` prune drops orphaned Historic ranges at EVERY
+session open (wedged wallets heal at launch, an in-app delete heals immediately); ALL FFI
+wallet-DB connections + the persist lane got the B4-12 wait-not-die 15 s busy_timeout; and the
+session now REVIVES after non-transient failures (capped backoff 15 s→5 min — error still
+surfaced, sync self-resumes). **Contract decision: ALLOW disconnect during restore** (wait +
+existing spinner) — gating it would punish exactly the add-wrong-birthday → remove → re-add
+flow. Re-test: add KS (old birthday) → restore starts → disconnect immediately → no error (or
+one dialog + self-resume ≤30 s), banner clears if only the KS was recovering, Activity drops KS
+rows ≤1 tick, no background deep-scan grind after disconnect. Zodl-side: NO code change needed.
 
 ## B4-17 (his 14) · Shielding SmartBanner for KS survives KS disconnect `[app] [class: stale gate]`
 Waited for 100% KS restore → shielding banner appeared → disconnected KS → banner stayed.
@@ -330,3 +393,68 @@ the card's content width. Cause: the sibling info box above it has an explicit
 `.frame(maxWidth: .infinity, alignment: .leading)`; the warning box never got one — iOS masks
 it because the narrow sheet makes the wrapped text fill the width anyway. FIX: same frame
 added (cross-platform; on iOS it's a no-op-to-improvement, matching the sibling box).
+
+## B4-24 · Keystone "Keep Zodl open" OK: dead-feeling button while the import runs `[app] [class: B4-4]`
+Field (Lukas, 2026-07-04): connecting a Keystone as an ACTIVE device (older birthday) lands on
+the "Keep Zodl open" screen (`RestoreInfoView`); its OK triggered the import on the FIRST click
+(coordinator forwards `gotItTapped` → `keystoneDeviceReady(.unlockTapped)` → the B4-4
+`isImportInFlight` guard swallows repeats — extra clicks were harmless no-ops), but the button
+bound to NOTHING visually: the in-flight flag lives on the `keystoneDeviceReady` element while
+the user looks at `restoreInfo`. The wait also grew to seconds this week (import now = engine
+stop → drain → anchor fetch → import → restart), so it read as a broken screen. FIX (same
+recipe as B4-4's "Connect new" spinner): `RestoreInfo.State.isProcessing` (owned by the
+coordinator — set when forwarding `gotItTapped` in the KS flow, cleared on
+`accountImportFailed`; success navigates away) + `RestoreInfoView` swaps OK for the
+spinner-accessory no-op button while processing. Cross-platform improvement (iOS shares the
+flow and the same wait); resync flow unaffected (navigates instantly on `resyncFinished`).
+Both schemes built green. Awaiting visual confirm.
+
+## B4-25 · Keystone SHIELDING sign flow: scanner maxWidth-capped `[app] [class: Rule #9 scan exemption]`
+Field (Lukas, 2026-07-04): shielding with Keystone → the sign-flow scanner renders boxed to the
+content column instead of full-window. Cause: `SignWithKeystoneCoordFlowView` was the ONLY
+ScanView-hosting coord flow still applying a CAPPED flow background (`applyScreenBackground()`);
+Send/SwapAndPay/AddKeystoneHWWallet all carry `capped: false` (Rule #9). FIX: same flip —
+safe because the root `SignWithKeystoneView` applies its OWN capped background and every other
+destination is the IDENTICAL set SendCoordFlow already hosts uncapped. macOS scheme green
+(iOS unaffected — the cap is macOS-only). Awaiting visual confirm.
+
+## B4-26 · "Shield funds" SmartBanner survives the Keystone shield flow `[app] [class: split-view stale gate]`
+Field (Lukas, 2026-07-04, right after the first successful KS shield on macOS): shield via the
+full-window sign flow → back to Activity → the banner still advertises shielding. FOURTH member
+of the stale-gate class (B4-10 currency, Tor setup, B4-17 KS-disconnect): macOS Home never
+re-fires onAppear, so banner state derived there goes stale after any full-window round-trip.
+FIX (the established recipe): `RootCoordinator`'s sign-flow close handlers — the combined
+success/failure/pending `closeTapped` case and the `transactionDetails(.closeDetailTapped)`
+case — now also send `.home(.smartBanner(.closeAndCleanupBanner))`. Self-correcting per
+outcome: success ⇒ re-evaluation drops the banner; failure ⇒ it legitimately re-opens. iOS
+unaffected in practice (onAppear re-fires anyway; the poke is the same action the banner system
+itself uses). macOS green. NOTE: the class keeps producing members — the structural kill
+remains F-3's presentation-registry/declared-navigation-events design (foundations plan).
+
+## B4-27 · macOS spinners: oversized + invisible-in-dark — consolidated into ZashiSpinner `[app] [class: consolidation]`
+Field (Lukas, 2026-07-04, on B4-24's OK spinner): (1) invisible in dark mode — the CTA is
+light and the spinner white-ish; (2) macOS `ProgressView()` in general renders the
+REGULAR-size NSProgressIndicator (~20 pt) and "breaks the heights at almost all places" —
+several sites had already hand-patched with `.scaleEffect(0.7/0.75)`, which shrinks PIXELS
+but not the LAYOUT BOX (heights stayed broken). Root facts: the macOS system spinner
+IGNORES SwiftUI tinting entirely (NSProgressIndicator-backed), and `.controlSize`/scale
+patches were scattered per-site. FIX (house rule: consolidate): NEW
+`UIComponents/ProgressViews/ZashiSpinner.swift` — iOS renders EXACTLY what each site
+rendered before (bare `ProgressView` or `CircularProgressViewStyle(iosTint:)`; zero iPhone
+change); macOS renders a small pure-SwiftUI ARC (14 pt layout box, honors color) with
+`macTint: .auto` (adaptive secondary) / `.buttonAccessory` (Design.Btns.Primary.fg —
+resolved via the component's OWN colorScheme, so call sites need none) / `.fixed(Color)`.
+ALL 30 inline `ProgressView()` sites across 22 files swept onto it (button accessories →
+`.buttonAccessory`; ServerSetup's scheme-aware helper → `.fixed`; existing
+scaleEffect/frame modifiers preserved verbatim for iOS fidelity). RULE going forward:
+never a bare `ProgressView()` in app code — always `ZashiSpinner`. Both schemes green.
+Awaiting visual pass (spinner size 14 pt is the one tuning knob if it reads too small).
+
+**B4-27 round 2 (2026-07-04, Lukas: "CTA bcg is sometimes light, sometimes dark"):** round 1's
+`.buttonAccessory` hardcoded the PRIMARY button's label color — wrong on ghost/secondary/
+disabled surfaces. Better than any inversion logic: ZashiButton ALREADY applies its per-type,
+per-state label color to the whole label row (`.zForegroundColor(fgColor())` in its body), and
+a `stroke(style:)` with no explicit color draws with the inherited foreground. So
+`.buttonAccessory` now resolves to NIL tint = the arc inherits — the spinner is always exactly
+the color of the title next to it, for all 8 button types, enabled AND disabled, both modes.
+macOS green. Awaiting visual confirm.
