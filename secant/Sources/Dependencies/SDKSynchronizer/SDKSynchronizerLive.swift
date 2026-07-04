@@ -308,10 +308,7 @@ extension SDKSynchronizerClient: DependencyKey {
             // from inside these very closures — must not re-acquire it). Every other migration
             // member here is read-only/non-broadcast and stays unguarded.
             // `storeSignedMigrationTransactions` (Keystone/PCZT path) is local storage, not a
-            // broadcast, so it stays unguarded too — MOB-1468, still a stub. The two batch members
-            // (`urEncoderForMigrationPCZTBatch`, `parseMigrationPCZTBatch`) remain plain inert
-            // stubs — their real implementations belong to KeystoneSDK/the Zcash SDK when the batch
-            // UR format exists (joint SDK + Keystone-team ask, unvalidated).
+            // broadcast, so it stays unguarded too (MOB-1469 P4).
             getMigrationState: { migrationEngine.currentState() },
             migrationStateStream: { migrationEngine.statePublisher() },
             getMigrationProgress: { migrationEngine.progress() },
@@ -348,21 +345,19 @@ extension SDKSynchronizerClient: DependencyKey {
             recreateInvalidMigrationTransfer: { await migrationEngine.recreateInvalid() },
             migrationSummary: { migrationEngine.summary() },
             migrationTransfers: { migrationEngine.transferRows() },
-            proposeNoteSplitPCZT: { Pczt() },
-            proposeMigrationPCZTs: { _ in [] },
-            storeSignedMigrationTransactions: { _ in },
-            submitSignedNoteSplit: { _ in
+            proposeNoteSplitPCZT: { await migrationEngine.proposeNoteSplitPCZT() },
+            proposeMigrationPCZTs: { await migrationEngine.proposeTransferPCZTs($0) },
+            storeSignedMigrationTransactions: { await migrationEngine.storeSignedTransferPCZTs($0) },
+            submitSignedNoteSplit: { pczt in
                 @Dependency(\.transactionGuard) var transactionGuard
                 do {
                     return try await transactionGuard.withSubmission {
-                        TransferResult.success(txId: "")
+                        await migrationEngine.submitSignedNoteSplit(pczt)
                     }
                 } catch {
                     return TransferResult.networkError(retryable: true)
                 }
             },
-            urEncoderForMigrationPCZTBatch: { _ in nil },
-            parseMigrationPCZTBatch: { _ in nil },
             // Fires the SDK's async `initializePostUpgrade(for:)` from this sync closure via a
             // `Task` (never crashes: errors are caught and logged inside the engine method).
             initializeMigrationPostUpgrade: { migrationEngine.initializePostUpgrade() }
@@ -440,6 +435,21 @@ extension LiveMigrationEngine.Gateway {
             },
             initializePostUpgrade: { account in
                 try await synchronizer.initializePostUpgrade(for: account)
+            },
+            proposeNoteSplitPCZT: { account in
+                try await synchronizer.proposeNoteSplitPCZT(for: account)
+            },
+            proposeTransferPCZTs: { schedule, account in
+                try await synchronizer.proposeMigrationTransferPCZTs(schedule, for: account)
+            },
+            storeSignedTransferPCZTs: { pczts, account in
+                try await synchronizer.storeSignedMigrationTransferPCZTs(pczts, for: account)
+            },
+            submitSignedNoteSplitPCZT: { pczt, account in
+                try await synchronizer.submitSignedNoteSplitPCZT(pczt, for: account)
+            },
+            redactPCZT: { pczt in
+                try await synchronizer.redactPCZTForSigner(pczt: pczt)
             }
         )
     }

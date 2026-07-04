@@ -19910,6 +19910,23 @@
         }
       }
     },
+    "migrationKeystoneSign.session" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transfer %1$lld of %2$lld"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transferencia %1$lld de %2$lld"
+          }
+        }
+      }
+    },
     "migrationPlan.etaHours" : {
       "extractionState" : "manual",
       "localizations" : {

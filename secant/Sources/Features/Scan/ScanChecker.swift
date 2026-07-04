@@ -125,39 +125,6 @@ struct KeystoneVotingDelegationPcztScanChecker: ScanChecker, Equatable {
     }
 }
 
-/// Migration Keystone batch signing (MOB-1468) — mirrors `KeystonePcztScanChecker`'s accumulate-
-/// with-progress flow, but the completed UR parses via `sdkSynchronizer.parseMigrationPCZTBatch`
-/// rather than `KeystoneZcashSDK().parseZcashPczt(ur:)`: that call is the single-PCZT decoder (it
-/// invokes the Rust `parse_zcash_pczt` FFI entrypoint), which is the wrong shape for a batch UR
-/// whose CBOR format doesn't exist yet — the accumulated UR's raw cbor bytes (`resultUR.cbor
-/// .cborData`, the same accessor `KeystoneZcashSDK` uses internally) go straight to the [ext]
-/// batch-parse stub instead. Stub returns `nil` today, so a completed scan reports the same
-/// failure an unparseable QR gets, exactly like every other checker here when parsing fails.
-struct KeystoneMigrationBatchScanChecker: ScanChecker, Equatable {
-    let id = 6
-
-    func checkQRCode(_ qrCode: String) -> Scan.Action? {
-        @Dependency(\.keystoneHandler) var keystoneHandler
-        @Dependency(\.sdkSynchronizer) var sdkSynchronizer
-
-        if let result = keystoneHandler.decodeQR(qrCode) {
-            if result.progress < 100 {
-                return ScanCheckerWrapper.reportCheck(qrCode, progress: result.progress)
-            }
-
-            if let resultUR = result.ur, result.progress == 100 {
-                if let pczts = sdkSynchronizer.parseMigrationPCZTBatch(resultUR.cbor.cborData) {
-                    return .foundPCZTBatch(pczts)
-                } else {
-                    return nil
-                }
-            }
-        }
-
-        return nil
-    }
-}
-
 struct ScanCheckerWrapper: Equatable, Sendable {
     let checker: any ScanChecker
 
@@ -167,7 +134,6 @@ struct ScanCheckerWrapper: Equatable, Sendable {
     static let keystonePCZTScanChecker = ScanCheckerWrapper(KeystonePcztScanChecker())
     static let swapStringScanChecker = ScanCheckerWrapper(SwapStringScanChecker())
     static let keystoneVotingDelegationPCZTScanChecker = ScanCheckerWrapper(KeystoneVotingDelegationPcztScanChecker())
-    static let keystoneMigrationBatchScanChecker = ScanCheckerWrapper(KeystoneMigrationBatchScanChecker())
 
     static func == (lhs: ScanCheckerWrapper, rhs: ScanCheckerWrapper) -> Bool {
         return lhs.checker.id == rhs.checker.id

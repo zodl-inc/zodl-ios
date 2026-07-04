@@ -79,10 +79,6 @@ struct Scan {
         case foundAccounts(ZcashAccounts)
         case foundPCZT(Data)
         case foundVotingDelegationPCZT(Data)
-        /// Migration Keystone batch signing (MOB-1468) — the fully parsed set of signed PCZTs from
-        /// one scanned batch UR session. Additive to this shared Scan feature; the coordinator that
-        /// requested the scan is responsible for consuming it (MOB-1468 phase 2).
-        case foundPCZTBatch([Pczt])
         case animatedQRProgress(Int, Int?, Int?)
         case scanFailed(ScanImageResult)
         case scan(RedactableString)
@@ -147,11 +143,6 @@ struct Scan {
                 return .none
 
             case .foundVotingDelegationPCZT:
-                state.isAnythingFound = true
-                state.progress = nil
-                return .none
-
-            case .foundPCZTBatch:
                 state.isAnythingFound = true
                 state.progress = nil
                 return .none

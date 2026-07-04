@@ -120,14 +120,13 @@ struct SDKSynchronizerClient: Sendable {
     // MARK: - Migration (Orchard → Ironwood) — backed by `LiveMigrationEngine` (MOB-1469)
     //
     // Swift mirror of `interface OrchardMigrationSdk` (`MigrationSdk.kt`), originally staged as
-    // inert stubs until the real SDK migration API existed (MOB-1455/1459). `live()` now wires every
-    // software-path member below to `LiveMigrationEngine`, which bridges these sync/non-throwing/
-    // app-typed closures onto the SDK's async-throws, per-account, `UInt64`-based migration API —
-    // see `LiveMigrationEngine.swift` and `MigrationTypeMapping.swift`. The 6 Keystone/PCZT members
-    // (marked below) remain inert stubs; they are rewired in a later phase (MOB-1468 follow-up).
-    // Names are qualified to fit this client's flat namespace (e.g. `stateStream` is already taken
-    // by `SynchronizerState`). Markers: `[draft]` = Kotlin draft 1:1, `[ext]` = proposed SDK
-    // extension not present in the Kotlin draft.
+    // inert stubs until the real SDK migration API existed (MOB-1455/1459). `live()` wires every
+    // member below — the software path AND the 4 Keystone/PCZT members — to `LiveMigrationEngine`,
+    // which bridges these sync/non-throwing/app-typed closures onto the SDK's async-throws,
+    // per-account, `UInt64`-based migration API — see `LiveMigrationEngine.swift` and
+    // `MigrationTypeMapping.swift`. Names are qualified to fit this client's flat namespace (e.g.
+    // `stateStream` is already taken by `SynchronizerState`). Markers: `[draft]` = Kotlin draft
+    // 1:1, `[ext]` = proposed SDK extension not present in the Kotlin draft.
 
     // State — Kotlin: getMigrationState / (Flow suggestion) / getMigrationProgress
     var getMigrationState: @Sendable () -> MigrationState = { .notStarted }                                   // [draft]
@@ -158,20 +157,24 @@ struct SDKSynchronizerClient: Sendable {
     // Progress UI
     var migrationSummary: @Sendable () -> MigrationSummary = { MigrationSummary.zero }                        // [ext]
     var migrationTransfers: @Sendable () -> [MigrationTransferRow] = { [] }                                   // [ext]
-    // Keystone (PCZT)
+    // Keystone (PCZT) — sequential per-transfer signing sessions (MOB-1469 P4; the earlier
+    // batched-UR design is dead — no device firmware understands a batch format). Both propose
+    // members return REDACTED, QR-ready PCZTs (the engine runs `redactPCZTForSigner` internally);
+    // the view feeds each one to the send flow's proven single-PCZT `urEncoderForPCZT`.
     var proposeNoteSplitPCZT: @Sendable () async -> Pczt = { Pczt() }                                         // [ext]
+    // The engine caches the returned PCZTs' transfer-id order: the signed PCZTs handed to
+    // `storeSignedMigrationTransactions` later pair with those ids BY INDEX, so the coordinator
+    // must keep the signed array in proposal order.
     var proposeMigrationPCZTs: @Sendable (MigrationSchedule) async -> [Pczt] = { _ in [] }                    // [ext]
+    // All-or-nothing local store (no broadcast): every proposed transfer's signed PCZT, in the
+    // `proposeMigrationPCZTs` order. On success the committed schedule persists exactly like
+    // `signAndStoreMigrationSchedule`; on failure nothing is stored and the set can be retried.
     var storeSignedMigrationTransactions: @Sendable ([Pczt]) async -> Void = { _ in }                         // [ext]
-    // Keystone note-split broadcast — [ext]: symmetric with submitNoteSplit; SDK must treat this
-    // broadcast as the migration note split (state -> splitPendingConfirmation).
+    // Keystone note-split broadcast — [ext]: symmetric with submitNoteSplit; the SDK treats this
+    // broadcast as the migration note split (state -> splitPendingConfirmation). Retry-safe: the
+    // failure sheet's Retry re-calls this with the SAME signed PCZT and the SDK re-broadcasts the
+    // stored prep transaction without double-storing.
     var submitSignedNoteSplit: @Sendable (Pczt) async -> TransferResult = { _ in TransferResult.success(txId: "") }
-    // Batch UR encoding of N migration PCZTs into ONE animated-QR session — [ext]: JOINT SDK +
-    // Keystone-team ask; device support unvalidated (feature-spec §14 risk). Stub: nil (screen dormant).
-    var urEncoderForMigrationPCZTBatch: @Sendable ([Pczt]) -> UREncoder? = { _ in nil }
-    // Batch parse of the scanned signed session back into N signed PCZTs — [ext], same ask. Input type
-    // matches the scan-checker plumbing (the accumulated UR; prefer a Data/cbor-based signature if the
-    // URKit type isn't Sendable-friendly — implementer resolves against ScanChecker.swift's shapes).
-    var parseMigrationPCZTBatch: @Sendable (Data) -> [Pczt]? = { _ in nil }
     // Lifecycle — Kotlin: initializePostUpgrade
     var initializeMigrationPostUpgrade: @Sendable () -> Void = { }                                            // [draft]
 }

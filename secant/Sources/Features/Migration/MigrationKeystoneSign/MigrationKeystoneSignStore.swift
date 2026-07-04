@@ -2,18 +2,17 @@
 //  MigrationKeystoneSignStore.swift
 //  zodl
 //
-//  Migration-owned Keystone signing screen (MOB-1468, Figma sign frame 2867:11861). Visually
+//  Migration-owned Keystone signing screen (MOB-1468/1469, Figma sign frame 2867:11861). Visually
 //  mirrors `SignWithKeystoneView`'s composition exactly (SendConfirmation cannot host this — its
-//  PCZT pipeline is single-PCZT and proposal-centric). Batched single-session signing: this screen
-//  always carries the full `[Pczt]` for the current signing context (note split / plan commit /
-//  immediate review are all sessions of 1..N, uniformly). The `UREncoder` is computed live in the
-//  view via `sdkSynchronizer.urEncoderForMigrationPCZTBatch(pczts)` — never cached in `State` (the
-//  same approach `SignWithKeystoneView` uses for `urEncoderForPCZT`), since `UREncoder` is a
-//  non-`Equatable`, non-`Sendable` class that cannot live in an `@ObservableState` `Equatable`
-//  struct. Stubbed today: the batch encoder returns `nil`, so the QR area renders the same
-//  empty/loading treatment `SignWithKeystoneView` shows while `pcztForUI == nil` — dormant, by
-//  design, until the SDK + Keystone batch support land (MOB-1455). The coordinator consumes both
-//  delegates (`.getSignature` -> scan -> submit/store, `.rejected` -> deferred pop) — MOB-1468.
+//  PCZT pipeline is proposal-centric). One screen instance per SEQUENTIAL signing session: `pczt`
+//  is the single redacted, QR-ready PCZT for session `sessionIndex` of `sessionTotal` (1-based;
+//  note split and immediate mode are naturally 1 of 1, a plan commit runs one session per
+//  transfer). The `UREncoder` is computed live in the view via the send flow's proven
+//  `sdkSynchronizer.urEncoderForPCZT(pczt)` — never cached in `State` (the same approach
+//  `SignWithKeystoneView` uses), since `UREncoder` is a non-`Equatable`, non-`Sendable` class that
+//  cannot live in an `@ObservableState` `Equatable` struct. The coordinator consumes both
+//  delegates (`.getSignature` -> scan -> next session or submit/store, `.rejected` -> deferred pop
+//  discarding the whole queue) — see `MigrationCoordFlowCoordinator`'s Keystone rows.
 //
 
 import ComposableArchitecture
@@ -23,11 +22,18 @@ import ComposableArchitecture
 struct MigrationKeystoneSign {
     @ObservableState
     struct State: Equatable {
-        var pczts: [Pczt] = []
+        /// The redacted, QR-ready PCZT this session signs.
+        var pczt = Pczt()
+        /// 1-based position of this session in the signing queue (display: "Transfer i of N").
+        var sessionIndex = 1
+        /// Total sessions in the queue; the "i of N" indicator only renders when > 1.
+        var sessionTotal = 1
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
 
-        init(pczts: [Pczt] = []) {
-            self.pczts = pczts
+        init(pczt: Pczt = Pczt(), sessionIndex: Int = 1, sessionTotal: Int = 1) {
+            self.pczt = pczt
+            self.sessionIndex = sessionIndex
+            self.sessionTotal = sessionTotal
         }
     }
 

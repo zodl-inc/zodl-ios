@@ -47,6 +47,11 @@ private final class FakeGateway: @unchecked Sendable {
         case restartCurrentStep
         case refreshStale
         case initializePostUpgrade
+        case proposeNoteSplitPCZT
+        case proposeTransferPCZTs
+        case storeSignedTransferPCZTs
+        case submitSignedNoteSplitPCZT
+        case redactPCZT
     }
 
     private struct State {
@@ -76,6 +81,12 @@ private final class FakeGateway: @unchecked Sendable {
         )
         var refreshStale: Result<UInt32, Error> = .success(0)
         var initializePostUpgrade: Result<Void, Error> = .success(())
+        var proposeNoteSplitPCZT: Result<Pczt, Error> = .success(Pczt())
+        var proposeTransferPCZTs: Result<[ZcashLightClientKit.MigrationTransferPCZT], Error> = .success([])
+        var storeSignedTransferPCZTs: Result<Void, Error> = .success(())
+        var submitSignedNoteSplitPCZT: Result<ZcashLightClientKit.TransferResult, Error> = .success(.success(txid: "split-tx"))
+        var storedSignedPairs: [[ZcashLightClientKit.MigrationTransferPCZT]] = []
+        var submittedNoteSplitPczts: [Pczt] = []
     }
 
     private enum FakeError: Error { case scripted }
@@ -165,6 +176,60 @@ private final class FakeGateway: @unchecked Sendable {
     func setRefreshStaleResult(_ value: UInt32) {
         let result: Result<UInt32, Error> = .success(value)
         lock.withLock { $0.refreshStale = result }
+    }
+
+    func setProposeNoteSplitPCZTResult(_ value: Pczt) {
+        let result: Result<Pczt, Error> = .success(value)
+        lock.withLock { $0.proposeNoteSplitPCZT = result }
+    }
+
+    func setProposeNoteSplitPCZTThrows() {
+        let result: Result<Pczt, Error> = .failure(FakeError.scripted)
+        lock.withLock { $0.proposeNoteSplitPCZT = result }
+    }
+
+    func setProposeTransferPCZTsResult(_ value: [ZcashLightClientKit.MigrationTransferPCZT]) {
+        let result: Result<[ZcashLightClientKit.MigrationTransferPCZT], Error> = .success(value)
+        lock.withLock { $0.proposeTransferPCZTs = result }
+    }
+
+    func setProposeTransferPCZTsThrows() {
+        let result: Result<[ZcashLightClientKit.MigrationTransferPCZT], Error> = .failure(FakeError.scripted)
+        lock.withLock { $0.proposeTransferPCZTs = result }
+    }
+
+    func setStoreSignedTransferPCZTsThrows() {
+        let result: Result<Void, Error> = .failure(FakeError.scripted)
+        lock.withLock { $0.storeSignedTransferPCZTs = result }
+    }
+
+    func setStoreSignedTransferPCZTsSucceeds() {
+        let result: Result<Void, Error> = .success(())
+        lock.withLock { $0.storeSignedTransferPCZTs = result }
+    }
+
+    func setSubmitSignedNoteSplitPCZTResult(_ value: ZcashLightClientKit.TransferResult) {
+        let result: Result<ZcashLightClientKit.TransferResult, Error> = .success(value)
+        lock.withLock { $0.submitSignedNoteSplitPCZT = result }
+    }
+
+    func setSubmitSignedNoteSplitPCZTThrows() {
+        let result: Result<ZcashLightClientKit.TransferResult, Error> = .failure(FakeError.scripted)
+        lock.withLock { $0.submitSignedNoteSplitPCZT = result }
+    }
+
+    var storedSignedPairs: [[ZcashLightClientKit.MigrationTransferPCZT]] {
+        lock.withLock { $0.storedSignedPairs }
+    }
+
+    var submittedNoteSplitPczts: [Pczt] {
+        lock.withLock { $0.submittedNoteSplitPczts }
+    }
+
+    /// The deterministic transform the fake's `redactPCZT` applies — tests assert against it to
+    /// prove every device-bound PCZT went through redaction.
+    static func redacted(_ pczt: Pczt) -> Pczt {
+        Pczt([0xED]) + pczt
     }
 
     private func record(_ call: Call) {
@@ -264,6 +329,38 @@ private final class FakeGateway: @unchecked Sendable {
                 self?.record(.initializePostUpgrade)
                 let fallback: Result<Void, Error> = .success(())
                 try (self?.lock.withLock { $0.initializePostUpgrade } ?? fallback).get()
+            },
+            proposeNoteSplitPCZT: { [weak self] _ in
+                self?.record(.proposeNoteSplitPCZT)
+                let fallback: Result<Pczt, Error> = .success(Pczt())
+                return try (self?.lock.withLock { $0.proposeNoteSplitPCZT } ?? fallback).get()
+            },
+            proposeTransferPCZTs: { [weak self] _, _ in
+                self?.record(.proposeTransferPCZTs)
+                let fallback: Result<[ZcashLightClientKit.MigrationTransferPCZT], Error> = .success([])
+                return try (self?.lock.withLock { $0.proposeTransferPCZTs } ?? fallback).get()
+            },
+            storeSignedTransferPCZTs: { [weak self] pairs, _ in
+                self?.record(.storeSignedTransferPCZTs)
+                let fallback: Result<Void, Error> = .success(())
+                let result = self?.lock.withLock { state -> Result<Void, Error> in
+                    state.storedSignedPairs.append(pairs)
+                    return state.storeSignedTransferPCZTs
+                }
+                try (result ?? fallback).get()
+            },
+            submitSignedNoteSplitPCZT: { [weak self] pczt, _ in
+                self?.record(.submitSignedNoteSplitPCZT)
+                let fallback: Result<ZcashLightClientKit.TransferResult, Error> = .success(.success(txid: ""))
+                let result = self?.lock.withLock { state -> Result<ZcashLightClientKit.TransferResult, Error> in
+                    state.submittedNoteSplitPczts.append(pczt)
+                    return state.submitSignedNoteSplitPCZT
+                }
+                return try (result ?? fallback).get()
+            },
+            redactPCZT: { [weak self] pczt in
+                self?.record(.redactPCZT)
+                return FakeGateway.redacted(pczt)
             }
         )
     }
@@ -285,6 +382,22 @@ private func sdkSchedule(count: Int, amount: UInt64 = 1_000) -> ZcashLightClient
     ZcashLightClientKit.MigrationSchedule(
         transfers: (0..<count).map { sdkTransfer(id: "t\($0)", amount: amount) },
         estimatedDurationHours: UInt32(count * 6)
+    )
+}
+
+/// APP-model schedule (what the Keystone PCZT members take at the client boundary).
+private func appSchedule(count: Int, amount: Int64 = 1_000) -> MigrationSchedule {
+    MigrationSchedule(
+        transfers: (0..<count).map { index in
+            TransferProposal(
+                id: "t\(index)",
+                amount: Zatoshi(amount),
+                anchorHeight: BlockHeight(100),
+                nextExecutableAfterHeight: BlockHeight(100),
+                expiryHeight: BlockHeight(200)
+            )
+        },
+        estimatedDurationHours: count * 6
     )
 }
 
@@ -530,6 +643,152 @@ private func sdkSchedule(count: Int, amount: UInt64 = 1_000) -> ZcashLightClient
         #expect(persisted.transfers.count == 1)
         #expect(persisted.transfers[0].proposal.amount == Zatoshi(9_999))
         #expect(persisted.transfers[0].status == .pending)
+    }
+
+    // MARK: Keystone (PCZT) external-signer path (MOB-1469 P4)
+
+    @Test func proposeNoteSplitPCZTReturnsTheRedactedPczt() async {
+        let (engine, gateway) = makeEngine()
+        gateway.setProposeNoteSplitPCZTResult(Pczt([0x0A, 0x0B]))
+
+        let result = await engine.proposeNoteSplitPCZT()
+
+        // The member's contract is "QR-ready": the SDK's unsigned PCZT must pass through
+        // redaction before it ever reaches an encoder.
+        #expect(result == FakeGateway.redacted(Pczt([0x0A, 0x0B])))
+        #expect(gateway.callCount(.proposeNoteSplitPCZT) == 1)
+        #expect(gateway.callCount(.redactPCZT) == 1)
+    }
+
+    @Test func proposeNoteSplitPCZTFailureReturnsAnEmptyPczt() async {
+        let (engine, gateway) = makeEngine()
+        gateway.setProposeNoteSplitPCZTThrows()
+
+        let result = await engine.proposeNoteSplitPCZT()
+
+        // Empty is the failure signal — the coordinator starts no signing session for it.
+        #expect(result.isEmpty)
+        #expect(gateway.callCount(.redactPCZT) == 0)
+    }
+
+    @Test func proposeTransferPCZTsRedactsEachPcztAndCachesTheIdOrderForTheStore() async {
+        let (engine, gateway) = makeEngine()
+        gateway.setProposeTransferPCZTsResult([
+            ZcashLightClientKit.MigrationTransferPCZT(id: "t0", pczt: Pczt([0x01])),
+            ZcashLightClientKit.MigrationTransferPCZT(id: "t1", pczt: Pczt([0x02]))
+        ])
+
+        let redacted = await engine.proposeTransferPCZTs(appSchedule(count: 2))
+
+        #expect(redacted == [FakeGateway.redacted(Pczt([0x01])), FakeGateway.redacted(Pczt([0x02]))])
+        #expect(gateway.callCount(.redactPCZT) == 2)
+
+        // The signed array pairs with the proposal's ids BY INDEX — the invariant the whole
+        // sequential signing queue leans on.
+        await engine.storeSignedTransferPCZTs([Pczt([0xA1]), Pczt([0xA2])])
+
+        #expect(gateway.storedSignedPairs == [
+            [
+                ZcashLightClientKit.MigrationTransferPCZT(id: "t0", pczt: Pczt([0xA1])),
+                ZcashLightClientKit.MigrationTransferPCZT(id: "t1", pczt: Pczt([0xA2]))
+            ]
+        ])
+    }
+
+    @Test func proposeTransferPCZTsFailureReturnsAnEmptyArray() async {
+        let (engine, gateway) = makeEngine()
+        gateway.setProposeTransferPCZTsThrows()
+
+        let result = await engine.proposeTransferPCZTs(appSchedule(count: 1))
+
+        #expect(result.isEmpty)
+        #expect(gateway.callCount(.redactPCZT) == 0)
+    }
+
+    @Test func storeSignedTransferPCZTsWithCountMismatchStoresNothing() async {
+        let (engine, gateway) = makeEngine()
+        gateway.setProposeTransferPCZTsResult([
+            ZcashLightClientKit.MigrationTransferPCZT(id: "t0", pczt: Pczt([0x01])),
+            ZcashLightClientKit.MigrationTransferPCZT(id: "t1", pczt: Pczt([0x02]))
+        ])
+        _ = await engine.proposeTransferPCZTs(appSchedule(count: 2))
+
+        // One signature short: pairing by index would mis-attribute — all-or-nothing means the
+        // gateway is never reached.
+        await engine.storeSignedTransferPCZTs([Pczt([0xA1])])
+
+        #expect(gateway.callCount(.storeSignedTransferPCZTs) == 0)
+    }
+
+    @Test func storeSignedTransferPCZTsWithoutAPriorProposeStoresNothing() async {
+        let (engine, gateway) = makeEngine()
+
+        await engine.storeSignedTransferPCZTs([Pczt([0xA1])])
+
+        #expect(gateway.callCount(.storeSignedTransferPCZTs) == 0)
+    }
+
+    @Test func storeSignedTransferPCZTsSuccessPersistsPendingRowsAndConsumesThePairing() async {
+        let store = MigrationScheduleStore.ephemeral()
+        let (engine, gateway) = makeEngine(store: store)
+        gateway.setProposeTransferPCZTsResult([
+            ZcashLightClientKit.MigrationTransferPCZT(id: "t0", pczt: Pczt([0x01])),
+            ZcashLightClientKit.MigrationTransferPCZT(id: "t1", pczt: Pczt([0x02]))
+        ])
+        _ = await engine.proposeTransferPCZTs(appSchedule(count: 2))
+
+        await engine.storeSignedTransferPCZTs([Pczt([0xA1]), Pczt([0xA2])])
+
+        // The committed schedule persists exactly like `signAndStore`'s rows...
+        let persisted = store.load()
+        #expect(persisted.transfers.count == 2)
+        #expect(persisted.transfers.allSatisfy { $0.status == .pending })
+
+        // ...and the pairing is consumed: a stray second hand-off has no ids to zip against.
+        await engine.storeSignedTransferPCZTs([Pczt([0xA1]), Pczt([0xA2])])
+        #expect(gateway.callCount(.storeSignedTransferPCZTs) == 1)
+    }
+
+    @Test func storeSignedTransferPCZTsThrowKeepsThePairingSoTheSetCanBeRetried() async {
+        let store = MigrationScheduleStore.ephemeral()
+        let (engine, gateway) = makeEngine(store: store)
+        gateway.setProposeTransferPCZTsResult([
+            ZcashLightClientKit.MigrationTransferPCZT(id: "t0", pczt: Pczt([0x01]))
+        ])
+        _ = await engine.proposeTransferPCZTs(appSchedule(count: 1))
+
+        gateway.setStoreSignedTransferPCZTsThrows()
+        await engine.storeSignedTransferPCZTs([Pczt([0xA1])])
+
+        // Nothing stored, nothing persisted — but the cached pairing survives for a retry.
+        #expect(store.load().transfers.isEmpty)
+
+        gateway.setStoreSignedTransferPCZTsSucceeds()
+        await engine.storeSignedTransferPCZTs([Pczt([0xA1])])
+
+        #expect(gateway.callCount(.storeSignedTransferPCZTs) == 2)
+        #expect(store.load().transfers.count == 1)
+    }
+
+    @Test func submitSignedNoteSplitMapsTheResultAndRefreshes() async {
+        let (engine, gateway) = makeEngine()
+        gateway.setSubmitSignedNoteSplitPCZTResult(.success(txid: "split-tx-7"))
+
+        let result = await engine.submitSignedNoteSplit(Pczt([0xF0]))
+
+        #expect(result == TransferResult.success(txId: "split-tx-7"))
+        #expect(gateway.submittedNoteSplitPczts == [Pczt([0xF0])])
+        // A broadcast mutates migration state — the cache must refresh right after.
+        #expect(gateway.callCount(.state) == 1)
+    }
+
+    @Test func submitSignedNoteSplitThrowMapsToRetryableNetworkError() async {
+        let (engine, gateway) = makeEngine()
+        gateway.setSubmitSignedNoteSplitPCZTThrows()
+
+        let result = await engine.submitSignedNoteSplit(Pczt([0xF1]))
+
+        #expect(result == TransferResult.networkError(retryable: true))
     }
 
     // MARK: Row derivation

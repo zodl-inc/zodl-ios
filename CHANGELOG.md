@@ -17,6 +17,7 @@ directly impact users rather than highlighting other crucial architectural updat
 - [MOB-1467] Scheduled Ironwood migration transfers can now send from background tasks, with local notifications for progress, required actions, and manual-mode send reminders — dormant until the migration SDK ships.
 - [MOB-1468] Keystone hardware-wallet accounts can complete the Ironwood migration — transfers are signed by QR in a single batched session — dormant until the migration SDK and Keystone batch support ship.
 - [MOB-1469] The Ironwood migration screens are now backed by the real migration engine instead of placeholder data — still not reachable from the app yet, so there's nothing to notice.
+- [MOB-1469] Keystone hardware-wallet accounts now sign Ironwood migration transfers for real: each transfer is signed in its own QR sign/scan session (labelled "Transfer 1 of N"), using the same proven QR format as a regular Keystone send — no signatures are kept unless every transfer in the plan is signed.
 
 ## 3.7.2 build 1
 

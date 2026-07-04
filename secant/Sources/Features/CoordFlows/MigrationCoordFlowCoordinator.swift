@@ -7,15 +7,20 @@
 //  Notifications -> NetworkPrivacy -> TransferPlan). See the MOB-1466 implementation spec's
 //  `MigrationCoordFlow` section for the full chaining table this mirrors row by row.
 //
-//  MOB-1468 (Keystone) adds a QR sign/scan round-trip ahead of the three signing sources
-//  (NoteSplit/TransferPlan/ReviewTransfer): each delegates `.keystoneSignRequested(pczts)` instead
-//  of signing locally, which sets `pendingKeystoneSigning` and pushes `keystoneSign`;
-//  `keystoneSign(.delegate(.getSignature))` pushes `scan` configured with the migration batch
-//  checker; `scan(.foundPCZTBatch(signed))` switches on `pendingKeystoneSigning` to submit/store the
-//  signed PCZTs and resume whichever chain the source represents, popping both pushed elements and
-//  clearing the context. `keystoneSign(.delegate(.rejected))` pops back to the signing source with
-//  its state untouched (no partial storage ever happens on that path). See the "Keystone signing"
-//  section below.
+//  MOB-1468/1469 (Keystone) adds SEQUENTIAL QR sign/scan sessions ahead of the three signing
+//  sources (NoteSplit/TransferPlan/ReviewTransfer): each delegates `.keystoneSignRequested(pczts)`
+//  (redacted, QR-ready, in proposal order) instead of signing locally, which seeds the
+//  `pendingKeystoneSigning` queue and pushes `keystoneSign` for session 1 of N;
+//  `keystoneSign(.delegate(.getSignature))` pushes `scan` configured with the send flow's
+//  single-PCZT checker; each `scan(.foundPCZT(signed))` appends to the queue's collected
+//  signatures, then either advances to the next session (pop scan+sign, push the next sign
+//  screen — `keystoneNextSigningSession`) or, after the LAST session, submits/stores the full set
+//  and resumes whichever chain the source represents (`keystoneSigningSubmitted`), popping both
+//  pushed elements and clearing the queue. `keystoneSign(.delegate(.rejected))` and a scan cancel
+//  (`keystoneScanAbandoned`) at ANY session discard EVERY collected signature and pop back to the
+//  signing source with its state untouched — the store is all-or-nothing, so a partial set is
+//  worthless (no partial storage ever happens on any path). See the "Keystone signing" section
+//  below.
 //
 
 import Foundation
@@ -142,65 +147,100 @@ extension MigrationCoordFlow {
                 state.path.append(.sending(sendingState))
                 return .none
 
-                // MARK: - Keystone signing (MOB-1468)
+                // MARK: - Keystone signing (MOB-1468/1469)
 
             case .path(.element(id: _, action: .noteSplit(.delegate(.keystoneSignRequested(let pczts))))):
-                state.pendingKeystoneSigning = .noteSplit
-                state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: pczts)))
-                return .none
+                return startKeystoneSigningQueue(context: .noteSplit, pczts: pczts, state: &state)
 
             case .path(.element(id: _, action: .transferPlan(.delegate(.keystoneSignRequested(let pczts))))):
-                state.pendingKeystoneSigning = .planCommit
-                state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: pczts)))
-                return .none
+                return startKeystoneSigningQueue(context: .planCommit, pczts: pczts, state: &state)
 
             case .path(.element(id: _, action: .reviewTransfer(.delegate(.keystoneSignRequested(let pczts))))):
-                state.pendingKeystoneSigning = .immediateReview
-                state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: pczts)))
-                return .none
+                return startKeystoneSigningQueue(context: .immediateReview, pczts: pczts, state: &state)
 
             case .path(.element(id: _, action: .keystoneSign(.delegate(.getSignature)))):
+                // The UR decoder is a stateful accumulator that LATCHES after a completed decode
+                // (`KeystoneSDKWrapper.foundResult`) — without this reset the second and every
+                // later session's scan would decode nothing. Same pre-scan reset the send flow's
+                // `getSignatureTapped` performs.
+                keystoneHandler.resetQRDecoder()
+                // The send flow's proven single-PCZT checker — the device returns one signed PCZT
+                // per session over the same UR format a regular hardware-wallet send uses.
                 var scanState = Scan.State.initial
-                scanState.checkers = [.keystoneMigrationBatchScanChecker]
+                scanState.checkers = [.keystonePCZTScanChecker]
                 state.path.append(.scan(scanState))
                 return .none
 
-            case .path(.element(id: _, action: .scan(.foundPCZTBatch(let signed)))):
-                guard let context = state.pendingKeystoneSigning else { return .none }
+            case .path(.element(id: _, action: .scan(.foundPCZT(let signedPczt)))):
+                guard var queue = state.pendingKeystoneSigning else { return .none }
 
-                // Empty batch: nothing decoded to a usable signed PCZT — in EVERY context this
-                // abandons the signing session like a rejection (deferred pop of scan + sign back
-                // to the initiating screen, context cleared) and never submits or stores anything
-                // (no-partial-storage invariant). The user re-initiates from the confirm button.
-                guard !signed.isEmpty else { return .send(.keystoneScanAbandoned) }
+                // Collected in session order == proposal order — the engine re-pairs the signed
+                // set with its cached transfer ids by index, so the order is load-bearing.
+                queue.signed.append(Pczt(signedPczt))
+                state.pendingKeystoneSigning = queue
 
-                switch context {
+                // More sessions pending: advance the queue (deferred — the acting `scan` element
+                // must survive `.forEach`'s delivery of this same action).
+                guard queue.signed.count == queue.pending.count else {
+                    return .send(.keystoneNextSigningSession)
+                }
+
+                // Last session: submit/store the FULL collected set, then resume the chain.
+                switch queue.context {
                 case .noteSplit:
-                    guard let pczt = signed.first else { return .none }
+                    guard let pczt = queue.signed.first else { return .none }
                     return .run { [sdkSynchronizer] send in
                         let result = await sdkSynchronizer.submitSignedNoteSplit(pczt)
                         await send(.keystoneSigningSubmitted(context: .noteSplit, result: result, signedPczt: pczt))
                     }
 
                 case .planCommit, .immediateReview:
-                    return .run { [sdkSynchronizer] send in
+                    return .run { [sdkSynchronizer, context = queue.context, signed = queue.signed] send in
                         await sdkSynchronizer.storeSignedMigrationTransactions(signed)
                         await send(.keystoneSigningSubmitted(context: context, result: nil, signedPczt: nil))
                     }
                 }
 
+            case .keystoneNextSigningSession:
+                guard let queue = state.pendingKeystoneSigning else { return .none }
+                let nextIndex = queue.signed.count
+                guard nextIndex < queue.pending.count else { return .none }
+                // Pop `scan` + the finished session's `keystoneSign`, push the next session's sign
+                // screen over the untouched signing source.
+                state.path.removeLast(2)
+                state.path.append(
+                    .keystoneSign(
+                        MigrationKeystoneSign.State(
+                            pczt: queue.pending[nextIndex],
+                            sessionIndex: nextIndex + 1,
+                            sessionTotal: queue.pending.count
+                        )
+                    )
+                )
+                return .none
+
             case .keystoneSigningSubmitted(let context, let result, let signedPczt):
                 return resumeAfterKeystoneSigning(context: context, result: result, signedPczt: signedPczt, state: &state)
 
             case .path(.element(id: _, action: .keystoneSign(.delegate(.rejected)))):
-                // No-partial-storage invariant: nothing was submitted/stored — just pop back to the
-                // signing source with its state untouched (NoteSplit still explainer, plan/review
-                // still unsigned) and clear the context. The pop is deferred to a follow-up
-                // self-action (mirrors `sendNowCompleted`'s deferred pop) rather than done inline
-                // here: `.forEach(\.path, action:)` still needs to deliver this SAME action to the
-                // `keystoneSign` element after this case returns, and popping it first would leave
-                // `.forEach` with no element to deliver to (a TCA "missing element" runtime error).
+                // No-partial-storage invariant: nothing was submitted/stored — discard the whole
+                // queue (collected signatures included; the all-or-nothing store makes a partial
+                // set worthless) and pop back to the signing source with its state untouched
+                // (NoteSplit still explainer, plan/review still unsigned). The pop is deferred to
+                // a follow-up self-action (mirrors `sendNowCompleted`'s deferred pop) rather than
+                // done inline here: `.forEach(\.path, action:)` still needs to deliver this SAME
+                // action to the `keystoneSign` element after this case returns, and popping it
+                // first would leave `.forEach` with no element to deliver to (a TCA "missing
+                // element" runtime error).
                 return .send(.keystoneSignRejected)
+
+            case .path(.element(id: _, action: .scan(.cancelTapped))):
+                // Scan abandonment mid-queue: same all-or-nothing semantics as a rejection — the
+                // whole signing session dies (deferred pop of scan + sign, queue discarded). Only
+                // meaningful while a queue is live; the migration flow pushes `scan` for no other
+                // purpose.
+                guard state.pendingKeystoneSigning != nil else { return .none }
+                return .send(.keystoneScanAbandoned)
 
             case .keystoneSignRejected:
                 state.pendingKeystoneSigning = nil
@@ -325,11 +365,32 @@ extension MigrationCoordFlow {
         return .run { [migrationBGScheduler] _ in await migrationBGScheduler.scheduleFirstWindow() }
     }
 
-    // MARK: - Keystone signing (MOB-1468): resume after submit/store
+    // MARK: - Keystone signing (MOB-1468/1469): queue start + resume after submit/store
 
-    /// Pops `scan`+`keystoneSign` (the two elements the QR round-trip pushed) and resumes whichever
-    /// chain `context` represents, mirroring how the equivalent software `.confirmed` row would
-    /// proceed from the now-topmost signing-source element:
+    /// Seeds the sequential signing queue and pushes session 1's sign screen. An unusable hand-off
+    /// — no PCZTs, or ANY empty placeholder (the engine returns `Pczt()` / `[]` when the propose
+    /// failed) — starts nothing: dropping only the empty ones would silently break the index
+    /// pairing with the engine's cached transfer ids, so the whole set is refused and the user
+    /// stays on the signing source to re-initiate from its confirm button.
+    private func startKeystoneSigningQueue(
+        context: MigrationCoordFlow.KeystoneSigningContext,
+        pczts: [Pczt],
+        state: inout MigrationCoordFlow.State
+    ) -> Effect<MigrationCoordFlow.Action> {
+        guard let first = pczts.first, pczts.allSatisfy({ !$0.isEmpty }) else { return .none }
+
+        state.pendingKeystoneSigning = MigrationCoordFlow.KeystoneSigningQueue(context: context, pending: pczts)
+        state.path.append(
+            .keystoneSign(
+                MigrationKeystoneSign.State(pczt: first, sessionIndex: 1, sessionTotal: pczts.count)
+            )
+        )
+        return .none
+    }
+
+    /// Pops `scan`+`keystoneSign` (the two elements the final QR session pushed) and resumes
+    /// whichever chain `context` represents, mirroring how the equivalent software `.confirmed`
+    /// row would proceed from the now-topmost signing-source element:
     /// - `.noteSplit`: mutates the `noteSplit` element now on top in place (the `isRescheduling`
     ///   precedent) — `phase = .splitting`, `signedNoteSplitPczt` set to the PCZT that was
     ///   submitted — then applies `result` exactly like that element's own `.splitResult` handling

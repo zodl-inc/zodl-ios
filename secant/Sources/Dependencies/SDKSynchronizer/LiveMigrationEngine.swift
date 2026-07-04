@@ -66,6 +66,18 @@ final class LiveMigrationEngine: @unchecked Sendable {
         /// refreshed. Takes no key — the live gateway derives the `UnifiedSpendingKey` internally.
         var refreshStale: @Sendable (AccountUUID) async throws -> UInt32
         var initializePostUpgrade: @Sendable (AccountUUID) async throws -> Void
+        // Keystone (PCZT) external-signer path (MOB-1469 P4). The SDK returns proof-less unsigned
+        // PCZTs and keeps the proven originals staged internally — never add proofs app-side.
+        var proposeNoteSplitPCZT: @Sendable (AccountUUID) async throws -> Pczt
+        var proposeTransferPCZTs: @Sendable (
+            ZcashLightClientKit.MigrationSchedule,
+            AccountUUID
+        ) async throws -> [ZcashLightClientKit.MigrationTransferPCZT]
+        var storeSignedTransferPCZTs: @Sendable ([ZcashLightClientKit.MigrationTransferPCZT], AccountUUID) async throws -> Void
+        var submitSignedNoteSplitPCZT: @Sendable (Pczt, AccountUUID) async throws -> ZcashLightClientKit.TransferResult
+        /// Strips the PCZT down to what the signing device needs (the send flow's
+        /// `redactPCZTForSigner`) — run on every proposed PCZT before it reaches a QR encoder.
+        var redactPCZT: @Sendable (Pczt) async throws -> Pczt
     }
 
     /// The cached snapshot serving the synchronous getters. SDK-derived fields are refreshed by
@@ -81,6 +93,14 @@ final class LiveMigrationEngine: @unchecked Sendable {
         var orchard: Zatoshi = .zero
         var schedule: MigrationSchedule?
         var mode: MigrationMode = .privateScheduled
+        /// Keystone (PCZT) session pairing: the transfer ids from the last `proposeTransferPCZTs`
+        /// call, in proposal order. The signed PCZTs come back positionally (session i signs the
+        /// i-th proposed PCZT), so `storeSignedTransferPCZTs` re-pairs them by zipping this order
+        /// with the signed array — cleared only once a store succeeds.
+        var pendingTransferPCZTIds: [String] = []
+        /// The schedule those PCZTs were built from — persisted as pending rows (like
+        /// `signAndStore`) once the signed set stores.
+        var pendingTransferPCZTSchedule: MigrationSchedule?
 
         /// The app-facing state after stall synthesis — see `LiveMigrationEngine.synthesizeAppState`.
         var appState: MigrationState { LiveMigrationEngine.synthesizeAppState(from: sdkState, overdue: overdue) }
@@ -252,6 +272,106 @@ final class LiveMigrationEngine: @unchecked Sendable {
             return result.app
         } catch {
             logFailure("submitNoteSplit", error)
+            return TransferResult.networkError(retryable: true)
+        }
+    }
+
+    // MARK: - Keystone (PCZT) external-signer path (MOB-1469 P4)
+
+    /// The note-split transaction as a REDACTED, QR-ready PCZT for the signing device. The SDK
+    /// stages the proven original internally; redaction happens here so the member's contract is
+    /// "feed the result straight to `urEncoderForPCZT`". An empty `Pczt` signals failure — the
+    /// coordinator treats it as "nothing to sign" and never starts a session.
+    func proposeNoteSplitPCZT() async -> Pczt {
+        guard let account = await gateway.currentAccountID() else {
+            logSkipped("proposeNoteSplitPCZT")
+            return Pczt()
+        }
+        do {
+            let pczt = try await gateway.proposeNoteSplitPCZT(account)
+            return try await gateway.redactPCZT(pczt)
+        } catch {
+            logFailure("proposeNoteSplitPCZT", error)
+            return Pczt()
+        }
+    }
+
+    /// One REDACTED, QR-ready PCZT per transfer of the confirmed `schedule`, in proposal order.
+    /// Caches the transfer-id order (and the schedule) for `storeSignedTransferPCZTs`: the signed
+    /// PCZTs handed back later pair with these ids BY INDEX, so callers must preserve the order.
+    /// An empty array signals failure — the coordinator never starts a session.
+    func proposeTransferPCZTs(_ schedule: MigrationSchedule) async -> [Pczt] {
+        guard let account = await gateway.currentAccountID() else {
+            logSkipped("proposeMigrationTransferPCZTs")
+            return []
+        }
+        do {
+            let pairs = try await gateway.proposeTransferPCZTs(schedule.sdk, account)
+            var redacted: [Pczt] = []
+            redacted.reserveCapacity(pairs.count)
+            for pair in pairs {
+                redacted.append(try await gateway.redactPCZT(pair.pczt))
+            }
+            protected.withLockUnchecked {
+                $0.pendingTransferPCZTIds = pairs.map(\.id)
+                $0.pendingTransferPCZTSchedule = schedule
+            }
+            return redacted
+        } catch {
+            logFailure("proposeMigrationTransferPCZTs", error)
+            return []
+        }
+    }
+
+    /// Stores the full signed set — all-or-nothing. Rebuilds the id↔PCZT pairs by zipping the
+    /// cached `proposeTransferPCZTs` id order with `signed` (same order, same count); a count
+    /// mismatch or missing cache stores nothing (the invariant the SDK enforces crate-side too).
+    /// On success the schedule rows persist as pending exactly like `signAndStore`; on a thrown
+    /// store nothing was stored — the cache is kept so the whole set can be retried.
+    func storeSignedTransferPCZTs(_ signed: [Pczt]) async {
+        guard let account = await gateway.currentAccountID() else {
+            logSkipped("storeSignedMigrationTransferPCZTs")
+            return
+        }
+        let (ids, schedule) = read { ($0.pendingTransferPCZTIds, $0.pendingTransferPCZTSchedule) }
+        guard !ids.isEmpty, ids.count == signed.count else {
+            logger.error(
+                "Migration signed-PCZT store skipped: \(signed.count, privacy: .public) signed vs \(ids.count, privacy: .public) cached ids."
+            )
+            return
+        }
+        let pairs = zip(ids, signed).map { ZcashLightClientKit.MigrationTransferPCZT(id: $0, pczt: $1) }
+        do {
+            try await gateway.storeSignedTransferPCZTs(pairs, account)
+            protected.withLockUnchecked {
+                $0.pendingTransferPCZTIds = []
+                $0.pendingTransferPCZTSchedule = nil
+            }
+            if let schedule {
+                setSchedule(schedule)
+            }
+            await refresh()
+        } catch {
+            // All-or-nothing: nothing was stored, the staged originals persist SDK-side and the
+            // cached pairing persists here, so the flow may retry with the same signed set.
+            logFailure("storeSignedMigrationTransferPCZTs", error)
+        }
+    }
+
+    /// Stores + broadcasts the device-signed note-split PCZT (the external-signer counterpart of
+    /// `submitSplit`). Retryable with the SAME signed PCZT — the SDK re-broadcasts the stored prep
+    /// transaction without double-storing.
+    func submitSignedNoteSplit(_ pczt: Pczt) async -> TransferResult {
+        guard let account = await gateway.currentAccountID() else {
+            logSkipped("submitSignedNoteSplitPCZT")
+            return TransferResult.networkError(retryable: true)
+        }
+        do {
+            let result = try await gateway.submitSignedNoteSplitPCZT(pczt, account)
+            await refresh()
+            return result.app
+        } catch {
+            logFailure("submitSignedNoteSplitPCZT", error)
             return TransferResult.networkError(retryable: true)
         }
     }

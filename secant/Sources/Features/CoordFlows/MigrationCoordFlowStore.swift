@@ -9,9 +9,11 @@
 //  `sendFormState`); every other screen lives in `path`. Everything here runs against the inert
 //  SDK stubs — it goes live when the real SDK (MOB-1455) fills them in.
 //
-//  MOB-1468 (Keystone) adds `keystoneSign`/`scan` path elements and `pendingKeystoneSigning`: the
-//  three signing sources (NoteSplit/TransferPlan/ReviewTransfer) delegate `.keystoneSignRequested`
-//  instead of signing locally, the coordinator routes through a QR sign/scan round-trip, then
+//  MOB-1468/1469 (Keystone) adds `keystoneSign`/`scan` path elements and `pendingKeystoneSigning`:
+//  the three signing sources (NoteSplit/TransferPlan/ReviewTransfer) delegate
+//  `.keystoneSignRequested` instead of signing locally, the coordinator runs one QR sign/scan
+//  round-trip PER PCZT (sequential sessions — the send flow's proven single-PCZT UR format; no
+//  device firmware understands a batch format), collects the signed PCZTs in proposal order, then
 //  resumes whichever chain the source represents. See `MigrationCoordFlowCoordinator.swift`'s
 //  Keystone rows for the routing table.
 //
@@ -22,14 +24,25 @@ import ComposableArchitecture
 
 @Reducer
 struct MigrationCoordFlow {
-    /// MOB-1468 (Keystone): which signing source is awaiting/mid QR round-trip, so
-    /// `scan(.foundPCZTBatch)` knows which chain to resume once the signed PCZTs come back.
+    /// MOB-1468 (Keystone): which signing source initiated the queue, so the final
+    /// `scan(.foundPCZT)` knows which chain to resume once every signed PCZT is collected.
     enum KeystoneSigningContext: Equatable {
         case noteSplit
         /// Fresh + re-created plans (`requiresSigning == true`) — the rescheduled variant never
         /// re-signs, so it never reaches this context.
         case planCommit
         case immediateReview
+    }
+
+    /// MOB-1469 (Keystone P4): the sequential signing queue — one QR sign/scan session per PCZT.
+    /// `pending` holds the redacted, QR-ready PCZTs in PROPOSAL ORDER (the engine cached the
+    /// matching transfer ids; the signed set is re-paired with them by index, so the order is
+    /// load-bearing). `signed` collects the device-signed PCZTs; `signed.count` is both the number
+    /// of completed sessions and the index of the next pending PCZT.
+    struct KeystoneSigningQueue: Equatable {
+        var context: KeystoneSigningContext
+        var pending: [Pczt]
+        var signed: [Pczt] = []
     }
 
     @Reducer(state: .equatable)
@@ -59,10 +72,11 @@ struct MigrationCoordFlow {
         /// Held here once confirmed on the Network Privacy screen (or defaulted when S5 is
         /// skipped) so Sending's coordinator-configured state can inject it.
         var networkPrivacyOptions = NetworkPrivacyOptions(useTor: false, submissionEndpoint: nil)
-        /// MOB-1468 (Keystone): set when a `.keystoneSignRequested` delegate pushes `keystoneSign`,
-        /// cleared once the QR round-trip resolves (either resumed via `foundPCZTBatch` or backed
-        /// out via `.rejected`).
-        var pendingKeystoneSigning: KeystoneSigningContext?
+        /// MOB-1468/1469 (Keystone): set when a `.keystoneSignRequested` delegate starts the
+        /// sequential signing queue, cleared once every session resolves (submit/store fired) or
+        /// the user rejects/abandons ANY session (which discards every collected signature — the
+        /// all-or-nothing store means a partial set is worthless).
+        var pendingKeystoneSigning: KeystoneSigningQueue?
 
         init() { }
     }
@@ -97,24 +111,33 @@ struct MigrationCoordFlow {
         /// Internal: sendNow's Sending screen finished (`.closed`) — refresh the `.status` element
         /// beneath with freshly-read rows and pop back to it.
         case sendNowCompleted(rows: [MigrationTransferRow])
-        /// Internal: MOB-1468 Keystone `scan(.foundPCZTBatch)` finished submitting (noteSplit) or
-        /// storing (planCommit/immediateReview) the signed PCZTs — pops `scan`+`keystoneSign` and
-        /// resumes the chain `context` represents. `result` carries the noteSplit broadcast outcome
-        /// (mirrors the software `.splitResult` handling) and `signedPczt` the PCZT that was
-        /// submitted (so the mutated `noteSplit` element can hold it for `retryTapped`); both `nil`
-        /// for the other two contexts, whose `storeSignedMigrationTransactions` call returns `Void`.
+        /// Internal: MOB-1468/1469 — the LAST session's `scan(.foundPCZT)` finished submitting
+        /// (noteSplit) or storing (planCommit/immediateReview) the collected signed PCZTs — pops
+        /// `scan`+`keystoneSign` and resumes the chain `context` represents. `result` carries the
+        /// noteSplit broadcast outcome (mirrors the software `.splitResult` handling) and
+        /// `signedPczt` the PCZT that was submitted (so the mutated `noteSplit` element can hold
+        /// it for `retryTapped`); both `nil` for the other two contexts, whose
+        /// `storeSignedMigrationTransactions` call returns `Void`.
         case keystoneSigningSubmitted(context: KeystoneSigningContext, result: TransferResult?, signedPczt: Pczt?)
+        /// Internal: MOB-1469 — a mid-queue `scan(.foundPCZT)` collected a signature with sessions
+        /// still remaining. Pops `scan` + the finished `keystoneSign` and pushes the next
+        /// session's sign screen. Deferred to a follow-up self-action for the same reason as
+        /// `keystoneSignRejected` — the acting `scan` element must outlive `.forEach`'s delivery.
+        case keystoneNextSigningSession
         /// Internal: MOB-1468 `keystoneSign(.delegate(.rejected))`'s pop, deferred to a follow-up
         /// self-action for the same reason `sendNowCompleted` defers its pop — popping the
         /// `keystoneSign` element inline in the `.path(.element(...))` case would race
         /// `.forEach(\.path, action:)`'s delivery of that same action to the (then-missing) element.
+        /// Discards the whole queue, collected signatures included.
         case keystoneSignRejected
-        /// Internal: an empty scanned batch abandons the signing session — pops BOTH the `scan`
-        /// and `keystoneSign` elements back to the initiating screen (deferred like
-        /// `keystoneSignRejected`, since `scan` is the acting element) and clears the context.
+        /// Internal: the user cancelled the scan mid-queue — pops BOTH the `scan` and
+        /// `keystoneSign` elements back to the initiating screen (deferred like
+        /// `keystoneSignRejected`, since `scan` is the acting element) and discards the whole
+        /// queue. Consistent with the all-or-nothing store: a partial signature set is worthless.
         case keystoneScanAbandoned
     }
 
+    @Dependency(\.keystoneHandler) var keystoneHandler
     @Dependency(\.migrationBGScheduler) var migrationBGScheduler
     @Dependency(\.migrationManager) var migrationManager
     @Dependency(\.sdkSynchronizer) var sdkSynchronizer

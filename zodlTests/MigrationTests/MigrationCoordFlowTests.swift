@@ -6,14 +6,17 @@
 //  for MOB-1466: re-entry routing (`.onAppear`), the chaining table from Entry through Complete
 //  for all three modes (immediate/scheduled/manual), the permission-step helper's skip logic,
 //  sendNow/reschedule/recovery orchestration, and every flow-root close path's `.flowFinished`
-//  emission. Also covers MOB-1468's Keystone signing round-trip: each of the three signing
-//  sources' `.keystoneSignRequested` delegate sets `pendingKeystoneSigning` and pushes
-//  `keystoneSign`; `keystoneSign(.delegate(.getSignature))` pushes `scan` configured with the
-//  migration batch checker; `scan(.foundPCZTBatch)` routes to the right SDK member per context, pops
-//  `scan`+`keystoneSign`, and resumes the matching chain (noteSplit splitting phase / plan
-//  post-confirm / immediate sending) — verified with order-asserting spies; `.rejected` pops back to
-//  the signing source with its state intact and clears the context; the no-partial-storage invariant
-//  (reject, or an empty scanned batch, never calls submit/store). `.serialized`: every
+//  emission. Also covers MOB-1468/1469's SEQUENTIAL Keystone signing queue: each of the three
+//  signing sources' `.keystoneSignRequested` delegate seeds `pendingKeystoneSigning` and pushes
+//  `keystoneSign` for session 1 of N; `keystoneSign(.delegate(.getSignature))` pushes `scan`
+//  configured with the send flow's single-PCZT checker; each `scan(.foundPCZT)` collects the
+//  signature and either advances the queue (pop scan+sign, push the next session) or, after the
+//  last session, submits/stores the FULL set ONCE in proposal order and resumes the matching chain
+//  (noteSplit splitting phase / plan post-confirm / immediate sending) — verified with
+//  order-asserting spies; `.rejected` and a mid-queue scan cancel discard EVERY collected
+//  signature and pop back to the signing source with its state intact (no-partial-storage
+//  invariant: neither path ever calls submit/store); an unusable propose hand-off (empty array or
+//  empty placeholder PCZTs) starts no session at all. `.serialized`: every
 //  `MigrationCoordFlow.State()` carries a `MigrationEntry.State` (`entryState`), which reads the
 //  process-global `@Shared(.inMemory(.selectedWalletAccount))` on init — matching the precedent in
 //  `MigrationEntryTests`, which mutates the same key directly.
@@ -377,9 +380,9 @@ import ComposableArchitecture
         #expect(sendingState.networkPrivacyOptions == NetworkPrivacyOptions(useTor: true, submissionEndpoint: nil))
     }
 
-    // MARK: - MOB-1468: Keystone signing — signRequested sets context + pushes keystoneSign
+    // MARK: - MOB-1468/1469: Keystone signing — signRequested seeds the queue + pushes session 1
 
-    @MainActor @Test func noteSplitKeystoneSignRequestedSetsNoteSplitContextAndPushesKeystoneSign() async {
+    @MainActor @Test func noteSplitKeystoneSignRequestedSeedsNoteSplitQueueAndPushesFirstSession() async {
         var state = MigrationCoordFlow.State()
         state.path.append(.noteSplit(MigrationNoteSplit.State(phase: .explainer)))
         let store = TestStore(initialState: state) {
@@ -390,15 +393,20 @@ import ComposableArchitecture
         let pczts: [Pczt] = [Data([0xAA])]
         await store.send(.path(.element(id: 0, action: .noteSplit(.delegate(.keystoneSignRequested(pczts))))))
 
-        #expect(store.state.pendingKeystoneSigning == MigrationCoordFlow.KeystoneSigningContext.noteSplit)
+        let queue = store.state.pendingKeystoneSigning
+        #expect(queue?.context == MigrationCoordFlow.KeystoneSigningContext.noteSplit)
+        #expect(queue?.pending == pczts)
+        #expect(queue?.signed.isEmpty == true)
         guard case let .keystoneSign(signState) = try? #require(store.state.path.last) else {
             Issue.record("Expected .keystoneSign pushed on top")
             return
         }
-        #expect(signState.pczts == pczts)
+        #expect(signState.pczt == pczts[0])
+        #expect(signState.sessionIndex == 1)
+        #expect(signState.sessionTotal == 1)
     }
 
-    @MainActor @Test func transferPlanKeystoneSignRequestedSetsPlanCommitContextAndPushesKeystoneSign() async {
+    @MainActor @Test func transferPlanKeystoneSignRequestedSeedsPlanCommitQueueAndPushesSessionOneOfN() async {
         var state = MigrationCoordFlow.State()
         state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .scheduled)))
         let store = TestStore(initialState: state) {
@@ -409,15 +417,21 @@ import ComposableArchitecture
         let pczts: [Pczt] = [Data([0xAA]), Data([0xBB])]
         await store.send(.path(.element(id: 0, action: .transferPlan(.delegate(.keystoneSignRequested(pczts))))))
 
-        #expect(store.state.pendingKeystoneSigning == MigrationCoordFlow.KeystoneSigningContext.planCommit)
+        let queue = store.state.pendingKeystoneSigning
+        #expect(queue?.context == MigrationCoordFlow.KeystoneSigningContext.planCommit)
+        #expect(queue?.pending == pczts)
         guard case let .keystoneSign(signState) = try? #require(store.state.path.last) else {
             Issue.record("Expected .keystoneSign pushed on top")
             return
         }
-        #expect(signState.pczts == pczts)
+        // Session 1 of 2 signs the FIRST proposed PCZT — the order pairs with the engine's cached
+        // transfer ids by index, so it is load-bearing.
+        #expect(signState.pczt == pczts[0])
+        #expect(signState.sessionIndex == 1)
+        #expect(signState.sessionTotal == 2)
     }
 
-    @MainActor @Test func reviewTransferKeystoneSignRequestedSetsImmediateReviewContextAndPushesKeystoneSign() async {
+    @MainActor @Test func reviewTransferKeystoneSignRequestedSeedsImmediateReviewQueue() async {
         var state = MigrationCoordFlow.State()
         state.path.append(.reviewTransfer(MigrationReviewTransfer.State(mode: .immediate)))
         let store = TestStore(initialState: state) {
@@ -428,23 +442,50 @@ import ComposableArchitecture
         let pczts: [Pczt] = [Data([0xCC])]
         await store.send(.path(.element(id: 0, action: .reviewTransfer(.delegate(.keystoneSignRequested(pczts))))))
 
-        #expect(store.state.pendingKeystoneSigning == MigrationCoordFlow.KeystoneSigningContext.immediateReview)
+        let queue = store.state.pendingKeystoneSigning
+        #expect(queue?.context == MigrationCoordFlow.KeystoneSigningContext.immediateReview)
+        #expect(queue?.pending == pczts)
         guard case let .keystoneSign(signState) = try? #require(store.state.path.last) else {
             Issue.record("Expected .keystoneSign pushed on top")
             return
         }
-        #expect(signState.pczts == pczts)
+        #expect(signState.pczt == pczts[0])
     }
 
-    // MARK: - MOB-1468: Keystone signing — getSignature pushes scan with the migration batch checker
-
-    @MainActor @Test func keystoneSignGetSignaturePushesScanConfiguredWithMigrationBatchChecker() async {
+    @MainActor @Test func keystoneSignRequestedWithNoUsablePCZTsStartsNoSession() async {
+        // The engine signals a failed propose with an empty array (plan/immediate) or an empty
+        // placeholder `Pczt()` (note split) — neither may start a signing session: the user stays
+        // on the source screen and re-initiates from its confirm button. A partially empty set is
+        // refused whole too: dropping only the empty ones would silently break the index pairing
+        // with the engine's cached transfer ids.
         var state = MigrationCoordFlow.State()
-        state.pendingKeystoneSigning = .noteSplit
         state.path.append(.noteSplit(MigrationNoteSplit.State(phase: .explainer)))
-        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: [Pczt()])))
+        state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .scheduled)))
         let store = TestStore(initialState: state) {
             MigrationCoordFlow()
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 0, action: .noteSplit(.delegate(.keystoneSignRequested([Pczt()]))))))
+        await store.send(.path(.element(id: 1, action: .transferPlan(.delegate(.keystoneSignRequested([]))))))
+        await store.send(.path(.element(id: 1, action: .transferPlan(.delegate(.keystoneSignRequested([Data([0x01]), Pczt()]))))))
+
+        #expect(store.state.pendingKeystoneSigning == nil)
+        #expect(store.state.path.count == 2)
+    }
+
+    // MARK: - MOB-1468/1469: Keystone signing — getSignature pushes scan with the send flow's checker
+
+    @MainActor @Test func keystoneSignGetSignaturePushesScanConfiguredWithSinglePCZTChecker() async {
+        let resetCalls = LockIsolated<Int>(0)
+        var state = MigrationCoordFlow.State()
+        state.pendingKeystoneSigning = MigrationCoordFlow.KeystoneSigningQueue(context: .noteSplit, pending: [Data([0xAA])])
+        state.path.append(.noteSplit(MigrationNoteSplit.State(phase: .explainer)))
+        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczt: Data([0xAA]))))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.keystoneHandler.resetQRDecoder = { resetCalls.withValue { $0 += 1 } }
         }
         store.exhaustivity = .off
 
@@ -454,18 +495,79 @@ import ComposableArchitecture
             Issue.record("Expected .scan pushed on top")
             return
         }
-        #expect(scanState.checkers == [.keystoneMigrationBatchScanChecker])
+        #expect(scanState.checkers == [.keystonePCZTScanChecker])
+        // The UR decoder latches after a completed decode — every session's scan must be preceded
+        // by a reset or the next session decodes nothing.
+        #expect(resetCalls.value == 1)
     }
 
-    // MARK: - MOB-1468: Keystone signing — foundPCZTBatch resumes noteSplit
+    // MARK: - MOB-1469: Keystone signing — sequential queue runs one session per PCZT
 
-    @MainActor @Test func foundPCZTBatchForNoteSplitContextSubmitsSignedPcztPopsAndMutatesNoteSplitIntoSplittingPhase() async {
+    @MainActor @Test func twoTransferPlanQueueRunsTwoSessionsThenStoresOnceInProposalOrder() async {
+        let storeCalls = LockIsolated<[[Pczt]]>([])
+        let scheduleCalls = LockIsolated<Int>(0)
+        let pending: [Pczt] = [Data([0x01]), Data([0x02])]
+        let signedFirst: Pczt = Data([0xA1])
+        let signedSecond: Pczt = Data([0xA2])
+        var state = MigrationCoordFlow.State()
+        state.pendingKeystoneSigning = MigrationCoordFlow.KeystoneSigningQueue(context: .planCommit, pending: pending)
+        state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .scheduled)))
+        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczt: pending[0], sessionIndex: 1, sessionTotal: 2)))
+        state.path.append(.scan(Scan.State.initial))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.keystoneHandler.resetQRDecoder = { }
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.storeSignedMigrationTransactions = { stored in storeCalls.withValue { $0.append(stored) } }
+            $0.migrationBGScheduler.scheduleFirstWindow = { scheduleCalls.withValue { $0 += 1 } }
+        }
+        store.exhaustivity = .off
+
+        // Session 1 of 2: the scanned signature is collected, scan+sign pop, session 2 pushes.
+        await store.send(.path(.element(id: 2, action: .scan(.foundPCZT(signedFirst)))))
+        await store.receive(\.keystoneNextSigningSession)
+
+        #expect(storeCalls.value.isEmpty)
+        #expect(store.state.pendingKeystoneSigning?.signed == [signedFirst])
+        #expect(store.state.path.count == 2)
+        guard case let .keystoneSign(secondSession) = try? #require(store.state.path.last) else {
+            Issue.record("Expected session 2's .keystoneSign pushed after session 1 completed")
+            return
+        }
+        #expect(secondSession.pczt == pending[1])
+        #expect(secondSession.sessionIndex == 2)
+        #expect(secondSession.sessionTotal == 2)
+
+        // Session 2 of 2: scan pushes again, the final signature triggers ONE store with the full
+        // collected set in proposal order, then the scheduled screen resumes the chain.
+        await store.send(.path(.element(id: 3, action: .keystoneSign(.delegate(.getSignature)))))
+        await store.send(.path(.element(id: 4, action: .scan(.foundPCZT(signedSecond)))))
+        await store.receive(\.keystoneSigningSubmitted)
+
+        #expect(storeCalls.value == [[signedFirst, signedSecond]])
+        #expect(scheduleCalls.value == 1)
+        #expect(store.state.pendingKeystoneSigning == nil)
+        #expect(store.state.path.count == 2)
+        guard case .scheduled = try? #require(store.state.path.last) else {
+            Issue.record("Expected .scheduled pushed on top of the retained .transferPlan element")
+            return
+        }
+        guard case .transferPlan = try? #require(store.state.path[id: 0]) else {
+            Issue.record("Expected .transferPlan retained at the bottom (never re-signs again)")
+            return
+        }
+    }
+
+    // MARK: - MOB-1468/1469: Keystone signing — final foundPCZT resumes noteSplit
+
+    @MainActor @Test func foundPCZTForNoteSplitContextSubmitsSignedPcztPopsAndMutatesNoteSplitIntoSplittingPhase() async {
         let callOrder = LockIsolated<[String]>([])
         let signed: Pczt = Data([0xAA])
         var state = MigrationCoordFlow.State()
-        state.pendingKeystoneSigning = .noteSplit
+        state.pendingKeystoneSigning = MigrationCoordFlow.KeystoneSigningQueue(context: .noteSplit, pending: [Data([0x0A])])
         state.path.append(.noteSplit(MigrationNoteSplit.State(phase: .explainer)))
-        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: [signed])))
+        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczt: Data([0x0A]))))
         state.path.append(.scan(Scan.State.initial))
         let store = TestStore(initialState: state) {
             MigrationCoordFlow()
@@ -481,9 +583,10 @@ import ComposableArchitecture
         }
         store.exhaustivity = .off
 
-        await store.send(.path(.element(id: 2, action: .scan(.foundPCZTBatch([signed])))))
+        await store.send(.path(.element(id: 2, action: .scan(.foundPCZT(signed)))))
         await store.receive(\.keystoneSigningSubmitted)
 
+        // The SCANNED (device-signed) PCZT is what gets submitted — not the unsigned original.
         #expect(callOrder.value == ["submitSignedNoteSplit(\(signed))"])
         #expect(store.state.pendingKeystoneSigning == nil)
         #expect(store.state.path.count == 1)
@@ -497,12 +600,12 @@ import ComposableArchitecture
         #expect(noteSplitState.isFailurePresented == false)
     }
 
-    @MainActor @Test func foundPCZTBatchForNoteSplitContextWithFailureResultPresentsFailureSheetAndKeepsSignedPczt() async {
+    @MainActor @Test func foundPCZTForNoteSplitContextWithFailureResultPresentsFailureSheetAndKeepsSignedPczt() async {
         let signed: Pczt = Data([0xBB])
         var state = MigrationCoordFlow.State()
-        state.pendingKeystoneSigning = .noteSplit
+        state.pendingKeystoneSigning = MigrationCoordFlow.KeystoneSigningQueue(context: .noteSplit, pending: [Data([0x0B])])
         state.path.append(.noteSplit(MigrationNoteSplit.State(phase: .explainer)))
-        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: [signed])))
+        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczt: Data([0x0B]))))
         state.path.append(.scan(Scan.State.initial))
         let store = TestStore(initialState: state) {
             MigrationCoordFlow()
@@ -512,63 +615,28 @@ import ComposableArchitecture
         }
         store.exhaustivity = .off
 
-        await store.send(.path(.element(id: 2, action: .scan(.foundPCZTBatch([signed])))))
+        await store.send(.path(.element(id: 2, action: .scan(.foundPCZT(signed)))))
         await store.receive(\.keystoneSigningSubmitted)
 
         guard case let .noteSplit(noteSplitState) = try? #require(store.state.path.last) else {
             Issue.record("Expected .noteSplit remaining on top")
             return
         }
+        // The failure sheet's Retry re-broadcasts this SAME signed PCZT — it must survive here.
         #expect(noteSplitState.phase == MigrationNoteSplit.State.Phase.splitting)
         #expect(noteSplitState.isFailurePresented == true)
         #expect(noteSplitState.signedNoteSplitPczt == signed)
     }
 
-    // MARK: - MOB-1468: Keystone signing — foundPCZTBatch resumes planCommit (shared post-confirm chain)
+    // MARK: - MOB-1468/1469: Keystone signing — final foundPCZT resumes planCommit (manual variant)
 
-    @MainActor @Test func foundPCZTBatchForPlanCommitContextStoresPopsAndPushesScheduledForScheduledVariant() async {
-        let callOrder = LockIsolated<[String]>([])
-        let signed: [Pczt] = [Data([0xAA]), Data([0xBB])]
-        var state = MigrationCoordFlow.State()
-        state.pendingKeystoneSigning = .planCommit
-        state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .scheduled)))
-        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: signed)))
-        state.path.append(.scan(Scan.State.initial))
-        let store = TestStore(initialState: state) {
-            MigrationCoordFlow()
-        } withDependencies: {
-            $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.storeSignedMigrationTransactions = { stored in
-                #expect(stored == signed)
-                callOrder.withValue { $0.append("store") }
-            }
-            $0.migrationBGScheduler.scheduleFirstWindow = { callOrder.withValue { $0.append("scheduleFirstWindow") } }
-        }
-        store.exhaustivity = .off
-
-        await store.send(.path(.element(id: 2, action: .scan(.foundPCZTBatch(signed)))))
-        await store.receive(\.keystoneSigningSubmitted)
-
-        #expect(callOrder.value == ["store", "scheduleFirstWindow"])
-        #expect(store.state.pendingKeystoneSigning == nil)
-        #expect(store.state.path.count == 2)
-        guard case .scheduled = try? #require(store.state.path.last) else {
-            Issue.record("Expected .scheduled pushed on top of the retained .transferPlan element")
-            return
-        }
-        guard case .transferPlan = try? #require(store.state.path[id: 0]) else {
-            Issue.record("Expected .transferPlan retained at the bottom (never re-signs again)")
-            return
-        }
-    }
-
-    @MainActor @Test func foundPCZTBatchForPlanCommitContextPushesSendingForManualVariant() async {
-        let signed: [Pczt] = [Data([0xCC])]
+    @MainActor @Test func foundPCZTForPlanCommitContextPushesSendingForManualVariant() async {
+        let signed: Pczt = Data([0xCC])
         var state = MigrationCoordFlow.State()
         state.networkPrivacyOptions = NetworkPrivacyOptions(useTor: true, submissionEndpoint: nil)
-        state.pendingKeystoneSigning = .planCommit
+        state.pendingKeystoneSigning = MigrationCoordFlow.KeystoneSigningQueue(context: .planCommit, pending: [Data([0x0C])])
         state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .manual)))
-        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: signed)))
+        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczt: Data([0x0C]))))
         state.path.append(.scan(Scan.State.initial))
         let store = TestStore(initialState: state) {
             MigrationCoordFlow()
@@ -579,7 +647,7 @@ import ComposableArchitecture
         }
         store.exhaustivity = .off
 
-        await store.send(.path(.element(id: 2, action: .scan(.foundPCZTBatch(signed)))))
+        await store.send(.path(.element(id: 2, action: .scan(.foundPCZT(signed)))))
         await store.receive(\.keystoneSigningSubmitted)
 
         guard case let .sending(sendingState) = try? #require(store.state.path.last) else {
@@ -590,16 +658,16 @@ import ComposableArchitecture
         #expect(sendingState.networkPrivacyOptions == NetworkPrivacyOptions(useTor: true, submissionEndpoint: nil))
     }
 
-    // MARK: - MOB-1468: Keystone signing — foundPCZTBatch resumes immediateReview
+    // MARK: - MOB-1468/1469: Keystone signing — final foundPCZT resumes immediateReview
 
-    @MainActor @Test func foundPCZTBatchForImmediateReviewContextStoresPopsAndPushesSending() async {
+    @MainActor @Test func foundPCZTForImmediateReviewContextStoresPopsAndPushesSending() async {
         let storeCalls = LockIsolated<[[Pczt]]>([])
-        let signed: [Pczt] = [Data([0xDD])]
+        let signed: Pczt = Data([0xDD])
         var state = MigrationCoordFlow.State()
         state.networkPrivacyOptions = NetworkPrivacyOptions(useTor: false, submissionEndpoint: nil)
-        state.pendingKeystoneSigning = .immediateReview
+        state.pendingKeystoneSigning = MigrationCoordFlow.KeystoneSigningQueue(context: .immediateReview, pending: [Data([0x0D])])
         state.path.append(.reviewTransfer(MigrationReviewTransfer.State(mode: .immediate)))
-        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: signed)))
+        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczt: Data([0x0D]))))
         state.path.append(.scan(Scan.State.initial))
         let store = TestStore(initialState: state) {
             MigrationCoordFlow()
@@ -609,10 +677,10 @@ import ComposableArchitecture
         }
         store.exhaustivity = .off
 
-        await store.send(.path(.element(id: 2, action: .scan(.foundPCZTBatch(signed)))))
+        await store.send(.path(.element(id: 2, action: .scan(.foundPCZT(signed)))))
         await store.receive(\.keystoneSigningSubmitted)
 
-        #expect(storeCalls.value == [signed])
+        #expect(storeCalls.value == [[signed]])
         #expect(store.state.pendingKeystoneSigning == nil)
         #expect(store.state.path.count == 2)
         guard case let .sending(sendingState) = try? #require(store.state.path.last) else {
@@ -626,46 +694,47 @@ import ComposableArchitecture
         }
     }
 
-    // MARK: - MOB-1468: Keystone signing — empty batch never submits/stores (no-partial-storage)
+    // MARK: - MOB-1468/1469: Keystone signing — mid-queue abandonment (no-partial-storage)
 
-    @MainActor @Test func foundPCZTBatchWithEmptyArrayForNoteSplitContextAbandonsSessionWithoutSubmitting() async {
-        let submitCalls = LockIsolated<Int>(0)
+    @MainActor @Test func midQueueRejectDiscardsAllCollectedSignaturesAndPopsToPlan() async {
+        let storeCalls = LockIsolated<Int>(0)
+        var queue = MigrationCoordFlow.KeystoneSigningQueue(context: .planCommit, pending: [Data([0x01]), Data([0x02])])
+        queue.signed = [Data([0xA1])]
         var state = MigrationCoordFlow.State()
-        state.pendingKeystoneSigning = .noteSplit
-        state.path.append(.noteSplit(MigrationNoteSplit.State(phase: .explainer)))
-        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: [Pczt()])))
-        state.path.append(.scan(Scan.State.initial))
+        state.pendingKeystoneSigning = queue
+        state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .scheduled)))
+        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczt: Data([0x02]), sessionIndex: 2, sessionTotal: 2)))
         let store = TestStore(initialState: state) {
             MigrationCoordFlow()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.submitSignedNoteSplit = { _ in
-                submitCalls.withValue { $0 += 1 }
-                return .success(txId: "should-not-be-called")
-            }
+            $0.sdkSynchronizer.storeSignedMigrationTransactions = { _ in storeCalls.withValue { $0 += 1 } }
         }
         store.exhaustivity = .off
 
-        await store.send(.path(.element(id: 2, action: .scan(.foundPCZTBatch([])))))
-        await store.receive(\.keystoneScanAbandoned)
+        await store.send(.path(.element(id: 1, action: .keystoneSign(.delegate(.rejected)))))
+        await store.receive(\.keystoneSignRejected)
 
-        #expect(submitCalls.value == 0)
+        // Session 1's collected signature dies with the queue — the store is all-or-nothing, so a
+        // partial set must never survive a rejection.
+        #expect(storeCalls.value == 0)
         #expect(store.state.pendingKeystoneSigning == nil)
         #expect(store.state.path.count == 1)
-        guard case let .noteSplit(noteSplitState) = try? #require(store.state.path.last) else {
-            Issue.record("Expected pop back to .noteSplit (scan + sign removed)")
+        guard case .transferPlan = try? #require(store.state.path.last) else {
+            Issue.record("Expected .keystoneSign popped, .transferPlan remaining on top, unsigned")
             return
         }
-        #expect(noteSplitState.phase == MigrationNoteSplit.State.Phase.explainer)
-        #expect(noteSplitState.signedNoteSplitPczt == nil)
     }
 
-    @MainActor @Test func foundPCZTBatchWithEmptyArrayForPlanCommitContextAbandonsSessionWithoutStoring() async {
+    @MainActor @Test func midQueueScanCancelAbandonsWholeSessionWithoutStoring() async {
         let storeCalls = LockIsolated<Int>(0)
         var state = MigrationCoordFlow.State()
-        state.pendingKeystoneSigning = .planCommit
+        state.pendingKeystoneSigning = MigrationCoordFlow.KeystoneSigningQueue(
+            context: .planCommit,
+            pending: [Data([0x01]), Data([0x02])]
+        )
         state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .scheduled)))
-        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: [Pczt()])))
+        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczt: Data([0x01]), sessionIndex: 1, sessionTotal: 2)))
         state.path.append(.scan(Scan.State.initial))
         let store = TestStore(initialState: state) {
             MigrationCoordFlow()
@@ -675,12 +744,10 @@ import ComposableArchitecture
         }
         store.exhaustivity = .off
 
-        await store.send(.path(.element(id: 2, action: .scan(.foundPCZTBatch([])))))
+        await store.send(.path(.element(id: 2, action: .scan(.cancelTapped))))
         await store.receive(\.keystoneScanAbandoned)
 
         #expect(storeCalls.value == 0)
-        // Deferred pop of scan + sign back to the plan, context cleared — the user re-initiates
-        // signing from the confirm button (no-partial-storage invariant: nothing was stored).
         #expect(store.state.pendingKeystoneSigning == nil)
         #expect(store.state.path.count == 1)
         guard case .transferPlan = try? #require(store.state.path.last) else {
@@ -689,13 +756,27 @@ import ComposableArchitecture
         }
     }
 
-    // MARK: - MOB-1468: Keystone signing — rejected pops back with state intact, context cleared
-
-    @MainActor @Test func keystoneSignRejectedPopsBackToNoteSplitWithExplainerStateIntactAndClearsContext() async {
+    @MainActor @Test func scanCancelWithoutActiveQueueDoesNothing() async {
         var state = MigrationCoordFlow.State()
-        state.pendingKeystoneSigning = .noteSplit
+        state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .scheduled)))
+        state.path.append(.scan(Scan.State.initial))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 1, action: .scan(.cancelTapped))))
+
+        #expect(store.state.path.count == 2)
+    }
+
+    // MARK: - MOB-1468/1469: Keystone signing — rejected pops back with state intact, queue cleared
+
+    @MainActor @Test func keystoneSignRejectedPopsBackToNoteSplitWithExplainerStateIntactAndClearsQueue() async {
+        var state = MigrationCoordFlow.State()
+        state.pendingKeystoneSigning = MigrationCoordFlow.KeystoneSigningQueue(context: .noteSplit, pending: [Data([0x0A])])
         state.path.append(.noteSplit(MigrationNoteSplit.State(phase: .explainer)))
-        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: [Pczt()])))
+        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczt: Data([0x0A]))))
         let store = TestStore(initialState: state) {
             MigrationCoordFlow()
         }
@@ -714,34 +795,13 @@ import ComposableArchitecture
         #expect(noteSplitState.signedNoteSplitPczt == nil)
     }
 
-    @MainActor @Test func keystoneSignRejectedPopsBackToUnsignedTransferPlanConfirmingScreenUntouched() async {
-        var state = MigrationCoordFlow.State()
-        state.pendingKeystoneSigning = .planCommit
-        state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .scheduled)))
-        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: [Pczt(), Pczt()])))
-        let store = TestStore(initialState: state) {
-            MigrationCoordFlow()
-        }
-        store.exhaustivity = .off
-
-        await store.send(.path(.element(id: 1, action: .keystoneSign(.delegate(.rejected)))))
-        await store.receive(\.keystoneSignRejected)
-
-        #expect(store.state.pendingKeystoneSigning == nil)
-        #expect(store.state.path.count == 1)
-        guard case .transferPlan = try? #require(store.state.path.last) else {
-            Issue.record("Expected .keystoneSign popped, .transferPlan remaining on top, unsigned")
-            return
-        }
-    }
-
     @MainActor @Test func keystoneSignRejectedNeverCallsSubmitOrStore() async {
         let submitCalls = LockIsolated<Int>(0)
         let storeCalls = LockIsolated<Int>(0)
         var state = MigrationCoordFlow.State()
-        state.pendingKeystoneSigning = .noteSplit
+        state.pendingKeystoneSigning = MigrationCoordFlow.KeystoneSigningQueue(context: .noteSplit, pending: [Data([0x0A])])
         state.path.append(.noteSplit(MigrationNoteSplit.State(phase: .explainer)))
-        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: [Pczt()])))
+        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczt: Data([0x0A]))))
         let store = TestStore(initialState: state) {
             MigrationCoordFlow()
         } withDependencies: {

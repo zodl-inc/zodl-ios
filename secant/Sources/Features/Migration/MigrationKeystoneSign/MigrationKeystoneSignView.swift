@@ -2,12 +2,14 @@
 //  MigrationKeystoneSignView.swift
 //  zodl
 //
-//  Migration-owned Keystone signing screen (MOB-1468, Figma sign frame 2867:11861). Visually
+//  Migration-owned Keystone signing screen (MOB-1468/1469, Figma sign frame 2867:11861). Visually
 //  mirrors `SignWithKeystoneView`'s composition exactly: account card with Keystone logo +
-//  truncated ZIP-316 address + "Hardware" badge, `AnimatedQRCode` (or the same empty/loading
-//  treatment while the batch encoder is nil), "Scan with your Keystone wallet" copy, Reject
-//  (secondary/destructive) / Get Signature (primary). Reuses `SignWithKeystoneView`'s existing
-//  localized keys — zero new strings.
+//  truncated ZIP-316 address + "Hardware" badge, `AnimatedQRCode` rendered from the send flow's
+//  single-PCZT `urEncoderForPCZT` (or the same empty/loading treatment while the encoder is nil),
+//  "Scan with your Keystone wallet" copy, Reject (secondary/destructive) / Get Signature
+//  (primary). Multi-session queues (a plan commit) additionally show a "Transfer i of N"
+//  indicator above the QR. Reuses `SignWithKeystoneView`'s existing localized keys plus the
+//  migration-owned session-indicator key.
 //
 
 import SwiftUI
@@ -33,8 +35,14 @@ struct MigrationKeystoneSignView: View {
                         accountCard
                             .padding(.top, 40)
 
+                        if store.sessionTotal > 1 {
+                            Text(String(localizable: .migrationKeystoneSignSession(store.sessionIndex, store.sessionTotal)))
+                                .zFont(.medium, size: 14, style: Design.Text.tertiary)
+                                .padding(.top, 24)
+                        }
+
                         qrArea
-                            .padding(.top, 32)
+                            .padding(.top, store.sessionTotal > 1 ? 12 : 32)
 
                         Text(localizable: .keystoneSignWithTitle)
                             .zFont(.medium, size: 16, style: Design.Text.primary)
@@ -128,7 +136,7 @@ struct MigrationKeystoneSignView: View {
     // MARK: - QR area
 
     @ViewBuilder private var qrArea: some View {
-        if let encoder = sdkSynchronizer.urEncoderForMigrationPCZTBatch(store.pczts) {
+        if let encoder = sdkSynchronizer.urEncoderForPCZT(store.pczt) {
             AnimatedQRCode(urEncoder: encoder, size: 250)
                 .frame(width: 216, height: 216)
                 .padding(24)
@@ -160,11 +168,11 @@ struct MigrationKeystoneSignView: View {
 
 // MARK: - Previews
 
-#Preview("Dormant (stub encoder)") {
+#Preview("Session 1 of 3") {
     NavigationView {
         MigrationKeystoneSignView(
             store: StoreOf<MigrationKeystoneSign>(
-                initialState: MigrationKeystoneSign.State(pczts: [Pczt()])
+                initialState: MigrationKeystoneSign.State(pczt: Pczt(), sessionIndex: 1, sessionTotal: 3)
             ) {
                 MigrationKeystoneSign()
             }
