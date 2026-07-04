@@ -30,6 +30,8 @@ extension ParserContext {
             ParserContext.mainnet
         case .testnet:
             ParserContext.testnet
+        case .regtest:
+            ParserContext.regtest
         }
     }
 }
