@@ -32,18 +32,77 @@ import SwiftUI
 private final class MacAmountNSTextField: NSTextField {
     /// The placeholder to show while idle; `placeholderAttributedString` itself is nil'd
     /// during editing.
-    var idlePlaceholder: NSAttributedString?
+    private var idlePlaceholder: NSAttributedString?
+    /// Focus once, when the field lands in a window (see `viewDidMoveToWindow`).
+    var autoFocusOnAppear = false
+    private var didAutoFocus = false
+    /// The LIVE focus truth (B4-8 round 5.2). Round 5.1's session flag desynced because the
+    /// responder callbacks LIE about the net state: in the SwiftUI-hosted window the field's
+    /// `becomeFirstResponder` is followed by a transient `textDidEndEditing` (the hosting
+    /// view's focus arbitration bounces the responder), after which focus lands back on the
+    /// FIELD EDITOR without the field's `becomeFirstResponder` ever re-firing — device log:
+    /// become(true) → end(false), final flag FALSE while visibly focused. So: never track,
+    /// always ASK. Focused = the window's first responder is the field itself, or a field
+    /// editor whose delegate is this field (the normal state while editing).
+    private var isEffectivelyFocused: Bool {
+        guard let window else { return false }
+        if window.firstResponder === self { return true }
+        if let editor = window.firstResponder as? NSTextView, editor.delegate === self {
+            return true
+        }
+        return false
+    }
+
+    /// Re-derive placeholder visibility from the live responder truth. Called one runloop
+    /// turn AFTER each responder event (become/end), so transient bounces have settled and
+    /// the answer reflects where focus actually ended up — event ORDER can no longer
+    /// strand a stale placeholder (or a stale dismissal).
+    private func refreshPlaceholderVisibility() {
+        placeholderAttributedString = isEffectivelyFocused ? nil : idlePlaceholder
+        needsDisplay = true
+    }
+
+    /// The ONE write path for the placeholder from `updateNSView`: remembers the idle
+    /// string and applies it per the live focus truth. Localization is the caller's
+    /// (`store.localePlaceholder` — "0.00" vs "0,00").
+    func setIdlePlaceholder(_ placeholder: NSAttributedString) {
+        idlePlaceholder = placeholder
+        refreshPlaceholderVisibility()
+    }
+
+    /// Round 4.1's `asyncAfter(0.1)` autofocus silently no-op'd whenever the field wasn't
+    /// in a window yet — leaving the field unfocused AND the round-4.1 placeholder/caret
+    /// fixes never running. The window arriving is the reliable signal.
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        guard autoFocusOnAppear, !didAutoFocus, window != nil else { return }
+        didAutoFocus = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.window?.makeFirstResponder(self)
+        }
+    }
 
     override func becomeFirstResponder() -> Bool {
         let ok = super.becomeFirstResponder()
         if ok {
+            // Optimistic hide now (with the repaint a borderless field doesn't get for
+            // free), TRUTH one turn later — by then the hosting view's focus bounce has
+            // settled, whichever way it went.
             placeholderAttributedString = nil
+            needsDisplay = true
+            configureFieldEditor()
             // After the current event finishes: the click that focused the field places the
-            // caret at the click point AFTER this method runs, so the end-caret must be
-            // applied on the next runloop turn to win.
+            // caret at the click point AFTER this method runs, so the end-caret (and the
+            // editor attributes, if the editor was installed late) must be applied on the
+            // next runloop turn to win.
             DispatchQueue.main.async { [weak self] in
-                guard let self, let editor = self.currentEditor() else { return }
-                editor.selectedRange = NSRange(location: (self.stringValue as NSString).length, length: 0)
+                guard let self else { return }
+                self.configureFieldEditor()
+                if let editor = self.currentEditor() {
+                    editor.selectedRange = NSRange(location: (self.stringValue as NSString).length, length: 0)
+                }
+                self.refreshPlaceholderVisibility()
             }
         }
         return ok
@@ -51,7 +110,34 @@ private final class MacAmountNSTextField: NSTextField {
 
     override func textDidEndEditing(_ notification: Notification) {
         super.textDidEndEditing(notification)
-        placeholderAttributedString = idlePlaceholder
+        // Deliberately NOT a synchronous placeholder restore: this callback also fires as
+        // a TRANSIENT during the hosting view's focus bounce (become → end → focus lands
+        // back on the field editor with no new become). One turn later the responder truth
+        // is settled: genuinely blurred ⇒ placeholder returns; still focused ⇒ it stays
+        // hidden.
+        DispatchQueue.main.async { [weak self] in
+            self?.refreshPlaceholderVisibility()
+        }
+    }
+
+    /// The load-bearing caret/baseline fix (B4-8 round 5). An EMPTY field editor
+    /// (`NSTextView`) draws its insertion point from `typingAttributes` — NOT from the
+    /// field's `alignment`, which only reaches the editor's text storage once there is
+    /// text. Left unconfigured, an empty right-aligned field blinks its caret at the LEFT
+    /// edge with 13pt-system metrics (short caret, high baseline), then jumps to the right
+    /// with the real font on the first typed character. Setting the paragraph style + the
+    /// real font in `typingAttributes` puts the caret at the RIGHT edge, at the real
+    /// font's height and baseline, from the first frame.
+    private func configureFieldEditor() {
+        guard let editor = currentEditor() as? NSTextView else { return }
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.alignment = .right
+        editor.defaultParagraphStyle = paragraph
+        editor.alignment = .right
+        var attrs: [NSAttributedString.Key: Any] = [.paragraphStyle: paragraph]
+        if let font { attrs[.font] = font }
+        if let textColor { attrs[.foregroundColor] = textColor }
+        editor.typingAttributes = attrs
     }
 }
 
@@ -79,12 +165,7 @@ struct MacAmountTextField: NSViewRepresentable {
         field.cell?.wraps = false
         field.cell?.isScrollable = true
         field.delegate = context.coordinator
-        if autoFocusOnAppear {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak field] in
-                guard let field else { return }
-                field.window?.makeFirstResponder(field)
-            }
-        }
+        field.autoFocusOnAppear = autoFocusOnAppear
         return field
     }
 
@@ -104,11 +185,11 @@ struct MacAmountTextField: NSViewRepresentable {
                 .paragraphStyle: paragraph
             ]
         )
-        (field as? MacAmountNSTextField)?.idlePlaceholder = idlePlaceholder
-        // The placeholder is dismissed while editing — don't resurrect it mid-edit.
-        if field.currentEditor() == nil {
-            field.placeholderAttributedString = idlePlaceholder
-        }
+        // Route through the gated setter — NEVER poke `placeholderAttributedString` here.
+        // The old `currentEditor() == nil` guard raced focus acquisition (the editor can
+        // install a beat after becomeFirstResponder) and resurrected the placeholder for
+        // the whole focused-empty session (B4-8 round 5.1).
+        (field as? MacAmountNSTextField)?.setIdlePlaceholder(idlePlaceholder)
     }
 
     final class Coordinator: NSObject, NSTextFieldDelegate {

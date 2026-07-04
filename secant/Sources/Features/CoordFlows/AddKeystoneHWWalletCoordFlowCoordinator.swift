@@ -103,10 +103,28 @@ extension AddKeystoneHWWalletCoordFlow {
 
                 // MARK: - RestoreInfo
                 
-            case .path(.element(id: _, action: .restoreInfo(.gotItTapped))):
+            case .path(.element(id: let restoreInfoId, action: .restoreInfo(.gotItTapped))):
                 for id in state.path.ids {
                     if case .keystoneDeviceReady = state.path[id: id] {
+                        // [B4-4 class] OK triggers the import running BEHIND this screen
+                        // (engine stop → drain → anchor fetch → import → restart —
+                        // seconds). Reflect it on the visible OK button (spinner +
+                        // disabled); without this the wait reads as a broken screen.
+                        if case .restoreInfo(var restoreInfoState) = state.path[id: restoreInfoId] {
+                            restoreInfoState.isProcessing = true
+                            state.path[id: restoreInfoId] = .restoreInfo(restoreInfoState)
+                        }
                         return .send(.path(.element(id: id, action: .keystoneDeviceReady(.unlockTapped(state.birthday)))))
+                    }
+                }
+                return .none
+
+            case .path(.element(id: _, action: .keystoneDeviceReady(.accountImportFailed))):
+                // A failed import must re-enable the OK button it is rendered behind.
+                for id in state.path.ids {
+                    if case .restoreInfo(var restoreInfoState) = state.path[id: id] {
+                        restoreInfoState.isProcessing = false
+                        state.path[id: id] = .restoreInfo(restoreInfoState)
                     }
                 }
                 return .none
