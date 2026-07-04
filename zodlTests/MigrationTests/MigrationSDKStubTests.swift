@@ -2,14 +2,20 @@
 //  MigrationSDKStubTests.swift
 //  zodlTests
 //
-//  Covers the inert "does nothing yet" contract of the stubbed migration members on
-//  SDKSynchronizerClient (Dependencies/SDKSynchronizer/SDKSynchronizerInterface.swift). No
+//  MOB-1469: `live()`'s software-path migration members are now backed by `LiveMigrationEngine`
+//  (see `LiveMigrationEngineTests.swift`), so this suite no longer pins "every migration member is
+//  an inert stub" — most aren't, once `.live()` is used. What's still true everywhere, including
+//  `.live()`, is the 6 Keystone/PCZT members (`proposeNoteSplitPCZT`, `proposeMigrationPCZTs`,
+//  `storeSignedMigrationTransactions`, `submitSignedNoteSplit`, `urEncoderForMigrationPCZTBatch`,
+//  `parseMigrationPCZTBatch`): they remain inert stubs pending a later phase's Keystone rewiring.
+//  This suite covers that inert contract on `SDKSynchronizerClient.noOp` and `.mocked()` — the
+//  hardcoded defaults every non-`.live()` construction gets — plus the handful of non-Keystone
+//  getters that happen to share the same "does nothing" defaults on those two constructions. No
 //  shared/global state -> no `.serialized`.
 //
-//  Deliberately NOT testing `liveValue`/`live()` — constructing the live client builds the
-//  real synchronizer stack; unit tests never touch `liveValue` (TCA convention). The stub's
-//  "never calls the SDK" property is enforced by review + the fact the SDK API doesn't exist
-//  to call.
+//  Deliberately NOT testing `liveValue`/`live()` — constructing the live client builds the real
+//  synchronizer stack; unit tests never touch `liveValue` (TCA convention). `.noOp`/`.mocked()`
+//  are separate, hardcoded closures (SDKSynchronizerTest.swift) untouched by `.live()`'s wiring.
 //
 
 import Testing

@@ -53,6 +53,13 @@ extension SDKSynchronizerClient: DependencyKey {
         
         let synchronizer = SDKSynchronizer(initializer: initializer)
 
+        // Constructed once per `live()` call (one per process), so its cache/refresh loop persist
+        // for the app's lifetime rather than being rebuilt per migration call.
+        let migrationEngine = LiveMigrationEngine(
+            store: .live(fileURL: MigrationScheduleStore.defaultFileURL),
+            gateway: .live(synchronizer: synchronizer)
+        )
+
         return SDKSynchronizerClient(
             stateStream: { synchronizer.stateStream },
             eventStream: { synchronizer.eventStream },
@@ -290,55 +297,57 @@ extension SDKSynchronizerClient: DependencyKey {
                     try await synchronizer.getTreeState(height: height)
                 }
             },
-            // Migration (Orchard → Ironwood) — STUB: the SDK API does not exist yet (MOB-1455).
-            // These compile the app against the expected contract and do nothing. When the real
-            // SDK lands, replace these closures here. The three broadcast-path stubs
-            // (`submitNoteSplit`, `executeNextPendingMigrationTransfer`, `submitSignedNoteSplit`)
-            // already acquire the transaction guard below — same `withSubmission` pattern as
-            // `createAndSubmitProposedTransactions` — so they are correct-by-construction once
-            // real broadcasting lands; every other migration stub here is read-only/non-broadcast
-            // and stays unguarded. `storeSignedMigrationTransactions` (Keystone/PCZT path) is
-            // local storage, not a broadcast, so it stays unguarded too — MOB-1468. The two batch
-            // members (`urEncoderForMigrationPCZTBatch`, `parseMigrationPCZTBatch`) are plain
-            // inert stubs — their real implementations belong to KeystoneSDK/the Zcash SDK when
-            // the batch UR format exists (joint SDK + Keystone-team ask, unvalidated).
-            getMigrationState: { .notStarted },
-            migrationStateStream: { Just(MigrationState.notStarted).eraseToAnyPublisher() },
-            getMigrationProgress: { nil },
-            isNoteSplitNeeded: { false },
-            prepareNoteSplit: { NoteSplitProposal(outputNotes: [], fee: Zatoshi.zero) },
-            submitNoteSplit: { _ in
+            // Migration (Orchard → Ironwood) — backed by `LiveMigrationEngine` (MOB-1469). The
+            // engine is constructed once here and captures `synchronizer` directly via its
+            // `Gateway` (see `LiveMigrationEngine.Gateway.live(synchronizer:)` below). The three
+            // broadcast-path members (`submitNoteSplit`, `executeNextPendingMigrationTransfer`,
+            // `submitSignedNoteSplit`) acquire the transaction guard HERE, in the LiveKey closure,
+            // wrapping the engine call — same `withSubmission` pattern as
+            // `createAndSubmitProposedTransactions`. The engine itself never touches the guard
+            // (it would deadlock: the guard is non-reentrant and the engine's `refresh()` — called
+            // from inside these very closures — must not re-acquire it). Every other migration
+            // member here is read-only/non-broadcast and stays unguarded.
+            // `storeSignedMigrationTransactions` (Keystone/PCZT path) is local storage, not a
+            // broadcast, so it stays unguarded too — MOB-1468, still a stub. The two batch members
+            // (`urEncoderForMigrationPCZTBatch`, `parseMigrationPCZTBatch`) remain plain inert
+            // stubs — their real implementations belong to KeystoneSDK/the Zcash SDK when the batch
+            // UR format exists (joint SDK + Keystone-team ask, unvalidated).
+            getMigrationState: { migrationEngine.currentState() },
+            migrationStateStream: { migrationEngine.statePublisher() },
+            getMigrationProgress: { migrationEngine.progress() },
+            isNoteSplitNeeded: { migrationEngine.noteSplitNeeded() },
+            prepareNoteSplit: { await migrationEngine.prepareSplit() },
+            submitNoteSplit: { proposal in
                 @Dependency(\.transactionGuard) var transactionGuard
                 do {
                     return try await transactionGuard.withSubmission {
-                        TransferResult.success(txId: "")
+                        await migrationEngine.submitSplit(proposal)
                     }
                 } catch {
                     return TransferResult.networkError(retryable: true)
                 }
             },
-            selectMigrationMode: { _ in },
-            proposeMigrationTransfers: { MigrationSchedule(transfers: [], estimatedDurationHours: 0) },
-            signAndStoreMigrationSchedule: { _ in },
-            isSyncRequiredBeforeNextMigrationTransfer: { false },
-            executeNextPendingMigrationTransfer: { _ in
+            selectMigrationMode: { migrationEngine.selectMode($0) },
+            proposeMigrationTransfers: { await migrationEngine.propose() },
+            signAndStoreMigrationSchedule: { await migrationEngine.signAndStore($0) },
+            isSyncRequiredBeforeNextMigrationTransfer: { migrationEngine.syncRequiredBeforeNext() },
+            executeNextPendingMigrationTransfer: { options in
                 @Dependency(\.transactionGuard) var transactionGuard
                 do {
                     return try await transactionGuard.withSubmission {
-                        let stubResult: TransferResult? = nil
-                        return stubResult
+                        await migrationEngine.executeNext(options)
                     }
                 } catch {
-                    return nil
+                    return TransferResult.networkError(retryable: true)
                 }
             },
-            hasOverdueMigrationTransfers: { false },
-            hasInvalidMigrationTransfers: { false },
-            restartCurrentMigrationStep: { MigrationSchedule(transfers: [], estimatedDurationHours: 0) },
-            rescheduleStalledMigrationTransfer: { },
-            recreateInvalidMigrationTransfer: { },
-            migrationSummary: { MigrationSummary.zero },
-            migrationTransfers: { [] },
+            hasOverdueMigrationTransfers: { migrationEngine.overdue() },
+            hasInvalidMigrationTransfers: { migrationEngine.invalid() },
+            restartCurrentMigrationStep: { await migrationEngine.restart() },
+            rescheduleStalledMigrationTransfer: { await migrationEngine.rescheduleStalled() },
+            recreateInvalidMigrationTransfer: { await migrationEngine.recreateInvalid() },
+            migrationSummary: { migrationEngine.summary() },
+            migrationTransfers: { migrationEngine.transferRows() },
             proposeNoteSplitPCZT: { Pczt() },
             proposeMigrationPCZTs: { _ in [] },
             storeSignedMigrationTransactions: { _ in },
@@ -354,8 +363,113 @@ extension SDKSynchronizerClient: DependencyKey {
             },
             urEncoderForMigrationPCZTBatch: { _ in nil },
             parseMigrationPCZTBatch: { _ in nil },
-            initializeMigrationPostUpgrade: { }
+            // Fires the SDK's async `initializePostUpgrade(for:)` from this sync closure via a
+            // `Task` (never crashes: errors are caught and logged inside the engine method).
+            initializeMigrationPostUpgrade: { migrationEngine.initializePostUpgrade() }
         )
+    }
+}
+
+// MARK: - Live migration gateway
+
+extension LiveMigrationEngine.Gateway {
+    /// Wires the engine's `Gateway` to the real SDK by capturing `synchronizer` directly (it is
+    /// already in scope inside `SDKSynchronizerClient.live()`), plus account and spending-key
+    /// sourcing from the currently selected account (the Send flow's path — see
+    /// `SDKSynchronizerClient.currentAccountSpendingKey()` below). The transaction guard for the two
+    /// broadcasting calls lives in the LiveKey closures above — never here.
+    static func live(synchronizer: SDKSynchronizer) -> LiveMigrationEngine.Gateway {
+        LiveMigrationEngine.Gateway(
+            currentAccountID: {
+                @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount?
+                return selectedWalletAccount?.id
+            },
+            orchardBalance: { account in
+                let balances = try await synchronizer.getAccountsBalances()
+                return balances[account]?.orchardBalance.spendableValue ?? .zero
+            },
+            state: { account in
+                try await synchronizer.migrationState(for: account)
+            },
+            progress: { account in
+                try await synchronizer.migrationProgress(for: account)
+            },
+            isNoteSplitNeeded: { account in
+                try await synchronizer.isNoteSplitNeeded(for: account)
+            },
+            prepareNoteSplit: { account in
+                try await synchronizer.prepareNoteSplit(for: account)
+            },
+            submitNoteSplit: { proposal, options, account in
+                let spendingKey = try SDKSynchronizerClient.currentAccountSpendingKey()
+                return try await synchronizer.submitNoteSplit(
+                    proposal: proposal,
+                    spendingKey: spendingKey,
+                    options: options,
+                    for: account
+                )
+            },
+            proposeTransfers: { account in
+                try await synchronizer.proposeMigrationTransfers(for: account)
+            },
+            proposeImmediateTransfers: { account in
+                try await synchronizer.proposeImmediateMigrationTransfers(for: account)
+            },
+            signAndStore: { schedule, account in
+                let spendingKey = try SDKSynchronizerClient.currentAccountSpendingKey()
+                try await synchronizer.signAndStoreMigrationSchedule(schedule, spendingKey: spendingKey, for: account)
+            },
+            isSyncRequiredBeforeNextTransfer: { account in
+                try await synchronizer.isSyncRequiredBeforeNextTransfer(for: account)
+            },
+            executeNext: { options, account in
+                try await synchronizer.executeNextPendingTransfer(options: options, for: account)
+            },
+            hasOverdueTransfers: { account in
+                try await synchronizer.hasOverdueTransfers(for: account)
+            },
+            hasInvalidTransfers: { account in
+                try await synchronizer.hasInvalidTransfers(for: account)
+            },
+            restartCurrentStep: { account in
+                try await synchronizer.restartCurrentMigrationStep(for: account)
+            },
+            refreshStale: { account in
+                let spendingKey = try SDKSynchronizerClient.currentAccountSpendingKey()
+                return try await synchronizer.refreshStaleTransfers(spendingKey: spendingKey, for: account)
+            },
+            initializePostUpgrade: { account in
+                try await synchronizer.initializePostUpgrade(for: account)
+            }
+        )
+    }
+}
+
+// MARK: - Account spending key (Send-flow parity)
+
+extension SDKSynchronizerClient {
+    enum MigrationLiveError: Error {
+        /// No wallet account is currently selected, so a spending key cannot be derived.
+        case noActiveAccount
+    }
+
+    /// Derives the `UnifiedSpendingKey` for the currently selected account, exactly as the Send flow
+    /// does (walletStorage → mnemonic seed → derivationTool). Used by the migration engine's signing
+    /// calls (`submitNoteSplit`, `signAndStoreMigrationSchedule`, `refreshStaleTransfers`).
+    static func currentAccountSpendingKey() throws -> UnifiedSpendingKey {
+        @Dependency(\.walletStorage) var walletStorage
+        @Dependency(\.mnemonic) var mnemonic
+        @Dependency(\.derivationTool) var derivationTool
+        @Dependency(\.zcashSDKEnvironment) var zcashSDKEnvironment
+        @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount?
+
+        guard let zip32AccountIndex = selectedWalletAccount?.zip32AccountIndex else {
+            throw MigrationLiveError.noActiveAccount
+        }
+        let storedWallet = try walletStorage.exportWallet()
+        let seedBytes = try mnemonic.toSeed(storedWallet.seedPhrase.value())
+        let network = zcashSDKEnvironment.network().networkType
+        return try derivationTool.deriveSpendingKey(seedBytes, zip32AccountIndex, network)
     }
 }
 

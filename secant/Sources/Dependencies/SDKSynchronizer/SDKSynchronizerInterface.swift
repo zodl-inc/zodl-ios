@@ -117,11 +117,16 @@ struct SDKSynchronizerClient: Sendable {
 
     var getTreeState: @Sendable (_ height: UInt64) async throws -> Data
 
-    // MARK: - Migration (Orchard → Ironwood) — stubs until the SDK API exists (MOB-1455)
+    // MARK: - Migration (Orchard → Ironwood) — backed by `LiveMigrationEngine` (MOB-1469)
     //
-    // Swift mirror of `interface OrchardMigrationSdk` (`MigrationSdk.kt`). Names are qualified
-    // to fit this client's flat namespace (e.g. `stateStream` is already taken by
-    // `SynchronizerState`). Markers: `[draft]` = Kotlin draft 1:1, `[ext]` = proposed SDK
+    // Swift mirror of `interface OrchardMigrationSdk` (`MigrationSdk.kt`), originally staged as
+    // inert stubs until the real SDK migration API existed (MOB-1455/1459). `live()` now wires every
+    // software-path member below to `LiveMigrationEngine`, which bridges these sync/non-throwing/
+    // app-typed closures onto the SDK's async-throws, per-account, `UInt64`-based migration API —
+    // see `LiveMigrationEngine.swift` and `MigrationTypeMapping.swift`. The 6 Keystone/PCZT members
+    // (marked below) remain inert stubs; they are rewired in a later phase (MOB-1468 follow-up).
+    // Names are qualified to fit this client's flat namespace (e.g. `stateStream` is already taken
+    // by `SynchronizerState`). Markers: `[draft]` = Kotlin draft 1:1, `[ext]` = proposed SDK
     // extension not present in the Kotlin draft.
 
     // State — Kotlin: getMigrationState / (Flow suggestion) / getMigrationProgress
