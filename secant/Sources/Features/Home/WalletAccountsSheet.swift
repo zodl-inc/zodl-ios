@@ -49,7 +49,9 @@ struct WalletAccountsSheetView: View {
                         store.send(.addKeystoneHWWalletTapped)
                     }
                     .padding(.top, 32)
+                    #if !os(macOS)
                     .padding(.horizontal, 20)
+                    #endif
                     .padding(.bottom, Design.Spacing.sheetBottomSpace)
                 } else {
                     Color.clear
@@ -125,7 +127,7 @@ struct WalletAccountsSheetView: View {
                 Asset.Assets.Partners.keystonePromo.image
                     .resizable()
                     .aspectRatio(contentMode: .fill)
-                    .frame(width: 346, height: 148)
+                    .frame(width: 280, height: 120)
                     .clipped()
             }
             .frame(maxWidth: .infinity)

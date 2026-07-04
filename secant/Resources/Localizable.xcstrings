@@ -9482,142 +9482,6 @@
         }
       }
     },
-    "recoveryPhraseDisplay.proceedWarningMac" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Keep this phrase securely hidden. Don’t take screenshots of it or store it on your computer!"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Mantén esta frase de manera segura oculta. ¡No tomes capturas de pantalla ni la guardes en tu Mac!"
-          }
-        }
-      }
-    },
-    "restoreInfo.tip1Mac" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Keep Zodl open — don’t minimize it."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Mantén Zodl abierta y no la minimices."
-          }
-        }
-      }
-    },
-    "restoreInfo.tip2Mac" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "To keep your Mac from sleeping, adjust your Energy Saver settings and keep it plugged in."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Para evitar que tu Mac entre en reposo, ajusta el ahorro de energía y mantenla conectada a la corriente."
-          }
-        }
-      }
-    },
-    "smartBanner.content.restore.infoMac" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Keep Zodl open and your Mac awake"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Mantén Zodl abierta y tu Mac activa"
-          }
-        }
-      }
-    },
-    "smartBanner.help.restore.point1Mac" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Keep Zodl open — don’t minimize it."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Mantén Zodl abierta y no la minimices."
-          }
-        }
-      }
-    },
-    "smartBanner.help.restore.point2Mac" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "To keep your Mac from sleeping, adjust your Energy Saver settings and keep it plugged in."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Para evitar que tu Mac entre en reposo, ajusta el ahorro de energía y mantenla conectada a la corriente."
-          }
-        }
-      }
-    },
-    "smartBanner.help.sync.infoMac" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Zodl is scanning the blockchain for your latest transactions to make sure your balances are displayed correctly. Keep Zodl open and your Mac awake to avoid interruptions."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Zodl está escaneando la blockchain para tus últimas transacciones para asegurarse de que tus balances se muestren correctamente. Mantén Zodl abierta y tu Mac activa para evitar interrupciones."
-          }
-        }
-      }
-    },
-    "localAuthentication.reasonMac" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "unlock your wallet"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "desbloquear tu billetera"
-          }
-        }
-      }
-    },
     "localAuthentication.reason" : {
       "comment" : "MARK: - Local authentication",
       "extractionState" : "manual",
@@ -9751,6 +9615,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "autorizar tu voto"
+          }
+        }
+      }
+    },
+    "localAuthentication.reasonMac" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "unlock your wallet"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "desbloquear tu billetera"
           }
         }
       }
@@ -10848,6 +10729,23 @@
         }
       }
     },
+    "recoveryPhraseDisplay.proceedWarningMac" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Keep this phrase securely hidden. Don’t take screenshots of it or store it on your computer!"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mantén esta frase de manera segura oculta. ¡No tomes capturas de pantalla ni la guardes en tu Mac!"
+          }
+        }
+      }
+    },
     "recoveryPhraseDisplay.reveal" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -11360,6 +11258,23 @@
         }
       }
     },
+    "restoreInfo.tip1Mac" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Keep Zodl open — don’t minimize it."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mantén Zodl abierta y no la minimices."
+          }
+        }
+      }
+    },
     "restoreInfo.tip2" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -11373,6 +11288,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Para evitar que la pantalla se apague, desactiva el modo de ahorro de energía y mantén el teléfono conectado a la corriente."
+          }
+        }
+      }
+    },
+    "restoreInfo.tip2Mac" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "To keep your Mac from sleeping, adjust your Energy Saver settings and keep it plugged in."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Para evitar que tu Mac entre en reposo, ajusta el ahorro de energía y mantenla conectada a la corriente."
           }
         }
       }
@@ -14242,6 +14174,23 @@
         }
       }
     },
+    "smartBanner.content.restore.infoMac" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Keep Zodl open and your Mac awake"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mantén Zodl abierta y tu Mac activa"
+          }
+        }
+      }
+    },
     "smartBanner.content.restore.infoSpendable" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -14719,6 +14668,23 @@
         }
       }
     },
+    "smartBanner.help.restore.point1Mac" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Keep Zodl open — don’t minimize it."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mantén Zodl abierta y no la minimices."
+          }
+        }
+      }
+    },
     "smartBanner.help.restore.point2" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -14732,6 +14698,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Para evitar que la pantalla de tu teléfono se apague, desactiva el modo de ahorro de energía y mantén tu teléfono conectado."
+          }
+        }
+      }
+    },
+    "smartBanner.help.restore.point2Mac" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "To keep your Mac from sleeping, adjust your Energy Saver settings and keep it plugged in."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Para evitar que tu Mac entre en reposo, ajusta el ahorro de energía y mantenla conectada a la corriente."
           }
         }
       }
@@ -14896,6 +14879,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Zodl está escaneando la blockchain para tus últimas transacciones para asegurarse de que tus balances se muestren correctamente. Mantén la aplicación Zodl abierta en una pantalla activa del teléfono para evitar interrupciones."
+          }
+        }
+      }
+    },
+    "smartBanner.help.sync.infoMac" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zodl is scanning the blockchain for your latest transactions to make sure your balances are displayed correctly. Keep Zodl open and your Mac awake to avoid interruptions."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zodl está escaneando la blockchain para tus últimas transacciones para asegurarse de que tus balances se muestren correctamente. Mantén Zodl abierta y tu Mac activa para evitar interrupciones."
           }
         }
       }
@@ -19113,6 +19113,10 @@
           }
         }
       }
+    },
+    "Zodl" : {
+      "comment" : "The main app window.",
+      "isCommentAutoGenerated" : true
     }
   },
   "version" : "1.1"

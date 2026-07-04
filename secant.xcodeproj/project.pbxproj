@@ -82,7 +82,7 @@
 		9E4AB2B72BA1BEE900F5D6DB /* zodl-production.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "zodl-production.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		9E5AB4822C94777800065483 /* zodl-internal.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "zodl-internal.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		9E60E3D32C65F49F00B16C3E /* secant-distrib.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "secant-distrib.entitlements"; sourceTree = "<group>"; };
-		9E6E82512FE3DC15008A82EF /* zodlmac-internal.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "zodlmac-internal.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		9E6E82512FE3DC15008A82EF /* Zodl.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Zodl.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		9ECDD9512CA687B300D81CA0 /* secant-mainnet.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "secant-mainnet.entitlements"; sourceTree = "<group>"; };
 		9ECDD9522CA6B2B400D81CA0 /* zashi-internal.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "zashi-internal.entitlements"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -281,7 +281,7 @@
 				9E4AB2B72BA1BEE900F5D6DB /* zodl-production.app */,
 				9E5AB4822C94777800065483 /* zodl-internal.app */,
 				9E41FFBB2CB2814500783CFD /* zodl-testnet.app */,
-				9E6E82512FE3DC15008A82EF /* zodlmac-internal.app */,
+				9E6E82512FE3DC15008A82EF /* Zodl.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -478,7 +478,7 @@
 				9E6E848A2FE3FA04008A82EF /* KeystoneSDK */,
 			);
 			productName = "zodlmac-internal";
-			productReference = 9E6E82512FE3DC15008A82EF /* zodlmac-internal.app */;
+			productReference = 9E6E82512FE3DC15008A82EF /* Zodl.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -1370,7 +1370,7 @@
 				CODE_SIGN_ENTITLEMENTS = "zodlmac-internal/zodlmac-internal.entitlements";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 5;
 				DEVELOPMENT_TEAM = RLPRR8CPQG;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -1441,7 +1441,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 5;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_TEAM = RLPRR8CPQG;
 				ENABLE_APP_SANDBOX = YES;
@@ -1526,7 +1526,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 5;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_TEAM = RLPRR8CPQG;
 				ENABLE_APP_SANDBOX = YES;

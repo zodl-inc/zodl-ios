@@ -20,7 +20,7 @@ enum FeatureFlag: String, CaseIterable, Codable {
         case .onboardingFlow: return false
         case .testBackupPhraseFlow: return false
         case .showFiatConversion: return false
-        case .useSlipstreamSynchronizer: return false
+        case .useSlipstreamSynchronizer: return true
         }
     }
 }

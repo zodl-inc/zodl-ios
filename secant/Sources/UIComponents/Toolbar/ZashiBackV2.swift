@@ -46,7 +46,7 @@ struct ZashiBackV2Modifier: ViewModifier {
                                         .zImage(size: 24, style: Design.Btns.Tertiary.fg)
                                 }
                             }
-                            .padding(.horizontal, 6)
+                            .zashiToolbarIconPadding()
 #else
                             if #available(iOS 26.0, *) {
                                 if invertedColors {

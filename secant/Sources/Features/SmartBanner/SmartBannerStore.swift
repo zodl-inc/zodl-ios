@@ -552,6 +552,12 @@ struct SmartBanner {
                 return .none
                 
             case .triggerPriority(let priority):
+                #if os(macOS)
+                // Ignore syncing widget on macos
+                if priority == .priority4 {
+                    return .none
+                }
+                #endif
                 state.priorityContentRequested = priority
                 return .send(.openBannerRequest)
 
