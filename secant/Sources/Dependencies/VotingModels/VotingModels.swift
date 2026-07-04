@@ -1,3 +1,4 @@
+#if VOTING_ENABLED
 import Foundation
 
 // MARK: - Ballot Constants
@@ -778,3 +779,5 @@ enum VoteCommitmentBuildEvent: Equatable, Sendable {
     case progress(Double)
     case completed(VoteCommitmentBundle)
 }
+
+#endif

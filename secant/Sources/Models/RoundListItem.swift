@@ -1,3 +1,4 @@
+#if VOTING_ENABLED
 //
 //  RoundListItem.swift
 //  Zashi
@@ -25,3 +26,5 @@ struct RoundListItem: Equatable, Identifiable {
             : session.title
     }
 }
+
+#endif

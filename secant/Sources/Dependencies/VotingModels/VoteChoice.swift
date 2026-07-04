@@ -1,3 +1,4 @@
+#if VOTING_ENABLED
 enum VoteChoice: Equatable, Hashable, Sendable {
     case option(UInt32)
 
@@ -22,3 +23,5 @@ extension VoteChoice: Codable {
         try container.encode(index)
     }
 }
+
+#endif

@@ -1,3 +1,4 @@
+#if VOTING_ENABLED
 import Foundation
 
 /// A single vote option within a proposal (e.g. "Support", "Oppose").
@@ -44,3 +45,5 @@ struct VotingProposal: Equatable, Identifiable, Sendable {
         self.forumURL = forumURL
     }
 }
+
+#endif

@@ -1,3 +1,4 @@
+#if VOTING_ENABLED
 import Foundation
 
 enum ProofStatus: Equatable {
@@ -13,3 +14,5 @@ enum SubmissionStatus: Equatable {
     case complete
     case failed(String)
 }
+
+#endif
