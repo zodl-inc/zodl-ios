@@ -8,6 +8,8 @@
 
 /* Begin PBXBuildFile section */
 		341F28912FF8D91400ED9BB5 /* ZcashLightClientKit in Frameworks */ = {isa = PBXBuildFile; productRef = 341F28902FF8D91400ED9BB5 /* ZcashLightClientKit */; };
+		341F28922FF8D91400ED9BB5 /* ZcashLightClientKit in Frameworks */ = {isa = PBXBuildFile; productRef = 341F28902FF8D91400ED9BB5 /* ZcashLightClientKit */; };
+		341F28932FF8D91400ED9BB5 /* ZcashLightClientKit in Frameworks */ = {isa = PBXBuildFile; productRef = 341F28902FF8D91400ED9BB5 /* ZcashLightClientKit */; };
 		34AA77182F857DB300D244E2 /* ComposableArchitecture in Frameworks */ = {isa = PBXBuildFile; productRef = 34AA77172F857DB300D244E2 /* ComposableArchitecture */; };
 		34AA771A2F857DB800D244E2 /* ComposableArchitecture in Frameworks */ = {isa = PBXBuildFile; productRef = 34AA77192F857DB800D244E2 /* ComposableArchitecture */; };
 		34AA771C2F857DBB00D244E2 /* ComposableArchitecture in Frameworks */ = {isa = PBXBuildFile; productRef = 34AA771B2F857DBB00D244E2 /* ComposableArchitecture */; };
@@ -144,6 +146,7 @@
 				34AA778E2F85833900D244E2 /* Lottie in Frameworks */,
 				34AA77402F8580D700D244E2 /* CasePathsCore in Frameworks */,
 				34AA77A42F8583C300D244E2 /* BigDecimal in Frameworks */,
+				341F28922FF8D91400ED9BB5 /* ZcashLightClientKit in Frameworks */,
 				34AA77C02F85862200D244E2 /* UInt128 in Frameworks */,
 				34AA77782F8582AC00D244E2 /* Flexa in Frameworks */,
 				34AA77562F85818900D244E2 /* MnemonicSwift in Frameworks */,
@@ -164,6 +167,7 @@
 				34AA778A2F85832E00D244E2 /* Lottie in Frameworks */,
 				34AA77382F8580CB00D244E2 /* CasePathsCore in Frameworks */,
 				34AA77A02F8583BA00D244E2 /* BigDecimal in Frameworks */,
+				341F28932FF8D91400ED9BB5 /* ZcashLightClientKit in Frameworks */,
 				34AA77BC2F85861800D244E2 /* UInt128 in Frameworks */,
 				34AA77742F8582A200D244E2 /* Flexa in Frameworks */,
 				34AA77522F85818000D244E2 /* MnemonicSwift in Frameworks */,
@@ -292,6 +296,7 @@
 				34AA778D2F85833900D244E2 /* Lottie */,
 				34AA77982F85837400D244E2 /* KeystoneSDK */,
 				34AA77A32F8583C300D244E2 /* BigDecimal */,
+				341F28902FF8D91400ED9BB5 /* ZcashLightClientKit */,
 				34AA77BF2F85862200D244E2 /* UInt128 */,
 				34B967682F8CC49100823B20 /* Atomics */,
 			);
@@ -331,6 +336,7 @@
 				34AA77892F85832E00D244E2 /* Lottie */,
 				34AA77942F85836900D244E2 /* KeystoneSDK */,
 				34AA779F2F8583BA00D244E2 /* BigDecimal */,
+				341F28902FF8D91400ED9BB5 /* ZcashLightClientKit */,
 				34AA77BB2F85861800D244E2 /* UInt128 */,
 				34B967642F8CC48700823B20 /* Atomics */,
 			);
