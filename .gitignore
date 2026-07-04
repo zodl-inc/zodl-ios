@@ -89,3 +89,6 @@ PartnerKeys.plist
 # Claude
 .claude/settings.local.json
 .remember/
+
+# Release
+**/*.mobileprovision

@@ -36,6 +36,14 @@ TEAM_ID = "RLPRR8CPQG"               # Apple Developer team (matches DEVELOPMENT
 # here so the two invocations can't drift apart.
 SKIP_VALIDATION_XCARGS = "-skipPackagePluginValidation -skipMacroValidation"
 
+# Render xcodebuild output with xcbeautify rather than xcpretty. Most of this app's
+# tests are Swift Testing (@Test / #expect); xcpretty predates that format and
+# silently swallows its output, so a failing Swift Testing test would scroll past
+# with nothing printed. fastlane only auto-selects xcbeautify when it's installed
+# (otherwise it falls back to xcpretty), so pin it here and treat it as a build
+# prerequisite: `brew install xcbeautify`.
+XCODEBUILD_FORMATTER = "xcbeautify"
+
 # Don't auto-generate fastlane/README.md on every run; it is maintained by hand.
 skip_docs
 
@@ -307,6 +315,13 @@ def run_unit_tests(paths)
     derived_data_path: paths[:derived_data],
     code_coverage: false,
     clean: false,
+    xcodebuild_formatter: XCODEBUILD_FORMATTER,
+    # Emit no scan reports. Nothing consumes them (CI runs tests on its own
+    # xcresult path, and the release lane never reads them), and HTML reports
+    # require xcpretty — which we intentionally don't use — so scan's default
+    # "html,junit" makes xcbeautify warn about the unsupported 'html' type.
+    # Pass/fail comes from the test run itself, not from these files.
+    output_types: "",
     xcargs: "CODE_SIGNING_ALLOWED=NO #{SKIP_VALIDATION_XCARGS}"
   )
 end
@@ -334,25 +349,47 @@ def ensure_appstore_profiles(variants, api_key)
   end
 end
 
+# Run a block with Apple's /usr/bin ahead of everything else in PATH, then restore
+# it. Xcode's exportArchive copies the app into the .ipa with
+# `/usr/bin/rsync -8aPhhE` — Apple's rsync, where -E means --extended-attributes.
+# For a local copy rsync forks a helper ("server") child resolved via $PATH by bare
+# name; a Homebrew rsync 3.x earlier in PATH (there -E is --executability and
+# --extended-attributes is unknown) rejects the option, so the export dies with
+# "Copy failed" / "rsync error: syntax or usage error … [server=3.x]". Pinning
+# /usr/bin first makes both ends Apple's rsync, so the build works whether or not a
+# Homebrew rsync is installed. Safe here because the fastlane Ruby is already
+# running (via rbenv's bundler); this only changes PATH for child processes (gym →
+# xcodebuild) spawned inside the block, and the caller's PATH is restored after.
+def with_system_rsync_first
+  previous_path = ENV["PATH"]
+  ENV["PATH"] = "/usr/bin:#{previous_path}"
+  yield
+ensure
+  ENV["PATH"] = previous_path
+end
+
 def build_and_upload(variant, version, build, api_key, paths, auth_xcargs)
   cfg = Zodl::Variants.config(variant)
 
-  ipa = build_app(
-    project: paths[:project],
-    scheme: cfg[:scheme],
-    configuration: cfg[:configuration],
-    export_method: "app-store",
-    output_directory: paths[:output_dir],
-    output_name: "#{variant}-#{version}-#{build}.ipa",
-    clean: true,
-    derived_data_path: paths[:derived_data],
-    xcargs: "CURRENT_PROJECT_VERSION=#{build} -allowProvisioningUpdates #{auth_xcargs} #{SKIP_VALIDATION_XCARGS}",
-    export_options: {
-      signingStyle: "manual",
-      teamID: TEAM_ID,
-      provisioningProfiles: { cfg[:app_identifier] => appstore_profile_name(variant) }
-    }
-  )
+  ipa = with_system_rsync_first do
+    build_app(
+      project: paths[:project],
+      scheme: cfg[:scheme],
+      configuration: cfg[:configuration],
+      export_method: "app-store",
+      output_directory: paths[:output_dir],
+      output_name: "#{variant}-#{version}-#{build}.ipa",
+      clean: true,
+      derived_data_path: paths[:derived_data],
+      xcodebuild_formatter: XCODEBUILD_FORMATTER,
+      xcargs: "CURRENT_PROJECT_VERSION=#{build} -allowProvisioningUpdates #{auth_xcargs} #{SKIP_VALIDATION_XCARGS}",
+      export_options: {
+        signingStyle: "manual",
+        teamID: TEAM_ID,
+        provisioningProfiles: { cfg[:app_identifier] => appstore_profile_name(variant) }
+      }
+    )
+  end
 
   upload_to_testflight(
     api_key: api_key,

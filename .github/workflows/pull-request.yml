@@ -2,6 +2,11 @@ name: Pull Request
 
 on:
   pull_request:
+    # Include ready_for_review so flipping a draft PR to "Ready for review"
+    # re-triggers CI. The default activity types are opened/synchronize/
+    # reopened only, so without this the draft-skipped job below would never
+    # run until the next push.
+    types: [opened, synchronize, reopened, ready_for_review]
     paths-ignore:
       - '.github/ISSUE_TEMPLATE/*'
       - '.github/pull_request_template.md'
@@ -20,6 +25,9 @@ env:
 
 jobs:
   unit_tests:
+    # Skip draft PRs — no tests run until a PR is marked ready for review
+    # (matches the e2e/smoke suite guard in e2e-smoke.yml).
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
     runs-on: macos-26
     timeout-minutes: 30
     steps:

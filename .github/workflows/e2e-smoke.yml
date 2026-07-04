@@ -2,6 +2,11 @@ name: E2E Smoke Tests
 
 on:
   pull_request:
+    # Include ready_for_review so flipping a draft PR to "Ready for review"
+    # re-triggers CI. The default activity types are opened/synchronize/
+    # reopened only, so without this the draft-skipped jobs below would never
+    # run until the next push.
+    types: [opened, synchronize, reopened, ready_for_review]
     paths-ignore:
       - '.github/ISSUE_TEMPLATE/*'
       - '.github/pull_request_template.md'
@@ -26,6 +31,10 @@ jobs:
   # via actions/upload-artifact. The previous matrix design ran
   # xcodebuild + SPM resolve in each phase job, paying ~7 min twice.
   build:
+    # Skip draft PRs — the e2e/smoke suite is expensive (up to 75-min runs
+    # that spend real mainnet funds). Manual `workflow_dispatch` runs carry
+    # no pull_request context, so the guard lets them through.
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
     runs-on: macos-26
     timeout-minutes: 25
     permissions:
@@ -190,6 +199,8 @@ jobs:
 
   e2e-ios:
     needs: build
+    # Same draft-PR guard as `build` — keep it explicit on the expensive job.
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
     runs-on: macos-26
     # Cold-cache phase 2 runs spend ~25-30 min on the
     # restore-existing-wallet sync alone (chain-tip catchup from the

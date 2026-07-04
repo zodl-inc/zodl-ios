@@ -6,11 +6,18 @@ directly impact users rather than highlighting other crucial architectural updat
 
 ## [Unreleased]
 
+## 3.7.2 build 1
+
+### Added
+- [MOB-1418] The Server Setup screen now explains that Automatic mode may use multiple servers to optimize performance, and points you to Manual connection mode (plus enabling Tor in Advanced Settings) if you'd prefer to reduce metadata exposure.
+
 ### Changed
-- QR / payment-request (ZIP-321) codes that contain more than one recipient are now rejected instead of silently processing only the first recipient, so what you review is always exactly what gets signed.
+- [MOB-1348] QR / payment-request (ZIP-321) codes that contain more than one recipient are now rejected instead of silently processing only the first recipient, so what you review is always exactly what gets signed.
+- [MOB-1130] The syncing widget now stays visible until the wallet is within a fixed number of blocks of the network tip, instead of hiding at a fixed percentage of total blocks. Previously, wallets with an older birthday height could stop showing the syncing status while still having a meaningful amount left to sync.
 
 ### Fixed
-- Paying with Flexa now requires a Zodl (mobile) account and is blocked for Keystone (hardware) accounts, which have no on-device key to sign with. Switching accounts also ends any open Flexa session so a payment can't bind to the wrong account.
+- [MOB-1352] Paying with Flexa now requires a ZODL (mobile) account and is blocked for Keystone (hardware) accounts, which have no on-device key to sign with. Switching accounts also ends any open Flexa session so a payment can't bind to the wrong account.
+- [MOB-1188] Disconnecting a Keystone hardware wallet no longer fails with a "couldn't be finalized" error when that account has transactions involving your other accounts.
 
 ## 3.7.0 build 1
 

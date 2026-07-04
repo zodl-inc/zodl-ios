@@ -14,13 +14,14 @@ The app's name is always written **ZODL** — all uppercase. Whenever generated 
 
 **Prerequisites:** Install SwiftGen (`brew install swiftgen`) and SwiftLint (v0.50.3 specifically - use the official .pkg installer). Both run automatically during Xcode builds.
 
-**Build targets:**
-- `secant-testnet` - primary development target (TAZ token, testnet)
-- `secant-mainnet` - production target (ZEC, mainnet)
-- `secant-distrib` - distribution variant
-- Conditional compilation via `SECANT_MAINNET` / `SECANT_TESTNET` flags
+**Build targets / schemes:**
+- `zodl-internal` - internal/development build (mainnet/ZEC); its scheme also runs the `zodlTests` test target
+- `zodl-testnet` - testnet build (TAZ token)
+- `zodl-production` - production / App Store build (mainnet/ZEC), built via the `zodl-AppStore` scheme
+- `zodlTests` - test target (run via the `zodl-internal` scheme)
+- Conditional compilation via `SECANT_MAINNET` / `SECANT_TESTNET` (plus `SECANT_DISTRIB` on the App Store config). These flags keep the legacy `SECANT_` prefix even though the targets are now named `zodl-*`.
 
-**Build:** Open `secant.xcworkspace` in Xcode and build the desired target.
+**Build:** Open `secant.xcodeproj` in Xcode and build the desired scheme (CI builds with `xcodebuild -project secant.xcodeproj`).
 
 **Tests:** Run the `zodlTests` target in Xcode (scheme `zodl-internal`). All tests use **Swift Testing** (`@Suite` / `@Test` / `#expect` / `#require`) — **write every new test in Swift Testing, never XCTest.** Tests use TCA's `TestStore` with dependency injection (`.noOp`, `withDependencies`, etc.). Swift Testing runs suites in parallel by default, so mark any suite that mutates process-global state (named `UserDefaults` suites, the OSLog store, shared singletons / TCA `@Shared` state) with `@Suite(.serialized)`.
 
@@ -35,15 +36,15 @@ The app's name is always written **ZODL** — all uppercase. Whenever generated 
 
 **Source layout** (`secant/Sources/`):
 - `Features/` - Screen-level features (~40), each in its own directory
-- `Features/CoordFlows/` - Multi-screen coordinator flows (Send, Restore, Scan, SwapAndPay, AddKeystoneHWWallet, RequestZec, SignWithKeystone, Transactions, WalletBackup). Each flow has `<Name>CoordFlowStore.swift`, `<Name>CoordFlowView.swift`, and `<Name>CoordFlowCoordinator.swift`.
-- `Dependencies/` - Dependency clients (~41) wrapping SDK, iOS, and custom services
+- `Features/CoordFlows/` - Multi-screen coordinator flows (Send, Restore, Scan, SwapAndPay, AddKeystoneHWWallet, RequestZec, SignWithKeystone, Transactions, Voting, WalletBackup). Each flow has `<Name>CoordFlowStore.swift`, `<Name>CoordFlowView.swift`, and `<Name>CoordFlowCoordinator.swift`. Most are flat files directly in `CoordFlows/`; Voting lives in its own `VotingCoordFlow/` subdirectory.
+- `Dependencies/` - Dependency clients (~49) wrapping SDK, iOS, and custom services
 - `UIComponents/` - Reusable UI building blocks (buttons, text fields, badges, etc.)
 - `Models/` - Shared data types (TransactionState, StoredWallet, WalletAccount, SwapAsset, Swaps, WalletStatus, etc.)
 - `Utils/` - Helpers and extensions
 - `Generated/` - SwiftGen output (assets, fonts) - do not edit manually
 - `Resources/` - Assets, fonts (Inter, RobotoMono, Zboto, Michroma), Lottie animations, localizations
 
-**Root feature** (`Features/Root/`) is the app coordinator - handles wallet initialization, navigation, and deep linking across 13 files.
+**Root feature** (`Features/Root/`) is the app coordinator - handles wallet initialization, navigation, and deep linking across 12 files.
 
 **Dependencies** use the `@DependencyClient` macro from `swift-dependencies` on a struct with `@Sendable` closures (Swift 6 concurrency). Layout per client:
 - `<Name>Interface.swift` - `@DependencyClient struct <Name>Client { ... }` plus the `DependencyValues` extension
@@ -81,6 +82,26 @@ struct SomeCoordFlow {
 - **String interpolation** required over concatenation
 - **Features vs UI Components:** Features are standalone screens/flows; UI Components are reusable building blocks shared across features
 - **Commit messages:** `[#<issue_number>] <descriptive title>`
+
+## Design System
+
+The app ships a complete design system — reusable SwiftUI components (`secant/Sources/UIComponents/`), colors (`Resources/Colors.xcassets`), image/icon assets (`Resources/Assets.xcassets`), and a localized string catalogue (`Resources/Localizable.xcstrings`). **All new UI work MUST reuse this design system as much as possible** rather than introducing bespoke equivalents.
+
+- **Components:** Reuse the existing `UIComponents` (e.g. `ZashiButton`, plus the badges, text fields, toasts, sheets, toggles, toolbars, tooltips, etc. under `UIComponents/`) instead of hand-rolling new controls. Example: `ZashiButton(String(localizable: .generalRequest)) { action() }` — don't build a styled `Button` from scratch.
+- **Colors:** Use the generated palette — `Asset.Colors.<name>.color` (including the `Asset.Colors.ZDesign.*` semantic ramp). Never hardcode `Color(red:green:blue:)` or hex literals.
+- **Assets / icons:** Use bundled assets via `Asset.Assets.<name>.image` (namespaced, e.g. `Asset.Assets.Icons.*`, `Asset.Assets.Brandmarks.*`). Prefer these over SF Symbols (`Image(systemName:)`).
+- **Strings:** Every user-facing string goes into `Localizable.xcstrings` and is referenced with `String(localizable: .someKey)` — the established idiom (~850 call sites; there are no hardcoded display literals in views). Never put display strings directly in code. (Per **App name**, the app is always `ZODL` in those strings.)
+- **When the design system can't cover a need** — no suitable component, color, or asset exists — **stop and tell the user** instead of silently creating a one-off. Extend the design system deliberately, with the user's agreement, rather than diverging from it.
+
+> `Asset.*` symbols are SwiftGen-generated into `Sources/Generated/` — do not edit those files; add the asset/color to the `.xcassets` catalogue and let the build regenerate them.
+
+## Changelog
+
+Every implemented task — any feature, fix, or other user-facing change — MUST be recorded in `CHANGELOG.md` as part of the same change. Treat the changelog entry as part of "done": do not consider an implementation complete until its entry exists, and add it automatically without waiting to be asked.
+
+- Add the entry under the `## [Unreleased]` section (create that section if it isn't there), in the matching `### Added` / `### Changed` / `### Fixed` / `### Removed` subsection.
+- Prefix every line with the issue identifier in brackets, e.g. `- [MOB-1321] Short, user-facing description of the change.`
+- Write from the user's perspective — what changed for them and why it matters — not the implementation detail. The changelog focuses on user-impacting modifications.
 
 ## Key Files
 
