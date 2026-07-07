@@ -1,7 +1,6 @@
 # frozen_string_literal: true
 
 require "open3"
-require "tmpdir"
 require "fileutils"
 require "shellwords"
 
@@ -11,6 +10,7 @@ require "shellwords"
 $LOAD_PATH.unshift(File.expand_path("lib", __dir__))
 require_relative "lib/zodl/preflight"
 require_relative "lib/zodl/build_paths"
+require_relative "lib/zodl/local_packages"
 require_relative "lib/zodl/notify"
 
 # Refuse to run outside bundler so the pinned gem versions in Gemfile.lock are
@@ -66,6 +66,7 @@ lane :release do |options|
   sha = resolve_sha(repo_root, ref)
   branch_version = Zodl::Version.from_branch(ref)
   project_version = marketing_version_at(repo_root, sha)
+  local_packages = local_packages_at(repo_root, sha)
   api_key = asc_api_key
   # Resolve+verify the signing key path now (cwd is still the real repo), so it's
   # an absolute path into the real fastlane dir before we chdir into the worktree.
@@ -85,7 +86,8 @@ lane :release do |options|
       dirty_tree: dirty_tree?(repo_root),
       partner_keys_error: partner_keys_error(repo_root),
       xcode_ok: xcode_ok?(repo_root),
-      signing_identity_ok: signing_identity_ok?
+      signing_identity_ok: signing_identity_ok?,
+      local_packages: local_packages
     )
     report = Zodl::Preflight.check(ctx)
     print_summary(variant, cfg, ref, sha, ctx, report)
@@ -104,7 +106,11 @@ lane :release do |options|
   # API-permission problem fails now instead of after the ~15-minute build.
   ensure_appstore_profiles(variants, api_key)
 
-  worktree = File.join(Dir.tmpdir, "zodl-release-#{sha[0, 8]}")
+  # The worktree is a sibling of the repo, NOT under $TMPDIR: the project may
+  # reference local Swift packages by relative path (XCLocalSwiftPackageReference,
+  # e.g. ../ZcashLightClientKit), and only a sibling worktree resolves those to
+  # the same directories the primary checkout uses in Xcode.
+  worktree = File.join(File.dirname(repo_root), "zodl-release-#{sha[0, 8]}")
   begin
     UI.message("Creating a clean build worktree at #{sha[0, 8]}…")
     run("git -C #{repo_root.shellescape} worktree add --detach #{worktree.shellescape} #{sha}", must_succeed: true)
@@ -244,6 +250,27 @@ def marketing_version_at(repo_root, sha)
   line[/MARKETING_VERSION = ([^;]+);/, 1]&.strip
 end
 
+# Local Swift package references (XCLocalSwiftPackageReference) in the project
+# as committed at `sha`, with the live state of each referenced directory. The
+# relativePath is relative to the .xcodeproj's directory — the repo root here —
+# and the build worktree is the repo's sibling, so the reference resolves to the
+# same directory for both. The referenced checkout is consumed as-is (HEAD plus
+# any uncommitted changes), so capture its git state for the preflight report.
+def local_packages_at(repo_root, sha)
+  pbxproj = run("git -C #{repo_root.shellescape} show #{sha}:secant.xcodeproj/project.pbxproj", must_succeed: true)
+  Zodl::LocalPackages.parse(pbxproj).map do |rel|
+    resolved = File.expand_path(rel, repo_root)
+    unless File.directory?(resolved)
+      next { path: rel, resolved: resolved, exists: false, git: nil, dirty: nil }
+    end
+
+    head = run("git -C #{resolved.shellescape} rev-parse --short HEAD 2>/dev/null").strip
+    git = head.empty? ? nil : head
+    dirty = git && !run("git -C #{resolved.shellescape} status --porcelain 2>/dev/null").strip.empty?
+    { path: rel, resolved: resolved, exists: true, git: git, dirty: dirty }
+  end
+end
+
 # Sets MARKETING_VERSION on all targets directly in the pbxproj. agvtool's
 # new-marketing-version does not update the build-setting form this project uses.
 def set_marketing_version(version)
@@ -340,7 +367,11 @@ end
 # flips it to INVALID), unexpired, and backed by a certificate in the local
 # keychain — exactly what exportArchive needs, and -allowProvisioningUpdates
 # does not mint such a profile. Only when reuse is impossible is the profile
-# renewed, keeping its canonical name.
+# renewed, keeping its canonical name. Name matching must be exact
+# (ignore_profiles_with_different_name): sigh's default fuzzy match happily
+# adopts one of the "<name> <timestamp>" duplicates the old force renewal left
+# behind, and the export step would then fail to find a profile under the
+# canonical name it asks for.
 def ensure_appstore_profiles(variants, api_key)
   variants.each do |variant|
     cfg = Zodl::Variants.config(variant)
@@ -350,7 +381,8 @@ def ensure_appstore_profiles(variants, api_key)
         api_key: api_key,
         app_identifier: cfg[:app_identifier],
         provisioning_name: name,
-        readonly: true
+        readonly: true,
+        ignore_profiles_with_different_name: true
       )
     rescue FastlaneCore::Interface::FastlaneError => e
       UI.important("Cannot reuse profile '#{name}' (#{e.message.strip}) — renewing it.")
@@ -380,7 +412,8 @@ def renew_appstore_profile(name, app_identifier, api_key)
     api_key: api_key,
     app_identifier: app_identifier,
     provisioning_name: name,
-    fail_on_name_taken: true
+    fail_on_name_taken: true,
+    ignore_profiles_with_different_name: true
   )
 end
 

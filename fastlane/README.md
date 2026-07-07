@@ -45,6 +45,14 @@ own App Store Connect app), an unpushed ref, a missing/invalid `PartnerKeys.plis
 the wrong Xcode, or no distribution signing identity. Run with `--dry-run` to see
 it without building.
 
+If the project at the built ref references local Swift packages (e.g. a local
+`../ZcashLightClientKit` checkout), preflight fails when that directory is
+missing and otherwise warns with the package's git state — the build consumes
+that checkout as-is (HEAD plus any uncommitted changes), so it is not
+reproducible from this repo alone. The throwaway build worktree is created
+beside the repo precisely so those relative references resolve to the same
+directories Xcode uses.
+
 ## Notifications
 
 A finished `release` posts a native macOS notification with a sound, so you can

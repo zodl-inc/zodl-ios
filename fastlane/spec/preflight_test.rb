@@ -59,4 +59,41 @@ class ZodlPreflightTest < Minitest::Test
     refute report.ok?
     assert_equal 1, report.errors.length
   end
+
+  def local_pkg(**overrides)
+    {
+      path: "../ZcashLightClientKit", resolved: "/Users/dev/ZcashLightClientKit",
+      exists: true, git: "6bfe97fc", dirty: false
+    }.merge(overrides)
+  end
+
+  def test_missing_local_package_blocks
+    report = Zodl::Preflight.check(facts(local_packages: [local_pkg(exists: false, git: nil, dirty: nil)]))
+    refute report.ok?
+    assert(report.errors.any? { |e| e.include?("../ZcashLightClientKit") && e.include?("not found") })
+  end
+
+  def test_local_package_warns_with_git_state
+    report = Zodl::Preflight.check(facts(local_packages: [local_pkg]))
+    assert report.ok?
+    assert(report.warnings.any? { |w| w.include?("6bfe97fc") && w.include?("clean") })
+  end
+
+  def test_dirty_local_package_warning_mentions_uncommitted_changes
+    report = Zodl::Preflight.check(facts(local_packages: [local_pkg(dirty: true)]))
+    assert report.ok?
+    assert(report.warnings.any? { |w| w.include?("UNCOMMITTED") })
+  end
+
+  def test_non_git_local_package_warns
+    report = Zodl::Preflight.check(facts(local_packages: [local_pkg(git: nil, dirty: nil)]))
+    assert report.ok?
+    assert(report.warnings.any? { |w| w.include?("not a git repository") })
+  end
+
+  def test_no_local_packages_is_silent
+    report = Zodl::Preflight.check(facts(local_packages: []))
+    assert report.ok?
+    assert_empty report.warnings
+  end
 end
