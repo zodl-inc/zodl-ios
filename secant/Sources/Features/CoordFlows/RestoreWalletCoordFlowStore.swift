@@ -224,4 +224,12 @@ extension AlertState where Action == RestoreWalletCoordFlow.Action {
             TextState(String(localizable: .rootInitializationAlertCantCreateNewWalletMessage(error.detailedMessage)))
         }
     }
+
+    static func failedToRecover(_ error: ZcashError) -> AlertState {
+        AlertState {
+            TextState(String(localizable: .rootInitializationAlertFailedTitle))
+        } message: {
+            TextState(String(localizable: .rootInitializationAlertErrorMessage(error.detailedMessage)))
+        }
+    }
 }

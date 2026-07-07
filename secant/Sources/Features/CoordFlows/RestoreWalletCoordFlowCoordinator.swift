@@ -8,6 +8,24 @@
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
 import MnemonicSwift
+import os
+import Foundation
+
+// [#1755] restore-flow diagnostics: the resolveRestore → commitRestore chain had
+// silent dead-ends (nil-birthday guards, the DB-present relevance branch). These lines
+// make an on-device "tap restore → nothing happens" self-explaining in Console/Xcode —
+// filter on the `restore-flow` category. No seed material or PII is ever logged.
+private let restoreFlowLogger = Logger(
+    subsystem: Bundle.main.bundleIdentifier ?? "co.ecc.zashi",
+    category: "restore-flow"
+)
+
+// [#1755] A dead CTA is worse than an error alert. The nil-birthday guards used to
+// `return .none`, silently eating the Restore tap; they now surface through the
+// existing `failedToRecover` sink so the user (and QA) always sees SOMETHING.
+private enum RestoreFlowGuardError: Error {
+    case missingBirthday
+}
 
 extension RestoreWalletCoordFlow {
     func coordinatorReduce() -> Reduce<RestoreWalletCoordFlow.State, RestoreWalletCoordFlow.Action> {
@@ -44,19 +62,23 @@ extension RestoreWalletCoordFlow {
                 return .none
                 
             case .resolveRestoreTapped:
+                var copyState = state
+                restoreFlowLogger.info("[#1755] resolveRestoreTapped → presenting Tor sheet (birthday set: \(copyState.birthday != nil, privacy: .public))")
                 state.isTorOn = false
                 state.isTorSheetPresented = true
                 return .none
 
             case .resolveRestore:
                 guard state.birthday != nil else {
-                    return .none
+                    restoreFlowLogger.error("[#1755] resolveRestore: birthday is nil — surfacing failedToRecover (was a silent dead end)")
+                    return .send(.failedToRecover(RestoreFlowGuardError.missingBirthday.toZcashError()))
                 }
                 let seedPhrase = state.words.joined(separator: " ")
                 do {
                     // validate the seed
                     try mnemonic.isValid(seedPhrase)
                 } catch {
+                    restoreFlowLogger.error("[#1755] resolveRestore: seed invalid → failedToRecover alert")
                     return .send(.failedToRecover(error.toZcashError()))
                 }
                 // Preventive guard ([#1024]): if a wallet DB is already on disk, the entered seed MUST be
@@ -64,16 +86,20 @@ extension RestoreWalletCoordFlow {
                 // existing DB desyncs the keychain seed from data.db (the USK no longer matches any account,
                 // so every send fails with `createToAddress` "Wallet does not contain an account…").
                 if databaseFiles.areDbFilesPresentFor(zcashSDKEnvironment.network()) {
+                    restoreFlowLogger.info("[#1755] resolveRestore: DB files PRESENT → awaiting isSeedRelevantToAnyDerivedAccount…")
                     return .run { send in
                         do {
                             let seedBytes = try mnemonic.toSeed(seedPhrase)
                             let relevant = try await sdkSynchronizer.isSeedRelevantToAnyDerivedAccount(seedBytes)
+                            restoreFlowLogger.info("[#1755] resolveRestore: relevance answered: \(relevant, privacy: .public)")
                             await send(.seedRelevanceChecked(relevant))
                         } catch {
+                            restoreFlowLogger.error("[#1755] resolveRestore: relevance check THREW → failedToRecover alert")
                             await send(.failedToRecover(error.toZcashError()))
                         }
                     }
                 }
+                restoreFlowLogger.info("[#1755] resolveRestore: no DB on disk → commitRestore")
                 return .send(.commitRestore)
 
             case .seedRelevanceChecked(let relevant):
@@ -84,11 +110,22 @@ extension RestoreWalletCoordFlow {
 
             case .seedNotRelevantToExistingDB:
                 // Handled by the Root reducer (presents `differentSeed()` + offers Start over / Try again).
+                restoreFlowLogger.error("[#1755] seed NOT relevant to existing DB → Root should present differentSeed alert")
+                return .none
+
+            case .failedToRecover(let error):
+                // [#1755] THE dead-CTA root cause: this sink was declared and sent from every
+                // restore error path (invalid seed, relevance-check failure, importWallet failure,
+                // missing birthday) but never reduced anywhere — the `default: return .none`
+                // swallowed it, so a failed restore looked like a Restore button doing nothing.
+                restoreFlowLogger.error("[#1755] failedToRecover → presenting alert (code: \(error.code.rawValue, privacy: .public))")
+                state.alert = AlertState.failedToRecover(error)
                 return .none
 
             case .commitRestore:
                 guard let birthday = state.birthday else {
-                    return .none
+                    restoreFlowLogger.error("[#1755] commitRestore: birthday is nil — surfacing failedToRecover (was a silent dead end)")
+                    return .send(.failedToRecover(RestoreFlowGuardError.missingBirthday.toZcashError()))
                 }
                 do {
                     let seedPhrase = state.words.joined(separator: " ")
@@ -110,15 +147,19 @@ extension RestoreWalletCoordFlow {
                     }
 #endif
 
+                    restoreFlowLogger.info("[#1755] commitRestore: wallet imported → pushing RestoreInfo (keep-open screen)")
                     state.path.append(.restoreInfo(RestoreInfo.State.initial))
 
                     // notify user
                     return .send(.successfullyRecovered)
                 } catch {
+                    restoreFlowLogger.error("[#1755] commitRestore: importWallet THREW → failedToRecover alert")
                     return .send(.failedToRecover(error.toZcashError()))
                 }
-                
+
             case .resolveRestoreRequested:
+                var copyState = state
+                restoreFlowLogger.info("[#1755] Tor sheet resolved (isTorOn: \(copyState.isTorOn, privacy: .public)) → resolveRestore")
                 state.isTorSheetPresented = false
                 let isTorOn = state.isTorOn
                 try? walletStorage.importTorSetupFlag(isTorOn)
