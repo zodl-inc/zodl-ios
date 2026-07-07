@@ -18,6 +18,7 @@ extension SDKSynchronizerClient: DependencyKey {
         databaseFiles: DatabaseFilesClient = .liveValue
     ) -> Self {
         @Shared(.inMemory(.swapAPIAccess)) var swapAPIAccess: WalletStorage.SwapAPIAccess = .direct
+        @Shared(.inMemory(.featureFlags)) var featureFlags: FeatureFlags = .initial
         @Dependency(\.userStoredPreferences) var userStoredPreferences
         @Dependency(\.walletStorage) var walletStorage
         @Dependency(\.zcashSDKEnvironment) var zcashSDKEnvironment
@@ -51,7 +52,14 @@ extension SDKSynchronizerClient: DependencyKey {
             isExchangeRateEnabled: isRateEnabled
         )
         
-        let synchronizer = SDKSynchronizer(initializer: initializer)
+        let synchronizer: any Synchronizer
+        if featureFlags.useSlipstream {
+            LoggerProxy.debug("[#1755] SlipstreamSynchronizer: selected (useSlipstream=true)")
+            synchronizer = SlipstreamSynchronizer(initializer: initializer)
+        } else {
+            LoggerProxy.debug("[#1755] SDKSynchronizer: selected (useSlipstream=false)")
+            synchronizer = SDKSynchronizer(initializer: initializer)
+        }
 
         return SDKSynchronizerClient(
             stateStream: { synchronizer.stateStream },
@@ -261,7 +269,7 @@ extension SDKSynchronizerClient: DependencyKey {
                 await synchronizer.isTorSuccessfullyInitialized()
             },
             httpRequestOverTor: { request in
-                try await synchronizer.httpRequestOverTor(for: request)
+                try await synchronizer.httpRequestOverTor(for: request, retryLimit: 3)
             },
             debugDatabaseSql: { query in
                 synchronizer.debugDatabase(sql: query)
@@ -503,7 +511,7 @@ extension SDKSynchronizerClient {
     static func transactionStatesFromZcashTransactions(
         accountUUID: AccountUUID?,
         zcashTransactions: [ZcashTransaction.Overview],
-        synchronizer: SDKSynchronizer
+        synchronizer: any Synchronizer
     ) async throws -> IdentifiedArrayOf<TransactionState> {
         guard let accountUUID else {
             return []

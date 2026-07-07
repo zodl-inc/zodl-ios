@@ -6,6 +6,9 @@ directly impact users rather than highlighting other crucial architectural updat
 
 ## [Unreleased]
 
+### Added
+- ZODL now syncs with the new Slipstream engine, making wallet restores and ongoing sync dramatically faster.
+
 ## 3.7.2 build 1
 
 ### Added
