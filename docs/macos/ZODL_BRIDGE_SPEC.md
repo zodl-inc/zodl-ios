@@ -60,6 +60,16 @@ depend on zcash: scheme."* Adjudication:
   malicious at origin is indistinguishable in transit. Defense = the confirm sheet (BR-4)
   plus authenticated origin display. Same boundary as a hacked webshop showing a wrong
   bank account.
+- *Malicious co-installed extension using "the same channel"* (Lukas's challenge #2,
+  2026-07-08): **cannot** — the host manifest's `allowed_origins` pins our extension ID
+  and the BROWSER enforces it at connect time; extensions are also process-isolated from
+  each other (no API to read/alter another extension's messages or native calls). The
+  channel is identity-bound, not a public bus. **The honest escalation it CAN do:**
+  rewrite the merchant page's DOM (swap the address inside the payment link) before our
+  extension reads it — client-side source compromise, same class as a hacked merchant
+  page, unreachable by channel design. And for first-time payments, "user checks the
+  address" is weak (no reference; two opaque strings). **Structural answer = BR-7
+  provenance tiers (verify by domain, not by address).**
 - *Look-alike extension in a store:* cannot reach the helper (ID pinning); residual = fake
   UI phishing, same class as fake wallet apps; mitigated by official-listing links only.
 - *Local malware (files/binaries replaced):* machine-owned boundary; Touch ID on the real
@@ -96,6 +106,25 @@ depend on zcash: scheme."* Adjudication:
   Swift SPM executable), Zodl feature = review interstitial + injection at the F5 seam
   behind `#if os(macOS)`. **v2 bonus: zero Info.plist AND zero pbxproj changes until B2**
   (no scheme registration at all).
+- **BR-7 · request provenance tiers (added after the malicious-extension challenge —
+  verify by domain, not by address):**
+  - **Tier 1 — origin-verified:** the page carries a *pointer* to the payment request on
+    the merchant's own domain; **Zodl re-fetches it natively over TLS** (outside the
+    browser, beyond any extension's reach) and enforces `fetch domain == tab domain`
+    (tab origin comes from OUR extension; no other extension can falsify it; the check
+    runs in native code). A DOM-rewriting attacker must point off-domain → mismatch
+    caught automatically. Residual = merchant's own server compromised (out of client
+    scope). Fetch rules: https only, no cross-origin redirects, size cap, plain-text
+    content. Merchant cost: serve the ZIP-321 text at a same-origin URL (static file
+    suffices). Confirm sheet shows: "Request verified from shop.example".
+  - **Tier 2 — page-embedded (plain `zcash:` links, ecosystem-compatible):**
+    unverifiable by construction; the confirm sheet states it: "Request read from page
+    content — Zodl cannot verify it wasn't altered in your browser. Verify the address
+    with the merchant." + first-seen notice + default-Cancel + rate limit.
+  - Markup for Tier 1 is additive (the plain `zcash:` URI stays for other wallets; the
+    same-origin pointer rides alongside — exact attribute/format decided in the
+    implementation plan). B0 may ship Tier 2 first; Tier 1 is the recommended-merchant
+    path and lands before any public distribution.
 
 ## 4. Phasing (v2)
 
@@ -127,7 +156,10 @@ depend on zcash: scheme."* Adjudication:
   roulette honestly in the demo README).
 - Manual matrix: decline; rate-limit; locked-app arrival; invalid URI; wrong extension ID
   calling the helper (refused); helper-with-Zodl-quit (wake path); origin display
-  truthfulness (tab URL vs displayed).
+  truthfulness (tab URL vs displayed); **Tier-1 mismatch (pointer to off-domain request →
+  refused with warning); Tier-1 redirect-off-origin (refused); Tier-2 labeling present**;
+  simulated DOM rewrite in the demo page (Tier 1 catches it, Tier 2 shows the
+  unverified label).
 - Unit: routing decision table, one-shot protocol encode/decode + size caps, rate limiter.
 - Negative gate: `grep` proves no `CFBundleURLTypes`/`zcash:` handler registration exists
   in any target (Invariant 2 is a testable absence).
