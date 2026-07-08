@@ -5,6 +5,9 @@ import Foundation
 // delivered payment request and acks it, so the browser→extension→helper→socket
 // chain is provable end-to-end before any Zodl integration exists (plan A5).
 
+// Unbuffered stdout: e2e.sh greps the log while we run (print block-buffers to files).
+setvbuf(stdout, nil, _IONBF, 0)
+
 let path = CommandLine.arguments.dropFirst().first ?? BridgeConfig.defaultSocketPath()
 try? FileManager.default.createDirectory(
     at: URL(fileURLWithPath: path).deletingLastPathComponent(),

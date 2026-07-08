@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "Zodl Bridge (dev)",
+  "version": "0.1.0",
+  "description": "Hands ZIP-321 payment requests from web pages to the native Zodl app. Holds no keys, no wallet data. One-way by design.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAv4XntZQ6QpjiKbEXU4xOHPKn9MgnIC/rQlyU/grRYgSWUeILv1H2sIYj2myeOqjneEBFHQ6r0bcPnBbaGIkJexiB1S1yGjvhZT30MOoiGAq+L5nrcVQAMnyieLvV4U0FMQjdYU5GXRY3zpYmUIZLQ+jnYW2W8tjlhqwqNIeb68MXwOkHaINSq6QgMs92Y6Ijo8bU9TbbKwJvkG0VWY/YAzAoNjquX0sY4W4sRVDFYP3RN/TffumaqAAPSH/I8p3oGYLtqQrCuXmtr5deMYF2P+oaPoxtm8D26iqXVtfIiFy2RxHGKEbFHghRRXzoRjHpQffBkA2YuOqk2Aq4gpnrOQIDAQAB",
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle",
+      "all_frames": true
+    }
+  ],
+  "permissions": ["nativeMessaging", "notifications"],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Zodl Bridge"
+  }
+}
