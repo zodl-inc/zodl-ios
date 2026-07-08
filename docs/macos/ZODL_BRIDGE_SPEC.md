@@ -1,141 +1,135 @@
-# Zodl Bridge — mini-spec (browser → native Zodl payments, pay-only v1)
+# Zodl Bridge — mini-spec v2 (browser → native Zodl payments, pay-only, one-way)
 
-**Status:** SPEC — no code until Lukas reviews (one policy decision BR-3 needs his explicit
-call). · **Date:** 2026-07-08 · **Repo/branch:** secant-ios-wallet / `slipstream-macos`
-(LOCAL commits only — branch is push-embargoed until the team green-light, it carries
-`1a10fc48`). · **Origin:** SDK repo
-`docs/slipstream/plans/2026-07-08-browser-wallet-spec.md` §13 Q7 (Lukas: "bridge").
+**Status:** SPEC v2 — no code until Lukas reviews. **v2 supersedes v1 (`ff18452f`) after
+Lukas's channel-threat challenge: the `zcash:` OS scheme is DROPPED from the design;
+the extension native-messaging chain is the only web→Zodl channel; the flow is strictly
+one-way.** · **Date:** 2026-07-08 · **Repo/branch:** secant-ios-wallet /
+`slipstream-macos` (LOCAL commits only — push embargo, branch carries `1a10fc48`).
+· **Origin:** SDK repo `docs/slipstream/plans/2026-07-08-browser-wallet-spec.md` §13 Q7.
 
-## 0. One line + the invariant
+## 0. One line + the invariants
 
-A page says "Pay with ZEC" → Zodl macOS comes to front with a canonical confirm → Touch ID
-→ paid. **The bridge can REQUEST, never AUTHORIZE:** no spending keys, no viewing keys, no
-wallet state ever exist in the browser; spend authority gains no new path — everything
-funnels through Zodl's existing proposal → confirm → Touch ID machinery. Pitch: "Apple Pay
-for ZEC." (No PCZT needed: creator = signer = Zodl.)
+A page's "Pay with ZEC" click → our extension → our helper → Zodl macOS foreground with a
+canonical confirm → Touch ID → broadcast. Merchant verifies payment on-chain (as it must
+regardless). **Invariant 1 — request, never authorize:** no keys, no wallet data, no spend
+path in the browser. **Invariant 2 — no squattable channel:** Zodl registers NO custom URL
+scheme on ANY platform; every hop of the web→Zodl path is identity-pinned. **Invariant 3 —
+one-way:** no txid/status returns to the page (v1 scope; helper-level delivery ack only).
 
-## 1. Recon facts the spec stands on (verified 2026-07-08, read-only sweep)
+## 1. Recon facts (verified 2026-07-08; unchanged from v1)
 
 | # | Fact | Where |
 |---|---|---|
-| F1 | **No URL scheme registered on any target** (no `CFBundleURLTypes` anywhere); macOS target = `GENERATE_INFOPLIST_FILE = YES` **plus** a checked-in static `zodlmac-internal/Info.plist` → URL types can be added to the static plist, **no pbxproj edit** (verify merge at build) | Info.plists ×5, pbxproj |
-| F2 | `onOpenURL` is wired on the shared RootView (both platforms) → `goToDeeplink` | `RootView.swift:317` |
-| F3 | **Inherited security gate:** a deeplink that parses as a ZIP-321 payment URI is deliberately REJECTED → `deeplinkWarning` screen ("we ignore it and let users know") | `RootDestination.swift:62–65`, `DeeplinkWarningView.swift` |
-| F4 | ZIP-321 parsing exists: `zcash-swift-payment-uri` 1.0.1 via `URIParserClient.checkRP` (used by the QR flow); SDK side additionally exposes `proposefulfillingPaymentURI` (SlipstreamSynchronizer:682) | `URIParser/*`, `ScanChecker.swift:36–49` |
-| F5 | **The reuse seam:** `ScanCoordFlowCoordinator` `.getProposal(paymentRequest)` → `sdkSynchronizer.proposeTransfer` → `.proposalResolved` → `path.append(.requestZecConfirmation(SendConfirmation.State))` — injectable without any QR | `ScanCoordFlowCoordinator.swift:198–351` |
-| F6 | macOS target: **no App Sandbox, no App Groups** today (iCloud entitlements only; sandbox posture = the pending F-2/F-3 foundations thread) — IPC must be designed sandbox-*ready* | `zodlmac-internal.entitlements` |
-| F7 | **No app-extension targets exist** — Safari Web Extension packaging = a new Xcode target = pbxproj surgery | pbxproj target list |
+| F1 | No URL scheme registered on any target today — **v2: stays that way, permanently, by policy** | Info.plists ×5, pbxproj |
+| F2 | `onOpenURL` wired on shared RootView → `goToDeeplink` | `RootView.swift:317` |
+| F3 | Inherited gate: ZIP-321-parsing deeplinks are rejected → `deeplinkWarning` — **v2: the gate STAYS, both platforms** (it is correct; v1's BR-3 reversal is withdrawn) | `RootDestination.swift:62–65` |
+| F4 | ZIP-321 parser: `zcash-swift-payment-uri` 1.0.1 via `URIParserClient.checkRP`; SDK exposes `proposefulfillingPaymentURI` (SlipstreamSynchronizer:682) | `URIParser/*`, `ScanChecker.swift:36–49` |
+| F5 | Reuse seam: `ScanCoordFlowCoordinator` `.getProposal(paymentRequest)` → proposal → `.requestZecConfirmation(SendConfirmation.State)` — injectable without QR | `ScanCoordFlowCoordinator.swift:198–351` |
+| F6 | macOS: no App Sandbox / App Groups today (F-2/F-3 pending) — IPC designed sandbox-ready | `zodlmac-internal.entitlements` |
+| F7 | No app-extension targets — Safari packaging = new target = pbxproj = post-WIP | pbxproj |
 
-## 2. Decisions
+## 2. The channel-trust adjudication (v2's reason to exist)
 
-### BR-1 · v1 scope = pay-only (DECIDED — Lukas's thesis)
-Zero wallet data crosses into the browser, ever. No balance glance, no activity, no
-addresses (v2+ candidates, each its own decision). The extension carries: intercept a
-ZIP-321 payment link, forward it, report status back. Nothing else.
+Lukas's challenge, 2026-07-08: *"no one can stop me from creating a same-looking app and
+registering zcash: … when I click pay with ZEC, which app is going to be used? … as long
+as we can't establish channels between parties in a provenly secure way, we shouldn't
+depend on zcash: scheme."* Adjudication:
 
-### BR-2 · Phasing (recon-corrected)
-- **B0 — URL-scheme foundation (Zodl-only, NO extension, ~½–1 session).** Register
-  `zcash:` on the macOS target (static Info.plist edit per F1) + the hardened
-  external-request flow (BR-3). Result: "Pay with ZEC" works from ANY browser on macOS
-  today — a plain `<a href="zcash:...">` link. **This alone is the demo.** One-way (no
-  txid back to the page).
-- **B1 — Chromium extension + duplex helper (~1–1.5 sessions).** Thin MV3 extension
-  (Chrome/Brave/Edge; works in Firefox too — no wasm, no SAB involved) + a small native
-  helper registered via native-messaging host manifest. Adds: click-interception with a
-  proper in-page "request sent → txid" status, request provenance metadata (origin URL
-  shown in Zodl's confirm), and the duplex channel (BR-4). No Xcode target changes.
-- **B2 — Safari packaging (post-WIP; ~1 session).** Same extension in-bundle via
-  `SFSafariWebExtensionHandler` — requires a new app-extension target (F7) ⇒ **sequenced
-  after Lukas's uncommitted pbxproj WIP lands** (hard rule: never touch his WIP).
-- **Later:** balance glance (opt-in), iOS Safari extension (the mobile card), store
-  distribution.
+| Channel | Receiver provable? | Origin known? | Verdict |
+|---|---|---|---|
+| `zcash:` OS scheme | **NO** — any app can claim it; multiple-handler resolution is undefined (Apple-documented on iOS; LS-arbitrary on macOS); handler can change silently; "Open in…?" shows a spoofable app *name* | no | **DROPPED. Zodl never registers or handles it, any platform** — the same reasoning as iOS's in-Zodl-camera-only policy, now uniform |
+| Extension native messaging | **YES** — browser launches only the helper at the absolute path in the host manifest Zodl installs; helper reachable only by our extension ID (`allowed_origins` / `allowed_extensions`, browser-enforced); web pages cannot use native messaging at all | **yes** — extension supplies the true tab origin | **THE channel** (the only web→Zodl path) |
+| `https://pay.<our-domain>/…` | yes — TLS authenticates the page; associated-domain binding is Apple-verified (unsquattable) | yes | The public **entry point**: our page cooperates with the extension; QR fallback for phones; "get Zodl" otherwise. (Universal-link app-open is reliable only from Safari/system opens on macOS — treated as bonus, not mechanism) |
+| QR → Zodl iOS in-app camera | yes (no inter-app hop) | n/a | Shipped today; remains the phone path |
+| Clipboard paste into Zodl | app is real, but clipboard integrity is not — crypto-clipper malware (rewrites addresses in clipboards) is a known class | no | Listed for completeness; not promoted |
 
-### BR-3 · THE POLICY DECISION — evolving the inherited ZIP-321 deeplink rejection ⚠ needs Lukas
-**Today (F3):** Zashi-inherited code rejects payment-URI deeplinks by design. The honest
-rationale: a URL can arrive with weak/no user intent (a page can auto-navigate to
-`zcash:` — drive-by wallet-popping), whereas opening the QR scanner is a strong intent
-signal. Note the asymmetry is about *intent*, not *data trust* — the QR flow already
-accepts attacker-supplied ZIP-321s (a poster QR ≡ a page link) and routes them through
-proposal → confirm.
+**Threats named and placed:**
+- *Scheme squatting / look-alike app:* eliminated — the OS routes nothing (Invariant 2).
+  Squatters may still catch raw `zcash:` links in no-extension browsers; we cannot prevent
+  third parties squatting, we refuse to participate → merchant guidance says link to the
+  https pay-page (fails safe onto our TLS page), while `zcash:` links in page markup still
+  work *with* our extension because interception happens inside the browser, before the OS.
+- *Relay rewrite (x→y) in transit:* closed on the pinned chain (page → our extension → our
+  helper → Zodl; browser enforces both pinnings; UDS hop is same-uid peer-checked).
+- *Malicious source (compromised merchant page):* **out of any channel's reach** — ZIP-321
+  requests are unsigned (no merchant-signature mechanism exists in the ZIP), so a request
+  malicious at origin is indistinguishable in transit. Defense = the confirm sheet (BR-4)
+  plus authenticated origin display. Same boundary as a hacked webshop showing a wrong
+  bank account.
+- *Look-alike extension in a store:* cannot reach the helper (ID pinning); residual = fake
+  UI phishing, same class as fake wallet apps; mitigated by official-listing links only.
+- *Local malware (files/binaries replaced):* machine-owned boundary; Touch ID on the real
+  confirm remains the spend gate; noted, not solvable here.
+- *Request spam / drive-by:* extension acts only on explicit user click (user gesture);
+  helper rate-limits; one in-flight request; Zodl drops arrivals while locked/onboarding/
+  restoring.
 
-**Proposal: macOS-only evolution — replace "reject with warning" by a hardened review
-flow that REBUILDS the intent signal** (iOS keeps today's warning gate, unchanged):
-1. Arrival while a request is already pending, or within a cooldown → dropped silently
-   (rate limit, drive-by spam defense).
-2. Never while locked/onboarding/restoring; app must reach foreground-active first.
-3. A **review interstitial** ("Payment request from your browser" + origin when the B1
-   channel supplies it) precedes the standard confirm; **default focus = Cancel**; the
-   pay path stays the existing SendConfirmation + Touch ID.
-4. Everything renders from the engine **Proposal** (F5), never from page-supplied text.
-5. New strings en+es (house rule).
+## 3. Decisions (v2)
 
-Options for the record: (a) the above (RECOMMENDED); (b) keep the gate, allow requests
-ONLY via the B1 extension channel (loses the zero-install B0 demo; the extension channel
-is not intrinsically higher-intent than a click); (c) change both platforms (bigger
-conversation, touches upstream-inherited behavior on iOS — not needed for the bridge).
-**B0 cannot ship without this call.**
+- **BR-1 · pay-only (unchanged):** zero wallet data in the browser, ever. Glance = v2+
+  decision, separate.
+- **BR-2 · channel policy (NEW, supersedes v1 BR-3):** Zodl registers NO custom URL
+  scheme on any platform; the F3 deeplink gate stays as-is everywhere; the extension
+  native-messaging chain is the ONLY web→Zodl channel. **No policy reversal needed —
+  v1's BR-3 question is withdrawn.**
+- **BR-3 · one-way (NEW, Lukas's call):** no txid/status to the page. Sharpest argument:
+  merchants cannot trust a client-reported txid anyway (hostile clients lie) — they must
+  match the payment on-chain per invoice (address/amount/memo), so txid-back adds zero
+  merchant security while adding attack surface and a privacy leak (binds the browser
+  session to an on-chain tx). Extension shows a helper-level "handed to Zodl" ack only.
+  Consequence: the UDS protocol collapses to one-shot fire-and-forget — simpler than v1.
+- **BR-4 · confirm hardening (absorbs v1's review flow):** review interstitial before the
+  standard SendConfirmation: authenticated **origin line** (from the extension), address-
+  book badge for known recipients, "first time paying this address" notice, default focus
+  = Cancel, never while locked, rate-limited, everything rendered from the engine
+  **Proposal** (F5) — never from page-supplied text. New strings en+es.
+- **BR-5 · transport:** browser⇄helper = native messaging (browser-dictated framing);
+  helper→Zodl = UDS one-shot `{v:1, id, type:"payRequest", uri, origin}` → local ack;
+  same-uid peer check; schema validation; size caps; helper wakes Zodl
+  (`open -b <bundle-id>`) if the socket is absent. Socket path chosen App-Group-relocatable
+  (F6, sandbox-ready).
+- **BR-6 · code placement:** `bridge/extension/` (vanilla MV3 JS), `bridge/host/` (small
+  Swift SPM executable), Zodl feature = review interstitial + injection at the F5 seam
+  behind `#if os(macOS)`. **v2 bonus: zero Info.plist AND zero pbxproj changes until B2**
+  (no scheme registration at all).
 
-### BR-4 · Duplex transport (B1): Unix-domain socket, sandbox-ready
-Helper (launched by the browser per native-messaging) speaks length-prefixed JSON with the
-extension (the protocol the browser dictates) and connects to Zodl on a UDS at an
-app-support path chosen so it can move into an App Group container when F-2/F-3 lands.
-JSON-lines protocol, versioned:
-`{v:1, id, type:"payRequest", uri, origin}` → `{v:1, id, status:"presented"|"declined"|"broadcast", txid?}`.
-Zodl listens while running; helper wakes Zodl (`open -b <bundle-id>`) when the socket is
-absent, then retries with backoff. Peer checks: same-uid peer credentials on the socket;
-schema validation; max sizes; one in-flight request per origin.
+## 4. Phasing (v2)
 
-### BR-5 · Pinning + threat table (v1)
-- Host manifest `allowed_origins` pins OUR extension ID(s) only; helper verifies the
-  browser-supplied origin argument and refuses others.
-- Threats: compromised page → can only emit a request; user sees canonical proposal +
-  origin, declines. Compromised extension → same ceiling (request-only). Malicious other
-  extension → not in `allowed_origins`, helper refuses. Local malware → owns the machine
-  anyway; still cannot spend without Touch ID (unchanged trust anchor). Request spam →
-  BR-3 rate limit + one-in-flight.
-- Explicitly REFUSED for v1: injecting "Pay" buttons into arbitrary page content by
-  detecting bare addresses (phishing-adjacent surface). v1 handles real ZIP-321 links and
-  an explicit extension-popup paste box only.
+- **B0 — the pinned channel end-to-end (~1–1.5 sessions):** MV3 extension (Chromium
+  family; Firefox variant near-free — no wasm/SAB anywhere) + native-messaging helper +
+  UDS one-shot + Zodl review/confirm flow. Demo: click "Pay with ZEC" in Brave → Zodl
+  front → Touch ID → paid; merchant page never learns anything (watches chain). THE demo.
+- **B1 — public entry point (~1 session):** `https://pay.<domain>` request page (params in
+  the URL fragment — never sent to the server) cooperating with the extension; QR render
+  for phone-Zodl users; "get Zodl" fallback. Merchant guidance doc (link format, on-chain
+  verification note, per-invoice address/memo).
+- **B2 — Safari packaging (post-WIP-land, ~1 session):** same extension in-bundle
+  (`SFSafariWebExtensionHandler`) — new Xcode target ⇒ strictly after Lukas's pbxproj WIP
+  lands.
+- **Later, separate decisions:** balance glance; iOS universal-links entry
+  (associated-domain, unsquattable — the iOS-correct analog of B1); store distribution;
+  Android-world note (intent-filter squatting is worse there — same policy: never scheme).
 
-### BR-6 · Code placement
-- Zodl feature (B0): new small `BridgeRequestCoordFlow` (or a direct injection into the
-  F5 seam) + review interstitial + Deeplink routing change behind `#if os(macOS)`;
-  Info.plist static edit; **no pbxproj**.
-- `bridge/extension/` — vanilla MV3 JS (no build system for v1), MIT-licensable
-  standalone.
-- `bridge/host/` — single small Swift executable (SPM), the native-messaging helper.
-- Docs: this file + a threat-model paragraph in `docs/macos/DESIGN_LANGUAGE.md`'s
-  security section when B1 ships.
+## 5. Testing & gates
 
-## 3. Flows
+- Fixture: `bridge/demo/` page — valid/invalid/oversized requests, a drive-by
+  auto-navigation case (must do nothing without a user click), and a raw `zcash:` link
+  (must be intercepted by the extension; with the extension disabled, document the OS
+  roulette honestly in the demo README).
+- Manual matrix: decline; rate-limit; locked-app arrival; invalid URI; wrong extension ID
+  calling the helper (refused); helper-with-Zodl-quit (wake path); origin display
+  truthfulness (tab URL vs displayed).
+- Unit: routing decision table, one-shot protocol encode/decode + size caps, rate limiter.
+- Negative gate: `grep` proves no `CFBundleURLTypes`/`zcash:` handler registration exists
+  in any target (Invariant 2 is a testable absence).
+- Both Zodl schemes build green; en+es complete; scenario-matrix row added.
 
-**B0:** page link click → macOS routes `zcash:` → Zodl foreground → BR-3 review →
-SendConfirmation (proposal-rendered) → Touch ID → broadcast. Page learns nothing (user
-watches the merchant's own payment-detected UX, standard crypto-checkout pattern).
+## 6. Effort
+B0 ≈ 1–1.5 sessions · B1 ≈ 1 · B2 ≈ 1 (post-WIP). v1's ½-session scheme shortcut is gone
+on purpose — it was speed borrowed from the trust model.
 
-**B1:** click → extension background catches navigation to `zcash:`/link → native message
-→ helper → UDS → Zodl (same BR-3/confirm path, now with `origin` shown) → status events
-stream back (`presented` → `broadcast{txid}` | `declined`) → extension resolves the
-page-visible state ("payment sent · txid…"). Timeout → `unknown` (user may still pay
-manually; page must not treat timeout as failure).
-
-## 4. Testing & gates
-- Fixture: a local demo page (repo `bridge/demo/`) with valid/invalid/oversized ZIP-321
-  links + an auto-redirect drive-by case (must be silently dropped per BR-3.1).
-- Manual matrix rows: decline path, rate-limit, locked-app arrival, invalid URI, wrong
-  origin, helper-without-Zodl (wake), Zodl-quit-mid-request (helper reports `unknown`).
-- Unit: URI routing decision table (ZIP-321 vs address vs junk), protocol
-  encode/decode, rate limiter.
-- Both Zodl schemes build green; en+es strings complete; scenario-matrix style row added
-  for the new flow.
-
-## 5. Effort
-B0 ≈ ½–1 session · B1 ≈ 1–1.5 sessions · B2 ≈ 1 session (post-WIP). The 1–2 session MVP
-promise = B0 (+ B1 if the demo wants txid-back).
-
-## 6. Open questions
-1. **BR-3** — the gate evolution: option (a)? (Blocks B0.)
-2. B1 extension distribution timing (unpacked dev is fine for demo; store listing later).
-3. Naming: "Zodl Bridge" as product name?
-4. Does the team memo bundle (D1–D6 + browser-wallet spec) want this spec attached?
-   (Recommend yes — same trust-model conversation.)
+## 7. Open questions
+1. Naming ("Zodl Bridge"?).
+2. B1 domain choice + who hosts the (static) pay-page.
+3. Extension store timing (unpacked is fine for demo/dogfood).
+4. Attach this spec to the team bundle (D1–D6 + browser-wallet spec)? Recommend yes.
