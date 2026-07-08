@@ -14,7 +14,11 @@ public struct Waker {
     }
 
     /// True once the listener is reachable. Launches at most once.
-    public func ensureListening(bundleID: String?, attempts: Int = 10, delayMs: Int = 500) -> Bool {
+    /// Default wait 30 s (60 × 500 ms): a cold SwiftUI launch binds its listener
+    /// early (at didFinishLaunching, before auth/Home), but "early" can still be
+    /// several seconds; the in-app buffer then replays the request when Home is
+    /// reached, so the helper only needs to survive until the socket BINDS.
+    public func ensureListening(bundleID: String?, attempts: Int = 60, delayMs: Int = 500) -> Bool {
         if probe() { return true }
         guard let bundleID, !bundleID.isEmpty, launch(bundleID) else { return false }
         for _ in 0..<attempts {

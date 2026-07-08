@@ -10,6 +10,13 @@
 
 import ComposableArchitecture
 import Foundation
+import os
+
+// [bridge-debug] Temporary diagnostics for the cold-launch investigation (task #172):
+// answers "did startListener fire, what home did the sandbox resolve, which syscall
+// failed" via `log show --predicate 'subsystem == "co.zodl.bridge"'`. Trim once the
+// live-fire E2E is green.
+private let bridgeLog = os.Logger(subsystem: "co.zodl.bridge", category: "server")
 
 extension BridgeServerClient: DependencyKey {
     #if os(macOS)
@@ -35,10 +42,22 @@ extension BridgeServerClient: DependencyKey {
 /// sockets — Network.framework's UDS support is not worth the abstraction here,
 /// and this mirrors the helper-side client byte-for-byte.
 final class BridgeUDSServer: @unchecked Sendable {
-    /// Spec shared constant — must match `BridgeConfig.defaultSocketPath()` in
-    /// bridge/host. App-Group-relocatable for the sandbox day (spec F6).
+    /// Team-prefixed App Group (macOS requirement) — must match
+    /// `BridgeConfig.appGroupID` in bridge/host.
+    static let appGroupID = "RLPRR8CPQG.zodl.bridge"
+
+    /// Sandbox-safe rendezvous (the task-#172 root cause, live-fire 2026-07-09):
+    /// the app IS sandboxed, so `NSHomeDirectory()` is the per-app container —
+    /// which (a) overflows `sun_path` (123 > 103 bytes) and (b) diverges from the
+    /// unsandboxed helper's view of "home". The App Group container is short and
+    /// IDENTICAL from both sides. Fallback = the legacy App Support path, for a
+    /// build signed without the group entitlement (logged either way).
     static var socketPath: String {
-        (NSHomeDirectory() as NSString)
+        if let group = FileManager.default
+            .containerURL(forSecurityApplicationGroupIdentifier: appGroupID) {
+            return group.appendingPathComponent("bridge.sock").path
+        }
+        return (NSHomeDirectory() as NSString)
             .appendingPathComponent("Library/Application Support/Zodl/bridge.sock")
     }
 
@@ -55,6 +74,7 @@ final class BridgeUDSServer: @unchecked Sendable {
         // Idempotent: a second start replaces the consumer stream but keeps the
         // socket (routing owns the single subscription; RootStore calls once).
         if listenFD >= 0 {
+            bridgeLog.log("[bridge-debug] start(): already listening, re-issuing stream")
             let (stream, continuation) = AsyncStream<BridgePaymentRequest>.makeStream()
             self.continuation?.finish()
             self.continuation = continuation
@@ -62,30 +82,43 @@ final class BridgeUDSServer: @unchecked Sendable {
         }
 
         let path = Self.socketPath
-        try? FileManager.default.createDirectory(
-            at: URL(fileURLWithPath: path).deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
+        bridgeLog.log("[bridge-debug] start(): home=\(NSHomeDirectory(), privacy: .public) socket=\(path, privacy: .public)")
+        do {
+            try FileManager.default.createDirectory(
+                at: URL(fileURLWithPath: path).deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+        } catch {
+            bridgeLog.log("[bridge-debug] start(): createDirectory FAILED: \(error.localizedDescription, privacy: .public)")
+        }
         unlink(path)
 
         var addr = sockaddr_un()
         addr.sun_family = sa_family_t(AF_UNIX)
         let maxLen = MemoryLayout.size(ofValue: addr.sun_path) - 1
         let pathBytes = Array(path.utf8)
-        guard pathBytes.count <= maxLen else { return .finished }
+        guard pathBytes.count <= maxLen else {
+            bridgeLog.log("[bridge-debug] start(): path too long (\(pathBytes.count) > \(maxLen))")
+            return .finished
+        }
         withUnsafeMutableBytes(of: &addr.sun_path) { $0.copyBytes(from: pathBytes) }
 
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
-        guard fd >= 0 else { return .finished }
+        guard fd >= 0 else {
+            bridgeLog.log("[bridge-debug] start(): socket() FAILED errno=\(errno)")
+            return .finished
+        }
         let bound = withUnsafePointer(to: &addr) { ptr in
             ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sa in
                 bind(fd, sa, socklen_t(MemoryLayout<sockaddr_un>.size))
             }
         }
         guard bound == 0, listen(fd, 8) == 0 else {
+            bridgeLog.log("[bridge-debug] start(): bind/listen FAILED bound=\(bound) errno=\(errno)")
             close(fd)
             return .finished
         }
+        bridgeLog.log("[bridge-debug] start(): LISTENING on \(path, privacy: .public)")
 
         listenFD = fd
         let (stream, continuation) = AsyncStream<BridgePaymentRequest>.makeStream()

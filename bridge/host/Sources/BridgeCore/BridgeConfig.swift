@@ -15,10 +15,17 @@ public struct BridgeConfig: Codable, Equatable {
         self.socketPath = socketPath
     }
 
-    /// Spec shared constant: `~/Library/Application Support/Zodl/bridge.sock`.
-    /// Chosen App-Group-relocatable for the day the app sandboxes (spec F6).
+    /// Team-prefixed App Group shared with the sandboxed app (spec F6 — the app IS
+    /// sandboxed; discovered in the 2026-07-09 live-fire). Must match
+    /// `BridgeUDSServer.appGroupID` in the Zodl app.
+    public static let appGroupID = "RLPRR8CPQG.zodl.bridge"
+
+    /// Spec shared constant: the App Group container — short (sun_path-safe) and
+    /// identical from the sandboxed app's and the unsandboxed helper's viewpoints.
+    /// The helper constructs it literally: unsandboxed `NSHomeDirectory()` = real home.
     public static func defaultSocketPath() -> String {
-        (NSHomeDirectory() as NSString).appendingPathComponent("Library/Application Support/Zodl/bridge.sock")
+        (NSHomeDirectory() as NSString)
+            .appendingPathComponent("Library/Group Containers/\(appGroupID)/bridge.sock")
     }
 
     public static func load(from url: URL) -> BridgeConfig? {

@@ -39,13 +39,16 @@ extension Root {
                 #endif
 
             case .bridge(.incoming(let request)):
-                // Arrival gates (spec BR-4): silent drops for state/pacing, visible
-                // refusal cards for account/content problems the user should see.
-                guard
-                    state.destinationState.destination == .home,
-                    !state.isRestoringWallet,
-                    state.bridgeRequestState == nil
-                else { return .none }
+                // Not ready to present yet (cold-launch wake lands here before Home, or
+                // mid-restore): BUFFER most-recent and replay when Home is reached
+                // (.synchronizerStateChanged below). This is what makes waking a
+                // quit Zodl actually deliver the click that woke it.
+                guard state.destinationState.destination == .home, !state.isRestoringWallet else {
+                    state.pendingBridgeRequest = request
+                    return .none
+                }
+                // A card is already up → one-in-flight: ignore the newcomer.
+                guard state.bridgeRequestState == nil else { return .none }
 
                 let now = Date().timeIntervalSince1970
                 guard now - state.lastBridgeRequestAt >= 5 else { return .none }
@@ -153,6 +156,19 @@ extension Root {
 
             case .bridge:
                 return .none
+
+            case .synchronizerStateChanged:
+                // The reliable "app is live on Home" signal (fires on every sync tick,
+                // and after BOTH ways Home is set — the action path AND the direct
+                // assignment in RootInitialization). Replay a buffered request once.
+                guard
+                    let pending = state.pendingBridgeRequest,
+                    state.destinationState.destination == .home,
+                    !state.isRestoringWallet,
+                    state.bridgeRequestState == nil
+                else { return .none }
+                state.pendingBridgeRequest = nil
+                return .send(.bridge(.incoming(pending)))
 
             default:
                 return .none

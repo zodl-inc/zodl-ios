@@ -8,7 +8,7 @@ identity-pinned. Spec: `docs/macos/ZODL_BRIDGE_SPEC.md` (v2 + BR-7) · plan:
 ```
 page click ─▶ extension (content.js → background.js)     [browser process isolation]
         ─▶ zodl-bridge-host (native messaging, argv-pinned caller)   [allowed_origins]
-        ─▶ UDS ~/Library/Application Support/Zodl/bridge.sock        [same-uid peer check]
+        ─▶ UDS ~/Library/Group Containers/RLPRR8CPQG.zodl.bridge/bridge.sock   [App Group + same-uid peer check]
         ─▶ Zodl review interstitial → SendConfirmation → Touch ID    [Phase B]
 ```
 
@@ -42,7 +42,7 @@ Expect: `building helper (release)…` (first build takes a moment) → `install
 ```
 swift run mock-zodl
 ```
-Expect: `mock-zodl listening on ~/Library/Application Support/Zodl/bridge.sock`.
+Expect: `mock-zodl listening on ~/Library/Group Containers/RLPRR8CPQG.zodl.bridge/bridge.sock`.
 
 **Step 3 — serve the demo shop** (Terminal 2, leave running):
 ```

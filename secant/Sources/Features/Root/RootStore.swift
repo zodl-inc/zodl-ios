@@ -64,6 +64,11 @@ struct Root {
         // 5 s request-spam cooldown (BR-4). Intake lives in RootBridge.swift.
         var bridgeRequestState: BridgeRequest.State?
         var lastBridgeRequestAt: TimeInterval = 0
+        // A request that arrived before the app was ready to show it (cold-launch wake,
+        // mid-restore, or a card already up). Most-recent-wins; replayed from
+        // synchronizerStateChanged once Home is reached — see RootBridge.swift. Without
+        // this a woken-from-quit Zodl silently drops the very click that woke it.
+        var pendingBridgeRequest: BridgePaymentRequest?
         @Shared(.inMemory(.exchangeRate)) var currencyConversion: CurrencyConversion? = nil
         var deeplinkWarningState: DeeplinkWarning.State = .initial
         var destinationState: DestinationState
