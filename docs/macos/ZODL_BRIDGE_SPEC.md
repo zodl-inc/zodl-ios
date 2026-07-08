@@ -125,6 +125,18 @@ depend on zcash: scheme."* Adjudication:
     same-origin pointer rides alongside — exact attribute/format decided in the
     implementation plan). B0 may ship Tier 2 first; Tier 1 is the recommended-merchant
     path and lands before any public distribution.
+  - **Real-world calibration (2026-07-08, CipherPay — cipherpay.app, presented to Lukas
+    at the summit; whole stack MIT on github.com/atmospherelabs-dev):** their hosted
+    checkout's "OPEN IN WALLET" is a genuine `<a href={zcash_uri}>` ZIP-321 anchor
+    (`cipherpay-web` CheckoutClient.tsx:395) ⇒ **bridge-compatible as-is, zero changes
+    on their side** (today, on desktop, that click is OS roulette or a dead end — the
+    bridge is what makes it work). Two design consequences: (1) their checkout lives on
+    `www.cipherpay.app` while invoices come from `api.cipherpay.app` ⇒ the Tier-1
+    domain comparison must be **registrable domain (eTLD+1), not exact host**;
+    (2) the Tier-1 pointer attribute should be **vendor-neutral**
+    (`data-zcash-request-src`, not `data-zodl-…`) so it can become an ecosystem
+    convention any wallet can verify — a one-attribute PR to their MIT checkout is the
+    natural first partner move.
 
 ## 4. Phasing (v2)
 
