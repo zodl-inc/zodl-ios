@@ -15,6 +15,10 @@ regardless). **Invariant 1 — request, never authorize:** no keys, no wallet da
 path in the browser. **Invariant 2 — no squattable channel:** Zodl registers NO custom URL
 scheme on ANY platform; every hop of the web→Zodl path is identity-pinned. **Invariant 3 —
 one-way:** no txid/status returns to the page (v1 scope; helper-level delivery ack only).
+**Invariant 4 — fully local (v1, Lukas 2026-07-08):** the extension chain is the
+STANDALONE solution — the entire request path is on-machine (extension → helper → Zodl),
+no server, no domain, no web infrastructure, no new observer. The https pay-page is NOT
+part of v1 (see B1, deferred).
 
 ## 1. Recon facts (verified 2026-07-08; unchanged from v1)
 
@@ -39,7 +43,7 @@ depend on zcash: scheme."* Adjudication:
 |---|---|---|---|
 | `zcash:` OS scheme | **NO** — any app can claim it; multiple-handler resolution is undefined (Apple-documented on iOS; LS-arbitrary on macOS); handler can change silently; "Open in…?" shows a spoofable app *name* | no | **DROPPED. Zodl never registers or handles it, any platform** — the same reasoning as iOS's in-Zodl-camera-only policy, now uniform |
 | Extension native messaging | **YES** — browser launches only the helper at the absolute path in the host manifest Zodl installs; helper reachable only by our extension ID (`allowed_origins` / `allowed_extensions`, browser-enforced); web pages cannot use native messaging at all | **yes** — extension supplies the true tab origin | **THE channel** (the only web→Zodl path) |
-| `https://pay.<our-domain>/…` | yes — TLS authenticates the page; associated-domain binding is Apple-verified (unsquattable) | yes | The public **entry point**: our page cooperates with the extension; QR fallback for phones; "get Zodl" otherwise. (Universal-link app-open is reliable only from Safari/system opens on macOS — treated as bonus, not mechanism) |
+| `https://pay.<our-domain>/…` | yes — TLS authenticates the page; associated-domain binding is Apple-verified (unsquattable) | yes | Optional **entry point** — **DEFERRED per Lukas (extension chain is standalone; keeps v1 fully local)**; revisit at public distribution. (Universal-link app-open is reliable only from Safari/system opens on macOS — bonus, not mechanism) |
 | QR → Zodl iOS in-app camera | yes (no inter-app hop) | n/a | Shipped today; remains the phone path |
 | Clipboard paste into Zodl | app is real, but clipboard integrity is not — crypto-clipper malware (rewrites addresses in clipboards) is a known class | no | Listed for completeness; not promoted |
 
@@ -99,10 +103,15 @@ depend on zcash: scheme."* Adjudication:
   family; Firefox variant near-free — no wasm/SAB anywhere) + native-messaging helper +
   UDS one-shot + Zodl review/confirm flow. Demo: click "Pay with ZEC" in Brave → Zodl
   front → Touch ID → paid; merchant page never learns anything (watches chain). THE demo.
-- **B1 — public entry point (~1 session):** `https://pay.<domain>` request page (params in
-  the URL fragment — never sent to the server) cooperating with the extension; QR render
-  for phone-Zodl users; "get Zodl" fallback. Merchant guidance doc (link format, on-chain
-  verification note, per-invoice address/memo).
+- **B1 — public entry point: DEFERRED (Lukas 2026-07-08 — "extension standalone is the
+  best option for now").** The extension chain has no dependency on it; merchant story
+  simplifies to "standard ZIP-321 `zcash:` links" (the existing ecosystem norm — zero
+  merchant-side work; our extension upgrades those clicks wherever installed). What B1
+  would add, deliberately deferred to the public-distribution decision: a safe landing
+  for no-extension users (today: OS scheme roulette or nothing — ecosystem status quo,
+  unchanged by us), a "get Zodl" onboarding funnel, and a QR for phone users on pages
+  without one. If/when built: `https://pay.<domain>` static page, params in the URL
+  fragment (never sent to the server), cooperating with the extension.
 - **B2 — Safari packaging (post-WIP-land, ~1 session):** same extension in-bundle
   (`SFSafariWebExtensionHandler`) — new Xcode target ⇒ strictly after Lukas's pbxproj WIP
   lands.
@@ -125,11 +134,12 @@ depend on zcash: scheme."* Adjudication:
 - Both Zodl schemes build green; en+es complete; scenario-matrix row added.
 
 ## 6. Effort
-B0 ≈ 1–1.5 sessions · B1 ≈ 1 · B2 ≈ 1 (post-WIP). v1's ½-session scheme shortcut is gone
-on purpose — it was speed borrowed from the trust model.
+B0 ≈ 1–1.5 sessions · B1 deferred (≈1 when/if called) · B2 ≈ 1 (post-WIP). v1's ½-session
+scheme shortcut is gone on purpose — it was speed borrowed from the trust model.
 
 ## 7. Open questions
 1. Naming ("Zodl Bridge"?).
-2. B1 domain choice + who hosts the (static) pay-page.
+2. ~~B1 domain choice + hosting~~ — moot while B1 is deferred; returns with the
+   public-distribution decision.
 3. Extension store timing (unpacked is fine for demo/dogfood).
 4. Attach this spec to the team bundle (D1–D6 + browser-wallet spec)? Recommend yes.
