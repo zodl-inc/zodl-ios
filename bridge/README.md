@@ -82,6 +82,31 @@ roulette Zodl refuses to join (Invariant 2). Row 6 (iframe): like step 5.
 **Step 10 — cleanup (optional; leave installed if Phase B is next):** Ctrl-C both
 terminals; `host/install-dev.sh --uninstall`; remove the unpacked extension.
 
+## Live fire with REAL Zodl (Phase B built — replaces mock-zodl)
+Phase B is in the app: UDS listener (starts at launch, macOS only) → Root intake
+gates (home-only, one-in-flight, 5 s cooldown, Zodl-account-only) → BR-7 Tier-1
+native verification → review card (`.zashiSheet`, engine-Proposal-rendered,
+default-Cancel) → the shipped send path (SE-decrypt biometric → derive → submit).
+
+1. `host/install-dev.sh --bundle-id co.electriccoin.secant-testnet`
+   (the mac app's ground-truth CFBundleIdentifier — legacy-inherited name; enables
+   wake-on-request when Zodl isn't running).
+2. Run Zodl macOS (zodlmac-internal) with a ready wallet, land on Home.
+3. Load the extension + serve the demo (steps 3–4 of the checklist above), but do
+   NOT run mock-zodl — the app owns the socket now (whichever binds last steals it).
+4. Click **Pay 0.001 ZEC** → Zodl comes to front with the review card (origin +
+   "read from page content" label) → **Cancel** (or Pay, if you mean it — it's a
+   real mainnet send to the demo address!).
+5. Tier-1 row ("verified"): works fully once the request source is same-domain
+   https (the localhost demo exercises the plumbing; CipherPay invoices are the
+   real thing: `data-zodl-request-src` → their public invoice JSON).
+
 ## Status
-Phase A complete (this directory). Phase B (Zodl-side listener + review flow +
-Tier-1 verification) is task #171 — see the plan.
+Phase A complete + headless E2E PASS. Phase B (task #171) BUILT: listener,
+intake gates, review card (en+es via `Bridge.xcstrings`), Tier-1 verifier
+(https-only, all-redirects-blocked, ≤4 KB, domain rule) — both schemes green.
+Unit tests for the domain rule + URI extraction live in `zodlTests/BridgeTests/`
+(pending first run: the shared sim-test lane has a pre-existing SwiftProtobuf
+link failure unrelated to the bridge; macOS scheme has no test action).
+Remaining: [needs-user] live-fire above · CipherPay testnet/mainnet E2E ·
+Safari packaging (post-WIP, new Xcode target).

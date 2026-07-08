@@ -315,6 +315,22 @@ private extension RootView {
                 }
             }
             .onOpenURL(perform: { store.goToDeeplink($0) })
+            // Zodl Bridge review/confirm card (docs/macos/ZODL_BRIDGE_SPEC.md BR-4):
+            // presented via the house MacCard at the Root root — global over the whole
+            // window, above MacSplitView (MODALS.md Rule #5). Backdrop dismissal maps
+            // to the child's close action so the one-in-flight gate re-opens.
+            .zashiSheet(
+                isPresented: Binding(
+                    get: { store.bridgeRequestState != nil },
+                    set: { if !$0 { store.send(.bridge(.child(.closeTapped))) } }
+                )
+            ) {
+                Group {
+                    if let bridgeStore = store.scope(state: \.bridgeRequestState, action: \.bridge.child) {
+                        BridgeRequestView(store: bridgeStore, tokenName: tokenName)
+                    }
+                }
+            }
             .alert(
                 store:
                     store.scope(

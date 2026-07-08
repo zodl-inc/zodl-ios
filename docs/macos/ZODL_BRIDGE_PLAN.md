@@ -2,6 +2,18 @@
 
 > Executes `ZODL_BRIDGE_SPEC.md` (v2 + BR-7). Inline execution, task-by-task, local
 > commits only (push embargo). Tasks #170 (Phase A) / #171 (Phase B).
+>
+> **STATUS 2026-07-09: Phase A COMPLETE (headless E2E PASS) · Phase B BUILT under
+> Lukas's autonomous GO** — B1 listener, B2 intake (Flexa-precedent submission,
+> MOB-1348 single-payment rule), B3 review card via `.zashiSheet` + `Bridge.xcstrings`
+> en+es (separate catalog — deliberately avoids Lukas's dirty `Localizable.xcstrings`;
+> merge candidate once his WIP lands), B4 Tier-1 verifier (https-only, ALL redirects
+> blocked, ≤4 KB, raw-or-JSON body, subdomain-of-tab domain rule + www-normalization).
+> Both schemes BUILD SUCCEEDED. B5 partial: unit tests written
+> (`zodlTests/BridgeTests/`) but the shared sim-test lane has a pre-existing
+> SwiftProtobuf link failure (bridge-unrelated) and the mac scheme lacks a test
+> action — first run lands with the normal test lane. [needs-user]: live-fire
+> checklist (bridge/README.md) + CipherPay E2E. Safari (B2-phase) remains post-WIP.
 
 **Goal:** "Pay with ZEC" click in a Chromium browser → pinned chain → Zodl macOS review
 interstitial → SendConfirmation → Touch ID → broadcast. One-way; pay-only; fully local.

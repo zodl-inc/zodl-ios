@@ -51,6 +51,7 @@ struct Root {
         var CancelFlexaId = UUID()
         var shieldingProcessorCancelId = UUID()
         var automaticServerRefreshCancelId = UUID()
+        var BridgeListenerCancelId = UUID()
 
         @Shared(.inMemory(.addressBookContacts)) var addressBookContacts: AddressBookContacts = .empty
         @Presents var alert: AlertState<Action>?
@@ -58,6 +59,11 @@ struct Root {
         var appStartState: AppStartState = .unknown
         var areMetadataPreserved = true
         var bgTask: PlatformBackgroundTask?
+        // Zodl Bridge (docs/macos/ZODL_BRIDGE_SPEC.md): non-nil while the review/confirm
+        // card is up — doubles as the one-in-flight gate; `lastBridgeRequestAt` is the
+        // 5 s request-spam cooldown (BR-4). Intake lives in RootBridge.swift.
+        var bridgeRequestState: BridgeRequest.State?
+        var lastBridgeRequestAt: TimeInterval = 0
         @Shared(.inMemory(.exchangeRate)) var currencyConversion: CurrencyConversion? = nil
         var deeplinkWarningState: DeeplinkWarning.State = .initial
         var destinationState: DestinationState
@@ -213,6 +219,7 @@ struct Root {
         case alert(PresentationAction<Action>)
         case batteryStateChanged
         case binding(BindingAction<Root.State>)
+        case bridge(BridgeAction)
         case cancelAllRunningEffects
         case deeplinkWarning(DeeplinkWarning.Action)
         case destination(DestinationAction)
@@ -317,6 +324,8 @@ struct Root {
     @Dependency(\.addressBook) var addressBook
     @Dependency(\.audioServices) var audioServices
     @Dependency(\.autolockHandler) var autolockHandler
+    @Dependency(\.bridgeServer) var bridgeServer
+    @Dependency(\.bridgeVerifier) var bridgeVerifier
     @Dependency(\.databaseFiles) var databaseFiles
     @Dependency(\.deeplink) var deeplink
     @Dependency(\.date) var date
@@ -498,6 +507,11 @@ struct Root {
         swapsReduce()
         
         checkFundsReduce()
+
+        bridgeReduce()
+            .ifLet(\.bridgeRequestState, action: \.bridge.child) {
+                BridgeRequest()
+            }
     }
     
     /// The `onChange` wrapper must observe every reducer that can mutate an input of

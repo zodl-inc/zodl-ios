@@ -51,11 +51,16 @@ extension Root {
                 state.appStartState = .didFinishLaunching
                 // TODO: [#704], trigger the review request logic when approved by the team,
                 // https://github.com/Electric-Coin-Company/zashi-ios/issues/704
-                return .run { send in
+                return .merge(
+                    .run { send in
                         try await mainQueue.sleep(for: .seconds(0.5))
                         await send(.initialization(.initialSetups))
                     }
-                    .cancellable(id: state.DidFinishLaunchingId, cancelInFlight: true)
+                    .cancellable(id: state.DidFinishLaunchingId, cancelInFlight: true),
+                    // Zodl Bridge: start the UDS listener once per launch (RootBridge.swift).
+                    // No-op on iOS — the live client there is inert by construction.
+                    .send(.bridge(.startListener))
+                )
 
             case .initialization(.appDelegate(.willEnterForeground)):
                 if state.featureFlags.appLaunchBiometric {
