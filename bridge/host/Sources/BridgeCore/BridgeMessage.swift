@@ -48,11 +48,11 @@ extension BridgeMessage {
             guard Self.isAcceptableOrigin(origin) else { return .badOrigin }
         }
         if let src = requestSrc {
-            guard src.count <= Self.maxRequestSrcLength,
-                let url = URL(string: src),
-                url.scheme == "https",
-                url.host?.isEmpty == false
-            else { return .badRequestSrc }
+            // Same https/loopback rule as origins (loopback = the demo fixture only);
+            // the production Tier-1 FETCH stays https-only, enforced Zodl-side (BR-7).
+            guard src.count <= Self.maxRequestSrcLength, Self.isAcceptableOrigin(src) else {
+                return .badRequestSrc
+            }
         }
         return nil
     }

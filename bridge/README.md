@@ -30,22 +30,57 @@ host/e2e.sh
 Proves: framed message → helper → UDS → mock listener → ack `received`; foreign
 extension ID refused (`caller-not-allowed`) before its input is even read.
 
-## Browser-in-the-loop (≈3 minutes, requires a human)
-1. `host/install-dev.sh` — builds + installs the helper and writes host manifests for
-   every Chromium browser found (Chrome/Brave/Edge/Chromium). Add
-   `--bundle-id <zodl bundle id>` once Phase B lands to enable wake-on-request.
-2. Browser → `chrome://extensions` (or `brave://extensions`) → Developer mode →
-   **Load unpacked** → `bridge/extension/`. The ID must read
-   `nginegnmdihpegemkajmjjeimigdkjma` (pinned by the manifest `key`).
-3. Terminal: `swift run --package-path bridge/host mock-zodl` (stand-in for Zodl).
-4. Terminal 2: `demo/serve.sh` → open http://localhost:8873.
-5. Click **Pay 0.001 ZEC** → notification "handed to Zodl" + the request printed by
-   `mock-zodl`.
-6. Negative checks: the BTC link does nothing; the oversized link is rejected; the
-   drive-by button produces NO bridge activity (the browser may show its own
-   external-protocol dialog — that OS roulette is exactly what Zodl refuses to join,
-   spec Invariant 2).
-7. `host/install-dev.sh --uninstall` when done.
+## Browser-in-the-loop (ordered; two terminals + one browser)
+
+**Step 1 — install the helper** (Terminal 1):
+```
+cd bridge/host && ./install-dev.sh
+```
+Expect: `building helper (release)…` (first build takes a moment) → `installed: …/Zodl/bridge/zodl-bridge-host` → one `manifest → …` line per Chromium browser found.
+
+**Step 2 — start the mock Zodl** (same terminal, leave running — it is the proof surface):
+```
+swift run mock-zodl
+```
+Expect: `mock-zodl listening on ~/Library/Application Support/Zodl/bridge.sock`.
+
+**Step 3 — serve the demo shop** (Terminal 2, leave running):
+```
+bridge/demo/serve.sh
+```
+
+**Step 4 — load the extension** (Brave or Chrome): `brave://extensions` →
+Developer mode ON → **Load unpacked** → select `bridge/extension/`. Open Details and
+verify the ID is exactly `nginegnmdihpegemkajmjjeimigdkjma` — the manifest `key` pins
+it; anything else means the host manifests won't match and the browser will refuse the
+native connection.
+
+**Step 5 — happy path:** open http://localhost:8873 → click **Pay 0.001 ZEC** (row 1).
+Expect: the page does NOT navigate; Terminal 1 prints the `REQUEST:` JSON
+(`amount=0.001`, `origin: http://localhost:8873`, `requestSrc: null`); a browser
+notification "handed to Zodl" (banners can be muted by Focus — the terminal line is
+the truth).
+
+**Step 6 — Tier-1 pointer:** wait 5 s (per-origin cooldown), click **Pay 0.002 ZEC
+(verified)** (row 2). Same as step 5 but the printed JSON carries
+`requestSrc: "http://localhost:8873/invoice.txt"` (absolutized by the content script;
+Zodl fetches + origin-compares it in Phase B4).
+
+**Step 7 — negative rows:** row 3 (BTC link — a literal `bitcoin:` link, the
+junk-scheme filter test): NO bridge activity (any external-app dialog is the
+browser's own). Row 4 (oversized): notification `invalid:uriTooLong`, nothing in the
+terminal. Row 5 (drive-by button): zero bridge activity — any dialog is the OS
+roulette Zodl refuses to join (Invariant 2). Row 6 (iframe): like step 5.
+
+**Step 8 — popup manual path:** pin + click the toolbar icon, paste a `zcash:` URI
+(right-click a Pay button → Copy Link Address), **Send to Zodl** → terminal prints
+`origin: "popup:"`.
+
+**Step 9 — failure mode (optional):** Ctrl-C mock-zodl, click Pay → notification
+`zodl-unreachable` (no wake target configured yet; Phase B adds `--bundle-id`).
+
+**Step 10 — cleanup (optional; leave installed if Phase B is next):** Ctrl-C both
+terminals; `host/install-dev.sh --uninstall`; remove the unpacked extension.
 
 ## Status
 Phase A complete (this directory). Phase B (Zodl-side listener + review flow +

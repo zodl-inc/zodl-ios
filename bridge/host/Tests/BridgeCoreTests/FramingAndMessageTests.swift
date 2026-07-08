@@ -59,6 +59,7 @@ final class BridgeMessageTests: XCTestCase {
         XCTAssertNil(message(origin: BridgeMessage.popupOrigin).validate())
         XCTAssertNil(message(origin: "http://localhost:8873").validate())
         XCTAssertNil(message(requestSrc: "https://shop.example/invoice/123").validate())
+        XCTAssertNil(message(requestSrc: "http://localhost:8873/invoice.txt").validate())
 
         XCTAssertEqual(message(v: 2).validate(), .badVersion)
         XCTAssertEqual(message(type: "balance").validate(), .badType)

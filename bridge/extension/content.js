@@ -20,11 +20,22 @@
       event.preventDefault();
       event.stopPropagation();
 
+      // BR-7 Tier 1 pointer, if the merchant provides one — absolutized against the
+      // page URL (Zodl needs an absolute URL to fetch and origin-compare natively).
+      let requestSrc = null;
+      const rawSrc = anchor.dataset.zodlRequestSrc;
+      if (rawSrc) {
+        try {
+          requestSrc = new URL(rawSrc, location.href).href;
+        } catch {
+          requestSrc = null;
+        }
+      }
+
       chrome.runtime.sendMessage({
         kind: "zodl-pay-request",
         uri: href,
-        // BR-7 Tier 1 pointer, if the merchant provides one (validated natively).
-        requestSrc: anchor.dataset.zodlRequestSrc || null
+        requestSrc
       });
     },
     true

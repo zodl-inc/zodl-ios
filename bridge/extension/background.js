@@ -66,7 +66,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   // Origin is browser-attested (`sender.origin` = the sending frame's origin);
   // page-supplied values are never trusted for identity (spec BR-7 reasoning).
-  const origin = sender.origin ?? (sender.tab ? new URL(sender.tab.url).origin : null) ?? "popup:";
+  // Our own extension origin = the popup's paste box → labeled "popup:".
+  const ownOrigin = "chrome-extension://" + chrome.runtime.id;
+  let origin;
+  if (sender.origin === ownOrigin) origin = "popup:";
+  else if (sender.origin) origin = sender.origin;
+  else if (sender.tab?.url) origin = new URL(sender.tab.url).origin;
+  else origin = "popup:";
 
   deliver(String(message.uri || ""), origin, message.requestSrc, sendResponse);
   return true; // async respond
