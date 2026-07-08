@@ -68,6 +68,12 @@ struct SDKSynchronizerClient: Sendable {
     var wipe: @Sendable () -> AnyPublisher<Void, Error>?
     
     var switchToEndpoint: @Sendable (LightWalletEndpoint) async throws -> Void
+    /// [#1755] v0.7 P1b: replaces the slipstream engine's alternate-server list — the
+    /// per-pass probe grid + mid-pass failover candidates. Consent-gated by the user's
+    /// connection mode exactly like submission fan-out: Automatic -> all known servers,
+    /// Manual -> EMPTY (the pinned server is used exclusively; probe and failover never
+    /// run). No-op on the old SDKSynchronizer engine.
+    var setAlternateEndpoints: @Sendable ([LightWalletEndpoint]) async -> Void
     
     // Proposals
     var proposeTransfer: @Sendable (AccountUUID, Recipient, Zatoshi, Memo?) async throws -> Proposal

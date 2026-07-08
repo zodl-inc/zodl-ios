@@ -48,6 +48,7 @@ extension SDKSynchronizerClient: TestDependencyKey {
         getAccountsBalances: unimplemented("\(Self.self).getAccountsBalances", placeholder: [:]),
         wipe: unimplemented("\(Self.self).wipe", placeholder: nil),
         switchToEndpoint: unimplemented("\(Self.self).switchToEndpoint"),
+        setAlternateEndpoints: unimplemented("\(Self.self).setAlternateEndpoints", placeholder: {}()),
         proposeTransfer: unimplemented("\(Self.self).proposeTransfer", placeholder: .testOnlyFakeProposal(totalFee: 0)),
         createAndSubmitProposedTransactions: unimplemented("\(Self.self).createAndSubmitProposedTransactions", placeholder: .success(txIds: [])),
         proposeShielding: unimplemented("\(Self.self).proposeShielding", placeholder: nil),
@@ -106,6 +107,7 @@ extension SDKSynchronizerClient {
         getAccountsBalances: { [:] },
         wipe: { Empty<Void, Error>().eraseToAnyPublisher() },
         switchToEndpoint: { _ in },
+        setAlternateEndpoints: { _ in },
         proposeTransfer: { _, _, _, _ in .testOnlyFakeProposal(totalFee: 0) },
         createAndSubmitProposedTransactions: { _, _ in .success(txIds: []) },
         proposeShielding: { _, _, _, _ in nil },
@@ -231,6 +233,7 @@ extension SDKSynchronizerClient {
         getAccountsBalances: @escaping @Sendable () async -> [AccountUUID: AccountBalance] = { [:] },
         wipe: @escaping @Sendable () -> AnyPublisher<Void, Error>? = { Fail(error: "Error").eraseToAnyPublisher() },
         switchToEndpoint: @escaping @Sendable (LightWalletEndpoint) async throws -> Void = { _ in },
+        setAlternateEndpoints: @escaping @Sendable ([LightWalletEndpoint]) async -> Void = { _ in },
         proposeTransfer:
         @escaping @Sendable (AccountUUID, Recipient, Zatoshi, Memo?) async throws -> Proposal = { _, _, _, _ in .testOnlyFakeProposal(totalFee: 0) },
         createAndSubmitProposedTransactions:
@@ -288,6 +291,7 @@ extension SDKSynchronizerClient {
             getAccountsBalances: getAccountsBalances,
             wipe: wipe,
             switchToEndpoint: switchToEndpoint,
+            setAlternateEndpoints: setAlternateEndpoints,
             proposeTransfer: proposeTransfer,
             createAndSubmitProposedTransactions: createAndSubmitProposedTransactions,
             proposeShielding: proposeShielding,
