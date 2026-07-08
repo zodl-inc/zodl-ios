@@ -29,7 +29,7 @@ part of v1 (see B1, deferred).
 | F3 | Inherited gate: ZIP-321-parsing deeplinks are rejected → `deeplinkWarning` — **v2: the gate STAYS, both platforms** (it is correct; v1's BR-3 reversal is withdrawn) | `RootDestination.swift:62–65` |
 | F4 | ZIP-321 parser: `zcash-swift-payment-uri` 1.0.1 via `URIParserClient.checkRP`; SDK exposes `proposefulfillingPaymentURI` (SlipstreamSynchronizer:682) | `URIParser/*`, `ScanChecker.swift:36–49` |
 | F5 | Reuse seam: `ScanCoordFlowCoordinator` `.getProposal(paymentRequest)` → proposal → `.requestZecConfirmation(SendConfirmation.State)` — injectable without QR | `ScanCoordFlowCoordinator.swift:198–351` |
-| F6 | macOS: no App Sandbox / App Groups today (F-2/F-3 pending) — IPC designed sandbox-ready | `zodlmac-internal.entitlements` |
+| F6 | ~~macOS: no App Sandbox~~ **CORRECTED 2026-07-09: the SIGNED app carries `com.apple.security.app-sandbox=true`** (build settings inject it; the bare checked-in file misled the recon). Rendezvous = App Group `RLPRR8CPQG.zodl.bridge` (entitlements-file-only; orthogonal to keychain — no `keychain-access-groups` in play — and to iCloud) | signed-app `codesign -d --entitlements`, live-fire task #172 |
 | F7 | No app-extension targets — Safari packaging = new target = pbxproj = post-WIP | pbxproj |
 
 ## 2. The channel-trust adjudication (v2's reason to exist)

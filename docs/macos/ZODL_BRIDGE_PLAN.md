@@ -34,7 +34,9 @@ install-script parameter.
 
 ## Shared constants (mirrored helper ↔ Zodl; single source per codebase)
 - Native-messaging host name: `com.zodl.bridge`
-- UDS socket: `~/Library/Application Support/Zodl/bridge.sock`
+- UDS socket: `~/Library/Group Containers/RLPRR8CPQG.zodl.bridge/bridge.sock`
+  (**App Group** — live-fire 2026-07-09 found the app IS sandboxed: container home
+  overflowed `sun_path` 123>103 AND diverged from the helper's real-home view)
 - Protocol: JSON line `{v:1, id, type:"payRequest", uri, origin, requestSrc?}` →
   ack line `{"status":"received"|"rejected", "reason"?}` (local ack only; NO wallet data)
 - Caps: native message ≤ 8 KB · uri ≤ 2 KB · requestSrc ≤ 1 KB, https-only
