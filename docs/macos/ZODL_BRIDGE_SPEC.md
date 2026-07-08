@@ -137,6 +137,14 @@ depend on zcash: scheme."* Adjudication:
     (`data-zcash-request-src`, not `data-zodl-…`) so it can become an ecosystem
     convention any wallet can verify — a one-attribute PR to their MIT checkout is the
     natural first partner move.
+    Docs read (same day): ALL their integrations funnel buyers to the hosted
+    `cipherpay.app/pay/{id}` page (Stripe model — no merchant-domain embeds) ⇒ eTLD+1
+    holds across their entire surface; `GET /api/invoices/{id}` is public/no-auth and
+    returns JSON incl. `zcash_uri` ⇒ a ready-made Tier-1 pointer — **B4 should accept
+    both raw ZIP-321 text AND JSON carrying a `zcash_uri` field**. Their status loop
+    (poll + SSE `/stream` + webhooks: detected→confirmed→underpaid) does the
+    payment-received UX server-side — **independent confirmation that the one-way
+    design (BR-3) needs nothing from us for full checkout UX**.
 
 ## 4. Phasing (v2)
 
