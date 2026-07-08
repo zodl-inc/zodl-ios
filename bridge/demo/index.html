@@ -16,6 +16,29 @@
   <p>Fixture page for the spec §5 manual matrix. Serve via <code>./serve.sh</code>
      (the extension accepts http origins for localhost only).</p>
 
+  <section style="background:#f6f6f9; padding:12px; border-radius:8px">
+    <h3 style="margin-top:0">0 · Live-fire self-pay setup (real Zodl)</h3>
+    <p style="font-size:13px; margin:6px 0">The default link addresses are placeholders —
+    the mock prints them, but real Zodl's parser refuses them (by design). For live fire,
+    paste <strong>your own</strong> Zodl address (Receive screen) so rows 1–2 become a
+    safe self-pay — even a real Pay just returns to your wallet minus the fee.</p>
+    <input id="selfaddr" placeholder="u1… (your own address)" style="width:100%; box-sizing:border-box; font:12px monospace; padding:6px">
+    <script>
+      // Rewrites the pay anchors' hrefs in place; the content script reads the href
+      // at click time, so real anchors stay real (no synthetic navigation involved).
+      document.getElementById("selfaddr").addEventListener("input", (e) => {
+        const addr = e.target.value.trim();
+        if (!addr) return;
+        for (const a of document.querySelectorAll("a.pay[href^='zcash:']")) {
+          const q = a.getAttribute("href").split("?")[1] || "";
+          if (!a.id || a.id !== "oversized") a.setAttribute("href", "zcash:" + addr + (q ? "?" + q : ""));
+        }
+      });
+    </script>
+    <small>Tier-1 row (2) additionally needs the served invoice to match:
+    <code>echo "zcash:YOURADDR?amount=0.0002" &gt; bridge/demo/invoice.txt</code> before serving.</small>
+  </section>
+
   <section>
     <h3>1 · Plain payment link (Tier 2 — page-embedded)</h3>
     <a class="pay" href="zcash:u1l8xunezsvhq8fgzfl7404m450nwnd76zshscn6nfys7vyz2ywyh4cc5daaq0c7q2su5lqfh23sp7fkf3kt27ve5948mzpjkmp6kkscgqsy3f?amount=0.001&memo=VGhhbmtzIGZvciB0aGUgZGVtbyE">Pay 0.001 ZEC</a>

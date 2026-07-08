@@ -94,9 +94,12 @@ default-Cancel) → the shipped send path (SE-decrypt biometric → derive → s
 2. Run Zodl macOS (zodlmac-internal) with a ready wallet, land on Home.
 3. Load the extension + serve the demo (steps 3–4 of the checklist above), but do
    NOT run mock-zodl — the app owns the socket now (whichever binds last steals it).
-4. Click **Pay 0.001 ZEC** → Zodl comes to front with the review card (origin +
-   "read from page content" label) → **Cancel** (or Pay, if you mean it — it's a
-   real mainnet send to the demo address!).
+4. **Self-pay setup (demo section 0):** paste your OWN address (Zodl → Receive)
+   into the demo's address box — the default link addresses are placeholders that
+   real Zodl's parser refuses (you'd see the refusal card, working as designed).
+   With your address in, click **Pay 0.001 ZEC** → Zodl front → review card
+   (origin + tier label) → Cancel to test the safe path, or **Pay** for the full
+   E2E: it's a self-send, the money returns to you minus the fee.
 5. Tier-1 row ("verified"): works fully once the request source is same-domain
    https (the localhost demo exercises the plumbing; CipherPay invoices are the
    real thing: `data-zodl-request-src` → their public invoice JSON).
