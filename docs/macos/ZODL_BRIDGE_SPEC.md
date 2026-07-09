@@ -189,6 +189,22 @@ depend on zcash: scheme."* Adjudication:
 B0 ≈ 1–1.5 sessions · B1 deferred (≈1 when/if called) · B2 ≈ 1 (post-WIP). v1's ½-session
 scheme shortcut is gone on purpose — it was speed borrowed from the trust model.
 
+## 6b. iOS port sketch (Lukas's question, 2026-07-09 — the sandbox is NOT the blocker)
+
+Same chain, stronger bindings: Safari Web Extension (same content.js interception,
+ships INSIDE Zodl iOS — extension↔app binding is cryptographic, no host manifest) →
+`SFSafariWebExtensionHandler` (helper hop deleted) → App Group container + Darwin
+notification (the native iOS idiom of tonight's Mac fix) → identical intake/gates/
+buffer-and-replay/review-card/engine-proposal code → Face ID. Wake = universal link
+(extensions can't launch their containing app; domain-verified, unsquattable — the
+adjudication table's own recommendation). In-transit rewrite: impossible for third
+parties (no OS scheme hop, every process ours-signed); residuals unchanged (DOM
+poisoning → Tier-1 re-fetch works identically; merchant-server compromise → out of
+scope). Frictions: Safari-only (iOS Chrome/Brave/Firefox = WebKit shells, no
+extensions) + one-time user enable in Settings + NEW app-extension target = pbxproj
+= post-WIP, same gate and largely the SAME WORK as macOS-Safari packaging (one
+"Safari family" wave covers both).
+
 ## 7. Open questions
 1. Naming ("Zodl Bridge"?).
 2. ~~B1 domain choice + hosting~~ — moot while B1 is deferred; returns with the
