@@ -30,9 +30,19 @@ public struct Waker {
 
     /// Production launcher: `/usr/bin/open -b <bundleID>` (LaunchServices, no shell).
     public static func systemLauncher(_ bundleID: String) -> Bool {
+        runOpen(["-b", bundleID])
+    }
+
+    /// Dev launcher: `/usr/bin/open <path>` — unambiguous when TestFlight and Xcode
+    /// builds share a bundle id (BridgeConfig.zodlAppPath).
+    public static func systemLaunchPath(_ path: String) -> Bool {
+        runOpen([path])
+    }
+
+    private static func runOpen(_ arguments: [String]) -> Bool {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-        process.arguments = ["-b", bundleID]
+        process.arguments = arguments
         do {
             try process.run()
             process.waitUntilExit()

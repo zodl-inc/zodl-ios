@@ -32,16 +32,26 @@ func readExactly(_ count: Int) -> Data {
 }
 
 let client = UDSClient(path: socketPath)
+// Wake target: an explicit app path (dev; unambiguous under TestFlight/Xcode
+// same-bundle-id coexistence) beats the bundle id.
+let appPath = config.zodlAppPath
 let waker = Waker(
     probe: { client.canConnect() },
-    launch: { Waker.systemLauncher($0) },
+    launch: { target in
+        if let appPath {
+            Waker.systemLaunchPath(appPath)
+        } else {
+            Waker.systemLauncher(target)
+        }
+    },
     sleepMs: { usleep(UInt32($0) * 1000) }
 )
+let wakeTarget = appPath ?? config.zodlBundleID
 
 let environment = HostPipeline.Environment(
     allowlist: Allowlist(allowedExtensionIDs: config.allowedExtensionIDs),
     deliver: { try client.sendLine($0) },
-    ensureListening: { waker.ensureListening(bundleID: config.zodlBundleID) }
+    ensureListening: { waker.ensureListening(bundleID: wakeTarget) }
 )
 
 let ack = HostPipeline.handle(framedInput: readExactly, callerOrigin: callerOrigin, env: environment)

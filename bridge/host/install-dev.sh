@@ -22,10 +22,14 @@ BROWSER_DIRS=(
 )
 
 BUNDLE_ID=""
+APP_PATH=""
 UNINSTALL=0
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --bundle-id) BUNDLE_ID="$2"; shift 2 ;;
+        # Dev: wake by explicit app path — needed when TestFlight + Xcode builds
+        # share the bundle id (LaunchServices would wake the bridge-less copy).
+        --app-path) APP_PATH="$2"; shift 2 ;;
         --uninstall) UNINSTALL=1; shift ;;
         *) echo "unknown arg: $1" >&2; exit 2 ;;
     esac
@@ -48,15 +52,17 @@ cp "$SCRIPT_DIR/.build/release/zodl-bridge-host" "$BINARY"
 chmod 755 "$BINARY"
 
 # Deployment facts live next to the binary (BridgeConfig): allowed callers + wake target.
-python3 - "$INSTALL_DIR/bridge-config.json" "$EXT_ID" "$BUNDLE_ID" <<'PY'
+python3 - "$INSTALL_DIR/bridge-config.json" "$EXT_ID" "$BUNDLE_ID" "$APP_PATH" <<'PY'
 import json, sys
-path, ext_id, bundle_id = sys.argv[1], sys.argv[2], sys.argv[3]
+path, ext_id, bundle_id, app_path = sys.argv[1:5]
 config = {"allowedExtensionIDs": [ext_id]}
 if bundle_id:
     config["zodlBundleID"] = bundle_id
+if app_path:
+    config["zodlAppPath"] = app_path
 json.dump(config, open(path, "w"), indent=2)
 PY
-echo "installed: $BINARY (+ bridge-config.json, ext id $EXT_ID${BUNDLE_ID:+, wake $BUNDLE_ID})"
+echo "installed: $BINARY (+ bridge-config.json, ext id $EXT_ID${BUNDLE_ID:+, wake $BUNDLE_ID}${APP_PATH:+, wake-path $APP_PATH})"
 
 installed=0
 for dir in "${BROWSER_DIRS[@]}"; do

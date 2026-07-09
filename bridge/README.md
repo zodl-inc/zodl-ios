@@ -94,6 +94,11 @@ default-Cancel) → the shipped send path (SE-decrypt biometric → derive → s
 2. Run Zodl macOS (zodlmac-internal) with a ready wallet, land on Home.
 3. Load the extension + serve the demo (steps 3–4 of the checklist above), but do
    NOT run mock-zodl — the app owns the socket now (whichever binds last steals it).
+   Dual-install note (TestFlight + Xcode builds share the bundle id): wake-from-quit
+   would open the bridge-less TestFlight copy — add
+   `--app-path <DerivedData>/Build/Products/Debug/Zodl.app` to install-dev.sh so the
+   helper wakes the dev build by path (unambiguous) until a TestFlight build ships
+   the bridge.
 4. **Self-pay setup (demo section 0):** paste your OWN address (Zodl → Receive)
    into the demo's address box — the default link addresses are placeholders that
    real Zodl's parser refuses (you'd see the refusal card, working as designed).

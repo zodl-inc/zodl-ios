@@ -6,12 +6,22 @@ public struct BridgeConfig: Codable, Equatable {
     public var allowedExtensionIDs: [String]
     /// Bundle id used to wake Zodl when the socket is absent; nil = never launch.
     public var zodlBundleID: String?
+    /// Dev override: wake by app PATH instead of bundle id. Needed when TestFlight
+    /// and Xcode builds coexist under the SAME bundle id — LaunchServices resolves
+    /// `open -b` to the (bridge-less) TestFlight copy; a path is unambiguous.
+    public var zodlAppPath: String?
     /// Override for tests/dev; nil = `defaultSocketPath()`.
     public var socketPath: String?
 
-    public init(allowedExtensionIDs: [String], zodlBundleID: String? = nil, socketPath: String? = nil) {
+    public init(
+        allowedExtensionIDs: [String],
+        zodlBundleID: String? = nil,
+        zodlAppPath: String? = nil,
+        socketPath: String? = nil
+    ) {
         self.allowedExtensionIDs = allowedExtensionIDs
         self.zodlBundleID = zodlBundleID
+        self.zodlAppPath = zodlAppPath
         self.socketPath = socketPath
     }
 
