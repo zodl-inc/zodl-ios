@@ -205,6 +205,15 @@ extensions) + one-time user enable in Settings + NEW app-extension target = pbxp
 = post-WIP, same gate and largely the SAME WORK as macOS-Safari packaging (one
 "Safari family" wave covers both).
 
+### 6b-ii · iOS reach tiers (Lukas's mass-market verdict, 2026-07-09)
+Extension = enthusiast tier (Safari-only + one-time enable — correct but not mass).
+**Mass tier on iOS = universal links** (zero setup, any browser, unsquattable) ⇒ the
+DEFERRED B1 pay-page / "Open in Zodl" merchant button is PROMOTED on iOS from optional
+sugar to the mass-market key (processor-side one-liner, same class as the Tier-1
+attribute — CipherPay = natural first). QR tier covers cross-device only; the
+browsing-ON-the-iPhone case is exactly where UL (masses) + extension (enthusiasts)
+are the only possible answers. Invariants identical across all tiers.
+
 ## 7. Open questions
 1. Naming ("Zodl Bridge"?).
 2. ~~B1 domain choice + hosting~~ — moot while B1 is deferred; returns with the
