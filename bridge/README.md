@@ -116,5 +116,11 @@ intake gates, review card (en+es via `Bridge.xcstrings`), Tier-1 verifier
 Unit tests for the domain rule + URI extraction live in `zodlTests/BridgeTests/`
 (pending first run: the shared sim-test lane has a pre-existing SwiftProtobuf
 link failure unrelated to the bridge; macOS scheme has no test action).
-Remaining: [needs-user] live-fire above · CipherPay testnet/mainnet E2E ·
-Safari packaging (post-WIP, new Xcode target).
+Live-fire VERIFIED (2026-07-09): Chrome/Brave chain + real Pay ceremony + wake-from-quit
++ **Safari via the safari-dev wrapper** (converter harness in `safari-dev/`; App Group
+entitlement must be WIRED via CODE_SIGN_ENTITLEMENTS on both targets — an orphan
+entitlements file signs sandbox-only and the handler's socket connect is denied).
+Safari-dev validates the exact handler→App-Group→Zodl pattern the production
+in-Zodl Safari-family target (macOS+iOS) will use.
+Remaining: [needs-user] CipherPay mainnet E2E (throwaway UFVK) · Safari-family
+production target inside Zodl (post-WIP) · TestFlight build with the bridge.
