@@ -110,9 +110,17 @@ extension WalletStorage {
     /// key), legacy plaintext on iOS. See docs/macos/KEYCHAIN_SE_HARDENING.md.
     static var liveStorage: WalletStorage {
 #if os(macOS)
-        WalletStorage(secItem: .live, secureEnclave: .liveValue)
+        var storage = WalletStorage(secItem: .live, secureEnclave: .liveValue)
 #else
-        WalletStorage(secItem: .live)
+        var storage = WalletStorage(secItem: .live)
 #endif
+#if SECANT_TESTNET
+        // Testnet builds must NEVER share keychain entries with a mainnet build
+        // on the same machine (macOS login-keychain items are keyed by service
+        // string only — an unscoped testnet restore would overwrite the mainnet
+        // seed entry). The prefix isolates every testnet key.
+        storage.zcashStoredWalletPrefix = "testnet_"
+#endif
+        return storage
     }
 }
