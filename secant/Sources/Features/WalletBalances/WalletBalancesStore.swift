@@ -195,8 +195,8 @@ struct WalletBalances {
                 }
                 
             case .balanceUpdated(let accountBalance):
-                state.shieldedBalance = (accountBalance?.saplingBalance.spendableValue ?? .zero) + (accountBalance?.orchardBalance.spendableValue ?? .zero)
-                state.shieldedWithPendingBalance = (accountBalance?.saplingBalance.total() ?? .zero) + (accountBalance?.orchardBalance.total() ?? .zero)
+                state.shieldedBalance = accountBalance?.shieldedSpendableValue ?? .zero
+                state.shieldedWithPendingBalance = accountBalance?.shieldedTotal() ?? .zero
                 state.transparentBalance = accountBalance?.unshielded ?? .zero
                 state.totalBalance = state.shieldedWithPendingBalance + state.transparentBalance + (accountBalance?.awaitingResolution ?? .zero)
                

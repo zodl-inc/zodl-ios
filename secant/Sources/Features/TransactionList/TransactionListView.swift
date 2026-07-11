@@ -55,6 +55,7 @@ struct TransactionListView: View {
                     } label: {
                         TransactionRowView(
                             transaction: transaction,
+                            tokenName: tokenName,
                             isUnread: TransactionList.isUnread(transaction),
                             isSwap: TransactionList.isSwap(transaction),
                             divider: store.latestTransactionId != transaction.id

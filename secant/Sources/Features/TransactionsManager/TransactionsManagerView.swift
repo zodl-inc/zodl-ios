@@ -115,6 +115,7 @@ struct TransactionsManagerView: View {
                                                     } label: {
                                                         TransactionRowView(
                                                             transaction: transaction,
+                                                            tokenName: tokenName,
                                                             isUnread: TransactionsManager.isUnread(transaction),
                                                             isSwap: TransactionsManager.isSwap(transaction),
                                                             divider: section.latestTransactionId != transaction.id

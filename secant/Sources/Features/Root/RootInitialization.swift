@@ -118,8 +118,8 @@ extension Root {
                 
                 // update flexa balance
                 if let accountBalance = latestState.data.accountsBalances[account.id] {
-                    let shieldedBalance = accountBalance.saplingBalance.spendableValue + accountBalance.orchardBalance.spendableValue
-                    let shieldedWithPendingBalance = accountBalance.saplingBalance.total() + accountBalance.orchardBalance.total()
+                    let shieldedBalance = accountBalance.shieldedSpendableValue
+                    let shieldedWithPendingBalance = accountBalance.shieldedTotal()
 
                     flexaHandler.updateBalance(shieldedWithPendingBalance, shieldedBalance)
                 }

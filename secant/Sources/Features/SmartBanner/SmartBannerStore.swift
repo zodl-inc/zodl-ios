@@ -350,7 +350,7 @@ struct SmartBanner {
                 let snapshot = SyncStatusSnapshot.snapshotFor(state: latestState.data.syncStatus)
 
                 if let account = state.selectedWalletAccount, let accountBalance = latestState.data.accountsBalances[account.id] {
-                    state.spendableBalance = accountBalance.saplingBalance.spendableValue + accountBalance.orchardBalance.spendableValue
+                    state.spendableBalance = accountBalance.shieldedSpendableValue
                 }
 
                 if snapshot.syncStatus != state.synchronizerStatusSnapshot.syncStatus {

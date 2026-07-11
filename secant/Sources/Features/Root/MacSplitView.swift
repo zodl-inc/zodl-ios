@@ -407,12 +407,17 @@ struct MacSplitView: View {
         } label: {
             HStack(spacing: 8) {
                 section.sectionIcon
-                    .zImage(size: 16, style: isSelected ? Design.Switcher.selectedText : Design.Text.primary)
+                    .zImage(size: 16, style: isSelected ? Design.Text.opposite : Design.Text.tertiary)
 
                 Text(section.title)
-                    .zFont(.medium, size: 14, style: isSelected ? Design.Switcher.selectedText : Design.Text.primary)
+                    .zFont(.medium, size: 14, style: isSelected ? Design.Text.opposite : Design.Text.tertiary)
 
                 Spacer(minLength: 0)
+                
+                if section.isBeta {
+                    Text(String(localizable: .macSidebarBeta))
+                        .zFont(size: 14, style: isSelected ? Design.Text.support : Design.Text.support)
+                }
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 7)
@@ -421,9 +426,9 @@ struct MacSplitView: View {
                 RoundedRectangle(cornerRadius: Design.Radius._md)
                     .fill(
                         isSelected
-                        ? Design.Switcher.selectedBg.color(colorScheme)
+                        ? Design.Surfaces.bgAlt.color(colorScheme)
                         : hoveredSection == section
-                            ? Design.Switcher.surfacePrimary.color(colorScheme).opacity(0.6)
+                            ? Design.Surfaces.bgSecondary.color(colorScheme)
                             : Color.clear
                     )
             }
@@ -578,6 +583,10 @@ private enum MacSection: CaseIterable {
         case .vote: return .macVoteSectionSelected
         case .more: return .home(.settingsTapped)
         }
+    }
+    
+    var isBeta: Bool {
+        self == .vote
     }
 }
 

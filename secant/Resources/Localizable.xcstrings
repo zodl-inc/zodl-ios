@@ -5072,12 +5072,12 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Beta: Vote"
+            "value" : "Vote"
           }
         },
         "es" : {
           "stringUnit" : {
-            "state" : "translated",
+            "state" : "needs_review",
             "value" : "Beta: Votar"
           }
         }
@@ -9632,6 +9632,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "desbloquear tu billetera"
+          }
+        }
+      }
+    },
+    "mac.sidebarBeta" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Beta"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Beta"
           }
         }
       }

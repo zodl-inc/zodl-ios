@@ -28,7 +28,7 @@ enum FeatureFlag: String, CaseIterable, Codable {
             #if os(macOS)
             return true
             #else
-            return false
+            return true
             #endif
         }
     }
