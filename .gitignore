@@ -84,6 +84,9 @@ PartnerKeys.plist
 # do not commit generated libraries to this repo (root-level only; not fastlane/lib)
 /lib
 *.a
+# Vendored Keystone UR-registry binaries are part of the checkout (macOS slice is custom-built,
+# not downloadable) — without them a fresh clone cannot build any Keystone-linking scheme.
+!LocalPackages/keystone-sdk-ios/URRegistryFFI.xcframework/**/*.a
 *.generated.swift
 
 # Claude
