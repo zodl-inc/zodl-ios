@@ -1,6 +1,19 @@
 {
     "releases": [
         {
+            "version": "3.7.3",
+            "date": "11-07-2026",
+            "timestamp": 1783775476,
+            "sections": [
+                {
+                    "title": "Changed:",
+                    "bulletpoints": [
+                        "We refined our list of supported Swap/Pay assets, focusing on the ones users actually use."
+                    ]
+                }
+            ]
+        },
+        {
             "version": "3.7.2",
             "date": "01-07-2026",
             "timestamp": 1782924729,

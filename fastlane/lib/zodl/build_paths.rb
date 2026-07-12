@@ -6,8 +6,8 @@ module Zodl
   # fastlane runs every top-level action wrapped in `Dir.chdir("..")` — it assumes
   # it was invoked from the `fastlane/` folder and steps up to the project root
   # (see fastlane runner.rb: "go up from the fastlane folder, to the project
-  # folder"). The release lane instead `Dir.chdir`es into a worktree under
-  # $TMPDIR, so that per-action `..` lands in the worktree's PARENT. Any RELATIVE
+  # folder"). The release lane instead `Dir.chdir`es into a throwaway worktree
+  # beside the repo, so that per-action `..` lands in the worktree's PARENT. Any RELATIVE
   # path handed to an action (project, derived-data, output dir) then resolves
   # there — outside the worktree — and fails (e.g. "Project file not found at
   # '.../T/secant.xcodeproj'"). Anchoring every action path to the absolute
@@ -17,8 +17,8 @@ module Zodl
 
     module_function
 
-    # worktree must be an absolute path (the release lane builds it from
-    # Dir.tmpdir, which is absolute).
+    # worktree must be an absolute path (the release lane derives it from the
+    # absolute repo root).
     def resolve(worktree)
       build = File.join(worktree, "build")
       {

@@ -81,13 +81,15 @@ struct SwapAsset: Equatable, Codable, Identifiable, Hashable {
     }
 
     var tokenIcon: Image {
+        // USDT0 is Tether's omnichain USDT — reuse the USDT logo (no dedicated art).
+        let iconName = token.lowercased() == "usdt0" ? "usdt" : token.lowercased()
 #if canImport(UIKit)
-        guard let icon = PlatformImage(named: token.lowercased()) else {
+        guard let icon = PlatformImage(named: iconName) else {
             return Asset.Assets.Tickers.none.image
         }
         return Image(platformImage: icon)
 #else
-        guard let icon = NSImage(named: token.lowercased()) else {
+        guard let icon = NSImage(named: iconName) else {
             return Asset.Assets.Tickers.none.image
         }
         return Image(nsImage: icon)
@@ -119,40 +121,15 @@ struct SwapAsset: Equatable, Codable, Identifiable, Hashable {
 }
 
 extension SwapAsset {
-    static func hardcodedChains() -> [SwapAsset] {
-        var template = SwapAsset(provider: "", chain: "arb", token: "", assetId: "", usdPrice: 0, decimals: 0)
-        
-        let arb = template; template.chain = "base"
-        let base = template; template.chain = "bera"
-        let bera = template; template.chain = "btc"
-        let btc = template; template.chain = "eth"
-        let eth = template; template.chain = "gnosis"
-        let gnosis = template; template.chain = "near"
-        let near = template; template.chain = "sol"
-        let sol = template; template.chain = "tron"
-        let tron = template; template.chain = "xrp"
-        let xrp = template; template.chain = "doge"
-        let doge = template; template.chain = "avax"
-        let avax = template; template.chain = "bsc"
-        let bsc = template; template.chain = "op"
-        let op = template; template.chain = "pol"
-        let pol = template; template.chain = "sui"
-        let sui = template; template.chain = "ltc"
-        let ltc = template; template.chain = "aleo"
-        let aleo = template; template.chain = "aptos"
-        let aptos = template; template.chain = "bch"
-        let bch = template; template.chain = "cardano"
-        let cardano = template; template.chain = "monad"
-        let monad = template; template.chain = "plasma"
-        let plasma = template; template.chain = "starknet"
-        let starknet = template; template.chain = "stellar"
-        let stellar = template; template.chain = "xlayer"
-        let xlayer = template; template.chain = "ton"
-        let ton = template
-
-        return [
-            arb, avax, base, bera, bsc, btc, doge, eth, gnosis, near, op, pol, sol, sui, ton, tron, ltc, xrp,
-            aleo, aptos, bch, cardano, monad, plasma, starknet, stellar, xlayer
-        ]
+    /// Fallback chain list for the address book when the live (curated) swap-asset
+    /// list hasn't loaded yet. Mirrors the chains behind the curated offering
+    /// (`Near1Click.Constants.supportedAssetIds`, MOB-1472) so creating a contact
+    /// only offers chains you can actually swap. Keep in sync with that list.
+    /// Deliberately excludes "zec": Zcash is recognized automatically from the
+    /// address, not a manually-pickable contact chain.
+    static func curatedChains() -> [SwapAsset] {
+        ["arb", "avax", "base", "bsc", "btc", "eth", "ltc", "near", "pol", "sol", "sui", "tron", "xrp"].map {
+            SwapAsset(provider: "", chain: $0, token: "", assetId: "", usdPrice: 0, decimals: 0)
+        }
     }
 }

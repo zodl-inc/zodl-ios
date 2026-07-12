@@ -14,7 +14,7 @@ module Zodl
     Context = Struct.new(
       :variant, :requested_version, :requested_build, :project_version,
       :branch_version, :latest_build, :ref_on_origin, :dirty_tree,
-      :partner_keys_error, :xcode_ok, :signing_identity_ok,
+      :partner_keys_error, :xcode_ok, :signing_identity_ok, :local_packages,
       keyword_init: true
     )
 
@@ -50,6 +50,27 @@ module Zodl
       errors << "no distribution signing identity found in the keychain" unless ctx.signing_identity_ok
 
       warnings << "working tree has uncommitted changes — they are NOT included in this build" if ctx.dirty_tree
+
+      # Local Swift packages (XCLocalSwiftPackageReference) are consumed live from
+      # their on-disk checkout — HEAD plus any uncommitted changes — so a build
+      # using them cannot be reproduced from this repo alone. A missing directory
+      # is a certain build failure; a present one is shipped knowingly.
+      (ctx.local_packages || []).each do |pkg|
+        unless pkg[:exists]
+          errors << "local Swift package #{pkg[:path]} not found at #{pkg[:resolved]}"
+          next
+        end
+
+        state =
+          if pkg[:git].nil?
+            "not a git repository"
+          elsif pkg[:dirty]
+            "#{pkg[:git]} + UNCOMMITTED changes"
+          else
+            "#{pkg[:git]}, clean"
+          end
+        warnings << "build uses local Swift package #{pkg[:path]} (#{state}) — not reproducible from this repo alone"
+      end
 
       Report.new(errors, warnings)
     end

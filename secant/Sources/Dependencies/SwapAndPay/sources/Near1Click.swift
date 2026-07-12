@@ -62,10 +62,52 @@ struct Near1Click {
 
         // zec asset
         static let nearZecAssetId = "nep141:zec.omft.near"
+
+        // Source-level curated allow-list (MOB-1472).
+        // Filters `swapAssets` down to the supported set as close to the provider
+        // response as possible, keyed by Near's own `assetId` (provider-specific,
+        // so it survives adding other swap providers later). No caller of
+        // `swapAssets` can ever receive an uncurated asset. `nearZecAssetId` MUST
+        // stay in the set — swap-to-ZEC depends on the native ZEC representation.
+        static let supportedAssetIds: Set<String> = [
+            nearZecAssetId,                                                     // ZEC (native)
+            "nep141:btc.omft.near",                                            // BTC@btc
+            "nep141:eth.omft.near",                                            // ETH@eth
+            "nep141:sol.omft.near",                                            // SOL@sol
+            "nep141:eth-0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48.omft.near", // USDC@eth
+            "nep141:eth-0xdac17f958d2ee523a2206206994597c13d831ec7.omft.near", // USDT@eth
+            "nep141:arb-0xaf88d065e77c8cc2239327c5edb3a432268e5831.omft.near", // USDC@arb
+            "nep141:sol-5ce3bf3a31af18be40ba30f721101b4341690186.omft.near",   // USDC@sol
+            "nep141:sol-c800a4bd850783ccb82c2b2c7e84175443606352.omft.near",   // USDT@sol
+            "nep245:v2_1.omni.hot.tg:56_2CMMyVTGZkeyNZTSvS5sarzfir6g",         // USDT@bsc
+            "nep141:tron-d28a265909efecdcee7c5028585214ea0b96f015.omft.near",  // USDT@tron
+            "nep141:sui-c1b81ecaf27933252d31a963bc5e9458f13c18ce.omft.near",   // USDC@sui
+            "nep141:base-0x833589fcd6edb6e08f4c7c32d4f71b54bda02913.omft.near", // USDC@base
+            "nep141:17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1", // USDC@near
+            "nep141:wrap.near", // wNEAR@near
+            "nep245:v2_1.omni.hot.tg:137_3hpYoaLtt8MP1Z2GH1U473DMRKgr", // USDT@pol
+            "nep141:eth-0x2260fac5e5542a773aa44fbcfedf7c193bc2c599.omft.near", // WBTC@eth
+            "nep141:nbtc.bridge.near", // BTC@near
+            "nep141:eth-0x6b175474e89094c44da98b954eedeac495271d0f.omft.near", // DAI@eth
+            "nep141:ltc.omft.near", // LTC@ltc
+            "nep141:tron.omft.near", // TRX@tron
+            "nep141:usdt.tether-token.near", // USDT@near
+            "nep245:v2_1.omni.hot.tg:56_11111111111111111111", // BNB@bsc
+            "nep245:v2_1.omni.hot.tg:43114_11111111111111111111", // AVAX@avax
+            "nep141:arb-0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9.omft.near", // USDT0@arb
+            "nep141:arb.omft.near", // ETH@arb
+            "nep245:v2_1.omni.hot.tg:137_qiStmoQJDQPTebaPjgx5VBxZv6L", // USDC@pol
+            "nep141:xrp.omft.near", // XRP@xrp
+            "nep141:base.omft.near" // ETH@base
+        ]
     }
     
     let submitDepositTxId: @Sendable (String, String) async throws -> Void
+    /// The curated offering — only the supported assets a user can select/swap.
     let swapAssets: @Sendable () async throws -> IdentifiedArrayOf<SwapAsset>
+    /// The full provider catalog — every asset, uncurated. For resolving/rendering
+    /// historical or exotic assets that are no longer offered for swaps (MOB-1472).
+    let swapAssetsCatalog: @Sendable () async throws -> IdentifiedArrayOf<SwapAsset>
     let quote: @Sendable (Bool, Bool, Bool, Int, SwapAsset, SwapAsset, String, String, String) async throws -> SwapQuote
     let status: @Sendable (String, Bool) async throws -> SwapDetails
 
@@ -167,6 +209,50 @@ struct Near1Click {
             throw SwapAndPayClient.EndpointError.message("Unknown error")
         }
     }
+
+    /// Source-level curation (MOB-1472): keep only the supported assets, matched
+    /// by Near's own `assetId`. Pure and synchronous so it can be unit-tested
+    /// independently of the networking in the `swapAssets` closure.
+    static func curated(_ assets: [SwapAsset]) -> [SwapAsset] {
+        assets.filter { Constants.supportedAssetIds.contains($0.assetId) }
+    }
+
+    /// Fetches and parses the provider's full token list — every asset, deduped,
+    /// before curation. `swapAssets` returns `curated(...)` of this (the offering);
+    /// `swapAssetsCatalog` returns this full list (for resolving historical assets).
+    static func fetchAllAssets() async throws -> [SwapAsset] {
+        // Send the Bearer JWT like every other 1click call (quote/submit/status). /tokens was the
+        // only unauthenticated one; 1click sits behind Cloudflare, whose bot-management resets the
+        // TLS connection of unauthenticated CFNetwork (URLSession) requests — which surfaced as a
+        // transport URLError on macOS while `curl` (different TLS fingerprint) and the authenticated
+        // CMC call both worked. Authenticating makes it a trusted request.
+        let (data, _) = try await Near1Click.getCall(urlString: Constants.tokensUrl, includeJwtKey: true)
+
+        guard let jsonObject = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+            throw URLError(.cannotParseResponse)
+        }
+
+        let chainAssets = jsonObject.compactMap { dict -> SwapAsset? in
+            guard let chain = dict[Constants.blockchain] as? String,
+                  let symbol = dict[Constants.symbol] as? String,
+                  let assetId = dict[Constants.assetId] as? String,
+                  let usdPrice = dict[Constants.price] as? Double,
+                  let decimals = dict[Constants.decimals] as? Int else {
+                return nil
+            }
+
+            return SwapAsset(
+                provider: String(localizable: .swapNearProvider),
+                chain: chain,
+                token: symbol,
+                assetId: assetId,
+                usdPrice: Decimal(usdPrice),
+                decimals: decimals
+            )
+        }
+
+        return chainAssets.removingDuplicates()
+    }
 }
 
 extension Near1Click {
@@ -195,41 +281,10 @@ extension Near1Click {
             }
         },
         swapAssets: {
-            // Send the Bearer JWT like every other 1click call (quote/submit/status). /tokens was the
-            // only unauthenticated one; 1click sits behind Cloudflare, whose bot-management resets the
-            // TLS connection of unauthenticated CFNetwork (URLSession) requests — which surfaced as a
-            // transport URLError on macOS while `curl` (different TLS fingerprint) and the authenticated
-            // CMC call both worked. Authenticating makes it a trusted request.
-            let (data, _) = try await Near1Click.getCall(urlString: Constants.tokensUrl, includeJwtKey: true)
-
-            guard let jsonObject = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
-                throw URLError(.cannotParseResponse)
-            }
-            
-            let formatter = NumberFormatter()
-            formatter.locale = Locale(identifier: "en_US")
-            formatter.numberStyle = .decimal
-            
-            let chainAssets = jsonObject.compactMap { dict -> SwapAsset? in
-                guard let chain = dict[Constants.blockchain] as? String,
-                      let symbol = dict[Constants.symbol] as? String,
-                      let assetId = dict[Constants.assetId] as? String,
-                      let usdPrice = dict[Constants.price] as? Double,
-                      let decimals = dict[Constants.decimals] as? Int else {
-                    return nil
-                }
-
-                return SwapAsset(
-                    provider: String(localizable: .swapNearProvider),
-                    chain: chain,
-                    token: symbol,
-                    assetId: assetId,
-                    usdPrice: Decimal(usdPrice),
-                    decimals: decimals
-                )
-            }
-            
-            return IdentifiedArrayOf(uniqueElements: chainAssets.removingDuplicates())
+            IdentifiedArrayOf(uniqueElements: Near1Click.curated(try await Near1Click.fetchAllAssets()))
+        },
+        swapAssetsCatalog: {
+            IdentifiedArrayOf(uniqueElements: try await Near1Click.fetchAllAssets())
         },
         quote: { dry, isSwapToZec, exactInput, slippageTolerance, zecAsset, toAsset, refundTo, destination, amount in
             // Deadline in ISO 8601 UTC format

@@ -1,6 +1,19 @@
 {
     "releases": [
         {
+            "version": "3.7.3",
+            "date": "11-07-2026",
+            "timestamp": 1783775476,
+            "sections": [
+                {
+                    "title": "Cambiado:",
+                    "bulletpoints": [
+                        "Refinamos nuestra lista de criptoactivos compatibles con Swap/Pago, centrándonos en los que los usuarios realmente utilizan."
+                    ]
+                }
+            ]
+        },
+        {
             "version": "3.7.2",
             "date": "01-07-2026",
             "timestamp": 1782924729,

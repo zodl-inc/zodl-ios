@@ -121,7 +121,9 @@ struct Root {
         var autoUpdateLatestAttemptedTimestamp: TimeInterval = 0
         var autoUpdateRefreshScheduled = false
         var autoUpdateSwapCandidates: IdentifiedArrayOf<TransactionState> = []
-        @Shared(.inMemory(.swapAssets)) var swapAssets: IdentifiedArrayOf<SwapAsset> = []
+        // Full catalog (MOB-1472) — resolves historical/exotic swap assets when
+        // enriching swap metadata in the background; not the curated offering.
+        @Shared(.inMemory(.swapAssetsCatalog)) var swapAssets: IdentifiedArrayOf<SwapAsset> = []
 
         var addKeystoneHWWalletCoordFlowState = AddKeystoneHWWalletCoordFlow.State.initial
         var currencyConversionSetupState = CurrencyConversionSetup.State.initial
