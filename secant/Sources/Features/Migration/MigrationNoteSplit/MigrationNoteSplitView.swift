@@ -2,11 +2,12 @@
 //  MigrationNoteSplitView.swift
 //  zodl
 //
-//  "Split Your Wallet Funds" screen (MOB-1461, Figma S2 · 2867:10535 explainer / 2867:10741
-//  progress / 2867:10645 success / 2670:15570 failure sheet). `onAppear` loads/resumes the split
-//  live via the store (MOB-1466); when the splitting phase is a flow re-entry root (`isFlowRoot`),
-//  its back control closes the flow instead of popping. The `continueTapped` delegate is emitted
-//  but consumed by nobody yet — chaining is the coordinator's job (phase 3).
+//  "Splitting Funds…" / "Split Confirmed!" screen (MOB-1461, Figma S2 · 2867:10741 progress /
+//  2867:10645 success / 2670:15570 failure sheet) — MOB-1478 (W4): re-entry-only now, see
+//  `MigrationNoteSplitStore`'s header comment. `onAppear` resumes/observes the split live via the
+//  store; the back control always closes the flow (re-entry is always the flow root). The
+//  `continueTapped` delegate (confirmed phase) is consumed by `MigrationCoordFlowCoordinator`, which
+//  closes the flow too — the commit already happened before the split started.
 //
 
 import ComposableArchitecture
@@ -82,8 +83,6 @@ struct MigrationNoteSplitView: View {
 
     private var headerBadge: MigrationPairedIcons.Badge {
         switch store.phase {
-        case .explainer:
-            return .coinsSwap
         case .splitting:
             return .spinner
         case .confirmed:
@@ -95,8 +94,6 @@ struct MigrationNoteSplitView: View {
 
     private var title: String {
         switch store.phase {
-        case .explainer:
-            return String(localizable: .migrationNoteSplitExplainerTitle)
         case .splitting:
             return String(localizable: .migrationNoteSplitSplittingTitle)
         case .confirmed:
@@ -106,8 +103,6 @@ struct MigrationNoteSplitView: View {
 
     private var description: String {
         switch store.phase {
-        case .explainer:
-            return String(localizable: .migrationNoteSplitExplainerDesc)
         case .splitting:
             return String(localizable: .migrationNoteSplitSplittingDesc)
         case .confirmed:
@@ -117,29 +112,23 @@ struct MigrationNoteSplitView: View {
 
     // MARK: - Detail rows
 
-    private var isTxIdRowVisible: Bool {
-        store.phase != .explainer
-    }
-
     @ViewBuilder private var detailRows: some View {
         VStack(spacing: 0) {
-            if isTxIdRowVisible {
-                detailRow(
-                    title: String(localizable: .transactionListTransactionId),
-                    value: store.txId.truncateMiddle,
-                    isAddressFont: true,
-                    icon: Asset.Assets.copy.image,
-                    rowAppereance: .top
-                )
-                .onTapGesture {
-                    store.send(.copyTxIdTapped)
-                }
+            detailRow(
+                title: String(localizable: .transactionListTransactionId),
+                value: store.txId.truncateMiddle,
+                isAddressFont: true,
+                icon: Asset.Assets.copy.image,
+                rowAppereance: .top
+            )
+            .onTapGesture {
+                store.send(.copyTxIdTapped)
             }
 
             detailRow(
                 title: String(localizable: .sendAmount),
                 value: "\(store.amount.decimalString()) ZEC",
-                rowAppereance: isTxIdRowVisible ? .middle : .top
+                rowAppereance: .middle
             )
 
             detailRow(
@@ -187,13 +176,6 @@ struct MigrationNoteSplitView: View {
 
     @ViewBuilder private var footer: some View {
         switch store.phase {
-        case .explainer:
-            ZashiButton(String(localizable: .generalConfirm)) {
-                store.send(.confirmTapped)
-            }
-            .padding(.top, 16)
-            .padding(.bottom, 24)
-
         case .splitting:
             VStack(spacing: 16) {
                 inProgressInfoCard
@@ -283,10 +265,13 @@ struct MigrationNoteSplitView: View {
 // MARK: - Presentation modifier
 
 private extension View {
-    /// Only the splitting phase can be a re-entry root — explainer/confirmed are always reached via
-    /// normal push, so a plain pop stands there regardless of `isFlowRoot`.
+    /// Re-entry is always the flow root (MOB-1478 W4: forward routing never pushes `.noteSplit` any
+    /// more), across both phases — a plain pop would silently fall back to Entry underneath, which
+    /// is wrong for a screen the user reached via the home banner, not by pushing forward. `false`
+    /// (not reachable in practice, only via directly-constructed state in tests/previews) keeps the
+    /// plain pop as a defensive fallback.
     @ViewBuilder func applyPresentationModifier(store: StoreOf<MigrationNoteSplit>) -> some View {
-        if store.phase == .splitting && store.isFlowRoot {
+        if store.isFlowRoot {
             zashiBackV2 {
                 store.send(.closeTapped)
             }
@@ -297,22 +282,6 @@ private extension View {
 }
 
 // MARK: - Previews
-
-#Preview("Explainer") {
-    NavigationView {
-        MigrationNoteSplitView(
-            store: StoreOf<MigrationNoteSplit>(
-                initialState: MigrationNoteSplit.State(
-                    phase: .explainer,
-                    amount: Zatoshi(1_245_800_000),
-                    fee: Zatoshi(100_000)
-                )
-            ) {
-                MigrationNoteSplit()
-            }
-        )
-    }
-}
 
 #Preview("Splitting") {
     NavigationView {

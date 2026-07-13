@@ -10,10 +10,18 @@
 //  SDK stubs — it goes live when the real SDK (MOB-1455) fills them in.
 //
 //  MOB-1468 (Keystone) adds `keystoneSign`/`scan` path elements and `pendingKeystoneSigning`: the
-//  three signing sources (NoteSplit/TransferPlan/ReviewTransfer) delegate `.keystoneSignRequested`
+//  two remaining signing sources (TransferPlan/ReviewTransfer) delegate `.keystoneSignRequested`
 //  instead of signing locally, the coordinator routes through a QR sign/scan round-trip, then
 //  resumes whichever chain the source represents. See `MigrationCoordFlowCoordinator.swift`'s
 //  Keystone rows for the routing table.
+//
+//  MOB-1478 (W2/W3/W4) reshapes the scheduled entry chain and replaces the full-screen Network
+//  Privacy step with a coordinator-owned Tor bottom sheet: `torSheetState`/`isTorSheetPresented`/
+//  `pendingTorDestination` back a single sheet presented from either Entry (immediate) or How This
+//  Works (scheduled) — see `MigrationCoordFlowCoordinator`'s Tor-sheet section. Note splitting also
+//  leaves forward routing entirely (silent-after-commit, under the TransferPlan/ReviewTransfer
+//  commit CTAs) — `MigrationNoteSplit` is re-entry-only now, so its Keystone signing folds into
+//  `TransferPlan`'s batch and `KeystoneSigningContext` no longer has a `.noteSplit` case.
 //
 
 import SwiftUI
@@ -25,19 +33,30 @@ struct MigrationCoordFlow {
     /// MOB-1468 (Keystone): which signing source is awaiting/mid QR round-trip, so
     /// `scan(.foundPCZTBatch)` knows which chain to resume once the signed PCZTs come back.
     enum KeystoneSigningContext: Equatable {
-        case noteSplit
         /// Fresh + re-created plans (`requiresSigning == true`) — the rescheduled variant never
-        /// re-signs, so it never reaches this context.
+        /// re-signs, so it never reaches this context. MOB-1478 (W4): the batch this context signs
+        /// now also carries the note-split PCZT first, when `isNoteSplitNeeded()` — the split no
+        /// longer has its own signing context (see `MigrationTransferPlanStore`).
         case planCommit
         case immediateReview
+    }
+
+    /// MOB-1478 (W2): which destination the coordinator stashed while the Tor bottom sheet is
+    /// presented — resumed once the user confirms ("Got it") or swipes the sheet away (identical
+    /// outcome, using whatever toggle state is showing at that moment).
+    enum PendingTorDestination: Equatable {
+        /// Immediate mode: push Review Transfer directly.
+        case reviewTransfer
+        /// Scheduled mode: resume the permission-step chain (`nextPermissionStepResult()`).
+        case permissionChain
     }
 
     @Reducer(state: .equatable)
     enum Path {
         case backgroundDelivery(MigrationBackgroundDelivery)
         case complete(MigrationComplete)
+        case howItWorks(MigrationHowItWorks)
         case keystoneSign(MigrationKeystoneSign)
-        case networkPrivacy(MigrationNetworkPrivacy)
         case noteSplit(MigrationNoteSplit)
         case notifications(MigrationNotifications)
         case recovery(MigrationRecovery)
@@ -56,25 +75,34 @@ struct MigrationCoordFlow {
         /// Persisted via `manager.setMigrationMode` once chosen; held here too so later hops in
         /// the same run (e.g. immediate's Tor-skip) don't need to re-read the dependency.
         var mode: MigrationMode?
-        /// Held here once confirmed on the Network Privacy screen (or defaulted when S5 is
-        /// skipped) so Sending's coordinator-configured state can inject it.
+        /// Held here once confirmed on the Tor sheet (or defaulted when it's skipped) so Sending's
+        /// coordinator-configured state can inject it.
         var networkPrivacyOptions = NetworkPrivacyOptions(useTor: false, submissionEndpoint: nil)
         /// MOB-1468 (Keystone): set when a `.keystoneSignRequested` delegate pushes `keystoneSign`,
         /// cleared once the QR round-trip resolves (either resumed via `foundPCZTBatch` or backed
         /// out via `.rejected`).
         var pendingKeystoneSigning: KeystoneSigningContext?
+        /// MOB-1478 (W2): the Tor bottom sheet's own state — always present (not optional), toggled
+        /// on screen via `isTorSheetPresented`, mirroring the `ServerSetup`/`serverSetupViewBinding`
+        /// precedent in `Root` rather than an `@Presents`/`ifLet` destination (there's exactly one
+        /// sheet, it never needs independent effect-cancellation-on-dismiss semantics `zashiSheet`
+        /// wouldn't already give it, and `zashiSheet` itself only takes a `Binding<Bool>` anyway).
+        var torSheetState = MigrationTorSheet.State()
+        var isTorSheetPresented = false
+        /// Non-nil exactly while `isTorSheetPresented` is true — see `PendingTorDestination`.
+        var pendingTorDestination: PendingTorDestination?
 
         init() { }
     }
 
-    /// Result of the async permission-step helper (`nextPermissionStepPathState()`): the screen
-    /// to push (`nil` once every permission step is satisfied and the flow can proceed straight to
-    /// the plan/review screen the caller already knows to push), plus whether Network Privacy (S5)
-    /// was skipped because the app-wide Tor setup flag is already on — in which case the
-    /// coordinator force-sets `networkPrivacyOptions.useTor = true` before proceeding.
+    /// Result of the async permission-step helper (`nextPermissionStepResult()`): the screen to push
+    /// (`nil` once every permission step is satisfied and the flow can proceed straight to the plan
+    /// screen the caller already knows to push). MOB-1478 (W2): Tor resolution no longer happens
+    /// inside this chain — the Tor bottom sheet gate runs once, earlier, immediately after How This
+    /// Works — so this struct dropped its `forcedUseTor` flag along with the deleted Network Privacy
+    /// step.
     struct PermissionStepResult: Equatable {
         var pathState: Path.State?
-        var forcedUseTor = false
     }
 
     enum Action {
@@ -97,13 +125,13 @@ struct MigrationCoordFlow {
         /// Internal: sendNow's Sending screen finished (`.closed`) — refresh the `.status` element
         /// beneath with freshly-read rows and pop back to it.
         case sendNowCompleted(rows: [MigrationTransferRow])
-        /// Internal: MOB-1468 Keystone `scan(.foundPCZTBatch)` finished submitting (noteSplit) or
-        /// storing (planCommit/immediateReview) the signed PCZTs — pops `scan`+`keystoneSign` and
-        /// resumes the chain `context` represents. `result` carries the noteSplit broadcast outcome
-        /// (mirrors the software `.splitResult` handling) and `signedPczt` the PCZT that was
-        /// submitted (so the mutated `noteSplit` element can hold it for `retryTapped`); both `nil`
-        /// for the other two contexts, whose `storeSignedMigrationTransactions` call returns `Void`.
-        case keystoneSigningSubmitted(context: KeystoneSigningContext, result: TransferResult?, signedPczt: Pczt?)
+        /// Internal: MOB-1468 Keystone `scan(.foundPCZTBatch)` finished storing the signed PCZTs
+        /// (`storeSignedMigrationTransactions`, `Void`-returning) — pops `scan`+`keystoneSign` and
+        /// resumes the chain `context` represents. MOB-1478 (W4): the stored batch now always
+        /// includes the note-split PCZT first when `isNoteSplitNeeded()` — there's no separate
+        /// per-source result to carry any more (the old `.noteSplit` context's `TransferResult`/
+        /// signed-PCZT payload is gone along with that context).
+        case keystoneSigningSubmitted(context: KeystoneSigningContext)
         /// Internal: MOB-1468 `keystoneSign(.delegate(.rejected))`'s pop, deferred to a follow-up
         /// self-action for the same reason `sendNowCompleted` defers its pop — popping the
         /// `keystoneSign` element inline in the `.path(.element(...))` case would race
@@ -113,6 +141,13 @@ struct MigrationCoordFlow {
         /// and `keystoneSign` elements back to the initiating screen (deferred like
         /// `keystoneSignRejected`, since `scan` is the acting element) and clears the context.
         case keystoneScanAbandoned
+        /// MOB-1478 (W2): the Tor bottom sheet's own actions (toggle binding + "Got it").
+        case torSheet(MigrationTorSheet.Action)
+        /// MOB-1478 (W2): `zashiSheet`'s `isPresented` binding changed — `true` when presented (the
+        /// coordinator already set this synchronously before returning, so this is mostly a
+        /// same-value echo), `false` on dismissal (both an explicit "Got it" — which also flips this
+        /// itself — and a swipe-to-dismiss, which the sheet's own gesture drives).
+        case torSheetPresentationChanged(Bool)
     }
 
     @Dependency(\.migrationBGScheduler) var migrationBGScheduler
@@ -128,6 +163,10 @@ struct MigrationCoordFlow {
 
         Scope(state: \.entryState, action: \.entry) {
             MigrationEntry()
+        }
+
+        Scope(state: \.torSheetState, action: \.torSheet) {
+            MigrationTorSheet()
         }
 
         Reduce { _, _ in .none }

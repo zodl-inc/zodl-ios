@@ -4,18 +4,33 @@
 //
 //  Routing brain for `MigrationCoordFlow` (MOB-1466): re-entry (`.onAppear`), the chaining table
 //  from Entry through Complete, and the shared permission-step helper (BackgroundDelivery ->
-//  Notifications -> NetworkPrivacy -> TransferPlan). See the MOB-1466 implementation spec's
-//  `MigrationCoordFlow` section for the full chaining table this mirrors row by row.
+//  Notifications -> TransferPlan). See the MOB-1466 implementation spec's `MigrationCoordFlow`
+//  section for the full chaining table this mirrors row by row.
 //
-//  MOB-1468 (Keystone) adds a QR sign/scan round-trip ahead of the three signing sources
-//  (NoteSplit/TransferPlan/ReviewTransfer): each delegates `.keystoneSignRequested(pczts)` instead
-//  of signing locally, which sets `pendingKeystoneSigning` and pushes `keystoneSign`;
-//  `keystoneSign(.delegate(.getSignature))` pushes `scan` configured with the migration batch
-//  checker; `scan(.foundPCZTBatch(signed))` switches on `pendingKeystoneSigning` to submit/store the
-//  signed PCZTs and resume whichever chain the source represents, popping both pushed elements and
-//  clearing the context. `keystoneSign(.delegate(.rejected))` pops back to the signing source with
-//  its state untouched (no partial storage ever happens on that path). See the "Keystone signing"
-//  section below.
+//  MOB-1468 (Keystone) adds a QR sign/scan round-trip ahead of the two signing sources
+//  (TransferPlan/ReviewTransfer): each delegates `.keystoneSignRequested(pczts)` instead of signing
+//  locally, which sets `pendingKeystoneSigning` and pushes `keystoneSign`; `keystoneSign(.delegate
+//  (.getSignature))` pushes `scan` configured with the migration batch checker; `scan(.foundPCZTBatch
+//  (signed))` stores the signed PCZTs and resumes whichever chain the source represents, popping both
+//  pushed elements and clearing the context. `keystoneSign(.delegate(.rejected))` pops back to the
+//  signing source with its state untouched (no partial storage ever happens on that path). See the
+//  "Keystone signing" section below.
+//
+//  MOB-1478 reshapes the scheduled entry chain and the note-split lifecycle:
+//  - W2: the full-screen Network Privacy step is replaced by a coordinator-owned Tor bottom sheet.
+//    `presentTorSheet`/`confirmTorSheet` gate the two points that used to push Network Privacy —
+//    Entry (immediate mode) and How This Works (scheduled mode) — behind the same
+//    `walletStorage.exportTorSetupFlag()` check as before.
+//  - W3: Entry's scheduled/private path now always pushes the new `howItWorks` screen (no more
+//    `isNoteSplitNeeded()` branch at Entry).
+//  - W4: note splitting leaves forward routing entirely — `MigrationNoteSplit` is reached only via
+//    re-entry (`reentryRoute() == .noteSplitProgress`), so it no longer requests Keystone signing;
+//    `KeystoneSigningContext` lost its `.noteSplit` case, and `MigrationTransferPlan`'s Keystone batch
+//    now carries the split PCZT itself, when needed.
+//  - W7: `Status`'s reschedule lands `.rescheduleCompleted` on the SAME status element instead of
+//    pushing a new `TransferPlan`.
+//  - W8: `nextPermissionStepResult()` picks the Notifications variant off `isManualDelivery()`.
+//  - W10: the Keystone scan push sets `instructions`/`forceLibraryToHide`.
 //
 
 import Foundation
@@ -36,9 +51,6 @@ extension MigrationCoordFlow {
                 }
 
             case .pushNextPermissionStep(let result):
-                if result.forcedUseTor {
-                    state.networkPrivacyOptions.useTor = true
-                }
                 if let pathState = result.pathState {
                     state.path.append(pathState)
                 }
@@ -53,35 +65,59 @@ extension MigrationCoordFlow {
 
                 switch mode {
                 case .immediate:
-                    // Skip Network Privacy (S5) iff the app-wide Tor setup flag is on — in that
-                    // case `useTor` is implicitly `true` and Review is pushed directly; otherwise
-                    // Network Privacy is shown so the user can opt in explicitly. Both checks here
-                    // are synchronous SDK/dependency reads, so no effect is needed.
+                    // Skip the Tor sheet iff the app-wide Tor setup flag is on — in that case
+                    // `useTor` is implicitly `true` and Review is pushed directly; otherwise the
+                    // sheet is shown so the user can opt in explicitly. Both checks here are
+                    // synchronous SDK/dependency reads, so no effect is needed.
                     if walletStorage.exportTorSetupFlag() == true {
                         state.networkPrivacyOptions.useTor = true
                         state.path.append(.reviewTransfer(MigrationReviewTransfer.State(mode: .immediate)))
                     } else {
-                        state.path.append(.networkPrivacy(MigrationNetworkPrivacy.State(variant: .immediate)))
+                        presentTorSheet(destination: .reviewTransfer, state: &state)
                     }
                     return .none
 
                 case .privateScheduled:
-                    if sdkSynchronizer.isNoteSplitNeeded() {
-                        state.path.append(.noteSplit(MigrationNoteSplit.State()))
-                        return .none
-                    }
+                    state.path.append(.howItWorks(MigrationHowItWorks.State()))
+                    return .none
+                }
+
+                // MARK: - HowItWorks (MOB-1478 W3)
+
+            case .path(.element(id: _, action: .howItWorks(.delegate(.continueTapped)))):
+                // Same Tor-sheet gate as Entry's immediate branch above, just reached later in the
+                // scheduled chain.
+                if walletStorage.exportTorSetupFlag() == true {
+                    state.networkPrivacyOptions.useTor = true
                     return .run { send in
                         await send(.pushNextPermissionStep(await nextPermissionStepResult()))
                     }
                 }
+                presentTorSheet(destination: .permissionChain, state: &state)
+                return .none
 
-                // MARK: - NoteSplit
+                // MARK: - Tor bottom sheet (MOB-1478 W2)
+
+            case .torSheet(.delegate(.gotIt)):
+                return confirmTorSheet(state: &state)
+
+            case .torSheetPresentationChanged(let isPresented):
+                state.isTorSheetPresented = isPresented
+                // `false` covers both an explicit "Got it" (which already ran `confirmTorSheet`
+                // itself, so `pendingTorDestination` is already `nil` and this is a harmless no-op)
+                // and a swipe-to-dismiss, which never routed through `.delegate(.gotIt)` at all —
+                // the spec treats both identically, so this is the swipe path's own trigger.
+                guard !isPresented else { return .none }
+                return confirmTorSheet(state: &state)
+
+                // MARK: - NoteSplit (re-entry-only, MOB-1478 W4)
 
             case .path(.element(id: let id, action: .noteSplit(.delegate(.continued)))):
-                // NoteSplit's `closeTapped` (flow-root back, splitting phase) and `continueTapped`
-                // (normal chain progression, confirmed phase) both emit the same `.continued`
-                // delegate value — `isFlowRoot` on the element disambiguates them, since only the
-                // flow-root splitting re-entry root can reach `closeTapped` at all.
+                // Forward routing never pushes `.noteSplit` any more (the split now runs silently
+                // under the TransferPlan/ReviewTransfer commit CTAs), so every reachable `.noteSplit`
+                // element is a re-entry root and this always takes the `isFlowRoot` branch in
+                // practice. The non-root branch is kept defensively (the exhaustive shape this
+                // reducer already had) rather than deleted.
                 if case .noteSplit(let noteSplitState) = state.path[id: id], noteSplitState.isFlowRoot {
                     return .send(.flowFinished)
                 }
@@ -105,19 +141,6 @@ extension MigrationCoordFlow {
                 return .run { send in
                     await send(.pushNextPermissionStep(await nextPermissionStepResult()))
                 }
-
-                // MARK: - NetworkPrivacy
-
-            case .path(.element(id: _, action: .networkPrivacy(.delegate(.confirmed(let options))))):
-                migrationManager.setNetworkPrivacyOptions(options)
-                state.networkPrivacyOptions = options
-
-                if state.mode == .immediate {
-                    state.path.append(.reviewTransfer(MigrationReviewTransfer.State(mode: .immediate)))
-                } else {
-                    state.path.append(.transferPlan(MigrationTransferPlan.State(variant: freshPlanVariant())))
-                }
-                return .none
 
                 // MARK: - TransferPlan
 
@@ -144,11 +167,6 @@ extension MigrationCoordFlow {
 
                 // MARK: - Keystone signing (MOB-1468)
 
-            case .path(.element(id: _, action: .noteSplit(.delegate(.keystoneSignRequested(let pczts))))):
-                state.pendingKeystoneSigning = .noteSplit
-                state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: pczts)))
-                return .none
-
             case .path(.element(id: _, action: .transferPlan(.delegate(.keystoneSignRequested(let pczts))))):
                 state.pendingKeystoneSigning = .planCommit
                 state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: pczts)))
@@ -162,44 +180,38 @@ extension MigrationCoordFlow {
             case .path(.element(id: _, action: .keystoneSign(.delegate(.getSignature)))):
                 var scanState = Scan.State.initial
                 scanState.checkers = [.keystoneMigrationBatchScanChecker]
+                // MOB-1478 (W10): matches the design's single centered flash control (precedent:
+                // `AddKeystoneHWWalletCoordFlowCoordinator` already sets `forceLibraryToHide`).
+                scanState.instructions = String(localizable: .migrationKeystoneScanInstructions)
+                scanState.forceLibraryToHide = true
                 state.path.append(.scan(scanState))
                 return .none
 
             case .path(.element(id: _, action: .scan(.foundPCZTBatch(let signed)))):
                 guard let context = state.pendingKeystoneSigning else { return .none }
 
-                // Empty batch: nothing decoded to a usable signed PCZT — in EVERY context this
-                // abandons the signing session like a rejection (deferred pop of scan + sign back
-                // to the initiating screen, context cleared) and never submits or stores anything
-                // (no-partial-storage invariant). The user re-initiates from the confirm button.
+                // Empty batch: nothing decoded to a usable signed PCZT — this abandons the signing
+                // session like a rejection (deferred pop of scan + sign back to the initiating
+                // screen, context cleared) and never stores anything (no-partial-storage invariant).
+                // The user re-initiates from the confirm button.
                 guard !signed.isEmpty else { return .send(.keystoneScanAbandoned) }
 
-                switch context {
-                case .noteSplit:
-                    guard let pczt = signed.first else { return .none }
-                    return .run { [sdkSynchronizer] send in
-                        let result = await sdkSynchronizer.submitSignedNoteSplit(pczt)
-                        await send(.keystoneSigningSubmitted(context: .noteSplit, result: result, signedPczt: pczt))
-                    }
-
-                case .planCommit, .immediateReview:
-                    return .run { [sdkSynchronizer] send in
-                        await sdkSynchronizer.storeSignedMigrationTransactions(signed)
-                        await send(.keystoneSigningSubmitted(context: context, result: nil, signedPczt: nil))
-                    }
+                return .run { [sdkSynchronizer] send in
+                    await sdkSynchronizer.storeSignedMigrationTransactions(signed)
+                    await send(.keystoneSigningSubmitted(context: context))
                 }
 
-            case .keystoneSigningSubmitted(let context, let result, let signedPczt):
-                return resumeAfterKeystoneSigning(context: context, result: result, signedPczt: signedPczt, state: &state)
+            case .keystoneSigningSubmitted(let context):
+                return resumeAfterKeystoneSigning(context: context, state: &state)
 
             case .path(.element(id: _, action: .keystoneSign(.delegate(.rejected)))):
-                // No-partial-storage invariant: nothing was submitted/stored — just pop back to the
-                // signing source with its state untouched (NoteSplit still explainer, plan/review
-                // still unsigned) and clear the context. The pop is deferred to a follow-up
-                // self-action (mirrors `sendNowCompleted`'s deferred pop) rather than done inline
-                // here: `.forEach(\.path, action:)` still needs to deliver this SAME action to the
-                // `keystoneSign` element after this case returns, and popping it first would leave
-                // `.forEach` with no element to deliver to (a TCA "missing element" runtime error).
+                // No-partial-storage invariant: nothing was stored — just pop back to the signing
+                // source with its state untouched (plan/review still unsigned) and clear the
+                // context. The pop is deferred to a follow-up self-action (mirrors
+                // `sendNowCompleted`'s deferred pop) rather than done inline here: `.forEach(\.path,
+                // action:)` still needs to deliver this SAME action to the `keystoneSign` element
+                // after this case returns, and popping it first would leave `.forEach` with no
+                // element to deliver to (a TCA "missing element" runtime error).
                 return .send(.keystoneSignRejected)
 
             case .keystoneSignRejected:
@@ -270,12 +282,22 @@ extension MigrationCoordFlow {
                     statusState.isRescheduling = true
                     state.path[id: id] = .status(statusState)
                 }
-                return .run { [migrationBGScheduler, sdkSynchronizer] send in
+                // MOB-1478 (W7): lands `.rescheduleCompleted` on the SAME status element instead of
+                // pushing a fresh `TransferPlan` — `MigrationStatus` itself now owns the
+                // post-reschedule confirmation presentation.
+                return .run { [migrationBGScheduler, sdkSynchronizer, id] send in
                     await sdkSynchronizer.rescheduleStalledMigrationTransfer()
                     await migrationBGScheduler.scheduleFirstWindow()
                     let rows = sdkSynchronizer.migrationTransfers()
-                    let planState = rescheduledPlanState(rows: rows)
-                    await send(.pushHydratedPathState(.transferPlan(planState)))
+                    let totalDurationHours = sdkSynchronizer.migrationSummary().estimatedDurationHours
+                    await send(
+                        .path(
+                            .element(
+                                id: id,
+                                action: .status(.rescheduleCompleted(rows: rows, totalDurationHours: totalDurationHours))
+                            )
+                        )
+                    )
                 }
 
                 // MARK: - Recovery
@@ -309,7 +331,8 @@ extension MigrationCoordFlow {
     /// Scheduled/recreated push `.scheduled`; manual pushes `.sending` (totalCount 1, current
     /// network-privacy options) — then schedules the first background window either way. Shared by
     /// the software `TransferPlan.delegate(.confirmed)` row and the Keystone `planCommit` resume
-    /// (`resumeAfterKeystoneSigning`), which both reach this point with a signed+stored schedule.
+    /// (`resumeAfterKeystoneSigning`), which both reach this point with a signed+stored schedule
+    /// (and, when needed, an already-signed+submitted note split — MOB-1478 W4).
     private func transferPlanPostConfirmChain(
         variant: MigrationTransferPlan.State.Variant,
         state: inout MigrationCoordFlow.State
@@ -325,15 +348,11 @@ extension MigrationCoordFlow {
         return .run { [migrationBGScheduler] _ in await migrationBGScheduler.scheduleFirstWindow() }
     }
 
-    // MARK: - Keystone signing (MOB-1468): resume after submit/store
+    // MARK: - Keystone signing (MOB-1468): resume after store
 
     /// Pops `scan`+`keystoneSign` (the two elements the QR round-trip pushed) and resumes whichever
     /// chain `context` represents, mirroring how the equivalent software `.confirmed` row would
     /// proceed from the now-topmost signing-source element:
-    /// - `.noteSplit`: mutates the `noteSplit` element now on top in place (the `isRescheduling`
-    ///   precedent) — `phase = .splitting`, `signedNoteSplitPczt` set to the PCZT that was
-    ///   submitted — then applies `result` exactly like that element's own `.splitResult` handling
-    ///   (success sets `txId`; failure presents the failure sheet).
     /// - `.planCommit`: the `transferPlan` element now on top never re-signs again — resumes via
     ///   `transferPlanPostConfirmChain(variant:state:)`, identical to the software `.confirmed` row.
     /// - `.immediateReview`: pushes `.sending`, identical to the software `reviewTransfer.confirmed`
@@ -342,34 +361,12 @@ extension MigrationCoordFlow {
     /// Clears `pendingKeystoneSigning` in every case.
     private func resumeAfterKeystoneSigning(
         context: MigrationCoordFlow.KeystoneSigningContext,
-        result: TransferResult?,
-        signedPczt: Pczt?,
         state: inout MigrationCoordFlow.State
     ) -> Effect<MigrationCoordFlow.Action> {
         state.pendingKeystoneSigning = nil
         state.path.removeLast(2)
 
         switch context {
-        case .noteSplit:
-            guard
-                let noteSplitId = state.path.ids.last,
-                case .noteSplit(var noteSplitState) = state.path[id: noteSplitId]
-            else {
-                return .none
-            }
-
-            noteSplitState.phase = .splitting
-            noteSplitState.signedNoteSplitPczt = signedPczt
-            switch result {
-            case .success(let txId):
-                noteSplitState.txId = txId
-                noteSplitState.isFailurePresented = false
-            case .networkError, .invalidNote, .expired, .none:
-                noteSplitState.isFailurePresented = true
-            }
-            state.path[id: noteSplitId] = .noteSplit(noteSplitState)
-            return .none
-
         case .planCommit:
             guard case let .transferPlan(planState) = state.path.last else { return .none }
             return transferPlanPostConfirmChain(variant: planState.variant, state: &state)
@@ -379,6 +376,44 @@ extension MigrationCoordFlow {
             sendingState.networkPrivacyOptions = state.networkPrivacyOptions
             state.path.append(.sending(sendingState))
             return .none
+        }
+    }
+
+    // MARK: - Tor bottom sheet (MOB-1478 W2): present + confirm/dismiss
+
+    /// Presents the Tor sheet fresh (reset toggle to its no-bias default) and stashes `destination`
+    /// to resume once the user confirms or swipes the sheet away.
+    private func presentTorSheet(
+        destination: MigrationCoordFlow.PendingTorDestination,
+        state: inout MigrationCoordFlow.State
+    ) {
+        state.torSheetState = MigrationTorSheet.State()
+        state.pendingTorDestination = destination
+        state.isTorSheetPresented = true
+    }
+
+    /// "Got it" and swipe-to-dismiss both land here (the spec treats them identically): persists
+    /// whatever `isTorOn` is currently showing exactly as `MigrationNetworkPrivacyStore` did, dismisses
+    /// the sheet, then resumes the stashed destination. A no-op if nothing is pending (defensive
+    /// against a stray `torSheetPresentationChanged(false)` after "Got it" already handled it).
+    private func confirmTorSheet(state: inout MigrationCoordFlow.State) -> Effect<MigrationCoordFlow.Action> {
+        guard let destination = state.pendingTorDestination else { return .none }
+        state.pendingTorDestination = nil
+        state.isTorSheetPresented = false
+
+        let options = NetworkPrivacyOptions(useTor: state.torSheetState.isTorOn, submissionEndpoint: nil)
+        migrationManager.setNetworkPrivacyOptions(options)
+        state.networkPrivacyOptions = options
+
+        switch destination {
+        case .reviewTransfer:
+            state.path.append(.reviewTransfer(MigrationReviewTransfer.State(mode: .immediate)))
+            return .none
+
+        case .permissionChain:
+            return .run { send in
+                await send(.pushNextPermissionStep(await nextPermissionStepResult()))
+            }
         }
     }
 
@@ -414,34 +449,25 @@ extension MigrationCoordFlow {
 
     // MARK: - Permission-step routing
 
-    /// Shared helper (used after Entry-scheduled-no-split, NoteSplit-continued, and each
-    /// permission screen's continue/skip): computes the next needed screen in order —
-    /// `backgroundDelivery` iff background refresh isn't `.available` -> `notifications` iff
-    /// authorization is still `.notDetermined` (granted/denied both skip, per §5 S4) ->
-    /// `networkPrivacy` iff the app-wide Tor setup flag isn't on -> `transferPlan`. When S5 is
-    /// skipped because Tor is already on, `forcedUseTor` tells the reducer to set
-    /// `networkPrivacyOptions.useTor = true` before the plan screen is reached.
+    /// Shared helper (used after How This Works/the Tor sheet, and each permission screen's
+    /// continue/skip): computes the next needed screen in order — `backgroundDelivery` iff
+    /// background refresh isn't `.available` -> `notifications` iff authorization is still
+    /// `.notDetermined` (granted/denied both skip, per §5 S4) -> `transferPlan`. MOB-1478 (W2): Tor
+    /// resolution no longer lives in this chain — the bottom-sheet gate already ran once, earlier,
+    /// immediately after How This Works.
     private func nextPermissionStepResult() async -> MigrationCoordFlow.PermissionStepResult {
         if await migrationBGScheduler.backgroundRefreshStatus() != .available {
             return MigrationCoordFlow.PermissionStepResult(pathState: .backgroundDelivery(MigrationBackgroundDelivery.State()))
         }
 
         if await userNotifications.authorizationStatus() == .notDetermined {
-            return MigrationCoordFlow.PermissionStepResult(pathState: .notifications(MigrationNotifications.State()))
+            // MOB-1478 (W8): mirrors `freshPlanVariant()`'s ternary — today `.manual` was
+            // unreachable since this always defaulted to `.scheduled`.
+            let variant: MigrationNotifications.State.Variant = migrationManager.isManualDelivery() ? .manual : .scheduled
+            return MigrationCoordFlow.PermissionStepResult(pathState: .notifications(MigrationNotifications.State(variant: variant)))
         }
 
-        if walletStorage.exportTorSetupFlag() != true {
-            let transferCount = sdkSynchronizer.migrationTransfers().count
-            let variant = MigrationNetworkPrivacy.State.Variant.scheduled(transferCount: transferCount)
-            return MigrationCoordFlow.PermissionStepResult(
-                pathState: .networkPrivacy(MigrationNetworkPrivacy.State(variant: variant))
-            )
-        }
-
-        return MigrationCoordFlow.PermissionStepResult(
-            pathState: .transferPlan(MigrationTransferPlan.State(variant: freshPlanVariant())),
-            forcedUseTor: true
-        )
+        return MigrationCoordFlow.PermissionStepResult(pathState: .transferPlan(MigrationTransferPlan.State(variant: freshPlanVariant())))
     }
 
     /// Fresh-entry plan variant: manual delivery (background delivery declined) shows the manual
@@ -450,20 +476,7 @@ extension MigrationCoordFlow {
         migrationManager.isManualDelivery() ? .manual : .scheduled
     }
 
-    // MARK: - Reschedule / Recovery: TransferPlan hydration
-
-    /// Status `.reschedule`'s follow-up plan screen: `rescheduleStalledMigrationTransfer()`
-    /// returns `Void` (no schedule), so `rows` are built directly from a fresh
-    /// `migrationTransfers()` read rather than via `injectedSchedule`. `requiresSigning: false`
-    /// marks this variant's confirm as a plain acknowledgment (transfers are already signed).
-    private func rescheduledPlanState(rows: [MigrationTransferRow]) -> MigrationTransferPlan.State {
-        MigrationTransferPlan.State(
-            variant: .scheduled,
-            rows: IdentifiedArrayOf(uniqueElements: rows),
-            totalDurationHours: sdkSynchronizer.migrationSummary().estimatedDurationHours,
-            requiresSigning: false
-        )
-    }
+    // MARK: - Recovery: TransferPlan hydration
 
     /// Recovery `.recreate`'s follow-up plan screen: `restartCurrentMigrationStep()` returns a
     /// fresh `MigrationSchedule`, injected via `injectedSchedule` so the screen's own `onAppear`
