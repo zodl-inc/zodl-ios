@@ -6,17 +6,34 @@
 //  for MOB-1466: re-entry routing (`.onAppear`), the chaining table from Entry through Complete
 //  for all three modes (immediate/scheduled/manual), the permission-step helper's skip logic,
 //  sendNow/reschedule/recovery orchestration, and every flow-root close path's `.flowFinished`
-//  emission. Also covers MOB-1468's Keystone signing round-trip: each of the three signing
+//  emission. Also covers MOB-1468's Keystone signing round-trip: each of the two remaining signing
 //  sources' `.keystoneSignRequested` delegate sets `pendingKeystoneSigning` and pushes
 //  `keystoneSign`; `keystoneSign(.delegate(.getSignature))` pushes `scan` configured with the
-//  migration batch checker; `scan(.foundPCZTBatch)` routes to the right SDK member per context, pops
-//  `scan`+`keystoneSign`, and resumes the matching chain (noteSplit splitting phase / plan
-//  post-confirm / immediate sending) — verified with order-asserting spies; `.rejected` pops back to
-//  the signing source with its state intact and clears the context; the no-partial-storage invariant
-//  (reject, or an empty scanned batch, never calls submit/store). `.serialized`: every
-//  `MigrationCoordFlow.State()` carries a `MigrationEntry.State` (`entryState`), which reads the
-//  process-global `@Shared(.inMemory(.selectedWalletAccount))` on init — matching the precedent in
-//  `MigrationEntryTests`, which mutates the same key directly.
+//  migration batch checker; `scan(.foundPCZTBatch)` stores the signed PCZTs, pops `scan`+
+//  `keystoneSign`, and resumes the matching chain (plan post-confirm / immediate sending) — verified
+//  with order-asserting spies; `.rejected` pops back to the signing source with its state intact and
+//  clears the context; the no-partial-storage invariant (reject, or an empty scanned batch, never
+//  calls store).
+//
+//  MOB-1478 reshapes the scheduled entry chain and adds the Tor bottom sheet:
+//  - W2/W3: Entry (immediate) and How This Works (scheduled) both gate on the same
+//    `walletStorage.exportTorSetupFlag()` check the old Network Privacy screen used, before either
+//    pushing straight through (flag set) or presenting the coordinator-owned Tor sheet (flag unset)
+//    and stashing the pending destination; "Got it" and swipe-dismissal (`torSheetPresentationChanged
+//    (false)`) both persist + resume identically.
+//  - W4: note splitting no longer gates or appears in forward routing at all — `MigrationNoteSplit`
+//    is re-entry-only, and its old Keystone signing context folded into `TransferPlan`'s batch (a
+//    signed-PCZT array can now be longer when the split was needed, but the coordinator still treats
+//    it as one opaque atomic batch either way).
+//  - W7: reschedule lands `.rescheduleCompleted` on the SAME status element instead of pushing a
+//    fresh `TransferPlan`.
+//  - W8: the Notifications variant now reaches `.manual` when delivery is manual (was previously
+//    unreachable).
+//  - W10: the Keystone scan push sets `instructions`/`forceLibraryToHide`.
+//
+//  `.serialized`: every `MigrationCoordFlow.State()` carries a `MigrationEntry.State` (`entryState`),
+//  which reads the process-global `@Shared(.inMemory(.selectedWalletAccount))` on init — matching the
+//  precedent in `MigrationEntryTests`, which mutates the same key directly.
 //
 
 import Testing
@@ -241,9 +258,9 @@ import ComposableArchitecture
         #expect(reviewState.fee == Zatoshi(100_000))
     }
 
-    // MARK: - Immediate flow (§6.1)
+    // MARK: - Immediate flow (§6.1): Tor sheet gate
 
-    @MainActor @Test func entryChoseImmediateWithTorFlagOnSkipsNetworkPrivacyAndPushesReview() async {
+    @MainActor @Test func entryChoseImmediateWithTorFlagOnSkipsTorSheetAndPushesReview() async {
         let setMigrationModeCalls = LockIsolated<[MigrationMode]>([])
         let selectMigrationModeCalls = LockIsolated<[MigrationMode]>([])
         let store = TestStore(initialState: MigrationCoordFlow.State()) {
@@ -263,14 +280,15 @@ import ComposableArchitecture
         #expect(setMigrationModeCalls.value == [MigrationMode.immediate])
         #expect(selectMigrationModeCalls.value == [MigrationMode.immediate])
         #expect(store.state.networkPrivacyOptions.useTor == true)
+        #expect(store.state.isTorSheetPresented == false)
         guard case let .reviewTransfer(reviewState) = try? #require(store.state.path.last) else {
-            Issue.record("Expected .reviewTransfer on the path (NetworkPrivacy skipped)")
+            Issue.record("Expected .reviewTransfer on the path (Tor sheet skipped)")
             return
         }
         #expect(reviewState.mode == MigrationReviewTransfer.State.Mode.immediate)
     }
 
-    @MainActor @Test func entryChoseImmediateWithTorFlagOffShowsNetworkPrivacy() async {
+    @MainActor @Test func entryChoseImmediateWithTorFlagOffPresentsTorSheetAndStashesReviewDestination() async {
         let store = TestStore(initialState: MigrationCoordFlow.State()) {
             MigrationCoordFlow()
         } withDependencies: {
@@ -283,18 +301,21 @@ import ComposableArchitecture
 
         await store.send(.entry(.delegate(.chose(.immediate))))
 
-        guard case let .networkPrivacy(networkPrivacyState) = try? #require(store.state.path.last) else {
-            Issue.record("Expected .networkPrivacy on the path (Tor flag off)")
-            return
-        }
-        #expect(networkPrivacyState.variant == MigrationNetworkPrivacy.State.Variant.immediate)
+        #expect(store.state.isTorSheetPresented == true)
+        #expect(store.state.pendingTorDestination == MigrationCoordFlow.PendingTorDestination.reviewTransfer)
+        // Nothing pushed yet — the sheet gates the push until confirmed/dismissed.
+        #expect(store.state.path.isEmpty)
     }
 
-    @MainActor @Test func networkPrivacyConfirmedInImmediateModePushesReviewTransferImmediate() async {
+    // MARK: - Tor bottom sheet (MOB-1478 W2): "Got it" and swipe-dismiss resume the stashed destination
+
+    @MainActor @Test func torSheetGotItInImmediateModePersistsOptionsAndPushesReviewTransfer() async {
         let setOptionsCalls = LockIsolated<[NetworkPrivacyOptions]>([])
         var state = MigrationCoordFlow.State()
         state.mode = .immediate
-        state.path.append(.networkPrivacy(MigrationNetworkPrivacy.State(variant: .immediate)))
+        state.torSheetState = MigrationTorSheet.State(isTorOn: true)
+        state.isTorSheetPresented = true
+        state.pendingTorDestination = .reviewTransfer
         let store = TestStore(initialState: state) {
             MigrationCoordFlow()
         } withDependencies: {
@@ -302,11 +323,13 @@ import ComposableArchitecture
         }
         store.exhaustivity = .off
 
-        let options = NetworkPrivacyOptions(useTor: true, submissionEndpoint: nil)
-        await store.send(.path(.element(id: 0, action: .networkPrivacy(.delegate(.confirmed(options))))))
+        await store.send(.torSheet(.delegate(.gotIt)))
 
-        #expect(setOptionsCalls.value == [options])
-        #expect(store.state.networkPrivacyOptions == options)
+        let expectedOptions = NetworkPrivacyOptions(useTor: true, submissionEndpoint: nil)
+        #expect(setOptionsCalls.value == [expectedOptions])
+        #expect(store.state.networkPrivacyOptions == expectedOptions)
+        #expect(store.state.isTorSheetPresented == false)
+        #expect(store.state.pendingTorDestination == nil)
         guard case let .reviewTransfer(reviewState) = try? #require(store.state.path.last) else {
             Issue.record("Expected .reviewTransfer pushed on top")
             return
@@ -314,10 +337,14 @@ import ComposableArchitecture
         #expect(reviewState.mode == MigrationReviewTransfer.State.Mode.immediate)
     }
 
-    @MainActor @Test func networkPrivacyConfirmedInScheduledModePushesTransferPlan() async {
+    @MainActor @Test func torSheetSwipeDismissInImmediateModePersistsOptionsAndPushesReviewTransfer() async {
+        // Spec: sheet dismissal by swipe is identical to "Got it" — same persist-then-proceed logic,
+        // using whatever toggle state is showing at that moment.
         var state = MigrationCoordFlow.State()
-        state.mode = .privateScheduled
-        state.path.append(.networkPrivacy(MigrationNetworkPrivacy.State(variant: .scheduled(transferCount: 5))))
+        state.mode = .immediate
+        state.torSheetState = MigrationTorSheet.State(isTorOn: false)
+        state.isTorSheetPresented = true
+        state.pendingTorDestination = .reviewTransfer
         let store = TestStore(initialState: state) {
             MigrationCoordFlow()
         } withDependencies: {
@@ -325,30 +352,69 @@ import ComposableArchitecture
         }
         store.exhaustivity = .off
 
-        let options = NetworkPrivacyOptions(useTor: false, submissionEndpoint: nil)
-        await store.send(.path(.element(id: 0, action: .networkPrivacy(.delegate(.confirmed(options))))))
+        await store.send(.torSheetPresentationChanged(false))
 
+        #expect(store.state.networkPrivacyOptions == NetworkPrivacyOptions(useTor: false, submissionEndpoint: nil))
+        #expect(store.state.isTorSheetPresented == false)
+        #expect(store.state.pendingTorDestination == nil)
+        guard case .reviewTransfer = try? #require(store.state.path.last) else {
+            Issue.record("Expected .reviewTransfer pushed on top (swipe-dismiss == Got it)")
+            return
+        }
+    }
+
+    @MainActor @Test func torSheetGotItInScheduledModeResumesPermissionChainAndPushesTransferPlan() async {
+        var state = MigrationCoordFlow.State()
+        state.mode = .privateScheduled
+        state.torSheetState = MigrationTorSheet.State(isTorOn: false)
+        state.isTorSheetPresented = true
+        state.pendingTorDestination = .permissionChain
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.migrationManager.setNetworkPrivacyOptions = { _ in }
+            $0.migrationBGScheduler.backgroundRefreshStatus = { .available }
+            $0.userNotifications.authorizationStatus = { .authorized }
+            $0.migrationManager.isManualDelivery = { false }
+            $0.sdkSynchronizer = .noOp
+        }
+        store.exhaustivity = .off
+
+        await store.send(.torSheet(.delegate(.gotIt)))
+        await store.receive(\.pushNextPermissionStep)
+
+        #expect(store.state.isTorSheetPresented == false)
+        #expect(store.state.pendingTorDestination == nil)
         guard case let .transferPlan(planState) = try? #require(store.state.path.last) else {
-            Issue.record("Expected .transferPlan pushed on top")
+            Issue.record("Expected .transferPlan pushed")
             return
         }
         #expect(planState.variant == MigrationTransferPlan.State.Variant.scheduled)
     }
 
+    @MainActor @Test func torSheetPresentationChangedToFalseWithNothingPendingIsANoOp() async {
+        let store = TestStore(initialState: MigrationCoordFlow.State()) {
+            MigrationCoordFlow()
+        }
+
+        await store.send(.torSheetPresentationChanged(false))
+    }
+
     @MainActor @Test func manualDeliveryFreshPlanUsesManualVariant() async {
         var state = MigrationCoordFlow.State()
-        state.mode = .privateScheduled
-        state.path.append(.networkPrivacy(MigrationNetworkPrivacy.State(variant: .scheduled(transferCount: 5))))
+        state.path.append(.notifications(MigrationNotifications.State()))
         let store = TestStore(initialState: state) {
             MigrationCoordFlow()
         } withDependencies: {
-            $0.migrationManager.setNetworkPrivacyOptions = { _ in }
+            $0.migrationBGScheduler.backgroundRefreshStatus = { .available }
+            $0.userNotifications.authorizationStatus = { .authorized }
             $0.migrationManager.isManualDelivery = { true }
+            $0.sdkSynchronizer = .noOp
         }
         store.exhaustivity = .off
 
-        let options = NetworkPrivacyOptions(useTor: false, submissionEndpoint: nil)
-        await store.send(.path(.element(id: 0, action: .networkPrivacy(.delegate(.confirmed(options))))))
+        await store.send(.path(.element(id: 0, action: .notifications(.delegate(.continued)))))
+        await store.receive(\.pushNextPermissionStep)
 
         guard case let .transferPlan(planState) = try? #require(store.state.path.last) else {
             Issue.record("Expected .transferPlan pushed on top")
@@ -378,25 +444,6 @@ import ComposableArchitecture
     }
 
     // MARK: - MOB-1468: Keystone signing — signRequested sets context + pushes keystoneSign
-
-    @MainActor @Test func noteSplitKeystoneSignRequestedSetsNoteSplitContextAndPushesKeystoneSign() async {
-        var state = MigrationCoordFlow.State()
-        state.path.append(.noteSplit(MigrationNoteSplit.State(phase: .explainer)))
-        let store = TestStore(initialState: state) {
-            MigrationCoordFlow()
-        }
-        store.exhaustivity = .off
-
-        let pczts: [Pczt] = [Data([0xAA])]
-        await store.send(.path(.element(id: 0, action: .noteSplit(.delegate(.keystoneSignRequested(pczts))))))
-
-        #expect(store.state.pendingKeystoneSigning == MigrationCoordFlow.KeystoneSigningContext.noteSplit)
-        guard case let .keystoneSign(signState) = try? #require(store.state.path.last) else {
-            Issue.record("Expected .keystoneSign pushed on top")
-            return
-        }
-        #expect(signState.pczts == pczts)
-    }
 
     @MainActor @Test func transferPlanKeystoneSignRequestedSetsPlanCommitContextAndPushesKeystoneSign() async {
         var state = MigrationCoordFlow.State()
@@ -436,12 +483,12 @@ import ComposableArchitecture
         #expect(signState.pczts == pczts)
     }
 
-    // MARK: - MOB-1468: Keystone signing — getSignature pushes scan with the migration batch checker
+    // MARK: - MOB-1468/1478 (W10): Keystone signing — getSignature pushes scan configured for migration
 
-    @MainActor @Test func keystoneSignGetSignaturePushesScanConfiguredWithMigrationBatchChecker() async {
+    @MainActor @Test func keystoneSignGetSignaturePushesScanConfiguredWithMigrationBatchCheckerAndScanConfig() async {
         var state = MigrationCoordFlow.State()
-        state.pendingKeystoneSigning = .noteSplit
-        state.path.append(.noteSplit(MigrationNoteSplit.State(phase: .explainer)))
+        state.pendingKeystoneSigning = .planCommit
+        state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .scheduled)))
         state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: [Pczt()])))
         let store = TestStore(initialState: state) {
             MigrationCoordFlow()
@@ -455,73 +502,8 @@ import ComposableArchitecture
             return
         }
         #expect(scanState.checkers == [.keystoneMigrationBatchScanChecker])
-    }
-
-    // MARK: - MOB-1468: Keystone signing — foundPCZTBatch resumes noteSplit
-
-    @MainActor @Test func foundPCZTBatchForNoteSplitContextSubmitsSignedPcztPopsAndMutatesNoteSplitIntoSplittingPhase() async {
-        let callOrder = LockIsolated<[String]>([])
-        let signed: Pczt = Data([0xAA])
-        var state = MigrationCoordFlow.State()
-        state.pendingKeystoneSigning = .noteSplit
-        state.path.append(.noteSplit(MigrationNoteSplit.State(phase: .explainer)))
-        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: [signed])))
-        state.path.append(.scan(Scan.State.initial))
-        let store = TestStore(initialState: state) {
-            MigrationCoordFlow()
-        } withDependencies: {
-            $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.submitSignedNoteSplit = { pczt in
-                callOrder.withValue { $0.append("submitSignedNoteSplit(\(pczt))") }
-                return .success(txId: "keystone-split-tx-id")
-            }
-            $0.sdkSynchronizer.storeSignedMigrationTransactions = { _ in
-                callOrder.withValue { $0.append("storeSignedMigrationTransactions") }
-            }
-        }
-        store.exhaustivity = .off
-
-        await store.send(.path(.element(id: 2, action: .scan(.foundPCZTBatch([signed])))))
-        await store.receive(\.keystoneSigningSubmitted)
-
-        #expect(callOrder.value == ["submitSignedNoteSplit(\(signed))"])
-        #expect(store.state.pendingKeystoneSigning == nil)
-        #expect(store.state.path.count == 1)
-        guard case let .noteSplit(noteSplitState) = try? #require(store.state.path.last) else {
-            Issue.record("Expected scan+keystoneSign popped, .noteSplit remaining on top")
-            return
-        }
-        #expect(noteSplitState.phase == MigrationNoteSplit.State.Phase.splitting)
-        #expect(noteSplitState.txId == "keystone-split-tx-id")
-        #expect(noteSplitState.signedNoteSplitPczt == signed)
-        #expect(noteSplitState.isFailurePresented == false)
-    }
-
-    @MainActor @Test func foundPCZTBatchForNoteSplitContextWithFailureResultPresentsFailureSheetAndKeepsSignedPczt() async {
-        let signed: Pczt = Data([0xBB])
-        var state = MigrationCoordFlow.State()
-        state.pendingKeystoneSigning = .noteSplit
-        state.path.append(.noteSplit(MigrationNoteSplit.State(phase: .explainer)))
-        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: [signed])))
-        state.path.append(.scan(Scan.State.initial))
-        let store = TestStore(initialState: state) {
-            MigrationCoordFlow()
-        } withDependencies: {
-            $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.submitSignedNoteSplit = { _ in .networkError(retryable: true) }
-        }
-        store.exhaustivity = .off
-
-        await store.send(.path(.element(id: 2, action: .scan(.foundPCZTBatch([signed])))))
-        await store.receive(\.keystoneSigningSubmitted)
-
-        guard case let .noteSplit(noteSplitState) = try? #require(store.state.path.last) else {
-            Issue.record("Expected .noteSplit remaining on top")
-            return
-        }
-        #expect(noteSplitState.phase == MigrationNoteSplit.State.Phase.splitting)
-        #expect(noteSplitState.isFailurePresented == true)
-        #expect(noteSplitState.signedNoteSplitPczt == signed)
+        #expect(scanState.instructions == String(localizable: .migrationKeystoneScanInstructions))
+        #expect(scanState.forceLibraryToHide == true)
     }
 
     // MARK: - MOB-1468: Keystone signing — foundPCZTBatch resumes planCommit (shared post-confirm chain)
@@ -558,6 +540,41 @@ import ComposableArchitecture
         }
         guard case .transferPlan = try? #require(store.state.path[id: 0]) else {
             Issue.record("Expected .transferPlan retained at the bottom (never re-signs again)")
+            return
+        }
+    }
+
+    // MOB-1478 (W4): TransferPlan's Keystone fork prepends the note-split PCZT when needed — the
+    // coordinator treats the resulting (longer) batch opaquely and stores the WHOLE array atomically,
+    // no per-element handling required.
+    @MainActor @Test func foundPCZTBatchForPlanCommitContextWithNoteSplitPrefixStoresWholeBatchAtomically() async {
+        let callOrder = LockIsolated<[String]>([])
+        let splitPczt: Pczt = Data([0x01])
+        let signed: [Pczt] = [splitPczt, Data([0xAA]), Data([0xBB])]
+        var state = MigrationCoordFlow.State()
+        state.pendingKeystoneSigning = .planCommit
+        state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .scheduled)))
+        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: signed)))
+        state.path.append(.scan(Scan.State.initial))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.storeSignedMigrationTransactions = { stored in
+                #expect(stored == signed)
+                callOrder.withValue { $0.append("store") }
+            }
+            $0.migrationBGScheduler.scheduleFirstWindow = { callOrder.withValue { $0.append("scheduleFirstWindow") } }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 2, action: .scan(.foundPCZTBatch(signed)))))
+        await store.receive(\.keystoneSigningSubmitted)
+
+        #expect(callOrder.value == ["store", "scheduleFirstWindow"])
+        #expect(store.state.pendingKeystoneSigning == nil)
+        guard case .scheduled = try? #require(store.state.path.last) else {
+            Issue.record("Expected .scheduled pushed")
             return
         }
     }
@@ -626,39 +643,7 @@ import ComposableArchitecture
         }
     }
 
-    // MARK: - MOB-1468: Keystone signing — empty batch never submits/stores (no-partial-storage)
-
-    @MainActor @Test func foundPCZTBatchWithEmptyArrayForNoteSplitContextAbandonsSessionWithoutSubmitting() async {
-        let submitCalls = LockIsolated<Int>(0)
-        var state = MigrationCoordFlow.State()
-        state.pendingKeystoneSigning = .noteSplit
-        state.path.append(.noteSplit(MigrationNoteSplit.State(phase: .explainer)))
-        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: [Pczt()])))
-        state.path.append(.scan(Scan.State.initial))
-        let store = TestStore(initialState: state) {
-            MigrationCoordFlow()
-        } withDependencies: {
-            $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.submitSignedNoteSplit = { _ in
-                submitCalls.withValue { $0 += 1 }
-                return .success(txId: "should-not-be-called")
-            }
-        }
-        store.exhaustivity = .off
-
-        await store.send(.path(.element(id: 2, action: .scan(.foundPCZTBatch([])))))
-        await store.receive(\.keystoneScanAbandoned)
-
-        #expect(submitCalls.value == 0)
-        #expect(store.state.pendingKeystoneSigning == nil)
-        #expect(store.state.path.count == 1)
-        guard case let .noteSplit(noteSplitState) = try? #require(store.state.path.last) else {
-            Issue.record("Expected pop back to .noteSplit (scan + sign removed)")
-            return
-        }
-        #expect(noteSplitState.phase == MigrationNoteSplit.State.Phase.explainer)
-        #expect(noteSplitState.signedNoteSplitPczt == nil)
-    }
+    // MARK: - MOB-1468: Keystone signing — empty batch never stores (no-partial-storage)
 
     @MainActor @Test func foundPCZTBatchWithEmptyArrayForPlanCommitContextAbandonsSessionWithoutStoring() async {
         let storeCalls = LockIsolated<Int>(0)
@@ -691,29 +676,6 @@ import ComposableArchitecture
 
     // MARK: - MOB-1468: Keystone signing — rejected pops back with state intact, context cleared
 
-    @MainActor @Test func keystoneSignRejectedPopsBackToNoteSplitWithExplainerStateIntactAndClearsContext() async {
-        var state = MigrationCoordFlow.State()
-        state.pendingKeystoneSigning = .noteSplit
-        state.path.append(.noteSplit(MigrationNoteSplit.State(phase: .explainer)))
-        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: [Pczt()])))
-        let store = TestStore(initialState: state) {
-            MigrationCoordFlow()
-        }
-        store.exhaustivity = .off
-
-        await store.send(.path(.element(id: 1, action: .keystoneSign(.delegate(.rejected)))))
-        await store.receive(\.keystoneSignRejected)
-
-        #expect(store.state.pendingKeystoneSigning == nil)
-        #expect(store.state.path.count == 1)
-        guard case let .noteSplit(noteSplitState) = try? #require(store.state.path.last) else {
-            Issue.record("Expected .keystoneSign popped, .noteSplit remaining on top")
-            return
-        }
-        #expect(noteSplitState.phase == MigrationNoteSplit.State.Phase.explainer)
-        #expect(noteSplitState.signedNoteSplitPczt == nil)
-    }
-
     @MainActor @Test func keystoneSignRejectedPopsBackToUnsignedTransferPlanConfirmingScreenUntouched() async {
         var state = MigrationCoordFlow.State()
         state.pendingKeystoneSigning = .planCommit
@@ -735,21 +697,16 @@ import ComposableArchitecture
         }
     }
 
-    @MainActor @Test func keystoneSignRejectedNeverCallsSubmitOrStore() async {
-        let submitCalls = LockIsolated<Int>(0)
+    @MainActor @Test func keystoneSignRejectedNeverCallsStore() async {
         let storeCalls = LockIsolated<Int>(0)
         var state = MigrationCoordFlow.State()
-        state.pendingKeystoneSigning = .noteSplit
-        state.path.append(.noteSplit(MigrationNoteSplit.State(phase: .explainer)))
+        state.pendingKeystoneSigning = .planCommit
+        state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .scheduled)))
         state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: [Pczt()])))
         let store = TestStore(initialState: state) {
             MigrationCoordFlow()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.submitSignedNoteSplit = { _ in
-                submitCalls.withValue { $0 += 1 }
-                return .success(txId: "should-not-be-called")
-            }
             $0.sdkSynchronizer.storeSignedMigrationTransactions = { _ in storeCalls.withValue { $0 += 1 } }
         }
         store.exhaustivity = .off
@@ -757,7 +714,6 @@ import ComposableArchitecture
         await store.send(.path(.element(id: 1, action: .keystoneSign(.delegate(.rejected)))))
         await store.receive(\.keystoneSignRejected)
 
-        #expect(submitCalls.value == 0)
         #expect(storeCalls.value == 0)
     }
 
@@ -779,9 +735,12 @@ import ComposableArchitecture
         #expect(acknowledgeCalls.value == 1)
     }
 
-    // MARK: - Scheduled flow (§6.2): note-split skip
+    // MARK: - Scheduled flow (§6.2, MOB-1478 W3): Entry always pushes How This Works
 
-    @MainActor @Test func entryChoseScheduledWithNoteSplitNeededPushesNoteSplit() async {
+    @MainActor @Test func entryChoseScheduledAlwaysPushesHowItWorksRegardlessOfNoteSplitNeed() async {
+        // Note splitting no longer gates (or appears in) forward routing at all — it runs silently
+        // under the commit CTAs (W4). `isNoteSplitNeeded` is stubbed `true` here specifically to
+        // prove Entry doesn't even look at it any more.
         let store = TestStore(initialState: MigrationCoordFlow.State()) {
             MigrationCoordFlow()
         } withDependencies: {
@@ -793,71 +752,67 @@ import ComposableArchitecture
 
         await store.send(.entry(.delegate(.chose(.privateScheduled))))
 
-        guard case .noteSplit = try? #require(store.state.path.last) else {
-            Issue.record("Expected .noteSplit pushed (note split needed)")
+        #expect(store.state.mode == MigrationMode.privateScheduled)
+        guard case .howItWorks = try? #require(store.state.path.last) else {
+            Issue.record("Expected .howItWorks pushed")
             return
         }
     }
 
-    @MainActor @Test func entryChoseScheduledWithoutNoteSplitNeededGoesStraightToPermissionSteps() async {
-        let store = TestStore(initialState: MigrationCoordFlow.State()) {
+    // MARK: - HowItWorks (MOB-1478 W3) -> Tor sheet gate (W2) -> permission steps
+
+    @MainActor @Test func howItWorksContinuedWithTorFlagOnSkipsTorSheetAndGoesStraightToPermissionSteps() async {
+        var state = MigrationCoordFlow.State()
+        state.mode = .privateScheduled
+        state.path.append(.howItWorks(MigrationHowItWorks.State()))
+        let store = TestStore(initialState: state) {
             MigrationCoordFlow()
         } withDependencies: {
-            $0.migrationManager.setMigrationMode = { _ in }
-            $0.migrationBGScheduler.backgroundRefreshStatus = { .available }
-            $0.userNotifications.authorizationStatus = { .authorized }
-            $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.isNoteSplitNeeded = { false }
             $0.walletStorage = .noOp
             $0.walletStorage.exportTorSetupFlag = { true }
+            $0.migrationBGScheduler.backgroundRefreshStatus = { .available }
+            $0.userNotifications.authorizationStatus = { .authorized }
+            $0.migrationManager.isManualDelivery = { false }
+            $0.sdkSynchronizer = .noOp
         }
         store.exhaustivity = .off
 
-        await store.send(.entry(.delegate(.chose(.privateScheduled))))
+        await store.send(.path(.element(id: 0, action: .howItWorks(.delegate(.continueTapped)))))
         await store.receive(\.pushNextPermissionStep)
 
+        #expect(store.state.networkPrivacyOptions.useTor == true)
+        #expect(store.state.isTorSheetPresented == false)
         guard case let .transferPlan(planState) = try? #require(store.state.path.last) else {
-            Issue.record("Expected .transferPlan pushed (all permission steps skipped)")
+            Issue.record("Expected .transferPlan pushed (Tor sheet + all permission steps skipped)")
             return
         }
         #expect(planState.variant == MigrationTransferPlan.State.Variant.scheduled)
-        #expect(store.state.networkPrivacyOptions.useTor == true)
     }
 
-    // MARK: - Scheduled flow (§6.2): permission-step skip combinations
-
-    @MainActor @Test func noteSplitContinuedWithAllPermissionStepsNeededPushesBackgroundDelivery() async {
+    @MainActor @Test func howItWorksContinuedWithTorFlagOffPresentsTorSheetAndStashesPermissionChainDestination() async {
         var state = MigrationCoordFlow.State()
-        state.path.append(.noteSplit(MigrationNoteSplit.State(phase: .confirmed)))
+        state.mode = .privateScheduled
+        state.path.append(.howItWorks(MigrationHowItWorks.State()))
         let store = TestStore(initialState: state) {
             MigrationCoordFlow()
         } withDependencies: {
-            $0.migrationBGScheduler.backgroundRefreshStatus = { .denied }
+            $0.walletStorage = .noOp
+            $0.walletStorage.exportTorSetupFlag = { false }
         }
         store.exhaustivity = .off
 
-        await store.send(.path(.element(id: 0, action: .noteSplit(.delegate(.continued)))))
-        await store.receive(\.pushNextPermissionStep)
+        await store.send(.path(.element(id: 0, action: .howItWorks(.delegate(.continueTapped)))))
 
-        guard case .backgroundDelivery = try? #require(store.state.path.last) else {
-            Issue.record("Expected .backgroundDelivery pushed (background refresh not available)")
+        #expect(store.state.isTorSheetPresented == true)
+        #expect(store.state.pendingTorDestination == MigrationCoordFlow.PendingTorDestination.permissionChain)
+        // How This Works stays on top — nothing pushed yet, the sheet gates the push.
+        guard case .howItWorks = try? #require(store.state.path.last) else {
+            Issue.record("Expected .howItWorks still on top")
             return
         }
     }
 
-    @MainActor @Test func noteSplitFlowRootCloseFinishesFlowInsteadOfContinuingPermissionSteps() async {
-        var state = MigrationCoordFlow.State()
-        state.path.append(.noteSplit(MigrationNoteSplit.State(phase: .splitting, isFlowRoot: true)))
-        let store = TestStore(initialState: state) {
-            MigrationCoordFlow()
-        }
-        store.exhaustivity = .off
-
-        // Same `.continued` delegate value as a normal continue, but `closeTapped` on a flow-root
-        // splitting screen — must finish the flow, not proceed to permission-step routing.
-        await store.send(.path(.element(id: 0, action: .noteSplit(.delegate(.continued)))))
-        await store.receive(\.flowFinished)
-    }
+    // MARK: - Scheduled flow (§6.2): permission-step skip combinations
 
     @MainActor @Test func backgroundDeliveryDeclinedSetsManualDeliveryAndContinuesToNotifications() async {
         let setManualDeliveryCalls = LockIsolated<[Bool]>([])
@@ -882,11 +837,34 @@ import ComposableArchitecture
         }
     }
 
-    @MainActor @Test func notificationsContinuedWithTorFlagOffPushesNetworkPrivacyScheduledVariant() async {
-        let rows: [MigrationTransferRow] = [
-            MigrationTransferRow(id: "0", index: 0, amount: Zatoshi(1_000), status: .pending, hoursFromNow: 0),
-            MigrationTransferRow(id: "1", index: 1, amount: Zatoshi(1_000), status: .pending, hoursFromNow: 0)
-        ]
+    // MOB-1478 (W8): mirrors `freshPlanVariant()`'s ternary — today `.manual` was unreachable since
+    // this always defaulted to `.scheduled`.
+    @MainActor @Test func notificationsVariantIsManualWhenManualDeliveryIsSet() async {
+        var state = MigrationCoordFlow.State()
+        state.path.append(.backgroundDelivery(MigrationBackgroundDelivery.State()))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.migrationManager.setManualDelivery = { _ in }
+            $0.migrationBGScheduler.backgroundRefreshStatus = { .available }
+            $0.userNotifications.authorizationStatus = { .notDetermined }
+            $0.migrationManager.isManualDelivery = { true }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 0, action: .backgroundDelivery(.delegate(.continued(backgroundAllowed: false))))))
+        await store.receive(\.pushNextPermissionStep)
+
+        guard case let .notifications(notificationsState) = try? #require(store.state.path.last) else {
+            Issue.record("Expected .notifications pushed")
+            return
+        }
+        #expect(notificationsState.variant == MigrationNotifications.State.Variant.manual)
+    }
+
+    @MainActor @Test func notificationsContinuedGoesStraightToTransferPlan() async {
+        // Tor is no longer part of this chain at all (W2) — notifications-continued always resolves
+        // straight to TransferPlan once background delivery + notifications are both settled.
         var state = MigrationCoordFlow.State()
         state.path.append(.notifications(MigrationNotifications.State()))
         let store = TestStore(initialState: state) {
@@ -894,24 +872,22 @@ import ComposableArchitecture
         } withDependencies: {
             $0.migrationBGScheduler.backgroundRefreshStatus = { .available }
             $0.userNotifications.authorizationStatus = { .authorized }
+            $0.migrationManager.isManualDelivery = { false }
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.migrationTransfers = { rows }
-            $0.walletStorage = .noOp
-            $0.walletStorage.exportTorSetupFlag = { false }
         }
         store.exhaustivity = .off
 
         await store.send(.path(.element(id: 0, action: .notifications(.delegate(.continued)))))
         await store.receive(\.pushNextPermissionStep)
 
-        guard case let .networkPrivacy(networkPrivacyState) = try? #require(store.state.path.last) else {
-            Issue.record("Expected .networkPrivacy pushed (Tor flag off)")
+        guard case let .transferPlan(planState) = try? #require(store.state.path.last) else {
+            Issue.record("Expected .transferPlan pushed")
             return
         }
-        #expect(networkPrivacyState.variant == MigrationNetworkPrivacy.State.Variant.scheduled(transferCount: 2))
+        #expect(planState.variant == MigrationTransferPlan.State.Variant.scheduled)
     }
 
-    @MainActor @Test func allPermissionStepsSkippedGoesStraightToTransferPlanWithForcedTor() async {
+    @MainActor @Test func allPermissionStepsSkippedGoesStraightToTransferPlan() async {
         var state = MigrationCoordFlow.State()
         state.path.append(.notifications(MigrationNotifications.State()))
         let store = TestStore(initialState: state) {
@@ -921,8 +897,6 @@ import ComposableArchitecture
             $0.userNotifications.authorizationStatus = { .denied }
             $0.migrationManager.isManualDelivery = { false }
             $0.sdkSynchronizer = .noOp
-            $0.walletStorage = .noOp
-            $0.walletStorage.exportTorSetupFlag = { true }
         }
         store.exhaustivity = .off
 
@@ -933,7 +907,6 @@ import ComposableArchitecture
             Issue.record("Expected .transferPlan pushed (all permission steps skipped)")
             return
         }
-        #expect(store.state.networkPrivacyOptions.useTor == true)
     }
 
     // MARK: - Scheduled flow (§6.2): plan confirm -> Scheduled
@@ -1117,15 +1090,32 @@ import ComposableArchitecture
         #expect(statusState.isFlowRoot == true)
     }
 
-    // MARK: - Reschedule: SDK + scheduler spies called in order, rescheduled plan pushed
+    // MARK: - Reschedule (MOB-1478 W7): SDK + scheduler spies called in order, lands .rescheduleCompleted
+    // on the SAME status element — no new plan push.
 
-    @MainActor @Test func statusRescheduleSetsIsReschedulingCallsSDKAndSchedulerThenPushesPlan() async {
+    @MainActor @Test func statusRescheduleSetsIsReschedulingCallsSDKAndSchedulerThenLandsRescheduleCompletedInPlace() async {
         let callOrder = LockIsolated<[String]>([])
         let refreshedRows: [MigrationTransferRow] = [
             MigrationTransferRow(id: "0", index: 0, amount: Zatoshi(1_000), status: .active, hoursFromNow: 0)
         ]
+        let summary = MigrationSummary(
+            transferred: Zatoshi.zero,
+            dust: Zatoshi.zero,
+            transfersSent: 0,
+            transfersTotal: 1,
+            estimatedDurationHours: 18
+        )
         var state = MigrationCoordFlow.State()
-        state.path.append(.status(MigrationStatus.State(presentation: .resume, isFlowRoot: true)))
+        state.path.append(
+            .status(
+                MigrationStatus.State(
+                    presentation: .resume,
+                    rows: [MigrationTransferRow(id: "old", index: 0, amount: Zatoshi(1_000), status: .overdue, hoursFromNow: 5)],
+                    stalledNumber: 1,
+                    isFlowRoot: true
+                )
+            )
+        )
         let store = TestStore(initialState: state) {
             MigrationCoordFlow()
         } withDependencies: {
@@ -1134,25 +1124,25 @@ import ComposableArchitecture
                 callOrder.withValue { $0.append("reschedule") }
             }
             $0.sdkSynchronizer.migrationTransfers = { refreshedRows }
+            $0.sdkSynchronizer.migrationSummary = { summary }
             $0.migrationBGScheduler.scheduleFirstWindow = { callOrder.withValue { $0.append("scheduleFirstWindow") } }
         }
         store.exhaustivity = .off
 
         await store.send(.path(.element(id: 0, action: .status(.delegate(.reschedule)))))
-        await store.receive(\.pushHydratedPathState)
+        await store.receive(\.path)
 
         #expect(callOrder.value == ["reschedule", "scheduleFirstWindow"])
-        guard case let .status(statusState) = try? #require(store.state.path[id: 0]) else {
-            Issue.record("Expected .status still at the bottom of the path with isRescheduling set")
+        // No new path element — the SAME status element lands the confirmation.
+        #expect(store.state.path.count == 1)
+        guard case let .status(statusState) = try? #require(store.state.path.last) else {
+            Issue.record("Expected .status still the only path element")
             return
         }
-        #expect(statusState.isRescheduling == true)
-        guard case let .transferPlan(planState) = try? #require(store.state.path.last) else {
-            Issue.record("Expected .transferPlan (rescheduled) pushed")
-            return
-        }
-        #expect(planState.requiresSigning == false)
-        #expect(planState.rows == IdentifiedArrayOf(uniqueElements: refreshedRows))
+        #expect(statusState.isRescheduling == false)
+        #expect(statusState.presentation == MigrationStatus.State.Presentation.rescheduleConfirmed(first: 1, last: 1))
+        #expect(statusState.rows == IdentifiedArrayOf(uniqueElements: refreshedRows))
+        #expect(statusState.totalDurationHours == 18)
     }
 
     @MainActor @Test func rescheduledPlanConfirmDoesNotSignAndFinishesFlow() async {

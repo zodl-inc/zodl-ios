@@ -3,13 +3,14 @@
 //  zodlTests
 //
 //  Covers the MigrationNoteSplit reducer
-//  (Features/Migration/MigrationNoteSplit/MigrationNoteSplitStore.swift) for MOB-1461/1466: the
-//  default phase/state, the txid pasteboard copy, the failure sheet dismissal (cancel/retry), the
-//  `continueTapped` delegate contract, and (MOB-1466) `onAppear` load/resume, `confirmTapped`
-//  submission, the `migrationStateStream()` subscription driving `.splitConfirmed`, and retry
-//  re-submission. Also covers MOB-1468's Keystone fork: a Keystone-vendor account's `confirmTapped`
-//  proposes the note-split PCZT and delegates `.keystoneSignRequested` instead of submitting locally
-//  (`.zcash` regression unaffected), and `retryTapped` re-broadcasts a coordinator-set
+//  (Features/Migration/MigrationNoteSplit/MigrationNoteSplitStore.swift) for MOB-1461/1466 —
+//  MOB-1478 (W4) reshaped this to re-entry-only (no more `.explainer` phase): the default
+//  `.splitting` phase/state, the txid pasteboard copy, the failure sheet dismissal (cancel/retry),
+//  the `continueTapped`/`closeTapped` delegate contract (both close the flow via the coordinator's
+//  `isFlowRoot` check — re-entry is always the flow root now, across both phases), `onAppear`
+//  subscribing to `migrationStateStream()` (with a defensive jump straight to `.confirmed` if the
+//  split already finished before this screen mounted), and retry re-submission. Also covers
+//  MOB-1468's Keystone note-split retry fork: `retryTapped` re-broadcasts a coordinator-set
 //  `signedNoteSplitPczt` via `submitSignedNoteSplit` rather than re-submitting the proposal.
 //  `.serialized`: several cases drive the process-global `@Shared(.inMemory(.selectedWalletAccount))`,
 //  and the copy action writes the shared toast.
@@ -23,24 +24,10 @@ import ComposableArchitecture
 @testable import zodl_internal
 
 @Suite(.serialized) struct MigrationNoteSplitTests {
-    private func walletAccount(keystone: Bool, idByte: UInt8) -> WalletAccount {
-        WalletAccount(
-            Account(
-                id: AccountUUID(id: [UInt8](repeating: idByte, count: 16)),
-                name: keystone ? "Keystone" : "Zodl",
-                keySource: keystone ? String(localizable: .accountsKeystone).lowercased() : nil,
-                seedFingerprint: nil,
-                hdAccountIndex: Zip32AccountIndex(0),
-                ufvk: nil,
-                uivk: nil
-            )
-        )
-    }
-
-    @MainActor @Test func defaultStateIsExplainerWithNoFailureSheet() async {
+    @MainActor @Test func defaultStateIsSplittingWithNoFailureSheet() async {
         let state = MigrationNoteSplit.State()
 
-        #expect(state.phase == MigrationNoteSplit.State.Phase.explainer)
+        #expect(state.phase == MigrationNoteSplit.State.Phase.splitting)
         #expect(state.amount == Zatoshi.zero)
         #expect(state.fee == Zatoshi.zero)
         #expect(state.txId == "")
@@ -97,6 +84,21 @@ import ComposableArchitecture
         await store.receive(.delegate(.continued))
     }
 
+    // MARK: - MOB-1478 (W4): confirmed-at-root emits the same delegate closeTapped does
+
+    @MainActor @Test func continueTappedWhenConfirmedAndFlowRootEmitsDelegateContinued() async {
+        // Re-entry always lands `.confirmed` at flow root eventually (the commit already happened
+        // before the split started) — the coordinator interprets this SAME `.continued` delegate as
+        // "close the flow" whenever `isFlowRoot`, exactly like `closeTapped`'s splitting-phase shape
+        // (coordinator-level wiring covered in `MigrationCoordFlowTests`).
+        let store = TestStore(initialState: MigrationNoteSplit.State(phase: .confirmed, isFlowRoot: true)) {
+            MigrationNoteSplit()
+        }
+
+        await store.send(.continueTapped)
+        await store.receive(.delegate(.continued))
+    }
+
     @MainActor @Test func splitConfirmedSetsConfirmedPhase() async {
         let store = TestStore(initialState: MigrationNoteSplit.State(phase: .splitting)) {
             MigrationNoteSplit()
@@ -115,9 +117,31 @@ import ComposableArchitecture
         await store.send(.delegate(.continued))
     }
 
-    // MARK: - onAppear: fresh load vs. resume
+    // MARK: - onAppear: resume/observe only (MOB-1478 W4 — no more fresh-prepare branch)
 
-    @MainActor @Test func onAppearWhenNotPendingConfirmationPreparesNoteSplitAndPopulatesAmountFee() async {
+    @MainActor @Test func onAppearWhilePendingConfirmationStaysInSplittingPhaseAndSubscribesToStream() async {
+        let stateStream = PassthroughSubject<MigrationState, Never>()
+        let store = TestStore(initialState: MigrationNoteSplit.State()) {
+            MigrationNoteSplit()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.getMigrationState = { .splitPendingConfirmation }
+            $0.sdkSynchronizer.migrationStateStream = { stateStream.eraseToAnyPublisher() }
+        }
+
+        // No prepare/submit call is made any more — the split already started elsewhere (under the
+        // TransferPlan/ReviewTransfer commit CTA); this screen only observes it. Phase stays at its
+        // default `.splitting` — no diff to describe.
+        await store.send(.onAppear)
+
+        stateStream.send(completion: .finished)
+        await store.finish()
+    }
+
+    @MainActor @Test func onAppearWhenAlreadyReadyToProposeJumpsToConfirmedPhase() async {
+        // Defensive: the split may have already reached `.readyToPropose` between the banner's
+        // `reentryRoute()` snapshot and this screen mounting — onAppear jumps straight to
+        // `.confirmed` rather than waiting on a stream event that already fired.
         let stateStream = PassthroughSubject<MigrationState, Never>()
         let store = TestStore(initialState: MigrationNoteSplit.State()) {
             MigrationNoteSplit()
@@ -125,42 +149,11 @@ import ComposableArchitecture
             $0.sdkSynchronizer = .noOp
             $0.sdkSynchronizer.getMigrationState = { .readyToPropose }
             $0.sdkSynchronizer.migrationStateStream = { stateStream.eraseToAnyPublisher() }
-            $0.sdkSynchronizer.prepareNoteSplit = {
-                NoteSplitProposal(outputNotes: [Zatoshi(500_000_000), Zatoshi(500_000_000)], fee: Zatoshi(100_000))
-            }
-        }
-
-        await store.send(.onAppear)
-        await store.receive(\.noteSplitPrepared) {
-            $0.proposal = NoteSplitProposal(outputNotes: [Zatoshi(500_000_000), Zatoshi(500_000_000)], fee: Zatoshi(100_000))
-            $0.amount = Zatoshi(1_000_000_000)
-            $0.fee = Zatoshi(100_000)
-        }
-
-        stateStream.send(completion: .finished)
-        await store.finish()
-    }
-
-    @MainActor @Test func onAppearWhenSplitPendingConfirmationJumpsToSplittingPhaseWithoutPreparing() async {
-        let stateStream = PassthroughSubject<MigrationState, Never>()
-        let prepareCalls = LockIsolated<Int>(0)
-        let store = TestStore(initialState: MigrationNoteSplit.State()) {
-            MigrationNoteSplit()
-        } withDependencies: {
-            $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.getMigrationState = { .splitPendingConfirmation }
-            $0.sdkSynchronizer.migrationStateStream = { stateStream.eraseToAnyPublisher() }
-            $0.sdkSynchronizer.prepareNoteSplit = {
-                prepareCalls.withValue { $0 += 1 }
-                return NoteSplitProposal(outputNotes: [], fee: Zatoshi.zero)
-            }
         }
 
         await store.send(.onAppear) {
-            $0.phase = .splitting
+            $0.phase = .confirmed
         }
-
-        #expect(prepareCalls.value == 0)
 
         stateStream.send(completion: .finished)
         await store.finish()
@@ -176,9 +169,7 @@ import ComposableArchitecture
             $0.sdkSynchronizer.migrationStateStream = { stateStream.eraseToAnyPublisher() }
         }
 
-        await store.send(.onAppear) {
-            $0.phase = .splitting
-        }
+        await store.send(.onAppear)
 
         stateStream.send(.readyToPropose)
         await store.receive(\.splitConfirmed) {
@@ -189,37 +180,7 @@ import ComposableArchitecture
         await store.finish()
     }
 
-    // MARK: - confirmTapped / submission
-
-    @MainActor @Test func confirmTappedEntersSplittingPhaseAndSubmitsProposal() async {
-        let stateStream = PassthroughSubject<MigrationState, Never>()
-        let submittedProposal = LockIsolated<NoteSplitProposal?>(nil)
-        let proposal = NoteSplitProposal(outputNotes: [Zatoshi(500_000_000)], fee: Zatoshi(100_000))
-        var state = MigrationNoteSplit.State(phase: .explainer)
-        state.proposal = proposal
-        let store = TestStore(initialState: state) {
-            MigrationNoteSplit()
-        } withDependencies: {
-            $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.migrationStateStream = { stateStream.eraseToAnyPublisher() }
-            $0.sdkSynchronizer.submitNoteSplit = { submitted in
-                submittedProposal.setValue(submitted)
-                return .success(txId: "e87f1234567890abcdef6f28b")
-            }
-        }
-
-        await store.send(.confirmTapped) {
-            $0.phase = .splitting
-        }
-        await store.receive(\.splitResult) {
-            $0.txId = "e87f1234567890abcdef6f28b"
-        }
-
-        #expect(submittedProposal.value == proposal)
-
-        stateStream.send(completion: .finished)
-        await store.finish()
-    }
+    // MARK: - splitResult: success/failure -> failure sheet
 
     @MainActor @Test func splitResultSuccessStoresTxIdAndStaysInSplittingPhase() async {
         let store = TestStore(initialState: MigrationNoteSplit.State(phase: .splitting)) {
@@ -291,71 +252,6 @@ import ComposableArchitecture
         }
 
         #expect(submitCalls.value == 1)
-
-        stateStream.send(completion: .finished)
-        await store.finish()
-    }
-
-    // MARK: - MOB-1468: Keystone confirmTapped fork
-
-    @MainActor @Test func confirmTappedWithKeystoneAccountProposesPCZTAndDelegatesKeystoneSignRequestedWithoutSubmitting() async {
-        let proposeCalls = LockIsolated<Int>(0)
-        let submitCalls = LockIsolated<Int>(0)
-        let pczt: Pczt = Data([0xAA, 0xBB])
-        var state = MigrationNoteSplit.State(phase: .explainer)
-        state.proposal = NoteSplitProposal(outputNotes: [Zatoshi(500_000_000)], fee: Zatoshi(100_000))
-        state.$selectedWalletAccount.withLock { $0 = walletAccount(keystone: true, idByte: 1) }
-        let store = TestStore(initialState: state) {
-            MigrationNoteSplit()
-        } withDependencies: {
-            $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.proposeNoteSplitPCZT = {
-                proposeCalls.withValue { $0 += 1 }
-                return pczt
-            }
-            $0.sdkSynchronizer.submitNoteSplit = { _ in
-                submitCalls.withValue { $0 += 1 }
-                return .success(txId: "should-not-be-called")
-            }
-        }
-
-        // Keystone confirm doesn't flip the phase locally — the coordinator does that once the QR
-        // round-trip resolves.
-        await store.send(.confirmTapped)
-        await store.receive(.delegate(.keystoneSignRequested([pczt])))
-
-        #expect(proposeCalls.value == 1)
-        #expect(submitCalls.value == 0)
-        #expect(store.state.phase == .explainer)
-    }
-
-    @MainActor @Test func confirmTappedWithZcashAccountUsesSoftwarePathUnchanged() async {
-        let stateStream = PassthroughSubject<MigrationState, Never>()
-        let proposeCalls = LockIsolated<Int>(0)
-        let proposal = NoteSplitProposal(outputNotes: [Zatoshi(500_000_000)], fee: Zatoshi(100_000))
-        var state = MigrationNoteSplit.State(phase: .explainer)
-        state.proposal = proposal
-        state.$selectedWalletAccount.withLock { $0 = walletAccount(keystone: false, idByte: 2) }
-        let store = TestStore(initialState: state) {
-            MigrationNoteSplit()
-        } withDependencies: {
-            $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.migrationStateStream = { stateStream.eraseToAnyPublisher() }
-            $0.sdkSynchronizer.proposeNoteSplitPCZT = {
-                proposeCalls.withValue { $0 += 1 }
-                return Pczt()
-            }
-            $0.sdkSynchronizer.submitNoteSplit = { _ in .success(txId: "e87f1234567890abcdef6f28b") }
-        }
-
-        await store.send(.confirmTapped) {
-            $0.phase = .splitting
-        }
-        await store.receive(\.splitResult) {
-            $0.txId = "e87f1234567890abcdef6f28b"
-        }
-
-        #expect(proposeCalls.value == 0)
 
         stateStream.send(completion: .finished)
         await store.finish()
