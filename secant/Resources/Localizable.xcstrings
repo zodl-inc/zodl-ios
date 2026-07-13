@@ -18703,6 +18703,171 @@
         }
       }
     },
+    "migrationHowItWorks.continue" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Continue"
+          }
+        }
+      }
+    },
+    "migrationHowItWorks.dustNote" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Choosing this option may require 'dust' be left in the Orchard pool \u2013 a small amount 0.0005 ZEC or less that won't be transferred."
+          }
+        }
+      }
+    },
+    "migrationHowItWorks.failsDesc" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "We'll notify you so you can complete it manually."
+          }
+        }
+      }
+    },
+    "migrationHowItWorks.failsTitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "If something fails"
+          }
+        }
+      }
+    },
+    "migrationHowItWorks.handlesDesc" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Each transfer goes out in its scheduled window while the app runs in the background."
+          }
+        }
+      }
+    },
+    "migrationHowItWorks.handlesTitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ZODL handles the rest"
+          }
+        }
+      }
+    },
+    "migrationHowItWorks.intro" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Moving funds between Zcash pools reveals the amount of each transfer. We split your balance into smaller transfers, spaced over time, so they're harder to correlate."
+          }
+        }
+      }
+    },
+    "migrationHowItWorks.presignDesc" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Approve now, with no further prompts."
+          }
+        }
+      }
+    },
+    "migrationHowItWorks.presignTitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pre-sign once"
+          }
+        }
+      }
+    },
+    "migrationHowItWorks.scheduleDesc" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transfers are spaced out to make them harder to link together."
+          }
+        }
+      }
+    },
+    "migrationHowItWorks.scheduleTitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Schedule"
+          }
+        }
+      }
+    },
+    "migrationHowItWorks.splitDesc" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your balance is divided into several smaller-sized amounts."
+          }
+        }
+      }
+    },
+    "migrationHowItWorks.splitTitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Split"
+          }
+        }
+      }
+    },
+    "migrationHowItWorks.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "How This Works"
+          }
+        }
+      }
+    },
+    "migrationKeystoneScan.instructions" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Scan Keystone QR code\nto sign the transaction"
+          }
+        }
+      }
+    },
     "migrationEntry.desc" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -18845,13 +19010,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Your full balance will be revealed on-chain — crossing the pool boundary exposes the transaction amount. We recommend selecting Migrate with Privacy instead."
+            "value" : "Your full balance will be revealed on-chain. Crossing the pool boundary exposes the transaction amount. We recommend selecting Migrate with Privacy instead."
           }
         },
         "es" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Tu saldo completo quedará expuesto en cadena (on-chain): cruzar el límite entre pools revela el monto de la transacción. Te recomendamos seleccionar Migrar con privacidad."
+            "state" : "needs_review",
+            "value" : "Tu saldo completo quedar\u00e1 expuesto en cadena (on-chain): cruzar el l\u00edmite entre pools revela el monto de la transacci\u00f3n. Te recomendamos seleccionar Migrar con privacidad."
           }
         }
       }
@@ -18862,12 +19027,12 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Pool-crossing transfer amounts are visible on-chain."
+            "value" : "Amounts transferred across pools are visible on-chain."
           }
         },
         "es" : {
           "stringUnit" : {
-            "state" : "translated",
+            "state" : "needs_review",
             "value" : "Los montos de las transferencias entre pools son visibles en cadena (on-chain)."
           }
         }
@@ -19491,13 +19656,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Transfer %1$lld waiting. Open ZODL to send or re-schedule."
+            "value" : "Open ZODL to send or re-schedule."
           }
         },
         "es" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Transferencia %1$lld en espera. Abre ZODL para enviarla o reprogramarla."
+            "state" : "needs_review",
+            "value" : "Abre ZODL para enviarla o reprogramarla."
           }
         }
       }
@@ -19508,13 +19673,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Migration plan needs update. Open ZODL to review the details."
+            "value" : "Open ZODL to review the details."
           }
         },
         "es" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "El plan de migración necesita una actualización. Abre ZODL para revisar los detalles."
+            "state" : "needs_review",
+            "value" : "Abre ZODL para revisar los detalles."
           }
         }
       }
@@ -19525,13 +19690,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Transfer %1$lld — ready to send. Open ZODL to review the details."
+            "value" : "Open ZODL to review the details."
           }
         },
         "es" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Transferencia %1$lld — lista para enviar. Abre ZODL para revisar los detalles."
+            "state" : "needs_review",
+            "value" : "Abre ZODL para revisar los detalles."
           }
         }
       }
@@ -19559,13 +19724,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Migration complete. Open ZODL to review the details."
+            "value" : "Open ZODL to review the details."
           }
         },
         "es" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Migración completada. Abre ZODL para revisar los detalles."
+            "state" : "needs_review",
+            "value" : "Abre ZODL para revisar los detalles."
           }
         }
       }
@@ -19848,13 +20013,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Your balance is split into %1$lld transfers over ~%2$lld hours. Approve once and we'll handle the rest — just keep the app running in the background. Amounts are randomized for privacy. If we miss a window, ZODL will prompt you on next open."
+            "value" : "Review the plan below \u2014 once confirmed, each transfer sends at its scheduled window over the next %1$lld hours."
           }
         },
         "es" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Tu saldo se divide en %1$lld transferencias a lo largo de ~%2$lld horas. Aprueba una vez y nosotros nos encargamos del resto — solo mantén la app ejecutándose en segundo plano. Los montos son aleatorios por privacidad. Si nos perdemos una ventana, ZODL te lo indicará la próxima vez que abras la app."
+            "state" : "needs_review",
+            "value" : "Tu saldo se divide en %1$lld transferencias a lo largo de ~%2$lld horas. Aprueba una vez y nosotros nos encargamos del resto \u2014 solo mant\u00e9n la app ejecut\u00e1ndose en segundo plano. Los montos son aleatorios por privacidad. Si nos perdemos una ventana, ZODL te lo indicar\u00e1 la pr\u00f3xima vez que abras la app."
           }
         }
       }
@@ -19865,13 +20030,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "We recommend following the plan below. Your balance will be split into %1$lld transfers over ~%2$lld hours. Amounts are randomized for privacy. Confirm to send the first transfer now."
+            "value" : "We recommend following the plan below. Split your balance into %1$lld transfers over ~%2$lld hours. Amounts are randomized for privacy. ZODL will prompt you on app open."
           }
         },
         "es" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Te recomendamos seguir el siguiente plan. Tu saldo se dividirá en %1$lld transferencias a lo largo de ~%2$lld horas. Los montos son aleatorios por privacidad. Confirma para enviar la primera transferencia ahora."
+            "state" : "needs_review",
+            "value" : "Te recomendamos seguir el siguiente plan. Tu saldo se dividir\u00e1 en %1$lld transferencias a lo largo de ~%2$lld horas. Los montos son aleatorios por privacidad. Confirma para enviar la primera transferencia ahora."
           }
         }
       }
@@ -19923,6 +20088,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "~%1$lld horas"
+          }
+        }
+      }
+    },
+    "migrationPlan.etaHoursIn" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "in ~%1$lld hours"
+          }
+        }
+      }
+    },
+    "migrationPlan.randomizedNote" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Amounts are randomized to reduce linkability."
           }
         }
       }
@@ -20012,6 +20199,17 @@
         }
       }
     },
+    "migrationReview.transferOfTotal" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transfer %1$lld of %2$lld"
+          }
+        }
+      }
+    },
     "migrationReview.descImmediate" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -20035,13 +20233,35 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "This transfer sends part of your Orchard balance to Ironwood as part of your scheduled migration.\n\nReview and confirm to send the transaction. Once confirmed, this cannot be undone."
+            "value" : "This transfer sends part of your Orchard balance to Ironwood as part of your scheduled migration."
           }
         },
         "es" : {
           "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Esta transferencia env\u00eda parte de tu saldo de Orchard a Ironwood como parte de tu migraci\u00f3n programada.\n\nRevisa y confirma para enviar la transacci\u00f3n. Una vez confirmada, esto no se puede deshacer."
+          }
+        }
+      }
+    },
+    "migrationReview.sendsNow" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
             "state" : "translated",
-            "value" : "Esta transferencia envía parte de tu saldo de Orchard a Ironwood como parte de tu migración programada.\n\nRevisa y confirma para enviar la transacción. Una vez confirmada, esto no se puede deshacer."
+            "value" : "Sends now"
+          }
+        }
+      }
+    },
+    "migrationReview.thisTransferTitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This Transfer"
           }
         }
       }
@@ -20103,13 +20323,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Your ZEC were successfully sent to Ironwood."
+            "value" : "Your ZEC was successfully sent to Ironwood."
           }
         },
         "es" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Tu ZEC se envió correctamente a Ironwood."
+            "state" : "needs_review",
+            "value" : "Tu ZEC se envi\u00f3 correctamente a Ironwood."
           }
         }
       }
@@ -20386,6 +20606,50 @@
         }
       }
     },
+    "migrationTorSheet.body" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "If Tor is available in your region, we recommend enabling it for enhanced privacy during the migration. This step is completely optional. You can also use a trusted VPN if Tor is unavailable in your region."
+          }
+        }
+      }
+    },
+    "migrationTorSheet.cardDesc" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Routes your connection through the Tor network for enhanced anonymity and privacy protection."
+          }
+        }
+      }
+    },
+    "migrationTorSheet.cardTitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enable Tor Protection"
+          }
+        }
+      }
+    },
+    "migrationTorSheet.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enable Tor Protection"
+          }
+        }
+      }
+    },
     "migrationStatus.reschedule" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -20403,6 +20667,17 @@
         }
       }
     },
+    "migrationStatus.rescheduledDesc" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transfers %1$lld-%2$lld have been successfully rescheduled. Keep the app running in the background. If we miss a window, ZODL will prompt you on next open."
+          }
+        }
+      }
+    },
     "migrationStatus.sendNow" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -20416,6 +20691,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Enviar ahora"
+          }
+        }
+      }
+    },
+    "migrationStatus.sendingNow" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sending now"
+          }
+        }
+      }
+    },
+    "migrationStatus.sentMinutesAgo" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sent %1$lld min ago"
           }
         }
       }
@@ -20501,6 +20798,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Qu\u00e9 sucede a continuaci\u00f3n"
+          }
+        }
+      }
+    },
+    "migrationReview.cannotBeUndone" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Once confirmed, this cannot be undone."
           }
         }
       }
