@@ -39,6 +39,9 @@ struct MigrationTransferPlanView: View {
                     .padding(.vertical, 1)
                 }
 
+                footerNote
+                    .padding(.top, 16)
+
                 ZashiButton(String(localizable: .generalConfirm)) {
                     store.send(.confirmTapped)
                 }
@@ -70,7 +73,7 @@ struct MigrationTransferPlanView: View {
 
         switch store.variant {
         case .scheduled:
-            return String(localizable: .migrationPlanDescScheduled(transferCount, store.totalDurationHours))
+            return String(localizable: .migrationPlanDescScheduled(store.totalDurationHours))
         case .manual:
             return String(localizable: .migrationPlanDescManual(transferCount, store.totalDurationHours))
         case .recreated:
@@ -93,10 +96,29 @@ struct MigrationTransferPlanView: View {
         }
     }
 
+    /// Scheduled/fresh plans use the new "in ~N hours" phrasing; recreated and manual plans keep
+    /// today's "~N hours" (frames differ — followed as drawn).
     private func eta(hoursFromNow: Int) -> String {
-        hoursFromNow == 0
-            ? String(localizable: .migrationPlanEtaFirst)
+        guard hoursFromNow > 0 else {
+            return String(localizable: .migrationPlanEtaFirst)
+        }
+
+        return store.variant == .scheduled
+            ? String(localizable: .migrationPlanEtaHoursIn(hoursFromNow))
             : String(localizable: .migrationPlanEtaHours(hoursFromNow))
+    }
+
+    // MARK: - Footer note
+
+    @ViewBuilder private var footerNote: some View {
+        HStack(spacing: 8) {
+            Asset.Assets.infoOutline.image
+                .zImage(size: 16, style: Design.Text.tertiary)
+
+            Text(localizable: .migrationPlanRandomizedNote)
+                .zFont(size: 12, style: Design.Text.tertiary)
+        }
+        .frame(maxWidth: .infinity, alignment: .center)
     }
 }
 

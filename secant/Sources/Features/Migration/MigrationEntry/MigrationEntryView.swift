@@ -52,10 +52,10 @@ struct MigrationEntryView: View {
                 if store.isDisclaimerVisible {
                     disclaimer
                         .padding(.top, 16)
+                } else {
+                    footerNote
+                        .padding(.top, 16)
                 }
-
-                footerNote
-                    .padding(.top, 16)
 
                 ZashiButton(String(localizable: .generalNext)) {
                     store.send(.nextTapped)
@@ -155,6 +155,7 @@ struct MigrationEntryView: View {
                                 )
                         }
                     }
+                    .shadow(color: isWarning ? Design.Utility.WarningYellow._200.color(colorScheme) : .clear, radius: 4)
             }
         }
         .buttonStyle(.plain)
@@ -187,27 +188,16 @@ struct MigrationEntryView: View {
     // MARK: - Disclaimer
 
     @ViewBuilder private var disclaimer: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 0) {
-                Text(localizable: .migrationEntryDisclaimerTitle)
-                    .zFont(.medium, size: 14, style: Design.Utility.WarningYellow._600)
-
-                Spacer()
-
-                Asset.Assets.infoOutline.image
-                    .zImage(size: 16, style: Design.Utility.WarningYellow._500)
-            }
+        HStack(alignment: .top, spacing: 8) {
+            Asset.Assets.infoOutline.image
+                .zImage(size: 16, style: Design.Utility.WarningYellow._700)
 
             Text(localizable: .migrationEntryDisclaimerDesc)
                 .zFont(size: 12, style: Design.Utility.WarningYellow._700)
                 .multilineTextAlignment(.leading)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(16)
-        .background {
-            RoundedRectangle(cornerRadius: Design.Radius._2xl)
-                .fill(Design.Utility.WarningYellow._50.color(colorScheme))
-        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // MARK: - Footer note
