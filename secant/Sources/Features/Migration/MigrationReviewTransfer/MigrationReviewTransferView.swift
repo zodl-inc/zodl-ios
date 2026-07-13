@@ -15,6 +15,7 @@ import SwiftUI
 
 struct MigrationReviewTransferView: View {
     @Perception.Bindable var store: StoreOf<MigrationReviewTransfer>
+    @Shared(.inMemory(.exchangeRate)) private var currencyConversion: CurrencyConversion?
 
     init(store: StoreOf<MigrationReviewTransfer>) {
         self.store = store
@@ -39,6 +40,11 @@ struct MigrationReviewTransferView: View {
                             .multilineTextAlignment(.leading)
                             .fixedSize(horizontal: false, vertical: true)
                             .padding(.bottom, 24)
+
+                        if isThisTransferVisible {
+                            thisTransferBlock
+                                .padding(.bottom, 16)
+                        }
 
                         detailRows
                     }
@@ -83,6 +89,63 @@ struct MigrationReviewTransferView: View {
             return String(localizable: .migrationReviewDescImmediate)
         case .manualStep:
             return String(localizable: .migrationReviewDescManual)
+        }
+    }
+
+    // MARK: - This Transfer
+
+    /// The "This Transfer" summary block is manual-mode only — immediate mode is untouched.
+    private var isThisTransferVisible: Bool {
+        store.mode != .immediate
+    }
+
+    private var stepNumber: Int {
+        guard case .manualStep(let number, _) = store.mode else { return 0 }
+        return number
+    }
+
+    private var stepTotal: Int {
+        guard case .manualStep(_, let total) = store.mode else { return 0 }
+        return total
+    }
+
+    @ViewBuilder private var thisTransferBlock: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(localizable: .migrationReviewThisTransferTitle)
+                    .zFont(.medium, size: 14, style: Design.Text.primary)
+
+                Text(localizable: .migrationReviewCannotBeUndone)
+                    .zFont(size: 12, style: Design.Text.tertiary)
+            }
+
+            thisTransferRow
+        }
+    }
+
+    @ViewBuilder private var thisTransferRow: some View {
+        HStack(alignment: .top, spacing: 12) {
+            MigrationStepBadge(number: stepNumber, style: .active, size: 24)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(localizable: .migrationReviewTransferOfTotal(stepNumber, stepTotal))
+                    .zFont(.semiBold, size: 16, style: Design.Text.primary)
+
+                Text(localizable: .migrationReviewSendsNow)
+                    .zFont(size: 14, style: Design.Text.tertiary)
+            }
+
+            Spacer(minLength: 8)
+
+            VStack(alignment: .trailing, spacing: 2) {
+                Text("\(store.amount.decimalString()) ZEC")
+                    .zFont(.semiBold, size: 16, style: Design.Text.primary)
+
+                if let currencyConversion {
+                    Text(currencyConversion.convert(store.amount))
+                        .zFont(size: 13, style: Design.Text.tertiary)
+                }
+            }
         }
     }
 
