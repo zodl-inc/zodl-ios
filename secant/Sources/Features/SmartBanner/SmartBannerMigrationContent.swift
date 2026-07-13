@@ -140,8 +140,11 @@ struct MigrationBannerContentView: View {
                 .zImage(size: 20, color: titleStyle)
         case .inProgress:
             migrationProgressRing()
-        case .transferWaiting, .updatePlan, .transfersExpired, .transferReady:
-            Asset.Assets.Icons.alertCircle.image
+        case .transferWaiting, .updatePlan, .transfersExpired:
+            Asset.Assets.Icons.alertCircleOutline.image
+                .zImage(size: 20, color: titleStyle)
+        case .transferReady:
+            Asset.Assets.infoCircle.image
                 .zImage(size: 20, color: titleStyle)
         case .complete:
             Asset.Assets.Icons.checkVerified.image
