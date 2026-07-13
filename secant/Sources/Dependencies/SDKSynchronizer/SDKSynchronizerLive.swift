@@ -354,7 +354,40 @@ extension SDKSynchronizerClient: DependencyKey {
             rescheduleStalledMigrationTransfer: { },
             recreateInvalidMigrationTransfer: { },
             migrationSummary: { MigrationSummary.zero },
-            migrationTransfers: { [] },
+            // MOB-1478 (W7): unlike the inert stubs around it, this one carries fixture rows —
+            // `MigrationStatus` is otherwise unreachable in any demo/QA state. The five rows mirror
+            // the updated Figma S10-progress frame and exercise every caption branch: sent-hours-ago,
+            // sent-minutes-ago (Transfer 2, under an hour), actively-broadcasting (Transfer 3), and
+            // two pending ETAs.
+            migrationTransfers: {
+                [
+                    MigrationTransferRow(
+                        id: "0", index: 0, amount: Zatoshi(351_220_000), status: .sent, hoursFromNow: 6
+                    ),
+                    MigrationTransferRow(
+                        id: "1",
+                        index: 1,
+                        amount: Zatoshi(287_410_000),
+                        status: .sent,
+                        hoursFromNow: 0,
+                        sentMinutesAgo: 18
+                    ),
+                    MigrationTransferRow(
+                        id: "2",
+                        index: 2,
+                        amount: Zatoshi(243_100_000),
+                        status: .active,
+                        hoursFromNow: 0,
+                        isBroadcasting: true
+                    ),
+                    MigrationTransferRow(
+                        id: "3", index: 3, amount: Zatoshi(199_830_000), status: .pending, hoursFromNow: 12
+                    ),
+                    MigrationTransferRow(
+                        id: "4", index: 4, amount: Zatoshi(164_240_000), status: .pending, hoursFromNow: 18
+                    )
+                ]
+            },
             proposeNoteSplitPCZT: { Pczt() },
             proposeMigrationPCZTs: { _ in [] },
             storeSignedMigrationTransactions: { _ in },

@@ -8,6 +8,13 @@
 //  coordinator's job (phase 3). When `isFlowRoot` is set, the back control closes the flow instead
 //  of popping (MOB-1466).
 //
+//  MOB-1478 (W7): `.rescheduleConfirmed(first:last:)` reuses this same screen for the post-reschedule
+//  confirmation — title borrows `migrationPlanTitleConfirm`, body is `migrationStatusRescheduledDesc`,
+//  and its "Got it" routes through the same `gotItTapped` exit as `.progress`. Row captions gained
+//  two branches: `sentMinutesAgo` (sub-hour "Sent N min ago") ahead of the hours-based sent caption,
+//  and `isBroadcasting` ("Sending now") ahead of the `.active` ETA caption — both fall back to
+//  today's copy when unset/false.
+//
 
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
@@ -72,6 +79,8 @@ struct MigrationStatusView: View {
             return store.isRescheduling
                 ? String(localizable: .migrationStatusReschedulingTitle)
                 : String(localizable: .migrationStatusResumeTitle)
+        case .rescheduleConfirmed:
+            return String(localizable: .migrationPlanTitleConfirm)
         }
     }
 
@@ -85,6 +94,8 @@ struct MigrationStatusView: View {
             return String(
                 localizable: .migrationStatusResumeDesc(store.stalledNumber, store.rows.count, store.stalledHoursAgo)
             )
+        case .rescheduleConfirmed(let first, let last):
+            return String(localizable: .migrationStatusRescheduledDesc(first, last))
         }
     }
 
@@ -93,14 +104,22 @@ struct MigrationStatusView: View {
     private func caption(for row: MigrationTransferRow) -> String {
         switch row.status {
         case .sent:
+            if let sentMinutesAgo = row.sentMinutesAgo {
+                return String(localizable: .migrationStatusSentMinutesAgo(sentMinutesAgo))
+            }
             return row.hoursFromNow == 0
                 ? String(localizable: .migrationStatusSentRecently)
                 : String(localizable: .migrationPlanSentAgo(row.hoursFromNow))
         case .overdue:
             return String(localizable: .migrationStatusOverdueAgo(row.hoursFromNow))
+        case .active where row.isBroadcasting:
+            // The single row actually being broadcast right now, as opposed to merely next-in-queue
+            // (MOB-1478 W7) — same `.active` badge, distinct caption.
+            return String(localizable: .migrationStatusSendingNow)
         default:
-            // Pending/active rows: "~Nh" ETA per the frames (S10-progress Transfer 3 = "~6 hours").
-            // A ready-now row renders "~10 mins", matching the Transfer Plan screen's treatment.
+            // Pending/queued-active rows: "~Nh" ETA per the frames (S10-progress Transfer 4 =
+            // "~12 hours"). A ready-now row renders "~10 mins", matching the Transfer Plan screen's
+            // treatment.
             return row.hoursFromNow == 0
                 ? String(localizable: .migrationPlanEtaFirst)
                 : String(localizable: .migrationPlanEtaHours(row.hoursFromNow))
@@ -125,7 +144,9 @@ struct MigrationStatusView: View {
 
     @ViewBuilder private var buttons: some View {
         switch store.presentation {
-        case .progress:
+        case .progress, .rescheduleConfirmed:
+            // `.rescheduleConfirmed`'s "Got it" routes through the same exit as `.progress`'s
+            // (MOB-1478 W7).
             ZashiButton(String(localizable: .migrationGotIt)) {
                 store.send(.gotItTapped)
             }
@@ -162,6 +183,8 @@ private extension View {
     /// `isFlowRoot` existed — that stands unconditionally. `.resume`'s back is a plain pop unless
     /// this screen is the coordinator's re-entry root, in which case it closes the flow instead
     /// (MOB-1466 back-semantics: "when `isFlowRoot == false`, current behavior stands").
+    /// `.rescheduleConfirmed` (MOB-1478 W7) falls through to that same plain-pop-or-close handling —
+    /// it never needs `.progress`'s special close-wired arrow.
     @ViewBuilder func applyPresentationModifier(store: StoreOf<MigrationStatus>) -> some View {
         if store.presentation == .progress {
             zashiBackV2 {
@@ -181,11 +204,17 @@ private extension View {
 
 private extension IdentifiedArray where ID == MigrationTransferRow.ID, Element == MigrationTransferRow {
     /// The 5-transfer set from the Figma frames (3.51220 / 2.87410 / 2.43100 / 1.99830 / 1.64240 ZEC).
+    /// MOB-1478 W7: Transfer 2 exercises sub-hour `sentMinutesAgo` ("Sent 18 min ago") and Transfer 3
+    /// exercises `isBroadcasting` ("Sending now"), matching the updated S10-progress frame.
     static var previewProgressRows: Self {
         [
             MigrationTransferRow(id: "0", index: 0, amount: Zatoshi(351_220_000), status: .sent, hoursFromNow: 6),
-            MigrationTransferRow(id: "1", index: 1, amount: Zatoshi(287_410_000), status: .sent, hoursFromNow: 0),
-            MigrationTransferRow(id: "2", index: 2, amount: Zatoshi(243_100_000), status: .active, hoursFromNow: 6),
+            MigrationTransferRow(
+                id: "1", index: 1, amount: Zatoshi(287_410_000), status: .sent, hoursFromNow: 0, sentMinutesAgo: 18
+            ),
+            MigrationTransferRow(
+                id: "2", index: 2, amount: Zatoshi(243_100_000), status: .active, hoursFromNow: 0, isBroadcasting: true
+            ),
             MigrationTransferRow(id: "3", index: 3, amount: Zatoshi(199_830_000), status: .pending, hoursFromNow: 12),
             MigrationTransferRow(id: "4", index: 4, amount: Zatoshi(164_240_000), status: .pending, hoursFromNow: 18)
         ]
@@ -199,6 +228,19 @@ private extension IdentifiedArray where ID == MigrationTransferRow.ID, Element =
             MigrationTransferRow(id: "2", index: 2, amount: Zatoshi(243_100_000), status: .overdue, hoursFromNow: 5),
             MigrationTransferRow(id: "3", index: 3, amount: Zatoshi(199_830_000), status: .pending, hoursFromNow: 1),
             MigrationTransferRow(id: "4", index: 4, amount: Zatoshi(164_240_000), status: .pending, hoursFromNow: 7)
+        ]
+    }
+
+    /// The post-reschedule confirmation frame (MOB-1478 W7): the two already-sent transfers stand,
+    /// Transfer 3 (the one that was stalled) is freshly re-windowed to a real ETA rather than
+    /// "Sending now" — the reschedule only re-queues it, broadcasting hasn't started yet.
+    static var previewRescheduleConfirmedRows: Self {
+        [
+            MigrationTransferRow(id: "0", index: 0, amount: Zatoshi(351_220_000), status: .sent, hoursFromNow: 18),
+            MigrationTransferRow(id: "1", index: 1, amount: Zatoshi(287_410_000), status: .sent, hoursFromNow: 11),
+            MigrationTransferRow(id: "2", index: 2, amount: Zatoshi(243_100_000), status: .active, hoursFromNow: 3),
+            MigrationTransferRow(id: "3", index: 3, amount: Zatoshi(199_830_000), status: .pending, hoursFromNow: 9),
+            MigrationTransferRow(id: "4", index: 4, amount: Zatoshi(164_240_000), status: .pending, hoursFromNow: 15)
         ]
     }
 }
@@ -250,6 +292,22 @@ private extension IdentifiedArray where ID == MigrationTransferRow.ID, Element =
                     stalledNumber: 3,
                     stalledHoursAgo: 5,
                     isRescheduling: true
+                )
+            ) {
+                MigrationStatus()
+            }
+        )
+    }
+}
+
+#Preview("Reschedule Confirmed") {
+    NavigationView {
+        MigrationStatusView(
+            store: StoreOf<MigrationStatus>(
+                initialState: MigrationStatus.State(
+                    presentation: .rescheduleConfirmed(first: 3, last: 5),
+                    rows: .previewRescheduleConfirmedRows,
+                    totalDurationHours: 24
                 )
             ) {
                 MigrationStatus()
