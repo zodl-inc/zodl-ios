@@ -38,7 +38,7 @@ struct SDKSynchronizerClient: Sendable {
     let exchangeRateUSDStream: @Sendable () -> AnyPublisher<FiatCurrencyResult?, Never>
     let latestState: @Sendable () -> SynchronizerState
     
-    let prepareWith: @Sendable ([UInt8], BlockHeight, WalletInitMode, String, String?) async throws -> Initializer.InitializationResult
+    let prepareWith: @Sendable ([UInt8], BlockHeight?, String, String?) async throws -> Initializer.InitializationResult
     let start: @Sendable (_ retry: Bool) async throws -> Void
     let stop: @Sendable () -> Void
     let isSyncing: @Sendable () -> Bool

@@ -197,8 +197,8 @@ extension Root {
                 
                 // update flexa balance
                 if let accountBalance = latestState.data.accountsBalances[account.id] {
-                    let shieldedBalance = accountBalance.saplingBalance.spendableValue + accountBalance.orchardBalance.spendableValue
-                    let shieldedWithPendingBalance = accountBalance.saplingBalance.total() + accountBalance.orchardBalance.total()
+                    let shieldedBalance = accountBalance.shieldedSpendableValue
+                    let shieldedWithPendingBalance = accountBalance.shieldedTotal()
 
                     flexaHandler.updateBalance(shieldedWithPendingBalance, shieldedBalance)
                 }
@@ -422,10 +422,12 @@ extension Root {
                     
                     return .run { send in
                         do {
+                            // [#1755] The SDK derives the init flow from the birthday: a brand-new wallet
+                            // passes nil (the SDK picks a reorg-safe recent height), restore/existing pass
+                            // the stored birthday. `walletMode` is no longer handed to the SDK.
                             let result = try await sdkSynchronizer.prepareWith(
                                 seedBytes,
-                                birthday,
-                                walletMode,
+                                walletMode == .newWallet ? nil : birthday,
                                 String(localizable: .accountsZashi),
                                 String(localizable: .accountsZashi).lowercased()
                             )
@@ -461,7 +463,6 @@ extension Root {
                                         let reprepareResult = try await sdkSynchronizer.prepareWith(
                                             seedBytes,
                                             birthday,
-                                            .restoreWallet,
                                             String(localizable: .accountsZashi),
                                             String(localizable: .accountsZashi).lowercased()
                                         )

@@ -134,15 +134,18 @@ extension Root.State: @retroactive Equatable {
 
             $0.sdkSynchronizer = .mocked(
                 stateStream: { Empty().eraseToAnyPublisher() },
-                prepareWith: { _, _, walletMode, _, _ in
-                    let modeLabel: String
-                    switch walletMode {
-                    case .newWallet: modeLabel = "newWallet"
-                    case .restoreWallet: modeLabel = "restoreWallet"
-                    case .existingWallet: modeLabel = "existingWallet"
+                prepareWith: { _, _, _, _ in
+                    // `WalletInitMode` is no longer part of the prepare surface, so the heal's
+                    // re-prepare is identified by call ordinal: every scenario's first prepare is
+                    // the initial `.existingWallet` one, and any later prepare is the heal's
+                    // re-prepare (S5's recovery route terminates at onboarding without preparing
+                    // again).
+                    let callIndex = calls.withValue { recorded -> Int in
+                        let index = recorded.filter { $0.hasPrefix("prepareWith") }.count + 1
+                        recorded.append("prepareWith#\(index)")
+                        return index
                     }
-                    calls.withValue { $0.append("prepareWith(\(modeLabel))") }
-                    if walletMode == .restoreWallet {
+                    if callIndex > 1 {
                         if let reprepareError {
                             throw reprepareError
                         }
@@ -244,7 +247,7 @@ extension Root.State: @retroactive Equatable {
 
         let recordedCalls = calls.value
         let wipeIndex = try #require(recordedCalls.firstIndex(of: "wipe"))
-        let reprepareIndex = try #require(recordedCalls.firstIndex(of: "prepareWith(restoreWallet)"))
+        let reprepareIndex = try #require(recordedCalls.firstIndex(of: "prepareWith#2"))
         #expect(wipeIndex < reprepareIndex, "the stale database must be wiped before it is re-prepared")
 
         #expect(setBools.value[Root.Constants.udIsRestoringWallet] == true)
@@ -426,7 +429,7 @@ extension Root.State: @retroactive Equatable {
 
         let recordedCalls = calls.value
         let wipeIndex = try #require(recordedCalls.firstIndex(of: "wipe"))
-        let reprepareIndex = try #require(recordedCalls.firstIndex(of: "prepareWith(restoreWallet)"))
+        let reprepareIndex = try #require(recordedCalls.firstIndex(of: "prepareWith#2"))
         #expect(wipeIndex < reprepareIndex, "the database must be wiped before the failing re-prepare is attempted")
 
         // `.staleWalletDatabaseHealed` and the catch's `.checkWalletInitialization` are
