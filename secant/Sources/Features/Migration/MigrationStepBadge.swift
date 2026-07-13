@@ -27,6 +27,7 @@ struct MigrationStepBadge: View {
 
     let number: Int
     let style: Style
+    var size: CGFloat = 28
 
     var body: some View {
         ZStack {
@@ -49,7 +50,7 @@ struct MigrationStepBadge: View {
                     .zImage(size: 12, color: .white)
             }
         }
-        .frame(width: 28, height: 28)
+        .frame(width: size, height: size)
     }
 }
 

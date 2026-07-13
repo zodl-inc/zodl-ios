@@ -222,6 +222,7 @@ public enum Asset {
     public static let flyReceivedFilled = ImageAsset(name: "flyReceivedFilled")
     public enum Icons {
       public static let alertCircle = ImageAsset(name: "alertCircle")
+      public static let alertCircleOutline = ImageAsset(name: "alertCircleOutline")
       public static let alertOutline = ImageAsset(name: "alertOutline")
       public static let alertTriangle = ImageAsset(name: "alertTriangle")
       public static let annotationCheck = ImageAsset(name: "annotationCheck")
@@ -238,6 +239,7 @@ public enum Asset {
       public static let calendar = ImageAsset(name: "calendar")
       public static let chainLink = ImageAsset(name: "chainLink")
       public static let checkSolid = ImageAsset(name: "checkSolid")
+      public static let checkSquareBroken = ImageAsset(name: "checkSquareBroken")
       public static let checkVerified = ImageAsset(name: "checkVerified")
       public static let checkVerifiedFilled = ImageAsset(name: "checkVerifiedFilled")
       public static let clockCheck = ImageAsset(name: "clockCheck")
@@ -253,6 +255,7 @@ public enum Asset {
       public static let downloadCloud = ImageAsset(name: "downloadCloud")
       public static let emptyShield = ImageAsset(name: "emptyShield")
       public static let expand = ImageAsset(name: "expand")
+      public static let faceContent = ImageAsset(name: "faceContent")
       public static let faceSmile = ImageAsset(name: "faceSmile")
       public static let file = ImageAsset(name: "file")
       public static let filter = ImageAsset(name: "filter")
