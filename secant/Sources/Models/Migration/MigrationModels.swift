@@ -144,13 +144,29 @@ struct MigrationTransferRow: Equatable, Sendable, Codable, Identifiable {
     var status: Status
     /// 0 = ready now; meaningful for pending rows.
     var hoursFromNow: Int
+    /// Precise "sent N minutes ago" recency for a `.sent` row under an hour old; `nil` keeps the
+    /// existing `hoursFromNow`-based caption (0 = "sent recently", otherwise "Sent Nh ago").
+    var sentMinutesAgo: Int?
+    /// True for the row currently broadcasting to the network — same `.active` badge as a
+    /// merely-queued row, captioned "Sending now" instead of an ETA.
+    var isBroadcasting: Bool
 
-    init(id: String, index: Int, amount: Zatoshi, status: Status, hoursFromNow: Int) {
+    init(
+        id: String,
+        index: Int,
+        amount: Zatoshi,
+        status: Status,
+        hoursFromNow: Int,
+        sentMinutesAgo: Int? = nil,
+        isBroadcasting: Bool = false
+    ) {
         self.id = id
         self.index = index
         self.amount = amount
         self.status = status
         self.hoursFromNow = hoursFromNow
+        self.sentMinutesAgo = sentMinutesAgo
+        self.isBroadcasting = isBroadcasting
     }
 }
 
