@@ -255,4 +255,137 @@ import ComposableArchitecture
         #expect(proposeCalls.value == 0)
         #expect(signCalls.value == 0)
     }
+
+    // MARK: - MOB-1478 (W4): silent note split runs before sign+store (immediate mode only)
+
+    @MainActor @Test func confirmTappedInImmediateModeWithNoteSplitNeededSplitsBeforeSigningThenDelegatesConfirmed() async {
+        let callOrder = LockIsolated<[String]>([])
+        let schedule = MigrationSchedule(
+            transfers: [
+                TransferProposal(id: "t0", amount: Zatoshi(1_245_800_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
+            ],
+            estimatedDurationHours: 0
+        )
+        var state = MigrationReviewTransfer.State(mode: .immediate)
+        state.schedule = schedule
+        let store = TestStore(initialState: state) {
+            MigrationReviewTransfer()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.isNoteSplitNeeded = { true }
+            $0.sdkSynchronizer.prepareNoteSplit = {
+                callOrder.withValue { $0.append("prepare") }
+                return NoteSplitProposal(outputNotes: [], fee: Zatoshi.zero)
+            }
+            $0.sdkSynchronizer.submitNoteSplit = { _ in
+                callOrder.withValue { $0.append("submit") }
+                return .success(txId: "split-tx-id")
+            }
+            $0.sdkSynchronizer.signAndStoreMigrationSchedule = { _ in
+                callOrder.withValue { $0.append("signAndStore") }
+            }
+        }
+
+        await store.send(.confirmTapped)
+        await store.receive(\.scheduleSigned)
+        await store.receive(.delegate(.confirmed))
+
+        #expect(callOrder.value == ["prepare", "submit", "signAndStore"])
+    }
+
+    @MainActor @Test func confirmTappedInImmediateModeWithNoteSplitFailurePresentsFailureSheetAndNeverSigns() async {
+        let signCalls = LockIsolated<Int>(0)
+        let schedule = MigrationSchedule(
+            transfers: [
+                TransferProposal(id: "t0", amount: Zatoshi(1_245_800_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
+            ],
+            estimatedDurationHours: 0
+        )
+        var state = MigrationReviewTransfer.State(mode: .immediate)
+        state.schedule = schedule
+        let store = TestStore(initialState: state) {
+            MigrationReviewTransfer()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.isNoteSplitNeeded = { true }
+            $0.sdkSynchronizer.prepareNoteSplit = { NoteSplitProposal(outputNotes: [], fee: Zatoshi.zero) }
+            $0.sdkSynchronizer.submitNoteSplit = { _ in .invalidNote }
+            $0.sdkSynchronizer.signAndStoreMigrationSchedule = { _ in signCalls.withValue { $0 += 1 } }
+        }
+
+        await store.send(.confirmTapped)
+        await store.receive(\.noteSplitFailed) {
+            $0.isFailurePresented = true
+        }
+
+        #expect(signCalls.value == 0)
+    }
+
+    @MainActor @Test func cancelTappedDismissesFailureSheet() async {
+        var state = MigrationReviewTransfer.State(mode: .immediate)
+        state.isFailurePresented = true
+        let store = TestStore(initialState: state) {
+            MigrationReviewTransfer()
+        }
+
+        await store.send(.cancelTapped) {
+            $0.isFailurePresented = false
+        }
+    }
+
+    @MainActor @Test func retryTappedInImmediateModeReattemptsWholeConfirmSequence() async {
+        let schedule = MigrationSchedule(transfers: [], estimatedDurationHours: 0)
+        var state = MigrationReviewTransfer.State(mode: .immediate)
+        state.schedule = schedule
+        state.isFailurePresented = true
+        let store = TestStore(initialState: state) {
+            MigrationReviewTransfer()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.isNoteSplitNeeded = { false }
+            $0.sdkSynchronizer.signAndStoreMigrationSchedule = { _ in }
+        }
+
+        await store.send(.retryTapped) {
+            $0.isFailurePresented = false
+        }
+        await store.receive(\.scheduleSigned)
+        await store.receive(.delegate(.confirmed))
+    }
+
+    // MOB-1478 (W4): the Keystone fork's batch now carries the note-split PCZT first, when needed —
+    // proved via proposal ORDER (split proposed before the schedule's own PCZT).
+    @MainActor @Test func confirmTappedInImmediateModeWithKeystoneAccountAndNoteSplitNeededProposesSplitPcztFirst() async {
+        let proposeOrder = LockIsolated<[String]>([])
+        let splitPczt: Pczt = Data([0x02])
+        let schedulePczt: [Pczt] = [Data([0xEE])]
+        let schedule = MigrationSchedule(
+            transfers: [
+                TransferProposal(id: "t0", amount: Zatoshi(1_245_800_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
+            ],
+            estimatedDurationHours: 0
+        )
+        var state = MigrationReviewTransfer.State(mode: .immediate)
+        state.schedule = schedule
+        state.$selectedWalletAccount.withLock { $0 = walletAccount(keystone: true, idByte: 9) }
+        let store = TestStore(initialState: state) {
+            MigrationReviewTransfer()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.isNoteSplitNeeded = { true }
+            $0.sdkSynchronizer.proposeNoteSplitPCZT = {
+                proposeOrder.withValue { $0.append("split") }
+                return splitPczt
+            }
+            $0.sdkSynchronizer.proposeMigrationPCZTs = { _ in
+                proposeOrder.withValue { $0.append("schedule") }
+                return schedulePczt
+            }
+        }
+
+        await store.send(.confirmTapped)
+        await store.receive(.delegate(.keystoneSignRequested([splitPczt] + schedulePczt)))
+
+        #expect(proposeOrder.value == ["split", "schedule"])
+    }
 }

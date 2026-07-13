@@ -5,6 +5,10 @@
 //  NavigationStack for the Orchard -> Ironwood migration flow (MOB-1466). `MigrationEntry` is the
 //  root screen; every other migration screen is pushed onto `path` by the coordinator.
 //
+//  MOB-1478 (W2): the Tor bottom sheet is a coordinator-owned `zashiSheet`, not a `path` element —
+//  presented from either Entry (immediate) or How This Works (scheduled) via the coordinator's shared
+//  gate, mirroring the `ServerSetup`/`serverSetupViewBinding` precedent in `RootView`.
+//
 
 import SwiftUI
 import ComposableArchitecture
@@ -32,10 +36,10 @@ struct MigrationCoordFlowView: View {
                     MigrationBackgroundDeliveryView(store: store)
                 case let .complete(store):
                     MigrationCompleteView(store: store)
+                case let .howItWorks(store):
+                    MigrationHowItWorksView(store: store)
                 case let .keystoneSign(store):
                     MigrationKeystoneSignView(store: store)
-                case let .networkPrivacy(store):
-                    MigrationNetworkPrivacyView(store: store)
                 case let .noteSplit(store):
                     MigrationNoteSplitView(store: store)
                 case let .notifications(store):
@@ -55,6 +59,14 @@ struct MigrationCoordFlowView: View {
                 case let .transferPlan(store):
                     MigrationTransferPlanView(store: store)
                 }
+            }
+            .zashiSheet(
+                isPresented: Binding(
+                    get: { store.isTorSheetPresented },
+                    set: { store.send(.torSheetPresentationChanged($0)) }
+                )
+            ) {
+                MigrationTorSheetView(store: store.scope(state: \.torSheetState, action: \.torSheet))
             }
         }
         .applyScreenBackground()
