@@ -7,7 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		348ECAA02FD5D95200BF9FE4 /* ZcashLightClientKit in Frameworks */ = {isa = PBXBuildFile; productRef = 348ECA9F2FD5D95200BF9FE4 /* ZcashLightClientKit */; };
+		349306B43005034B00F55591 /* ZcashLightClientKit in Frameworks */ = {isa = PBXBuildFile; productRef = 349306B33005034B00F55591 /* ZcashLightClientKit */; };
 		34AA77182F857DB300D244E2 /* ComposableArchitecture in Frameworks */ = {isa = PBXBuildFile; productRef = 34AA77172F857DB300D244E2 /* ComposableArchitecture */; };
 		34AA771A2F857DB800D244E2 /* ComposableArchitecture in Frameworks */ = {isa = PBXBuildFile; productRef = 34AA77192F857DB800D244E2 /* ComposableArchitecture */; };
 		34AA771C2F857DBB00D244E2 /* ComposableArchitecture in Frameworks */ = {isa = PBXBuildFile; productRef = 34AA771B2F857DBB00D244E2 /* ComposableArchitecture */; };
@@ -47,8 +47,7 @@
 		34B967652F8CC48700823B20 /* Atomics in Frameworks */ = {isa = PBXBuildFile; productRef = 34B967642F8CC48700823B20 /* Atomics */; };
 		34B967672F8CC48B00823B20 /* Atomics in Frameworks */ = {isa = PBXBuildFile; productRef = 34B967662F8CC48B00823B20 /* Atomics */; };
 		34B967692F8CC49100823B20 /* Atomics in Frameworks */ = {isa = PBXBuildFile; productRef = 34B967682F8CC49100823B20 /* Atomics */; };
-		9E4841532F869F5F00D0649B /* ZcashLightClientKit in Frameworks */ = {isa = PBXBuildFile; productRef = 9E4841522F869F5F00D0649B /* ZcashLightClientKit */; };
-		9E4841562F869F5F00D0649B /* ZcashLightClientKit in Frameworks */ = {isa = PBXBuildFile; productRef = 9E4841522F869F5F00D0649B /* ZcashLightClientKit */; };
+		34CE8BEA3005025200212409 /* ZcashLightClientKit in Frameworks */ = {isa = PBXBuildFile; productRef = 34CE8BE93005025200212409 /* ZcashLightClientKit */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -145,7 +144,7 @@
 				34AA771C2F857DBB00D244E2 /* ComposableArchitecture in Frameworks */,
 				34AA778E2F85833900D244E2 /* Lottie in Frameworks */,
 				34AA77402F8580D700D244E2 /* CasePathsCore in Frameworks */,
-				348ECAA02FD5D95200BF9FE4 /* ZcashLightClientKit in Frameworks */,
+				349306B43005034B00F55591 /* ZcashLightClientKit in Frameworks */,
 				34AA77A42F8583C300D244E2 /* BigDecimal in Frameworks */,
 				34AA77C02F85862200D244E2 /* UInt128 in Frameworks */,
 				34AA77782F8582AC00D244E2 /* Flexa in Frameworks */,
@@ -162,7 +161,6 @@
 				34AA777F2F8582E600D244E2 /* ZcashPaymentURI in Frameworks */,
 				34AA77472F85814600D244E2 /* URLRouting in Frameworks */,
 				34B967652F8CC48700823B20 /* Atomics in Frameworks */,
-				9E4841562F869F5F00D0649B /* ZcashLightClientKit in Frameworks */,
 				34AA77272F857E2F00D244E2 /* XCTestDynamicOverlay in Frameworks */,
 				34AA77182F857DB300D244E2 /* ComposableArchitecture in Frameworks */,
 				34AA778A2F85832E00D244E2 /* Lottie in Frameworks */,
@@ -180,7 +178,6 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				9E4841532F869F5F00D0649B /* ZcashLightClientKit in Frameworks */,
 				34AA77812F8582EB00D244E2 /* ZcashPaymentURI in Frameworks */,
 				34AA77492F85814C00D244E2 /* URLRouting in Frameworks */,
 				34AA77292F857E3400D244E2 /* XCTestDynamicOverlay in Frameworks */,
@@ -188,6 +185,7 @@
 				34AA778C2F85833300D244E2 /* Lottie in Frameworks */,
 				34AA773C2F8580D000D244E2 /* CasePathsCore in Frameworks */,
 				34AA77A22F8583BF00D244E2 /* BigDecimal in Frameworks */,
+				34CE8BEA3005025200212409 /* ZcashLightClientKit in Frameworks */,
 				34AA77BE2F85861E00D244E2 /* UInt128 in Frameworks */,
 				34AA77762F8582A700D244E2 /* Flexa in Frameworks */,
 				34AA77542F85818500D244E2 /* MnemonicSwift in Frameworks */,
@@ -298,7 +296,7 @@
 				34AA77A32F8583C300D244E2 /* BigDecimal */,
 				34AA77BF2F85862200D244E2 /* UInt128 */,
 				34B967682F8CC49100823B20 /* Atomics */,
-				348ECA9F2FD5D95200BF9FE4 /* ZcashLightClientKit */,
+				349306B33005034B00F55591 /* ZcashLightClientKit */,
 			);
 			productName = "zodl-testnet";
 			productReference = 9E41FFBB2CB2814500783CFD /* zodl-testnet.app */;
@@ -337,7 +335,6 @@
 				34AA77942F85836900D244E2 /* KeystoneSDK */,
 				34AA779F2F8583BA00D244E2 /* BigDecimal */,
 				34AA77BB2F85861800D244E2 /* UInt128 */,
-				9E4841522F869F5F00D0649B /* ZcashLightClientKit */,
 				34B967642F8CC48700823B20 /* Atomics */,
 			);
 			productName = "zodl-production";
@@ -377,8 +374,8 @@
 				34AA77962F85836E00D244E2 /* KeystoneSDK */,
 				34AA77A12F8583BF00D244E2 /* BigDecimal */,
 				34AA77BD2F85861E00D244E2 /* UInt128 */,
-				9E4841522F869F5F00D0649B /* ZcashLightClientKit */,
 				34B967662F8CC48B00823B20 /* Atomics */,
+				34CE8BE93005025200212409 /* ZcashLightClientKit */,
 			);
 			productName = "zodl-internal";
 			productReference = 9E5AB4822C94777800065483 /* zodl-internal.app */;
@@ -423,8 +420,8 @@
 				34AA779A2F8583A500D244E2 /* XCRemoteSwiftPackageReference "BigDecimal" */,
 				34AA77B52F85848A00D244E2 /* XCRemoteSwiftPackageReference "xcstrings-tool-plugin" */,
 				34AA77B62F85860300D244E2 /* XCRemoteSwiftPackageReference "UInt128" */,
-				9E4841512F869F5E00D0649B /* XCRemoteSwiftPackageReference "zcash-swift-wallet-sdk" */,
 				34B9675A2F8CC47200823B20 /* XCRemoteSwiftPackageReference "swift-atomics" */,
+				34CE8BE83005025200212409 /* XCLocalSwiftPackageReference "../ZcashLightClientKit" */,
 			);
 			productRefGroup = 0D4E7A0626B364170058B01E /* Products */;
 			projectDirPath = "";
@@ -1295,6 +1292,13 @@
 		};
 /* End XCConfigurationList section */
 
+/* Begin XCLocalSwiftPackageReference section */
+		34CE8BE83005025200212409 /* XCLocalSwiftPackageReference "../ZcashLightClientKit" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../ZcashLightClientKit;
+		};
+/* End XCLocalSwiftPackageReference section */
+
 /* Begin XCRemoteSwiftPackageReference section */
 		34AA77122F857DA300D244E2 /* XCRemoteSwiftPackageReference "swift-composable-architecture" */ = {
 			isa = XCRemoteSwiftPackageReference;
@@ -1402,20 +1406,12 @@
 				minimumVersion = 1.3.0;
 			};
 		};
-		9E4841512F869F5E00D0649B /* XCRemoteSwiftPackageReference "zcash-swift-wallet-sdk" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/zcash/zcash-swift-wallet-sdk.git";
-			requirement = {
-				kind = exactVersion;
-				version = "2.6.0-alpha.6";
-			};
-		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		348ECA9F2FD5D95200BF9FE4 /* ZcashLightClientKit */ = {
+		349306B33005034B00F55591 /* ZcashLightClientKit */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 9E4841512F869F5E00D0649B /* XCRemoteSwiftPackageReference "zcash-swift-wallet-sdk" */;
+			package = 34CE8BE83005025200212409 /* XCLocalSwiftPackageReference "../ZcashLightClientKit" */;
 			productName = ZcashLightClientKit;
 		};
 		34AA77172F857DB300D244E2 /* ComposableArchitecture */ = {
@@ -1628,9 +1624,8 @@
 			package = 34B9675A2F8CC47200823B20 /* XCRemoteSwiftPackageReference "swift-atomics" */;
 			productName = Atomics;
 		};
-		9E4841522F869F5F00D0649B /* ZcashLightClientKit */ = {
+		34CE8BE93005025200212409 /* ZcashLightClientKit */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 9E4841512F869F5E00D0649B /* XCRemoteSwiftPackageReference "zcash-swift-wallet-sdk" */;
 			productName = ZcashLightClientKit;
 		};
 /* End XCSwiftPackageProductDependency section */
