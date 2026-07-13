@@ -17,6 +17,16 @@
 //  coordinator to route through `MigrationKeystoneSign` + `Scan` in ONE batched session. The software
 //  path and the rescheduled `requiresSigning == false` variant (never re-signs) are unchanged.
 //
+//  MOB-1478 (W4): note splitting runs silently under this screen's commit, right before signing —
+//  `.confirmTapped`/`.retryTapped` share one effect: iff `isNoteSplitNeeded()`, `prepareNoteSplit` +
+//  `submitNoteSplit` first (mirrors `MigrationNoteSplitStore`'s old explainer-confirm sequence 1:1);
+//  a split failure presents the same Cancel/Retry failure sheet `MigrationNoteSplit` uses (this
+//  screen had none before) instead of proceeding to sign+store. The Keystone fork's batch
+//  (`requestKeystoneSignature`) now proposes the note-split PCZT first too, when needed, so the WHOLE
+//  batch (split + all N transfers) signs in the same QR ceremony — `storeSignedMigrationTransactions`
+//  already stores an arbitrary `[Pczt]` atomically, so the no-partial-storage invariant holds
+//  unchanged. `MigrationNoteSplit` itself no longer requests Keystone signing (re-entry-only now).
+//
 
 import Foundation
 import ComposableArchitecture
@@ -47,6 +57,9 @@ struct MigrationTransferPlan {
         /// `signAndStoreMigrationSchedule` and delegates `.confirmed` directly. The re-created
         /// (recovery) variant signs a fresh schedule, so it keeps the default `true`.
         var requiresSigning = true
+        /// MOB-1478 (W4): failure sheet for the silent note-split step, presented over this screen
+        /// instead of proceeding to sign+store — mirrors `MigrationNoteSplit.State.isFailurePresented`.
+        var isFailurePresented = false
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
 
         init(
@@ -62,11 +75,19 @@ struct MigrationTransferPlan {
         }
     }
 
-    enum Action: Equatable {
-        /// Signs and stores the active schedule.
+    enum Action: BindableAction, Equatable {
+        case binding(BindingAction<State>)
+        /// Failure sheet: dismiss (stay on screen).
+        case cancelTapped
+        /// Signs and stores the active schedule (silently splitting first, when needed).
         case confirmTapped
         case delegate(Delegate)
+        /// MOB-1478 (W4): the silent split step failed — presents the failure sheet instead of
+        /// proceeding to sign+store.
+        case noteSplitFailed
         case onAppear
+        /// Failure sheet: dismiss, then re-attempt `confirmTapped`'s whole effect from scratch.
+        case retryTapped
         /// `signAndStoreMigrationSchedule` completed.
         case scheduleSigned
         /// `proposeMigrationTransfers()` result — populates rows/duration for a fresh entry.
@@ -74,9 +95,10 @@ struct MigrationTransferPlan {
 
         enum Delegate: Equatable {
             case confirmed
-            /// MOB-1468 (Keystone): the schedule's PCZTs (ALL N transfers) were proposed and need QR
-            /// signing in ONE batched session — the shared shape across all three Keystone signing
-            /// sources so the coordinator can treat them symmetrically.
+            /// MOB-1468 (Keystone): the schedule's PCZTs (ALL N transfers, plus the note-split PCZT
+            /// first when needed — MOB-1478 W4) were proposed and need QR signing in ONE batched
+            /// session — the shared shape across the Keystone signing sources so the coordinator can
+            /// treat them symmetrically.
             case keystoneSignRequested([Pczt])
         }
     }
@@ -86,25 +108,49 @@ struct MigrationTransferPlan {
     init() { }
 
     var body: some Reducer<State, Action> {
+        BindingReducer()
+
         Reduce { state, action in
             switch action {
-            case .confirmTapped:
+            case .binding:
+                return .none
+
+            case .cancelTapped:
+                state.isFailurePresented = false
+                return .none
+
+            case .confirmTapped, .retryTapped:
+                state.isFailurePresented = false
+
                 guard state.requiresSigning else {
                     // Rescheduled variant: transfers are already signed — this is acknowledgment.
                     return .send(.delegate(.confirmed))
                 }
 
                 let schedule = state.schedule ?? MigrationSchedule(transfers: [], estimatedDurationHours: 0)
+                let needsNoteSplit = sdkSynchronizer.isNoteSplitNeeded()
 
                 guard state.selectedWalletAccount?.vendor == .keystone else {
                     return .run { send in
+                        if needsNoteSplit {
+                            let proposal = await sdkSynchronizer.prepareNoteSplit()
+                            let splitResult = await sdkSynchronizer.submitNoteSplit(proposal)
+                            guard case .success = splitResult else {
+                                await send(.noteSplitFailed)
+                                return
+                            }
+                        }
                         await sdkSynchronizer.signAndStoreMigrationSchedule(schedule)
                         await send(.scheduleSigned)
                     }
                 }
-                return requestKeystoneSignature(for: schedule)
+                return requestKeystoneSignature(for: schedule, includeNoteSplit: needsNoteSplit)
 
             case .delegate:
+                return .none
+
+            case .noteSplitFailed:
+                state.isFailurePresented = true
                 return .none
 
             case .onAppear:
@@ -134,11 +180,16 @@ struct MigrationTransferPlan {
         }
     }
 
-    /// MOB-1468 (Keystone) `confirmTapped` fork: proposes ALL of the schedule's PCZTs and hands them
-    /// to the coordinator for ONE batched QR-signing session.
-    private func requestKeystoneSignature(for schedule: MigrationSchedule) -> Effect<Action> {
+    /// MOB-1468 (Keystone) `confirmTapped` fork: proposes ALL of the schedule's PCZTs — prefixed with
+    /// the note-split PCZT when `includeNoteSplit` (MOB-1478 W4), so the whole batch signs in one QR
+    /// ceremony — and hands them to the coordinator for that ONE batched QR-signing session.
+    private func requestKeystoneSignature(for schedule: MigrationSchedule, includeNoteSplit: Bool) -> Effect<Action> {
         .run { send in
-            let pczts = await sdkSynchronizer.proposeMigrationPCZTs(schedule)
+            var pczts: [Pczt] = []
+            if includeNoteSplit {
+                pczts.append(await sdkSynchronizer.proposeNoteSplitPCZT())
+            }
+            pczts.append(contentsOf: await sdkSynchronizer.proposeMigrationPCZTs(schedule))
             await send(.delegate(.keystoneSignRequested(pczts)))
         }
     }

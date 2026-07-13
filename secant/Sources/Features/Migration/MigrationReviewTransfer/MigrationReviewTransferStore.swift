@@ -20,6 +20,13 @@
 //  coordinator to route through `MigrationKeystoneSign` + `Scan`. The manual-step path (transfers
 //  already signed at plan commit) is unchanged — `signAndStoreMigrationSchedule` never runs there.
 //
+//  MOB-1478 (W4): immediate mode's `confirmTapped`/`retryTapped` silently split first when needed —
+//  same `isNoteSplitNeeded()` -> `prepareNoteSplit`/`submitNoteSplit` sequence as `MigrationTransfer
+//  Plan`, a split failure presents the same Cancel/Retry failure sheet `MigrationNoteSplit` uses
+//  (this screen had none before), and the Keystone fork's proposed PCZT batch carries the note-split
+//  PCZT first too, when needed. The manual-step path never forks (never re-signs, never splits) —
+//  unchanged.
+//
 
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
@@ -46,6 +53,10 @@ struct MigrationReviewTransfer {
         /// True when the manual-step variant is the coordinator's re-entry root — its back control
         /// then closes the flow instead of popping.
         var isFlowRoot = false
+        /// MOB-1478 (W4): failure sheet for the silent note-split step (immediate mode only),
+        /// presented instead of proceeding to sign+store — mirrors `MigrationNoteSplit.State
+        /// .isFailurePresented`.
+        var isFailurePresented = false
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
 
         init(
@@ -61,14 +72,23 @@ struct MigrationReviewTransfer {
         }
     }
 
-    enum Action: Equatable {
+    enum Action: BindableAction, Equatable {
+        case binding(BindingAction<State>)
+        /// Failure sheet: dismiss (stay on screen).
+        case cancelTapped
         /// Flow-root back control (manual step only): closes the flow instead of popping.
         case closeTapped
-        /// Immediate mode signs+stores the schedule then delegates; manual step delegates directly.
+        /// Immediate mode silently splits (when needed) then signs+stores the schedule before
+        /// delegating; manual step delegates directly.
         case confirmTapped
         case delegate(Delegate)
+        /// MOB-1478 (W4): immediate mode's silent split step failed — presents the failure sheet
+        /// instead of proceeding to sign+store.
+        case noteSplitFailed
         /// Immediate mode only: proposes a single-transfer schedule for Amount/Fee display.
         case onAppear
+        /// Failure sheet: dismiss, then re-attempt `confirmTapped`'s whole effect from scratch.
+        case retryTapped
         /// `signAndStoreMigrationSchedule` completed (immediate mode only).
         case scheduleSigned
         /// `proposeMigrationTransfers()` result (immediate mode only).
@@ -78,8 +98,10 @@ struct MigrationReviewTransfer {
             case closed
             case confirmed
             /// MOB-1468 (Keystone): the immediate-mode schedule's PCZT was proposed and needs QR
-            /// signing — a single-element array (batched-session-of-1), the shared shape across all
-            /// three Keystone signing sources so the coordinator can treat them symmetrically.
+            /// signing — prefixed with the note-split PCZT first when needed (MOB-1478 W4) — a
+            /// single-element (or two-element, split included) array batched into ONE QR ceremony,
+            /// the shared shape across the Keystone signing sources so the coordinator can treat them
+            /// symmetrically.
             case keystoneSignRequested([Pczt])
         }
     }
@@ -89,26 +111,51 @@ struct MigrationReviewTransfer {
     init() { }
 
     var body: some Reducer<State, Action> {
+        BindingReducer()
+
         Reduce { state, action in
             switch action {
+            case .binding:
+                return .none
+
+            case .cancelTapped:
+                state.isFailurePresented = false
+                return .none
+
             case .closeTapped:
                 return .send(.delegate(.closed))
 
-            case .confirmTapped:
+            case .confirmTapped, .retryTapped:
+                state.isFailurePresented = false
+
                 guard case .immediate = state.mode, let schedule = state.schedule else {
                     // Manual step: the transfer was already signed at plan commit — delegate directly.
                     return .send(.delegate(.confirmed))
                 }
 
+                let needsNoteSplit = sdkSynchronizer.isNoteSplitNeeded()
+
                 guard state.selectedWalletAccount?.vendor == .keystone else {
                     return .run { send in
+                        if needsNoteSplit {
+                            let proposal = await sdkSynchronizer.prepareNoteSplit()
+                            let splitResult = await sdkSynchronizer.submitNoteSplit(proposal)
+                            guard case .success = splitResult else {
+                                await send(.noteSplitFailed)
+                                return
+                            }
+                        }
                         await sdkSynchronizer.signAndStoreMigrationSchedule(schedule)
                         await send(.scheduleSigned)
                     }
                 }
-                return requestKeystoneSignature(for: schedule)
+                return requestKeystoneSignature(for: schedule, includeNoteSplit: needsNoteSplit)
 
             case .delegate:
+                return .none
+
+            case .noteSplitFailed:
+                state.isFailurePresented = true
                 return .none
 
             case .onAppear:
@@ -131,11 +178,16 @@ struct MigrationReviewTransfer {
         }
     }
 
-    /// MOB-1468 (Keystone) `confirmTapped` fork: proposes the immediate-mode schedule's PCZT and
-    /// hands it to the coordinator for QR signing.
-    private func requestKeystoneSignature(for schedule: MigrationSchedule) -> Effect<Action> {
+    /// MOB-1468 (Keystone) `confirmTapped` fork: proposes the immediate-mode schedule's PCZT —
+    /// prefixed with the note-split PCZT when `includeNoteSplit` (MOB-1478 W4) — and hands the batch
+    /// to the coordinator for QR signing.
+    private func requestKeystoneSignature(for schedule: MigrationSchedule, includeNoteSplit: Bool) -> Effect<Action> {
         .run { send in
-            let pczts = await sdkSynchronizer.proposeMigrationPCZTs(schedule)
+            var pczts: [Pczt] = []
+            if includeNoteSplit {
+                pczts.append(await sdkSynchronizer.proposeNoteSplitPCZT())
+            }
+            pczts.append(contentsOf: await sdkSynchronizer.proposeMigrationPCZTs(schedule))
             await send(.delegate(.keystoneSignRequested(pczts)))
         }
     }

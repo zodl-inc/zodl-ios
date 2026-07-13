@@ -7,12 +7,16 @@
 //  via the store; the `confirmTapped` delegate is emitted but consumed by nobody yet — chaining
 //  into the rest of the migration flow is the coordinator's job (MOB-1466 phase 3).
 //
+//  MOB-1478 (W4): `confirmTapped` now silently splits first when needed — a failure presents the
+//  same Cancel/Retry bottom sheet `MigrationNoteSplit` uses (this screen had no failure path before).
+//
 
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
 import SwiftUI
 
 struct MigrationTransferPlanView: View {
+    @Environment(\.colorScheme) private var colorScheme
     @Perception.Bindable var store: StoreOf<MigrationTransferPlan>
 
     init(store: StoreOf<MigrationTransferPlan>) {
@@ -50,6 +54,9 @@ struct MigrationTransferPlanView: View {
             }
             .screenHorizontalPadding()
             .zashiBack()
+            .zashiSheet(isPresented: $store.isFailurePresented) {
+                failureSheetContent
+            }
         }
         .applyScreenBackground()
         .onAppear {
@@ -119,6 +126,46 @@ struct MigrationTransferPlanView: View {
                 .zFont(size: 12, style: Design.Text.tertiary)
         }
         .frame(maxWidth: .infinity, alignment: .center)
+    }
+
+    // MARK: - Failure sheet (MOB-1478 W4 — silent note split)
+
+    /// Mirrors `MigrationNoteSplitView`'s failure sheet exactly (same strings, same Cancel/Retry
+    /// shape) — this screen had no failure path before the silent split moved under its commit.
+    @ViewBuilder private var failureSheetContent: some View {
+        VStack(spacing: 0) {
+            Asset.Assets.Icons.alertOutline.image
+                .zImage(size: 20, style: Design.Utility.ErrorRed._500)
+                .background {
+                    Circle()
+                        .fill(Design.Utility.ErrorRed._100.color(colorScheme))
+                        .frame(width: 44, height: 44)
+                }
+                .padding(.top, 48)
+
+            Text(localizable: .migrationNoteSplitFailedTitle)
+                .zFont(.semiBold, size: 20, style: Design.Text.primary)
+                .multilineTextAlignment(.center)
+                .padding(.top, 16)
+                .padding(.bottom, 12)
+
+            Text(localizable: .migrationNoteSplitFailedBody)
+                .zFont(size: 14, style: Design.Text.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
+                .multilineTextAlignment(.center)
+                .lineSpacing(2)
+                .padding(.bottom, 32)
+
+            ZashiButton(String(localizable: .generalCancel), type: .secondary) {
+                store.send(.cancelTapped)
+            }
+            .padding(.bottom, 12)
+
+            ZashiButton(String(localizable: .migrationNoteSplitRetry)) {
+                store.send(.retryTapped)
+            }
+            .padding(.bottom, Design.Spacing.sheetBottomSpace)
+        }
     }
 }
 
