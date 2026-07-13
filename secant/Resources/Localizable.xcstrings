@@ -19667,19 +19667,35 @@
         }
       }
     },
-    "migrationNotification.actionNeededTitle" : {
+    "migrationNotification.planNeedsUpdateTitle" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Action needed"
+            "value" : "Migration plan needs update"
           }
-        },
-        "es" : {
+        }
+      }
+    },
+    "migrationNotification.transferWaitingTitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Acción necesaria"
+            "value" : "Transfer %1$lld waiting"
+          }
+        }
+      }
+    },
+    "migrationNotification.manualTransferReadyTitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transfer %1$lld \u2014 ready to send"
           }
         }
       }

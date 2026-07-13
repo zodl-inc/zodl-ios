@@ -8,9 +8,9 @@
 //  construct a case and hand it to `userNotifications.scheduleMigrationNotification(_:at:)`.
 //  Table-tested directly (see MigrationNotificationTests).
 //
-//  Titles are short new copy ("Migration update" / "Action needed" / "Migration complete") —
-//  §4.4 only pins the bodies verbatim; PR flags these for design confirmation against the Figma
-//  lock-screen mocks.
+//  Copy follows the lock-screen mocks' consistent split (MOB-1478 W9): `title` carries the
+//  specific fact (incl. any transfer number), `body` is a short generic call-to-action — except
+//  `transferComplete`, whose §4.4 matrix copy is unchanged and stays fully in `body`.
 //
 
 @preconcurrency import ZcashLightClientKit
@@ -49,15 +49,22 @@ enum MigrationNotification: Equatable, Sendable {
         switch self {
         case .transferComplete:
             return String(localizable: .migrationNotificationTransferCompleteTitle)
-        case .transferWaiting, .planNeedsUpdate, .manualTransferReady:
-            return String(localizable: .migrationNotificationActionNeededTitle)
+        case let .transferWaiting(number):
+            return String(localizable: .migrationNotificationTransferWaitingTitle(number))
+        case .planNeedsUpdate:
+            return String(localizable: .migrationNotificationPlanNeedsUpdateTitle)
+        case let .manualTransferReady(number):
+            return String(localizable: .migrationNotificationManualTransferReadyTitle(number))
         case .migrationComplete:
             return String(localizable: .migrationNotificationMigrationCompleteTitle)
         }
     }
 
-    /// §4.4 matrix copy verbatim. `remaining` renders via `Zatoshi.decimalString()`;
-    /// `nextInHours` is the armed-window interval rounded to hours (caller-computed).
+    /// §4.4 matrix copy verbatim for `transferComplete`, whose body carries the full fact-plus-
+    /// CTA sentence. Every other case follows the lock-screen split: `title` now carries the
+    /// specific fact (incl. any transfer number), so `body` here is just the short generic
+    /// call-to-action. `remaining` renders via `Zatoshi.decimalString()`; `nextInHours` is the
+    /// armed-window interval rounded to hours (caller-computed).
     var body: String {
         switch self {
         case let .transferComplete(number, total, nextInHours, remaining):
@@ -69,12 +76,12 @@ enum MigrationNotification: Equatable, Sendable {
                     remaining.decimalString()
                 )
             )
-        case let .transferWaiting(number):
-            return String(localizable: .migrationNotificationTransferWaitingBody(number))
+        case .transferWaiting:
+            return String(localizable: .migrationNotificationTransferWaitingBody)
         case .planNeedsUpdate:
             return String(localizable: .migrationNotificationPlanNeedsUpdateBody)
-        case let .manualTransferReady(number):
-            return String(localizable: .migrationNotificationManualTransferReadyBody(number))
+        case .manualTransferReady:
+            return String(localizable: .migrationNotificationManualTransferReadyBody)
         case .migrationComplete:
             return String(localizable: .migrationNotificationMigrationCompleteBody)
         }
