@@ -12,6 +12,7 @@ import ComposableArchitecture
 import SwiftUI
 
 struct MigrationBackgroundDeliveryView: View {
+    @Environment(\.colorScheme) private var colorScheme
     @Environment(\.openURL) private var openURL
     @Environment(\.scenePhase) private var scenePhase
     @Perception.Bindable var store: StoreOf<MigrationBackgroundDelivery>
@@ -44,10 +45,8 @@ struct MigrationBackgroundDeliveryView: View {
                 footerNote
                     .padding(.bottom, 16)
 
-                ZashiButton(String(localizable: .migrationSkipOpenApp), type: .tertiary) {
-                    store.send(.skipTapped)
-                }
-                .padding(.bottom, 12)
+                skipButton
+                    .padding(.bottom, 12)
 
                 ZashiButton(String(localizable: .migrationAllow)) {
                     store.send(.allowTapped)
@@ -97,14 +96,41 @@ struct MigrationBackgroundDeliveryView: View {
     @ViewBuilder private var footerNote: some View {
         HStack(alignment: .top, spacing: 8) {
             Asset.Assets.infoOutline.image
-                .zImage(size: 16, style: Design.Text.tertiary)
+                .zImage(size: 16, style: Design.Utility.WarningYellow._700)
 
             Text(localizable: .migrationBackgroundDeliveryFooter)
-                .zFont(size: 12, style: Design.Text.tertiary)
+                .zFont(size: 12, style: Design.Utility.WarningYellow._700)
                 .multilineTextAlignment(.leading)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    // MARK: - Skip button
+
+    // `ZashiButton`'s `Type` enum has no per-instance color hook, so this reproduces its `.tertiary`
+    // layout locally with the warning label/border swapped in (MOB-1478 W8; same override duplicated
+    // in MigrationNotificationsView rather than touching the shared component).
+    @ViewBuilder private var skipButton: some View {
+        Button {
+            store.send(.skipTapped)
+        } label: {
+            Text(localizable: .migrationSkipOpenApp)
+                .zFont(.semiBold, size: 16, style: Design.Utility.WarningYellow._700)
+                .fixedSize()
+                .minimumScaleFactor(0.5)
+                .padding(.horizontal, 18)
+                .padding(.vertical, 12)
+                .frame(maxWidth: .infinity)
+                .background {
+                    RoundedRectangle(cornerRadius: Design.Radius._xl)
+                        .fill(Design.Btns.Tertiary.bg.color(colorScheme))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: Design.Radius._xl)
+                                .stroke(Design.Utility.WarningYellow._300.color(colorScheme), lineWidth: 1)
+                        }
+                }
+        }
     }
 }
 
