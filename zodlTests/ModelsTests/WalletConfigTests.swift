@@ -18,7 +18,13 @@ import Foundation
 
     @Test func allFeatureFlagsDisabledByDefault() {
         for flag in FeatureFlag.allCases {
-            #expect(!flag.enabledByDefault)
+            // [#1755]/[MOB-1458] Deliberate exception: the Slipstream engine is on by default on
+            // this line (see the flag's TODO in WalletConfig.swift). Every other flag stays off.
+            if flag == .useSlipstreamSynchronizer {
+                #expect(flag.enabledByDefault)
+            } else {
+                #expect(!flag.enabledByDefault)
+            }
         }
     }
 

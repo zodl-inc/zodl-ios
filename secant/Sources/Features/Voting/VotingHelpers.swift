@@ -556,7 +556,8 @@ extension NetworkType {
     var votingRustNetworkId: UInt32 {
         switch self {
         case .mainnet: 1
-        case .testnet: 0
+        // Regtest (custom activation heights) uses testnet consensus semantics for voting.
+        case .testnet, .regtest: 0
         }
     }
 }
