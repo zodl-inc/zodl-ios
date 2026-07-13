@@ -10,6 +10,15 @@
 //  (`.done`) instead of popping — every other delegate is consumed by
 //  `MigrationCoordFlowCoordinator` (MOB-1466).
 //
+//  MOB-1478 (W7): rows can now carry sub-hour sent recency (`sentMinutesAgo`) and a broadcasting
+//  flag (`isBroadcasting`) — both just ride along through `statusLoaded`/`migrationStateChanged`
+//  unchanged; the View derives their captions. `.rescheduleConfirmed(first:last:)` is a new
+//  presentation reached via the public `rescheduleCompleted` action, landing on this same screen
+//  instead of flipping `isRescheduling` back to `.resume`. The reschedule effect itself (SDK
+//  reschedule + background-window scheduling) still runs in `MigrationCoordFlowCoordinator`, which
+//  today pushes a fresh `TransferPlan` screen on completion instead — wiring it to send
+//  `rescheduleCompleted` here is a later phase.
+//
 
 import Foundation
 import ComposableArchitecture
@@ -22,6 +31,11 @@ struct MigrationStatus {
         enum Presentation: Equatable {
             case progress
             case resume
+            /// Post-reschedule confirmation (MOB-1478 W7): entered via `rescheduleCompleted` instead
+            /// of flipping back to `.resume`. `first`/`last` are the stalled-range transfer numbers
+            /// ("Transfers {first}-{last}") captured from `.resume`'s `stalledNumber`/`rows.count` at
+            /// the moment of transition.
+            case rescheduleConfirmed(first: Int, last: Int)
         }
 
         var presentation = Presentation.progress
@@ -71,6 +85,12 @@ struct MigrationStatus {
         /// `migrationStateStream()` ticked — reloads rows/summary/gate.
         case migrationStateChanged
         case onAppear
+        /// Public: the coordinator's reschedule effect (SDK reschedule + first-window scheduling)
+        /// finished — lands on `.rescheduleConfirmed` with the refreshed rows/duration instead of
+        /// flipping `isRescheduling` back to `.resume`. The coordinator doesn't send this yet (it
+        /// still pushes a fresh `TransferPlan` screen on completion) — wiring it up is a later phase;
+        /// this action is the store-side surface for it (MOB-1478 W7).
+        case rescheduleCompleted(rows: [MigrationTransferRow], totalDurationHours: Int)
         case rescheduleTapped
         case sendNowTapped
         /// `migrationTransfers()` + `migrationSummary()` + `manager.sendGate()` result.
@@ -112,6 +132,13 @@ struct MigrationStatus {
                     }
                     .cancellable(id: state.cancelStateStreamId, cancelInFlight: true)
                 )
+
+            case .rescheduleCompleted(let rows, let totalDurationHours):
+                state.presentation = .rescheduleConfirmed(first: state.stalledNumber, last: state.rows.count)
+                state.rows = IdentifiedArrayOf(uniqueElements: rows)
+                state.totalDurationHours = totalDurationHours
+                state.isRescheduling = false
+                return .none
 
             case .rescheduleTapped:
                 state.isRescheduling = true
