@@ -1,3 +1,4 @@
+#if canImport(UIKit)
 //
 //  UIMailDialog.swift
 //  secant
@@ -76,3 +77,39 @@ struct UIMailDialogView: UIViewRepresentable {
 
     typealias UIViewType = UIMailDialog
 }
+
+#else
+import SwiftUI
+
+/// macOS: no in-app mail composer. Open the default mail client via a `mailto:` URL with the
+/// support address/subject/body prefilled, then call `completion` (which clears the binding that
+/// presented this zero-frame helper).
+struct UIMailDialogView: View {
+    @Environment(\.openURL) private var openURL
+    let supportData: SupportData
+    let completion: () -> Void
+
+    init(supportData: SupportData, completion: @escaping () -> Void) {
+        self.supportData = supportData
+        self.completion = completion
+    }
+
+    var body: some View {
+        Color.clear
+            .frame(width: 0, height: 0)
+            .onAppear {
+                var components = URLComponents()
+                components.scheme = "mailto"
+                components.path = supportData.toAddress
+                components.queryItems = [
+                    URLQueryItem(name: "subject", value: supportData.subject),
+                    URLQueryItem(name: "body", value: "\n\n\(supportData.message)")
+                ]
+                if let url = components.url {
+                    openURL(url)
+                }
+                completion()
+            }
+    }
+}
+#endif

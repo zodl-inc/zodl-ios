@@ -4,6 +4,7 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 
 /// Proposal detail with vote-choice selection. Tapping an option writes
@@ -270,7 +271,7 @@ struct ProposalDetailView: View {
             }
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .zashiPlainButtonStyle()
     }
 
     @ViewBuilder
@@ -340,7 +341,7 @@ struct ProposalDetailView: View {
             .padding(.vertical, 16)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .zashiPlainButtonStyle()
         .disabled(isLocked)
     }
 

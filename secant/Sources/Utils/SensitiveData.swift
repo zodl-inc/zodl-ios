@@ -15,9 +15,9 @@ import Foundation
 /// `Redactable` protocol is just a helper so we can let developers to see the sensitive data when
 /// developing and debugging but production or release builds (even testflight) are set to redacted by default.
 #if DEBUG
-protocol Redactable { }
+nonisolated protocol Redactable { }
 #else
-protocol Redactable: Undescribable { }
+nonisolated protocol Redactable: Undescribable { }
 #endif
 
 // MARK: - Redactable Seed Phrase
@@ -57,7 +57,7 @@ struct Birthday: Codable, Equatable, Redactable {
 // MARK: - Redactable String
 
 /// Redactable holder for a string.
-struct RedactableString: Equatable, Hashable, Redactable {
+nonisolated struct RedactableString: Equatable, Hashable, Redactable {
     let data: String
     
     init(_ data: String = "") { self.data = data }
@@ -67,7 +67,7 @@ struct RedactableString: Equatable, Hashable, Redactable {
 
 /// Utility that converts a string to a redacted counterpart.
 extension String {
-    var redacted: RedactableString { RedactableString(self) }
+    nonisolated var redacted: RedactableString { RedactableString(self) }
 }
 
 // MARK: - Redactable BlockHeight
@@ -107,6 +107,7 @@ struct RedactableSynchronizerState: Equatable, Redactable {
         var accountsBalances: [AccountUUID: AccountBalance]
         var syncStatus: SyncStatus
         var latestBlockHeight: BlockHeight
+        var isRecovering: Bool
         var fullyScannedHeight: BlockHeight
     }
 
@@ -118,6 +119,7 @@ struct RedactableSynchronizerState: Equatable, Redactable {
             accountsBalances: data.accountsBalances,
             syncStatus: data.syncStatus,
             latestBlockHeight: data.latestBlockHeight,
+            isRecovering: data.isRecovering,
             fullyScannedHeight: data.fullyScannedHeight
         )
     }

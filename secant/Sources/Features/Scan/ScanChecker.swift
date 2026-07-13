@@ -6,6 +6,8 @@
 //
 
 import ComposableArchitecture
+@preconcurrency import ZcashLightClientKit
+import Foundation
 import ZcashPaymentURI
 
 @preconcurrency import KeystoneSDK

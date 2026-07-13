@@ -5,7 +5,10 @@
 //  Created by Lukáš Korba on 2025-07-03.
 //
 
+#if canImport(UIKit)
 import UIKit
+import Combine
+#endif
 import SwiftUI
 import ComposableArchitecture
 
@@ -25,6 +28,7 @@ extension AddressBookContactView {
         .padding(.vertical, 1)
         .background(Asset.Colors.background.color)
         .listStyle(.plain)
+        .zashiHideListBackground()
     }
     
     @ViewBuilder func assetsLoadingComposition(_ colorScheme: ColorScheme) -> some View {
@@ -111,6 +115,22 @@ extension AddressBookContactView {
                 } else if store.chainsToPresent.isEmpty && store.searchTerm.isEmpty {
                     assetsEmptyComposition(colorScheme)
                 } else {
+#if os(macOS)
+                    // macOS: a `List` has no intrinsic height and collapses inside the card; use a
+                    // scrollable stack that fills the definite card height instead.
+                    ScrollView {
+                        LazyVStack(spacing: 0) {
+                            WithPerceptionTracking {
+                                ForEach(store.chainsToPresent, id: \.self) { chain in
+                                    chainView(chain, colorScheme)
+                                        .zashiPlainButtonStyle()
+                                }
+                            }
+                        }
+                    }
+                    // No solid background on macOS — let the sheet's Liquid Glass card surface show
+                    // through the (transparent) rows. iOS keeps its list-row background below.
+#else
                     List {
                         WithPerceptionTracking {
                             ForEach(store.chainsToPresent, id: \.self) { chain in
@@ -124,6 +144,8 @@ extension AddressBookContactView {
                     .padding(.vertical, 1)
                     .background(Asset.Colors.background.color)
                     .listStyle(.plain)
+                    .zashiHideListBackground()
+#endif
                 }
             }
         }

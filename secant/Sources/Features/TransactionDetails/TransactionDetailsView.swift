@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
 
@@ -16,7 +17,7 @@ struct TransactionDetailsView: View {
         case middle
         case top
         
-        var corners: UIRectCorner {
+        var corners: RectCorner {
             switch self {
             case .bottom:
                 return [.bottomLeft, .bottomRight]
@@ -34,7 +35,7 @@ struct TransactionDetailsView: View {
 
     @FocusState var isAnnotationFocused
 
-    @Perception.Bindable var store: StoreOf<TransactionDetails>
+    @PlatformBindable var store: StoreOf<TransactionDetails>
     let tokenName: String
 
     @Shared(.appStorage(.sensitiveContent)) var isSensitiveContentHidden = false
@@ -115,30 +116,37 @@ struct TransactionDetailsView: View {
                 
                 footer()
             }
-            .zashiSheet(isPresented: $store.isReportSwapSheetEnabled) {
-                reportSwapSheetContent()
-            }
             .zashiBack(hidden: store.isCloseButtonRequired) {
                 store.send(.closeDetailTapped)
             }
             .zashiBackV2(hidden: !store.isCloseButtonRequired) {
                 store.send(.closeDetailTapped)
             }
-            .navigationBarItems(
+            .zashiNavigationBarItems(
                 trailing:
                     HStack(spacing: 0) {
+#if !os(macOS)
+                        // macOS: the hide-balance eye lives in the split's left rail; keep the bookmark.
                         hideBalancesButton()
+#endif
                         bookmarkButton()
                     }
             )
             .onAppear { store.send(.onAppear) }
             .onDisappear { store.send(.onDisappear) }
-            .zashiSheet(isPresented: $store.annotationRequest) {
-                annotationContent(store.isEditMode)
-            }
         }
-        .navigationBarTitleDisplayMode(.inline)
+        .zashiNavBarTitleDisplayMode(.inline)
         .applyDefaultGradientScreenBackground()
+        // macOS: present the sheets AFTER applyDefaultGradientScreenBackground so the dimmed backdrop
+        // covers the FULL detail pane, not the max-width-capped (Rule #8) content column — a `.zashiSheet`
+        // is an overlay bound to the view it's attached to, so above the cap it clamps to `Design.Mac.viewCapWidth`. iOS
+        // (native `.sheet`) is modal regardless, so this is iOS-neutral.
+        .zashiSheet(isPresented: $store.isReportSwapSheetEnabled) {
+            reportSwapSheetContent()
+        }
+        .zashiSheet(isPresented: $store.annotationRequest) {
+            annotationContent(store.isEditMode)
+        }
     }
     
     @ViewBuilder func footer() -> some View {
@@ -252,6 +260,12 @@ extension TransactionDetailsView {
         Button {
             store.send(.bookmarkTapped)
         } label: {
+#if os(macOS)
+            // macOS 26 sizes the glass capsule to the icon's WIDTH — a bare SF symbol is narrow → a TALL
+            // capsule. Horizontal padding widens it to the same circular capsule as the back button.
+            Image(systemName: store.isBookmarked ? "bookmark.fill" : "bookmark")
+                .zashiToolbarIconPadding()
+#else
             if store.isBookmarked {
                 Asset.Assets.Icons.bookmarkCheck.image
                     .zImage(size: 32, style: Design.Text.primary)
@@ -263,6 +277,7 @@ extension TransactionDetailsView {
                     .padding(4)
                     .tint(Asset.Colors.primary.color)
             }
+#endif
         }
     }
     

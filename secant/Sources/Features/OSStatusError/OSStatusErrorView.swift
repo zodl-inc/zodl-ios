@@ -6,12 +6,13 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 
 struct OSStatusErrorView: View {
     @Environment(\.colorScheme) private var colorScheme
     
-    @Perception.Bindable var store: StoreOf<OSStatusError>
+    @PlatformBindable var store: StoreOf<OSStatusError>
     
     init(store: StoreOf<OSStatusError>) {
         self.store = store
@@ -31,27 +32,33 @@ struct OSStatusErrorView: View {
                     }
                     .rotationEffect(.degrees(180))
 
-                Text(localizable: .osStatusErrorTitle)
+                Text(localizable: store.secureEnclaveUnavailable ? .osStatusErrorSecureEnclaveTitle : .osStatusErrorTitle)
                     .zFont(.semiBold, size: 24, style: Design.Text.primary)
                     .padding(.top, 16)
                     .padding(.bottom, 12)
 
-                Text(localizable: .osStatusErrorMessage)
+                Text(localizable: store.secureEnclaveUnavailable ? .osStatusErrorSecureEnclaveMessage : .osStatusErrorMessage)
                     .zFont(size: 14, style: Design.Text.primary)
                     .multilineTextAlignment(.center)
                     .lineSpacing(3)
-                    .padding(.bottom, 12)
+                    .padding(.bottom, store.secureEnclaveUnavailable ? 100 : 12)
 
-                Text(localizable: .osStatusErrorError(String(format: "%d", store.osStatus)))
-                    .zFont(.medium, size: 14, style: Design.Text.primary)
-                    .padding(.bottom, 100)
+                // A keychain OSStatus code and Contact Support are meaningless for a missing-hardware case,
+                // so the Secure-Enclave-unavailable screen is purely informational (no code, no button).
+                if !store.secureEnclaveUnavailable {
+                    Text(localizable: .osStatusErrorError(String(format: "%d", store.osStatus)))
+                        .zFont(.medium, size: 14, style: Design.Text.primary)
+                        .padding(.bottom, 100)
+                }
 
                 Spacer()
-                
-                ZashiButton(String(localizable: .errorPageActionContactSupport)) {
-                    store.send(.sendSupportMail)
+
+                if !store.secureEnclaveUnavailable {
+                    ZashiButton(String(localizable: .errorPageActionContactSupport)) {
+                        store.send(.sendSupportMail)
+                    }
+                    .padding(.bottom, 24)
                 }
-                .padding(.bottom, 24)
                 
                 if let supportData = store.supportData {
                     UIMailDialogView(

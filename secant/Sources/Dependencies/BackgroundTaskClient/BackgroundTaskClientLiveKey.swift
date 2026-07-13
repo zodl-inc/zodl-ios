@@ -3,6 +3,7 @@
 //  Zashi
 //
 
+#if canImport(UIKit)
 // @preconcurrency: BGContinuedProcessingTask is an Apple framework class (BackgroundTasks)
 // not yet annotated Sendable. The compiler itself recommends this import in its hint.
 @preconcurrency import BackgroundTasks
@@ -41,11 +42,11 @@ extension BackgroundTaskClient: DependencyKey {
         return Self(
             beginTask: { name in
                 await MainActor.run {
-                    UIApplication.shared.isIdleTimerDisabled = true
+                    PlatformIdleTimer.disabled = true
                     var taskId: UIBackgroundTaskIdentifier = .invalid
                     taskId = UIApplication.shared.beginBackgroundTask(withName: name) {
                         LoggerProxy.warn("Background task '\(name)' expired by iOS — ending task")
-                        UIApplication.shared.isIdleTimerDisabled = false
+                        PlatformIdleTimer.disabled = false
                         UIApplication.shared.endBackgroundTask(taskId)
                         taskId = .invalid
                     }
@@ -54,7 +55,7 @@ extension BackgroundTaskClient: DependencyKey {
             },
             endTask: { id in
                 await MainActor.run {
-                    UIApplication.shared.isIdleTimerDisabled = false
+                    PlatformIdleTimer.disabled = false
                     guard id != .invalid else { return }
                     UIApplication.shared.endBackgroundTask(id)
                 }
@@ -102,3 +103,11 @@ extension BackgroundTaskClient: DependencyKey {
         )
     }()
 }
+#else
+import ComposableArchitecture
+
+extension BackgroundTaskClient: DependencyKey {
+    // macOS: no UIKit background tasks; a Mac syncs while the app is open.
+    static let liveValue = Self.noOp
+}
+#endif

@@ -6,12 +6,13 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 
 struct AdvancedSettingsView: View {
     @Environment(\.colorScheme) private var colorScheme
     
-    @Perception.Bindable var store: StoreOf<AdvancedSettings>
+    @PlatformBindable var store: StoreOf<AdvancedSettings>
     @Shared(.inMemory(.walletStatus)) var walletStatus: WalletStatus = .none
     
     init(store: StoreOf<AdvancedSettings>) {
@@ -98,22 +99,13 @@ struct AdvancedSettingsView: View {
                 .zFont(size: 12, style: Design.Text.tertiary)
                 .padding(.bottom, 20)
 
-                Button {
+                // Rule #7 + consolidation: ZashiButton owns the macOS width cap (`Design.Mac.maxButtonWidth`) + the Destructive1
+                // styling — don't hand-roll a full-width destructive CTA. (Reset / Delete Zashi.)
+                ZashiButton(
+                    String(localizable: .settingsDeleteZashi),
+                    type: .destructive1
+                ) {
                     store.send(.operationAccessCheck(.resetZashi))
-                } label: {
-                    Text(localizable: .settingsDeleteZashi)
-                        .zFont(.semiBold, size: 16, style: Design.Btns.Destructive1.fg)
-                        .frame(height: 24)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 12)
-                        .background {
-                            RoundedRectangle(cornerRadius: Design.Radius._xl)
-                                .fill(Design.Btns.Destructive1.bg.color(colorScheme))
-                                .overlay {
-                                    RoundedRectangle(cornerRadius: Design.Radius._xl)
-                                        .stroke(Design.Btns.Destructive1.border.color(colorScheme))
-                                }
-                        }
                 }
                 .screenHorizontalPadding()
                 .padding(.bottom, 24)
@@ -121,7 +113,8 @@ struct AdvancedSettingsView: View {
         }
         .applyScreenBackground()
         .listStyle(.plain)
-        .navigationBarTitleDisplayMode(.inline)
+        .zashiHideListBackground()
+        .zashiNavBarTitleDisplayMode(.inline)
         .zashiBack()
         .screenTitle(String(localizable: .settingsAdvanced))
     }

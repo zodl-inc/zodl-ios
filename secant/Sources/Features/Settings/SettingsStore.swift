@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
 
@@ -132,7 +133,7 @@ struct Settings {
                 
             case .addressBookAccessCheck:
                 return .run { send in
-                    if await localAuthentication.authenticate() {
+                    if await localAuthentication.authenticate(for: .addressBook) {
                         await send(.addressBookTapped)
                     }
                 }

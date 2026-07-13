@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 import ComposableArchitecture
 
 private enum VotingChainDisplayURL {
@@ -72,6 +73,14 @@ struct VotingConfigSettingsView: View {
             .applyScreenBackground()
             .screenTitle(String(localizable: .coinVoteConfigSettingsScreenTitle))
             .zashiBack { store.send(.dismissTapped) }
+#if os(macOS)
+            .zashiSelectorSheet(isPresented: addCustomChainSheetBinding) {
+                addCustomChainSheet
+            }
+            .zashiSelectorSheet(isPresented: editCustomChainSheetBinding) {
+                editCustomChainSheet
+            }
+#else
             .sheet(isPresented: addCustomChainSheetBinding) {
                 addCustomChainSheet
                     .presentationDetents([.large])
@@ -82,6 +91,7 @@ struct VotingConfigSettingsView: View {
                     .presentationDetents([.large])
                     .presentationDragIndicator(.hidden)
             }
+#endif
             .onAppear {
                 store.send(.onAppear)
             }
@@ -148,7 +158,7 @@ struct VotingConfigSettingsView: View {
                 selectionIndicator(isSelected: isSelected)
                     .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .zashiPlainButtonStyle()
             .accessibilityLabel(selectAccessibilityLabel)
             .accessibilityAddTraits(isSelected ? .isSelected : [])
 
@@ -200,7 +210,7 @@ struct VotingConfigSettingsView: View {
             chainSourceCardContentRow(name: name, url: url, isDefault: isDefault, showChevron: showChevron)
                 .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .zashiPlainButtonStyle()
     }
 
     private func chainSourceCardContentRow(
@@ -254,7 +264,17 @@ struct VotingConfigSettingsView: View {
             }
     }
 
-private var bottomBar: some View {
+    // macOS caps the "add a custom source" affordance to ZashiButton's width (Rule #7) so it lines up
+    // with the Save button below; iOS keeps it full-width (byte-identical to before).
+    private var addSourceMaxWidth: CGFloat {
+#if os(macOS)
+        Design.Mac.maxButtonWidth
+#else
+        .infinity
+#endif
+    }
+
+    private var bottomBar: some View {
         VStack(spacing: 12) {
             Button {
                 store.send(.addCustomChainButtonTapped)
@@ -267,14 +287,19 @@ private var bottomBar: some View {
                         .zFont(.semiBold, size: 16, style: Design.Text.primary)
                         .tracking(-0.256)
                 }
-                .frame(maxWidth: .infinity)
+                .frame(maxWidth: addSourceMaxWidth)
                 .frame(height: 48)
                 .background {
                     RoundedRectangle(cornerRadius: Design.Radius._xl)
                         .fill(Design.Inputs.Default.bg.color(colorScheme))
                 }
+#if os(macOS)
+                // Capped above to ZashiButton's macOS width (Rule #7); expand + center so it lines up with
+                // the Save button below instead of stretching full-width.
+                .frame(maxWidth: .infinity, alignment: .center)
+#endif
             }
-            .buttonStyle(.plain)
+            .zashiPlainButtonStyle()
 
             ZashiButton(saveTitle) {
                 store.send(.saveTapped)
@@ -345,7 +370,10 @@ private var bottomBar: some View {
             .padding(.top, 12)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+#if !os(macOS)
+        // macOS presents this in a MacCard (Liquid Glass); a screen background would cover the glass.
         .applyScreenBackground()
+#endif
         .onAppear {
             focusedSourceField = isEditing ? .editTitle : .addTitle
         }
@@ -370,7 +398,7 @@ private var bottomBar: some View {
                                 .fill(Design.Btns.Tertiary.bg.color(colorScheme))
                         }
                 }
-                .buttonStyle(.plain)
+                .zashiPlainButtonStyle()
                 .accessibilityLabel(String(localizable: .coinVoteConfigSettingsAccessibilityClose))
 
                 Spacer()
@@ -474,8 +502,12 @@ private var bottomBar: some View {
                 .tracking(-0.256)
                 .lineLimit(1)
                 .truncationMode(.middle)
+#if os(iOS)
                 .keyboardType(isURL ? .URL : .default)
+#endif
+#if os(iOS)
                 .textInputAutocapitalization(isURL ? .never : .words)
+#endif
                 .autocorrectionDisabled()
                 .focused($focusedSourceField, equals: focusField)
             }
@@ -627,7 +659,7 @@ private var bottomBar: some View {
     }
 
     private var sourceFormSheetMinHeight: CGFloat {
-        max(620, UIScreen.main.bounds.height - 62)
+        max(620, PlatformScreen.bounds.height - 62)
     }
 }
 

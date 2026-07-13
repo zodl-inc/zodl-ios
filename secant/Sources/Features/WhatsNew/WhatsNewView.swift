@@ -6,12 +6,13 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 
 struct WhatsNewView: View {
     @Environment(\.colorScheme) var colorScheme
     
-    @Perception.Bindable var store: StoreOf<WhatsNew>
+    @PlatformBindable var store: StoreOf<WhatsNew>
     
     init(store: StoreOf<WhatsNew>) {
         self.store = store
@@ -25,7 +26,7 @@ struct WhatsNewView: View {
                 whatsNewView()
             }
         }
-        .navigationBarTitleDisplayMode(.inline)
+        .zashiNavBarTitleDisplayMode(.inline)
         .applyScreenBackground()
     }
     

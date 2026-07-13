@@ -4,6 +4,7 @@
 //
 
 import ComposableArchitecture
+import Combine
 
 @Reducer
 struct DelegationSigning {
@@ -32,7 +33,7 @@ struct DelegationSigningView: View {
     @Environment(\.colorScheme) var colorScheme
     @Dependency(\.sdkSynchronizer) var sdkSynchronizer
 
-    @Perception.Bindable var store: StoreOf<VotingCoordFlow>
+    @PlatformBindable var store: StoreOf<VotingCoordFlow>
     let roundId: String
 
     @State private var isQRCodeEnlarged = false
@@ -105,7 +106,14 @@ struct DelegationSigningView: View {
                 Group {
                     if let pczt = store.roundCache[roundId]?.pendingUnsignedDelegationPczt,
                        let encoder = sdkSynchronizer.urEncoderForPCZT(pczt) {
-                        AnimatedQRCode(urEncoder: encoder, size: UIScreen.main.bounds.width - 64)
+                        #if os(macOS)
+                        // No full device screen to fill — clamp to the capped content column so the
+                        // enlarged QR doesn't overflow the window. iOS fills the device width.
+                        let qrSize = Design.Mac.viewCapWidth - 64
+                        #else
+                        let qrSize = PlatformScreen.bounds.width - 64
+                        #endif
+                        AnimatedQRCode(urEncoder: encoder, size: qrSize)
                             .padding()
                             .background {
                                 RoundedRectangle(cornerRadius: Design.Radius._4xl)
@@ -117,8 +125,8 @@ struct DelegationSigningView: View {
             // While this screen is up the user typically steps away to fetch
             // and use their Keystone — keep the display awake so the QR stays
             // visible and the submission flow stays foregrounded.
-            .onAppear { UIApplication.shared.isIdleTimerDisabled = true }
-            .onDisappear { UIApplication.shared.isIdleTimerDisabled = false }
+            .onAppear { PlatformIdleTimer.disabled = true }
+            .onDisappear { PlatformIdleTimer.disabled = false }
         }
     }
 
@@ -234,7 +242,7 @@ struct DelegationSigningView: View {
     @ViewBuilder
     private func qrStatusView(text: String?) -> some View {
         VStack(spacing: 8) {
-            ProgressView()
+            ZashiSpinner()
             if let text {
                 Text(text)
                     .zFont(.medium, size: 13, style: Design.Text.tertiary)
@@ -355,7 +363,7 @@ struct DelegationSigningView: View {
             .padding(.vertical, 12)
             .frame(maxWidth: .infinity, minHeight: 60)
         }
-        .buttonStyle(.plain)
+        .zashiPlainButtonStyle()
     }
 
     @ViewBuilder

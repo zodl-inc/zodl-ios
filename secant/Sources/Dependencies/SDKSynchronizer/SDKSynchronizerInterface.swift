@@ -38,7 +38,10 @@ struct SDKSynchronizerClient: Sendable {
     let exchangeRateUSDStream: @Sendable () -> AnyPublisher<FiatCurrencyResult?, Never>
     let latestState: @Sendable () -> SynchronizerState
     
-    let prepareWith: @Sendable ([UInt8], BlockHeight, WalletInitMode, String, String?) async throws -> Void
+    /// Seed is OPTIONAL: pass it only on first init (account import). Once the wallet exists in
+    /// `data.db`, pass `nil` — the SDK prepares from the stored accounts and the seed never needs to
+    /// be decrypted at launch (see docs/macos/KEYCHAIN_SE_HARDENING.md).
+    let prepareWith: @Sendable ([UInt8]?, BlockHeight?, String, String?) async throws -> Void
     let start: @Sendable (_ retry: Bool) async throws -> Void
     let stop: @Sendable () -> Void
     let isSyncing: @Sendable () -> Bool
@@ -65,6 +68,12 @@ struct SDKSynchronizerClient: Sendable {
     var wipe: @Sendable () -> AnyPublisher<Void, Error>?
     
     var switchToEndpoint: @Sendable (LightWalletEndpoint) async throws -> Void
+    /// [#1755] v0.7 P1b: replaces the slipstream engine's alternate-server list — the
+    /// per-pass probe grid + mid-pass failover candidates. Consent-gated by the user's
+    /// connection mode exactly like submission fan-out: Automatic -> all known servers,
+    /// Manual -> EMPTY (the pinned server is used exclusively; probe and failover never
+    /// run). No-op on the old SDKSynchronizer engine.
+    var setAlternateEndpoints: @Sendable ([LightWalletEndpoint]) async -> Void
     
     // Proposals
     var proposeTransfer: @Sendable (AccountUUID, Recipient, Zatoshi, Memo?) async throws -> Proposal

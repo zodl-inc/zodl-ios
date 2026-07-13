@@ -6,13 +6,14 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 
 // FIXME: Candidate for removal from the project
 struct CrossPayConfirmationView: View {
     @Environment(\.colorScheme) private var colorScheme
     
-    @Perception.Bindable var store: StoreOf<SwapAndPay>
+    @PlatformBindable var store: StoreOf<SwapAndPay>
     let tokenName: String
     
     init(store: StoreOf<SwapAndPay>, tokenName: String) {

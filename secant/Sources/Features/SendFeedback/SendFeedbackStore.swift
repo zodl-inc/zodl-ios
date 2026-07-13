@@ -6,7 +6,10 @@
 //
 
 import ComposableArchitecture
+import Combine
+#if canImport(MessageUI)
 import MessageUI
+#endif
 
 @Reducer
 struct SendFeedback {
@@ -54,7 +57,7 @@ struct SendFeedback {
                 state.memoState.text = ""
                 state.selectedRating = 4
                 // TCA Store is @MainActor; reducer body always runs on main.
-                state.canSendMail = MainActor.assumeIsolated { MFMailComposeViewController.canSendMail() }
+                state.canSendMail = MailSupport.canSendMail()
                 return .none
 
             case .sendTapped:

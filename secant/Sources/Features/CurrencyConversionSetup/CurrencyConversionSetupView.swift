@@ -6,11 +6,12 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 
 struct CurrencyConversionSetupView: View {
     @Environment(\.colorScheme) private var colorScheme
-    @Perception.Bindable var store: StoreOf<CurrencyConversionSetup>
+    @PlatformBindable var store: StoreOf<CurrencyConversionSetup>
     
     init(store: StoreOf<CurrencyConversionSetup>) {
         self.store = store
@@ -41,14 +42,20 @@ struct CurrencyConversionSetupView: View {
             .zashiSheet(isPresented: $store.isTorSheetPresented) {
                 torSheetContent()
             }
+#if os(macOS)
+            .zashiSelectorSheet(isPresented: $store.isCurrencyPickerSheetPresented) {
+                currencyPickerSheetContent()
+            }
+#else
             .sheet(isPresented: $store.isCurrencyPickerSheetPresented) {
                 currencyPickerSheetContent()
                     .applySheetBackground()
                     .presentationDetents([.large])
                     .presentationDragIndicator(.visible)
             }
+#endif
         }
-        .navigationBarTitleDisplayMode(.inline)
+        .zashiNavBarTitleDisplayMode(.inline)
         .applyScreenBackground()
     }
     
@@ -189,7 +196,7 @@ struct CurrencyConversionSetupView: View {
                     Button {
                         store.send(.binding(.set(\.isCurrencyPickerSheetPresented, false)))
                     } label: {
-                        if #available(iOS 26.0, *) {
+                        if #available(iOS 26.0, macOS 26.0, *) {
                             Asset.Assets.buttonCloseX.image
                                 .zImage(size: 20, style: Design.Text.primary)
                                 .padding(10)
@@ -242,7 +249,7 @@ struct CurrencyConversionSetupView: View {
                             .padding(.vertical, 20)
                             .contentShape(Rectangle())
                         }
-                        .buttonStyle(.plain)
+                        .zashiPlainButtonStyle()
 
                         if index < CurrencyISO4217.allCases.count - 1 {
                             Design.Surfaces.divider.color(colorScheme)
@@ -369,15 +376,8 @@ extension CurrencyConversionSetupView {
     }
     
     private func note() -> some View {
-        HStack(alignment: .top, spacing: 0) {
-            Asset.Assets.infoCircle.image
-                .zImage(size: 20, style: Design.Text.primary)
-                .padding(.trailing, 12)
-
-            Text(localizable: .currencyConversionNote)
-                .zFont(size: 12, style: Design.Text.tertiary)
-        }
-        .screenHorizontalPadding()
+        HintBox(String(localizable: .currencyConversionNote))
+            .screenHorizontalPadding()
     }
     
     private func optionVStack(_ title: String, subtitle: String) -> some View {

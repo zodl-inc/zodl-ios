@@ -1,4 +1,7 @@
+#if canImport(UIKit)
 import UIKit
+#endif
+import Combine
 import SwiftUI
 @preconcurrency import AVFoundation
 import ComposableArchitecture
@@ -325,11 +328,23 @@ struct Home {
             case .keystoneBannerTapped:
                 state.accountSwitchRequest = false
                 return .run { send in
+#if os(macOS)
+                    // [B4-11] Only needs to outlast the account-switch card's CLOSE animation —
+                    // the macOS sheet host (MacSplitView) has no presentation conflict with the
+                    // closing overlay, so this is purely visual pacing. Field: 1 s felt long.
+                    try? await mainQueue.sleep(for: .seconds(0.35))
+#else
                     try? await mainQueue.sleep(for: .seconds(1))
+#endif
                     await send(.presentKeystoneWeb)
                 }
 
             case .presentKeystoneWeb:
+                // [B4-11] In-app on both platforms. The old macOS failure was (very likely) NOT the
+                // present-after-MacCard trap: the sheet host lived on HomeView, which is absent from
+                // the macOS view tree — the flag flipped with nobody listening. macOS now hosts the
+                // sheet in MacSplitView (like the account-switch card). If the trap does still bite,
+                // fall back to NSWorkspace.shared.open (external browser) here.
                 state.isInAppBrowserKeystoneOn = true
                 return .none
 

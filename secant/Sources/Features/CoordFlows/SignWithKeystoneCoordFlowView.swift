@@ -6,12 +6,13 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 
 struct SignWithKeystoneCoordFlowView: View {
     @Environment(\.colorScheme) var colorScheme
 
-    @Perception.Bindable var store: StoreOf<SignWithKeystoneCoordFlow>
+    @PlatformBindable var store: StoreOf<SignWithKeystoneCoordFlow>
     let tokenName: String
 
     init(store: StoreOf<SignWithKeystoneCoordFlow>, tokenName: String) {
@@ -30,7 +31,7 @@ struct SignWithKeystoneCoordFlowView: View {
                         ),
                     tokenName: tokenName
                 )
-                .navigationBarHidden(true)
+                .zashiNavigationBarHidden(true)
             } destination: { store in
                 switch store.case {
                 case let .preSendingFailure(store):
@@ -49,10 +50,20 @@ struct SignWithKeystoneCoordFlowView: View {
                     TransactionDetailsView(store: store, tokenName: tokenName)
                 }
             }
-            .navigationBarHidden(!store.path.isEmpty)
+            .zashiNavigationBarHidden(!store.path.isEmpty)
         }
-        .applyScreenBackground()
-        .zashiBack()
+        // `capped: false` at the flow level (Rule #9, scan exemption — same as SendCoordFlow,
+        // which hosts the IDENTICAL destination set): a capped flow background framed the whole
+        // NavigationStack to the content column, shrinking the pushed full-window ScanView (the
+        // "maxWidth-capped scanner" in the Keystone SHIELDING sign flow). The root
+        // SignWithKeystoneView applies its OWN capped background, so content screens keep their
+        // column; the scan's full-window background wins.
+        .applyScreenBackground(capped: false)
+        // macOS: this flow is a full-window takeover (MacSplitView), so there is nothing to go "back"
+        // to at its root — and a `.zashiBack()` there renders a toolbar button whose `dismiss()` acts on
+        // the window itself (looked like Zodl minimizing). `zashiSectionRootBack` renders nothing on
+        // macOS; Reject is the escape. iOS is unchanged (still `.zashiBack()`).
+        .zashiSectionRootBack()
     }
 }
 

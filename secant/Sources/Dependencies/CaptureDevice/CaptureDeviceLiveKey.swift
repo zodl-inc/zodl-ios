@@ -17,13 +17,18 @@ extension CaptureDeviceClient: DependencyKey {
                 AVCaptureDevice.authorizationStatus(for: .video) == .authorized
             },
             isTorchAvailable: {
+#if os(iOS)
                 guard let videoCaptureDevice = AVCaptureDevice.default(for: .video) else {
                     return false
                 }
 
                 return videoCaptureDevice.hasTorch
+#else
+                return false
+#endif
             },
             torch: { isTorchOn in
+#if os(iOS)
                 var device: AVCaptureDevice?
 
                 if #available(iOS 17, *) {
@@ -51,6 +56,10 @@ extension CaptureDeviceClient: DependencyKey {
                 } else {
                     throw CaptureDeviceClientError.torchUnavailable
                 }
+#else
+                _ = isTorchOn
+                throw CaptureDeviceClientError.torchUnavailable
+#endif
             }
 
         )

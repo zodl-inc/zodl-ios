@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 
 struct Toast: ViewModifier {
@@ -93,7 +94,7 @@ struct Toast: ViewModifier {
 
     @ViewBuilder
     private func toastLabel(_ message: String) -> some View {
-        if #available(iOS 26.0, *) {
+        if #available(iOS 26.0, macOS 26.0, *) {
             Text(message)
                 .zFont(size: 14, style: Design.Btns.Primary.bg)
                 .padding(.horizontal, 20)

@@ -4,6 +4,7 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 
 /// First-time intro shown to users who have not yet seen the Coinholder
@@ -63,9 +64,13 @@ struct HowToVoteView: View {
                 .padding(.horizontal, 24)
                 .padding(.bottom, 24)
             }
-            .applyScreenBackground()
+            // macOS: this intro is taller than the fixed pane, so without scroll-within-pane the
+            // centered content renders ABOVE the window and grows the window/sidebar. `scrollable: true`
+            // clamps it to the pane and scrolls instead (macScrollableContent — names this "voting intro").
+            // No-op on iOS (Rule #11), where the inner ScrollView + pinned CTA already handle it.
+            .applyScreenBackground(scrollable: true)
             .screenTitle(String(localizable: .coinVoteCommonScreenTitle))
-            .zashiBack { store.send(.dismissFlow) }
+            .zashiSectionRootBack { store.send(.dismissFlow) }
         }
     }
 

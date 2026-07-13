@@ -6,9 +6,12 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
+#if canImport(MessageUI)
 import MessageUI
+#endif
 
 @Reducer
 struct SendConfirmation {
@@ -202,7 +205,11 @@ struct SendConfirmation {
             switch action {
             case .onAppear:
                 // __LD TESTED
-                state.pcztForUI = nil
+                // NB: do NOT reset `pcztForUI` here. It is produced once by `.resolvePCZT` and cleared
+                // only by `.resetPCZTs` (reject / completion). macOS re-fires `onAppear` on a window
+                // minimize/restore; clearing it here wiped the live Keystone signing QR mid-flow (the
+                // screen fell back to a spinner). Each flow already enters with a fresh `.initial` state
+                // (pcztForUI == nil), so the reset was redundant for fresh entry anyway.
                 state.partialFailureTxIds = []
                 state.partialFailureStatuses = []
                 state.pendingDescription = nil
@@ -213,7 +220,7 @@ struct SendConfirmation {
                 state.randomResubmissionIconIndex = Int.random(in: 1...2)
                 state.isTransparentAddress = derivationTool.isTransparentAddress(state.address, zcashSDKEnvironment.network().networkType)
                 // TCA Store is @MainActor; reducer body always runs on main.
-                state.canSendMail = MainActor.assumeIsolated { MFMailComposeViewController.canSendMail() }
+                state.canSendMail = MailSupport.canSendMail()
                 state.alias = nil
                 for contact in state.addressBookContacts.contacts {
                     if contact.address == state.address {
@@ -263,11 +270,14 @@ struct SendConfirmation {
             case .sendTapped:
                 state.isSending = true
                 return .run { send in
-                    guard await localAuthentication.authenticate() else {
+                    // macOS: the Secure-Enclave seed decrypt in `.sendTriggered` is itself the biometric
+                    // gate, so an app-level prompt here would be a redundant SECOND auth — defer to it
+                    // (`authenticateForSeedDecrypt` returns true without prompting on macOS). iOS prompts.
+                    guard await localAuthentication.authenticateForSeedDecrypt(for: .sendFunds) else {
                         await send(.stopSending)
                         return
                     }
-                    
+
                     await send(.sendRequested)
                 }
 
@@ -290,7 +300,7 @@ struct SendConfirmation {
                 }
                 return .run { send in
                     do {
-                        let storedWallet = try walletStorage.exportWallet()
+                        let storedWallet = try await walletStorage.exportWallet(AuthenticationContext.sendFunds.localizedReason)
                         let seedBytes = try mnemonic.toSeed(storedWallet.seedPhrase.value())
                         let network = zcashSDKEnvironment.network().networkType
                         let spendingKey = try derivationTool.deriveSpendingKey(seedBytes, zip32AccountIndex, network)
@@ -413,13 +423,21 @@ struct SendConfirmation {
 
                 \(state.failedPcztMsg ?? "")
                 """
+#if os(macOS)
+                // macOS has no in-app composer; UIMailDialogView opens the default mail client via a
+                // `mailto:` URL and MailSupport.canSendMail() is always true here. The failure screen is a
+                // separate CoordFlow destination that never runs the confirmation screen's canSendMail probe,
+                // so route the report straight to mail. iOS keeps its canSendMail-gated share fallback.
+                state.supportData = supportData
+#else
                 if state.canSendMail {
                     state.supportData = supportData
                 } else {
                     state.messageToBeShared = supportData.message
                 }
+#endif
                 return .none
-                
+
             case .sendSupportMailFinished:
                 state.supportData = nil
                 return .none

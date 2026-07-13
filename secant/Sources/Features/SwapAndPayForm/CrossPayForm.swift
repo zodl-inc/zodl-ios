@@ -6,12 +6,13 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 
 extension SwapAndPayForm {
     @ViewBuilder func crossPayFormView(_ colorScheme: ColorScheme) -> some View {
         WithPerceptionTracking {
-            ScrollView {
+            PlatformScrollable {
                 VStack(spacing: 0) {
                     WithPerceptionTracking {
                         WalletBalancesView(
@@ -49,7 +50,9 @@ extension SwapAndPayForm {
                                         title: String(localizable: .sendAmount),
                                         error: store.isCrossPayInsufficientFunds ? String(localizable: .sendErrorInsufficientFunds) : nil
                                     )
+#if os(iOS)
                                     .keyboardType(.decimalPad)
+#endif
                                     .focused($isAmountFocused)
 
                                     Asset.Assets.Icons.switchHorizontal.image
@@ -65,7 +68,9 @@ extension SwapAndPayForm {
                                             Asset.Assets.Icons.currencyDollar.image
                                             .zImage(size: 20, style: Design.Inputs.Default.text)
                                     )
+#if os(iOS)
                                     .keyboardType(.decimalPad)
+#endif
                                     .focused($isUsdFocused)
                                     .padding(.top, 23)
                                 }
@@ -128,7 +133,7 @@ extension SwapAndPayForm {
                             if store.isQuoteRequestInFlight {
                                 ZashiButton(
                                     String(localizable: .sendReview),
-                                    accessoryView: ProgressView()
+                                    accessoryView: ZashiSpinner(macTint: .buttonAccessory)
                                 ) { }
                                     .disabled(true)
                                     .padding(.top, keyboardVisible ? 40 : 0)
@@ -146,7 +151,13 @@ extension SwapAndPayForm {
                     }
                 }
                 .ignoresSafeArea()
+#if os(macOS)
+                // macOS: fill the fixed window (the screen-height minHeight overflows it); the existing
+                // Spacers then pin the CTA to the bottom with no scroll — content-top / CTA-bottom.
+                .frame(maxHeight: .infinity)
+#else
                 .frame(minHeight: keyboardVisible ? 0 : safeAreaHeight)
+#endif
                 .screenHorizontalPadding()
             }
             .padding(.vertical, 1)
@@ -156,13 +167,13 @@ extension SwapAndPayForm {
                 isAddressFocused = false
             }
             .applyScreenBackground()
+#if os(iOS)
             .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
                 store.send(.willEnterForeground)
             }
-            .popover(isPresented: $store.assetSelectBinding) {
+#endif
+            .zashiSelectorSheet(isPresented: $store.assetSelectBinding) {
                 assetContent(colorScheme)
-                    .padding(.horizontal, 4)
-                    .applyScreenBackground()
             }
             .zashiSheet(isPresented: $store.isQuotePresented) {
                 quoteContent(colorScheme)
@@ -173,6 +184,11 @@ extension SwapAndPayForm {
             .zashiSheet(isPresented: $store.isCancelSheetVisible) {
                 cancelSheetContent(colorScheme)
             }
+#if os(macOS)
+            .zashiSheet(isPresented: $store.isSlippagePresented) {
+                slippageContent(colorScheme)
+            }
+#else
             .sheet(isPresented: $store.isSlippagePresented) {
                 slippageContent(colorScheme)
                     .screenHorizontalPadding()
@@ -189,8 +205,7 @@ extension SwapAndPayForm {
                                 Spacer()
                                 
                                 Button {
-                                    UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder),
-                                                                    to: nil, from: nil, for: nil)
+                                    PlatformKeyboard.dismiss()
                                 } label: {
                                     Text(String(localizable: .generalDone).uppercased())
                                         .zFont(.regular, size: 14, style: Design.Text.primary)
@@ -205,6 +220,7 @@ extension SwapAndPayForm {
                         }
                     )
             }
+#endif
             .zashiSheet(isPresented: $store.balancesBinding) {
                 WithPerceptionTracking {
                     BalancesView(
@@ -279,10 +295,12 @@ extension SwapAndPayForm {
         }
         .onAppear {
             store.send(.onAppear)
+#if os(iOS)
             if let window = UIApplication.shared.windows.first {
                 let safeFrame = window.safeAreaLayoutGuide.layoutFrame
                 safeAreaHeight = safeFrame.height
             }
+#endif
         }
     }
 }

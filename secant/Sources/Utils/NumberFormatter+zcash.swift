@@ -8,7 +8,7 @@
 import Foundation
 
 extension NumberFormatter {
-    static let zcashNumberFormatter: NumberFormatter = {
+    nonisolated static let zcashNumberFormatter: NumberFormatter = {
         var formatter = NumberFormatter()
         formatter.maximumFractionDigits = 8
         formatter.maximumIntegerDigits = 8
@@ -17,7 +17,7 @@ extension NumberFormatter {
         return formatter
     }()
     
-    static let zcashNumberFormatter8FractionDigits: NumberFormatter = {
+    nonisolated static let zcashNumberFormatter8FractionDigits: NumberFormatter = {
         var formatter = NumberFormatter()
         formatter.minimumFractionDigits = 8
         formatter.maximumIntegerDigits = 8
@@ -49,7 +49,7 @@ extension NumberFormatter {
         return formatter
     }()
     
-    static let zcashUSNumberFormatter: NumberFormatter = {
+    nonisolated static let zcashUSNumberFormatter: NumberFormatter = {
         var formatter = NumberFormatter()
         formatter.maximumFractionDigits = 8
         formatter.maximumIntegerDigits = 8

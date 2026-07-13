@@ -7,7 +7,9 @@
 
 import Foundation
 import ComposableArchitecture
+#if canImport(UIKit)
 import UIKit
+#endif
 
 extension TaxExporterClient: DependencyKey {
     static let liveValue = Self.live()

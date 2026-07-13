@@ -6,12 +6,13 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 
 extension SwapAndPayForm {
     @ViewBuilder func swapFormView(_ colorScheme: ColorScheme) -> some View {
         WithPerceptionTracking {
-            ScrollView {
+            PlatformScrollable {
                 VStack(spacing: 0) {
                     if store.isSwapExperienceEnabled {
                         fromView(colorScheme)
@@ -92,7 +93,7 @@ extension SwapAndPayForm {
                             if store.isQuoteRequestInFlight {
                                 ZashiButton(
                                     String(localizable: .swapAndPayGetQuote),
-                                    accessoryView: ProgressView()
+                                    accessoryView: ZashiSpinner(macTint: .buttonAccessory)
                                 ) { }
                                     .disabled(true)
                                     .padding(.bottom, 56)
@@ -109,7 +110,13 @@ extension SwapAndPayForm {
                     }
                 }
                 .ignoresSafeArea()
+#if os(macOS)
+                // macOS: fill the fixed window (the screen-height minHeight overflows it); the existing
+                // Spacers then pin the CTA to the bottom with no scroll — content-top / CTA-bottom.
+                .frame(maxHeight: .infinity)
+#else
                 .frame(minHeight: keyboardVisible ? 0 : safeAreaHeight)
+#endif
                 .screenHorizontalPadding()
             }
             .padding(.top, 1)
@@ -119,13 +126,13 @@ extension SwapAndPayForm {
                 isAddressFocused = false
             }
             .applyScreenBackground()
+#if os(iOS)
             .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
                 store.send(.willEnterForeground)
             }
-            .popover(isPresented: $store.assetSelectBinding) {
+#endif
+            .zashiSelectorSheet(isPresented: $store.assetSelectBinding) {
                 assetContent(colorScheme)
-                    .padding(.horizontal, 4)
-                    .applyScreenBackground()
             }
             .overlayPreferenceValue(UnknownAddressPreferenceKey.self) { preferences in
                 if isAddressFocused && store.isAddressBookHintVisible {
@@ -183,6 +190,11 @@ extension SwapAndPayForm {
                     .opacity(keyboardVisible ? 1 : 0)
                 }
             )
+#if os(macOS)
+            .zashiSheet(isPresented: $store.isSlippagePresented) {
+                slippageContent(colorScheme)
+            }
+#else
             .sheet(isPresented: $store.isSlippagePresented) {
                 slippageContent(colorScheme)
                     .screenHorizontalPadding()
@@ -199,8 +211,7 @@ extension SwapAndPayForm {
                                 Spacer()
                                 
                                 Button {
-                                    UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder),
-                                                                    to: nil, from: nil, for: nil)
+                                    PlatformKeyboard.dismiss()
                                 } label: {
                                     Text(String(localizable: .generalDone).uppercased())
                                         .zFont(.regular, size: 14, style: Design.Text.primary)
@@ -215,6 +226,7 @@ extension SwapAndPayForm {
                         }
                     )
             }
+#endif
             .zashiSheet(isPresented: $store.isQuotePresented) {
                 quoteContent(colorScheme)
             }
@@ -233,10 +245,12 @@ extension SwapAndPayForm {
         }
         .onAppear {
             store.send(.onAppear)
+#if os(iOS)
             if let window = UIApplication.shared.windows.first {
                 let safeFrame = window.safeAreaLayoutGuide.layoutFrame
                 safeAreaHeight = safeFrame.height
             }
+#endif
         }
     }
     
@@ -272,7 +286,7 @@ extension SwapAndPayForm {
                             )
                             
                             if store.spendability == .nothing {
-                                ProgressView()
+                                ZashiSpinner()
                                     .scaleEffect(0.7)
                                     .frame(width: 11, height: 14)
                             }
@@ -306,6 +320,18 @@ extension SwapAndPayForm {
                             
                             Spacer()
                             
+#if os(macOS)
+                            // B4-8: SwiftUI's macOS TextField edits large custom fonts on a broken
+                            // fixed baseline (usesSingleLineMode) — see MacAmountTextField.
+                            MacAmountTextField(
+                                text: $store.amountText,
+                                placeholder: store.localePlaceholder,
+                                autoFocusOnAppear: true
+                            )
+                            .disabled(store.isQuoteRequestInFlight)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 32)
+#else
                             TextField(
                                 "",
                                 text: $store.amountText,
@@ -330,6 +356,7 @@ extension SwapAndPayForm {
                                     isAmountFocused = true
                                 }
                             }
+#endif
                         }
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
@@ -448,6 +475,16 @@ extension SwapAndPayForm {
                         
                         Spacer()
                         
+#if os(macOS)
+                        // B4-8: same broken-baseline class as the field above — see MacAmountTextField.
+                        MacAmountTextField(
+                            text: $store.amountText,
+                            placeholder: store.localePlaceholder
+                        )
+                        .disabled(store.isQuoteRequestInFlight)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 32)
+#else
                         TextField(
                             "",
                             text: $store.amountText,
@@ -467,6 +504,7 @@ extension SwapAndPayForm {
                         .multilineTextAlignment(.trailing)
                         .accentColor(Design.Text.primary.color(colorScheme))
                         .focused($isAmountFocused)
+#endif
                     }
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)

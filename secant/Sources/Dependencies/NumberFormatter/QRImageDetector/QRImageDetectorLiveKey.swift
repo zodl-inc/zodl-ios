@@ -7,6 +7,10 @@
 
 import ComposableArchitecture
 import CoreImage
+#if !canImport(UIKit)
+import AppKit
+import Vision
+#endif
 
 extension QRImageDetectorClient: DependencyKey {
     static let liveValue = Self.live()
@@ -14,6 +18,7 @@ extension QRImageDetectorClient: DependencyKey {
     static func live() -> Self {
         Self(
             check: { image in
+#if canImport(UIKit)
                 guard let image else { return nil }
                 guard let ciImage = CIImage(image: image) else { return nil }
 
@@ -25,6 +30,19 @@ extension QRImageDetectorClient: DependencyKey {
                 return features?.compactMap {
                     ($0 as? CIQRCodeFeature)?.messageString
                 }
+#else
+                guard let image,
+                      let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+                    return nil
+                }
+                let request = VNDetectBarcodesRequest()
+                request.symbologies = [.qr]
+                try? VNImageRequestHandler(cgImage: cgImage, options: [:]).perform([request])
+                let codes = ((request.results as? [VNBarcodeObservation]) ?? [])
+                    .filter { $0.symbology == .qr }
+                    .compactMap { $0.payloadStringValue }
+                return codes.isEmpty ? nil : codes
+#endif
             }
         )
     }

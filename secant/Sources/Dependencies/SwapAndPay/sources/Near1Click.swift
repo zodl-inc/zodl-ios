@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import Combine
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
 
@@ -220,7 +221,12 @@ struct Near1Click {
     /// before curation. `swapAssets` returns `curated(...)` of this (the offering);
     /// `swapAssetsCatalog` returns this full list (for resolving historical assets).
     static func fetchAllAssets() async throws -> [SwapAsset] {
-        let (data, _) = try await Near1Click.getCall(urlString: Constants.tokensUrl)
+        // Send the Bearer JWT like every other 1click call (quote/submit/status). /tokens was the
+        // only unauthenticated one; 1click sits behind Cloudflare, whose bot-management resets the
+        // TLS connection of unauthenticated CFNetwork (URLSession) requests — which surfaced as a
+        // transport URLError on macOS while `curl` (different TLS fingerprint) and the authenticated
+        // CMC call both worked. Authenticating makes it a trusted request.
+        let (data, _) = try await Near1Click.getCall(urlString: Constants.tokensUrl, includeJwtKey: true)
 
         guard let jsonObject = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
             throw URLError(.cannotParseResponse)
@@ -378,7 +384,7 @@ extension Near1Click {
             )
         },
         status: { depositAddress, isSwapToZec in
-            let (data, response) = try await Near1Click.getCall(urlString: "\(Constants.statusUrl)\(depositAddress)", includeJwtKey: true)
+            let (data, _) = try await Near1Click.getCall(urlString: "\(Constants.statusUrl)\(depositAddress)", includeJwtKey: true)
 
             guard let jsonObject = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
                 throw SwapAndPayClient.EndpointError.message("Check status: Cannot parse response")
@@ -390,6 +396,13 @@ extension Near1Click {
             
             var status: SwapDetails.Status
             
+            // [B4-14 root cause — Lukas, 2026-07-02] Any TERMINAL status missing from these
+            // switches falls into `default: .pending` and the swap stays "Paying…/Swapping…"
+            // FOREVER (the auto-update flip gate requires `!status.isPending`). The from-ZEC
+            // branch was missing FAILED — a crosspay whose Near fill failed never terminated.
+            // EXPIRED was missing from BOTH branches (same forever-pending class). Every status
+            // the API documents is now mapped explicitly in both branches; `default` remains
+            // only for statuses Near may add in the future (deliberately non-terminal).
             if isSwapToZec {
                 status = switch statusStr {
                 case SwapConstants.pendingDeposit: .pendingDeposit
@@ -398,6 +411,7 @@ extension Near1Click {
                 case SwapConstants.failed: .failed
                 case SwapConstants.incompleteDeposit: .incompleteDeposit
                 case SwapConstants.processing: .processing
+                case SwapConstants.expired: .expired
                 default: .pending
                 }
             } else {
@@ -406,6 +420,9 @@ extension Near1Click {
                 case SwapConstants.pendingDeposit: .pending
                 case SwapConstants.refunded: .refunded
                 case SwapConstants.success: .success
+                case SwapConstants.failed: .failed
+                case SwapConstants.processing: .processing
+                case SwapConstants.expired: .expired
                 default: .pending
                 }
             }
@@ -419,11 +436,11 @@ extension Near1Click {
                 throw SwapAndPayClient.EndpointError.message("Check status: Missing `swapType` parameter.")
             }
 
-            guard var fromAsset = quoteRequestDict[Constants.originAsset] as? String else {
+            guard let fromAsset = quoteRequestDict[Constants.originAsset] as? String else {
                 throw SwapAndPayClient.EndpointError.message("Check status: Missing `originAsset` parameter.")
             }
 
-            guard var toAsset = quoteRequestDict[Constants.destinationAsset] as? String else {
+            guard let toAsset = quoteRequestDict[Constants.destinationAsset] as? String else {
                 throw SwapAndPayClient.EndpointError.message("Check status: Missing `destinationAsset` parameter.")
             }
             

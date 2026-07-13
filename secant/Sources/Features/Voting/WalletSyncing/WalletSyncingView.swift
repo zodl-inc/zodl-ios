@@ -4,6 +4,7 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 
 /// Shown while the wallet's contiguous-from-birthday scan height is below
@@ -48,7 +49,7 @@ struct WalletSyncingView: View {
             }
             .applyScreenBackground()
             .screenTitle(String(localizable: .coinVoteCommonScreenTitle))
-            .zashiBack { store.send(.dismissFlow) }
+            .zashiSectionRootBack { store.send(.dismissFlow) }
         }
     }
 }

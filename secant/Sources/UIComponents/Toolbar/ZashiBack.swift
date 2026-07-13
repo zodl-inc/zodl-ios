@@ -23,7 +23,7 @@ struct ZashiBackModifier: ViewModifier {
             content
                 .navigationBarBackButtonHidden(true)
                 .toolbar {
-                    ToolbarItem(placement: .navigationBarLeading) {
+                    ToolbarItem(placement: .zashiLeading) {
                         Button {
                             if let customDismiss {
                                 customDismiss()
@@ -31,6 +31,10 @@ struct ZashiBackModifier: ViewModifier {
                                 dismiss()
                             }
                         } label: {
+#if os(macOS)
+                            backIcon()
+                                .padding(.horizontal, 6)
+#else
                             if #available(iOS 26.0, *) {
                                 backIcon()
                             } else {
@@ -38,6 +42,7 @@ struct ZashiBackModifier: ViewModifier {
                                     .padding(.trailing, 24)
                                     .padding(8)
                             }
+#endif
                         }
                         .disabled(disabled)
                         .accessibilityIdentifier(AccessibilityID.Navigation.back)
@@ -71,5 +76,31 @@ extension View {
                 customDismiss: customDismiss
             )
         )
+    }
+
+    /// Back/dismiss control for a screen that is the ROOT of a sidebar SECTION's navigation stack.
+    /// On iOS the section is presented (popover/push), so this is the normal `.zashiBack` and the back
+    /// arrow dismisses it. On macOS the section is a peer-root inside the split — there is nothing to go
+    /// back to — so it renders NOTHING (no back button). RULE: use this instead of `.zashiBack` on every
+    /// sidebar-section root screen, so adding a new section can never reintroduce the macOS back-button bug.
+    @ViewBuilder func zashiSectionRootBack(customDismiss: (() -> Void)? = nil) -> some View {
+#if os(macOS)
+        self
+#else
+        zashiBack(customDismiss: customDismiss)
+#endif
+    }
+
+    /// macOS: horizontal padding that widens a toolbar icon into a circular Liquid Glass capsule. A bare
+    /// SF symbol / asset is narrow, so macOS 26 sizes the capsule to that width → a TALL pill; this padding
+    /// matches the back button's width and makes it circular. ONE source of truth for the value, so a tweak
+    /// (or a later swap SF → branded Asset icons — the shape comes from width, not the icon source) is a
+    /// one-liner. No-op on iOS (toolbar icons there draw their own iOS styling). RULE for toolbar icons.
+    @ViewBuilder func zashiToolbarIconPadding() -> some View {
+#if os(macOS)
+        padding(.horizontal, 11)
+#else
+        self
+#endif
     }
 }

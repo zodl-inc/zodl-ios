@@ -7,7 +7,6 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		348ECAA02FD5D95200BF9FE4 /* ZcashLightClientKit in Frameworks */ = {isa = PBXBuildFile; productRef = 348ECA9F2FD5D95200BF9FE4 /* ZcashLightClientKit */; };
 		34AA77182F857DB300D244E2 /* ComposableArchitecture in Frameworks */ = {isa = PBXBuildFile; productRef = 34AA77172F857DB300D244E2 /* ComposableArchitecture */; };
 		34AA771A2F857DB800D244E2 /* ComposableArchitecture in Frameworks */ = {isa = PBXBuildFile; productRef = 34AA77192F857DB800D244E2 /* ComposableArchitecture */; };
 		34AA771C2F857DBB00D244E2 /* ComposableArchitecture in Frameworks */ = {isa = PBXBuildFile; productRef = 34AA771B2F857DBB00D244E2 /* ComposableArchitecture */; };
@@ -35,9 +34,6 @@
 		34AA778A2F85832E00D244E2 /* Lottie in Frameworks */ = {isa = PBXBuildFile; productRef = 34AA77892F85832E00D244E2 /* Lottie */; };
 		34AA778C2F85833300D244E2 /* Lottie in Frameworks */ = {isa = PBXBuildFile; productRef = 34AA778B2F85833300D244E2 /* Lottie */; };
 		34AA778E2F85833900D244E2 /* Lottie in Frameworks */ = {isa = PBXBuildFile; productRef = 34AA778D2F85833900D244E2 /* Lottie */; };
-		34AA77952F85836900D244E2 /* KeystoneSDK in Frameworks */ = {isa = PBXBuildFile; productRef = 34AA77942F85836900D244E2 /* KeystoneSDK */; };
-		34AA77972F85836E00D244E2 /* KeystoneSDK in Frameworks */ = {isa = PBXBuildFile; productRef = 34AA77962F85836E00D244E2 /* KeystoneSDK */; };
-		34AA77992F85837400D244E2 /* KeystoneSDK in Frameworks */ = {isa = PBXBuildFile; productRef = 34AA77982F85837400D244E2 /* KeystoneSDK */; };
 		34AA77A02F8583BA00D244E2 /* BigDecimal in Frameworks */ = {isa = PBXBuildFile; productRef = 34AA779F2F8583BA00D244E2 /* BigDecimal */; };
 		34AA77A22F8583BF00D244E2 /* BigDecimal in Frameworks */ = {isa = PBXBuildFile; productRef = 34AA77A12F8583BF00D244E2 /* BigDecimal */; };
 		34AA77A42F8583C300D244E2 /* BigDecimal in Frameworks */ = {isa = PBXBuildFile; productRef = 34AA77A32F8583C300D244E2 /* BigDecimal */; };
@@ -47,8 +43,26 @@
 		34B967652F8CC48700823B20 /* Atomics in Frameworks */ = {isa = PBXBuildFile; productRef = 34B967642F8CC48700823B20 /* Atomics */; };
 		34B967672F8CC48B00823B20 /* Atomics in Frameworks */ = {isa = PBXBuildFile; productRef = 34B967662F8CC48B00823B20 /* Atomics */; };
 		34B967692F8CC49100823B20 /* Atomics in Frameworks */ = {isa = PBXBuildFile; productRef = 34B967682F8CC49100823B20 /* Atomics */; };
-		9E4841532F869F5F00D0649B /* ZcashLightClientKit in Frameworks */ = {isa = PBXBuildFile; productRef = 9E4841522F869F5F00D0649B /* ZcashLightClientKit */; };
-		9E4841562F869F5F00D0649B /* ZcashLightClientKit in Frameworks */ = {isa = PBXBuildFile; productRef = 9E4841522F869F5F00D0649B /* ZcashLightClientKit */; };
+		9E6E823A2FE33B7E008A82EF /* ZcashLightClientKit in Frameworks */ = {isa = PBXBuildFile; productRef = 9E6E82392FE33B7E008A82EF /* ZcashLightClientKit */; };
+		9E6E82472FE34147008A82EF /* ZcashLightClientKit in Frameworks */ = {isa = PBXBuildFile; productRef = 9E6E82462FE34147008A82EF /* ZcashLightClientKit */; };
+		9E6E82492FE3414F008A82EF /* ZcashLightClientKit in Frameworks */ = {isa = PBXBuildFile; productRef = 9E6E82482FE3414F008A82EF /* ZcashLightClientKit */; };
+		9E6E824B2FE34156008A82EF /* ZcashLightClientKit in Frameworks */ = {isa = PBXBuildFile; productRef = 9E6E824A2FE34156008A82EF /* ZcashLightClientKit */; };
+		9E6E84612FE3DEA1008A82EF /* Atomics in Frameworks */ = {isa = PBXBuildFile; productRef = 9E6E84602FE3DEA1008A82EF /* Atomics */; };
+		9E6E84632FE3DEA5008A82EF /* BigDecimal in Frameworks */ = {isa = PBXBuildFile; productRef = 9E6E84622FE3DEA5008A82EF /* BigDecimal */; };
+		9E6E84652FE3DEAF008A82EF /* CasePaths in Frameworks */ = {isa = PBXBuildFile; productRef = 9E6E84642FE3DEAF008A82EF /* CasePaths */; };
+		9E6E84672FE3DEAF008A82EF /* CasePathsCore in Frameworks */ = {isa = PBXBuildFile; productRef = 9E6E84662FE3DEAF008A82EF /* CasePathsCore */; };
+		9E6E84692FE3DEB9008A82EF /* ComposableArchitecture in Frameworks */ = {isa = PBXBuildFile; productRef = 9E6E84682FE3DEB9008A82EF /* ComposableArchitecture */; };
+		9E6E846D2FE3DEC7008A82EF /* Lottie in Frameworks */ = {isa = PBXBuildFile; productRef = 9E6E846C2FE3DEC7008A82EF /* Lottie */; };
+		9E6E846F2FE3DECB008A82EF /* MnemonicSwift in Frameworks */ = {isa = PBXBuildFile; productRef = 9E6E846E2FE3DECB008A82EF /* MnemonicSwift */; };
+		9E6E84712FE3DED5008A82EF /* UInt128 in Frameworks */ = {isa = PBXBuildFile; productRef = 9E6E84702FE3DED5008A82EF /* UInt128 */; };
+		9E6E84732FE3DED9008A82EF /* URLRouting in Frameworks */ = {isa = PBXBuildFile; productRef = 9E6E84722FE3DED9008A82EF /* URLRouting */; };
+		9E6E84752FE3DEF1008A82EF /* ZcashPaymentURI in Frameworks */ = {isa = PBXBuildFile; productRef = 9E6E84742FE3DEF1008A82EF /* ZcashPaymentURI */; };
+		9E6E84772FE3DEF8008A82EF /* ZcashLightClientKit in Frameworks */ = {isa = PBXBuildFile; productRef = 9E6E84762FE3DEF8008A82EF /* ZcashLightClientKit */; };
+		9E6E84792FE3DF0A008A82EF /* XCTestDynamicOverlay in Frameworks */ = {isa = PBXBuildFile; productRef = 9E6E84782FE3DF0A008A82EF /* XCTestDynamicOverlay */; };
+		9E6E848B2FE3FA04008A82EF /* KeystoneSDK in Frameworks */ = {isa = PBXBuildFile; productRef = 9E6E848A2FE3FA04008A82EF /* KeystoneSDK */; };
+		9E6EDEFA2FE42357008A82EF /* KeystoneSDK in Frameworks */ = {isa = PBXBuildFile; productRef = 9E6EDEF92FE42357008A82EF /* KeystoneSDK */; };
+		9E6EDEFC2FE4235E008A82EF /* KeystoneSDK in Frameworks */ = {isa = PBXBuildFile; productRef = 9E6EDEFB2FE4235E008A82EF /* KeystoneSDK */; };
+		9E6EDEFE2FE42363008A82EF /* KeystoneSDK in Frameworks */ = {isa = PBXBuildFile; productRef = 9E6EDEFD2FE42363008A82EF /* KeystoneSDK */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -68,6 +82,7 @@
 		9E4AB2B72BA1BEE900F5D6DB /* zodl-production.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "zodl-production.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		9E5AB4822C94777800065483 /* zodl-internal.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "zodl-internal.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		9E60E3D32C65F49F00B16C3E /* secant-distrib.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "secant-distrib.entitlements"; sourceTree = "<group>"; };
+		9E6E82512FE3DC15008A82EF /* Zodl.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Zodl.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		9ECDD9512CA687B300D81CA0 /* secant-mainnet.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "secant-mainnet.entitlements"; sourceTree = "<group>"; };
 		9ECDD9522CA6B2B400D81CA0 /* zashi-internal.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "zashi-internal.entitlements"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -119,11 +134,33 @@
 			);
 			target = 0D4E7A1526B364180058B01E /* zodlTests */;
 		};
+		9E6E8AAA2FE3DC15008A82EF /* PBXFileSystemSynchronizedBuildFileExceptionSet */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				LaunchScreen.storyboard,
+				"Preview Content/Preview Assets.xcassets",
+				Resources/Templates/fonts/fonts_swift5_swiftui.stencil,
+				Resources/Templates/xcassets/assets_swift5_swiftui.stencil,
+				"secant-mainnet-Info.plist",
+				"secant-testnet-Info.plist",
+				swiftgen.yml,
+				"zashi-testnet-Info.plist",
+			);
+			target = 9E6E82502FE3DC15008A82EF /* zodlmac-internal */;
+		};
+		9EF2B0A82FE461E3005A8404 /* PBXFileSystemSynchronizedBuildFileExceptionSet */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 9E6E82502FE3DC15008A82EF /* zodlmac-internal */;
+		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
-		340DE6D62FE1CB2C0061AA14 /* secant */ = {isa = PBXFileSystemSynchronizedRootGroup; exceptions = (340DECC62FE1CB430061AA14 /* PBXFileSystemSynchronizedBuildFileExceptionSet */, 340DECC72FE1CB430061AA14 /* PBXFileSystemSynchronizedBuildFileExceptionSet */, 340DECC82FE1CB430061AA14 /* PBXFileSystemSynchronizedBuildFileExceptionSet */, ); explicitFileTypes = {}; explicitFolders = (); path = secant; sourceTree = "<group>"; };
+		340DE6D62FE1CB2C0061AA14 /* secant */ = {isa = PBXFileSystemSynchronizedRootGroup; exceptions = (340DECC62FE1CB430061AA14 /* PBXFileSystemSynchronizedBuildFileExceptionSet */, 340DECC72FE1CB430061AA14 /* PBXFileSystemSynchronizedBuildFileExceptionSet */, 340DECC82FE1CB430061AA14 /* PBXFileSystemSynchronizedBuildFileExceptionSet */, 9E6E8AAA2FE3DC15008A82EF /* PBXFileSystemSynchronizedBuildFileExceptionSet */, ); explicitFileTypes = {}; explicitFolders = (); path = secant; sourceTree = "<group>"; };
 		340DED062FE1CB870061AA14 /* zodlTests */ = {isa = PBXFileSystemSynchronizedRootGroup; exceptions = (340DED2B2FE1CB8F0061AA14 /* PBXFileSystemSynchronizedBuildFileExceptionSet */, ); explicitFileTypes = {}; explicitFolders = (); path = zodlTests; sourceTree = "<group>"; };
+		9E6E82522FE3DC15008A82EF /* zodlmac-internal */ = {isa = PBXFileSystemSynchronizedRootGroup; exceptions = (9EF2B0A82FE461E3005A8404 /* PBXFileSystemSynchronizedBuildFileExceptionSet */, ); explicitFileTypes = {}; explicitFolders = (); path = "zodlmac-internal"; sourceTree = "<group>"; };
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -131,6 +168,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				9E6E824B2FE34156008A82EF /* ZcashLightClientKit in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -145,13 +183,13 @@
 				34AA771C2F857DBB00D244E2 /* ComposableArchitecture in Frameworks */,
 				34AA778E2F85833900D244E2 /* Lottie in Frameworks */,
 				34AA77402F8580D700D244E2 /* CasePathsCore in Frameworks */,
-				348ECAA02FD5D95200BF9FE4 /* ZcashLightClientKit in Frameworks */,
+				9E6E82492FE3414F008A82EF /* ZcashLightClientKit in Frameworks */,
 				34AA77A42F8583C300D244E2 /* BigDecimal in Frameworks */,
 				34AA77C02F85862200D244E2 /* UInt128 in Frameworks */,
 				34AA77782F8582AC00D244E2 /* Flexa in Frameworks */,
 				34AA77562F85818900D244E2 /* MnemonicSwift in Frameworks */,
 				34AA773E2F8580D700D244E2 /* CasePaths in Frameworks */,
-				34AA77992F85837400D244E2 /* KeystoneSDK in Frameworks */,
+				9E6EDEFE2FE42363008A82EF /* KeystoneSDK in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -162,17 +200,17 @@
 				34AA777F2F8582E600D244E2 /* ZcashPaymentURI in Frameworks */,
 				34AA77472F85814600D244E2 /* URLRouting in Frameworks */,
 				34B967652F8CC48700823B20 /* Atomics in Frameworks */,
-				9E4841562F869F5F00D0649B /* ZcashLightClientKit in Frameworks */,
 				34AA77272F857E2F00D244E2 /* XCTestDynamicOverlay in Frameworks */,
 				34AA77182F857DB300D244E2 /* ComposableArchitecture in Frameworks */,
 				34AA778A2F85832E00D244E2 /* Lottie in Frameworks */,
 				34AA77382F8580CB00D244E2 /* CasePathsCore in Frameworks */,
+				9E6E82472FE34147008A82EF /* ZcashLightClientKit in Frameworks */,
 				34AA77A02F8583BA00D244E2 /* BigDecimal in Frameworks */,
 				34AA77BC2F85861800D244E2 /* UInt128 in Frameworks */,
 				34AA77742F8582A200D244E2 /* Flexa in Frameworks */,
 				34AA77522F85818000D244E2 /* MnemonicSwift in Frameworks */,
 				34AA77362F8580CB00D244E2 /* CasePaths in Frameworks */,
-				34AA77952F85836900D244E2 /* KeystoneSDK in Frameworks */,
+				9E6EDEFC2FE4235E008A82EF /* KeystoneSDK in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -180,7 +218,6 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				9E4841532F869F5F00D0649B /* ZcashLightClientKit in Frameworks */,
 				34AA77812F8582EB00D244E2 /* ZcashPaymentURI in Frameworks */,
 				34AA77492F85814C00D244E2 /* URLRouting in Frameworks */,
 				34AA77292F857E3400D244E2 /* XCTestDynamicOverlay in Frameworks */,
@@ -188,12 +225,33 @@
 				34AA778C2F85833300D244E2 /* Lottie in Frameworks */,
 				34AA773C2F8580D000D244E2 /* CasePathsCore in Frameworks */,
 				34AA77A22F8583BF00D244E2 /* BigDecimal in Frameworks */,
+				9E6E823A2FE33B7E008A82EF /* ZcashLightClientKit in Frameworks */,
 				34AA77BE2F85861E00D244E2 /* UInt128 in Frameworks */,
 				34AA77762F8582A700D244E2 /* Flexa in Frameworks */,
 				34AA77542F85818500D244E2 /* MnemonicSwift in Frameworks */,
 				34AA773A2F8580D000D244E2 /* CasePaths in Frameworks */,
-				34AA77972F85836E00D244E2 /* KeystoneSDK in Frameworks */,
 				34B967672F8CC48B00823B20 /* Atomics in Frameworks */,
+				9E6EDEFA2FE42357008A82EF /* KeystoneSDK in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		9E6E824E2FE3DC15008A82EF /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				9E6E846F2FE3DECB008A82EF /* MnemonicSwift in Frameworks */,
+				9E6E84752FE3DEF1008A82EF /* ZcashPaymentURI in Frameworks */,
+				9E6E84792FE3DF0A008A82EF /* XCTestDynamicOverlay in Frameworks */,
+				9E6E84692FE3DEB9008A82EF /* ComposableArchitecture in Frameworks */,
+				9E6E84772FE3DEF8008A82EF /* ZcashLightClientKit in Frameworks */,
+				9E6E846D2FE3DEC7008A82EF /* Lottie in Frameworks */,
+				9E6E84712FE3DED5008A82EF /* UInt128 in Frameworks */,
+				9E6E84612FE3DEA1008A82EF /* Atomics in Frameworks */,
+				9E6E848B2FE3FA04008A82EF /* KeystoneSDK in Frameworks */,
+				9E6E84732FE3DED9008A82EF /* URLRouting in Frameworks */,
+				9E6E84632FE3DEA5008A82EF /* BigDecimal in Frameworks */,
+				9E6E84672FE3DEAF008A82EF /* CasePathsCore in Frameworks */,
+				9E6E84652FE3DEAF008A82EF /* CasePaths in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -209,6 +267,7 @@
 				9E4A01762B0C9ABD005AFC7E /* CHANGELOG.md */,
 				340DE6D62FE1CB2C0061AA14 /* secant */,
 				340DED062FE1CB870061AA14 /* zodlTests */,
+				9E6E82522FE3DC15008A82EF /* zodlmac-internal */,
 				0D4E7A0626B364170058B01E /* Products */,
 				343CF3F429BB5A14009E44DF /* Frameworks */,
 				9E318C622CE37F5500FC342A /* Recovered References */,
@@ -222,6 +281,7 @@
 				9E4AB2B72BA1BEE900F5D6DB /* zodl-production.app */,
 				9E5AB4822C94777800065483 /* zodl-internal.app */,
 				9E41FFBB2CB2814500783CFD /* zodl-testnet.app */,
+				9E6E82512FE3DC15008A82EF /* Zodl.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -294,11 +354,11 @@
 				34AA77772F8582AC00D244E2 /* Flexa */,
 				34AA77822F8582F100D244E2 /* ZcashPaymentURI */,
 				34AA778D2F85833900D244E2 /* Lottie */,
-				34AA77982F85837400D244E2 /* KeystoneSDK */,
 				34AA77A32F8583C300D244E2 /* BigDecimal */,
 				34AA77BF2F85862200D244E2 /* UInt128 */,
 				34B967682F8CC49100823B20 /* Atomics */,
-				348ECA9F2FD5D95200BF9FE4 /* ZcashLightClientKit */,
+				9E6E82482FE3414F008A82EF /* ZcashLightClientKit */,
+				9E6EDEFD2FE42363008A82EF /* KeystoneSDK */,
 			);
 			productName = "zodl-testnet";
 			productReference = 9E41FFBB2CB2814500783CFD /* zodl-testnet.app */;
@@ -334,11 +394,11 @@
 				34AA77732F8582A200D244E2 /* Flexa */,
 				34AA777E2F8582E600D244E2 /* ZcashPaymentURI */,
 				34AA77892F85832E00D244E2 /* Lottie */,
-				34AA77942F85836900D244E2 /* KeystoneSDK */,
 				34AA779F2F8583BA00D244E2 /* BigDecimal */,
 				34AA77BB2F85861800D244E2 /* UInt128 */,
-				9E4841522F869F5F00D0649B /* ZcashLightClientKit */,
 				34B967642F8CC48700823B20 /* Atomics */,
+				9E6E82462FE34147008A82EF /* ZcashLightClientKit */,
+				9E6EDEFB2FE4235E008A82EF /* KeystoneSDK */,
 			);
 			productName = "zodl-production";
 			productReference = 9E4AB2B72BA1BEE900F5D6DB /* zodl-production.app */;
@@ -374,14 +434,51 @@
 				34AA77752F8582A700D244E2 /* Flexa */,
 				34AA77802F8582EB00D244E2 /* ZcashPaymentURI */,
 				34AA778B2F85833300D244E2 /* Lottie */,
-				34AA77962F85836E00D244E2 /* KeystoneSDK */,
 				34AA77A12F8583BF00D244E2 /* BigDecimal */,
 				34AA77BD2F85861E00D244E2 /* UInt128 */,
-				9E4841522F869F5F00D0649B /* ZcashLightClientKit */,
 				34B967662F8CC48B00823B20 /* Atomics */,
+				9E6E82392FE33B7E008A82EF /* ZcashLightClientKit */,
+				9E6EDEF92FE42357008A82EF /* KeystoneSDK */,
 			);
 			productName = "zodl-internal";
 			productReference = 9E5AB4822C94777800065483 /* zodl-internal.app */;
+			productType = "com.apple.product-type.application";
+		};
+		9E6E82502FE3DC15008A82EF /* zodlmac-internal */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 9E6E82592FE3DC16008A82EF /* Build configuration list for PBXNativeTarget "zodlmac-internal" */;
+			buildPhases = (
+				9E6E824D2FE3DC15008A82EF /* Sources */,
+				9E6E824E2FE3DC15008A82EF /* Frameworks */,
+				9E6E824F2FE3DC15008A82EF /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				9E6E8CCC2FE3DC15008A82EF /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				340DE6D62FE1CB2C0061AA14 /* secant */,
+				9E6E82522FE3DC15008A82EF /* zodlmac-internal */,
+			);
+			name = "zodlmac-internal";
+			packageProductDependencies = (
+				9E6E84602FE3DEA1008A82EF /* Atomics */,
+				9E6E84622FE3DEA5008A82EF /* BigDecimal */,
+				9E6E84642FE3DEAF008A82EF /* CasePaths */,
+				9E6E84662FE3DEAF008A82EF /* CasePathsCore */,
+				9E6E84682FE3DEB9008A82EF /* ComposableArchitecture */,
+				9E6E846C2FE3DEC7008A82EF /* Lottie */,
+				9E6E846E2FE3DECB008A82EF /* MnemonicSwift */,
+				9E6E84702FE3DED5008A82EF /* UInt128 */,
+				9E6E84722FE3DED9008A82EF /* URLRouting */,
+				9E6E84742FE3DEF1008A82EF /* ZcashPaymentURI */,
+				9E6E84762FE3DEF8008A82EF /* ZcashLightClientKit */,
+				9E6E84782FE3DF0A008A82EF /* XCTestDynamicOverlay */,
+				9E6E848A2FE3FA04008A82EF /* KeystoneSDK */,
+			);
+			productName = "zodlmac-internal";
+			productReference = 9E6E82512FE3DC15008A82EF /* Zodl.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -391,12 +488,15 @@
 			isa = PBXProject;
 			attributes = {
 				BuildIndependentTargetsInParallel = YES;
-				LastSwiftUpdateCheck = 1250;
+				LastSwiftUpdateCheck = 2650;
 				LastUpgradeCheck = 1600;
 				TargetAttributes = {
 					0D4E7A1526B364180058B01E = {
 						CreatedOnToolsVersion = 12.5;
 						TestTargetID = 9E5AB4632C94777800065483;
+					};
+					9E6E82502FE3DC15008A82EF = {
+						CreatedOnToolsVersion = 26.5;
 					};
 				};
 			};
@@ -419,12 +519,12 @@
 				34AA77622F85827F00D244E2 /* XCRemoteSwiftPackageReference "flexa-ios" */,
 				34AA77792F8582CC00D244E2 /* XCRemoteSwiftPackageReference "zcash-swift-payment-uri" */,
 				34AA77842F85830C00D244E2 /* XCRemoteSwiftPackageReference "lottie-spm" */,
-				34AA778F2F85835A00D244E2 /* XCRemoteSwiftPackageReference "keystone-sdk-ios" */,
 				34AA779A2F8583A500D244E2 /* XCRemoteSwiftPackageReference "BigDecimal" */,
 				34AA77B52F85848A00D244E2 /* XCRemoteSwiftPackageReference "xcstrings-tool-plugin" */,
 				34AA77B62F85860300D244E2 /* XCRemoteSwiftPackageReference "UInt128" */,
-				9E4841512F869F5E00D0649B /* XCRemoteSwiftPackageReference "zcash-swift-wallet-sdk" */,
 				34B9675A2F8CC47200823B20 /* XCRemoteSwiftPackageReference "swift-atomics" */,
+				9E34CAE92FE337E700238B7D /* XCLocalSwiftPackageReference "../ZcashLightClientKit" */,
+				9E6E84862FE3F9EA008A82EF /* XCLocalSwiftPackageReference "LocalPackages/keystone-sdk-ios" */,
 			);
 			productRefGroup = 0D4E7A0626B364170058B01E /* Products */;
 			projectDirPath = "";
@@ -434,6 +534,7 @@
 				9E4AB2952BA1BEE900F5D6DB /* zodl-production */,
 				9E5AB4632C94777800065483 /* zodl-internal */,
 				9E41FF9C2CB2814500783CFD /* zodl-testnet */,
+				9E6E82502FE3DC15008A82EF /* zodlmac-internal */,
 			);
 		};
 /* End PBXProject section */
@@ -461,6 +562,13 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		9E5AB4752C94777800065483 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		9E6E824F2FE3DC15008A82EF /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -672,6 +780,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		9E6E824D2FE3DC15008A82EF /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -691,6 +806,10 @@
 		34AA77CC2F85891F00D244E2 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			productRef = 34AA77CB2F85891F00D244E2 /* XCStringsToolPlugin */;
+		};
+		9E6E8CCC2FE3DC15008A82EF /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			productRef = 9E6E8BBB2FE3DC15008A82EF /* XCStringsToolPlugin */;
 		};
 /* End PBXTargetDependency section */
 
@@ -1240,6 +1359,218 @@
 			};
 			name = "Release-AppStore";
 		};
+		9E6E825A2FE3DC16008A82EF /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = "zodlmac-icon";
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CODE_SIGN_ENTITLEMENTS = "zodlmac-internal/zodlmac-internal.entitlements";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 5;
+				DEVELOPMENT_TEAM = RLPRR8CPQG;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
+				ENABLE_PREVIEWS = YES;
+				ENABLE_RESOURCE_ACCESS_CAMERA = YES;
+				ENABLE_USER_SELECTED_FILES = readwrite;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "zodlmac-internal/Info.plist";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.6;
+				MARKETING_VERSION = 3.7.1;
+				PRODUCT_BUNDLE_IDENTIFIER = "co.electriccoin.secant-testnet";
+				PRODUCT_NAME = Zodl;
+				REGISTER_APP_GROUPS = YES;
+				SDKROOT = macosx;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited) SECANT_MAINNET";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		9E6E825B2FE3DC16008A82EF /* Release-Testflight */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_APPICON_NAME = "zodlmac-icon";
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_ENTITLEMENTS = "zodlmac-internal/zodlmac-internal.entitlements";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 5;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = RLPRR8CPQG;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
+				ENABLE_PREVIEWS = YES;
+				ENABLE_RESOURCE_ACCESS_CAMERA = YES;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				ENABLE_USER_SELECTED_FILES = readwrite;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "zodlmac-internal/Info.plist";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.6;
+				MARKETING_VERSION = 3.7.1;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = "co.electriccoin.secant-testnet";
+				PRODUCT_NAME = Zodl;
+				REGISTER_APP_GROUPS = YES;
+				SDKROOT = macosx;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) SECANT_MAINNET";
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 6.0;
+			};
+			name = "Release-Testflight";
+		};
+		9E6E825C2FE3DC16008A82EF /* Release-AppStore */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_APPICON_NAME = "zodlmac-icon";
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_ENTITLEMENTS = "zodlmac-internal/zodlmac-internal.entitlements";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 5;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = RLPRR8CPQG;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
+				ENABLE_PREVIEWS = YES;
+				ENABLE_RESOURCE_ACCESS_CAMERA = YES;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				ENABLE_USER_SELECTED_FILES = readwrite;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "zodlmac-internal/Info.plist";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.6;
+				MARKETING_VERSION = 3.7.1;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = "co.electriccoin.secant-testnet";
+				PRODUCT_NAME = Zodl;
+				REGISTER_APP_GROUPS = YES;
+				SDKROOT = macosx;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) SECANT_MAINNET";
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 6.0;
+			};
+			name = "Release-AppStore";
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -1293,7 +1624,28 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = "Release-Testflight";
 		};
+		9E6E82592FE3DC16008A82EF /* Build configuration list for PBXNativeTarget "zodlmac-internal" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				9E6E825A2FE3DC16008A82EF /* Debug */,
+				9E6E825B2FE3DC16008A82EF /* Release-Testflight */,
+				9E6E825C2FE3DC16008A82EF /* Release-AppStore */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = "Release-Testflight";
+		};
 /* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		9E34CAE92FE337E700238B7D /* XCLocalSwiftPackageReference "../ZcashLightClientKit" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../ZcashLightClientKit;
+		};
+		9E6E84862FE3F9EA008A82EF /* XCLocalSwiftPackageReference "LocalPackages/keystone-sdk-ios" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = "LocalPackages/keystone-sdk-ios";
+		};
+/* End XCLocalSwiftPackageReference section */
 
 /* Begin XCRemoteSwiftPackageReference section */
 		34AA77122F857DA300D244E2 /* XCRemoteSwiftPackageReference "swift-composable-architecture" */ = {
@@ -1362,14 +1714,6 @@
 				minimumVersion = 4.6.0;
 			};
 		};
-		34AA778F2F85835A00D244E2 /* XCRemoteSwiftPackageReference "keystone-sdk-ios" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/KeystoneHQ/keystone-sdk-ios/";
-			requirement = {
-				kind = upToNextMinorVersion;
-				minimumVersion = 0.8.6;
-			};
-		};
 		34AA779A2F8583A500D244E2 /* XCRemoteSwiftPackageReference "BigDecimal" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/mgriebling/BigDecimal.git";
@@ -1402,22 +1746,9 @@
 				minimumVersion = 1.3.0;
 			};
 		};
-		9E4841512F869F5E00D0649B /* XCRemoteSwiftPackageReference "zcash-swift-wallet-sdk" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/zcash/zcash-swift-wallet-sdk.git";
-			requirement = {
-				kind = exactVersion;
-				version = "2.6.0-alpha.6";
-			};
-		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		348ECA9F2FD5D95200BF9FE4 /* ZcashLightClientKit */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 9E4841512F869F5E00D0649B /* XCRemoteSwiftPackageReference "zcash-swift-wallet-sdk" */;
-			productName = ZcashLightClientKit;
-		};
 		34AA77172F857DB300D244E2 /* ComposableArchitecture */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 34AA77122F857DA300D244E2 /* XCRemoteSwiftPackageReference "swift-composable-architecture" */;
@@ -1553,21 +1884,6 @@
 			package = 34AA77842F85830C00D244E2 /* XCRemoteSwiftPackageReference "lottie-spm" */;
 			productName = Lottie;
 		};
-		34AA77942F85836900D244E2 /* KeystoneSDK */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 34AA778F2F85835A00D244E2 /* XCRemoteSwiftPackageReference "keystone-sdk-ios" */;
-			productName = KeystoneSDK;
-		};
-		34AA77962F85836E00D244E2 /* KeystoneSDK */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 34AA778F2F85835A00D244E2 /* XCRemoteSwiftPackageReference "keystone-sdk-ios" */;
-			productName = KeystoneSDK;
-		};
-		34AA77982F85837400D244E2 /* KeystoneSDK */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 34AA778F2F85835A00D244E2 /* XCRemoteSwiftPackageReference "keystone-sdk-ios" */;
-			productName = KeystoneSDK;
-		};
 		34AA779F2F8583BA00D244E2 /* BigDecimal */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 34AA779A2F8583A500D244E2 /* XCRemoteSwiftPackageReference "BigDecimal" */;
@@ -1628,10 +1944,110 @@
 			package = 34B9675A2F8CC47200823B20 /* XCRemoteSwiftPackageReference "swift-atomics" */;
 			productName = Atomics;
 		};
-		9E4841522F869F5F00D0649B /* ZcashLightClientKit */ = {
+		9E6E82392FE33B7E008A82EF /* ZcashLightClientKit */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 9E4841512F869F5E00D0649B /* XCRemoteSwiftPackageReference "zcash-swift-wallet-sdk" */;
+			package = 9E34CAE92FE337E700238B7D /* XCLocalSwiftPackageReference "../ZcashLightClientKit" */;
 			productName = ZcashLightClientKit;
+		};
+		9E6E82462FE34147008A82EF /* ZcashLightClientKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 9E34CAE92FE337E700238B7D /* XCLocalSwiftPackageReference "../ZcashLightClientKit" */;
+			productName = ZcashLightClientKit;
+		};
+		9E6E82482FE3414F008A82EF /* ZcashLightClientKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 9E34CAE92FE337E700238B7D /* XCLocalSwiftPackageReference "../ZcashLightClientKit" */;
+			productName = ZcashLightClientKit;
+		};
+		9E6E824A2FE34156008A82EF /* ZcashLightClientKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 9E34CAE92FE337E700238B7D /* XCLocalSwiftPackageReference "../ZcashLightClientKit" */;
+			productName = ZcashLightClientKit;
+		};
+		9E6E84602FE3DEA1008A82EF /* Atomics */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 34B9675A2F8CC47200823B20 /* XCRemoteSwiftPackageReference "swift-atomics" */;
+			productName = Atomics;
+		};
+		9E6E84622FE3DEA5008A82EF /* BigDecimal */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 34AA779A2F8583A500D244E2 /* XCRemoteSwiftPackageReference "BigDecimal" */;
+			productName = BigDecimal;
+		};
+		9E6E84642FE3DEAF008A82EF /* CasePaths */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 34AA772C2F8580B800D244E2 /* XCRemoteSwiftPackageReference "swift-case-paths" */;
+			productName = CasePaths;
+		};
+		9E6E84662FE3DEAF008A82EF /* CasePathsCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 34AA772C2F8580B800D244E2 /* XCRemoteSwiftPackageReference "swift-case-paths" */;
+			productName = CasePathsCore;
+		};
+		9E6E84682FE3DEB9008A82EF /* ComposableArchitecture */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 34AA77122F857DA300D244E2 /* XCRemoteSwiftPackageReference "swift-composable-architecture" */;
+			productName = ComposableArchitecture;
+		};
+		9E6E846C2FE3DEC7008A82EF /* Lottie */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 34AA77842F85830C00D244E2 /* XCRemoteSwiftPackageReference "lottie-spm" */;
+			productName = Lottie;
+		};
+		9E6E846E2FE3DECB008A82EF /* MnemonicSwift */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 34AA774C2F85817200D244E2 /* XCRemoteSwiftPackageReference "MnemonicSwift" */;
+			productName = MnemonicSwift;
+		};
+		9E6E84702FE3DED5008A82EF /* UInt128 */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 34AA77B62F85860300D244E2 /* XCRemoteSwiftPackageReference "UInt128" */;
+			productName = UInt128;
+		};
+		9E6E84722FE3DED9008A82EF /* URLRouting */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 34AA77412F85812500D244E2 /* XCRemoteSwiftPackageReference "swift-url-routing" */;
+			productName = URLRouting;
+		};
+		9E6E84742FE3DEF1008A82EF /* ZcashPaymentURI */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 34AA77792F8582CC00D244E2 /* XCRemoteSwiftPackageReference "zcash-swift-payment-uri" */;
+			productName = ZcashPaymentURI;
+		};
+		9E6E84762FE3DEF8008A82EF /* ZcashLightClientKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 9E34CAE92FE337E700238B7D /* XCLocalSwiftPackageReference "../ZcashLightClientKit" */;
+			productName = ZcashLightClientKit;
+		};
+		9E6E84782FE3DF0A008A82EF /* XCTestDynamicOverlay */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 34AA771D2F857DFF00D244E2 /* XCRemoteSwiftPackageReference "xctest-dynamic-overlay" */;
+			productName = XCTestDynamicOverlay;
+		};
+		9E6E848A2FE3FA04008A82EF /* KeystoneSDK */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 9E6E84862FE3F9EA008A82EF /* XCLocalSwiftPackageReference "LocalPackages/keystone-sdk-ios" */;
+			productName = KeystoneSDK;
+		};
+		9E6E8BBB2FE3DC15008A82EF /* XCStringsToolPlugin */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 34AA77B52F85848A00D244E2 /* XCRemoteSwiftPackageReference "xcstrings-tool-plugin" */;
+			productName = "plugin:XCStringsToolPlugin";
+		};
+		9E6EDEF92FE42357008A82EF /* KeystoneSDK */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 9E6E84862FE3F9EA008A82EF /* XCLocalSwiftPackageReference "LocalPackages/keystone-sdk-ios" */;
+			productName = KeystoneSDK;
+		};
+		9E6EDEFB2FE4235E008A82EF /* KeystoneSDK */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 9E6E84862FE3F9EA008A82EF /* XCLocalSwiftPackageReference "LocalPackages/keystone-sdk-ios" */;
+			productName = KeystoneSDK;
+		};
+		9E6EDEFD2FE42363008A82EF /* KeystoneSDK */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 9E6E84862FE3F9EA008A82EF /* XCLocalSwiftPackageReference "LocalPackages/keystone-sdk-ios" */;
+			productName = KeystoneSDK;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

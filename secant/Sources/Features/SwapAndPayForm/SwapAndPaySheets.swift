@@ -5,12 +5,28 @@
 //  Created by Lukáš Korba on 2025-05-26.
 //
 
+#if canImport(UIKit)
 import UIKit
+import Combine
+#endif
 import SwiftUI
 import ComposableArchitecture
 
 extension SwapAndPayForm {
     @ViewBuilder func assetsLoadingComposition(_ colorScheme: ColorScheme) -> some View {
+#if os(macOS)
+        // macOS: a `List` collapses inside the fixed-height selector card; fill it with a
+        // scrollable stack of the same shimmering placeholders instead.
+        ScrollView {
+            LazyVStack(spacing: 0) {
+                ForEach(0..<15) { _ in
+                    NoTransactionPlaceholder(true)
+                }
+            }
+        }
+        .disabled(true)
+        .background(Asset.Colors.background.color)
+#else
         List {
             WithPerceptionTracking {
                 ForEach(0..<15) { _ in
@@ -25,6 +41,7 @@ extension SwapAndPayForm {
         .padding(.vertical, 1)
         .background(Asset.Colors.background.color)
         .listStyle(.plain)
+#endif
     }
     
     @ViewBuilder func assetsEmptyComposition(_ colorScheme: ColorScheme) -> some View {
@@ -119,6 +136,7 @@ extension SwapAndPayForm {
     }
 }
 
+#if canImport(UIKit)
 struct FocusableTextField: UIViewRepresentable {
     @Binding var text: String
     @Binding var isFirstResponder: Bool
@@ -131,7 +149,7 @@ struct FocusableTextField: UIViewRepresentable {
         textField.attributedPlaceholder = NSAttributedString(
             string: placeholder,
             attributes: [
-                .foregroundColor: UIColor(Design.Switcher.selectedText.color(colorScheme)),
+                .foregroundColor: PlatformColor(Design.Switcher.selectedText.color(colorScheme)),
                 .font: FontFamily.Inter.medium.font(size: 16)
             ]
         )
@@ -141,7 +159,7 @@ struct FocusableTextField: UIViewRepresentable {
         textField.keyboardType = .decimalPad
         textField.addTarget(context.coordinator, action: #selector(Coordinator.textDidChange(_:)), for: .editingChanged)
         textField.font = FontFamily.Inter.medium.font(size: 16)
-        textField.textColor = UIColor(Design.Switcher.selectedText.color(colorScheme))
+        textField.textColor = PlatformColor(Design.Switcher.selectedText.color(colorScheme))
 
         return textField
     }
@@ -182,3 +200,44 @@ struct FocusableTextField: UIViewRepresentable {
         }
     }
 }
+#else
+// macOS: native text field styled to match iOS. Two system-default traps fixed here (B4-15):
+// (1) the DEFAULT macOS textFieldStyle draws a bezel + its own background box inside the
+//     switcher pill (white in light mode, dark in dark) — `.plain` removes it;
+// (2) a placeholder passed as the TextField TITLE renders in the system placeholder color
+//     (white-ish in dark mode) regardless of any foreground modifier — the "%" that read as
+//     white. Style the prompt explicitly, like iOS's attributedPlaceholder above.
+// Focus: bridge the isFirstResponder binding to @FocusState so the auto-focus that fires on
+// selecting the Custom chip works on macOS too.
+struct FocusableTextField: View {
+    @Binding var text: String
+    @Binding var isFirstResponder: Bool
+    var placeholder: String = ""
+    let colorScheme: ColorScheme
+
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        TextField(
+            "",
+            text: $text,
+            prompt:
+                // Dismiss the placeholder while focused: the field is centered, so the caret
+                // otherwise renders crossing the "%" glyph.
+                Text(focused ? "" : placeholder)
+                .font(.custom(FontFamily.Inter.medium.name, size: 16))
+                .foregroundColor(Design.Switcher.selectedText.color(colorScheme))
+        )
+        .textFieldStyle(.plain)
+        .multilineTextAlignment(.center)
+        .zFont(.medium, size: 16, color: Design.Switcher.selectedText.color(colorScheme))
+        .focused($focused)
+        .onChange(of: isFirstResponder) { _, newValue in
+            focused = newValue
+        }
+        .onChange(of: focused) { _, newValue in
+            isFirstResponder = newValue
+        }
+    }
+}
+#endif

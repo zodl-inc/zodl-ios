@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 
 @MainActor
@@ -38,17 +39,28 @@ final class SplashManager: ObservableObject {
 
     init(_ isHidden: Bool, completion: @escaping () -> Void) {
         self.isHidden = isHidden
-        self.screenSize = UIScreen.main.bounds.size
+        self.screenSize = PlatformScreen.bounds.size
         self.completion = completion
         
         if !isHidden {
             preparePoints()
-            if featureFlags.appLaunchBiometric {
+            // Only prompt for biometrics at launch when a wallet actually EXISTS. Authenticating to
+            // unlock nothing (fresh install / onboarding) is pointless and annoying — macOS surfaced
+            // this by prompting Touch ID on the empty onboarding launch. `areKeysPresent` is the same
+            // "wallet exists" signal the Root init flow uses; with no wallet, skip straight to reveal.
+            @Dependency(\.walletStorage) var walletStorage
+            let walletExists = (try? walletStorage.areKeysPresent()) ?? false
+            if featureFlags.appLaunchBiometric && walletExists {
                 authenticate()
             } else {
+#if os(macOS)
+                // macOS: no biometric + no animation — reveal Home right away (static logo only).
+                Task { self.finished() }
+#else
                 Task {
                     self.spinTheWheel()
                 }
+#endif
             }
         }
     }
@@ -59,10 +71,15 @@ final class SplashManager: ObservableObject {
         authenticationDidntSucceed = false
 
         Task {
-            if await !localAuthentication.authenticate() {
+            if await !localAuthentication.authenticate(for: .appUnlock) {
                 self.authenticationFailed()
             } else {
+#if os(macOS)
+                // macOS: no tear-away animation — reveal Home immediately after a successful auth.
+                self.finished()
+#else
                 self.spinTheWheel()
+#endif
             }
         }
     }
@@ -183,42 +200,48 @@ struct SplashView: View {
         : 0.0
     }
 
-    var hiHeight: CGFloat {
-        var potentialCountryCode: String?
-        
-        if #available(iOS 16, *) {
-            potentialCountryCode = Locale.current.language.languageCode?.identifier
-        } else {
-            potentialCountryCode = Locale.current.languageCode
-        }
-        
-        if let potentialCountryCode, potentialCountryCode == "es" {
-            return 0.6
-        } else {
-            return 0.35
-        }
+    // Centered "Hi" logo, scaled up on macOS for the larger window. Matches WelcomeView.hiLogoHeight so
+    // the launch transition (splash → welcome → home) shows ONE consistent logo. iOS size unchanged.
+    private var hiLogoHeight: CGFloat {
+#if os(macOS)
+        96
+#else
+        60
+#endif
     }
 
     var body: some View {
         if splashManager.isOn && !isHidden {
+#if os(macOS)
+            // macOS: a STATIC, window-sized logo — no tear-away animation, no screen-bounds mask
+            // (that mask sized to the whole screen and "framed" the logo inside the window). Touch ID
+            // runs over it; on success Home is revealed immediately. iOS keeps the animated splash.
+            ZStack {
+                Asset.Colors.splash.color.ignoresSafeArea()
+                Asset.Assets.welcomeScreenLogo.image
+                    .zImage(height: hiLogoHeight, color: .white)
+                lockedIcons()
+            }
+#else
             ZStack {
                 hiIcon()
                 lockedIcons()
             }
             .ignoresSafeArea(.keyboard)
+#endif
         }
     }
     
     @ViewBuilder func hiIcon() -> some View {
-        GeometryReader { proxy in
+        // Simplified from a GeometryReader/.position (over-engineering left from when two images needed
+        // placing) to a plain centered ZStack — the logo just centers, shifted up by hiIconYOffset when
+        // auth fails. The tear-away mask + splash colour are unchanged, so the iOS animation is identical.
+        ZStack {
+            Asset.Colors.splash.color
             Asset.Assets.welcomeScreenLogo.image
-                .zImage(height: 60, color: .white)
-                .position(
-                    x: proxy.frame(in: .local).midX,
-                    y: proxy.frame(in: .local).midY - hiIconYOffset
-                )
+                .zImage(height: hiLogoHeight, color: .white)
+                .offset(y: -hiIconYOffset)
         }
-        .background(Asset.Colors.splash.color)
         .mask {
             SplashManager.SplashShape(points: splashManager.points)
         }

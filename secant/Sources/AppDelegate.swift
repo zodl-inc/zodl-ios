@@ -1,3 +1,4 @@
+#if os(iOS)
 //
 //  AppDelegate.swift
 //  secant
@@ -7,12 +8,16 @@
 
 import SwiftUI
 import ComposableArchitecture
+import os
 @preconcurrency import ZcashLightClientKit
 import Network
 import Atomics
 
 import BackgroundTasks
 import UserNotifications
+
+// [#1755] slipstream: boot evidence logger
+private let slipstreamBootLogger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "co.ecc.zashi", category: "slipstream")
 
 // swiftlint:disable indentation_width
 final class AppDelegate: NSObject, UIApplicationDelegate {
@@ -42,7 +47,15 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
 
         // set the default behavior for the NSDecimalNumber
         NSDecimalNumber.defaultBehavior = Zatoshi.decimalHandler
-        
+
+        // [#1755] slipstream: log engine selection at boot (before wallet init, always fires)
+        let useSlipstreamAtBoot = UserDefaultsWalletConfigStorage.cachedFlag(.useSlipstreamSynchronizer)
+        if useSlipstreamAtBoot {
+            slipstreamBootLogger.info("[#1755] ENGINE=SlipstreamSynchronizer (flag=true)")
+        } else {
+            slipstreamBootLogger.info("[#1755] ENGINE=SDKSynchronizer (flag=false)")
+        }
+
         rootStore.send(.initialization(.appDelegate(.didFinishLaunching)))
 
         return true
@@ -183,3 +196,4 @@ extension AppDelegate {
         }
     }
 }
+#endif

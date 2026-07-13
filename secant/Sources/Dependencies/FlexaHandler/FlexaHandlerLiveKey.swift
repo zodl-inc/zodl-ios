@@ -8,10 +8,14 @@
 import Foundation
 import ComposableArchitecture
 @preconcurrency import Combine
+#if canImport(Flexa)
 import Flexa
+#endif
 @preconcurrency import ZcashLightClientKit
 import CryptoKit
+#if canImport(UIKit)
 import UIKit
+#endif
 import os
 
 /// This is a quick fix for Flexa changing the balances of the account from an expected value to 0.
@@ -42,6 +46,7 @@ struct FlexaTransaction: Equatable {
     }
 }
 
+#if canImport(Flexa)
 extension FlexaHandlerClient: DependencyKey {
     static let liveValue = Self.live()
 
@@ -159,7 +164,7 @@ private extension FlexaHandlerClient {
                         symbol: "ZEC",
                         balance: zecAmount,
                         balanceAvailable: zecAvailableAmount,
-                        icon: UIImage(named: "zcashZecLogo") ?? UIImage()
+                        icon: PlatformImage(named: "zcashZecLogo") ?? PlatformImage()
                     )
                 ]
             )
@@ -179,3 +184,18 @@ private extension FlexaHandlerClient {
         )
     }
 }
+#else
+extension FlexaHandlerClient: DependencyKey {
+    // macOS: the Flexa SDK is iOS-only; expose a no-op client so the dependency resolves.
+    static let liveValue = Self(
+        prepare: {},
+        open: {},
+        onTransactionRequest: { Just(nil).eraseToAnyPublisher() },
+        clearTransactionRequest: {},
+        transactionSent: { _, _ in },
+        updateBalance: { _, _ in },
+        flexaAlert: { _, _ in },
+        signOut: {}
+    )
+}
+#endif

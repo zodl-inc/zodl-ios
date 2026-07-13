@@ -80,7 +80,14 @@ extension Root {
                 // long-lived serverSetupState so each open re-benchmarks instead of showing a stale
                 // "Fastest servers" ranking and reusing a stale recommendedSyncServer on an Automatic Save.
                 state.serverSetupState = .initial
+#if os(macOS)
+                // macOS: present full-window via the path (MacSplitView `.serverSwitch?`), exactly like
+                // the smart-banner entry above. The serverSetupViewBinding → zashiFullScreenCover route
+                // renders a raw native .sheet on macOS, which is banned for app content (MODALS Rule #5a).
+                state.path = .serverSwitch
+#else
                 state.serverSetupViewBinding = true
+#endif
                 return .none
 
             case .splashRemovalRequested:
@@ -111,7 +118,9 @@ extension Root {
                 }
                 return .run { send in
                     do {
-                        if await !localAuthentication.authenticate() {
+                        // macOS: the SE seed decrypt below is the single biometric gate
+                        // (see `authenticateForSeedDecrypt`); iOS prompts here.
+                        if await !localAuthentication.authenticateForSeedDecrypt(for: .sendFunds) {
                             return
                         }
 
@@ -126,7 +135,7 @@ extension Root {
                             assertionFailure("Flexa reached spending-key derivation for a non-Zodl account")
                             return
                         }
-                        let storedWallet = try walletStorage.exportWallet()
+                        let storedWallet = try await walletStorage.exportWallet(AuthenticationContext.sendFunds.localizedReason)
                         let seedBytes = try mnemonic.toSeed(storedWallet.seedPhrase.value())
                         let network = zcashSDKEnvironment.network().networkType
                         let spendingKey = try derivationTool.deriveSpendingKey(seedBytes, zip32AccountIndex, network)

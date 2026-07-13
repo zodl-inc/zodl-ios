@@ -6,13 +6,14 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
 
 struct RequestPaymentConfirmationView: View {
     @Environment(\.colorScheme) private var colorScheme
     
-    @Perception.Bindable var store: StoreOf<SendConfirmation>
+    @PlatformBindable var store: StoreOf<SendConfirmation>
     let tokenName: String
     
     init(store: StoreOf<SendConfirmation>, tokenName: String) {
@@ -212,12 +213,7 @@ struct RequestPaymentConfirmationView: View {
                         ZashiButton(
                             String(localizable: .sendSending),
                             accessoryView:
-                                ProgressView()
-                                .progressViewStyle(
-                                    CircularProgressViewStyle(
-                                        tint: Asset.Colors.secondary.color
-                                    )
-                                )
+                                ZashiSpinner(iosTint: Asset.Colors.secondary.color, macTint: .buttonAccessory)
                         ) { }
                             .screenHorizontalPadding()
                             .padding(.top, 40)

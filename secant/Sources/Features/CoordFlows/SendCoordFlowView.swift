@@ -6,12 +6,13 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 
 struct SendCoordFlowView: View {
     @Environment(\.colorScheme) var colorScheme
 
-    @Perception.Bindable var store: StoreOf<SendCoordFlow>
+    @PlatformBindable var store: StoreOf<SendCoordFlow>
     let tokenName: String
 
     @Shared(.appStorage(.sensitiveContent)) var isSensitiveContentHidden = false
@@ -33,12 +34,15 @@ struct SendCoordFlowView: View {
                     tokenName: tokenName
                 )
                 .screenTitle(String(localizable: .generalSend))
-                .navigationBarItems(
+#if !os(macOS)
+                // macOS: the hide-balance eye lives in the split's left rail; don't duplicate it.
+                .zashiNavigationBarItems(
                     trailing:
                         HStack(spacing: 0) {
                             hideBalancesButton()
                         }
                 )
+#endif
             } destination: { store in
                 switch store.case {
                 case let .addressBook(store):
@@ -68,9 +72,13 @@ struct SendCoordFlowView: View {
                 }
             }
         }
-        .applyScreenBackground()
+        // macOS: this flow hosts the select-recipient AddressBook List (already full-width via its own
+        // `capped: false` + `macContentRowCap()`). Move the cap OFF the flow so that List's scroll
+        // indicator reaches the window edge; every other screen in the flow self-caps (audited). iOS
+        // unaffected — `capped: false` collapses to the same background-only path there (Rule #11).
+        .applyScreenBackground(capped: false)
     }
-    
+
     private func hideBalancesButton() -> some View {
         Button {
             $isSensitiveContentHidden.withLock { $0.toggle() }

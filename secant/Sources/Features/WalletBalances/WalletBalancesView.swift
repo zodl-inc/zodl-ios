@@ -6,33 +6,48 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
+ import ZcashLightClientKit
 
 struct WalletBalancesView: View {
     @Environment(\.colorScheme) private var colorScheme
     
-    @Perception.Bindable var store: StoreOf<WalletBalances>
+    @PlatformBindable var store: StoreOf<WalletBalances>
     let tokenName: String
     let couldBeHidden: Bool
     let shortened: Bool
+    /// macOS sidebar: align the amount + currency to the leading edge (and drop the large top
+    /// padding) instead of the default centered layout. Default false → iOS unchanged.
+    let leadingAligned: Bool
+    /// macOS sidebar: an optional view rendered INSIDE the abbreviated amount row, right after the
+    /// currency — used for the hide-balances eye so it sits flush against the value and tracks its
+    /// width. It must live in the amount row (which hugs its content), NOT wrapped around the whole
+    /// view, so the full-width exchange-rate row below can't fight it for width and blow up the height.
+    /// Default nil → iOS / other call sites unchanged.
+    let trailingAccessory: AnyView?
 
     init(
         store: StoreOf<WalletBalances>,
         tokenName: String,
         couldBeHidden: Bool = false,
-        shortened: Bool = false
+        shortened: Bool = false,
+        leadingAligned: Bool = false,
+        trailingAccessory: AnyView? = nil
     ) {
         self.store = store
         self.tokenName = tokenName
         self.couldBeHidden = couldBeHidden
         self.shortened = shortened
+        self.leadingAligned = leadingAligned
+        self.trailingAccessory = trailingAccessory
     }
 
     var body: some View {
         WithPerceptionTracking {
-            VStack(spacing: 0) {
+            VStack(alignment: leadingAligned ? .leading : .center, spacing: 0) {
                 balanceContent()
-                    .padding(.top, 40)
+                    .padding(.top, leadingAligned ? 0 : 40)
                     .anchorPreference(
                         key: ExchangeRateFeaturePreferenceKey.self,
                         value: .bounds
@@ -60,8 +75,15 @@ struct WalletBalancesView: View {
                         .padding(.bottom, 30)
                     }
                 } else if !shortened {
+#if os(macOS)
+                    // macOS: don't RESERVE the spendable row's space when it isn't shown (spendability ==
+                    // .everything). The empty 30pt left a gap between the balance and the form; macOS wants
+                    // the content hugging the top. iOS keeps the reservation (avoids a scroll-layout jump).
+                    EmptyView()
+#else
                     Color.clear
                         .padding(.bottom, 30)
+#endif
                 }
             }
             .foregroundColor(Asset.Colors.primary.color)
@@ -72,13 +94,33 @@ struct WalletBalancesView: View {
     
     @ViewBuilder private func balanceContent() -> some View {
         HStack(spacing: 0) {
+#if !os(macOS)
             ZcashSymbol()
                 .frame(width: 32, height: 32)
                 .zForegroundColor(Design.Text.primary)
+#endif
             
             if shortened {
+#if os(macOS)
+                HStack(spacing: 8) {
+                    ZatoshiText(store.totalBalance, .abbreviated)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.5)
+                        .frame(height: 28)
+
+                    Text(tokenName)
+
+                    // Optional trailing accessory (macOS sidebar: the hide-balances eye). The row hugs
+                    // its content, so the eye sits flush after the currency and tracks the amount's width.
+                    if let trailingAccessory {
+                        trailingAccessory
+                    }
+                }
+                .zFont(.semiBold, size: 16, style: Design.Text.primary)
+#else
                 ZatoshiText(store.totalBalance, .abbreviated)
                     .zFont(.semiBold, size: 48, style: Design.Text.primary)
+#endif
             } else {
                 ZatoshiRepresentationView(
                     balance: store.totalBalance,
@@ -101,7 +143,7 @@ struct WalletBalancesView: View {
                             .font(.custom(FontFamily.Inter.semiBold.name, size: 14))
                             .foregroundColor(Asset.Colors.primary.color)
 
-                        ProgressView()
+                        ZashiSpinner()
                     }
                     .frame(height: 36)
                     .padding(.top, 10)
@@ -143,7 +185,7 @@ struct WalletBalancesView: View {
                                     .foregroundColor(Asset.Colors.primary.color)
 
                                 if store.isExchangeRateUSDInFlight {
-                                    ProgressView()
+                                    ZashiSpinner()
                                         .scaleEffect(0.7)
                                         .frame(width: 20, height: 20)
                                 } else {
@@ -169,7 +211,7 @@ struct WalletBalancesView: View {
                                     .foregroundColor(Asset.Colors.primary.color)
 
                                 if store.isExchangeRateUSDInFlight {
-                                    ProgressView()
+                                    ZashiSpinner()
                                         .scaleEffect(0.7)
                                         .frame(width: 11, height: 14)
                                 } else {
@@ -177,8 +219,10 @@ struct WalletBalancesView: View {
                                         .zImage(size: 20, color: Asset.Colors.shade72.color)
                                 }
                             }
-                            .padding(8)
+                            .padding(.vertical, 8)
+                            #if !os(macOS)
                             .padding(.horizontal, 6)
+                            #endif
                         }
                     }
                     .frame(height: 36)

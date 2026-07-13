@@ -6,12 +6,13 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 
 struct ResyncWalletView: View {
     @Environment(\.colorScheme) private var colorScheme
 
-    @Perception.Bindable var store: StoreOf<ResyncWallet>
+    @PlatformBindable var store: StoreOf<ResyncWallet>
 
     init(store: StoreOf<ResyncWallet>) {
         self.store = store
@@ -64,7 +65,7 @@ struct ResyncWalletView: View {
         }
         .screenHorizontalPadding()
         .applyScreenBackground()
-        .navigationBarTitleDisplayMode(.inline)
+        .zashiNavBarTitleDisplayMode(.inline)
         .zashiBack()
         .screenTitle(String(localizable: .resyncWalletTitle))
     }

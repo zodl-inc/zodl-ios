@@ -35,7 +35,7 @@ struct AvailableBalanceView: View {
                 .padding(.trailing, 6)
 
             if showIndicator {
-                ProgressView()
+                ZashiSpinner()
                     .scaleEffect(0.9)
             } else {
                 HStack(spacing: 0) {

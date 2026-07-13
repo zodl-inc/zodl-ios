@@ -6,8 +6,12 @@
 //
 
 import ComposableArchitecture
+import Foundation
+import Combine
 @preconcurrency import ZcashLightClientKit
-@preconcurrency import MessageUI
+#if canImport(MessageUI)
+import MessageUI
+#endif
 
 @Reducer
 struct DisconnectHWWallet {
@@ -54,8 +58,9 @@ struct DisconnectHWWallet {
         Reduce { state, action in
             switch action {
             case .onAppear:
-                // TCA Store is @MainActor; reducer body always runs on main.
-                state.canSendMail = MainActor.assumeIsolated { MFMailComposeViewController.canSendMail() }
+                // macOS routes to mail too (`mailto:` via UIMailDialogView); MailSupport reports
+                // `true` there, so this no longer falls back to the share sheet.
+                state.canSendMail = MailSupport.canSendMail()
                 return .none
 
             case .binding:

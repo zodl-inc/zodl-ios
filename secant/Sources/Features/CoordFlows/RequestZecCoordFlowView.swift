@@ -6,12 +6,13 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 
 struct RequestZecCoordFlowView: View {
     @Environment(\.colorScheme) var colorScheme
 
-    @Perception.Bindable var store: StoreOf<RequestZecCoordFlow>
+    @PlatformBindable var store: StoreOf<RequestZecCoordFlow>
     let tokenName: String
 
     init(store: StoreOf<RequestZecCoordFlow>, tokenName: String) {
@@ -30,7 +31,7 @@ struct RequestZecCoordFlowView: View {
                         ),
                     tokenName: tokenName
                 )
-                .navigationBarHidden(true)
+                .zashiNavigationBarHidden(true)
             } destination: { store in
                 switch store.case {
                 case let .requestZec(store):
@@ -39,7 +40,7 @@ struct RequestZecCoordFlowView: View {
                     RequestZecSummaryView(store: store, tokenName: tokenName)
                 }
             }
-            .navigationBarHidden(!store.path.isEmpty)
+            .zashiNavigationBarHidden(!store.path.isEmpty)
         }
         .padding(.horizontal, 4)
         .applyScreenBackground()

@@ -15,6 +15,14 @@ import Foundation
 struct WalletStorage {
     enum Constants {
         static let zcashStoredWallet = "zcashStoredWallet"
+        /// macOS Secure-Enclave storage (see docs/macos/KEYCHAIN_SE_HARDENING.md): the seed lives as
+        /// ECIES ciphertext under `…Seed`, its non-secret metadata as plaintext under `…Meta`. On iOS
+        /// the single `zcashStoredWallet` blob is used instead.
+        static let zcashStoredWalletSeed = "zcashStoredWalletSeed"
+        static let zcashStoredWalletMeta = "zcashStoredWalletMeta"
+        /// Auth-free storage-format version marker (plaintext) — drives the one-time SE migration.
+        static let zcashStorageVersion = "zcashStorageVersion"
+        static let zcashStorageVersionSecureEnclave = 2
         static let zcashStoredAdressBookEncryptionKeys = "zcashStoredAdressBookEncryptionKeys"
         static let zcashStoredUserMetadataEncryptionKeys = "zcashStoredMetadataEncryptionKeys"
 
@@ -64,6 +72,7 @@ struct WalletStorage {
 
     enum WalletStorageError: Error {
         case alreadyImported
+        case secureEnclaveUnavailable
         case uninitializedAddressBookEncryptionKeys
         case uninitializedUserMetadataEncryptionKeys
         case uninitializedWallet
@@ -73,10 +82,61 @@ struct WalletStorage {
     }
 
     private let secItem: SecItemClient
+    /// Non-nil only on macOS: the seed is wrapped by a non-extractable Secure Enclave key instead of
+    /// being stored as plaintext. Nil on iOS and in tests, where the legacy plaintext path is used.
+    private let secureEnclave: SecureEnclaveClient?
     var zcashStoredWalletPrefix = ""
-    
-    init(secItem: SecItemClient) {
+
+    /// Restore/create primes the just-supplied seed here (macOS / Secure-Enclave only) so the first-init
+    /// burst — `prepare` plus the seed-derived metadata / address-book keys — reuses it instead of
+    /// re-decrypting the SE-wrapped seed 2–3 times (each a biometric prompt). Consumed by the first
+    /// `exportWallet()`, never persisted; a timestamp backstop prevents stale reuse. iOS / spends are
+    /// unaffected (nil unless just stored). Held in a reference box because `WalletStorage` is a value
+    /// type shared by-copy across the dependency closures. See docs/macos/KEYCHAIN_SE_HARDENING.md.
+    private let primedSeedBox = PrimedSeedBox()
+
+    /// Thread-safe single-use holder for the primed seed (see `primedSeedBox`).
+    private final class PrimedSeedBox: @unchecked Sendable {
+        private let lock = NSLock()
+        private var value: (wallet: StoredWallet, primedAt: Date)?
+        private let maxAge: TimeInterval = 600
+
+        func set(_ wallet: StoredWallet) {
+            lock.lock(); defer { lock.unlock() }
+            value = (wallet, Date())
+        }
+
+        /// Returns and CONSUMES the seed if within the freshness window; otherwise drops it and returns
+        /// nil so the caller decrypts as usual. Single-use: the first first-init read takes it.
+        func consumeIfFresh() -> StoredWallet? {
+            lock.lock(); defer { lock.unlock() }
+            guard let primed = value else { return nil }
+            value = nil
+            return Date().timeIntervalSince(primed.primedAt) < maxAge ? primed.wallet : nil
+        }
+
+        func clear() {
+            lock.lock(); defer { lock.unlock() }
+            value = nil
+        }
+    }
+
+    init(secItem: SecItemClient, secureEnclave: SecureEnclaveClient? = nil) {
         self.secItem = secItem
+        self.secureEnclave = secureEnclave
+    }
+
+    /// FALLBACK reason for the Secure-Enclave seed-read prompt when a caller passes no per-action reason
+    /// (first init / background shielding). User-facing seed accesses thread a context reason via
+    /// `exportWallet(reason:)` — see `AuthenticationContext` — so the prompt says what the access is for.
+    private var seedAuthenticationReason: String {
+#if os(macOS)
+        // macOS composes the prompt as "{app} is trying to {reason}", so the reason must be a verb
+        // phrase; reuse the localized macOS reason ("unlock your wallet"). iOS keeps its sentence.
+        String(localizable: .localAuthenticationReasonMac)
+#else
+        "Authenticate to access your Zodl wallet"
+#endif
     }
 
     func importWallet(
@@ -99,21 +159,102 @@ struct WalletStorage {
         )
 
         do {
-            guard let data = try encode(object: wallet) else {
-                throw KeychainError.encoding
+            if let secureEnclave {
+                try storeWalletSecurely(wallet, secureEnclave: secureEnclave)
+                // Reuse the just-supplied seed across the first-init burst (no re-decrypt → no prompts).
+                setPrimedSeed(wallet)
+            } else {
+                guard let data = try encode(object: wallet) else {
+                    throw KeychainError.encoding
+                }
+
+                try setData(data, forKey: Constants.zcashStoredWallet)
             }
-            
-            try setData(data, forKey: Constants.zcashStoredWallet)
         } catch KeychainError.duplicate {
             throw WalletStorageError.alreadyImported
+        } catch let error as WalletStorageError {
+            throw error
         } catch {
             throw WalletStorageError.storageError(error)
         }
     }
-    
-    func exportWallet() throws -> StoredWallet {
+
+    /// macOS: encrypt the seed with the Secure Enclave key (public-key ECIES — no prompt) and store the
+    /// ciphertext, plus the non-secret metadata as a separate plaintext item.
+    private func storeWalletSecurely(_ wallet: StoredWallet, secureEnclave: SecureEnclaveClient) throws {
+        guard secureEnclave.isAvailable() else {
+            throw WalletStorageError.secureEnclaveUnavailable
+        }
+        let cipher = try secureEnclave.encryptSeed(Data(wallet.seedPhrase.value().utf8))
+        try setData(cipher, forKey: Constants.zcashStoredWalletSeed)
+
+        guard let metaData = try encode(object: wallet.metadata) else {
+            throw KeychainError.encoding
+        }
+        try setData(metaData, forKey: Constants.zcashStoredWalletMeta)
+    }
+
+    private func setPrimedSeed(_ wallet: StoredWallet) {
+        primedSeedBox.set(wallet)
+    }
+
+    private func consumePrimedSeed() -> StoredWallet? {
+        primedSeedBox.consumeIfFresh()
+    }
+
+    func clearPrimedSeed() {
+        primedSeedBox.clear()
+    }
+
+    /// Returns the full wallet INCLUDING the seed. On macOS this decrypts the Secure-Enclave-wrapped
+    /// seed and therefore triggers the OS auth prompt — call only when the seed is genuinely needed
+    /// (spend / export / first init). For birthday / backup-flag / existence use `exportWalletMetadata`
+    /// / `areKeysPresent`, which never decrypt.
+    func exportWallet(reason: String? = nil) async throws -> StoredWallet {
+        // Restore/create primed the seed — reuse it once instead of an SE decrypt (and its prompt).
+        if secureEnclave != nil, let primed = consumePrimedSeed() {
+            return primed
+        }
+        if let secureEnclave {
+            return try await exportWalletSecurely(secureEnclave: secureEnclave, reason: reason)
+        }
+        return try loadPlaintextWallet()
+    }
+
+    private func exportWalletSecurely(secureEnclave: SecureEnclaveClient, reason: String?) async throws -> StoredWallet {
+        let meta = try exportWalletMetadata()
+        guard meta.version == Constants.zcashKeychainVersion else {
+            throw WalletStorageError.unsupportedVersion(meta.version)
+        }
+
+        let cipher: Data?
+        do {
+            cipher = try data(forKey: Constants.zcashStoredWalletSeed)
+        } catch KeychainError.noDataFound {
+            throw WalletStorageError.uninitializedWallet
+        }
+        guard let cipher else {
+            throw WalletStorageError.uninitializedWallet
+        }
+
+        let seedData = try await secureEnclave.decryptSeed(cipher, reason ?? seedAuthenticationReason)
+        guard let seedPhrase = String(data: seedData, encoding: .utf8) else {
+            throw WalletStorageError.uninitializedWallet
+        }
+
+        return StoredWallet(
+            language: .english,
+            seedPhrase: SeedPhrase(seedPhrase),
+            version: meta.version,
+            birthday: meta.birthday,
+            hasUserPassedPhraseBackupTest: meta.hasUserPassedPhraseBackupTest
+        )
+    }
+
+    /// iOS / no-Secure-Enclave: read the single plaintext `StoredWallet` blob (legacy path, unchanged).
+    private func loadPlaintextWallet() throws -> StoredWallet {
         let reqData: Data?
-        
+
         do {
             reqData = try data(forKey: Constants.zcashStoredWallet)
         } catch KeychainError.noDataFound {
@@ -121,64 +262,161 @@ struct WalletStorage {
         } catch {
             throw error
         }
-        
+
         guard let reqData else {
             throw WalletStorageError.uninitializedWallet
         }
-        
+
         guard let wallet = try decode(json: reqData, as: StoredWallet.self) else {
             throw WalletStorageError.uninitializedWallet
         }
-        
+
         guard wallet.version == Constants.zcashKeychainVersion else {
             throw WalletStorageError.unsupportedVersion(wallet.version)
         }
-        
+
         return wallet
     }
-    
+
+    /// Reads the non-secret wallet metadata WITHOUT decrypting the seed (no biometric prompt). On macOS
+    /// this is the separate plaintext item; on iOS it is projected from the single blob.
+    func exportWalletMetadata() throws -> WalletMetadata {
+        let reqData: Data?
+
+        if secureEnclave != nil {
+            do {
+                reqData = try data(forKey: Constants.zcashStoredWalletMeta)
+            } catch KeychainError.noDataFound {
+                throw WalletStorageError.uninitializedWallet
+            }
+            guard let reqData, let meta = try decode(json: reqData, as: WalletMetadata.self) else {
+                throw WalletStorageError.uninitializedWallet
+            }
+            return meta
+        }
+
+        return try loadPlaintextWallet().metadata
+    }
+
     func areKeysPresent() throws -> Bool {
-        do {
-            _ = try exportWallet()
-        } catch {
-            // TODO: [#219] - report & log error.localizedDescription, https://github.com/Electric-Coin-Company/zashi-ios/issues/219]
-            throw error
-        }
-        
-        return true
+        let key = secureEnclave != nil ? Constants.zcashStoredWalletSeed : Constants.zcashStoredWallet
+        let present = itemExists(forKey: key)
+        return present
     }
-    
+
+    /// Whether the seed can be stored securely on this device. macOS requires a Secure Enclave and has
+    /// no plaintext fallback, so creation/restore on a Mac without one (pre-T2 Intel) would hard-error;
+    /// callers can use this to surface a clear message instead. Always `true` on iOS and on Macs with a
+    /// Secure Enclave (Apple silicon, T2 Intel).
+    func isSecureStorageAvailable() -> Bool {
+        secureEnclave?.isAvailable() ?? true
+    }
+
     func updateBirthday(_ height: BlockHeight) throws {
-        do {
-            var wallet = try exportWallet()
+        if secureEnclave != nil {
+            var meta = try exportWalletMetadata()
+            meta.birthday = Birthday(height)
+            guard let data = try encode(object: meta) else {
+                throw KeychainError.encoding
+            }
+            try updateData(data, forKey: Constants.zcashStoredWalletMeta)
+        } else {
+            var wallet = try loadPlaintextWallet()
             wallet.birthday = Birthday(height)
-            
             guard let data = try encode(object: wallet) else {
                 throw KeychainError.encoding
             }
-            
             try updateData(data, forKey: Constants.zcashStoredWallet)
-        } catch {
-            throw error
         }
     }
-    
+
     func markUserPassedPhraseBackupTest(_ flag: Bool = true) throws {
-        do {
-            var wallet = try exportWallet()
+        if secureEnclave != nil {
+            var meta = try exportWalletMetadata()
+            meta.hasUserPassedPhraseBackupTest = flag
+            guard let data = try encode(object: meta) else {
+                throw KeychainError.encoding
+            }
+            try updateData(data, forKey: Constants.zcashStoredWalletMeta)
+        } else {
+            var wallet = try loadPlaintextWallet()
             wallet.hasUserPassedPhraseBackupTest = flag
-            
             guard let data = try encode(object: wallet) else {
                 throw KeychainError.encoding
             }
-            
             try updateData(data, forKey: Constants.zcashStoredWallet)
-        } catch {
-            throw error
         }
     }
-    
+
+    // MARK: - Secure Enclave migration (macOS)
+
+    /// One-time, crash-safe migration of a legacy plaintext seed into the Secure Enclave: read the old
+    /// plaintext item, re-store the seed as enclave ciphertext + plaintext metadata, VERIFY the enclave
+    /// copy is readable (one biometric prompt) and only then delete the plaintext. Safe to call on every
+    /// launch — no-op on iOS, and an auth-free version check short-circuits once migrated. So existing
+    /// testers upgrade invisibly instead of landing on onboarding. See docs/macos/KEYCHAIN_SE_HARDENING.md.
+    func migrateToSecureEnclaveIfNeeded() async throws {
+        guard let secureEnclave, secureEnclave.isAvailable() else {
+            return
+        }
+        let version = storageVersion()
+        if version >= Constants.zcashStorageVersionSecureEnclave {
+            return
+        }
+
+        let seedItemExists = itemExists(forKey: Constants.zcashStoredWalletSeed)
+        let plaintextExists = itemExists(forKey: Constants.zcashStoredWallet)
+
+        // Already SE-wrapped (fresh install, or a prior run that wrote the ciphertext but crashed before
+        // clearing the plaintext): verify the enclave copy, then make sure no plaintext lingers.
+        if seedItemExists {
+            // Verify + drop any lingering plaintext from a prior crashed run; otherwise just stamp.
+            if plaintextExists {
+                _ = try await exportWallet()
+                try? deleteData(forKey: Constants.zcashStoredWallet)
+            }
+            try setStorageVersion(Constants.zcashStorageVersionSecureEnclave)
+            return
+        }
+
+        // Nothing SE-wrapped yet: migrate the plaintext seed if there is one.
+        guard
+            plaintextExists,
+            let oldData = try? data(forKey: Constants.zcashStoredWallet),
+            let wallet = try? decode(json: oldData, as: StoredWallet.self)
+        else {
+            return
+        }
+
+        try storeWalletSecurely(wallet, secureEnclave: secureEnclave)   // encrypt + write (no prompt)
+        _ = try await exportWallet()                                    // verify the enclave copy (prompt)
+        try? deleteData(forKey: Constants.zcashStoredWallet)            // verified → drop the plaintext
+        try setStorageVersion(Constants.zcashStorageVersionSecureEnclave)
+    }
+
+    private func storageVersion() -> Int {
+        guard
+            let data = try? data(forKey: Constants.zcashStorageVersion),
+            let version = try? decode(json: data, as: Int.self)
+        else { return 0 }
+        return version
+    }
+
+    private func setStorageVersion(_ version: Int) throws {
+        guard let data = try encode(object: version) else { throw KeychainError.encoding }
+        do {
+            try setData(data, forKey: Constants.zcashStorageVersion)
+        } catch KeychainError.duplicate {
+            try updateData(data, forKey: Constants.zcashStorageVersion)
+        }
+    }
+
     func resetZashi() throws {
+        clearPrimedSeed()
+        try? deleteData(forKey: Constants.zcashStorageVersion)
+        try? deleteData(forKey: Constants.zcashStoredWalletSeed)
+        try? deleteData(forKey: Constants.zcashStoredWalletMeta)
+        try? secureEnclave?.deleteKey()
         try deleteData(forKey: Constants.zcashStoredWallet)
         try? deleteData(forKey: Constants.zcashStoredAdressBookEncryptionKeys)
         try? deleteData(forKey: "\(Constants.zcashStoredUserMetadataEncryptionKeys)_zashi")
@@ -503,10 +741,39 @@ struct WalletStorage {
             /// Thus, after restoring from a backup of a different device, these items will not be present.
             kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly
         ]
-        
+
         return query
     }
-    
+
+    /// Query for MATCHING an existing item to mutate (delete / update). Deliberately omits BOTH
+    /// `kSecAttrAccessible` AND — for the single-instance items (empty `account`) — `kSecAttrAccount`,
+    /// unlike `baseQuery`.
+    ///
+    /// Two distinct macOS file (login) keychain quirks made `SecItemDelete` / `SecItemUpdate` silently
+    /// match nothing while `SecItemCopyMatching` tolerated the very same query — so `deleteData` /
+    /// `updateData` no-op'd, items survived a `resetZashi()`, and the wallet ended up half-wiped and
+    /// stuck at launch ("Keychain keys are still present"):
+    ///   1. Including the accessibility constant in the mutate query → no match. (Fixed earlier.)
+    ///   2. An item ADDED with `kSecAttrAccount: ""` persists with a NULL account, and a mutate query
+    ///      carrying account "" then matches that NULL-account item on NOTHING — even though copy-match
+    ///      with the same "" still finds it. (This is what kept the SE-wrapped seed undeletable; proven
+    ///      on a stuck wallet — `security delete-generic-password -s zcashStoredWalletSeed`, matching by
+    ///      service alone, removed exactly the item the app's `account: ""` delete couldn't.)
+    /// The single-instance items (seed / meta / version / wallet) use account "" and are uniquely
+    /// identified by service alone, so we match by service for them; per-account items pass a real
+    /// account and keep it. Neither omission affects correctness on iOS. See
+    /// docs/macos/KEYCHAIN_SE_HARDENING.md.
+    func mutationQuery(forAccount account: String = "", andKey forKey: String) -> [String: Any] {
+        var query: [String: Any] = [
+            kSecAttrService as String: zcashStoredWalletPrefix + forKey,
+            kSecClass as String: kSecClassGenericPassword
+        ]
+        if !account.isEmpty {
+            query[kSecAttrAccount as String] = account
+        }
+        return query
+    }
+
     func restoreQuery(forAccount account: String = "", andKey forKey: String) -> [String: Any] {
         var query = baseQuery(forAccount: account, andKey: forKey)
         query[kSecMatchLimit as String] = kSecMatchLimitOne
@@ -542,6 +809,17 @@ struct WalletStorage {
         }
     }
 
+    /// Whether a keychain item exists for `forKey`, WITHOUT returning (or, for an SE-wrapped seed,
+    /// decrypting) its data — so an existence check never triggers a biometric prompt.
+    func itemExists(forKey: String, account: String = "") -> Bool {
+        var query = baseQuery(forAccount: account, andKey: forKey)
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+        query[kSecReturnData as String] = kCFBooleanFalse as Any
+
+        var result: AnyObject?
+        return secItem.copyMatching(query as CFDictionary, &result) == errSecSuccess
+    }
+
     /// Restore data for key
     func data(
         forKey: String,
@@ -568,7 +846,7 @@ struct WalletStorage {
         forKey: String,
         account: String = ""
     ) throws {
-        let query = baseQuery(forAccount: account, andKey: forKey)
+        let query = mutationQuery(forAccount: account, andKey: forKey)
 
         let status = secItem.delete(query as CFDictionary)
 
@@ -609,8 +887,8 @@ struct WalletStorage {
         forKey: String,
         account: String = ""
     ) throws {
-        let query = baseQuery(forAccount: account, andKey: forKey)
-        
+        let query = mutationQuery(forAccount: account, andKey: forKey)
+
         let attributes: [String: AnyObject] = [
             kSecValueData as String: data as AnyObject
         ]

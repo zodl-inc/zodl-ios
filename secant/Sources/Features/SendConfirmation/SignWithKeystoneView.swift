@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
 
@@ -16,7 +17,7 @@ struct SignWithKeystoneView: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.presentationMode) var presentationMode
 
-    @Perception.Bindable var store: StoreOf<SendConfirmation>
+    @PlatformBindable var store: StoreOf<SendConfirmation>
 
     @Dependency(\.sdkSynchronizer) var sdkSynchronizer
 
@@ -92,7 +93,7 @@ struct SignWithKeystoneView: View {
                                 }
                         } else {
                             VStack {
-                                ProgressView()
+                                ZashiSpinner()
                             }
                             .frame(width: 216, height: 216)
                             .padding(24)
@@ -162,12 +163,19 @@ struct SignWithKeystoneView: View {
         .screenHorizontalPadding()
         .applyScreenBackground()
         .navigationBarBackButtonHidden(true)
-        .navigationBarTitleDisplayMode(.inline)
+        .zashiNavBarTitleDisplayMode(.inline)
         .screenTitle(String(localizable: .keystoneSignWithSignTransaction))
         .enlargeQR(isPresented: $store.isQRCodeEnlarged) {
             Group {
                 if let pczt = store.pcztForUI, let encoder = sdkSynchronizer.urEncoderForPCZT(pczt) {
-                    AnimatedQRCode(urEncoder: encoder, size: UIScreen.main.bounds.width - 64)
+                    #if os(macOS)
+                    // No full device screen to fill — clamp to the capped content column so the
+                    // enlarged QR doesn't overflow the window. iOS fills the device width.
+                    let qrSize = Design.Mac.viewCapWidth - 64
+                    #else
+                    let qrSize = PlatformScreen.bounds.width - 64
+                    #endif
+                    AnimatedQRCode(urEncoder: encoder, size: qrSize)
                         .padding()
                         .background {
                             RoundedRectangle(cornerRadius: Design.Radius._4xl)

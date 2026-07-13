@@ -6,13 +6,14 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
 
 struct AddressDetailsView: View {
     @Environment(\.colorScheme) var colorScheme
 
-    @Perception.Bindable var store: StoreOf<AddressDetails>
+    @PlatformBindable var store: StoreOf<AddressDetails>
     
     init(store: StoreOf<AddressDetails>) {
         self.store = store
@@ -121,7 +122,7 @@ extension AddressDetailsView {
                 Image(storedImg, scale: 1, label: Text(localizable: .qrCodeFor(qrText)))
                     .resizable()
             } else {
-                ProgressView()
+                ZashiSpinner()
             }
         }
     }
@@ -132,7 +133,7 @@ extension AddressDetailsView {
                 Image(storedImg, scale: 1, label: Text(localizable: .qrCodeFor(qrText)))
                     .resizable()
             } else {
-                ProgressView()
+                ZashiSpinner()
             }
         }
     }
@@ -147,7 +148,7 @@ extension AddressDetailsView {
            ) {
             UIShareDialogView(activityItems: [
                 ShareableImage(
-                    image: UIImage(cgImage: cgImg),
+                    image: PlatformImage(cgImage: cgImg),
                     title: String(localizable: .addressDetailsShareTitle),
                     reason: String(localizable: .addressDetailsShareDesc)
                 ), String(localizable: .addressDetailsShareDesc)

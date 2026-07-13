@@ -6,13 +6,14 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
 
 struct SendConfirmationView: View {
     @Environment(\.colorScheme) private var colorScheme
     
-    @Perception.Bindable var store: StoreOf<SendConfirmation>
+    @PlatformBindable var store: StoreOf<SendConfirmation>
     let tokenName: String
     
     init(store: StoreOf<SendConfirmation>, tokenName: String) {
@@ -168,12 +169,7 @@ struct SendConfirmationView: View {
                         ZashiButton(
                             String(localizable: .sendSending),
                             accessoryView:
-                                ProgressView()
-                                .progressViewStyle(
-                                    CircularProgressViewStyle(
-                                        tint: Asset.Colors.secondary.color
-                                    )
-                                )
+                                ZashiSpinner(iosTint: Asset.Colors.secondary.color, macTint: .buttonAccessory)
                         ) { }
                         .screenHorizontalPadding()
                         .padding(.bottom, 24)
@@ -198,7 +194,7 @@ struct SendConfirmationView: View {
                 store.send(.cancelTapped)
             }
         }
-        .navigationBarTitleDisplayMode(.inline)
+        .zashiNavBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden()
         .padding(.vertical, 1)
         .applyScreenBackground()

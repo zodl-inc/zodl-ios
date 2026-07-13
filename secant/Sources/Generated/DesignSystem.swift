@@ -389,6 +389,34 @@ public enum Design: Colorable {
         public static let _full: CGFloat = 9999
     }
     
+    // MARK: - macOS sizing — the control numbers
+
+    /// Every fixed macOS dimension lives here, so the whole Mac app can be resized from ONE place:
+    /// change a value and the window, sidebar, content column, button, card, or toolbar width updates everywhere.
+    public enum Mac {
+        /// Fixed macOS window width (`zodlmac_internalApp` / `WindowSize`).
+        public static let windowWidth: CGFloat = 900
+        /// Fixed macOS window height (`zodlmac_internalApp` / `WindowSize`).
+        public static let windowHeight: CGFloat = 720
+        /// Fixed sidebar (left column) width (`MacSplitView` / `FixedSidebarWidth`, Rule #4).
+        public static let sidebarWidth: CGFloat = 240
+        /// Max width of a content view's centered column (Rule #8) — `applyScreenBackground`'s cap.
+        public static let viewCapWidth: CGFloat = 530
+        /// Max width of a button — the capped, centered pill (Rule #7) — `ZashiButton`.
+        public static let maxButtonWidth: CGFloat = 260
+
+        // Root-hosted overlay cards (MODALS.md Rule #5).
+        /// `.zashiSheet` content-hug card max width (`MacCard`).
+        public static let cardMaxWidth: CGFloat = 364
+        /// `.zashiSelectorSheet` definite-size card width.
+        public static let selectorCardWidth: CGFloat = 364
+        /// `.zashiSelectorSheet` definite-size card height range (so its inner List can fill + scroll).
+        public static let selectorCardHeightRange: ClosedRange<CGFloat> = 320...600
+
+        /// macOS window-toolbar search field width (`NativeSearchField`).
+        public static let toolbarSearchFieldWidth: CGFloat = 200
+    }
+
     // MARK: - Spacing Constants
     
     public enum Spacing {

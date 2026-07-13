@@ -6,12 +6,13 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 
 struct TransactionsCoordFlowView: View {
     @Environment(\.colorScheme) var colorScheme
 
-    @Perception.Bindable var store: StoreOf<TransactionsCoordFlow>
+    @PlatformBindable var store: StoreOf<TransactionsCoordFlow>
     let tokenName: String
 
     init(store: StoreOf<TransactionsCoordFlow>, tokenName: String) {
@@ -49,10 +50,16 @@ struct TransactionsCoordFlowView: View {
                     TransactionDetailsView(store: store, tokenName: tokenName)
                 }
             }
-            .navigationBarHidden(true)
+            .zashiNavigationBarHidden(true)
         }
-        .applyScreenBackground()
-        .zashiBack()
+        // macOS: this flow hosts the Activity List, which must be full-width so its (visible) scroll
+        // indicator sits at the window edge, not the 530-column edge. The content cap is moved OFF the
+        // flow (`capped: false`) and onto each screen: Activity caps per-row via `.macContentRowCap()`,
+        // while TransactionDetails / AddressBookContact self-cap via their own backgrounds. The flow
+        // background stays full-bleed either way. iOS unaffected — `capped: false` collapses to the same
+        // background-only path there (Rule #11).
+        .applyScreenBackground(capped: false)
+        .zashiSectionRootBack()
         .screenTitle(String(localizable: .generalRequest))
     }
 }

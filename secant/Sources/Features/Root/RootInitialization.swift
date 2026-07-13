@@ -6,6 +6,7 @@
 //
 
 import ComposableArchitecture
+import Combine
 import Foundation
 @preconcurrency import ZcashLightClientKit
 
@@ -50,11 +51,16 @@ extension Root {
                 state.appStartState = .didFinishLaunching
                 // TODO: [#704], trigger the review request logic when approved by the team,
                 // https://github.com/Electric-Coin-Company/zashi-ios/issues/704
-                return .run { send in
+                return .merge(
+                    .run { send in
                         try await mainQueue.sleep(for: .seconds(0.5))
                         await send(.initialization(.initialSetups))
                     }
-                    .cancellable(id: state.DidFinishLaunchingId, cancelInFlight: true)
+                    .cancellable(id: state.DidFinishLaunchingId, cancelInFlight: true),
+                    // Zodl Bridge: start the UDS listener once per launch (RootBridge.swift).
+                    // No-op on iOS — the live client there is inert by construction.
+                    .send(.bridge(.startListener))
+                )
 
             case .initialization(.appDelegate(.willEnterForeground)):
                 if state.featureFlags.appLaunchBiometric {
@@ -129,8 +135,50 @@ extension Root {
                     state.$walletStatus.withLock { $0 = state.wasRestoringWhenDisconnected ? .restoring : .none }
                 }
 
+                // [#1755 / slipstream] Drive the restoring/resyncing LABEL from the SDK's durable
+                // `isRecovering` signal (recovery_progress incomplete = a from-birthday backfill is in
+                // progress). It's recomputed from data.db every launch, so a kill mid-restore relaunches
+                // as .restoring with no reliance on a persisted guess, and a stale flag self-corrects.
+                // A user-initiated RESYNC is the same engine operation (isRecovering can't see intent),
+                // so we honor the persisted resync intent for the label. `.disconnected` (set above) is
+                // left untouched; resync completion still clears via the existing up-to-date path.
+                let recovering = latestState.data.isRecovering
+                if state.walletStatus != .disconnected {
+                    if recovering {
+                        if state.walletStatus != .restoring, state.walletStatus != .resyncing {
+                            let resyncing = userDefaults.objectForKey(Constants.udIsResyncingWallet) as? Bool ?? false
+                            state.$walletStatus.withLock { $0 = resyncing ? .resyncing : .restoring }
+                        }
+                        state.isRestoringWallet = true
+                    } else if state.walletStatus == .restoring {
+                        state.isRestoringWallet = false
+                        userDefaults.remove(Constants.udIsRestoringWallet)
+                        userDefaults.remove(Constants.udIsResyncingWallet)
+                        state.$walletStatus.withLock { $0 = .none }
+                    }
+                }
+
                 // handle BCGTask
                 guard state.bgTask != nil else {
+                    // [#1755 / slipstream] Kick the banner priority chain HERE — on the first DETERMINATE
+                    // sync state — not at synchronizer registration. By now the isRecovering block above has
+                    // settled walletStatus (restoring vs not), so evaluatePriority3 (restoring) is decided
+                    // correctly; firing at registration ran the chain while walletStatus was still `.none`
+                    // (isRecovering arrives async) and a restore flashed the currency-conversion banner
+                    // before the restoring one replaced it. One-shot per registration (re-armed there);
+                    // gated on syncing/upToDate so we never kick during `.unprepared`/error.
+                    var launchModeKnown = false
+                    switch snapshot.syncStatus {
+                    case .syncing, .upToDate: launchModeKnown = true
+                    default: break
+                    }
+                    if !state.initialBannerEvaluationFired, launchModeKnown {
+                        state.initialBannerEvaluationFired = true
+                        return .merge(
+                            .send(.home(.smartBanner(.evaluatePriority1))),
+                            .send(.initialization(.checkRestoreWalletFlag(snapshot.syncStatus)))
+                        )
+                    }
                     return .send(.initialization(.checkRestoreWalletFlag(snapshot.syncStatus)))
                 }
                 
@@ -191,11 +239,27 @@ extension Root {
                 }
                 return .run { [state] send in
                     do {
+                        // TODO: [#1755] T6.8-L1: resolve server selection BEFORE first start so the
+                        // automatic race completes while the synchronizer is still idle. Without this
+                        // the race finished ~10-20s into the first pass and triggered a switchTo
+                        // restart ([WARNING] switchTo during active sync — pass will restart).
+                        // Skip during background tasks (matches the .refreshAutomaticServer guard).
+                        // mid-session re-selection (post-start) is kept via .refreshAutomaticServer.
+                        if state.bgTask == nil {
+                            // zcash #1757 split refreshIfEnabled() into findBestServer + applySwitch.
+                            // Pre-start the synchronizer is idle, so applySwitch (switchIfIdle) applies
+                            // immediately — same intent. findBestServer() returns nil when Automatic is
+                            // off / nothing better, so this is a no-op in manual mode.
+                            if let best = await autoServerSelection.findBestServer() {
+                                _ = await autoServerSelection.applySwitch(best)
+                            }
+                        }
                         try await sdkSynchronizer.start(true)
                         if state.bgTask != nil {
                             LoggerProxy.event("BGTask synchronizer.start() PASSED")
                         }
                         await send(.initialization(.registerForSynchronizersUpdate))
+                        await send(.observeTransactions)
                         await send(.refreshAutomaticServer)
                     } catch {
                         if state.bgTask != nil {
@@ -213,14 +277,15 @@ extension Root {
                         .map(Root.Action.synchronizerStateChanged)
                 }
                 .cancellable(id: state.CancelStateId, cancelInFlight: true)
-                if state.bgTask != nil {
-                    return stateStreamEffect
-                } else {
-                    return .merge(
-                        stateStreamEffect,
-                        .send(.home(.smartBanner(.evaluatePriority1)))
-                    )
-                }
+                // [#1755 / slipstream] Re-arm the one-shot banner-priority kick. The chain (evaluatePriority1)
+                // used to fire HERE, at registration — but that raced the async isRecovering signal, so a
+                // restore briefly showed the currency-conversion banner before the restoring one replaced it.
+                // It now fires from synchronizerStateChanged on the first determinate state, once walletStatus
+                // (restoring vs not) is settled. Same once-per-registration cadence, just deferred until the
+                // launch mode is known. Firing is foreground-only (guarded there), matching the old bgTask
+                // suppression, so no explicit branch is needed here.
+                state.initialBannerEvaluationFired = false
+                return stateStreamEffect
 
             case .initialization(.checkWalletConfig):
                 return .run { send in
@@ -243,6 +308,13 @@ extension Root {
                 )
                 
             case .initialization(.initialSetups):
+                // macOS without a Secure Enclave (pre-T2 Intel): the seed can't be stored securely and
+                // there's no plaintext fallback, so create/restore would hard-error. Surface a clear info
+                // screen instead. Always true on iOS and on Secure-Enclave Macs → no behavior change there.
+                if !walletStorage.isSecureStorageAvailable() {
+                    state.osStatusErrorState.secureEnclaveUnavailable = true
+                    return .send(.destination(.updateDestination(.osStatusError)))
+                }
                 if !diskSpaceChecker.hasEnoughFreeSpaceForSync() {
                     state.destinationState.preNotEnoughFreeSpaceDestination = state.destinationState.internalDestination
                     return .send(.destination(.updateDestination(.notEnoughFreeSpace)))
@@ -252,8 +324,13 @@ extension Root {
                 }
                 // TODO: [#524] finish all the wallet events according to definition, https://github.com/Electric-Coin-Company/zashi-ios/issues/524
                 LoggerProxy.event(".appDelegate(.didFinishLaunching)")
-                /// We need to fetch data from keychain, in order to be 100% sure the keychain can be read we delay the check a bit
-                return .send(.initialization(.checkWalletInitialization))
+                /// We need to fetch data from keychain, in order to be 100% sure the keychain can be read we delay the check a bit.
+                /// macOS: first transparently migrate any legacy plaintext seed into the Secure Enclave, so an
+                /// un-migrated wallet isn't seen as "keysMissing" and sent to onboarding (no-op on iOS / once done).
+                return .run { send in
+                    try? await walletStorage.migrateToSecureEnclave()
+                    await send(.initialization(.checkWalletInitialization))
+                }
 
                 /// Evaluate the wallet's state based on keychain keys and database files presence
             case .initialization(.checkWalletInitialization):
@@ -318,23 +395,39 @@ extension Root {
                 /// Stored wallet is present, database files may or may not be present, trying to initialize app state variables and environments.
                 /// When initialization succeeds user is taken to the home screen.
             case .initialization(.initializeSDK(let walletMode)):
-                do {
-                    let storedWallet: StoredWallet
-                    do {
-                        storedWallet = try walletStorage.exportWallet()
-                    } catch {
-                        return .send(.destination(.updateDestination(.osStatusError)))
-                    }
-                    let birthday = storedWallet.birthday?.value() ?? zcashSDKEnvironment.latestCheckpoint()
-                    try mnemonic.isValid(storedWallet.seedPhrase.value())
-                    let seedBytes = try mnemonic.toSeed(storedWallet.seedPhrase.value())
-                    
-                    return .run { send in
+                let dbFilesPresent = databaseFiles.areDbFilesPresentFor(zcashSDKEnvironment.network())
+                return .run { send in
                         do {
+                            // Seed handling (docs/macos/KEYCHAIN_SE_HARDENING.md): the macOS seed is
+                            // Secure-Enclave-wrapped, so decrypting it prompts. The SDK's `prepare` takes
+                            // an OPTIONAL seed — once the wallet exists in `data.db` we prepare WITHOUT it
+                            // (no prompt on normal launches). The seed is decrypted only on FIRST init
+                            // (the user just supplied it) and reused for the seed-derived keys below.
+                            let seedBytes: [UInt8]?
+                            let birthday: BlockHeight
+                            if dbFilesPresent {
+                                seedBytes = nil
+                                birthday = (try? walletStorage.exportWalletMetadata().birthday?.value())
+                                    ?? zcashSDKEnvironment.latestCheckpoint()
+                            } else {
+                                let storedWallet: StoredWallet
+                                do {
+                                    storedWallet = try await walletStorage.exportWallet(nil)
+                                } catch {
+                                    await send(.destination(.updateDestination(.osStatusError)))
+                                    return
+                                }
+                                try mnemonic.isValid(storedWallet.seedPhrase.value())
+                                seedBytes = try mnemonic.toSeed(storedWallet.seedPhrase.value())
+                                birthday = storedWallet.birthday?.value() ?? zcashSDKEnvironment.latestCheckpoint()
+                            }
+
+                            // [#1755] The SDK derives the init flow from the birthday: a brand-new wallet
+                            // passes nil (the SDK picks a reorg-safe recent height), restore/existing pass
+                            // the stored birthday. `walletMode` is no longer handed to the SDK.
                             try await sdkSynchronizer.prepareWith(
                                 seedBytes,
-                                birthday,
-                                walletMode,
+                                walletMode == .newWallet ? nil : birthday,
                                 String(localizable: .accountsZashi),
                                 String(localizable: .accountsZashi).lowercased()
                             )
@@ -347,9 +440,48 @@ extension Root {
 
                             let walletAccounts = try await sdkSynchronizer.walletAccounts()
                             await send(.initialization(.loadedWalletAccounts(walletAccounts)))
+
+                            // First init only (we still hold the seed): derive the seed-derived metadata
+                            // encryption keys HERE, reusing `seedBytes`, so the async
+                            // resolveMetadataEncryptionKeys below finds them present and never re-decrypts
+                            // the Secure-Enclave seed. Together with WalletStorage's primed-seed reuse,
+                            // restore/create fires ZERO seed prompts (docs/macos/KEYCHAIN_SE_HARDENING.md).
+                            // Existing-wallet launches keep seedBytes == nil, so the standard
+                            // resolveMetadataEncryptionKeys recovery path is unchanged.
+                            if let seedBytes {
+                                for account in walletAccounts
+                                where (try? walletStorage.exportUserMetadataEncryptionKeys(account.account)) == nil {
+                                    do {
+                                        var keys = UserMetadataEncryptionKeys.empty
+                                        try keys.cacheFor(
+                                            seed: seedBytes,
+                                            account: account.account,
+                                            network: zcashSDKEnvironment.network().networkType
+                                        )
+                                        try walletStorage.importUserMetadataEncryptionKeys(keys, account.account)
+                                    } catch {
+                                        LoggerProxy.event("first-init metadata key derivation failed for '\(account.account.name ?? "?")': \(error)")
+                                    }
+                                }
+                            }
+
                             await send(.resolveMetadataEncryptionKeys)
                             await send(.loadUserMetadata)
 
+                            // TODO: [#1755] T6.8-L1: resolve server selection BEFORE first start.
+                            // The automatic race completes here while the synchronizer is still idle;
+                            // previously it ran post-start and triggered a switchTo restart ~10-20s
+                            // into the first pass ([WARNING] switchTo during active sync — pass will
+                            // restart), wasting ~50s on iPad A10 / ~5-10s on iPhone.
+                            // evaluateBestOf is bounded by evaluationTimeoutSeconds=5.0 (existing
+                            // constant in AutoServerSelectionConstants) so no new timeout is needed.
+                            // zcash #1757 split refreshIfEnabled() into findBestServer + applySwitch.
+                            // findBestServer() returns nil when Automatic is off, so this stays a
+                            // no-op in manual mode; pre-start the synchronizer is idle so applySwitch
+                            // (switchIfIdle) applies immediately — same intent as before.
+                            if let best = await autoServerSelection.findBestServer() {
+                                _ = await autoServerSelection.applySwitch(best)
+                            }
                             try await sdkSynchronizer.start(false)
 
                             var selectedAccount: WalletAccount?
@@ -362,7 +494,10 @@ extension Root {
 
                             exchangeRate.refreshExchangeRateUSD()
 
-                            if let account = selectedAccount {
+                            // Address-book keys are seed-derived — derive only when we actually hold the
+                            // seed (first init) and they're missing. On normal launches `seedBytes` is nil
+                            // and they're already cached, so this is skipped (no prompt).
+                            if let account = selectedAccount, let seedBytes {
                                 let addressBookEncryptionKeys = try? walletStorage.exportAddressBookEncryptionKeys()
                                 if addressBookEncryptionKeys == nil {
                                     do {
@@ -386,10 +521,7 @@ extension Root {
                             await send(.initialization(.initializationFailed(error.toZcashError())))
                         }
                     }
-                } catch {
-                    return .send(.initialization(.initializationFailed(error.toZcashError())))
-                }
-                
+
             case .initialization(.initializationSuccessfullyDone):
                 return .merge(
                     .send(.initialization(.registerForSynchronizersUpdate)),
@@ -423,45 +555,39 @@ extension Root {
                 )
 
             case .resolveMetadataEncryptionKeys:
-                do {
-                    let storedWallet: StoredWallet
-                    do {
-                        storedWallet = try walletStorage.exportWallet()
-                    } catch {
-                        return .send(.destination(.updateDestination(.osStatusError)))
+                return .run { [walletAccounts = state.walletAccounts] send in
+                    // Decrypt the seed only if some account is actually missing its metadata keys
+                    // (promptless otherwise — docs/macos/KEYCHAIN_SE_HARDENING.md). The keys are
+                    // seed-derived, so on normal launches they're already cached and this never decrypts.
+                    let accountsMissingKeys = walletAccounts.filter {
+                        (try? walletStorage.exportUserMetadataEncryptionKeys($0.account)) == nil
                     }
-                    try mnemonic.isValid(storedWallet.seedPhrase.value())
-                    let seedBytes = try mnemonic.toSeed(storedWallet.seedPhrase.value())
-                    
-                    return .run { [walletAccounts = state.walletAccounts] send in
+                    guard !accountsMissingKeys.isEmpty else { return }
+
+                    guard
+                        let storedWallet = try? await walletStorage.exportWallet(nil),
+                        let seedBytes = try? mnemonic.toSeed(storedWallet.seedPhrase.value())
+                    else { return }
+
+                    for account in accountsMissingKeys {
                         do {
-                            
-                            for account in walletAccounts {
-                                let userMetadataEncryptionKeys = try? walletStorage.exportUserMetadataEncryptionKeys(account.account)
-                                if userMetadataEncryptionKeys == nil {
-                                    do {
-                                        var keys = UserMetadataEncryptionKeys.empty
-                                        try keys.cacheFor(
-                                            seed: seedBytes,
-                                            account: account.account,
-                                            network: zcashSDKEnvironment.network().networkType
-                                        )
-                                        try walletStorage.importUserMetadataEncryptionKeys(keys, account.account)
-                                        await send(.loadUserMetadata)
-                                    } catch {
-                                        // TODO: [#1408] error handling https://github.com/Electric-Coin-Company/zashi-ios/issues/1408
-                                    }
-                                }
-                            }
+                            var keys = UserMetadataEncryptionKeys.empty
+                            try keys.cacheFor(
+                                seed: seedBytes,
+                                account: account.account,
+                                network: zcashSDKEnvironment.network().networkType
+                            )
+                            try walletStorage.importUserMetadataEncryptionKeys(keys, account.account)
+                            await send(.loadUserMetadata)
+                        } catch {
+                            LoggerProxy.event("resolveMetadataEncryptionKeys: failed to derive metadata keys for account '\(account.account.name ?? "?")': \(error)")
                         }
                     }
-                } catch { }
-                return .none
+                }
                 
             case .initialization(.checkBackupPhraseValidation):
-                do {
-                    let _ = try walletStorage.exportWallet()
-                } catch {
+                // Existence check only (promptless) — do NOT decrypt the seed here.
+                guard (try? walletStorage.areKeysPresent()) == true else {
                     return .send(.destination(.updateDestination(.osStatusError)))
                 }
 
@@ -469,6 +595,25 @@ extension Root {
                 let isAtDeeplinkWarningScreen = state.destinationState.destination == .deeplinkWarning
 
                 return .run { send in
+#if !os(macOS)
+                    // iOS-only launch-time desync check ([#1024]): the keychain seed reads without a
+                    // prompt here, so re-confirm it still matches the wallet DB and warn if it drifted.
+                    // Only a definitive `false` warns; any error defaults to relevant so a transient rust
+                    // hiccup never falsely locks a valid wallet, and hardware-only wallets are skipped by
+                    // `try?`. Intentionally NOT done on macOS: the seed is Secure-Enclave-wrapped, so this
+                    // would prompt on EVERY launch, and the preventive guard at restore (`resolveRestore`,
+                    // which uses the freshly-typed seed — no decrypt) already prevents the desync at its
+                    // source. Re-checking every launch buys nothing there but a biometric.
+                    if databaseFiles.areDbFilesPresentFor(zcashSDKEnvironment.network()),
+                       let storedWallet = try? await walletStorage.exportWallet(nil),
+                       let seedBytes = try? mnemonic.toSeed(storedWallet.seedPhrase.value()) {
+                        let relevant = (try? await sdkSynchronizer.isSeedRelevantToAnyDerivedAccount(seedBytes)) ?? true
+                        if !relevant {
+                            await send(.initialization(.seedValidationResult(false)))
+                        }
+                    }
+#endif
+
                     // Delay the splash overlay dismissal
                     try await mainQueue.sleep(for: .seconds(0.5))
                     if !isAtDeeplinkWarningScreen {
@@ -494,14 +639,22 @@ extension Root {
                 guard let wipePublisher = sdkSynchronizer.wipe() else {
                     return .send(.resetZashiSDKFailed)
                 }
-                return .publisher {
-                    wipePublisher
-                        .replaceEmpty(with: Void())
-                        .map { _ in return Root.Action.resetZashiSDKSucceeded }
-                        .replaceError(with: Root.Action.resetZashiSDKFailed)
-                        .receive(on: mainQueue)
-                }
-                .cancellable(id: state.SynchronizerCancelId, cancelInFlight: true)
+                return .merge(
+                    // [#1755] Return the SmartBanner to its initial state at the START of the wipe so a
+                    // stale promo banner (e.g. currency conversion, priority8) doesn't linger through
+                    // reset → restore. iPhone hides Home behind the welcome screen so it's never seen;
+                    // macOS keeps Home mounted in the split view, so without this the old banner stays
+                    // visible until the restoring banner (priority3) finally overrides it.
+                    .send(.home(.smartBanner(.closeAndCleanupBanner))),
+                    .publisher {
+                        wipePublisher
+                            .replaceEmpty(with: Void())
+                            .map { _ in return Root.Action.resetZashiSDKSucceeded }
+                            .replaceError(with: Root.Action.resetZashiSDKFailed)
+                            .receive(on: mainQueue)
+                    }
+                    .cancellable(id: state.SynchronizerCancelId, cancelInFlight: true)
+                )
 
             case .resetZashiSDKSucceeded:
                 state.splashAppeared = true
@@ -609,41 +762,6 @@ extension Root {
                     return .send(.resetZashiKeychainFailedWithCorruptedData(error.localizedDescription))
                 }
 
-                // TODO: [#1627] validate whether this code makes sense
-                // https://github.com/zodl-inc/zodl-ios/issues/1627
-//                if state.appInitializationState == .keysMissing && state.onboardingState.isImportingWallet {
-//                    state.appInitializationState = .uninitialized
-//                    return .cancel(id: SynchronizerCancelId)
-//                } else if state.appInitializationState == .keysMissing && state.onboardingState.destination == .createNewWallet {
-//                    state.appInitializationState = .uninitialized
-//                    return .concatenate(
-//                        .cancel(id: SynchronizerCancelId),
-//                        .send(.onboarding(.createNewWalletRequested))
-//                    )
-//                } else {
-//                    return .concatenate(
-//                        .cancel(id: SynchronizerCancelId),
-//                        .send(.initialization(.checkWalletInitialization))
-//                    )
-//                }
-
-                // TODO: [#1627] this might need to be recreated
-                // https://github.com/zodl-inc/zodl-ios/issues/1627
-//                if state.appInitializationState == .keysMissing && state.onboardingState.destination == .importExistingWallet {
-//                    state.appInitializationState = .uninitialized
-//                    return .cancel(id: SynchronizerCancelId)
-//                } else if state.appInitializationState == .keysMissing && state.onboardingState.destination == .createNewWallet {
-//                    state.appInitializationState = .uninitialized
-//                    return .concatenate(
-//                        .cancel(id: SynchronizerCancelId),
-//                        .send(.onboarding(.createNewWalletRequested))
-//                    )
-//                } else {
-//                    return .concatenate(
-//                        .cancel(id: SynchronizerCancelId),
-//                        .send(.initialization(.checkWalletInitialization))
-//                    )
-//                }
                 return .concatenate(
                     .cancel(id: state.SynchronizerCancelId),
                     .send(.initialization(.checkWalletInitialization))

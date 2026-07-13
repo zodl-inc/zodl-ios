@@ -6,11 +6,12 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 
 struct AddKeystoneHWWalletView: View {
     @Environment(\.colorScheme) private var colorScheme
-    @Perception.Bindable var store: StoreOf<AddKeystoneHWWallet>
+    @PlatformBindable var store: StoreOf<AddKeystoneHWWallet>
     
     init(store: StoreOf<AddKeystoneHWWallet>) {
         self.store = store
@@ -98,18 +99,25 @@ struct AddKeystoneHWWalletView: View {
                     InAppBrowserView(url: url)
                 }
             }
-            .navigationBarItems(
+            .zashiNavigationBarItems(
                 trailing:
                     Button {
                         store.send(.helpSheetRequested)
                     } label: {
+#if os(macOS)
+                        // macOS 26 sizes the glass capsule to the icon's WIDTH — a bare SF symbol is narrow
+                        // → tall capsule. zashiToolbarIconPadding() widens it to circular (matches the back).
+                        Image(systemName: "info.circle")
+                            .zashiToolbarIconPadding()
+#else
                         Asset.Assets.Icons.help.image
                             .zImage(size: 24, style: Design.Text.primary)
                             .padding(Design.Spacing.navBarButtonPadding)
+#endif
                     }
             )
         }
-        .navigationBarTitleDisplayMode(.inline)
+        .zashiNavBarTitleDisplayMode(.inline)
         .applyScreenBackground()
     }
     

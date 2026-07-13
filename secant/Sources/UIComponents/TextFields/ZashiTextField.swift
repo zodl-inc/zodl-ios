@@ -82,7 +82,9 @@ struct ZashiTextField<PrefixContent, InputReplacementContent, AccessoryContent>:
                                 .font(.custom(FontFamily.Inter.regular.name, size: 16))
                                 .foregroundColor(Design.Inputs.Default.text.color(colorScheme))
                     )
+#if os(iOS)
                     .autocapitalization(.none)
+#endif
                     .autocorrectionDisabled()
                     .font(.custom(
                         addressFont

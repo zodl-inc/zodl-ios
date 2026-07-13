@@ -4,6 +4,7 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
 
@@ -101,21 +102,25 @@ struct ProposalListView: View {
                                         choice: displayedChoices[proposal.id]
                                     )
                                 }
-                                .buttonStyle(.plain)
+                                .zashiPlainButtonStyle()
                             }
                         }
                     }
                     .padding(.horizontal, 24)
                     .padding(.top, 12)
                     .padding(.bottom, showCTA ? 96 : 24)
+                    // macOS: cap the scroll CONTENT so the full-width scroller reaches the window edge.
+                    .macContentRowCap()
                 }
                 .padding(.vertical, 1)
 
                 if showCTA {
+                    // chrome pinned outside the scroll — cap it too so it stays in the column.
                     bottomCTA(proposals: proposals, choices: displayedChoices)
+                        .macContentRowCap()
                 }
             }
-            .applyScreenBackground()
+            .applyScreenBackground(capped: false)
             .screenTitle(String(localizable: .coinVoteCommonScreenTitle))
             .zashiBack()
         }
@@ -187,7 +192,7 @@ struct ProposalListView: View {
                 .fixedSize(horizontal: false, vertical: false)
             } else {
                 HStack(spacing: 8) {
-                    ProgressView()
+                    ZashiSpinner()
                         .scaleEffect(0.75)
                     Text(localizable: .coinVoteProposalListPreparingVotingPower)
                         .zFont(.medium, size: 14, style: Design.Text.tertiary)
@@ -505,7 +510,7 @@ private struct ExpandableText: View {
                             .foregroundStyle(Design.Text.primary.color(colorScheme))
                     }
                 }
-                .buttonStyle(.plain)
+                .zashiPlainButtonStyle()
             }
         }
     }

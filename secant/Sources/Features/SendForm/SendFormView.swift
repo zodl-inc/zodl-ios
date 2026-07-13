@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 //import Scan
 
@@ -19,7 +20,7 @@ struct SendFormView: View {
     
     @State private var keyboardVisible: Bool = false
 
-    @Perception.Bindable var store: StoreOf<SendForm>
+    @PlatformBindable var store: StoreOf<SendForm>
     let tokenName: String
 
     @FocusState private var isAddressFocused
@@ -36,7 +37,7 @@ struct SendFormView: View {
         WithPerceptionTracking {
             ZStack {
                 WithPerceptionTracking {
-                    ScrollView {
+                    PlatformScrollable {
                         ScrollViewReader { value in
                             WithPerceptionTracking {
                                 VStack(alignment: .center) {
@@ -86,7 +87,9 @@ struct SendFormView: View {
                                                     .offset(x: 8)
                                             )
                                             .id(InputID.addressBookHint)
+#if os(iOS)
                                             .keyboardType(.alphabet)
+#endif
                                             .focused($isAddressFocused)
                                             .submitLabel(.next)
                                             .onSubmit {
@@ -109,7 +112,9 @@ struct SendFormView: View {
                                                             Asset.Assets.Icons.currencyZec.image
                                                                 .zImage(size: 20, style: Design.Inputs.Default.text)
                                                     )
+#if os(iOS)
                                                     .keyboardType(.decimalPad)
+#endif
                                                     .focused($isAmountFocused)
                                                     
                                                     if store.isCurrencyConversionEnabled {
@@ -130,7 +135,9 @@ struct SendFormView: View {
                                                                     }
                                                                 }
                                                         )
+#if os(iOS)
                                                         .keyboardType(.decimalPad)
+#endif
                                                         .focused($isCurrencyFocused)
                                                         .padding(.top, 23)
                                                         .disabled(store.currencyConversion == nil)
@@ -144,7 +151,14 @@ struct SendFormView: View {
                                         if store.isMemoInputEnabled {
                                             MessageEditorView(store: store.memoStore(), isAddUAtoMemoActive: true)
                                                 .frame(minHeight: 155)
+#if os(macOS)
+                                                // macOS: don't stretch with the extra height — keep it
+                                                // fixed so the bottom Spacer takes ALL the slack (content
+                                                // hugs the top, biggest gap above the CTA at the bottom).
+                                                .frame(maxHeight: 155)
+#else
                                                 .frame(maxHeight: 300)
+#endif
                                                 .id(InputID.message)
                                                 .focused($isMemoFocused)
                                         } else {
@@ -153,18 +167,20 @@ struct SendFormView: View {
                                                     .zFont(.medium, size: 14, style: Design.Inputs.Filled.label)
                                                     .padding(.bottom, 6)
                                                 
-                                                HStack(spacing: 0) {
-                                                    VStack {
-                                                        Asset.Assets.infoOutline.image
-                                                            .zImage(size: 20, style: Design.Utility.Gray._500)
-                                                            .padding(.trailing, 12)
-                                                        
-                                                        Spacer(minLength: 0)
-                                                    }
-                                                    
+                                                // B4-2: `alignment: .top` replaces the old inner
+                                                // `VStack { icon; Spacer(minLength: 0) }` — that spacer made
+                                                // the box GREEDY for height, and the no-scroll macOS form
+                                                // offered it all the slack (the disabled memo rendered as
+                                                // tall as the real editor). Top-aligning the icon directly
+                                                // keeps the identical look while the box hugs its text.
+                                                HStack(alignment: .top, spacing: 0) {
+                                                    Asset.Assets.infoOutline.image
+                                                        .zImage(size: 20, style: Design.Utility.Gray._500)
+                                                        .padding(.trailing, 12)
+
                                                     Text(localizable: .sendInfoMemo)
                                                         .zFont(size: 12, style: Design.Utility.Gray._700)
-                                                    
+
                                                     Spacer()
                                                 }
                                                 .padding(10)
@@ -175,14 +191,25 @@ struct SendFormView: View {
                                             }
                                         }
                                         
+#if os(macOS)
+                                        // macOS: push the CTA to the bottom (no scroll); on iOS it flows under the form.
+                                        Spacer(minLength: 24)
+#endif
                                         ZashiButton(String(localizable: .sendReview)) {
                                             store.send(.reviewTapped)
                                         }
                                         .disabled(!store.isValidForm)
                                         .padding(.top, 40)
+#if os(macOS)
+                                        .padding(.bottom, 24)
+#endif
                                         .accessibilityIdentifier(AccessibilityID.SendForm.reviewButton)
                                     }
                                 }
+#if os(macOS)
+                                // macOS: fill the pane so the Spacer below the form pins the CTA to the bottom.
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+#endif
                                 .screenHorizontalPadding()
                                 .onChange(of: store.isNotAddressInAddressBook) { update in
                                     withAnimation {
@@ -214,7 +241,10 @@ struct SendFormView: View {
             }
             .padding(.vertical, 1)
             .applyScreenBackground()
+#if !os(macOS)
+            // macOS: Send is a peer-root in the split, not a screen pushed over Activity — no back arrow.
             .zashiBack() { store.send(.dismissRequired) }
+#endif
             .zashiSheet(isPresented: $store.isSheetTexAddressVisible) {
                 helpSheetContent()
             }
@@ -470,7 +500,7 @@ struct SendFormView: View {
             tokenName: "ZEC"
         )
     }
-    .navigationViewStyle(.stack)
+    .zashiStackNavigationStyle()
 }
 
 // MARK: - Store

@@ -4,6 +4,7 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
 
@@ -42,19 +43,24 @@ struct PollsListView: View {
                 }
                 .padding(.horizontal, 24)
                 .padding(.bottom, 24)
+                // macOS: cap the scroll CONTENT (not the ScrollView) so the full-width scroller reaches
+                // the window edge while content stays in the 530 column. No flow cap above this screen.
+                .macContentRowCap()
             }
             .padding(.vertical, 1)
-            .applyScreenBackground()
+            .applyScreenBackground(capped: false)
             .screenTitle(String(localizable: .coinVoteCommonScreenTitle))
-            .zashiBack { store.send(.dismissFlow) }
+            .zashiSectionRootBack { store.send(.dismissFlow) }
             .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
+                ToolbarItem(placement: .zashiTrailing) {
                     Button {
                         store.send(.openConfigSettings)
                     } label: {
                         settingsButtonIcon()
                     }
-                    .buttonStyle(.plain)
+#if !os(macOS)
+                    .zashiPlainButtonStyle()
+#endif
                     .accessibilityLabel(String(localizable: .coinVotePollsListChainConfigAccessibility))
                 }
             }
@@ -175,6 +181,12 @@ struct PollsListView: View {
 
     @ViewBuilder
     private func settingsButtonIcon() -> some View {
+#if os(macOS)
+        // macOS 26 sizes the glass capsule to the icon's WIDTH — a bare SF symbol is narrow → a TALL
+        // capsule. Horizontal padding widens it to the same circular capsule as the back button.
+        Image(systemName: "gearshape")
+            .zashiToolbarIconPadding()
+#else
         let icon = Asset.Assets.Icons.settings2.image
             .zImage(size: 20, style: Design.Btns.Ghost.fg)
 
@@ -188,6 +200,7 @@ struct PollsListView: View {
                         .fill(Design.Btns.Ghost.bg.color(colorScheme))
                 }
         }
+#endif
     }
 
     private var visiblePolls: [RoundListItem] {

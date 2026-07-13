@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import ComposableArchitecture
 
 extension TransactionDetailsView {
     @ViewBuilder func reportSwapSheetContent() -> some View {

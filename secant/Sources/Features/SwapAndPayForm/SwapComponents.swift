@@ -5,7 +5,10 @@
 //  Created by Lukáš Korba on 28.08.2025.
 //
 
+#if canImport(UIKit)
 import UIKit
+import Combine
+#endif
 import SwiftUI
 import ComposableArchitecture
 
@@ -55,6 +58,22 @@ extension SwapAndPayForm {
                 } else if store.swapAssetsToPresent.isEmpty && store.searchTerm.isEmpty {
                     assetsLoadingComposition(colorScheme)
                 } else {
+#if os(macOS)
+                    // macOS: a `List` has no intrinsic height and collapses inside the card; use a
+                    // scrollable stack that fills the definite card height instead.
+                    ScrollView {
+                        LazyVStack(spacing: 0) {
+                            WithPerceptionTracking {
+                                ForEach(store.swapAssetsToPresent, id: \.self) { asset in
+                                    assetView(asset, colorScheme)
+                                        .zashiPlainButtonStyle()
+                                }
+                            }
+                        }
+                    }
+                    // No solid background on macOS — let the sheet's Liquid Glass card surface show
+                    // through the (transparent) rows. iOS keeps its list-row background below.
+#else
                     List {
                         WithPerceptionTracking {
                             ForEach(store.swapAssetsToPresent, id: \.self) { asset in
@@ -68,6 +87,7 @@ extension SwapAndPayForm {
                     .padding(.vertical, 1)
                     .background(Asset.Colors.background.color)
                     .listStyle(.plain)
+#endif
                 }
             }
         }
@@ -134,6 +154,8 @@ extension SwapAndPayForm {
     @ViewBuilder func slippageContent(_ colorScheme: ColorScheme) -> some View {
         WithPerceptionTracking {
             VStack(alignment: .leading, spacing: 0) {
+#if !os(macOS)
+                // macOS presents this in a MacCard, which draws its own close button.
                 Button {
                     store.send(.closeSlippageSheetTapped)
                 } label: {
@@ -142,6 +164,7 @@ extension SwapAndPayForm {
                         .padding(8)
                 }
                 .padding(.vertical, 24)
+#endif
                 
                 Text(localizable: .swapAndPaySlippage)
                     .zFont(.semiBold, size: 24, style: Design.Text.primary)
@@ -174,7 +197,9 @@ extension SwapAndPayForm {
                                    ? CGFloat(store.customSlippage.count - 1) * 13.0 + 2.0
                                    : CGFloat(store.customSlippage.count) * 13.0
                             )
+#if os(iOS)
                             .keyboardType(.decimalPad)
+#endif
                             .onAppear {
                                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                                     isSlippageFocused = true
@@ -245,6 +270,9 @@ extension SwapAndPayForm {
                         )
                         .zFont(size: 12, style: Design.Utility.WarningYellow._900)
                         .fixedSize(horizontal: false, vertical: true)
+                        // Span the card like the info box above (B4-22) — without this the box
+                        // hugs its wrapped text and falls short of the MacCard's content width.
+                        .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 20)
                         .padding(.vertical, 16)
                         .background {

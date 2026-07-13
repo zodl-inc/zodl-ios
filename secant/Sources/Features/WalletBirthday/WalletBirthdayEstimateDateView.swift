@@ -6,10 +6,11 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 
 struct WalletBirthdayEstimateDateView: View {
-    @Perception.Bindable var store: StoreOf<WalletBirthday>
+    @PlatformBindable var store: StoreOf<WalletBirthday>
 
     @State private var selectedMonth: String = ""
     @State private var selectedYear: Int = WalletBirthday.Constants.startYear
@@ -51,7 +52,9 @@ struct WalletBirthdayEstimateDateView: View {
                                 .zFont(size: 23, style: Design.Text.primary)
                         }
                     }
+#if os(iOS)
                     .pickerStyle(.wheel)
+#endif
                     .onChange(of: selectedYear) { _ in
                         store.send(.binding(.set(\.selectedYear, selectedYear)))
                         // sync month in case it went out of range
@@ -66,7 +69,9 @@ struct WalletBirthdayEstimateDateView: View {
                                 .zFont(size: 23, style: Design.Text.primary)
                         }
                     }
+#if os(iOS)
                     .pickerStyle(.wheel)
+#endif
                 }
                 
                 Spacer()
@@ -97,15 +102,22 @@ struct WalletBirthdayEstimateDateView: View {
                 selectedMonth = newMonth
             }
             .zashiBack()
-            .navigationBarTitleDisplayMode(.inline)
-            .navigationBarItems(
+            .zashiNavBarTitleDisplayMode(.inline)
+            .zashiNavigationBarItems(
                 trailing:
                     Button {
                         store.send(.helpSheetRequested)
                     } label: {
+#if os(macOS)
+                        // macOS 26 sizes the glass capsule to the icon's WIDTH — a bare SF symbol is narrow
+                        // → tall capsule. zashiToolbarIconPadding() widens it to circular (matches the back).
+                        Image(systemName: "info.circle")
+                            .zashiToolbarIconPadding()
+#else
                         Asset.Assets.Icons.help.image
                             .zImage(size: 24, style: Design.Text.primary)
                             .padding(Design.Spacing.navBarButtonPadding)
+#endif
                     }
             )
             .screenHorizontalPadding()

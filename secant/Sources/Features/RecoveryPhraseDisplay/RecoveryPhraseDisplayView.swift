@@ -6,8 +6,12 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 @preconcurrency import MnemonicSwift
+#if os(macOS)
+import AppKit
+#endif
 
 struct RecoveryPhraseDisplayView: View {
     @Environment(\.colorScheme) private var colorScheme
@@ -21,7 +25,7 @@ struct RecoveryPhraseDisplayView: View {
         static let hiddenWordPlaceholder = "•••••"
     }
 
-    @Perception.Bindable var store: StoreOf<RecoveryPhraseDisplay>
+    @PlatformBindable var store: StoreOf<RecoveryPhraseDisplay>
 
     init(store: StoreOf<RecoveryPhraseDisplay>) {
         self.store = store
@@ -31,7 +35,10 @@ struct RecoveryPhraseDisplayView: View {
         WithPerceptionTracking {
             VStack(alignment: .leading, spacing: 0) {
                 Text(localizable: .recoveryPhraseDisplayTitle)
-
+                #if os(macOS)
+                    .padding(.top, 24)
+                #endif
+                
                 Text(localizable: .recoveryPhraseDisplayDescription)
                     .zFont(size: 14, style: Design.Text.primary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -93,6 +100,7 @@ struct RecoveryPhraseDisplayView: View {
                 }
             }
             .onAppear { store.send(.onAppear) }
+#if os(iOS)
             .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
                 store.send(.hideEverything)
             }
@@ -102,12 +110,19 @@ struct RecoveryPhraseDisplayView: View {
             .onReceive(NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)) { _ in
                 store.send(.hideEverything)
             }
+#elseif os(macOS)
+            // macOS: hide the revealed phrase when the app loses focus (user switches away), matching the
+            // iOS willResignActive purge so the seed isn't left on screen on focus loss (MOB-1363).
+            .onReceive(NotificationCenter.default.publisher(for: NSApplication.willResignActiveNotification)) { _ in
+                store.send(.hideEverything)
+            }
+#endif
             .alert($store.scope(state: \.alert, action: \.alert))
             .zashiBack()
             .zashiSheet(isPresented: $store.isHelpSheetPresented) {
                 helpSheetContent()
             }
-            .navigationBarItems(
+            .zashiNavigationBarItems(
                 trailing:
                     Button {
                         store.send(
@@ -117,6 +132,11 @@ struct RecoveryPhraseDisplayView: View {
                             animation: .easeInOut
                         )
                     } label: {
+#if os(macOS)
+                        // RULE #3: plain SF symbols → clean circular glass capsule (no forced zImage size).
+                        Image(systemName: (store.isRecoveryPhraseHidden || !store.isWalletBackup) ? "info.circle" : "eye.slash")
+                            .zashiToolbarIconPadding()
+#else
                         if store.isRecoveryPhraseHidden || !store.isWalletBackup {
                             Asset.Assets.Icons.help.image
                                 .zImage(size: 24, style: Design.Text.primary)
@@ -126,11 +146,12 @@ struct RecoveryPhraseDisplayView: View {
                                 .zImage(size: 24, style: Design.Text.primary)
                                 .padding(Design.Spacing.navBarButtonPadding)
                         }
+#endif
                     }
             )
         }
         .padding(.horizontal, 20)
-        .applyScreenBackground()
+        .applyScreenBackground(scrollable: true)
         .screenTitle(String(localizable: .recoveryPhraseDisplayScreenTitle).uppercased())
     }
     
@@ -230,19 +251,7 @@ struct RecoveryPhraseDisplayView: View {
     }
     
     @ViewBuilder private func infoContent(text: String) -> some View {
-        HStack(alignment: .top, spacing: 8) {
-            Asset.Assets.infoCircle.image
-                .zImage(size: 20, style: Design.Text.primary)
-            
-            if let attrText = try? AttributedString(
-                markdown: text,
-                including: \.zashiApp
-            ) {
-                ZashiText(withAttributedString: attrText, colorScheme: colorScheme)
-                    .zFont(size: 14, style: Design.Text.tertiary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
+        HintBox(text, style: .markdown)
     }
 }
 

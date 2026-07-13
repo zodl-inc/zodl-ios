@@ -1,0 +1,39 @@
+# macOS Foundations — F-1 verdicts (inventory + fragility map)
+**2026-07-02 · Foundations review phase F-1 (see FOUNDATIONS_REVIEW_PLAN.md) · evidence = source
+reads (MacSplitView, FixedSidebarWidth, MacCard/ZashiSheet, RootView) + the 2026-07-01 audit's
+platform sweep + this branch's field-bug history. F-2 items are prototype adjudications in
+~/Downloads/testApp; F-3/F-4/F-5 are the hardening/a11y/codify waves.**
+
+## Verdict table
+
+| # | Component | Verdict | Fragility (1-5) | Why / what changes |
+|---|---|---|---|---|
+| B | **FixedSidebarWidth** (responder-chain NSSplitViewItem pin, autosave purge, 6-retry async) | **REPLACE-candidate** → F-2(b) — *strengthened by H field evidence* | **5 — highest in the app** | Pokes incidental AppKit structure + timing (already caused the startup-pop bug). **2026-07-02 field evidence (H round 2): the pin demonstrably MISSED the first-frame window when state restoration was disabled — first-frame width is now guaranteed by the content-side `.frame(width:)` in MacSplitView instead, verified on device.** The pin's remaining job is only divider-drag/width-persistence enforcement; F-2(b) tests whether pure SwiftUI + `.toolbar(removing: .sidebarToggle)` covers that too. If yes → delete the pin. If drag survives → KEEP the pin but isolated behind one seam + a canary UI test that fails loudly on the next macOS update. |
+| A | **MacSplitView nav shell** (peer-roots, `.id` teardown, three-phase blank frame, scattered takeover conditions) | **KEEP + HARDEN** | 4 (blank frame), 3 (rest) | The blank frame exists to dodge a SwiftUI `try!` crash (`comparisonTypeMismatch`) — correct today, but OS-version sensitive in BOTH directions. F-2(c): does the crash still reproduce without it on current SwiftUI? (If Apple fixed it, the blank + its one-frame flash retire.) Separately: window-takeover logic is scattered (path switch + binding `if` + RULE #9/#10 path-content scans) — F-3 unifies into ONE derived `windowMode` enum (`.split / .takeover(flow) / .broadcastLocked`) so a new flow declares itself once. |
+| C | **MacCard / MacCardCoordinator** (the "maybe yes, maybe no") | **KEEP + CONTRACT** (— with one new bug found) | 3 | The core idea is sound and idiomatic-adjacent: single root host, environment injection (the only channel that crosses nav containers), content built in the child, ESC both paths, colorScheme re-publish, id-guarded teardown. It earns its existence (stacking-free whole-window dim, one adoption point, glass surface). **NEW FINDING (F-1): the single-slot invariant is unenforced** — `coordinator.entry` is silently REPLACED if a second `.zashiSheet` opens over an open card; when the second closes, the first's `isPresented` stays true with NO visible card and no re-publish path → stuck invisible state. Today no flow legitimately stacks two cards, which is why it hasn't fired — but nothing stops the next feature from doing it. F-3: document the contract in MODALS.md + a DEBUG assertion on replacement (or make sync() re-publish surviving cards on entry-nil). **TRAP REFUTED (2026-07-02 field test, B4-11):** the "native `.sheet` won't present after/near a MacCard" belief was a MIS-DIAGNOSIS — the Keystone-browser sheet's host (HomeView) was simply absent from the macOS view tree (the silent platform-gap class, component D). With the sheet hosted in MacSplitView it presents fine ~0.35s after the card closes, Lukas-verified. F-2(a) narrows to the native-sheet-vs-MacCard ERGONOMICS comparison only (sizing/detents); no interop trap to retire. MacCard remains for dynamic/stacked-feel cards. Animation TODO stands. Focus/VoiceOver containment is NOT provided by a ZStack overlay (background stays focusable) → F-4. |
+| D | **Platform-gap class** (iOS presenters needing manual macOS wiring) | **HARDEN (structural)** | 4 (proven: shipped silently) | The Keystone popover proved a new iOS flow can compile green and be invisible on macOS. F-3: presentation REGISTRY (Root-level flows declared once, both platforms render from the table) — the `windowMode` enum above is the natural home; interim tripwire: CI grep for `.popover(`/`.sheet(`/`.fullScreenCover(` inside `#if os(iOS)`/`#else` without a paired macOS presenter. |
+| F | **Lifecycle idiom** (onAppear-refire class) | **HARDEN (doc + sweep)** | 3 (two field bugs: pcztForUI wipe, stale split gates) | macOS re-fires `.onAppear` on window minimize/restore/section churn; iOS habits ("reset state in onAppear") ship bugs. F-3: one documented idiom — *transient flow state is created by explicit actions and cleared by explicit teardown, NEVER reset in onAppear; onAppear may only (re)derive display state* — plus a sweep of current onAppear bodies against it. |
+| E | **Design.Mac constants + rules #1-#11** | **KEEP + SPECIFY** | 2 | Values (240/530/364/260, 900×720, 0.725×) are coherent in use but documented as discoveries, not a system. F-5: DESIGN_LANGUAGE.md v2 — each rule with WHY + test + "adding a new section/flow/modal = these steps" recipe (the "easy to extend" deliverable). |
+| H | **Window & scene contract** | **✅ RESOLVED — Lukas-verified 2026-07-02 (fixes uncommitted)** | 2 (restored) | Both pops fixed and visually verified. Round 1 (centering, CONFIRMED): (1) scene `.defaultSize` added — window born right-sized; (2) `isRestorable = false` — state restoration (separate from frame autosave) no longer re-applies geometry post-display; (3) width-purge moved to app `init()` (pre-window). Round 2 (sidebar, the field re-test): removing restoration EXPOSED that restoration had been the thing late-correcting the width to 240 — the content-hugging-narrow first layout then simply persisted (FixedSidebarWidth's 6-retry async pin missed its window). Fix = pin the CONTENT: `.frame(width: sidebarWidth)` on the sidebar view in MacSplitView — frame 1 is 240 **by construction**, independent of column-metric timing. CONFIRMED on device across relaunches. Consequence: FixedSidebarWidth is now demoted to divider-drag/persistence enforcement only — first-frame correctness no longer depends on it (feeds F-2(b) retirement case, see B). |
+| G | **Accessibility & keyboard** | **UNVERIFIED** | ? | Never audited: VO containment in MacCard, focus order through sidebar→detail, full-keyboard-access, ⌘W/ESC consistency. F-4 is the audit+fix pass; MacCard focus containment is its biggest known gap (see C). |
+
+## Fragility ranking (what breaks first on a macOS update)
+**B FixedSidebarWidth ≫ A blank-frame > C sheet-interop trap > everything else.** B and A-blank both
+paper over framework behavior observed empirically; each needs either retirement (if the underlying
+issue is gone) or a canary test that converts "silent weirdness after an OS update" into a red build.
+
+## F-2 adjudication list (sandbox prototypes, Lukas eyeballs each)
+- (a) Native `.sheet` + `.presentationSizing(.fitted)` vs MacCard for single modals — INCLUDING the
+  detent-gotcha check. (The present-after-MacCard repro is RESOLVED — refuted 2026-07-02, see C.)
+- (b) Pure-SwiftUI sidebar pinning (hard triple + toolbar(removing:)) vs FixedSidebarWidth — drag,
+  persistence, first-frame width, section-switch re-assert.
+- (c) Section switch WITHOUT the blank frame on current SwiftUI — does comparisonTypeMismatch still
+  crash? (Keep the pop-to-root UX question separate: blank also hides the pop; if crash is gone,
+  decide whether to keep a 1-frame blank purely for the hide.)
+
+## Bottom line for Lukas
+The foundation is **sound in architecture, fragile in three spots, and under-enforced in two**.
+Nothing needs a rewrite: MacCard was the right call (with a contract + one latent single-slot bug to
+close), the split shell is right (with its two empiricisms needing canaries or retirement), and the
+one structural debt worth real investment is the **presentation registry / windowMode enum** — it
+turns the class of bug that cost you the Keystone flow into a compile-time impossibility.

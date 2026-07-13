@@ -5,6 +5,8 @@
 //  Created by Lukáš Korba on 2025-02-19.
 //
 
+import Foundation
+
 enum Serializer {
     static func stringToBytes(_ string: String) -> [UInt8] {
         return Array(string.utf8)

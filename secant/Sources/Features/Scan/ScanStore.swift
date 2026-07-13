@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import Combine
 import CoreImage
 import ComposableArchitecture
 import Foundation
@@ -70,7 +71,7 @@ struct Scan {
         case cancelTapped
         case checkCameraPermission
         case clearInfo
-        case libraryImage(UIImage?)
+        case libraryImage(PlatformImage?)
         case onAppear
         case onDisappear
         case foundAddress(RedactableString)

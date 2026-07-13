@@ -21,10 +21,17 @@ struct ZashiButton<PrefixContent, AccessoryContent>: View where PrefixContent: V
     
     @Environment(\.isEnabled) var isEnabled
     @Environment(\.colorScheme) private var colorScheme
-    
+    /// macOS: `MacCard` sets this on its content so every button inside a card renders full-bleed
+    /// (see `\.zashiButtonFillsWidth`). ORed with the explicit `fillsWidth` param below.
+    @Environment(\.zashiButtonFillsWidth) private var envFillsWidth
+
     let title: String
     let type: `Type`
     let infinityWidth: Bool
+    /// macOS only: fill the container's full width, bypassing Rule #7's `Design.Mac.maxButtonWidth` pill
+    /// cap — for full-bleed CTAs inside a fixed-width surface like `MacCard` (which turns this on for its
+    /// whole content via `\.zashiButtonFillsWidth`). Inert on iOS, which already fills when `infinityWidth`.
+    let fillsWidth: Bool
     let fontSize: CGFloat
     let horizontalPadding: CGFloat
     let verticalPadding: CGFloat
@@ -37,6 +44,7 @@ struct ZashiButton<PrefixContent, AccessoryContent>: View where PrefixContent: V
         _ title: String,
         type: `Type` = .primary,
         infinityWidth: Bool = true,
+        fillsWidth: Bool = false,
         fontSize: CGFloat = 16,
         horizontalPadding: CGFloat = 18,
         verticalPadding: CGFloat = 12,
@@ -48,6 +56,7 @@ struct ZashiButton<PrefixContent, AccessoryContent>: View where PrefixContent: V
         self.title = title
         self.type = type
         self.infinityWidth = infinityWidth
+        self.fillsWidth = fillsWidth
         self.fontSize = fontSize
         self.horizontalPadding = horizontalPadding
         self.verticalPadding = verticalPadding
@@ -57,6 +66,9 @@ struct ZashiButton<PrefixContent, AccessoryContent>: View where PrefixContent: V
         self.action = action
     }
     
+    /// Effective full-width decision: the explicit `fillsWidth` param OR the `MacCard`-set environment.
+    private var fillsFullWidth: Bool { fillsWidth || envFillsWidth }
+
     var body: some View {
         Button {
             action()
@@ -80,16 +92,31 @@ struct ZashiButton<PrefixContent, AccessoryContent>: View where PrefixContent: V
             .zForegroundColor(fgColor())
             .padding(.horizontal, horizontalPadding)
             .padding(.vertical, verticalPadding)
+#if os(macOS)
+            // macOS: cap the CTA (background INCLUDED) to a logical width and center it, so buttons
+            // don't stretch across the wide window. Order matters — cap → background → expand-and-
+            // center. Capping only the label and applying the background AFTER the expand-to-infinity
+            // frame (the old code) left a full-width background with merely centered text, which is
+            // exactly what looked "full width".
+            // `fillsFullWidth` (MacCard / explicit param) OPTS OUT of Rule #7's cap so the button fills
+            // its container — full-bleed CTAs are the intended style inside a fixed-width card.
+            .frame(maxWidth: fillsFullWidth ? .infinity : (infinityWidth ? Design.Mac.maxButtonWidth : nil), minHeight: minHeight)
+            .background { buttonBackground }
+            .frame(maxWidth: infinityWidth ? .infinity : nil, alignment: .center)
+#else
             .frame(maxWidth: infinityWidth ? .infinity : nil, minHeight: minHeight)
-            .background {
-                RoundedRectangle(cornerRadius: Design.Radius._xl)
-                    .fill(bgColor().color(colorScheme))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: Design.Radius._xl)
-                            .stroke(strokeColor().color(colorScheme))
-                    }
-            }
+            .background { buttonBackground }
+#endif
         }
+    }
+
+    private var buttonBackground: some View {
+        RoundedRectangle(cornerRadius: Design.Radius._xl)
+            .fill(bgColor().color(colorScheme))
+            .overlay {
+                RoundedRectangle(cornerRadius: Design.Radius._xl)
+                    .stroke(strokeColor().color(colorScheme))
+            }
     }
     
     private func bgColor() -> Colorable {
@@ -204,11 +231,53 @@ struct ZashiButton<PrefixContent, AccessoryContent>: View where PrefixContent: V
     }
 }
 
+/// Plain button styling that makes the ENTIRE frame tappable on macOS. SwiftUI's `.plain` style on
+/// macOS only hit-tests the *drawn* parts of a label, so transparent gaps — `Spacer`s, the padding
+/// between an icon and a chevron — ignore clicks (rows respond only on their icon/label). Adding
+/// `.contentShape(Rectangle())` makes the whole label rectangle the hit area, so full rows
+/// (transaction rows, settings rows, the account switcher) respond anywhere, matching iOS. Defined
+/// cross-platform but only applied on macOS via `View.zashiPlainButtonStyle()`.
+struct FullAreaButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .contentShape(Rectangle())
+            .opacity(configuration.isPressed ? 0.7 : 1.0)
+    }
+}
+
+extension View {
+    /// Plain button style, but full-frame tappable on macOS (see `FullAreaButtonStyle`). On iOS this
+    /// is exactly `.zashiPlainButtonStyle()`, so the shipping iOS app is byte-for-byte unchanged.
+    @ViewBuilder func zashiPlainButtonStyle() -> some View {
+#if os(macOS)
+        buttonStyle(FullAreaButtonStyle())
+#else
+        buttonStyle(.plain)
+#endif
+    }
+}
+
+/// macOS: `MacCard` sets this to `true` on its content so every `ZashiButton` inside a card renders
+/// full-bleed (bypassing Rule #7's `Design.Mac.maxButtonWidth` cap) without each call site opting in.
+/// Default `false` → the normal capped, centered pill everywhere else. `ZashiButton` ORs it with the
+/// explicit `fillsWidth` param.
+private struct ZashiButtonFillsWidthKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    var zashiButtonFillsWidth: Bool {
+        get { self[ZashiButtonFillsWidthKey.self] }
+        set { self[ZashiButtonFillsWidthKey.self] = newValue }
+    }
+}
+
 extension ZashiButton where PrefixContent == EmptyView, AccessoryContent == EmptyView {
     init(
         _ title: String,
         type: `Type` = .primary,
         infinityWidth: Bool = true,
+        fillsWidth: Bool = false,
         fontSize: CGFloat = 16,
         horizontalPadding: CGFloat = 18,
         verticalPadding: CGFloat = 12,
@@ -219,6 +288,7 @@ extension ZashiButton where PrefixContent == EmptyView, AccessoryContent == Empt
             title,
             type: type,
             infinityWidth: infinityWidth,
+            fillsWidth: fillsWidth,
             fontSize: fontSize,
             horizontalPadding: horizontalPadding,
             verticalPadding: verticalPadding,
@@ -235,6 +305,7 @@ extension ZashiButton where PrefixContent == EmptyView {
         _ title: String,
         type: `Type` = .primary,
         infinityWidth: Bool = true,
+        fillsWidth: Bool = false,
         fontSize: CGFloat = 16,
         horizontalPadding: CGFloat = 18,
         verticalPadding: CGFloat = 12,
@@ -246,6 +317,7 @@ extension ZashiButton where PrefixContent == EmptyView {
             title,
             type: type,
             infinityWidth: infinityWidth,
+            fillsWidth: fillsWidth,
             fontSize: fontSize,
             horizontalPadding: horizontalPadding,
             verticalPadding: verticalPadding,
@@ -262,6 +334,7 @@ extension ZashiButton where AccessoryContent == EmptyView {
         _ title: String,
         type: `Type` = .primary,
         infinityWidth: Bool = true,
+        fillsWidth: Bool = false,
         fontSize: CGFloat = 16,
         horizontalPadding: CGFloat = 18,
         verticalPadding: CGFloat = 12,
@@ -273,6 +346,7 @@ extension ZashiButton where AccessoryContent == EmptyView {
             title,
             type: type,
             infinityWidth: infinityWidth,
+            fillsWidth: fillsWidth,
             fontSize: fontSize,
             horizontalPadding: horizontalPadding,
             verticalPadding: verticalPadding,

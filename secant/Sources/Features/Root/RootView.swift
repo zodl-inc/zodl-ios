@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
 
@@ -7,7 +8,7 @@ struct RootView: View {
     @Environment(\.colorScheme) var colorScheme
     @State var covered = false
     
-    @Perception.Bindable var store: StoreOf<Root>
+    @PlatformBindable var store: StoreOf<Root>
     let tokenName: String
     let networkType: NetworkType
 
@@ -63,7 +64,7 @@ private extension RootView {
                             )
                         )
                     }
-                    .navigationViewStyle(.stack)
+                    .zashiStackNavigationStyle()
                     .overlayedWithSplash(store.splashAppeared) {
                         store.send(.splashRemovalRequested)
                     }
@@ -77,7 +78,7 @@ private extension RootView {
                             )
                         )
                     }
-                    .navigationViewStyle(.stack)
+                    .zashiStackNavigationStyle()
                     .overlayedWithSplash(store.splashAppeared) {
                         store.send(.splashRemovalRequested)
                     }
@@ -91,12 +92,29 @@ private extension RootView {
                             )
                         )
                     }
-                    .navigationViewStyle(.stack)
+                    .zashiStackNavigationStyle()
                     .overlayedWithSplash(store.splashAppeared) {
                         store.send(.splashRemovalRequested)
                     }
 
                 case .home:
+#if os(macOS)
+                    // STARTUP FIX: the splash is a CONTENT overlay, but MacSplitView's window toolbar
+                    // (Activity's search + filter) is chrome ABOVE the overlay, so those items leak
+                    // through during the splash. Don't build the split until the splash is gone
+                    // (`splashAppeared == true`); show the splash colour beneath meanwhile so the
+                    // tear-away reveals a seamless background, and the toolbar only ever exists after.
+                    Group {
+                        if store.splashAppeared {
+                            MacSplitView(store: store, tokenName: tokenName, networkType: networkType)
+                        } else {
+                            Asset.Colors.splash.color.ignoresSafeArea()
+                        }
+                    }
+                    .overlayedWithSplash(store.splashAppeared) {
+                        store.send(.splashRemovalRequested)
+                    }
+#else
                     ZStack {
                         // Home view
                         NavigationStack {
@@ -265,8 +283,14 @@ private extension RootView {
                     .overlayedWithSplash(store.splashAppeared) {
                         store.send(.splashRemovalRequested)
                     }
+#endif
 
                 case .onboarding:
+                    // The onboarding landing is a full-bleed HERO (logo + title + CTAs on the gradient),
+                    // the same launch-sequence family as .welcome — NOT a capped single-view form. The old
+                    // macOSSingleViewLayout() framed it (gradient included) to a 460pt column on the app
+                    // background — the boxed "card" on a dark surround. The onboarding gradient must
+                    // full-bleed the window, so the wrapper is gone (Rule #8a). Let it fill.
                     RestoreWalletCoordFlowView(
                         store: store.scope(
                             state: \.onboardingState,
@@ -278,6 +302,10 @@ private extension RootView {
                     }
 
                 case .welcome:
+                    // The welcome screen is a full-bleed splash (colour + centered logo), NOT a capped
+                    // single-view form. The macOSSingleViewLayout() box wrapper (since removed, Rule #8a)
+                    // framed it to a 460pt column on the app background — the "green frame, not full
+                    // window" seen at launch. Let it fill.
                     WelcomeView(
                         store: store.scope(
                             state: \.welcomeState,
@@ -287,6 +315,22 @@ private extension RootView {
                 }
             }
             .onOpenURL(perform: { store.goToDeeplink($0) })
+            // Zodl Bridge review/confirm card (docs/macos/ZODL_BRIDGE_SPEC.md BR-4):
+            // presented via the house MacCard at the Root root — global over the whole
+            // window, above MacSplitView (MODALS.md Rule #5). Backdrop dismissal maps
+            // to the child's close action so the one-in-flight gate re-opens.
+            .zashiSheet(
+                isPresented: Binding(
+                    get: { store.bridgeRequestState != nil },
+                    set: { if !$0 { store.send(.bridge(.child(.closeTapped))) } }
+                )
+            ) {
+                Group {
+                    if let bridgeStore = store.scope(state: \.bridgeRequestState, action: \.bridge.child) {
+                        BridgeRequestView(store: bridgeStore, tokenName: tokenName)
+                    }
+                }
+            }
             .alert(
                 store:
                     store.scope(
@@ -298,7 +342,7 @@ private extension RootView {
                 state: \.exportLogsState.$alert,
                 action: \.exportLogs.alert
             ))
-            .fullScreenCover(
+            .zashiFullScreenCover(
                 isPresented:
                     Binding(
                         get: { store.serverSetupViewBinding },
@@ -334,6 +378,12 @@ private extension RootView {
             }
         }
         .toast()
+        // macOS: the single root card host — renders any `.zashiSheet` / `.zashiSelectorSheet` (which write
+        // their content to a `MacCardCoordinator` injected via `@Environment` — down-propagation, since a
+        // PreferenceKey would be swallowed by the enclosing NavigationStack/NavigationSplitView) as ONE
+        // centered, dimmed card over the whole window, above the content cap (`Design.Mac.viewCapWidth`).
+        // No-op on iOS (native `.sheet`).
+        .macCardHost()
     }
 }
 

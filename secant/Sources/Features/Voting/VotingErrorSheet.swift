@@ -229,7 +229,13 @@ struct VotingSheetContent: View {
         case .standard:
             return .clear
         case .unverifiedWarning:
+#if os(macOS)
+            // macOS: the MacCard already provides the Liquid Glass surface, so a near-opaque fill would
+            // cover it (the "partially solid" card). Stay clear and let the glass show (MODALS Rule #5).
+            return .clear
+#else
             return Design.Surfaces.bgPrimary.color(colorScheme).opacity(0.96)
+#endif
         }
     }
 

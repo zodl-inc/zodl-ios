@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import Combine
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
 import SwiftUI
@@ -92,9 +93,19 @@ struct PrivateDataConsent {
                 return .send(.exportLogs(.start))
 
             case .exportRequested:
-                state.isExportingData = true
                 state.exportOnlyLogs = false
+#if os(macOS)
+                // macOS: the private-data export is the wallet's data.db ONLY — logs are intentionally
+                // excluded. The OSLog export is pathologically slow / blocked under the macOS sandbox and
+                // left the spinner hanging forever. `dataDbURL` is already resolved in `.onAppear`, so just
+                // trigger the share directly; with no logs, `exportURLs` is the single data.db file and the
+                // content-aware share opens a native Save panel for it. iOS keeps data.db + logs (below).
+                state.exportBinding = true
+                return .none
+#else
+                state.isExportingData = true
                 return .send(.exportLogs(.start))
+#endif
                 
             case .shareFinished:
                 state.isExportingData = false

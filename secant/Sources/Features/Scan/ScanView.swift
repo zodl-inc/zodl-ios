@@ -6,13 +6,14 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 
 struct ScanView: View {
     @Environment(\.colorScheme) var colorScheme
     @Environment(\.openURL) var openURL
     
-    @State private var image: UIImage?
+    @State private var image: PlatformImage?
     @State private var showSheet = false
     
     let store: StoreOf<Scan>
@@ -43,9 +44,13 @@ struct ScanView: View {
                                 torchButton(size: proxy.size)
                             }
                             
+#if os(iOS)
+                            // iOS: the library picker sits below the scan cutout. macOS moves it to the
+                            // window toolbar (`.toolbar` below) so nothing sits below the cutout.
                             if !store.forceLibraryToHide {
                                 libraryButton(size: proxy.size)
                             }
+#endif
                         }
                         
                         WithPerceptionTracking {
@@ -90,9 +95,16 @@ struct ScanView: View {
                             
                             if !store.isCameraEnabled {
                                 primaryButton(String(localizable: .scanOpenSettings)) {
+#if os(iOS)
                                     if let url = URL(string: UIApplication.openSettingsURLString) {
                                         openURL(url)
                                     }
+#elseif os(macOS)
+                                    // Deep-link to System Settings → Privacy & Security → Camera.
+                                    if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Camera") {
+                                        openURL(url)
+                                    }
+#endif
                                 }
                             } else {
                                 primaryButton(String(localizable: .generalCancel)) {
@@ -106,7 +118,10 @@ struct ScanView: View {
             }
             .edgesIgnoringSafeArea(.all)
             .ignoresSafeArea()
-            .applyScreenBackground()
+            // RULE #9: scan is EXEMPT from the macOS 800pt content cap — the full-window gray-out
+            // overlay + camera cutout must fill the whole window, not shrink to the content column.
+            // (No-op on iOS, where there is no cap — Rule #11.)
+            .applyScreenBackground(capped: false)
             .onAppear { store.send(.onAppear) }
             .onDisappear { store.send(.onDisappear) }
             .zashiBackV2(hidden: store.isCameraEnabled, invertedColors: colorScheme == .light) {
@@ -117,6 +132,23 @@ struct ScanView: View {
                     store.send(.libraryImage(img))
                 }
             }
+#if os(macOS)
+            // macOS: the image-library picker lives in the window toolbar (like the Activity filter
+            // button), so nothing sits below the scan cutout and it can be larger. Conditionally add the
+            // whole ToolbarItem (not an empty one) so there's no stray glass capsule when it's hidden.
+            .toolbar {
+                if !store.forceLibraryToHide {
+                    ToolbarItem(placement: .zashiTrailing) {
+                        Button {
+                            showSheet = true
+                        } label: {
+                            Image(systemName: "photo.on.rectangle")
+                                .zashiToolbarIconPadding()
+                        }
+                    }
+                }
+            }
+#endif
         }
     }
     
@@ -129,7 +161,12 @@ struct ScanView: View {
                 .foregroundColor(Asset.Colors.ZDesign.Base.obsidian.color)
                 .padding(.horizontal, 18)
                 .padding(.vertical, 12)
+#if os(macOS)
+                // RULE #7: cap the scan overlay buttons (Cancel / Open Settings) — never full-width.
+                .frame(maxWidth: Design.Mac.maxButtonWidth)
+#else
                 .frame(maxWidth: .infinity)
+#endif
                 .background {
                     RoundedRectangle(cornerRadius: Design.Radius._xl)
                         .fill(Asset.Colors.ZDesign.Base.bone.color)
@@ -209,7 +246,12 @@ struct ScanView: View {
         .tint(Asset.Colors.ZDesign.Base.brand.color)
         .position(
             x: topLeft.x + frameSize.width * 0.5,
-            y: topLeft.y - 56
+            // [B4-1] The sign flow's larger cutout (popoverRatio 1.075) starts so close to the
+            // window top that `topLeft.y - 56` landed ABOVE the visible bounds — the gold bar was
+            // rendering, just off-screen (the account-import scan's smaller cutout kept it
+            // visible). Clamp so the bar stays on-screen; with no headroom it overlaps the
+            // cutout's top edge instead of vanishing.
+            y: max(topLeft.y - 56, 36)
         )
     }
 }
@@ -316,28 +358,31 @@ extension ScanView {
     }
 
     static func normalizedRectsOfInterest(_ popoverRatio: CGFloat) -> (renderOnly: CGRect, real: CGRect) {
-        let rect = UIScreen.main.bounds
-        
         let readRectSize = 0.6
-
         let topLeftX = (1.0 - readRectSize) * 0.5
+        let real = CGRect(x: topLeftX, y: topLeftX, width: readRectSize, height: readRectSize)
+#if os(macOS)
+        // macOS: a large SQUARE cutout. The width fraction → height fraction is aspect-corrected by the
+        // fixed window ratio (Design.Mac.windowWidth / windowHeight) so the rendered rect is square in
+        // POINTS, not stretched to the landscape window. Sized to sit just above the Cancel CTA — the
+        // library button now lives in the toolbar, so nothing sits below the cutout. (Camera scan zone
+        // `real` unchanged; the iOS path is untouched — Rule #11.)
+        let widthFraction = 0.54
+        let renderOnly = CGRect(
+            x: (1.0 - widthFraction) * 0.5,
+            y: 0.1,
+            width: widthFraction,
+            height: widthFraction * (Design.Mac.windowWidth / Design.Mac.windowHeight)
+        )
+#else
+        let rect = PlatformScreen.bounds
         let ratio = rect.width / rect.height
         let rectHeight = ratio * readRectSize * popoverRatio
         let topLeftY = (1.0 - rectHeight) * 0.5
+        let renderOnly = CGRect(x: topLeftX, y: topLeftY, width: readRectSize, height: rectHeight)
+#endif
 
-        return (
-            renderOnly: CGRect(
-                x: topLeftX,
-                y: topLeftY,
-                width: readRectSize,
-                height: rectHeight
-            ), real: CGRect(
-                x: topLeftX,
-                y: topLeftX,
-                width: readRectSize,
-                height: readRectSize
-            )
-        )
+        return (renderOnly: renderOnly, real: real)
     }
 }
 

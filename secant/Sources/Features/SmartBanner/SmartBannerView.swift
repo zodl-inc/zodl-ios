@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 
 enum SBConstants {
@@ -17,7 +18,7 @@ enum SBConstants {
 struct SmartBannerView: View {
     @Environment(\.colorScheme) var colorScheme
 
-    @Perception.Bindable var store: StoreOf<SmartBanner>
+    @PlatformBindable var store: StoreOf<SmartBanner>
     
     @State private var realHeight: CGFloat = 100
     @State private var isUnhidden = false
@@ -31,73 +32,127 @@ struct SmartBannerView: View {
     
     var body: some View {
         WithPerceptionTracking {
-            ZStack(alignment: .top) {
-                BottomRoundedRectangle(radius: SBConstants.fixedHeight)
-                    .frame(height: SBConstants.fixedHeight)
-                    .foregroundColor(Design.screenBackground.color(colorScheme))
-                    .shadow(color: Design.Text.primary.color(colorScheme).opacity(store.isOpen ? 0.25 : 0), radius: 1)
-                    .zIndex(1)
-                
-                VStack(spacing: 0) {
-                    if store.isOpen {
-                        priorityContent()
-                            .padding(.vertical, 16)
-                            .padding(.top, SBConstants.fixedHeight)
-                            .screenHorizontalPadding()
-                    }
-                    
-                    TopRoundedRectangle(radius: store.isOpen ? SBConstants.fixedHeight : 0)
-                        .frame(height: SBConstants.fixedHeightWithShadow)
-                        .foregroundColor(Design.screenBackground.color(colorScheme))
-                        .shadow(color: Design.Text.primary.color(colorScheme).opacity(0.1), radius: store.isOpen ? 1 : 0, y: -1)
+            bannerContainer
+#if !os(macOS)
+                // macOS: both banner sheets are hosted at the window ROOT (MacSplitView, MODALS.md Rule #5)
+                // — a `.zashiSheet` here overlays only the sidebar the banner lives in, clamping the card to
+                // the sidebar width. iOS presents them inline.
+                .zashiSheet(isPresented: $store.isSmartBannerSheetPresented) {
+                    SmartBannerHelpSheetView(store: store, tokenName: tokenName)
                 }
-                .frame(minHeight: SBConstants.fixedHeight + SBConstants.shadowHeight)
-                
-                if let supportData = store.supportData {
-                    UIMailDialogView(
-                        supportData: supportData,
-                        completion: {
-                            store.send(.sendSupportMailFinished)
-                        }
-                    )
-                    // UIMailDialogView only wraps MFMailComposeViewController presentation
-                    // so frame is set to 0 to not break SwiftUI's layout
-                    .frame(width: 0, height: 0)
+                .zashiSheet(isPresented: $store.isSyncTimedOutSheetPresented) {
+                    SmartBannerSyncTimeoutSheetView(store: store)
                 }
-                
-                shareMessageView()
-            }
-            .zashiSheet(isPresented: $store.isSmartBannerSheetPresented) {
-                helpSheetContent()
-            }
-            .zashiSheet(isPresented: $store.isSyncTimedOutSheetPresented) {
-                syncTimedSheetContent()
-            }
-            .onAppear { store.send(.onAppear) }
-            .onDisappear { store.send(.onDisappear) }
-            .background {
-                VStack(spacing: 0) {
-                    Design.screenBackground.color(colorScheme)
-                        .frame(height: 2)
-                        .frame(maxWidth: .infinity)
-                    LinearGradient(
-                        stops: [
-                            Gradient.Stop(color: Design.Utility.Purple._700.color(.light), location: 0.00),
-                            Gradient.Stop(color: Design.Utility.Purple._950.color(.light), location: 1.00)
-                        ],
-                        startPoint: UnitPoint(x: 0.5, y: 0.0),
-                        endPoint: UnitPoint(x: 0.5, y: 1.0)
-                    )
-                    Design.screenBackground.color(colorScheme)
-                        .frame(height: 2)
-                        .frame(maxWidth: .infinity)
-                }
-                .onTapGesture {
-                    store.send(.smartBannerContentTapped)
-                }
-            }
-            .clipShape( Rectangle() )
+#endif
+                .onAppear { store.send(.onAppear) }
+                .onDisappear { store.send(.onDisappear) }
         }
+    }
+
+    @ViewBuilder private var bannerContainer: some View {
+#if os(macOS)
+        // macOS: the smart banner is a RoundedRectangle card that reveals/dismisses IN PLACE
+        // (the iOS side-by-side reveal + shaped corners don't translate to the sidebar).
+        Group {
+            if store.isOpen {
+                priorityContent()
+                    .padding(20)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(
+                        RoundedRectangle(cornerRadius: 20)
+                            .fill(LinearGradient(
+                                stops: [
+                                    Gradient.Stop(color: Design.Utility.Purple._700.color(.light), location: 0.00),
+                                    Gradient.Stop(color: Design.Utility.Purple._950.color(.light), location: 1.00)
+                                ],
+                                startPoint: UnitPoint(x: 0.5, y: 0.0),
+                                endPoint: UnitPoint(x: 0.5, y: 1.0)
+                            ))
+                    )
+                    // Tap the banner (anywhere but a CTA button, which consumes its own click) to
+                    // open its help sheet / setup screen — on iOS this is the background tap (#else).
+                    .contentShape(RoundedRectangle(cornerRadius: 20))
+                    .onTapGesture {
+                        store.send(.smartBannerContentTapped)
+                    }
+                    .transition(.opacity.combined(with: .scale(scale: 0.95, anchor: .top)))
+            }
+        }
+        .animation(.spring(response: 0.45, dampingFraction: 0.82), value: store.isOpen)
+        // macOS has no in-app mail composer; when a support report is queued (`reportPrepared` sets
+        // `supportData` because `MailSupport.canSendMail()` is true here), this zero-frame helper opens
+        // the default mail client via `mailto:`. iOS renders the same view inline in the #else ZStack.
+        .background {
+            if let supportData = store.supportData {
+                UIMailDialogView(
+                    supportData: supportData,
+                    completion: {
+                        store.send(.sendSupportMailFinished)
+                    }
+                )
+                .frame(width: 0, height: 0)
+            }
+        }
+#else
+        ZStack(alignment: .top) {
+            BottomRoundedRectangle(radius: SBConstants.fixedHeight)
+                .frame(height: SBConstants.fixedHeight)
+                .foregroundColor(Design.screenBackground.color(colorScheme))
+                .shadow(color: Design.Text.primary.color(colorScheme).opacity(store.isOpen ? 0.25 : 0), radius: 1)
+                .zIndex(1)
+
+            VStack(spacing: 0) {
+                if store.isOpen {
+                    priorityContent()
+                        .padding(.vertical, 16)
+                        .padding(.top, SBConstants.fixedHeight)
+                        .screenHorizontalPadding()
+                }
+
+                TopRoundedRectangle(radius: store.isOpen ? SBConstants.fixedHeight : 0)
+                    .frame(height: SBConstants.fixedHeightWithShadow)
+                    .foregroundColor(Design.screenBackground.color(colorScheme))
+                    .shadow(color: Design.Text.primary.color(colorScheme).opacity(0.1), radius: store.isOpen ? 1 : 0, y: -1)
+            }
+            .frame(minHeight: SBConstants.fixedHeight + SBConstants.shadowHeight)
+
+            if let supportData = store.supportData {
+                UIMailDialogView(
+                    supportData: supportData,
+                    completion: {
+                        store.send(.sendSupportMailFinished)
+                    }
+                )
+                // UIMailDialogView only wraps MFMailComposeViewController presentation
+                // so frame is set to 0 to not break SwiftUI's layout
+                .frame(width: 0, height: 0)
+            }
+
+            shareMessageView()
+        }
+        .background {
+            VStack(spacing: 0) {
+                Design.screenBackground.color(colorScheme)
+                    .frame(height: 2)
+                    .frame(maxWidth: .infinity)
+                LinearGradient(
+                    stops: [
+                        Gradient.Stop(color: Design.Utility.Purple._700.color(.light), location: 0.00),
+                        Gradient.Stop(color: Design.Utility.Purple._950.color(.light), location: 1.00)
+                    ],
+                    startPoint: UnitPoint(x: 0.5, y: 0.0),
+                    endPoint: UnitPoint(x: 0.5, y: 1.0)
+                )
+                Design.screenBackground.color(colorScheme)
+                    .frame(height: 2)
+                    .frame(maxWidth: .infinity)
+            }
+            .onTapGesture {
+                store.send(.smartBannerContentTapped)
+            }
+        }
+        .clipShape( Rectangle() )
+#endif
     }
 }
 
@@ -115,7 +170,15 @@ extension SmartBannerView {
         }
     }
     
-    @ViewBuilder private func syncTimedSheetContent() -> some View {
+}
+
+// A standalone view (MODALS.md Rule #5) — hosted at the MacSplitView ROOT on macOS (the banner is in the
+// sidebar), inline on iOS; same rationale as SmartBannerHelpSheetView.
+struct SmartBannerSyncTimeoutSheetView: View {
+    @Environment(\.colorScheme) private var colorScheme
+    let store: StoreOf<SmartBanner>
+
+    var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Asset.Assets.infoOutline.image
                 .zImage(size: 20, style: Design.Utility.ErrorRed._500)

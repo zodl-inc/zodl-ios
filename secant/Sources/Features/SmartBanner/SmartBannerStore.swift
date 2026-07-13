@@ -6,10 +6,14 @@
 //
 
 import Foundation
+import SwiftUI
+import Combine
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
 
+#if canImport(MessageUI)
 import MessageUI
+#endif
 
 @Reducer
 struct SmartBanner {
@@ -262,7 +266,7 @@ struct SmartBanner {
                 \(supportData.message)
                 """
                 // TCA Store is @MainActor; reducer body always runs on main.
-                if MainActor.assumeIsolated({ MFMailComposeViewController.canSendMail() }) {
+                if MailSupport.canSendMail() {
                     state.supportData = supportData
                 } else {
                     state.messageToBeShared = supportData.message
@@ -344,7 +348,7 @@ struct SmartBanner {
                 
             case .synchronizerStateChanged(let latestState):
                 let snapshot = SyncStatusSnapshot.snapshotFor(state: latestState.data.syncStatus)
-                
+
                 if let account = state.selectedWalletAccount, let accountBalance = latestState.data.accountsBalances[account.id] {
                     state.spendableBalance = accountBalance.saplingBalance.spendableValue + accountBalance.orchardBalance.spendableValue
                 }
@@ -392,10 +396,20 @@ struct SmartBanner {
                             if accountBalance.unshielded > zcashSDKEnvironment.shieldingThreshold() {
                                 return .send(.transparentBalanceUpdated(accountBalance.unshielded))
                             } else {
-                                return .merge(
-                                    .send(.closeAndCleanupBanner),
-                                    .send(.closeSheetTapped)
-                                )
+                                // The streamed `latestState` balance can lag right after an account
+                                // switch, transiently reading <= threshold and tearing down a shield
+                                // banner that `walletAccountChanged`'s re-eval just revealed for the new
+                                // (Keystone) account. Re-confirm against the authoritative balance — as
+                                // `evaluatePriority7` does — before closing; only close if it too is below.
+                                return .run { [account] send in
+                                    let fresh = try? await sdkSynchronizer.getAccountsBalances()[account.id]
+                                    if let fresh, fresh.unshielded > zcashSDKEnvironment.shieldingThreshold() {
+                                        await send(.transparentBalanceUpdated(fresh.unshielded))
+                                    } else {
+                                        await send(.closeAndCleanupBanner)
+                                        await send(.closeSheetTapped)
+                                    }
+                                }
                             }
                         } else if state.transparentBalance < zcashSDKEnvironment.shieldingThreshold() && accountBalance.unshielded > zcashSDKEnvironment.shieldingThreshold() {
                             return .merge(
@@ -461,7 +475,7 @@ struct SmartBanner {
                 guard !state.transactions.isEmpty else {
                     return .send(.evaluatePriority7)
                 }
-                if let storedWallet = try? walletStorage.exportWallet(), !storedWallet.hasUserPassedPhraseBackupTest {
+                if let metadata = try? walletStorage.exportWalletMetadata(), !metadata.hasUserPassedPhraseBackupTest {
                     if let walletBackupReminder = walletStorage.exportWalletBackupReminder() {
                         state.remindMeWalletBackupPhaseCounter = walletBackupReminder.occurence
                         let now = Date().timeIntervalSince1970
@@ -538,6 +552,12 @@ struct SmartBanner {
                 return .none
                 
             case .triggerPriority(let priority):
+                #if os(macOS)
+                // Ignore syncing widget on macos
+                if priority == .priority4 {
+                    return .none
+                }
+                #endif
                 state.priorityContentRequested = priority
                 return .send(.openBannerRequest)
 

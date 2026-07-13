@@ -4,7 +4,16 @@
 //
 
 import ComposableArchitecture
+#if canImport(UIKit)
 import UIKit
+#else
+// macOS shim: UIKit's `UIBackgroundTaskIdentifier` doesn't exist on macOS. Background tasks are
+// a no-op on macOS (a Mac syncs while open), so a minimal stand-in keeps the interface and its
+// callers compiling without disturbing the iOS path.
+struct UIBackgroundTaskIdentifier: Sendable, Equatable {
+    static let invalid = UIBackgroundTaskIdentifier()
+}
+#endif
 
 extension DependencyValues {
     var backgroundTask: BackgroundTaskClient {

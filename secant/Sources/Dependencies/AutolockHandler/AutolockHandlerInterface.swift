@@ -6,7 +6,7 @@
 //
 
 import ComposableArchitecture
-import UIKit
+import Foundation
 
 extension DependencyValues {
     var autolockHandler: AutolockHandlerClient {
@@ -19,6 +19,6 @@ extension DependencyValues {
 struct AutolockHandlerClient {
     var value: @Sendable (Bool) async -> Void = { _ in }
     var batteryStatePublisher: @Sendable () -> NotificationCenter.Publisher = {
-        NotificationCenter.Publisher(center: .default, name: .AVAssetChapterMetadataGroupsDidChange)
+        NotificationCenter.Publisher(center: .default, name: Notification.Name("co.zodl.autolock.placeholder"))
     }
 }

@@ -4,6 +4,7 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 
 /// Blocking error screen — used for both `.error` (generic init failure)
@@ -79,7 +80,7 @@ struct VotingErrorView: View {
             }
             .applyScreenBackground()
             .screenTitle(String(localizable: .coinVoteCommonScreenTitle))
-            .zashiBack { store.send(.dismissFlow) }
+            .zashiSectionRootBack { store.send(.dismissFlow) }
         }
     }
 }

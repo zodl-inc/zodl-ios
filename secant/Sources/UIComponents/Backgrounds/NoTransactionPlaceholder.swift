@@ -6,7 +6,9 @@
 //
 
 import SwiftUI
+#if canImport(UIKit)
 import UIKit
+#endif
 
 struct ShimmerConfiguration {
     let gradient: Gradient
@@ -68,6 +70,7 @@ struct NoTransactionPlaceholder: View {
     }
 }
 
+#if canImport(UIKit)
 class ShimmerCALayer: UIView {
     private var gradientLayer: CAGradientLayer?
     private let configuration: ShimmerConfiguration
@@ -84,12 +87,12 @@ class ShimmerCALayer: UIView {
     }
     
     private func setupLayer() {
-        backgroundColor = UIColor.clear
+        backgroundColor = PlatformColor.clear
         
         let gradient = CAGradientLayer()
         gradient.colors = configuration.gradient.stops.map { stop in
             // Convert SwiftUI Color to CGColor
-            UIColor(stop.color).cgColor
+            PlatformColor(stop.color).cgColor
         }
         
         gradient.locations = configuration.gradient.stops.map { stop in
@@ -169,7 +172,7 @@ struct CALayerView: UIViewRepresentable {
         let gradientLayer = CAGradientLayer()
         gradientLayer.frame = CGRect(origin: .zero, size: size)
         gradientLayer.colors = configuration.gradient.stops.map { stop in
-            UIColor(stop.color).cgColor
+            PlatformColor(stop.color).cgColor
         }
         gradientLayer.locations = configuration.gradient.stops.map { stop in
             NSNumber(value: stop.location)
@@ -221,8 +224,36 @@ struct CALayerView: UIViewRepresentable {
     }
 }
 
+#endif
+
+#if !canImport(UIKit)
+// macOS: a pure-SwiftUI gradient-sweep that reproduces the motion of the iOS CALayer shimmer above,
+// from the SAME ShimmerConfiguration. The gradient is exactly the view's width and slides from fully
+// off-left to fully off-right — mirroring the iOS layer's `startPoint -1→1` / `endPoint 0→2` sweep —
+// looping every `duration` seconds. No AppKit/CALayer needed; iOS keeps its CAGradientLayer path.
+struct MacShimmerView: View {
+    let configuration: ShimmerConfiguration
+    @State private var animating = false
+
+    var body: some View {
+        GeometryReader { geo in
+            LinearGradient(
+                gradient: configuration.gradient,
+                startPoint: .leading,
+                endPoint: .trailing
+            )
+            .frame(width: geo.size.width, height: geo.size.height)
+            .offset(x: animating ? geo.size.width : -geo.size.width)
+            .animation(.linear(duration: configuration.duration).repeatForever(autoreverses: false), value: animating)
+            .onAppear { animating = true }
+        }
+    }
+}
+#endif
+
 extension View {
     func shimmer(_ active: Bool, configuration: ShimmerConfiguration = ShimmerConfiguration.default) -> some View {
+#if canImport(UIKit)
         self.overlay(
             active ?
             DirectCAShimmerView(isActive: active, configuration: configuration)
@@ -231,5 +262,18 @@ extension View {
                 .allowsHitTesting(false)
             : nil
         )
+#else
+        // macOS: SwiftUI gradient-sweep overlay matching the iOS shimmer's motion (same configuration —
+        // gradient, 1.5s linear repeat, 0.15 opacity, screen blend), so placeholders animate instead of
+        // sitting as static rectangles. [#1438]
+        self.overlay(
+            active ?
+            MacShimmerView(configuration: configuration)
+                .opacity(configuration.opacity)
+                .blendMode(.screen)
+                .allowsHitTesting(false)
+            : nil
+        )
+#endif
     }
 }

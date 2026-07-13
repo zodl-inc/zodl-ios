@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
 
@@ -14,7 +15,7 @@ struct ServerSetupView: View {
 
     var customDismiss: (() -> Void)? = nil
 
-    @Perception.Bindable var store: StoreOf<ServerSetup>
+    @PlatformBindable var store: StoreOf<ServerSetup>
 
     init(store: StoreOf<ServerSetup>, customDismiss: (() -> Void)? = nil) {
         self.store = store
@@ -50,7 +51,7 @@ struct ServerSetupView: View {
             .alert($store.scope(state: \.alert, action: \.alert))
             .applyScreenBackground()
         }
-        .navigationBarTitleDisplayMode(.inline)
+        .zashiNavBarTitleDisplayMode(.inline)
     }
 
     // MARK: - Connection Mode
@@ -228,9 +229,13 @@ struct ServerSetupView: View {
                                             )
                                             .zFont(.medium, size: 14, style: Design.Text.primary)
                                             .frame(height: 40)
+#if os(iOS)
                                             .autocapitalization(.none)
+#endif
                                             .autocorrectionDisabled()
+#if os(iOS)
                                             .keyboardType(.URL)
+#endif
                                             .multilineTextAlignment(.leading)
                                             .padding(.leading, 10)
                                             .background {
@@ -338,31 +343,25 @@ struct ServerSetupView: View {
                 let needsServer = store.connectionMode == .manual && (store.selectedServer == nil || customIsInvalid)
                 let canSave = store.hasChanges && !needsServer
 
-                Button {
-                    store.send(.setServerTapped)
-                } label: {
-                    HStack(spacing: 8) {
-                        Text(localizable: .serverSetupSave)
-                            .zFont(.semiBold, size: 16,
-                                   style: !canSave
-                                   ? Design.Btns.Primary.fgDisabled
-                                   : Design.Btns.Primary.fg
-                            )
-                        if store.isUpdatingServer {
-                            progressView(invertTint: true)
-                        }
+                // Rule #7 + button consolidation: ZashiButton owns the macOS width cap (`Design.Mac.maxButtonWidth`) and the
+                // primary/disabled styling — don't re-implement a full-width hand-rolled CTA. Branch only
+                // to keep the in-progress spinner as the accessory while the server is being saved.
+                if store.isUpdatingServer {
+                    ZashiButton(
+                        String(localizable: .serverSetupSave),
+                        accessoryView: progressView(invertTint: true)
+                    ) {
+                        store.send(.setServerTapped)
                     }
-                    .frame(height: 48)
-                    .frame(maxWidth: .infinity)
-                    .background(
-                        !canSave
-                        ? Design.Btns.Primary.bgDisabled.color(colorScheme)
-                        : Design.Btns.Primary.bg.color(colorScheme)
-                    )
-                    .cornerRadius(10)
+                    .disabled(true)
+                    .screenHorizontalPadding()
+                } else {
+                    ZashiButton(String(localizable: .serverSetupSave)) {
+                        store.send(.setServerTapped)
+                    }
+                    .disabled(!canSave)
                     .screenHorizontalPadding()
                 }
-                .disabled(store.isUpdatingServer || !canSave)
             }
         }
     }
@@ -428,13 +427,9 @@ struct ServerSetupView: View {
     }
 
     private func progressView(invertTint: Bool = false) -> some View {
-        ProgressView()
-            .progressViewStyle(
-                CircularProgressViewStyle(
-                    tint: colorScheme == .dark
-                    ? (invertTint ? .black : .white) : (invertTint ? .white : .black)
-                )
-            )
+        let tint: Color = colorScheme == .dark
+            ? (invertTint ? .black : .white) : (invertTint ? .white : .black)
+        return ZashiSpinner(iosTint: tint, macTint: .fixed(tint))
     }
 }
 

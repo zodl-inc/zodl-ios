@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
 
@@ -55,6 +56,7 @@ struct RestoreWalletCoordFlow {
     enum Action: BindableAction {
         case alert(PresentationAction<Action>)
         case binding(BindingAction<RestoreWalletCoordFlow.State>)
+        case commitRestore
         case evaluateSeedValidity
         case failedToRecover(ZcashError)
         case helpSheetRequested
@@ -64,6 +66,8 @@ struct RestoreWalletCoordFlow {
         case resolveRestoreRequested
         case resolveRestoreTapped
         case restoreCancelTapped
+        case seedNotRelevantToExistingDB
+        case seedRelevanceChecked(Bool)
         case selectedIndex(Int?)
         case successfullyRecovered
         case suggestedWordTapped(String)
@@ -81,6 +85,7 @@ struct RestoreWalletCoordFlow {
         case newWalletSuccessfulyCreated
     }
 
+    @Dependency(\.databaseFiles) var databaseFiles
     @Dependency(\.mnemonic) var mnemonic
     @Dependency(\.pasteboard) var pasteboard
     @Dependency(\.sdkSynchronizer) var sdkSynchronizer
@@ -217,6 +222,14 @@ extension AlertState where Action == RestoreWalletCoordFlow.Action {
             TextState(String(localizable: .rootInitializationAlertFailedTitle))
         } message: {
             TextState(String(localizable: .rootInitializationAlertCantCreateNewWalletMessage(error.detailedMessage)))
+        }
+    }
+
+    static func failedToRecover(_ error: ZcashError) -> AlertState {
+        AlertState {
+            TextState(String(localizable: .rootInitializationAlertFailedTitle))
+        } message: {
+            TextState(String(localizable: .rootInitializationAlertErrorMessage(error.detailedMessage)))
         }
     }
 }

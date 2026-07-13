@@ -6,12 +6,11 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 
 struct AddKeystoneHWWalletCoordFlowView: View {
-    @Environment(\.colorScheme) var colorScheme
-
-    @Perception.Bindable var store: StoreOf<AddKeystoneHWWalletCoordFlow>
+    @PlatformBindable var store: StoreOf<AddKeystoneHWWalletCoordFlow>
     let tokenName: String
 
     init(store: StoreOf<AddKeystoneHWWalletCoordFlow>, tokenName: String) {
@@ -53,8 +52,19 @@ struct AddKeystoneHWWalletCoordFlowView: View {
                 }
             }
         }
-        .applyScreenBackground()
+        // `capped: false` at the flow level: every keystone screen already applies its OWN background
+        // (capped for content, `capped: false` for the pushed ScanView). A capped flow background framed
+        // the whole NavigationStack to the capped content column (`Design.Mac.viewCapWidth`), which also shrank the full-window scan
+        // (the "dimmed capped" scan bug). Uncapped here, the scan's own full-window background wins.
+        .applyScreenBackground(capped: false)
+#if os(iOS)
+        // The flow's root content (AddHWWalletView) already owns the canonical back —
+        // `.zashiBack { backToHomeTapped }` → returns to the split home. This wrapper-level `.zashiBack()`
+        // (default env dismiss) DUPLICATES it; on macOS that drew a SECOND back arrow whose env dismiss,
+        // with no presentation to close, hid the whole app. Keep it iOS-only — macOS shows the single
+        // content back.
         .zashiBack()
+#endif
     }
     
     @ViewBuilder private func helpSheetContent() -> some View {
@@ -64,20 +74,8 @@ struct AddKeystoneHWWalletCoordFlowView: View {
                 .padding(.top, 24)
                 .padding(.bottom, 12)
 
-            HStack(alignment: .top, spacing: 8) {
-                Asset.Assets.infoCircle.image
-                    .zImage(size: 20, style: Design.Text.primary)
-
-                if let attrText = try? AttributedString(
-                    markdown: String(localizable: .walletBirthdayHelpDesc),
-                    including: \.zashiApp
-                ) {
-                    ZashiText(withAttributedString: attrText, colorScheme: colorScheme)
-                        .zFont(size: 14, style: Design.Text.tertiary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            .padding(.bottom, 32)
+            HintBox(String(localizable: .walletBirthdayHelpDesc), style: .markdown)
+                .padding(.bottom, 32)
             
             ZashiButton(String(localizable: .restoreInfoGotIt)) {
                 store.send(.closeHelpSheetTapped)

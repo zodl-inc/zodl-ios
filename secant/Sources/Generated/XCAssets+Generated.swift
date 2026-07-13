@@ -208,6 +208,7 @@ public enum Asset {
     public static let welcomeScreenLogo = ImageAsset(name: "WelcomeScreenLogo")
     public static let zashiLogo = ImageAsset(name: "ZashiLogo")
     public static let zashiLogoWithBackground = ImageAsset(name: "ZashiLogoWithBackground")
+    public static let zodlSphinxHero = ImageAsset(name: "ZodlSphinxHero")
     public static let alertIcon = ImageAsset(name: "alertIcon")
     public static let arrowLeftLong = ImageAsset(name: "arrowLeftLong")
     public static let buttonCloseX = ImageAsset(name: "buttonCloseX")
@@ -221,6 +222,7 @@ public enum Asset {
     public static let eyeOn = ImageAsset(name: "eyeOn")
     public static let flyReceivedFilled = ImageAsset(name: "flyReceivedFilled")
     public enum Icons {
+      public static let activity = ImageAsset(name: "activity")
       public static let alertCircle = ImageAsset(name: "alertCircle")
       public static let alertOutline = ImageAsset(name: "alertOutline")
       public static let alertTriangle = ImageAsset(name: "alertTriangle")

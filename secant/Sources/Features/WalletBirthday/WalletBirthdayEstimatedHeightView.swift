@@ -6,12 +6,13 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 
 struct WalletBirthdayEstimatedHeightView: View {
     @Environment(\.colorScheme) var colorScheme
     
-    @Perception.Bindable var store: StoreOf<WalletBirthday>
+    @PlatformBindable var store: StoreOf<WalletBirthday>
     
     init(store: StoreOf<WalletBirthday>) {
         self.store = store
@@ -80,15 +81,22 @@ struct WalletBirthdayEstimatedHeightView: View {
                 .padding(.bottom, 24)
             }
             .zashiBack()
-            .navigationBarTitleDisplayMode(.inline)
-            .navigationBarItems(
+            .zashiNavBarTitleDisplayMode(.inline)
+            .zashiNavigationBarItems(
                 trailing:
                     Button {
                         store.send(.helpSheetRequested)
                     } label: {
+#if os(macOS)
+                        // macOS 26 sizes the glass capsule to the icon's WIDTH — a bare SF symbol is narrow
+                        // → tall capsule. zashiToolbarIconPadding() widens it to circular (matches the back).
+                        Image(systemName: "info.circle")
+                            .zashiToolbarIconPadding()
+#else
                         Asset.Assets.Icons.help.image
                             .zImage(size: 24, style: Design.Text.primary)
                             .padding(Design.Spacing.navBarButtonPadding)
+#endif
                     }
             )
             .screenHorizontalPadding()

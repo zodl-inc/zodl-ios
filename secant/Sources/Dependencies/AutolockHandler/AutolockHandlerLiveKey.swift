@@ -6,6 +6,8 @@
 //
 
 import ComposableArchitecture
+import Foundation
+#if canImport(UIKit)
 import UIKit
 
 extension AutolockHandlerClient: DependencyKey {
@@ -28,11 +30,20 @@ private extension AutolockHandlerClient {
     @MainActor static func handleAutolock(_ isRestoring: Bool) -> Void {
         switch UIDevice.current.batteryState {
         case .charging, .full:
-            UIApplication.shared.isIdleTimerDisabled = isRestoring
+            PlatformIdleTimer.disabled = isRestoring
         case .unplugged, .unknown:
-            UIApplication.shared.isIdleTimerDisabled = false
+            PlatformIdleTimer.disabled = false
         @unknown default:
-            UIApplication.shared.isIdleTimerDisabled = false
+            PlatformIdleTimer.disabled = false
         }
     }
 }
+#else
+extension AutolockHandlerClient: DependencyKey {
+    // macOS: no UIDevice battery / idle-timer control.
+    static let liveValue = Self(
+        value: { _ in },
+        batteryStatePublisher: { NotificationCenter.default.publisher(for: Notification.Name("co.zodl.macos.autolock.noop")) }
+    )
+}
+#endif

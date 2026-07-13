@@ -42,3 +42,34 @@ extension StoredWallet {
         hasUserPassedPhraseBackupTest: false
     )
 }
+
+/// The non-secret metadata persisted alongside the seed. On macOS this is stored as a SEPARATE
+/// plaintext keychain item, so reading it (birthday, backup-flag, existence) never has to decrypt the
+/// Secure-Enclave-wrapped seed and therefore never triggers a biometric prompt. On iOS it is projected
+/// from the single `StoredWallet` blob. See docs/macos/KEYCHAIN_SE_HARDENING.md.
+struct WalletMetadata: Codable, Equatable {
+    var version: Int
+    var birthday: Birthday?
+    var hasUserPassedPhraseBackupTest: Bool
+
+    init(
+        version: Int,
+        birthday: Birthday? = nil,
+        hasUserPassedPhraseBackupTest: Bool
+    ) {
+        self.version = version
+        self.birthday = birthday
+        self.hasUserPassedPhraseBackupTest = hasUserPassedPhraseBackupTest
+    }
+}
+
+extension StoredWallet {
+    /// The metadata projection of this wallet (everything except the secret seed material).
+    var metadata: WalletMetadata {
+        WalletMetadata(
+            version: version,
+            birthday: birthday,
+            hasUserPassedPhraseBackupTest: hasUserPassedPhraseBackupTest
+        )
+    }
+}

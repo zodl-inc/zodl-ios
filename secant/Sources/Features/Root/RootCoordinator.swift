@@ -6,6 +6,7 @@
 //
 
 import Combine
+import Dispatch
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
 
@@ -227,6 +228,11 @@ extension Root {
                 return .none
 
             case .home(.seeAllTransactionsTapped):
+                // [B4-21] PRODUCT DECISION (2026-07-02): the full reset is intended — filters and
+                // search live only while the user stays on the Activity screen. On macOS this
+                // action is also the section-switch re-entry, so leaving to Send/Receive and
+                // coming back means a clean, unfiltered Activity (outline icon, full content).
+                // A filter/search carry-over was briefly added here and reverted on that call.
                 state.transactionsCoordFlowState = .initial
                 state.path = .transactionsCoordFlow
                 return .none
@@ -255,9 +261,22 @@ extension Root {
                 // MARK: - Keystone
 
             case .sendCoordFlow(.path(.element(id: _, action: .confirmWithKeystone(.rejectTapped)))),
-                    .signWithKeystoneCoordFlow(.sendConfirmation(.rejectTapped)),
                     .swapAndPayCoordFlow(.path(.element(id: _, action: .confirmWithKeystone(.rejectTapped)))):
                 state.path = nil
+                return .none
+
+            case .signWithKeystoneCoordFlow(.sendConfirmation(.rejectTapped)):
+                // The standalone Keystone sign flow (shield-from-Keystone) is presented via the
+                // `signWithKeystoneCoordFlowBinding` binding, not `path`, so the shared `path = nil` above
+                // was a no-op for it: on iOS only the popover's interactive swipe dismissed it, and the
+                // macOS full-window takeover would have no way out at all. Flip the binding so Reject
+                // actually closes the flow on both platforms.
+                state.signWithKeystoneCoordFlowBinding = false
+                // Clear the processor's replayed `.proposal` (CurrentValueSubject) so a later
+                // SmartBanner re-subscription can't receive the stale state and instantly close a
+                // freshly-opened shield banner (field bug: banner dismissed on every account switch
+                // AFTER one rejected Keystone shield).
+                shieldingProcessor.reset()
                 return .none
 
             case .signWithKeystoneRequested:
@@ -276,6 +295,12 @@ extension Root {
                 state.path = nil
                 state.$selectedWalletAccount.withLock { $0 = nil }
                 return .run { send in
+                    // [B4-17] The disconnected account's SmartBanners (e.g. the Keystone shielding
+                    // offer) must not survive it — macOS's always-visible banner host never
+                    // re-evaluates on its own (the split-view stale-gate class). Close-and-cleanup
+                    // re-runs the priority chain against the remaining accounts; fires AFTER the
+                    // deletion completed, so the re-evaluation can't resurrect the stale offer.
+                    await send(.home(.smartBanner(.closeAndCleanupBanner)))
                     let walletAccounts = try await sdkSynchronizer.walletAccounts()
                     await send(.initialization(.loadedWalletAccounts(walletAccounts)))
                     await send(.fetchTransactionsForTheSelectedAccount)
@@ -292,6 +317,13 @@ extension Root {
                 return .send(.initialization(.resetZashiRequest(areMetadataPreserved)))
 
                 // MARK: - Restore Wallet Coord Flow from Onboarding
+
+            case .onboarding(.seedNotRelevantToExistingDB):
+                // Preventive guard ([#1024]): the entered seed doesn't match the wallet DB already on disk.
+                // Funnel through the single mismatch sink (`seedValidationResult(false)` → `differentSeed()`:
+                // "Start over" wipes via resetZashi, "Try again" dismisses) — before the seed is ever written
+                // to the keychain.
+                return .send(.initialization(.seedValidationResult(false)))
 
             case .onboarding(.path(.element(id: _, action: .restoreInfo(.gotItTapped)))):
                 var leavesScreenOpen = false
@@ -328,6 +360,7 @@ extension Root {
                     .scanCoordFlow(.path(.element(id: _, action: .sendResultFailure(.closeTapped)))),
                     .scanCoordFlow(.path(.element(id: _, action: .sendResultPending(.closeTapped)))):
                 state.path = nil
+                state.macRedirectToActivityAfterClose = true
                 return .send(.fetchTransactionsForTheSelectedAccount)
 
                 // MARK: - Self
@@ -355,6 +388,7 @@ extension Root {
                     .sendCoordFlow(.path(.element(id: _, action: .sendResultFailure(.closeTapped)))),
                     .sendCoordFlow(.path(.element(id: _, action: .sendResultPending(.closeTapped)))):
                 state.path = nil
+                state.macRedirectToActivityAfterClose = true
                 return .send(.fetchTransactionsForTheSelectedAccount)
 
             case .sendCoordFlow(.path(.element(id: _, action: .transactionDetails(.closeDetailTapped)))):
@@ -367,11 +401,23 @@ extension Root {
                     .signWithKeystoneCoordFlow(.path(.element(id: _, action: .sendResultFailure(.closeTapped)))),
                     .signWithKeystoneCoordFlow(.path(.element(id: _, action: .sendResultPending(.closeTapped)))):
                 state.signWithKeystoneCoordFlowBinding = false
-                return .send(.fetchTransactionsForTheSelectedAccount)
+                state.macRedirectToActivityAfterClose = true
+                // See the reject case above — clear the processor's replayed terminal state.
+                shieldingProcessor.reset()
+                // [class: split-view stale gate — B4-10/B4-17 recipe] macOS Home never re-fires
+                // onAppear (always-visible split view), so the "Shield funds" banner survives the
+                // return from this full-window sign flow. Poke the re-evaluation: after a
+                // successful shield it drops; after a failure it legitimately re-opens.
+                return .merge(
+                    .send(.fetchTransactionsForTheSelectedAccount),
+                    .send(.home(.smartBanner(.closeAndCleanupBanner)))
+                )
 
             case .signWithKeystoneCoordFlow(.path(.element(id: _, action: .transactionDetails(.closeDetailTapped)))):
                 state.signWithKeystoneCoordFlowBinding = false
-                return .none
+                shieldingProcessor.reset()
+                // Same stale-gate poke — this close also lands back on Activity post-shield.
+                return .send(.home(.smartBanner(.closeAndCleanupBanner)))
 
                 // MARK: - Tor Setup
                 
@@ -405,10 +451,15 @@ extension Root {
                     .swapAndPayCoordFlow(.path(.element(id: _, action: .sendResultFailure(.closeTapped)))),
                     .swapAndPayCoordFlow(.path(.element(id: _, action: .sendResultPending(.closeTapped)))):
                 state.path = nil
+                state.macRedirectToActivityAfterClose = true
                 return .send(.fetchTransactionsForTheSelectedAccount)
 
             case .swapAndPayCoordFlow(.path(.element(id: _, action: .transactionDetails(.closeDetailTapped)))):
                 state.path = nil
+                // [B4-19] This detail is reached via "Check status" on a Result screen; closing it
+                // ends the whole Swap/Pay flow, so land on Activity — where the transaction lives —
+                // instead of the stale Swap/Pay form. Same redirect the Result closes use.
+                state.macRedirectToActivityAfterClose = true
                 return .none
 
                 // MARK: - Transactions Coord Flow

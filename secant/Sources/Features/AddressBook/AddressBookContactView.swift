@@ -6,12 +6,13 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 
 struct AddressBookContactView: View {
     @Environment(\.colorScheme) var colorScheme
     
-    @Perception.Bindable var store: StoreOf<AddressBook>
+    @PlatformBindable var store: StoreOf<AddressBook>
 
     @FocusState var isAddressFocused: Bool
     @FocusState var isNameFocused: Bool
@@ -152,10 +153,8 @@ struct AddressBookContactView: View {
                     action: \.alert
                 )
             )
-            .popover(isPresented: $store.chainSelectBinding) {
+            .zashiSelectorSheet(isPresented: $store.chainSelectBinding) {
                 assetContent(colorScheme)
-                    .padding(.horizontal, 4)
-                    .applyScreenBackground()
             }
         }
         .applyScreenBackground()

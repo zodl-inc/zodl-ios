@@ -7,12 +7,12 @@
 
 extension LocalAuthenticationClient {
     static let mockAuthenticationSucceeded = Self(
-        authenticate: { true },
+        authenticate: { _ in true },
         method: { .none }
     )
-    
+
     static let mockAuthenticationFailed = Self(
-        authenticate: { false },
+        authenticate: { _ in false },
         method: { .none }
     )
 }

@@ -1,10 +1,9 @@
 import SwiftUI
+import Combine
 import ComposableArchitecture
 
 struct SettingsView: View {
-    @Environment(\.colorScheme) var colorScheme
-    
-    @Perception.Bindable var store: StoreOf<Settings>
+    @PlatformBindable var store: StoreOf<Settings>
     
     init(store: StoreOf<Settings>) {
         self.store = store
@@ -34,12 +33,15 @@ struct SettingsView: View {
                                 }
                             }
                             
+#if !os(macOS)
+                            // macOS hosts voting in the sidebar (Beta: Vote); the Settings entry is iOS-only.
                             ActionRow(
                                 icon: Asset.Assets.Icons.checkVerified.image,
                                 title: String(localizable: .settingsCoinholderPolling)
                             ) {
                                 store.send(.coinholderPollingTapped)
                             }
+#endif
 
                             ActionRow(
                                 icon: Asset.Assets.Icons.settings.image,
@@ -101,8 +103,9 @@ struct SettingsView: View {
                         .padding(.bottom, 24)
                 }
                 .listStyle(.plain)
+                .zashiHideListBackground()
                 .applyScreenBackground()
-                .zashiBack() { store.send(.backToHomeTapped) }
+                .zashiSectionRootBack { store.send(.backToHomeTapped) }
                 .screenTitle(String(localizable: .settingsTitle))
             } destination: { store in
                 switch store.case {
@@ -152,7 +155,12 @@ struct SettingsView: View {
                     WhatsNewView(store: store)
                 }
             }
-            .applyScreenBackground()
+            // macOS: the Settings NavigationStack hosts AddressBook, whose List must be full-width so its
+            // (visible) scroll indicator sits at the window edge, not the 530-column edge. Move the cap OFF
+            // the stack (`capped: false`); the Settings root list self-caps (its own background above) and
+            // every pushed destination self-caps too, so only AddressBook's full-width List is affected.
+            // iOS unaffected — `capped: false` collapses to the same background-only path there (Rule #11).
+            .applyScreenBackground(capped: false)
             .zashiSheet(isPresented: $store.isInRecoverFundsMode) {
                 recoverFundsSheetContent()
             }
@@ -162,7 +170,7 @@ struct SettingsView: View {
             .zashiSheet(isPresented: $store.isResyncHelpSheetPresented) {
                 resyncHelpSheetContent()
             }
-            .fullScreenCover(
+            .zashiFullScreenCover(
                 item: $store.scope(state: \.votingCoordFlow, action: \.votingCoordFlow)
             ) { votingStore in
                 // fullScreenCover content is an escaping closure — needs its
@@ -223,20 +231,8 @@ struct SettingsView: View {
                 .padding(.top, 24)
                 .padding(.bottom, 12)
 
-            HStack(alignment: .top, spacing: 8) {
-                Asset.Assets.infoCircle.image
-                    .zImage(size: 20, style: Design.Text.primary)
-
-                if let attrText = try? AttributedString(
-                    markdown: String(localizable: .walletBirthdayHelpDesc),
-                    including: \.zashiApp
-                ) {
-                    ZashiText(withAttributedString: attrText, colorScheme: colorScheme)
-                        .zFont(size: 14, style: Design.Text.tertiary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            .padding(.bottom, 32)
+            HintBox(String(localizable: .walletBirthdayHelpDesc), style: .markdown)
+                .padding(.bottom, 32)
             
             ZashiButton(String(localizable: .restoreInfoGotIt)) {
                 store.send(.closeResyncHelpSheetTapped)

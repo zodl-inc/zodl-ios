@@ -1,8 +1,10 @@
 import ComposableArchitecture
+import Combine
 @preconcurrency import ZcashLightClientKit
 import Foundation
-import BackgroundTasks
+#if canImport(Flexa)
 import Flexa
+#endif
 
 @Reducer
 struct Root {
@@ -49,13 +51,24 @@ struct Root {
         var CancelFlexaId = UUID()
         var shieldingProcessorCancelId = UUID()
         var automaticServerRefreshCancelId = UUID()
+        var BridgeListenerCancelId = UUID()
 
         @Shared(.inMemory(.addressBookContacts)) var addressBookContacts: AddressBookContacts = .empty
         @Presents var alert: AlertState<Action>?
         var appInitializationState: InitializationState = .uninitialized
         var appStartState: AppStartState = .unknown
         var areMetadataPreserved = true
-        var bgTask: BGProcessingTask?
+        var bgTask: PlatformBackgroundTask?
+        // Zodl Bridge (docs/macos/ZODL_BRIDGE_SPEC.md): non-nil while the review/confirm
+        // card is up — doubles as the one-in-flight gate; `lastBridgeRequestAt` is the
+        // 5 s request-spam cooldown (BR-4). Intake lives in RootBridge.swift.
+        var bridgeRequestState: BridgeRequest.State?
+        var lastBridgeRequestAt: TimeInterval = 0
+        // A request that arrived before the app was ready to show it (cold-launch wake,
+        // mid-restore, or a card already up). Most-recent-wins; replayed from
+        // synchronizerStateChanged once Home is reached — see RootBridge.swift. Without
+        // this a woken-from-quit Zodl silently drops the very click that woke it.
+        var pendingBridgeRequest: BridgePaymentRequest?
         @Shared(.inMemory(.exchangeRate)) var currencyConversion: CurrencyConversion? = nil
         var deeplinkWarningState: DeeplinkWarning.State = .initial
         var destinationState: DestinationState
@@ -64,6 +77,12 @@ struct Root {
         var homeState: Home.State = .initial
         var isLockedInKeychainUnavailableState = false
         var isRestoringWallet = false
+        // [#1755 / slipstream] One-shot guard: the banner priority chain (SmartBanner.evaluatePriority1) is
+        // kicked once per stream registration, from synchronizerStateChanged, AFTER the launch mode
+        // (restoring vs not) is known — see RootInitialization. Re-armed in registerForSynchronizersUpdate.
+        // Prevents the currency-conversion banner flashing over a restore when the chain ran before the
+        // async isRecovering signal had set walletStatus.
+        var initialBannerEvaluationFired = false
         @Shared(.appStorage(.lastAuthenticationTimestamp)) var lastAuthenticationTimestamp: Int = 0
         var maxResetZashiAppAttempts = ResetZashiConstants.maxResetZashiAppAttempts
         var maxResetZashiSDKAttempts = ResetZashiConstants.maxResetZashiSDKAttempts
@@ -79,6 +98,11 @@ struct Root {
         var serverSetupState: ServerSetup.State
         var serverSetupViewBinding = false
         var signWithKeystoneCoordFlowBinding = false
+        // macOS: set true when a transaction Result screen (Send / Pay / Swap — incl. Keystone & scan)
+        // is closed; `MacSplitView` observes it, redirects the sidebar to Activity so the finished
+        // transaction is visible at the top, then clears it via `.macRedirectToActivityHandled`. Unused
+        // on iOS (no sidebar) — harmless if left set.
+        var macRedirectToActivityAfterClose = false
         var splashAppeared = false
         var supportData: SupportData?
         @Shared(.inMemory(.swapAPIAccess)) var swapAPIAccess: WalletStorage.SwapAPIAccess = .direct
@@ -107,6 +131,15 @@ struct Root {
         var requestZecCoordFlowState = RequestZecCoordFlow.State.initial
         var scanCoordFlowState = ScanCoordFlow.State.initial
         var sendCoordFlowState = SendCoordFlow.State.initial
+#if os(macOS)
+        // macOS: the "Beta: Vote" sidebar section renders this as a peer-root (iOS presents voting from
+        // Settings instead, so this Root-level state exists only on macOS).
+        var votingCoordFlowState = VotingCoordFlow.State()
+        // macOS: true while the "Beta: Vote" peer-section is selected. iOS treats voting as sensitive via
+        // `path == .settings`; macOS voting has no `path`, so this flag carries the same signal into
+        // `isSensitiveFlowActive` so an automatic server switch is deferred during a vote (iOS parity).
+        var isMacVotingSectionActive = false
+#endif
         var settingsState = Settings.State.initial
         var signWithKeystoneCoordFlowState = SignWithKeystoneCoordFlow.State.initial
         var swapAndPayCoordFlowState = SwapAndPayCoordFlow.State.initial
@@ -129,6 +162,12 @@ struct Root {
         /// before the project compiles.
         var isSensitiveFlowActive: Bool {
             if signWithKeystoneCoordFlowBinding { return true }
+#if os(macOS)
+            // macOS: voting is a peer-section with no `path`, so carry its in-progress signal here to
+            // defer an automatic server switch during a vote — matching iOS, where `path == .settings`
+            // covers the same voting broadcasts.
+            if isMacVotingSectionActive { return true }
+#endif
             guard let path else { return false }
             switch path {
             // The voting flow has no `Path` case of its own — it is presented from inside Settings
@@ -187,6 +226,7 @@ struct Root {
         case alert(PresentationAction<Action>)
         case batteryStateChanged
         case binding(BindingAction<Root.State>)
+        case bridge(BridgeAction)
         case cancelAllRunningEffects
         case deeplinkWarning(DeeplinkWarning.Action)
         case destination(DestinationAction)
@@ -223,6 +263,13 @@ struct Root {
         case scanCoordFlow(ScanCoordFlow.Action)
         case sendAgainRequested(TransactionState)
         case sendCoordFlow(SendCoordFlow.Action)
+#if os(macOS)
+        // macOS-only: Root-level "Beta: Vote" peer-section actions (iOS reaches voting via Settings).
+        case votingCoordFlow(VotingCoordFlow.Action)
+        case macVoteSectionSelected
+        case macResetSectionPaths
+        case macRedirectToActivityHandled
+#endif
         case settings(Settings.Action)
         case signWithKeystoneCoordFlow(SignWithKeystoneCoordFlow.Action)
         case signWithKeystoneRequested
@@ -268,6 +315,7 @@ struct Root {
         // Auto-update Swaps
         case attemptToCheckSwapStatus(Bool)
         case autoUpdateCandidatesSwapDetails(SwapDetails)
+        case autoUpdateSwapStatusFetchFailed
         case compareAndUpdateMetadataOfSwap(SwapDetails)
         
         // Check funds
@@ -283,6 +331,8 @@ struct Root {
     @Dependency(\.addressBook) var addressBook
     @Dependency(\.audioServices) var audioServices
     @Dependency(\.autolockHandler) var autolockHandler
+    @Dependency(\.bridgeServer) var bridgeServer
+    @Dependency(\.bridgeVerifier) var bridgeVerifier
     @Dependency(\.databaseFiles) var databaseFiles
     @Dependency(\.deeplink) var deeplink
     @Dependency(\.date) var date
@@ -366,7 +416,53 @@ struct Root {
         Scope(state: \.sendCoordFlowState, action: \.sendCoordFlow) {
             SendCoordFlow()
         }
-        
+
+#if os(macOS)
+        Scope(state: \.votingCoordFlowState, action: \.votingCoordFlow) {
+            VotingCoordFlow()
+        }
+
+        // macOS: the "Beta: Vote" sidebar section configures the Root-level voting flow from the
+        // selected account (mirrors SettingsCoordinator.coinholderPollingTapped); VotingCoordFlowView's
+        // onAppear then loads. Only (re)initializes when the account changes, to preserve in-progress
+        // voting when switching back to the section. iOS path is untouched.
+        Reduce { state, action in
+            switch action {
+            case .macVoteSectionSelected:
+                state.isMacVotingSectionActive = true
+                guard let account = state.selectedWalletAccount else { return .none }
+                let walletId = account.id.id.map { String(format: "%02x", $0) }.joined()
+                if state.votingCoordFlowState.walletId != walletId {
+                    var votingState = VotingCoordFlow.State()
+                    votingState.isKeystoneUser = account.vendor == .keystone
+                    votingState.walletId = walletId
+                    state.votingCoordFlowState = votingState
+                }
+                return .none
+            case .macResetSectionPaths:
+                // macOS: clear the vote-section flag on every switch; `.macVoteSectionSelected` (sent
+                // right after this when switching TO Vote) re-sets it, so leaving Vote lands on false.
+                state.isMacVotingSectionActive = false
+                // macOS: pop EVERY section's NavigationStack to root before the sidebar switches
+                // sections. SwiftUI's NavigationSplitView reconciles the detail column's nav state on a
+                // section switch; a PUSHED path of one type vs the incoming section's different path type
+                // crashes with AnyNavigationPath.comparisonTypeMismatch (a try!). Empty = nothing to compare.
+                state.transactionsCoordFlowState.path.removeAll()
+                state.receiveState.path.removeAll()
+                state.sendCoordFlowState.path.removeAll()
+                state.swapAndPayCoordFlowState.path.removeAll()
+                state.votingCoordFlowState.path.removeAll()
+                state.settingsState.path.removeAll()
+                return .none
+            case .macRedirectToActivityHandled:
+                state.macRedirectToActivityAfterClose = false
+                return .none
+            default:
+                return .none
+            }
+        }
+#endif
+
         Scope(state: \.scanCoordFlowState, action: \.scanCoordFlow) {
             ScanCoordFlow()
         }
@@ -418,6 +514,11 @@ struct Root {
         swapsReduce()
         
         checkFundsReduce()
+
+        bridgeReduce()
+            .ifLet(\.bridgeRequestState, action: \.bridge.child) {
+                BridgeRequest()
+            }
     }
     
     /// The `onChange` wrapper must observe every reducer that can mutate an input of

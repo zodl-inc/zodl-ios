@@ -6,6 +6,11 @@
 //
 
 import SwiftUI
+#if canImport(UIKit)
+import UIKit
+#elseif canImport(AppKit)
+import AppKit
+#endif
 
 /// Codable struct for JSON serialization
 /// Supported Near tokens 
@@ -62,21 +67,33 @@ struct SwapAsset: Equatable, Codable, Identifiable, Hashable {
     }
 
     var chainIcon: Image {
-        guard let icon = UIImage(named: "chain_\(chain.lowercased())") else {
+#if canImport(UIKit)
+        guard let icon = PlatformImage(named: "chain_\(chain.lowercased())") else {
             return Asset.Assets.Tickers.none.image
         }
-
-        return Image(uiImage: icon)
+        return Image(platformImage: icon)
+#else
+        guard let icon = NSImage(named: "chain_\(chain.lowercased())") else {
+            return Asset.Assets.Tickers.none.image
+        }
+        return Image(nsImage: icon)
+#endif
     }
 
     var tokenIcon: Image {
         // USDT0 is Tether's omnichain USDT — reuse the USDT logo (no dedicated art).
         let iconName = token.lowercased() == "usdt0" ? "usdt" : token.lowercased()
-        guard let icon = UIImage(named: iconName) else {
+#if canImport(UIKit)
+        guard let icon = PlatformImage(named: iconName) else {
             return Asset.Assets.Tickers.none.image
         }
-
-        return Image(uiImage: icon)
+        return Image(platformImage: icon)
+#else
+        guard let icon = NSImage(named: iconName) else {
+            return Asset.Assets.Tickers.none.image
+        }
+        return Image(nsImage: icon)
+#endif
     }
 
     var provider: String

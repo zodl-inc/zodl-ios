@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Safari requires web-extension appexes (and their container app) sandboxed. -->
+	<key>com.apple.security.app-sandbox</key>
+	<true/>
+	<key>com.apple.security.network.client</key>
+	<true/>
+	<!-- The SAME App Group the real Zodl binds. Without this on the EXTENSION
+	     target, the sandboxed SafariWebExtensionHandler cannot reach the group-
+	     container socket (connect() denied) — the live-fire root cause, 2026-07-09.
+	     Requires signing with team RLPRR8CPQG (both targets). This is exactly what
+	     the production in-Zodl Safari target will declare. -->
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>RLPRR8CPQG.zodl.bridge</string>
+	</array>
+</dict>
+</plist>

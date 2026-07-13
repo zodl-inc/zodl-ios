@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body { font: 13px -apple-system, sans-serif; width: 320px; margin: 12px; }
+    h1 { font-size: 14px; margin: 0 0 8px; }
+    textarea { width: 100%; height: 64px; box-sizing: border-box; font: 12px monospace; }
+    button { margin-top: 8px; width: 100%; padding: 6px; }
+    #status { margin-top: 8px; min-height: 16px; color: #444; }
+    .hint { color: #888; font-size: 11px; margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <h1>Zodl Bridge</h1>
+  <textarea id="uri" placeholder="Paste a zcash: payment request…"></textarea>
+  <button id="send">Send to Zodl</button>
+  <div id="status"></div>
+  <p class="hint">Manual requests are labeled as such in Zodl. This extension holds no keys and receives no wallet data.</p>
+  <script src="popup.js"></script>
+</body>
+</html>

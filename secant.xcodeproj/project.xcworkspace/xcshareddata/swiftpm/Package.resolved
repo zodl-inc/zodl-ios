@@ -1,5 +1,5 @@
 {
-  "originHash" : "4c7373c5f3adfdcdcd7de6ca0dbccee8a5285b0fea671ef4c1ad7b8ee13a0c03",
+  "originHash" : "dcaea7f87db6ebdceee4d366c7974e712241a0d610ebd6d31300d5683b0f20d8",
   "pins" : [
     {
       "identity" : "base32",
@@ -107,15 +107,6 @@
       "state" : {
         "revision" : "8d33ffd6f74b3bcfc99af759d4204c6395a3f918",
         "version" : "3.2.1"
-      }
-    },
-    {
-      "identity" : "keystone-sdk-ios",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/KeystoneHQ/keystone-sdk-ios/",
-      "state" : {
-        "revision" : "7dbf7476bf6b04b204f79e37f71115574acb3e40",
-        "version" : "0.8.6"
       }
     },
     {
@@ -276,8 +267,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-log.git",
       "state" : {
-        "revision" : "2aed77ae5ec9a86d8fe42c12275e4c2653a286ee",
-        "version" : "1.13.1"
+        "revision" : "92448c359f00ebe36ae97d3bd9086f13c7692b5a",
+        "version" : "1.13.2"
       }
     },
     {
@@ -339,8 +330,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/objecthub/swift-numberkit.git",
       "state" : {
-        "revision" : "33af3f9011e45dcd8ee696492d30dbcd5a8a67f3",
-        "version" : "2.6.0"
+        "revision" : "6182110549aa7cf614cb6fff3d6142e65be9b602",
+        "version" : "2.6.1"
       }
     },
     {
@@ -402,8 +393,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-system.git",
       "state" : {
-        "revision" : "669763cfd5806a67e21972d7e5e2d6b80b1ea985",
-        "version" : "1.6.5"
+        "revision" : "7502b711c92a17741fa625d722b0ccbd595d8ed1",
+        "version" : "1.7.2"
       }
     },
     {
@@ -456,8 +447,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/BlockchainCommons/URKit",
       "state" : {
-        "revision" : "c7cf16b03ce061c2d461fb4c635cc27c9e1d00e3",
-        "version" : "15.0.0"
+        "revision" : "c0a447560768e2552cf85a586dea8cfc26162891",
+        "version" : "15.1.0"
       }
     },
     {
@@ -485,15 +476,6 @@
       "state" : {
         "revision" : "798053ba8a2d80560b5e3f4899a8b35ac0c348bb",
         "version" : "1.0.1"
-      }
-    },
-    {
-      "identity" : "zcash-swift-wallet-sdk",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/zcash/zcash-swift-wallet-sdk.git",
-      "state" : {
-        "revision" : "4303068e9282bb8b03bd94807b7d8ad268de75bf",
-        "version" : "2.6.0-alpha.6"
       }
     }
   ],

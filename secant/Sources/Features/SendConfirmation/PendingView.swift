@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
 import Lottie
@@ -18,7 +19,7 @@ struct PendingView: View {
         static let lottieNameDark = "sending-dark"
     }
     
-    @Perception.Bindable var store: StoreOf<SendConfirmation>
+    @PlatformBindable var store: StoreOf<SendConfirmation>
     let tokenName: String
     
     init(store: StoreOf<SendConfirmation>, tokenName: String) {
@@ -52,7 +53,9 @@ struct PendingView: View {
                     .padding(.top, 8)
                     .screenHorizontalPadding()
 
-                if store.txIdToExpand != nil {
+                // B4-7: mutually exclusive with "Check status" (shown below for non-regular
+                // flows) — View transaction is regular-only here too.
+                if store.type == .regular && store.txIdToExpand != nil {
                     ZashiButton(
                         String(localizable: .sendViewTransaction),
                         type: .tertiary,

@@ -4,6 +4,7 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 
 /// Shown when the wallet has no shielded notes at the round's snapshot

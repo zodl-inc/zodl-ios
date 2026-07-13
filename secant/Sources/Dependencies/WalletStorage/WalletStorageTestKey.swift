@@ -11,8 +11,11 @@ import XCTestDynamicOverlay
 extension WalletStorageClient {
     static let noOp = Self(
         importWallet: { _, _, _, _ in },
-        exportWallet: { .placeholder },
+        exportWallet: { _ in .placeholder },
+        exportWalletMetadata: { StoredWallet.placeholder.metadata },
         areKeysPresent: { false },
+        isSecureStorageAvailable: { true },
+        migrateToSecureEnclave: { },
         updateBirthday: { _ in },
         markUserPassedPhraseBackupTest: { _ in },
         resetZashi: { },

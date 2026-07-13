@@ -6,10 +6,13 @@
 //
 
 import Foundation
+import os
 @preconcurrency import Combine
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
 @preconcurrency import KeystoneSDK
+
+private let slipstreamLogger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "co.ecc.zashi", category: "slipstream")
 
 extension SDKSynchronizerClient: DependencyKey {
     static let liveValue: SDKSynchronizerClient = Self.live()
@@ -51,18 +54,44 @@ extension SDKSynchronizerClient: DependencyKey {
             isExchangeRateEnabled: isRateEnabled
         )
         
-        let synchronizer = SDKSynchronizer(initializer: initializer)
+        // [#1755] slipstream: engine selection from the synchronously-readable flag cache (the async
+        // WalletConfigProvider.load() can't be awaited here; the cache is the early-construction shortcut).
+        let useSlipstream = UserDefaultsWalletConfigStorage.cachedFlag(.useSlipstreamSynchronizer)
+
+        let synchronizer: any Synchronizer
+        if useSlipstream {
+            slipstreamLogger.info("[#1755] SlipstreamSynchronizer CONSTRUCTED (useSlipstreamSynchronizer=true)")
+            LoggerProxy.debug("[#1755] SlipstreamSynchronizer: selected (useSlipstreamSynchronizer=true)")
+            // [#1755] v0.7 P1b: in AUTOMATIC connection mode the full built-in server list
+            // rides along as the engine's probe grid — each pass opens with a ~1 s parallel
+            // health probe (commit to the healthiest server) and arms mid-pass wire-collapse
+            // failover. CONSENT-GATED by the same preference as the app-level auto-switch and
+            // submission fan-out: Manual mode passes an EMPTY list, so the pinned (or custom)
+            // server is used exclusively — the probe never runs and failover never arms.
+            // A mode change in Server settings re-applies via setAlternateEndpoints; the
+            // engine dedupes the selected endpoint out of the list. Ignored on Tor passes.
+            let autoServerOn = userStoredPreferences.automaticServerSelection() ?? true
+            synchronizer = SlipstreamSynchronizer(
+                initializer: initializer,
+                alternateEndpoints: autoServerOn
+                    ? ZcashSDKEnvironment.endpoints(for: network.networkType)
+                    : []
+            )
+        } else {
+            slipstreamLogger.info("[#1755] SDKSynchronizer CONSTRUCTED (useSlipstreamSynchronizer=false)")
+            LoggerProxy.debug("[#1755] SDKSynchronizer: selected (useSlipstreamSynchronizer=false)")
+            synchronizer = SDKSynchronizer(initializer: initializer)
+        }
 
         return SDKSynchronizerClient(
             stateStream: { synchronizer.stateStream },
             eventStream: { synchronizer.eventStream },
             exchangeRateUSDStream: { synchronizer.exchangeRateUSDStream },
             latestState: { synchronizer.latestState },
-            prepareWith: { seedBytes, walletBirtday, walletMode, name, keySource in
+            prepareWith: { seedBytes, walletBirtday, name, keySource in
                 let result = try await synchronizer.prepare(
                     with: seedBytes,
                     walletBirthday: walletBirtday,
-                    for: walletMode,
                     name: name,
                     keySource: keySource
                 )
@@ -123,6 +152,11 @@ extension SDKSynchronizerClient: DependencyKey {
             wipe: { synchronizer.wipe() },
             switchToEndpoint: { endpoint in
                 try await synchronizer.switchTo(endpoint: endpoint)
+            },
+            setAlternateEndpoints: { endpoints in
+                // Slipstream-only: the old engine has no wire grid; the cast makes this
+                // a structural no-op there rather than a silent misconfiguration.
+                await (synchronizer as? SlipstreamSynchronizer)?.setAlternateEndpoints(endpoints)
             },
             proposeTransfer: { accountUUID, recipient, amount, memo in
                 try await synchronizer.proposeTransfer(
@@ -261,7 +295,7 @@ extension SDKSynchronizerClient: DependencyKey {
                 await synchronizer.isTorSuccessfullyInitialized()
             },
             httpRequestOverTor: { request in
-                try await synchronizer.httpRequestOverTor(for: request)
+                try await synchronizer.httpRequestOverTor(for: request, retryLimit: 3)
             },
             debugDatabaseSql: { query in
                 synchronizer.debugDatabase(sql: query)
@@ -503,7 +537,7 @@ extension SDKSynchronizerClient {
     static func transactionStatesFromZcashTransactions(
         accountUUID: AccountUUID?,
         zcashTransactions: [ZcashTransaction.Overview],
-        synchronizer: SDKSynchronizer
+        synchronizer: any Synchronizer
     ) async throws -> IdentifiedArrayOf<TransactionState> {
         guard let accountUUID else {
             return []

@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 
 struct SwapAndPayCoordFlowView: View {
@@ -13,7 +14,7 @@ struct SwapAndPayCoordFlowView: View {
 
     @Shared(.appStorage(.sensitiveContent)) var isSensitiveContentHidden = false
     
-    @Perception.Bindable var store: StoreOf<SwapAndPayCoordFlow>
+    @PlatformBindable var store: StoreOf<SwapAndPayCoordFlow>
     let tokenName: String
 
     init(store: StoreOf<SwapAndPayCoordFlow>, tokenName: String) {
@@ -33,7 +34,7 @@ struct SwapAndPayCoordFlowView: View {
                             ),
                         tokenName: tokenName
                     )
-                    .zashiBack {
+                    .zashiSectionRootBack {
                         store.send(.backButtonTapped)
                     }
                     .zashiTitle {
@@ -44,9 +45,11 @@ struct SwapAndPayCoordFlowView: View {
                         )
                         .zFont(.semiBold, size: 16, style: Design.Text.primary)
                     }
-                    .navigationBarItems(
+                    .zashiNavigationBarItems(
                         trailing:
                             HStack(spacing: 4) {
+#if !os(macOS)
+                                // macOS: the hide-balance eye lives in the split's left rail; keep only the (?) here.
                                 if store.isSensitiveButtonVisible {
                                     Button {
                                         $isSensitiveContentHidden.withLock { $0.toggle() }
@@ -57,13 +60,22 @@ struct SwapAndPayCoordFlowView: View {
                                             .padding(store.isSensitiveButtonVisible ? 8 : Design.Spacing.navBarButtonPadding)
                                     }
                                 }
-                                
+#endif
+
                                 Button {
                                     store.send(.helpSheetRequested)
                                 } label: {
+#if os(macOS)
+                                    // macOS 26 sizes the glass capsule to the icon's WIDTH — a bare SF
+                                    // symbol is narrow → a TALL capsule. Horizontal padding widens it to
+                                    // the same circular capsule as the back button.
+                                    Image(systemName: "info.circle")
+                                        .zashiToolbarIconPadding()
+#else
                                     Asset.Assets.infoCircle.image
                                         .zImage(size: 24, style: Design.Text.primary)
                                         .padding(store.isSensitiveButtonVisible ? 8 : Design.Spacing.navBarButtonPadding)
+#endif
                                 }
                             }
                     )
@@ -104,7 +116,11 @@ struct SwapAndPayCoordFlowView: View {
                 }
                 .onAppear { store.send(.onAppear) }
             }
-            .applyScreenBackground()
+            // macOS: hosts the select-recipient AddressBook List (already full-width via its own
+            // `capped: false` + `macContentRowCap()`). Move the cap OFF the flow so that List's scroll
+            // indicator reaches the window edge; every other screen in the flow self-caps (audited). iOS
+            // unaffected — `capped: false` collapses to the same background-only path there (Rule #11).
+            .applyScreenBackground(capped: false)
         }
     }
 

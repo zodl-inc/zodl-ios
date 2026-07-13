@@ -6,10 +6,11 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 
 struct ExportTransactionHistoryView: View {
-    @Perception.Bindable var store: StoreOf<ExportTransactionHistory>
+    @PlatformBindable var store: StoreOf<ExportTransactionHistory>
 
     init(store: StoreOf<ExportTransactionHistory>) {
         self.store = store
@@ -31,7 +32,7 @@ struct ExportTransactionHistoryView: View {
                 if store.isExportingData {
                     ZashiButton(
                         String(localizable: .taxExportDownload),
-                        accessoryView: ProgressView()
+                        accessoryView: ZashiSpinner(macTint: .buttonAccessory)
                     ) {
                         store.send(.exportRequested)
                     }
@@ -49,7 +50,7 @@ struct ExportTransactionHistoryView: View {
 
             shareLogsView()
         }
-        .navigationBarTitleDisplayMode(.inline)
+        .zashiNavBarTitleDisplayMode(.inline)
         .screenHorizontalPadding()
         .applyScreenBackground()
         .screenTitle(String(localizable: .taxExportTitle))

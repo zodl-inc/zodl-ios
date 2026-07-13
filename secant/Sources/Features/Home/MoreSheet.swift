@@ -11,6 +11,8 @@ import ComposableArchitecture
 extension HomeView {
     @ViewBuilder func moreContent() -> some View {
         VStack(alignment: .leading, spacing: 0) {
+#if canImport(Flexa)
+            // Flexa SDK is iOS-only; the row is compiled out on macOS (the action would no-op).
             if !store.isKeystoneAccountActive {
                 ActionRow(
                     icon: walletStatus.isNotReadyForFullySyncedOperation
@@ -27,6 +29,7 @@ extension HomeView {
                 .padding(.top, 32)
                 .padding(.bottom, store.isKeystoneAccountActive ? 24 : 0)
             }
+#endif
 
             if !store.isKeystoneConnected {
                 ActionRow(
@@ -84,6 +87,8 @@ extension HomeView {
             .padding(.top, 32)
             .padding(.bottom, 8)
 
+#if canImport(Flexa)
+            // Flexa SDK is iOS-only; compiled out on macOS.
             if !store.isKeystoneAccountActive {
                 ActionRow(
                     icon: walletStatus.isNotReadyForFullySyncedOperation
@@ -99,6 +104,7 @@ extension HomeView {
                 .disabled(walletStatus.isNotReadyForFullySyncedOperation)
                 .padding(.bottom, 24)
             }
+#endif
 
             HStack(alignment: .top, spacing: 0) {
                 Asset.Assets.infoOutline.image

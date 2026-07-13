@@ -6,12 +6,13 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 
 struct RestoreInfoView: View {
     @Environment(\.colorScheme) var colorScheme
     
-    @Perception.Bindable var store: StoreOf<RestoreInfo>
+    @PlatformBindable var store: StoreOf<RestoreInfo>
     
     init(store: StoreOf<RestoreInfo>) {
         self.store = store
@@ -50,9 +51,15 @@ struct RestoreInfoView: View {
                 .zFont(size: 14, style: Design.Text.primary)
                 .padding(.bottom, 16)
 
+#if os(macOS)
+                bulletpoint(String(localizable: .restoreInfoTip1Mac))
+                bulletpoint(String(localizable: .restoreInfoTip2Mac))
+                    .padding(.bottom, Design.Spacing._lg)
+#else
                 bulletpoint(String(localizable: .restoreInfoTip1))
                 bulletpoint(String(localizable: .restoreInfoTip2))
                     .padding(.bottom, Design.Spacing._lg)
+#endif
 
                 if let attrText = try? AttributedString(
                     markdown: String(
@@ -95,17 +102,30 @@ struct RestoreInfoView: View {
                 }
                 .padding(.leading, 1)
 
-                ZashiButton((store.isKeystoneFlow || store.isResyncFlow)
-                            ? String(localizable: .generalOk).uppercased()
-                            : String(localizable: .restoreInfoGotIt)
-                ) {
-                    store.send(.gotItTapped)
+                // [B4-4 class] In the Keystone flow, OK triggers the import behind this
+                // screen (engine stop → drain → anchor fetch → import → restart —
+                // seconds). Show the wait (spinner + disabled) instead of a dead button
+                // that ignores clicks; re-entry is blocked by the no-op action.
+                if store.isProcessing {
+                    ZashiButton(
+                        String(localizable: .generalOk).uppercased(),
+                        accessoryView:
+                            ZashiSpinner(iosTint: Asset.Colors.secondary.color, macTint: .buttonAccessory)
+                    ) { }
+                    .padding(.vertical, 24)
+                } else {
+                    ZashiButton((store.isKeystoneFlow || store.isResyncFlow)
+                                ? String(localizable: .generalOk).uppercased()
+                                : String(localizable: .restoreInfoGotIt)
+                    ) {
+                        store.send(.gotItTapped)
+                    }
+                    .padding(.vertical, 24)
                 }
-                .padding(.vertical, 24)
             }
             .zashiBack(hidden: true)
         }
-        .navigationBarTitleDisplayMode(.inline)
+        .zashiNavBarTitleDisplayMode(.inline)
         .screenHorizontalPadding()
         .applyScreenBackground()
     }

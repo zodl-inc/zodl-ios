@@ -45,12 +45,31 @@ struct WalletStorageClient {
     ///   - `WalletStorageError.uninitializedWallet`:  when no wallet's data is found in the keychain.
     ///   - `WalletStorageError.storageError` when some unrecognized error occurred.
     ///   - `WalletStorageError.unsupportedVersion` when wallet's version stored in the keychain is outdated.
-    var exportWallet: @Sendable () throws -> StoredWallet
+    ///
+    /// On macOS this decrypts the Secure-Enclave-wrapped seed and triggers an OS auth prompt, hence
+    /// `async` — call only when the seed itself is needed (spend / export / first init). For birthday /
+    /// backup-flag, use `exportWalletMetadata` (no prompt). `reason` (non-nil) is the macOS prompt wording —
+    /// a verb phrase, typically `AuthenticationContext.X.localizedReason`, so the prompt says what the seed
+    /// access is for; `nil` falls back to a generic reason. Ignored on iOS (no SE seed-wrap).
+    var exportWallet: @Sendable (_ reason: String?) async throws -> StoredWallet
+
+    /// Loads the non-secret wallet metadata (version, birthday, backup-flag) WITHOUT decrypting the
+    /// seed — never triggers a biometric prompt.
+    var exportWalletMetadata: @Sendable () throws -> WalletMetadata
 
     /// Check if the wallet representation `StoredWallet` is present in the persistent storage.
     ///
     /// - Returns: the information whether some wallet is stored or is not available
     var areKeysPresent: @Sendable () throws -> Bool
+
+    /// Whether the seed can be stored securely on this device. Always `true` on iOS and on Macs with a
+    /// Secure Enclave; `false` only on a Mac without one (pre-T2 Intel), where there is no plaintext
+    /// fallback — callers can surface a clear message instead of letting create/restore hard-error.
+    var isSecureStorageAvailable: @Sendable () -> Bool = { true }
+
+    /// One-time, crash-safe migration of a legacy plaintext seed into the Secure Enclave (macOS).
+    /// No-op on iOS and once already migrated. May trigger a single biometric prompt while verifying.
+    var migrateToSecureEnclave: @Sendable () async throws -> Void
 
     /// Update the birthday in the securely stored wallet.
     ///

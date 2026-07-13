@@ -6,10 +6,24 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 
-extension SmartBannerView {
-    @ViewBuilder func helpSheetContent() -> some View {
+// A standalone view (not a method on SmartBannerView) so it can be presented from the MacSplitView ROOT
+// on macOS (MODALS.md Rule #5) — the banner sits in the sidebar, and `.zashiSheet` overlays only the view
+// it's attached to. As a real view in the hierarchy it also gets the correct `colorScheme` (dark mode).
+// iOS presents it inline from SmartBannerView, unchanged.
+struct SmartBannerHelpSheetView: View {
+    @Environment(\.colorScheme) private var colorScheme
+    @PlatformBindable var store: StoreOf<SmartBanner>
+    let tokenName: String
+
+    init(store: StoreOf<SmartBanner>, tokenName: String) {
+        self.store = store
+        self.tokenName = tokenName
+    }
+
+    var body: some View {
         WithPerceptionTracking {
             switch store.priorityContent {
             case .priority1: disconnectedHelpContent()
@@ -96,9 +110,15 @@ extension SmartBannerView {
                 .padding(.bottom, 12)
                 .fixedSize(horizontal: false, vertical: true)
             
+#if os(macOS)
+            bulletpoint(String(localizable: .smartBannerHelpRestorePoint1Mac))
+            bulletpoint(String(localizable: .smartBannerHelpRestorePoint2Mac))
+                .padding(.bottom, 32)
+#else
             bulletpoint(String(localizable: .smartBannerHelpRestorePoint1))
             bulletpoint(String(localizable: .smartBannerHelpRestorePoint2))
                 .padding(.bottom, 32)
+#endif
 
             if !store.areFundsSpendable {
                 note(String(localizable: .smartBannerHelpRestoreWarning))
@@ -120,10 +140,17 @@ extension SmartBannerView {
                 .padding(.bottom, 12)
                 .fixedSize(horizontal: false, vertical: true)
 
+#if os(macOS)
+            Text(localizable: .smartBannerHelpSyncInfoMac)
+                .zFont(size: 16, style: Design.Text.tertiary)
+                .padding(.bottom, 12)
+                .fixedSize(horizontal: false, vertical: true)
+#else
             Text(localizable: .smartBannerHelpSyncInfo)
                 .zFont(size: 16, style: Design.Text.tertiary)
                 .padding(.bottom, 12)
                 .fixedSize(horizontal: false, vertical: true)
+#endif
 
             ZashiButton(String(localizable: .generalOk).uppercased()) {
                 store.send(.closeSheetTapped)
@@ -140,10 +167,17 @@ extension SmartBannerView {
                 .padding(.bottom, 12)
                 .fixedSize(horizontal: false, vertical: true)
 
+#if os(macOS)
+            Text(localizable: .smartBannerHelpSyncInfoMac)
+                .zFont(size: 16, style: Design.Text.tertiary)
+                .padding(.bottom, 32)
+                .fixedSize(horizontal: false, vertical: true)
+#else
             Text(localizable: .smartBannerHelpSyncInfo)
                 .zFont(size: 16, style: Design.Text.tertiary)
                 .padding(.bottom, 32)
                 .fixedSize(horizontal: false, vertical: true)
+#endif
             
             ZashiButton(String(localizable: .generalOk).uppercased()) {
                 store.send(.closeSheetTapped)
@@ -352,17 +386,6 @@ extension SmartBannerView {
     }
     
     @ViewBuilder private func note(_ text: String) -> some View {
-        VStack {
-            HStack(alignment: .top, spacing: 0) {
-                Asset.Assets.infoCircle.image
-                    .zImage(size: 20, style: Design.Text.tertiary)
-                    .padding(.trailing, 12)
-                
-                Text(text)
-                    .zFont(size: 12, style: Design.Text.tertiary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .frame(maxWidth: .infinity)
+        HintBox(text, iconStyle: Design.Text.tertiary)
     }
 }

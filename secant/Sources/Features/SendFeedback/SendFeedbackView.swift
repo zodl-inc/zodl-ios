@@ -6,12 +6,13 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 
 struct SendFeedbackView: View {
     @Environment(\.colorScheme) private var colorScheme
     
-    @Perception.Bindable var store: StoreOf<SendFeedback>
+    @PlatformBindable var store: StoreOf<SendFeedback>
     
     @FocusState var isFieldFocused: Bool
     @State private var keyboardVisible: Bool = false
@@ -74,7 +75,9 @@ struct SendFeedbackView: View {
                         )
                         .frame(height: 155)
                         .autocorrectionDisabled()
+#if os(iOS)
                         .autocapitalization(.none)
+#endif
                         .focused($isFieldFocused)
                         .onAppear {
                             isFieldFocused = true
@@ -140,7 +143,7 @@ struct SendFeedbackView: View {
                 }
             )
         }
-        .navigationBarTitleDisplayMode(.inline)
+        .zashiNavBarTitleDisplayMode(.inline)
         .applyScreenBackground()
         .screenTitle(String(localizable: .sendFeedbackScreenTitle).uppercased())
     }

@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import Combine
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
 
@@ -353,6 +354,16 @@ struct ServerSetup {
 
             userStoredPreferences.setAutomaticServerSelection(automatic)
             try userStoredPreferences.setServer(endpoint.serverConfig(isCustom: isCustom))
+
+            // [#1755] v0.7 P1b: keep the slipstream engine's probe grid in lockstep with the
+            // just-persisted connection mode — Automatic arms the per-pass health probe +
+            // wire failover over all known servers; Manual revokes it (empty list = the
+            // selected server is used exclusively). Applies from the next sync pass.
+            await sdkSynchronizer.setAlternateEndpoints(
+                automatic
+                    ? ZcashSDKEnvironment.endpoints(for: zcashSDKEnvironment.network().networkType)
+                    : []
+            )
         }
 
         try await mainQueue.sleep(for: .seconds(Benchmark.saveCompletionDelay))

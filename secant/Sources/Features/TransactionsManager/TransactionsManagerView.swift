@@ -6,13 +6,14 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
 
 struct TransactionsManagerView: View {
     @Environment(\.colorScheme) private var colorScheme
 
-    @Perception.Bindable var store: StoreOf<TransactionsManager>
+    @PlatformBindable var store: StoreOf<TransactionsManager>
     let tokenName: String
     
     @Shared(.appStorage(.sensitiveContent)) var isSensitiveContentHidden = false
@@ -25,6 +26,9 @@ struct TransactionsManagerView: View {
     var body: some View {
         WithPerceptionTracking {
             VStack(spacing: 0) {
+#if !os(macOS)
+                // macOS: search + filter live in the window toolbar (see the `.toolbar` below);
+                // the content area is the full transaction list.
                 HStack(spacing: 0) {
                     ZashiTextField(
                         text: $store.searchTerm,
@@ -36,7 +40,7 @@ struct TransactionsManagerView: View {
                             .zImage(size: 20, style: Design.Dropdowns.Default.text)
                     )
                     .padding(.trailing, 8)
-                    
+
                     Button {
                         store.send(.filterTapped)
                     } label: {
@@ -77,10 +81,12 @@ struct TransactionsManagerView: View {
                 }
                 .screenHorizontalPadding()
                 .padding(.vertical, 12)
+#endif
                 
                 if store.transactionSections.isEmpty && !store.isInvalidated {
                     noTransactionsView()
-                    
+                        .macContentRowCap()
+
                     Spacer()
                 } else {
                     ScrollViewReader { scrollViewProxy in
@@ -94,6 +100,7 @@ struct TransactionsManagerView: View {
                                     Spacer()
                                 }
                                 .frame(maxWidth: .infinity)
+                                .macContentRowCap()
                                 .listRowInsets(EdgeInsets())
                                 .listRowBackground(Asset.Colors.background.color)
                                 .listRowSeparator(.hidden)
@@ -118,6 +125,7 @@ struct TransactionsManagerView: View {
                                                             }
                                                         }
                                                     }
+                                                    .macContentRowCap()
                                                     .listRowInsets(EdgeInsets())
                                                 }
                                             }
@@ -127,6 +135,7 @@ struct TransactionsManagerView: View {
                                             Text(section.id)
                                                 .zFont(.medium, size: 16, style: Design.Text.tertiary)
                                                 .screenHorizontalPadding()
+                                                .macContentRowCap()
                                                 .listRowInsets(EdgeInsets())
                                                 .listRowBackground(Asset.Colors.background.color)
                                                 .listRowSeparator(.hidden)
@@ -143,21 +152,79 @@ struct TransactionsManagerView: View {
                 }
             }
             .disabled(store.transactions.isEmpty)
-            .applyScreenBackground()
+            // macOS: full-width List so the (visible) scroll indicator hits the window edge, not the
+            // 530-column edge. Each row/empty-state caps its own content via `.macContentRowCap()`.
+            // iOS unaffected — `capped: false` collapses to the same background-only path there (Rule #11).
+            .applyScreenBackground(capped: false)
             .listStyle(.plain)
+            .zashiHideListBackground()
             .onAppear { store.send(.onAppear) }
-            .navigationBarItems(trailing: hideBalancesButton())
+#if os(macOS)
+            // macOS: search + filter live in the window toolbar as two SEPARATE glass capsules —
+            // search first (native NSSearchField), filter second (clean icon-only circle).
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    NativeSearchField(
+                        text: $store.searchTerm,
+                        placeholder: String(localizable: .filterSearch)
+                    )
+                    .frame(width: Design.Mac.toolbarSearchFieldWidth)
+                }
+                if #available(macOS 26.0, *) {
+                    ToolbarSpacer(.fixed, placement: .primaryAction)
+                }
+                ToolbarItem(placement: .primaryAction) {
+                    macFilterToolbarButton()
+                }
+            }
+            // A title MUST be set or `.primaryAction` items collapse to the LEADING edge — landing
+            // over the sidebar / traffic lights instead of trailing. `.screenTitle` is a no-op on
+            // macOS, so anchor it here. The window hides the title text (titleVisibility = .hidden in
+            // the split), so this is placement-only: search + filter snap right, over the content.
+            .navigationTitle("")
+#endif
+#if !os(macOS)
+            // macOS: the hide-balance eye lives in the split's left rail; don't duplicate it.
+            .zashiNavigationBarItems(trailing: hideBalancesButton())
+#endif
             .zashiSheet(isPresented: $store.filtersRequest) {
                 filtersContent()
             }
         }
-        .navigationBarTitleDisplayMode(.inline)
+        .zashiNavBarTitleDisplayMode(.inline)
+#if !os(macOS)
+        // macOS: this is the split's default content (Activity) — no back-to-home.
         .zashiBack() {
             store.send(.dismissRequired)
         }
+#endif
         .screenTitle(String(localizable: .generalActivity).uppercased())
     }
-    
+
+#if os(macOS)
+    /// Native window-toolbar filter button (macOS). Provide ONLY the SF Symbol — no `.resizable()`,
+    /// no frame, no color: the system sizes it and wraps it in a clean circular glass capsule.
+    /// (Forcing a size via `zImage` is what turned it into a scaled-up capsule.) An active filter is
+    /// signalled by swapping to the filled-circle glyph (the Finder/Mail idiom): it keeps the capsule
+    /// intact, unlike a count badge, which needs an overlay that breaks it. The exact count stays in
+    /// the filter sheet. `WithPerceptionTracking` so the glyph refreshes when `activeFilters` changes.
+    @ViewBuilder func macFilterToolbarButton() -> some View {
+        WithPerceptionTracking {
+            Button {
+                store.send(.filterTapped)
+            } label: {
+                Image(systemName: store.activeFilters.count > 0
+                      ? "line.3.horizontal.decrease.circle.fill"
+                      : "line.3.horizontal.decrease")
+            }
+            // The app sets a global `.zashiPlainButtonStyle()` for content buttons; that cascades into
+            // the toolbar and strips the native glass capsule. Resetting to `.automatic` restores the
+            // toolbar's default — a clean circular glass button.
+            .buttonStyle(.automatic)
+        }
+    }
+#endif
+
     @ViewBuilder func hideBalancesButton() -> some View {
         Button {
             $isSensitiveContentHidden.withLock { $0.toggle() }

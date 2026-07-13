@@ -6,12 +6,13 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 
 struct DisconnectHWWalletView: View {
     @Environment(\.colorScheme) private var colorScheme
 
-    @Perception.Bindable var store: StoreOf<DisconnectHWWallet>
+    @PlatformBindable var store: StoreOf<DisconnectHWWallet>
 
     init(store: StoreOf<DisconnectHWWallet>) {
         self.store = store
@@ -49,7 +50,7 @@ struct DisconnectHWWalletView: View {
                     ZashiButton(
                         String(localizable: .disconnectHWWalletTitle),
                         type: .destructive1,
-                        accessoryView: ProgressView()
+                        accessoryView: ZashiSpinner(macTint: .buttonAccessory)
                     ) { }
                     .disabled(true)
                     .padding(.bottom, 24)
@@ -87,7 +88,7 @@ struct DisconnectHWWalletView: View {
         }
         .screenHorizontalPadding()
         .applyScreenBackground()
-        .navigationBarTitleDisplayMode(.inline)
+        .zashiNavBarTitleDisplayMode(.inline)
         .zashiBack()
         .screenTitle(String(localizable: .disconnectHWWalletTitle))
     }

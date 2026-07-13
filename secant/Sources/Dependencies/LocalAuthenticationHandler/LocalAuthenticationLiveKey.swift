@@ -13,7 +13,7 @@ extension LocalAuthenticationClient: DependencyKey {
 
     static func live() -> Self {
         Self(
-            authenticate: {
+            authenticate: { reason in
 #if targetEnvironment(simulator)
                 // Bypass on sim unless e2e launches with
                 // `-zodlE2EBiometric YES` to force the real path.
@@ -23,7 +23,6 @@ extension LocalAuthenticationClient: DependencyKey {
 #endif
                 let context = LAContext()
                 var error: NSError?
-                let reason = String(localizable: .localAuthenticationReason)
 
                 do {
                     /// Biometrics validation

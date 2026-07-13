@@ -7,7 +7,10 @@
 
 import Foundation
 import ComposableArchitecture
+#if canImport(UIKit)
 import UIKit
+#endif
+@preconcurrency import ZcashLightClientKit
 @preconcurrency import Combine
 
 extension ShieldingProcessorClient: DependencyKey {
@@ -18,7 +21,8 @@ extension ShieldingProcessorClient: DependencyKey {
 
         return ShieldingProcessorClient(
             observe: { impl.observe() },
-            shieldFunds: { impl.shieldFunds() }
+            shieldFunds: { impl.shieldFunds() },
+            reset: { impl.reset() }
         )
     }
 }
@@ -39,6 +43,11 @@ private final class ShieldingProcessorImpl: @unchecked Sendable {
 
     func observe() -> AnyPublisher<ShieldingProcessorClient.State, Never> {
         subject.eraseToAnyPublisher()
+    }
+
+    // See `ShieldingProcessorClient.reset` — clears the replayed terminal state on flow teardown.
+    func reset() {
+        subject.send(.unknown)
     }
 
     func shieldFunds() {
@@ -63,7 +72,7 @@ private final class ShieldingProcessorImpl: @unchecked Sendable {
         } else {
             Task { [subject, derivationTool, mnemonic, sdkSynchronizer, walletStorage, zcashSDKEnvironment] in
                 do {
-                    let storedWallet = try walletStorage.exportWallet()
+                    let storedWallet = try await walletStorage.exportWallet(nil)
                     let seedBytes = try mnemonic.toSeed(storedWallet.seedPhrase.value())
                     let spendingKey = try derivationTool.deriveSpendingKey(seedBytes, zip32AccountIndex, zcashSDKEnvironment.network().networkType)
 

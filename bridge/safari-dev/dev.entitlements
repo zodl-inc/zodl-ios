@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Safari requires web-extension appexes to be sandboxed. -->
+	<key>com.apple.security.app-sandbox</key>
+	<true/>
+	<!-- SAME App Group the real Zodl binds — the sandboxed handler reaches the
+	     socket via the shared container. Requires signing with team RLPRR8CPQG
+	     (Xcode: select your team on BOTH the app and the extension targets).
+	     This mirrors exactly what the production in-Zodl Safari target will do. -->
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>RLPRR8CPQG.zodl.bridge</string>
+	</array>
+</dict>
+</plist>

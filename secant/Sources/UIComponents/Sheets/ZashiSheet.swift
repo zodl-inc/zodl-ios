@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import ComposableArchitecture
 
 private struct SheetHeightKey: PreferenceKey {
     static let defaultValue: CGFloat = 0
@@ -59,6 +60,25 @@ struct ZashiSheetModifier<SheetContent: View>: ViewModifier {
     var sheetContent: SheetContent
 
     func body(content: Content) -> some View {
+#if os(macOS)
+        // macOS: publish to the single root card host (`.macCardHost()`), which renders the centered,
+        // dimmed, content-hugging card OVER THE WHOLE WINDOW — escaping the content cap
+        // (`Design.Mac.viewCapWidth`, MODALS.md Rule #5). Replaces the old local `.overlay`, whose dimmed
+        // backdrop was clamped to the capped
+        // content column.
+        content
+            .macCardPublish(
+                isPresented: isPresented,
+                horizontalPadding: horizontalPadding,
+                showsCloseButton: true,
+                dismiss: { isPresented = false }
+            ) {
+                sheetContent
+            }
+            .onChange(of: isPresented) { _, newValue in
+                if !newValue { onDismiss?() }
+            }
+#else
         content
             .sheet(isPresented: $isPresented, onDismiss: onDismiss) {
                 if #available(iOS 26.0, *) {
@@ -88,6 +108,7 @@ struct ZashiSheetModifier<SheetContent: View>: ViewModifier {
                         .applySheetBackground()
                 }
             }
+#endif
     }
 
     @ViewBuilder func mainBody(stickToBottom: Bool = false) -> some View {
@@ -124,6 +145,22 @@ struct ZashiSheetModifier<SheetContent: View>: ViewModifier {
     }
 }
 
+#if os(macOS)
+extension View {
+    /// RULE #5: the macOS sheet card surface is Liquid Glass (macOS 26+), with a solid fallback below.
+    /// macOS-only — the iOS sheet path is untouched (Rule #11). Shared with `.zashiSelectorSheet`.
+    @ViewBuilder func macSheetCardSurface() -> some View {
+        if #available(macOS 26.0, *) {
+            self.glassEffect(in: RoundedRectangle(cornerRadius: Design.Radius._4xl))
+        } else {
+            self
+                .background(Asset.Colors.background.color)
+                .clipShape(RoundedRectangle(cornerRadius: Design.Radius._4xl))
+        }
+    }
+}
+#endif
+
 extension View {
     func zashiSheet(
         isPresented: Binding<Bool>,
@@ -138,7 +175,13 @@ extension View {
                 horizontalPadding: horizontalPadding,
                 dragIndicatorVisibility: dragIndicatorVisibility,
                 onDismiss: onDismiss,
-                sheetContent: content()
+                // PERCEPTION (MODALS.md Rule #5b): wrap the content in WithPerceptionTracking so it stays
+                // reactive when rendered DETACHED in the macOS root card (MacCard), where it observes store
+                // state OUTSIDE the presenting view's tracking scope. Without it, a tap updates the state
+                // but the card keeps drawing the stale snapshot (e.g. filter chips never toggle, reset
+                // doesn't clear them). iOS re-renders via the native sheet's parent propagation regardless;
+                // wrapping is behaviour-neutral there. One wrap here covers every `.zashiSheet` dialog.
+                sheetContent: WithPerceptionTracking { content() }
             )
         )
     }

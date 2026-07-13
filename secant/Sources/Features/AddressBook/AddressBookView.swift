@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 
 extension String {
@@ -23,7 +24,12 @@ extension String {
 
 struct AddressBookView: View {
     @Environment(\.colorScheme) private var colorScheme
-    @Perception.Bindable var store: StoreOf<AddressBook>
+    @PlatformBindable var store: StoreOf<AddressBook>
+#if os(macOS)
+    // macOS replaces the iOS Menu "bubble" (manual vs scan) with the app's macOS sheet equivalent —
+    // a zashiSheet card offering the same two choices. This drives its presentation.
+    @State private var macAddContactDialog = false
+#endif
 
     init(store: StoreOf<AddressBook>) {
         self.store = store
@@ -47,6 +53,7 @@ struct AddressBookView: View {
                         }
                         .frame(maxWidth: .infinity)
                         .screenHorizontalPadding()
+                        .macContentRowCap()
                     } else {
                         contactsList()
                     }
@@ -55,6 +62,7 @@ struct AddressBookView: View {
                 Spacer()
 
                 addContactButton(store)
+                    .macContentRowCap()
             }
             .padding(.top, 24)
             .onAppear { store.send(.onAppear) }
@@ -65,13 +73,38 @@ struct AddressBookView: View {
                 ? String(localizable: .addressBookSelectRecipient)
                 : String(localizable: .addressBookTitle)
             )
-            .navigationBarTitleDisplayMode(.inline)
-            .applyScreenBackground()
+            .zashiNavBarTitleDisplayMode(.inline)
+            // macOS: full-width scroll container so the (visible) indicator hits the window edge, not the
+            // 530-column edge; rows/chrome cap their own content via `.macContentRowCap()`. iOS no-op (Rule #11).
+            .applyScreenBackground(capped: false)
         }
     }
 
     func addContactButton(_ store: StoreOf<AddressBook>) -> some View {
         WithPerceptionTracking {
+#if os(macOS)
+            // macOS: a `Menu` whose label is an interactive `ZashiButton` mis-renders here (the
+            // button swallows the click AND `.menuStyle(.borderlessButton)` blows the label up to a
+            // full-screen plus icon). Replace the iOS Menu "bubble" with the app's macOS sheet
+            // equivalent — a zashiSheet card offering the same two choices (manual vs scan).
+            ZashiButton(
+                String(localizable: .addressBookAddNewContact),
+                prefixView:
+                    Asset.Assets.Icons.plus.image
+                        .renderingMode(.template)
+                        .resizable()
+                        .frame(width: 20, height: 20)
+            ) {
+                macAddContactDialog = true
+            }
+            .screenHorizontalPadding()
+            .padding(.bottom, 24)
+            .padding(.top, 8)
+            .accessibilityIdentifier(AccessibilityID.AddressBook.addContact)
+            .zashiSheet(isPresented: $macAddContactDialog) {
+                macAddContactChoice()
+            }
+#else
             Menu {
                 Button {
                     store.send(.scanButtonTapped)
@@ -112,9 +145,64 @@ struct AddressBookView: View {
                 .padding(.top, 8)
             }
             .accessibilityIdentifier(AccessibilityID.AddressBook.addContact)
+#endif
         }
     }
-    
+
+#if os(macOS)
+    // The macOS card-dialog equivalent of the iOS "Add New Contact" Menu bubble: the same two
+    // choices (manual entry vs scan), presented in a zashiSheet. The sheet provides the card
+    // chrome (background, rounded corners, close button); this is just its content.
+    @ViewBuilder func macAddContactChoice() -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(localizable: .addressBookAddNewContact)
+                .zFont(.semiBold, size: 20, style: Design.Text.primary)
+                .padding(.bottom, 8)
+
+            Button {
+                macAddContactDialog = false
+                store.send(.addManualButtonTapped)
+            } label: {
+                HStack(spacing: 12) {
+                    Asset.Assets.Icons.pencil.image
+                        .zImage(size: 20, style: Design.Text.primary)
+
+                    Text(localizable: .addressBookManualEntry)
+                        .zFont(.medium, size: 16, style: Design.Text.primary)
+
+                    Spacer()
+                }
+                .contentShape(Rectangle())
+                .padding(.vertical, 14)
+            }
+            .zashiPlainButtonStyle()
+            .accessibilityIdentifier(AccessibilityID.AddressBook.manualEntry)
+
+            Divider()
+
+            Button {
+                macAddContactDialog = false
+                store.send(.scanButtonTapped)
+            } label: {
+                HStack(spacing: 12) {
+                    Asset.Assets.Icons.qr.image
+                        .zImage(size: 20, style: Design.Text.primary)
+
+                    Text(localizable: .addressBookScanAddress)
+                        .zFont(.medium, size: 16, style: Design.Text.primary)
+
+                    Spacer()
+                }
+                .contentShape(Rectangle())
+                .padding(.vertical, 14)
+            }
+            .zashiPlainButtonStyle()
+            .accessibilityIdentifier(AccessibilityID.AddressBook.scanEntry)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+#endif
+
     func emptyComposition() -> some View {
         Asset.Assets.send.image
             .zImage(size: 32, style: Design.Btns.Tertiary.fg)
@@ -134,6 +222,7 @@ struct AddressBookView: View {
                     .padding(.top, 24)
                     .padding(.bottom, 16)
                     .screenHorizontalPadding()
+                    .macContentRowCap()
                     .listBackground()
 
                 ForEach(store.walletAccounts, id: \.self) { walletAccount in
@@ -154,6 +243,7 @@ struct AddressBookView: View {
                                     .padding(.horizontal, 4)
                             }
                         }
+                        .macContentRowCap()
                         .listBackground()
                     }
                 }
@@ -177,12 +267,14 @@ struct AddressBookView: View {
                     }
                     .padding(.top, 24)
                     .screenHorizontalPadding()
+                    .macContentRowCap()
                 } else {
                     Text(localizable: .accountsAddressBookContacts)
                         .zFont(.medium, size: 14, style: Design.Text.tertiary)
                         .padding(.top, 32)
                         .padding(.bottom, 16)
                         .screenHorizontalPadding()
+                        .macContentRowCap()
                         .listBackground()
                 }
             }
@@ -206,14 +298,25 @@ struct AddressBookView: View {
                             .padding(.horizontal, 4)
                     }
                 }
+                .macContentRowCap()
                 .listRowInsets(EdgeInsets())
                 .listRowBackground(Asset.Colors.background.color)
                 .listRowSeparator(.hidden)
             }
+
+            // [B4-6] Tail inset: the chain-ticker circle is drawn OFFSET (+12 y) past the avatar,
+            // so on the LAST row it extends below the row's layout bounds and the plain List
+            // clipped it. An invisible tail row gives the overhang room to render.
+            Color.clear
+                .frame(height: 14)
+                .listRowInsets(EdgeInsets())
+                .listRowBackground(Asset.Colors.background.color)
+                .listRowSeparator(.hidden)
         }
         .padding(.vertical, 1)
         .background(Asset.Colors.background.color)
         .listStyle(.plain)
+        .zashiHideListBackground()
     }
 
     @ViewBuilder func walletAccountView(

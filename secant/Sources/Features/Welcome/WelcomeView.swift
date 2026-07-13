@@ -6,25 +6,22 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 
 struct WelcomeView: View {
-    @Perception.Bindable var store: StoreOf<Welcome>
+    @PlatformBindable var store: StoreOf<Welcome>
 
-    var hiHeight: CGFloat {
-        var potentialCountryCode: String?
-        
-        if #available(iOS 16, *) {
-            potentialCountryCode = Locale.current.language.languageCode?.identifier
-        } else {
-            potentialCountryCode = Locale.current.languageCode
-        }
-        
-        if let potentialCountryCode, potentialCountryCode == "es" {
-            return 0.6
-        } else {
-            return 0.35
-        }
+    // Centered "Hi" logo, scaled up on macOS for the larger window. Matches SplashView.hiLogoHeight so
+    // the launch transition (splash → welcome → home) shows ONE consistent logo — no GeometryReader/
+    // .position recompute (the old over-engineering, from when two images needed placing) that made it
+    // jump. iOS size is unchanged (Rule #11); only the structure is simplified.
+    private var hiLogoHeight: CGFloat {
+#if os(macOS)
+        96
+#else
+        60
+#endif
     }
     
     init(store: StoreOf<Welcome>) {
@@ -32,18 +29,13 @@ struct WelcomeView: View {
     }
 
     var body: some View {
-        GeometryReader { proxy in
-            WithPerceptionTracking {
-                Asset.Assets.welcomeScreenLogo.image
-                    .zImage(height: 60, color: .white)
-                    .position(
-                        x: proxy.frame(in: .local).midX,
-                        y: proxy.frame(in: .local).midY
-                    )
-            }
+        // One centered logo on the full-bleed splash colour, identical on both platforms (only the size
+        // differs). Replaces the iOS GeometryReader/.position path — simpler, and no recompute jitter.
+        ZStack {
+            Asset.Colors.splash.color.ignoresSafeArea()
+            Asset.Assets.welcomeScreenLogo.image
+                .zImage(height: hiLogoHeight, color: .white)
         }
-        .background(Asset.Colors.splash.color)
-        .ignoresSafeArea()
     }
 }
 

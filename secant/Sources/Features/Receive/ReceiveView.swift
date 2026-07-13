@@ -6,13 +6,14 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
 
 struct ReceiveView: View {
     @Environment(\.colorScheme) var colorScheme
 
-    @Perception.Bindable var store: StoreOf<Receive>
+    @PlatformBindable var store: StoreOf<Receive>
     let networkType: NetworkType
     let tokenName: String
 
@@ -161,7 +162,7 @@ struct ReceiveView: View {
                 .padding(.horizontal, 4)
                 .applyScreenBackground()
                 .screenTitle(String(localizable: .tabsReceiveZec))
-                .zashiBack() { store.send(.backToHomeTapped) }
+                .zashiSectionRootBack { store.send(.backToHomeTapped) }
             } destination: { store in
                 switch store.case {
                 case let .addressDetails(store):
@@ -174,7 +175,7 @@ struct ReceiveView: View {
                     ZecKeyboardView(store: store, tokenName: tokenName)
                 }
             }
-            .navigationBarHidden(!store.path.isEmpty)
+            .zashiNavigationBarHidden(!store.path.isEmpty)
             .zashiSheet(isPresented: $explainer) {
                 explainerContent()
             }

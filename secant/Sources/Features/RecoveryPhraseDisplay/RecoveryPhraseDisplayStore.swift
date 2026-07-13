@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import Combine
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
 
@@ -126,7 +127,9 @@ struct RecoveryPhraseDisplay {
                 
             case .recoveryPhraseUnhideRequested:
                 return .run { send in
-                    guard await localAuthentication.authenticate() else {
+                    // macOS: the SE seed decrypt below is the single biometric gate
+                    // (see `authenticateForSeedDecrypt`); iOS prompts here.
+                    guard await localAuthentication.authenticateForSeedDecrypt(for: .revealRecoveryPhrase) else {
                         return
                     }
 
@@ -135,7 +138,7 @@ struct RecoveryPhraseDisplay {
                     // reducer. The seed reaches the state only via the action below,
                     // and only after authentication has already succeeded.
                     do {
-                        let storedWallet = try walletStorage.exportWallet()
+                        let storedWallet = try await walletStorage.exportWallet(AuthenticationContext.revealRecoveryPhrase.localizedReason)
                         await send(.recoveryPhraseRevealed(storedWallet))
                     } catch {
                         await send(.recoveryPhraseRevealFailed(error.toZcashError()))

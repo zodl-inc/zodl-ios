@@ -8,7 +8,9 @@
 @preconcurrency import Combine
 import ComposableArchitecture
 import Foundation
+#if canImport(MessageUI)
 import MessageUI
+#endif
 
 @preconcurrency import ZcashLightClientKit
 
@@ -58,7 +60,7 @@ extension Root {
                 \(supportData.message)
                 """
                 // TCA Store is @MainActor; reducer body always runs on main.
-                if MainActor.assumeIsolated({ MFMailComposeViewController.canSendMail() }) {
+                if MailSupport.canSendMail() {
                     state.supportData = supportData
                 } else {
                     state.messageShareBinding = supportData.message

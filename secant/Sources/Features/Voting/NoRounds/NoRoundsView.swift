@@ -4,6 +4,7 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 
 /// Empty-state shown when the voting service returns zero rounds. Renders the
@@ -71,15 +72,17 @@ struct VotingCoordFlowBackdrop: View {
         .padding(.vertical, 1)
         .applyScreenBackground()
         .screenTitle(String(localizable: .coinVoteCommonScreenTitle))
-        .zashiBack { store.send(.dismissFlow) }
+        .zashiSectionRootBack { store.send(.dismissFlow) }
         .toolbar {
-            ToolbarItem(placement: .navigationBarTrailing) {
+            ToolbarItem(placement: .zashiTrailing) {
                 Button {
                     store.send(.openConfigSettings)
                 } label: {
                     settingsButtonIcon()
                 }
-                .buttonStyle(.plain)
+#if !os(macOS)
+                .zashiPlainButtonStyle()
+#endif
                 .accessibilityLabel(String(localizable: .coinVotePollsListChainConfigAccessibility))
             }
         }
@@ -87,6 +90,12 @@ struct VotingCoordFlowBackdrop: View {
 
     @ViewBuilder
     private func settingsButtonIcon() -> some View {
+#if os(macOS)
+        // macOS 26 sizes the glass capsule to the icon's WIDTH — a bare SF symbol is narrow → a TALL
+        // capsule. Horizontal padding widens it to the same circular capsule as the back button.
+        Image(systemName: "gearshape")
+            .zashiToolbarIconPadding()
+#else
         let icon = Asset.Assets.Icons.settings2.image
             .zImage(size: 20, style: Design.Btns.Ghost.fg)
 
@@ -100,6 +109,7 @@ struct VotingCoordFlowBackdrop: View {
                         .fill(Design.Btns.Ghost.bg.color(colorScheme))
                 }
         }
+#endif
     }
 }
 

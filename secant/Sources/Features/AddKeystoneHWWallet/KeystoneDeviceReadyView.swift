@@ -6,10 +6,11 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 
 struct KeystoneDeviceReadyView: View {
-    @Perception.Bindable var store: StoreOf<AddKeystoneHWWallet>
+    @PlatformBindable var store: StoreOf<AddKeystoneHWWallet>
 
     init(store: StoreOf<AddKeystoneHWWallet>) {
         self.store = store
@@ -41,13 +42,26 @@ struct KeystoneDeviceReadyView: View {
                     store.send(.setBirthdayTapped)
                 }
                 .padding(.bottom, 12)
+                .disabled(store.isImportInFlight)
 
-                ZashiButton(
-                    String(localizable: .keystoneAddHWWalletConnectNew)
-                ) {
-                    store.send(.unlockTapped(nil))
+                // [B4-4] importAccount can wait a long time on a restore-busy data.db — show the
+                // wait (spinner + disabled) instead of a dead button that ignores clicks.
+                if store.isImportInFlight {
+                    ZashiButton(
+                        String(localizable: .keystoneAddHWWalletConnectNew),
+                        accessoryView:
+                            ZashiSpinner(iosTint: Asset.Colors.secondary.color, macTint: .buttonAccessory)
+                    ) { }
+                    .padding(.bottom, 24)
+                    .disabled(true)
+                } else {
+                    ZashiButton(
+                        String(localizable: .keystoneAddHWWalletConnectNew)
+                    ) {
+                        store.send(.unlockTapped(nil))
+                    }
+                    .padding(.bottom, 24)
                 }
-                .padding(.bottom, 24)
             }
             .screenHorizontalPadding()
             .zashiBackV2(background: false) {

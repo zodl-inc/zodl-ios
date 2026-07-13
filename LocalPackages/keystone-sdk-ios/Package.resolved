@@ -1,0 +1,60 @@
+{
+  "originHash" : "7726dae544f22eddfbaa4d4be5f6ce1a400c26102ecd36fc1a3e00cb99b03fb7",
+  "pins" : [
+    {
+      "identity" : "bcswiftdcbor",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/BlockchainCommons/BCSwiftDCBOR",
+      "state" : {
+        "revision" : "21efa67ada2f22a6c277e1961f1059bb376e9b1a",
+        "version" : "2.0.2"
+      }
+    },
+    {
+      "identity" : "bcswiftfloat16",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/blockchaincommons/BCSwiftFloat16",
+      "state" : {
+        "revision" : "a27f3935a7b1db715713eda67369b02feade2ded",
+        "version" : "2.0.0"
+      }
+    },
+    {
+      "identity" : "bcswifttags",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/BlockchainCommons/BCSwiftTags",
+      "state" : {
+        "revision" : "ced8d92c7cc53375cdf9806c59251fe0161f02ec",
+        "version" : "0.2.3"
+      }
+    },
+    {
+      "identity" : "swift-numberkit",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/objecthub/swift-numberkit.git",
+      "state" : {
+        "revision" : "6182110549aa7cf614cb6fff3d6142e65be9b602",
+        "version" : "2.6.1"
+      }
+    },
+    {
+      "identity" : "swiftsortedcollections",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/wolfmcnally/SwiftSortedCollections",
+      "state" : {
+        "revision" : "dd6c8e0eaef987e55a35c056d185144a7c71fc19",
+        "version" : "0.1.0"
+      }
+    },
+    {
+      "identity" : "urkit",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/BlockchainCommons/URKit",
+      "state" : {
+        "revision" : "c0a447560768e2552cf85a586dea8cfc26162891",
+        "version" : "15.1.0"
+      }
+    }
+  ],
+  "version" : 3
+}

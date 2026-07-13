@@ -4,6 +4,7 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 
 /// Tallying-phase view. Voting has closed and the helper servers are
@@ -27,7 +28,7 @@ struct TallyingView: View {
                     .fixedSize(horizontal: false, vertical: true)
 
                 HStack(spacing: 12) {
-                    ProgressView()
+                    ZashiSpinner()
                     VStack(alignment: .leading, spacing: 4) {
                         Text(localizable: .coinVoteTallyingTitleInProgress)
                             .zFont(.semiBold, size: 16, style: Design.Text.primary)

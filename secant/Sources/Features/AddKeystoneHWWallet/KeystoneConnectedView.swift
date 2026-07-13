@@ -6,10 +6,11 @@
 //
 
 import SwiftUI
+import Combine
 import ComposableArchitecture
 
 struct KeystoneConnectedView: View {
-    @Perception.Bindable var store: StoreOf<AddKeystoneHWWallet>
+    @PlatformBindable var store: StoreOf<AddKeystoneHWWallet>
 
     init(store: StoreOf<AddKeystoneHWWallet>) {
         self.store = store
