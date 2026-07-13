@@ -89,17 +89,17 @@ import Foundation
             Row(
                 name: "transferWaiting",
                 notification: MigrationNotification.transferWaiting(number: 2),
-                expected: "Action needed"
+                expected: "Transfer 2 waiting"
             ),
             Row(
                 name: "planNeedsUpdate",
                 notification: MigrationNotification.planNeedsUpdate,
-                expected: "Action needed"
+                expected: "Migration plan needs update"
             ),
             Row(
                 name: "manualTransferReady",
                 notification: MigrationNotification.manualTransferReady(number: 3),
-                expected: "Action needed"
+                expected: "Transfer 3 — ready to send"
             ),
             Row(
                 name: "migrationComplete",
@@ -113,7 +113,21 @@ import Foundation
         }
     }
 
-    // MARK: - body — §4.4 matrix copy verbatim, incl. format-arg rendering
+    @Test func transferWaitingTitleRendersNumber() {
+        let notification = MigrationNotification.transferWaiting(number: 7)
+
+        #expect(notification.title == "Transfer 7 waiting")
+    }
+
+    @Test func manualTransferReadyTitleRendersNumber() {
+        let notification = MigrationNotification.manualTransferReady(number: 9)
+
+        #expect(notification.title == "Transfer 9 — ready to send")
+    }
+
+    // MARK: - body — §4.4 matrix copy verbatim for `transferComplete`; every other case is now a
+    // short generic CTA (MOB-1478 W9), since the specific fact (incl. any transfer number) moved
+    // to `title`.
 
     @Test func transferCompleteBodyRendersAllFourArgs() {
         let notification = MigrationNotification.transferComplete(
@@ -141,28 +155,28 @@ import Foundation
         #expect(notification.body == expected)
     }
 
-    @Test func transferWaitingBodyRendersNumber() {
+    @Test func transferWaitingBodyIsFixedCopy() {
         let notification = MigrationNotification.transferWaiting(number: 3)
 
-        #expect(notification.body == "Transfer 3 waiting. Open ZODL to send or re-schedule.")
+        #expect(notification.body == "Open ZODL to send or re-schedule.")
     }
 
     @Test func planNeedsUpdateBodyIsFixedCopy() {
         let notification = MigrationNotification.planNeedsUpdate
 
-        #expect(notification.body == "Migration plan needs update. Open ZODL to review the details.")
+        #expect(notification.body == "Open ZODL to review the details.")
     }
 
-    @Test func manualTransferReadyBodyRendersNumber() {
+    @Test func manualTransferReadyBodyIsFixedCopy() {
         let notification = MigrationNotification.manualTransferReady(number: 4)
 
-        #expect(notification.body == "Transfer 4 — ready to send. Open ZODL to review the details.")
+        #expect(notification.body == "Open ZODL to review the details.")
     }
 
     @Test func migrationCompleteBodyIsFixedCopy() {
         let notification = MigrationNotification.migrationComplete
 
-        #expect(notification.body == "Migration complete. Open ZODL to review the details.")
+        #expect(notification.body == "Open ZODL to review the details.")
     }
 
     // MARK: - Equatable
