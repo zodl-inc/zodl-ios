@@ -12,6 +12,8 @@ enum FeatureFlag: String, CaseIterable, Codable {
     case onboardingFlow
     case testBackupPhraseFlow
     case showFiatConversion
+    // TODO: [#1755] feature-branch default — revisit before the public SDK release
+    case useSlipstreamSynchronizer
 
     var enabledByDefault: Bool {
         switch self {
@@ -19,6 +21,7 @@ enum FeatureFlag: String, CaseIterable, Codable {
         case .onboardingFlow: return false
         case .testBackupPhraseFlow: return false
         case .showFiatConversion: return false
+        case .useSlipstreamSynchronizer: return true
         }
     }
 }
