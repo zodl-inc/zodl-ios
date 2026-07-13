@@ -1,6 +1,6 @@
 # MOB-1478 — Update migration UI to revised Figma designs
 
-**Status:** awaiting approval · **Parent:** MOB-1458 · **Branch:** new `michal/MOB-1478-migration-ui-design-update`, forked off the current `michal/MOB-1458-ironwood-support-feature` tip; on completion it is pushed and a PR opens against `michal/MOB-1458-ironwood-support-feature`
+**Status:** approved by Michal 2026-07-13 (incl. the base-branch force-with-lease push) · **Parent:** MOB-1458 · **Branch:** new `michal/MOB-1478-migration-ui-design-update`, forked off the current `michal/MOB-1458-ironwood-support-feature` tip; on completion it is pushed and a PR opens against `michal/MOB-1458-ironwood-support-feature`
 
 ## Sources
 
