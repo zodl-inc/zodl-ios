@@ -71,13 +71,15 @@ import Foundation
         let kept = Near1Click.curated([
             swapAsset(assetId: "nep141:btc.omft.near"),                                     // supported
             swapAsset(assetId: "nep141:eth.omft.near"),                                     // supported
-            swapAsset(assetId: "nep245:v2_1.omni.hot.tg:137_qiStmoQJDQPTebaPjgx5VBxZv6L"),  // pol.usdc — dropped
+            // USDC@pol joined the allow-list in the MOB-1472 finalization (196249a0) — kept since.
+            swapAsset(assetId: "nep245:v2_1.omni.hot.tg:137_qiStmoQJDQPTebaPjgx5VBxZv6L"),  // supported
             swapAsset(assetId: "nep141:doge.omft.near")                                     // dropped
         ])
         let ids = kept.map(\.assetId)
-        #expect(kept.count == 2)
+        #expect(kept.count == 3)
         #expect(ids.contains("nep141:btc.omft.near"))
         #expect(ids.contains("nep141:eth.omft.near"))
+        #expect(ids.contains("nep245:v2_1.omni.hot.tg:137_qiStmoQJDQPTebaPjgx5VBxZv6L"))
         #expect(!ids.contains("nep141:doge.omft.near"))
     }
 
