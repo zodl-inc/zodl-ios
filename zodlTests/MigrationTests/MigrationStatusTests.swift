@@ -10,6 +10,11 @@
 //  derivation from `manager.sendGate()`, and the `isFlowRoot`-gated close-instead-of-pop back
 //  action. No shared/global state -> no `.serialized`.
 //
+//  MOB-1478 (W7) additions: `sentMinutesAgo`/`isBroadcasting` row fields riding unchanged through
+//  `onAppear`/`statusLoaded`, and the `rescheduleCompleted` action's transition to
+//  `.rescheduleConfirmed(first:last:)` — deriving the stalled-range numbers from the pre-transition
+//  `stalledNumber`/`rows.count`, refreshing rows/duration, and clearing `isRescheduling`.
+//
 
 import Testing
 import Foundation
@@ -128,6 +133,47 @@ import ComposableArchitecture
         await store.finish()
     }
 
+    @MainActor @Test func onAppearPreservesSentMinutesAgoAndIsBroadcastingRowFields() async {
+        let stateStream = PassthroughSubject<MigrationState, Never>()
+        let rows: [MigrationTransferRow] = [
+            MigrationTransferRow(
+                id: "0", index: 0, amount: Zatoshi(287_410_000), status: .sent, hoursFromNow: 0, sentMinutesAgo: 18
+            ),
+            MigrationTransferRow(
+                id: "1", index: 1, amount: Zatoshi(243_100_000), status: .active, hoursFromNow: 0, isBroadcasting: true
+            )
+        ]
+        let summary = MigrationSummary(
+            transferred: Zatoshi(287_410_000),
+            dust: Zatoshi.zero,
+            transfersSent: 1,
+            transfersTotal: 2,
+            estimatedDurationHours: 12
+        )
+        let store = TestStore(initialState: MigrationStatus.State()) {
+            MigrationStatus()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.migrationTransfers = { rows }
+            $0.sdkSynchronizer.migrationSummary = { summary }
+            $0.sdkSynchronizer.migrationStateStream = { stateStream.eraseToAnyPublisher() }
+            $0.migrationManager.sendGate = { .allowed }
+        }
+
+        await store.send(.onAppear)
+        await store.receive(\.statusLoaded) {
+            $0.rows = IdentifiedArrayOf(uniqueElements: rows)
+            $0.totalDurationHours = 12
+            $0.isSendNowDisabled = false
+        }
+
+        #expect(store.state.rows[id: "0"]?.sentMinutesAgo == 18)
+        #expect(store.state.rows[id: "1"]?.isBroadcasting == true)
+
+        stateStream.send(completion: .finished)
+        await store.finish()
+    }
+
     @MainActor @Test func onAppearWithSyncRequiredGateDisablesSendNow() async {
         let stateStream = PassthroughSubject<MigrationState, Never>()
         let store = TestStore(initialState: MigrationStatus.State(presentation: .resume)) {
@@ -215,5 +261,66 @@ import ComposableArchitecture
 
         await store.send(.closeTapped)
         await store.receive(.delegate(.done))
+    }
+
+    // MARK: - rescheduleCompleted: post-reschedule confirmation (MOB-1478 W7)
+
+    @MainActor @Test func rescheduleCompletedLandsOnRescheduleConfirmedWithStalledRangeAndRefreshedRows() async {
+        var state = MigrationStatus.State(presentation: .resume)
+        state.stalledNumber = 3
+        state.stalledHoursAgo = 5
+        state.isRescheduling = true
+        state.rows = [
+            MigrationTransferRow(id: "0", index: 0, amount: Zatoshi(351_220_000), status: .sent, hoursFromNow: 18),
+            MigrationTransferRow(id: "1", index: 1, amount: Zatoshi(287_410_000), status: .sent, hoursFromNow: 11),
+            MigrationTransferRow(id: "2", index: 2, amount: Zatoshi(243_100_000), status: .overdue, hoursFromNow: 5),
+            MigrationTransferRow(id: "3", index: 3, amount: Zatoshi(199_830_000), status: .pending, hoursFromNow: 1),
+            MigrationTransferRow(id: "4", index: 4, amount: Zatoshi(164_240_000), status: .pending, hoursFromNow: 7)
+        ]
+
+        let refreshedRows: [MigrationTransferRow] = [
+            MigrationTransferRow(id: "0", index: 0, amount: Zatoshi(351_220_000), status: .sent, hoursFromNow: 18),
+            MigrationTransferRow(id: "1", index: 1, amount: Zatoshi(287_410_000), status: .sent, hoursFromNow: 11),
+            MigrationTransferRow(id: "2", index: 2, amount: Zatoshi(243_100_000), status: .active, hoursFromNow: 3),
+            MigrationTransferRow(id: "3", index: 3, amount: Zatoshi(199_830_000), status: .pending, hoursFromNow: 9),
+            MigrationTransferRow(id: "4", index: 4, amount: Zatoshi(164_240_000), status: .pending, hoursFromNow: 15)
+        ]
+
+        let store = TestStore(initialState: state) {
+            MigrationStatus()
+        }
+
+        await store.send(.rescheduleCompleted(rows: refreshedRows, totalDurationHours: 24)) {
+            $0.presentation = .rescheduleConfirmed(first: 3, last: 5)
+            $0.rows = IdentifiedArrayOf(uniqueElements: refreshedRows)
+            $0.totalDurationHours = 24
+            $0.isRescheduling = false
+        }
+    }
+
+    @MainActor @Test func rescheduleCompletedDerivesLastFromRowCountBeforeTheRefresh() async {
+        var state = MigrationStatus.State(presentation: .resume)
+        state.stalledNumber = 2
+        state.rows = [
+            MigrationTransferRow(id: "0", index: 0, amount: Zatoshi(1_000), status: .sent, hoursFromNow: 10),
+            MigrationTransferRow(id: "1", index: 1, amount: Zatoshi(1_000), status: .overdue, hoursFromNow: 3),
+            MigrationTransferRow(id: "2", index: 2, amount: Zatoshi(1_000), status: .pending, hoursFromNow: 6)
+        ]
+
+        // Deliberately a different count than `state.rows` above, to pin down that `last` is derived
+        // from the row count as it stood BEFORE this refresh (3), not from the refreshed array (1).
+        let refreshedRows: [MigrationTransferRow] = [
+            MigrationTransferRow(id: "0", index: 0, amount: Zatoshi(1_000), status: .sent, hoursFromNow: 10)
+        ]
+
+        let store = TestStore(initialState: state) {
+            MigrationStatus()
+        }
+
+        await store.send(.rescheduleCompleted(rows: refreshedRows, totalDurationHours: 6)) {
+            $0.presentation = .rescheduleConfirmed(first: 2, last: 3)
+            $0.rows = IdentifiedArrayOf(uniqueElements: refreshedRows)
+            $0.totalDurationHours = 6
+        }
     }
 }

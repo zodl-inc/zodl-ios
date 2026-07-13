@@ -136,6 +136,45 @@ import Foundation
         }
     }
 
+    @Test func migrationTransferRowDefaultsToNoMinutesRecencyAndNotBroadcasting() {
+        let row = MigrationTransferRow(id: "row-0", index: 0, amount: Zatoshi(100), status: .sent, hoursFromNow: 0)
+
+        #expect(row.sentMinutesAgo == nil)
+        #expect(row.isBroadcasting == false)
+    }
+
+    @Test func migrationTransferRowCodableRoundTripWithSentMinutesAgo() throws {
+        let original = MigrationTransferRow(
+            id: "row-0",
+            index: 1,
+            amount: Zatoshi(287_410_000),
+            status: .sent,
+            hoursFromNow: 0,
+            sentMinutesAgo: 18
+        )
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(MigrationTransferRow.self, from: data)
+
+        #expect(decoded == original)
+        #expect(decoded.sentMinutesAgo == 18)
+    }
+
+    @Test func migrationTransferRowCodableRoundTripWithIsBroadcasting() throws {
+        let original = MigrationTransferRow(
+            id: "row-2",
+            index: 2,
+            amount: Zatoshi(243_100_000),
+            status: .active,
+            hoursFromNow: 0,
+            isBroadcasting: true
+        )
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(MigrationTransferRow.self, from: data)
+
+        #expect(decoded == original)
+        #expect(decoded.isBroadcasting == true)
+    }
+
     @Test func migrationSummaryZeroIsAllZero() {
         let zero = MigrationSummary.zero
         #expect(zero.transferred == Zatoshi.zero)
