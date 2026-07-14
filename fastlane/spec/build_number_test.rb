@@ -37,4 +37,15 @@ class ZodlBuildNumberTest < Minitest::Test
   def test_zero_is_error
     refute Zodl::BuildNumber.validate(requested: 0, latest: nil).ok?
   end
+
+  def test_nil_latest_skips_train_comparison_entirely
+    r = Zodl::BuildNumber.validate(requested: 7, latest: nil)
+    assert r.ok?
+    assert_nil r.warning
+  end
+
+  def test_nil_latest_still_rejects_zero_and_garbage
+    refute Zodl::BuildNumber.validate(requested: 0, latest: nil).ok?
+    refute Zodl::BuildNumber.validate(requested: "x", latest: nil).ok?
+  end
 end
