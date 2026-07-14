@@ -22,8 +22,11 @@ module Zodl
     def validate(requested:, latest:)
       req = Integer(requested)
       return Result.new(error: "build must be >= 1, got #{req}") if req < 1
+      # No App Store Connect train to compare against (e.g. the DMG channel):
+      # the requested number only has to be a positive integer.
+      return Result.new if latest.nil?
 
-      top = latest.nil? ? 0 : Integer(latest)
+      top = Integer(latest)
 
       if req == top
         Result.new(error: "build #{req} already exists on App Store Connect")
