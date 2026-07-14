@@ -22,6 +22,9 @@ directly impact users rather than highlighting other crucial architectural updat
 - [MOB-1472] The assets you can swap are now a curated set of major coins and stablecoins across the supported chains (plus swapping to ZEC), instead of the full list from the swap provider, and the address-book chain picker is limited to those chains. Existing swaps in your history (including assets no longer offered) still display normally, and existing contacts on other chains are preserved.
 - [MOB-1478] The Ironwood migration flow now matches the revised designs: choosing Migrate with Privacy opens a "How This Works" explainer, Tor protection is offered in an optional sheet only when Tor is off, note splitting happens automatically once you confirm a plan or transfer (no separate splitting step), progress reports minute-level and in-flight transfer status plus a confirmation after rescheduling, permission screens highlight the trade-off of skipping, and migration notifications lead with what happened. Dormant until the migration SDK ships.
 
+### Fixed
+- [MOB-1458] The app name now reads ZODL (all uppercase) consistently across every in-app message — 66 strings previously said "Zodl", e.g. the launch Keychain-error screen, About, Reset ZODL, and sync/restore guidance. The Keystone promo code "Zodl" and example URLs are unchanged.
+
 ## 3.7.2 build 1
 
 ### Added
