@@ -2,29 +2,47 @@
 
 module Zodl
   # Maps each variant to its scheme/target/archive-config, App Store Connect
-  # bundle id, and channel. Each variant is a separate target with its own
-  # bundle id, so build-number namespaces never overlap. "internal-testnet"
-  # expands to both TestFlight variants.
+  # bundle id, channel, and platform (iOS or macOS). Each variant is a separate
+  # target with its own bundle id, so build-number namespaces never overlap.
+  # "internal-testnet" expands to both iOS TestFlight variants. "mac" expands to
+  # both macOS variants (which share a target/bundle-id but differ by channel:
+  # TestFlight package vs. local notarized DMG).
   module Variants
     ATOMIC = {
       "internal" => {
         scheme: "zodl-internal", target: "zodl-internal",
         configuration: "Release-Testflight",
-        app_identifier: "co.electriccoin.secant-testnet", channel: :testflight
+        app_identifier: "co.electriccoin.secant-testnet",
+        channel: :testflight, platform: :ios
       },
       "testnet" => {
         scheme: "zodl-testnet", target: "zodl-testnet",
         configuration: "Release-Testflight",
-        app_identifier: "co.ecc.zashi-testnet", channel: :testflight
+        app_identifier: "co.ecc.zashi-testnet", channel: :testflight, platform: :ios
       },
       "appstore" => {
         scheme: "zodl-AppStore", target: "zodl-production",
         configuration: "Release-AppStore",
-        app_identifier: "co.electriccoin.secant-mainnet", channel: :appstore
+        app_identifier: "co.electriccoin.secant-mainnet", channel: :appstore, platform: :ios
+      },
+      "mac-internal" => {
+        scheme: "zodlmac-internal", target: "zodlmac-internal",
+        configuration: "Release-Testflight",
+        app_identifier: "co.electriccoin.secant-testnet",
+        channel: :testflight, platform: :macos
+      },
+      "mac-dmg" => {
+        scheme: "zodlmac-internal", target: "zodlmac-internal",
+        configuration: "Release-AppStore",
+        app_identifier: "co.electriccoin.secant-testnet",
+        channel: :dmg, platform: :macos
       }
     }.freeze
 
-    COMBINED = { "internal-testnet" => %w[internal testnet] }.freeze
+    COMBINED = {
+      "internal-testnet" => %w[internal testnet],
+      "mac" => %w[mac-internal mac-dmg]
+    }.freeze
 
     module_function
 
