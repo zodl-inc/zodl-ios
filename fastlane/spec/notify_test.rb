@@ -61,6 +61,17 @@ class ZodlNotifyTest < Minitest::Test
     assert_raises(ArgumentError) { Zodl::Notify.payload(event: :bogus) }
   end
 
+  def test_success_message_uses_outcomes_when_given
+    fields = Zodl::Notify.payload(event: :success, variants: %w[mac-internal mac-dmg], version: "3.8.0", build: 1,
+                                  outcomes: ["mac-internal → TestFlight", "mac-dmg → DMG at /tmp/ZODL-3.8.0-1.dmg"])
+    assert_equal "mac-internal → TestFlight; mac-dmg → DMG at /tmp/ZODL-3.8.0-1.dmg", fields[:message]
+  end
+
+  def test_success_message_defaults_without_outcomes
+    fields = Zodl::Notify.payload(event: :success, variants: ["internal"], version: "3.8.0", build: 1)
+    assert_equal "Uploaded to TestFlight", fields[:message]
+  end
+
   # --- enabled? ----------------------------------------------------------
 
   def test_enabled_by_default
