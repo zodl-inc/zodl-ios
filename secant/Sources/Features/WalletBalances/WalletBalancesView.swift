@@ -71,11 +71,25 @@ struct WalletBalancesView: View {
     }
     
     @ViewBuilder private func balanceContent() -> some View {
+        // Debug-only entry gesture for the migration SDK simulator (MOB-1480): long-press the
+        // balance amount. Gated on `shortened` (unique to Home, so SendForm/CrossPay never get
+        // it) and `MigrationSimulatorFlag.isEnabled` (compiles everywhere, inert outside testnet).
+        if shortened && MigrationSimulatorFlag.isEnabled {
+            balanceRow()
+                .onLongPressGesture {
+                    store.send(.migrationSimulatorLongPressed)
+                }
+        } else {
+            balanceRow()
+        }
+    }
+
+    @ViewBuilder private func balanceRow() -> some View {
         HStack(spacing: 0) {
             ZcashSymbol()
                 .frame(width: 32, height: 32)
                 .zForegroundColor(Design.Text.primary)
-            
+
             if shortened {
                 ZatoshiText(store.totalBalance, .abbreviated)
                     .zFont(.semiBold, size: 48, style: Design.Text.primary)

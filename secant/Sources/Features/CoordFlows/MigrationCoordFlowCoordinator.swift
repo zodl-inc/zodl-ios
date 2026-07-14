@@ -32,6 +32,13 @@
 //  - W8: `nextPermissionStepResult()` picks the Notifications variant off `isManualDelivery()`.
 //  - W10: the Keystone scan push sets `instructions`/`forceLibraryToHide`.
 //
+//  MOB-1480 adds a simulator-only Keystone bypass (no physical device required): `MigrationKeystoneSign
+//  Store`'s "Simulate signed result" button delegates `.simulateSignature`, handled here by reading
+//  the batch straight off the already-pushed `keystoneSign` element (the bypass never pushes `scan`,
+//  so there is no scanned result to read instead) and running the identical store/resume chain the
+//  real round-trip uses. `resumeAfterKeystoneSigning` pops 1 or 2 path elements depending on whether
+//  `scan` is actually on top, so that one shared resume path stays correct for both callers.
+//
 
 import Foundation
 import ComposableArchitecture
@@ -201,6 +208,26 @@ extension MigrationCoordFlow {
                     await send(.keystoneSigningSubmitted(context: context))
                 }
 
+                // MARK: - Keystone signing (MOB-1480): simulator-only bypass
+
+            case .path(.element(id: let id, action: .keystoneSign(.delegate(.simulateSignature)))):
+                guard let context = state.pendingKeystoneSigning else { return .none }
+                guard case let .keystoneSign(signState) = state.path[id: id] else { return .none }
+
+                // Simulator-only bypass: no physical device exists to scan a QR back, so the batch
+                // is read straight off the already-pushed `keystoneSign` element's own state instead
+                // of arriving via `.scan(.foundPCZTBatch)`. Unlike that real path (which abandons an
+                // empty batch as a no-partial-storage safeguard against a failed scan), this button
+                // exists purely to exercise the resume chain for manual QA, so an empty batch falls
+                // back to a single fabricated placeholder rather than abandoning — the coordinator
+                // never inspects PCZT contents either way.
+                let signed: [Pczt] = signState.pczts.isEmpty ? [Pczt()] : signState.pczts
+
+                return .run { [sdkSynchronizer] send in
+                    await sdkSynchronizer.storeSignedMigrationTransactions(signed)
+                    await send(.keystoneSigningSubmitted(context: context))
+                }
+
             case .keystoneSigningSubmitted(let context):
                 return resumeAfterKeystoneSigning(context: context, state: &state)
 
@@ -350,13 +377,20 @@ extension MigrationCoordFlow {
 
     // MARK: - Keystone signing (MOB-1468): resume after store
 
-    /// Pops `scan`+`keystoneSign` (the two elements the QR round-trip pushed) and resumes whichever
-    /// chain `context` represents, mirroring how the equivalent software `.confirmed` row would
-    /// proceed from the now-topmost signing-source element:
+    /// Pops back to the signing-source element and resumes whichever chain `context` represents,
+    /// mirroring how the equivalent software `.confirmed` row would proceed from the now-topmost
+    /// signing-source element:
     /// - `.planCommit`: the `transferPlan` element now on top never re-signs again — resumes via
     ///   `transferPlanPostConfirmChain(variant:state:)`, identical to the software `.confirmed` row.
     /// - `.immediateReview`: pushes `.sending`, identical to the software `reviewTransfer.confirmed`
     ///   row.
+    ///
+    /// MOB-1480: how much to pop depends on which caller reached here. The real QR round-trip
+    /// pushes `scan` on top of `keystoneSign` (2 elements to unwind back to the signing source); the
+    /// simulator-only bypass (`keystoneSign(.delegate(.simulateSignature))`) never pushes `scan` at
+    /// all (1 element to unwind). Rather than trust the caller, this reads the actual top of the
+    /// path — `.scan` on top means the real round-trip ran (unchanged behavior, still always finds
+    /// `.scan` there), anything else means the bypass ran.
     ///
     /// Clears `pendingKeystoneSigning` in every case.
     private func resumeAfterKeystoneSigning(
@@ -364,7 +398,8 @@ extension MigrationCoordFlow {
         state: inout MigrationCoordFlow.State
     ) -> Effect<MigrationCoordFlow.Action> {
         state.pendingKeystoneSigning = nil
-        state.path.removeLast(2)
+        let topElementIsScan = state.path.last?.is(\.scan) == true
+        state.path.removeLast(topElementIsScan ? 2 : 1)
 
         switch context {
         case .planCommit:

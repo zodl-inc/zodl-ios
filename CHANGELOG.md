@@ -17,6 +17,7 @@ directly impact users rather than highlighting other crucial architectural updat
 - [MOB-1466] Ironwood migration screens are wired into a complete guided flow (entry, scheduling, status, recovery) driven by migration state, with a Home banner entry point — dormant until the migration SDK ships.
 - [MOB-1467] Scheduled Ironwood migration transfers can now send from background tasks, with local notifications for progress, required actions, and manual-mode send reminders — dormant until the migration SDK ships.
 - [MOB-1468] Keystone hardware-wallet accounts can complete the Ironwood migration — transfers are signed by QR in a single batched session — dormant until the migration SDK and Keystone batch support ship.
+- [MOB-1480] Testnet builds gain a migration simulator: long-press the balance on the home screen to open a debug menu that walks every Ironwood migration path — scenario presets, failure injection, simulated time, on-demand background-delivery runs with real notifications, and a simulated Keystone signing pass. Off outside testnet builds; production behavior is unchanged.
 
 ### Changed
 - [MOB-1472] The assets you can swap are now a curated set of major coins and stablecoins across the supported chains (plus swapping to ZEC), instead of the full list from the swap provider, and the address-book chain picker is limited to those chains. Existing swaps in your history (including assets no longer offered) still display normally, and existing contacts on other chains are preserved.

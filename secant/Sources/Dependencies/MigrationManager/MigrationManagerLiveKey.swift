@@ -35,7 +35,8 @@ extension MigrationManagerClient: DependencyKey {
             sendGate: { impl.sendGate() },
             recordMigrationBroadcast: { impl.recordMigrationBroadcast() },
             isSyncDeferredAfterBroadcast: { impl.isSyncDeferredAfterBroadcast() },
-            reconcile: { impl.reconcile() }
+            reconcile: { impl.reconcile() },
+            resetPersistedFlags: { impl.resetPersistedFlags() }
         )
     }
 }
@@ -108,6 +109,12 @@ final class MigrationManagerImpl: @unchecked Sendable {
     }
 
     func orchardBalanceToMigrate(accountUUID: AccountUUID?) async -> Zatoshi {
+        // MOB-1480: simulator active -> its own balance replaces the real per-account SDK read
+        // (the simulated migration has no real funds to look up against `accountUUID`).
+        if MigrationSimulatorFlag.isEnabled && MigrationSimulatorClient.sharedEngine.isActive {
+            return MigrationSimulatorClient.sharedEngine.orchardBalance()
+        }
+
         guard let accountUUID else { return .zero }
 
         guard let balances = try? await sdkSynchronizer.getAccountsBalances(),
@@ -146,6 +153,11 @@ final class MigrationManagerImpl: @unchecked Sendable {
         }
     }
 
+    /// MOB-1480: the migration SDK simulator's debug panel "Reset app migration flags" control.
+    func resetPersistedFlags() {
+        gateStorage.resetPersistedFlags()
+    }
+
     /// `.requiresAttention(.syncRequiredBeforeNext)` carries no progress payload of its own, but
     /// per spec it renders identically to a plain `.inProgress(p)` banner — so it's normalized to
     /// that shape here, using the SDK's own out-of-band `getMigrationProgress()` snapshot, before
@@ -163,6 +175,13 @@ final class MigrationManagerImpl: @unchecked Sendable {
 
     /// "Next due" (manual): ready height already reached (or unknown / no progress -> not due).
     private func isNextTransferDue() -> Bool {
+        // MOB-1480: `nextTransferReadyAtHeight` is a synthetic (epoch-seconds) height while the
+        // simulator is active, which can never compare true against the real chain's
+        // `latestBlockHeight` below — ask the engine directly instead.
+        if MigrationSimulatorFlag.isEnabled && MigrationSimulatorClient.sharedEngine.isActive {
+            return MigrationSimulatorClient.sharedEngine.isNextTransferDue()
+        }
+
         guard let readyAtHeight = sdkSynchronizer.getMigrationProgress()?.nextTransferReadyAtHeight else {
             return false
         }
@@ -424,5 +443,18 @@ final class MigrationGateStorage: @unchecked Sendable {
 
     func clearAcknowledgedComplete() {
         userDefaults.set(false, forKey: .migrationCompleteAcknowledged)
+    }
+
+    /// Clears every persisted migration flag this storage owns: mode, manual delivery, network
+    /// privacy, complete-acknowledged, last-broadcast. Backs the migration SDK simulator's debug
+    /// panel "Reset app migration flags" control (MOB-1480). Deliberately leaves
+    /// `migrationSyncGateUntil`/the transient sync-required flag alone: the 10-minute send gate is
+    /// a short-lived timing window, not a durable app flag, and expires on its own.
+    func resetPersistedFlags() {
+        userDefaults.removeObject(forKey: .migrationMode)
+        userDefaults.removeObject(forKey: .migrationManualDelivery)
+        userDefaults.removeObject(forKey: .migrationNetworkPrivacyOptions)
+        userDefaults.removeObject(forKey: .migrationCompleteAcknowledged)
+        userDefaults.removeObject(forKey: .migrationLastBroadcastAt)
     }
 }
