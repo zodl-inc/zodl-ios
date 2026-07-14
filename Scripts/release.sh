@@ -7,7 +7,8 @@ usage() {
   cat <<'EOF'
 Usage: Scripts/release.sh --variant <v> --ref <ref> --version <X.Y.Z> --build <n> [options]
 
-  --variant     internal | testnet | appstore | internal-testnet
+  --variant     internal | testnet | appstore | internal-testnet |
+                mac-internal | mac-dmg | mac  (mac = both macOS variants)
   --ref         branch, tag, or commit SHA to build
   --version     marketing version you intend to ship (X.Y.Z)
   --build       build number (integer)
