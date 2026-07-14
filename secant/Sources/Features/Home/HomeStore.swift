@@ -18,6 +18,10 @@ struct Home {
         var isRateEducationEnabled = false
         var isRateTooltipEnabled = false
         var migratingDatabase = true
+        /// Debug-only migration SDK simulator panel (MOB-1480), presented as a sheet when
+        /// non-`nil`. Entered via a long-press on the balance amount, gated on
+        /// `MigrationSimulatorFlag.isEnabled` at the point `state.migrationSimulator` is set.
+        @Presents var migrationSimulator: MigrationSimulatorPanel.State?
         var moreRequest = false
         var payRequest = false
         var smartBannerState = SmartBanner.State.initial
@@ -74,6 +78,7 @@ struct Home {
         case currencyConversionSetupTapped
         case foundTransactions
         case keystoneBannerTapped
+        case migrationSimulator(PresentationAction<MigrationSimulatorPanel.Action>)
         case moreTapped
         case moreInMoreTapped
         case onAppear
@@ -289,6 +294,12 @@ struct Home {
                 state.isRateTooltipEnabled = state.walletBalancesState.isExchangeRateStale
                 return .none
 
+            case .walletBalances(.migrationSimulatorLongPressed):
+                if MigrationSimulatorFlag.isEnabled {
+                    state.migrationSimulator = MigrationSimulatorPanel.State()
+                }
+                return .none
+
             case .alert(.presented(let action)):
                 return .send(action)
 
@@ -355,10 +366,16 @@ struct Home {
 
             case .walletBalances:
                 return .none
-                
+
             case .smartBanner:
                 return .none
+
+            case .migrationSimulator:
+                return .none
             }
+        }
+        .ifLet(\.$migrationSimulator, action: \.migrationSimulator) {
+            MigrationSimulatorPanel()
         }
     }
 }

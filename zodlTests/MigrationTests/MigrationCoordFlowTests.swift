@@ -1295,4 +1295,82 @@ import ComposableArchitecture
 
         #expect(acknowledgeCalls.value == 1)
     }
+
+    // MARK: - MOB-1480: Keystone signing — simulator-only bypass (no `.scan` ever pushed)
+
+    @MainActor @Test func keystoneSignSimulateSignatureForImmediateReviewContextStoresPopsAndPushesSendingWithoutScan() async {
+        let storeCalls = LockIsolated<[[Pczt]]>([])
+        let signed: [Pczt] = [Data([0xEE])]
+        var state = MigrationCoordFlow.State()
+        state.networkPrivacyOptions = NetworkPrivacyOptions(useTor: false, submissionEndpoint: nil)
+        state.pendingKeystoneSigning = .immediateReview
+        state.path.append(.reviewTransfer(MigrationReviewTransfer.State(mode: .immediate)))
+        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: signed)))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.storeSignedMigrationTransactions = { stored in storeCalls.withValue { $0.append(stored) } }
+        }
+        store.exhaustivity = .off
+
+        // No `.scan` element on the path at all — the bypass button lives on `keystoneSign` itself
+        // and the coordinator reads the batch straight off that element instead of a scanned
+        // result. Deliberately NOT asserting `isSimulatorBypassVisible` here: this test target
+        // (zodl-internal) always has `MigrationSimulatorFlag.isEnabled == false`, so the button
+        // would never actually be visible in this build — the coordinator's handler is
+        // intentionally not flag-gated (only the button's visibility is), so driving the delegate
+        // directly is the correct boundary to test.
+        await store.send(.path(.element(id: 1, action: .keystoneSign(.delegate(.simulateSignature)))))
+        await store.receive(\.keystoneSigningSubmitted)
+
+        #expect(storeCalls.value == [signed])
+        #expect(store.state.pendingKeystoneSigning == nil)
+        #expect(store.state.path.count == 2)
+        guard case let .sending(sendingState) = try? #require(store.state.path.last) else {
+            Issue.record("Expected .sending pushed on top of the retained .reviewTransfer element")
+            return
+        }
+        #expect(sendingState.totalCount == 1)
+        guard case .reviewTransfer = try? #require(store.state.path[id: 0]) else {
+            Issue.record("Expected .reviewTransfer retained at the bottom (only keystoneSign popped)")
+            return
+        }
+    }
+
+    @MainActor @Test func keystoneSignSimulateSignatureWithEmptyBatchFallsBackToPlaceholderAndResumesPlanCommit() async {
+        let storeCalls = LockIsolated<[[Pczt]]>([])
+        var state = MigrationCoordFlow.State()
+        state.pendingKeystoneSigning = .planCommit
+        state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .scheduled)))
+        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: [])))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.storeSignedMigrationTransactions = { stored in storeCalls.withValue { $0.append(stored) } }
+            $0.migrationBGScheduler.scheduleFirstWindow = { }
+        }
+        store.exhaustivity = .off
+
+        // Unlike the real `.scan(.foundPCZTBatch([]))` path (which abandons the session — see
+        // `foundPCZTBatchWithEmptyArrayForPlanCommitContextAbandonsSessionWithoutStoring` above),
+        // the simulator bypass falls back to a single fabricated placeholder `Pczt` instead: this
+        // button exists purely to exercise the resume chain for manual QA, never a real signing
+        // session that could legitimately fail to decode.
+        await store.send(.path(.element(id: 1, action: .keystoneSign(.delegate(.simulateSignature)))))
+        await store.receive(\.keystoneSigningSubmitted)
+
+        #expect(storeCalls.value == [[Pczt()]])
+        #expect(store.state.pendingKeystoneSigning == nil)
+        #expect(store.state.path.count == 2)
+        guard case .scheduled = try? #require(store.state.path.last) else {
+            Issue.record("Expected .scheduled pushed on top of the retained .transferPlan element")
+            return
+        }
+        guard case .transferPlan = try? #require(store.state.path[id: 0]) else {
+            Issue.record("Expected .transferPlan retained at the bottom (only keystoneSign popped)")
+            return
+        }
+    }
 }

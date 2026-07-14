@@ -18,6 +18,7 @@ directly impact users rather than highlighting other crucial architectural updat
 - [MOB-1467] Scheduled Ironwood migration transfers can now send from background tasks, with local notifications for progress, required actions, and manual-mode send reminders — dormant until the migration SDK ships.
 - [MOB-1468] Keystone hardware-wallet accounts can complete the Ironwood migration — transfers are signed by QR in a single batched session — dormant until the migration SDK and Keystone batch support ship.
 - [MOB-1483] The Ironwood migration is only offered once the network has actually activated Ironwood — before the chain tip reaches the activation height there is no migration banner, no way into the flow, and no migration background work or notifications. The offer appears automatically once the activated network is detected, without restarting the app.
+- [MOB-1480] Testnet builds gain a migration simulator: long-press the balance on the home screen to open a debug menu that walks every Ironwood migration path — scenario presets, failure injection, simulated time, on-demand background-delivery runs with real notifications, and a simulated Keystone signing pass. Off outside testnet builds; production behavior is unchanged.
 
 ### Fixed
 - [PRO-325] Swaps out of ZEC and CrossPays that fail on the swap provider's side now show "Swap Failed" / "Payment Failed" (with the contact-support option) instead of appearing to stay in progress forever. Long-running swaps in this direction also correctly show their processing state.

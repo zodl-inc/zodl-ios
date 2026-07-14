@@ -44,6 +44,10 @@ struct MigrationManagerClient: Sendable {
     var isSyncDeferredAfterBroadcast: @Sendable () -> Bool = { false }   // consumed by MOB-1467
     // Reconciliation
     var reconcile: @Sendable () -> Void
+    // Debug/testnet-only: clears every persisted migration flag this client owns (mode, manual
+    // delivery, network privacy, complete-acknowledged, last-broadcast) — consumed by the
+    // migration SDK simulator's debug panel "Reset app migration flags" control (MOB-1480).
+    var resetPersistedFlags: @Sendable () -> Void
 }
 
 enum MigrationSendGate: Equatable, Sendable {
