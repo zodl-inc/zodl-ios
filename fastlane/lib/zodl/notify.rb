@@ -24,15 +24,17 @@ module Zodl
     # Builds the notification fields for `event`. Pure (no I/O), so the wording
     # and sound selection are unit-testable.
     #
-    #   event   :success | :dry_run_ok | :failure
-    #   reason  failure detail (only its first line is shown); used by :failure
+    #   event    :success | :dry_run_ok | :failure
+    #   reason   failure detail (only its first line is shown); used by :failure
+    #   outcomes per-variant result strings shown on success
     #
     # Returns { title:, subtitle:, message:, sound: }.
-    def payload(event:, variants: [], version: nil, build: nil, reason: nil)
+    def payload(event:, variants: [], version: nil, build: nil, reason: nil, outcomes: [])
       subtitle = describe(variants, version, build)
       case event
       when :success
-        { title: "ZODL release ✅", subtitle: subtitle, message: "Uploaded to TestFlight", sound: SUCCESS_SOUND }
+        message = outcomes.empty? ? "Uploaded to TestFlight" : outcomes.join("; ")
+        { title: "ZODL release ✅", subtitle: subtitle, message: message, sound: SUCCESS_SOUND }
       when :dry_run_ok
         { title: "ZODL dry run ✅", subtitle: subtitle, message: "Preflight passed", sound: SUCCESS_SOUND }
       when :failure
@@ -46,10 +48,10 @@ module Zodl
     # when notifications are disabled or delivery fails, and true when a
     # notification was handed to the notifier. `runner` is injectable so tests can
     # capture the payload without showing a real banner.
-    def post(event:, variants: [], version: nil, build: nil, reason: nil, runner: nil)
+    def post(event:, variants: [], version: nil, build: nil, reason: nil, outcomes: [], runner: nil)
       return false unless enabled?
 
-      fields = payload(event: event, variants: variants, version: version, build: build, reason: reason)
+      fields = payload(event: event, variants: variants, version: version, build: build, reason: reason, outcomes: outcomes)
       (runner || method(:deliver)).call(fields)
       true
     rescue StandardError
