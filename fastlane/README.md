@@ -37,7 +37,8 @@ Other flags: `--yes` (skip confirmation), `--skip-tests`, `--help`.
 
 Preflight reconciles your declared `--version` / `--build` / `--variant` / `--ref`
 against git, the project, and App Store Connect, and refuses to build on any
-mismatch: wrong version (vs the project `MARKETING_VERSION` and the release
+mismatch: wrong version (vs the built target's `MARKETING_VERSION` — targets are
+versioned independently, e.g. macOS vs iOS — and the release
 branch), a duplicate or regressing build number (checked against the variant's
 own App Store Connect app), an unpushed ref, a missing/invalid `PartnerKeys.plist`,
 the wrong Xcode, no distribution signing identity, or a local ../ZcashLightClientKit
