@@ -8,15 +8,15 @@ module Zodl
   module Dmg
     module_function
 
-    def filename(version:, build:)
-      "ZODL-#{version}-#{build}.dmg"
+    def filename(flavor:, version:, build:)
+      "ZODL-#{flavor}-#{version}-#{build}.dmg"
     end
 
     # `source_dir` must contain ONLY the app bundle; create-dmg turns the whole
-    # folder into the volume. `volicon` (.icns) and `background` (window-sized
-    # image, 600x400pt — the app→Applications arrow is baked into it) are
-    # optional; nil skips them.
-    def create_dmg_command(app_name:, source_dir:, dmg_path:, volname: "ZODL", volicon: nil, background: nil)
+    # folder into the volume. `volname` is the flavor's product name, supplied by
+    # the caller. `volicon` (.icns) and `background` (window-sized image, 600x400pt —
+    # the app→Applications arrow is baked into it) are optional; nil skips them.
+    def create_dmg_command(app_name:, source_dir:, dmg_path:, volname:, volicon: nil, background: nil)
       command = ["create-dmg", "--volname", volname]
       command += ["--volicon", volicon] if volicon
       command += ["--background", background] if background
