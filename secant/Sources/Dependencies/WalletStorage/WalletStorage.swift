@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import os
 @preconcurrency import MnemonicSwift
 @preconcurrency import ZcashLightClientKit
 
@@ -81,7 +82,7 @@ struct WalletStorage {
         case unsupportedLanguage(MnemonicLanguageType)
     }
 
-    private let secItem: SecItemClient
+    let secItem: SecItemClient
     /// Non-nil only on macOS: the seed is wrapped by a non-extractable Secure Enclave key instead of
     /// being stored as plaintext. Nil on iOS and in tests, where the legacy plaintext path is used.
     private let secureEnclave: SecureEnclaveClient?
@@ -92,6 +93,11 @@ struct WalletStorage {
     /// password dialogs at differently-signed builds (Xcode vs Developer ID vs TestFlight).
     /// Existing items are relocated once by WalletStorage+KeychainRelocation. Never set on iOS.
     var useDataProtectionKeychain = false
+
+    /// Once-per-process relocation gate (WalletStorage+KeychainRelocation.swift). Copies of an
+    /// `OSAllocatedUnfairLock` share one underlying allocation, so every dependency closure that
+    /// holds a copy of the live storage shares this single gate.
+    let relocationGate = OSAllocatedUnfairLock<KeychainRelocationState>(initialState: KeychainRelocationState.notStarted)
 
     /// Restore/create primes the just-supplied seed here (macOS / Secure-Enclave only) so the first-init
     /// burst — `prepare` plus the seed-derived metadata / address-book keys — reuses it instead of
