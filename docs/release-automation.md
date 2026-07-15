@@ -1,6 +1,6 @@
 # Release automation (local fastlane)
 
-Build, sign, and submit any ZODL iOS variant from your Mac with one command. It
+Build, sign, and submit any ZODL iOS or macOS variant from your Mac with one command. It
 signs with the same Xcode identity you already use to Archive by hand, so **no
 signing keys are stored in the repo or anywhere new**. A fail-closed *preflight*
 reconciles what you ask for against git, the project, and App Store Connect, and

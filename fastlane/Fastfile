@@ -125,9 +125,10 @@ lane :release do |options|
 
   # sigh stashes every minted profile in the lane context, and build_app merges
   # those into export_options by bundle id — clobbering the explicit per-channel
-  # provisioningProfiles map. Both mac profiles share one bundle id, so the merge
-  # would make the App Store export reference the Developer ID profile. The
-  # explicit maps below are the single source of truth; drop sigh's context.
+  # provisioningProfiles map. Each mac flavor's two profiles (App Store + Developer ID)
+  # share that flavor's bundle id, so the merge would make an App Store export reference
+  # a Developer ID profile. The explicit maps below are the single source of truth; drop
+  # sigh's context.
   lane_context.delete(SharedValues::SIGH_PROFILE_PATHS)
   lane_context.delete(SharedValues::SIGH_PROFILE_PATH)
   lane_context.delete(SharedValues::SIGH_PROFILE_TYPE)

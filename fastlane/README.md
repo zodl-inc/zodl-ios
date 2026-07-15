@@ -1,6 +1,6 @@
 # Release automation (local fastlane)
 
-Build, sign, and submit ZODL iOS variants from your Mac. Signs with your existing
+Build, sign, and submit ZODL iOS and macOS variants from your Mac. Signs with your existing
 Xcode identity — no keys are stored in the repo or anywhere new.
 
 ## One-time setup
