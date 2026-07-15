@@ -6,6 +6,9 @@ directly impact users rather than highlighting other crucial architectural updat
 
 ## [Unreleased]
 
+### Added
+- [MOB-1482] The macOS ZODL app can now be built and shipped through the release tooling on two channels: TestFlight (`mac-internal`) and a notarized drag-to-Applications DMG for distribution outside the App Store (`mac-dmg`; combined variant `mac` builds both).
+
 ## 3.7.2 build 1
 
 ### Added

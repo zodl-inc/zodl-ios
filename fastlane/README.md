@@ -7,7 +7,7 @@ Xcode identity — no keys are stored in the repo or anywhere new.
 
 1. Ruby is pinned by `.ruby-version` (4.0.5); install it with `rbenv install` if needed.
 2. `bundle install`
-3. `brew install xcbeautify` (formats xcodebuild output, including Swift Testing results)
+3. `brew install xcbeautify create-dmg` (xcbeautify formats xcodebuild output including Swift Testing results; create-dmg builds the `mac-dmg` disk image)
 4. `brew install bats-core` (only needed to run the wrapper tests)
 5. Create an App Store Connect API key (App Store Connect → Users and Access →
    Integrations), download the `.p8`, then `cp fastlane/.env.example fastlane/.env`
@@ -21,9 +21,7 @@ Build a variant:
 
     ./Scripts/release.sh --variant appstore --ref release/3.8.0 --version 3.8.0 --build 3
 
-`--variant` is one of `internal`, `testnet`, `appstore`, or `internal-testnet`
-(builds internal then testnet, running tests once). `--ref` is any branch, tag,
-or commit.
+`--variant` is one of `internal`, `testnet`, `appstore`, `internal-testnet` (builds internal then testnet, running tests once), `mac-internal` (macOS → TestFlight), `mac-dmg` (macOS → notarized DMG in `build/`), or `mac` (both macOS variants). `--ref` is any branch, tag, or commit.
 
 Dry run (all checks, no build):
 
@@ -42,7 +40,7 @@ against git, the project, and App Store Connect, and refuses to build on any
 mismatch: wrong version (vs the project `MARKETING_VERSION` and the release
 branch), a duplicate or regressing build number (checked against the variant's
 own App Store Connect app), an unpushed ref, a missing/invalid `PartnerKeys.plist`,
-the wrong Xcode, or no distribution signing identity. Run with `--dry-run` to see
+the wrong Xcode, or no distribution signing identity. macOS variants additionally require the matching certificates in the keychain (`mac-internal`: Apple Distribution + Mac Installer Distribution; `mac-dmg`: Developer ID Application — see docs/macos/DEVELOPER_ID_CERTIFICATE.md) and a local ../ZcashLightClientKit checkout with a universal macOS FFI slice. Run with `--dry-run` to see
 it without building.
 
 ## Notifications

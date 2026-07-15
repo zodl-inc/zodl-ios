@@ -95,3 +95,4 @@ PartnerKeys.plist
 
 # Release
 **/*.mobileprovision
+**/*.provisionprofile
