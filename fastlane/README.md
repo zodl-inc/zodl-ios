@@ -7,7 +7,7 @@ Xcode identity — no keys are stored in the repo or anywhere new.
 
 1. Ruby is pinned by `.ruby-version` (4.0.5); install it with `rbenv install` if needed.
 2. `bundle install`
-3. `brew install xcbeautify create-dmg` (xcbeautify formats xcodebuild output including Swift Testing results; create-dmg builds the `mac-dmg` disk image)
+3. `brew install xcbeautify create-dmg` (xcbeautify formats xcodebuild output including Swift Testing results; create-dmg builds the drag-to-Applications disk image)
 4. `brew install bats-core` (only needed to run the wrapper tests)
 5. Create an App Store Connect API key (App Store Connect → Users and Access →
    Integrations), download the `.p8`, then `cp fastlane/.env.example fastlane/.env`
@@ -21,7 +21,7 @@ Build a variant:
 
     ./Scripts/release.sh --variant appstore --ref release/3.8.0 --version 3.8.0 --build 3
 
-`--variant` is one of `internal`, `testnet`, `appstore`, `internal-testnet` (builds internal then testnet, running tests once), `mac-internal` (macOS → TestFlight), `mac-dmg` (macOS → notarized DMG in `build/`), or `mac` (both macOS variants). `--ref` is any branch, tag, or commit.
+`--variant` is one of `internal`, `testnet`, `appstore`, `internal-testnet` (builds internal then testnet, running tests once), `mac-internal`, `mac-internal-dmg`, `mac-testnet`, `mac-testnet-dmg` (macOS → TestFlight or notarized DMG), or `mac` (all four macOS variants). DMG artifacts land at `build/ZODL-<flavor>-<version>-<build>.dmg` (e.g. `build/ZODL-testnet-3.7.1-7.dmg`). `--ref` is any branch, tag, or commit.
 
 Dry run (all checks, no build):
 
@@ -32,7 +32,7 @@ Bump the marketing version + build (the deliberate version-change step, run in `
     ./Scripts/bump.sh --version 3.8.0 --build 1 --target ios
 
 `--target` scopes the bump and is required: an Xcode target name (e.g.
-`zodlmac-internal`), `ios` (all iOS app targets), or `all`. Targets are
+`zodlmac-internal`), `ios` (all iOS app targets), `mac` (all macOS app targets), or `all`. Targets are
 versioned independently — bumping iOS never rewrites the macOS app.
 
 Other flags: `--yes` (skip confirmation), `--skip-tests`, `--help`.
@@ -47,10 +47,8 @@ branch), a duplicate or regressing build number (checked against the variant's
 own App Store Connect app), an unpushed ref, a missing/invalid `PartnerKeys.plist`,
 the wrong Xcode, no distribution signing identity, or a local ../ZcashLightClientKit
 checkout missing its platform's FFI slice — every variant needs this checkout, not
-just macOS. macOS variants additionally require the matching certificates in the
-keychain (`mac-internal`: Apple Distribution + Mac Installer Distribution;
-`mac-dmg`: Developer ID Application — see docs/macos/DEVELOPER_ID_CERTIFICATE.md)
-and a universal (arm64 + x86_64) macOS FFI slice in that checkout. Run with
+just macOS. macOS variants additionally require the matching certificates (TestFlight:
+Apple Distribution + Mac Installer Distribution; DMG: Developer ID Application). Run with
 `--dry-run` to see it without building.
 
 ## Notifications
