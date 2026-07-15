@@ -29,7 +29,11 @@ Dry run (all checks, no build):
 
 Bump the marketing version + build (the deliberate version-change step, run in `main`):
 
-    ./Scripts/bump.sh --version 3.8.0 --build 1
+    ./Scripts/bump.sh --version 3.8.0 --build 1 --target ios
+
+`--target` scopes the bump and is required: an Xcode target name (e.g.
+`zodlmac-internal`), `ios` (all iOS app targets), or `all`. Targets are
+versioned independently — bumping iOS never rewrites the macOS app.
 
 Other flags: `--yes` (skip confirmation), `--skip-tests`, `--help`.
 

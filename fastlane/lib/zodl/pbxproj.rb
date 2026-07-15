@@ -14,18 +14,44 @@ module Zodl
     # several mean its own configs disagree (caller decides how loud to be);
     # empty means the target or setting was not found.
     def marketing_versions(pbxproj, target:)
+      ids = config_ids(pbxproj, target: target)
+      return [] unless ids
+
+      ids.filter_map { |config_id|
+        block = config_block(pbxproj, config_id)
+        block && block[/MARKETING_VERSION = ([^;]+);/, 1]&.strip
+      }.uniq.sort
+    end
+
+    # Returns a copy of `pbxproj` with `key = value;` rewritten in each of
+    # `target`'s configuration blocks. Blocks that don't carry the key are left
+    # untouched (nothing is inserted). Raises on an unknown target.
+    def set_setting(pbxproj, target:, key:, value:)
+      ids = config_ids(pbxproj, target: target)
+      raise ArgumentError, "unknown target: #{target.inspect}" unless ids
+
+      ids.reduce(pbxproj) do |text, config_id|
+        block = config_block(text, config_id)
+        next text unless block
+
+        text.sub(block, block.gsub(/#{Regexp.escape(key)} = [^;]+;/, "#{key} = #{value};"))
+      end
+    end
+
+    # The configuration ids listed by the target's XCConfigurationList, or nil
+    # when the target does not exist in this project.
+    def config_ids(pbxproj, target:)
       list = pbxproj[
         /\/\* Build configuration list for PBXNativeTarget "#{Regexp.escape(target)}" \*\/ = \{.*?buildConfigurations = \((.*?)\);/m, 1
       ]
-      return [] unless list
+      list&.scan(/[A-F0-9]{24}/)
+    end
 
-      list.scan(/[A-F0-9]{24}/).filter_map { |config_id|
-        # A configuration block runs from its id header to its trailing
-        # `name = <configuration>;` line — build settings are UPPER_CASE, so a
-        # lowercase `name = ` cannot occur earlier inside buildSettings.
-        block = pbxproj[/#{config_id} \/\* [^*]* \*\/ = \{\s*isa = XCBuildConfiguration;.*?name = [^;]+;/m]
-        block && block[/MARKETING_VERSION = ([^;]+);/, 1]&.strip
-      }.uniq.sort
+    # A configuration block runs from its id header to its trailing
+    # `name = <configuration>;` line — build settings are UPPER_CASE, so a
+    # lowercase `name = ` cannot occur earlier inside buildSettings.
+    def config_block(pbxproj, config_id)
+      pbxproj[/#{config_id} \/\* [^*]* \*\/ = \{\s*isa = XCBuildConfiguration;.*?name = [^;]+;/m]
     end
   end
 end

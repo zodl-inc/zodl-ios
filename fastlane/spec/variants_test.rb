@@ -71,4 +71,25 @@ class ZodlVariantsTest < Minitest::Test
   def test_valid_accepts_mac_variants
     %w[mac-internal mac-dmg mac].each { |v| assert Zodl::Variants.valid?(v), v }
   end
+
+  def test_bump_targets_all_covers_every_app_target_once
+    assert_equal %w[zodl-internal zodl-testnet zodl-production zodlmac-internal],
+                 Zodl::Variants.bump_targets("all")
+  end
+
+  def test_bump_targets_ios_covers_only_ios_targets
+    assert_equal %w[zodl-internal zodl-testnet zodl-production],
+                 Zodl::Variants.bump_targets("ios")
+  end
+
+  def test_bump_targets_accepts_an_exact_target_name
+    assert_equal ["zodlmac-internal"], Zodl::Variants.bump_targets("zodlmac-internal")
+  end
+
+  def test_bump_targets_rejects_unknown_selector_naming_the_options
+    error = assert_raises(ArgumentError) { Zodl::Variants.bump_targets("zodl-mac") }
+    assert_match(/zodlmac-internal/, error.message)
+    assert_match(/ios/, error.message)
+    assert_match(/all/, error.message)
+  end
 end

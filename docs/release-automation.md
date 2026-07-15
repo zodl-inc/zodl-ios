@@ -117,8 +117,8 @@ worktree`. Your current checkout and working changes are left untouched.
 then cut the release branch:
 
 ```bash
-./Scripts/bump.sh --version 3.8.0 --build 1     # edits the project + commits
-git push                                         # push the bump commit on main
+./Scripts/bump.sh --version 3.8.0 --build 1 --target ios   # edits the project + commits
+git push                                                    # push the bump commit on main
 git checkout -b release/3.8.0
 git push -u origin release/3.8.0
 ```
@@ -177,14 +177,17 @@ Scripts/release.sh --variant <v> --ref <ref> --version <X.Y.Z> --build <n> [opti
   --skip-tests  skip the unit-test step
   -h, --help
 
-Scripts/bump.sh --version <X.Y.Z> --build <n>
+Scripts/bump.sh --version <X.Y.Z> --build <n> --target <target|ios|all>
+  --target      scope of the bump: an Xcode target name (e.g. zodlmac-internal),
+                'ios' (all iOS app targets), or 'all' (every app target) —
+                targets are versioned independently (macOS does not track iOS)
 ```
 
 ## Troubleshooting (preflight messages)
 
 | Message | Fix |
 |---|---|
-| `version … does not match project MARKETING_VERSION …` | Run `bump` first, or pass the version the project is actually at. |
+| `version … does not match project MARKETING_VERSION …` | Run `bump` scoped to the variant's target first (e.g. `--target zodlmac-internal` for mac variants), or pass the version that target is actually at. |
 | `build N already exists` / `is lower than the latest build` | Pick a higher number — check that variant's app in App Store Connect / TestFlight. |
 | `ref is not on origin` | `git push` the branch or commit first. |
 | `Could not resolve ref …` | The branch/tag/commit isn't on `origin` or locally — push or fetch it. |

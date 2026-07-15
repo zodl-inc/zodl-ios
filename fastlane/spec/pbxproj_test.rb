@@ -23,6 +23,7 @@ class ZodlPbxprojTest < Minitest::Test
     		BBBBBBBBBBBBBBBBBBBBBBB1 /* Debug */ = {
     			isa = XCBuildConfiguration;
     			buildSettings = {
+    				CURRENT_PROJECT_VERSION = 6;
     				MARKETING_VERSION = 3.7.1;
     				SDKROOT = macosx;
     			};
@@ -31,6 +32,7 @@ class ZodlPbxprojTest < Minitest::Test
     		BBBBBBBBBBBBBBBBBBBBBBB2 /* Release-AppStore */ = {
     			isa = XCBuildConfiguration;
     			buildSettings = {
+    				CURRENT_PROJECT_VERSION = 6;
     				MARKETING_VERSION = 3.7.1;
     			};
     			name = "Release-AppStore";
@@ -92,5 +94,32 @@ class ZodlPbxprojTest < Minitest::Test
 
   def test_unknown_target_returns_empty
     assert_equal [], versions("nope")
+  end
+
+  def test_set_setting_rewrites_only_the_named_targets_configs
+    updated = Zodl::Pbxproj.set_setting(FIXTURE, target: "zodlmac-internal", key: "MARKETING_VERSION", value: "3.8.0")
+    assert_equal ["3.8.0"], Zodl::Pbxproj.marketing_versions(updated, target: "zodlmac-internal")
+    # The other targets keep their values.
+    assert_equal ["3.7.2"], Zodl::Pbxproj.marketing_versions(updated, target: "zodl-internal")
+    assert_equal ["1.0.0", "2.0.0"], Zodl::Pbxproj.marketing_versions(updated, target: "disagreeing")
+  end
+
+  def test_set_setting_handles_other_keys
+    updated = Zodl::Pbxproj.set_setting(FIXTURE, target: "zodlmac-internal", key: "CURRENT_PROJECT_VERSION", value: "7")
+    assert_equal 2, updated.scan("CURRENT_PROJECT_VERSION = 7;").length
+    refute_includes updated, "CURRENT_PROJECT_VERSION = 6;"
+  end
+
+  def test_set_setting_leaves_configs_without_the_key_untouched
+    # The iOS fixture configs carry no CURRENT_PROJECT_VERSION — nothing is
+    # added or changed for them.
+    updated = Zodl::Pbxproj.set_setting(FIXTURE, target: "zodl-internal", key: "CURRENT_PROJECT_VERSION", value: "9")
+    assert_equal FIXTURE, updated
+  end
+
+  def test_set_setting_rejects_unknown_target
+    assert_raises(ArgumentError) do
+      Zodl::Pbxproj.set_setting(FIXTURE, target: "nope", key: "MARKETING_VERSION", value: "1.0.0")
+    end
   end
 end

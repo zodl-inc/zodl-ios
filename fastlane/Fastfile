@@ -157,24 +157,29 @@ lane :release do |options|
   UI.success("Done: #{outcomes.join('; ')} — #{version} (#{build}) from #{ref} @ #{sha[0, 8]}")
 end
 
-desc "Set MARKETING_VERSION and CURRENT_PROJECT_VERSION and commit. Driven by Scripts/bump.sh."
+desc "Set MARKETING_VERSION and CURRENT_PROJECT_VERSION for a target scope and commit. Driven by Scripts/bump.sh."
 lane :bump do |options|
   version = options.fetch(:version)
   build   = Integer(options.fetch(:build))
+  selector = options[:target].to_s
+  UI.user_error!("target is required — an Xcode target name, 'ios' (all iOS app targets), or 'all'") if selector.empty?
   UI.user_error!("version '#{version}' is not in X.Y.Z form") unless Zodl::Version.valid?(version)
+  targets = begin
+    Zodl::Variants.bump_targets(selector)
+  rescue ArgumentError => e
+    UI.user_error!(e.message)
+  end
   repo_root = run("git rev-parse --show-toplevel", must_succeed: true).strip
 
   Dir.chdir(repo_root) do
-    UI.message("Setting marketing version to #{version}…")
-    set_marketing_version(version)
-    UI.message("Setting build number to #{build}…")
-    run("agvtool new-version -all #{build}", must_succeed: true)
+    UI.message("Setting #{targets.join(', ')} to #{version} (#{build})…")
+    set_versions(targets, version, build)
     UI.message("Committing the version bump…")
     run("git add secant.xcodeproj/project.pbxproj", must_succeed: true)
-    run("git commit -m #{"Bump to #{version} (#{build})".shellescape}", must_succeed: true)
+    run("git commit -m #{"Bump #{selector} to #{version} (#{build})".shellescape}", must_succeed: true)
   end
 
-  UI.success("Bumped to #{version} (#{build}) and committed.")
+  UI.success("Bumped #{selector} to #{version} (#{build}) and committed.")
 end
 
 # Notify on a failed release. The success and dry-run paths post inline (where
@@ -302,13 +307,19 @@ def marketing_version_for(pbxproj, target)
   versions.first
 end
 
-# Sets MARKETING_VERSION on all targets directly in the pbxproj. agvtool's
-# new-marketing-version does not update the build-setting form this project uses.
-def set_marketing_version(version)
-  path = "secant.xcodeproj/project.pbxproj"
-  content = File.read(path)
-  content.gsub!(/MARKETING_VERSION = [^;]+;/, "MARKETING_VERSION = #{version};")
-  File.write(path, content)
+# Rewrites MARKETING_VERSION and CURRENT_PROJECT_VERSION inside each named
+# target's own configuration blocks. agvtool has no per-target mode, and every
+# Info.plist references these build settings, so pbxproj surgery is the whole
+# job. Targets not named keep their versions — macOS is versioned independently
+# of iOS.
+def set_versions(targets, version, build)
+  path = "#{Zodl::BuildPaths::PROJECT}/project.pbxproj"
+  text = File.read(path)
+  targets.each do |target|
+    text = Zodl::Pbxproj.set_setting(text, target: target, key: "MARKETING_VERSION", value: version)
+    text = Zodl::Pbxproj.set_setting(text, target: target, key: "CURRENT_PROJECT_VERSION", value: build.to_s)
+  end
+  File.write(path, text)
 end
 
 # Resolves a branch/tag/commit to a commit SHA. Prefers origin/<ref> so a release
