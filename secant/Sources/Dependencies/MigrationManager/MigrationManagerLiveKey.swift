@@ -206,6 +206,12 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// `SDKSynchronizerClient.transactionStatesFromZcashTransactions`). Not `private`: wired
     /// directly to `MigrationManagerClient.isIronwoodActivated` in `live()`.
     func isIronwoodActivated() -> Bool {
+        // An active simulator bypasses the real-chain gate (MOB-1483 spec §5, same idiom as the
+        // simulator hooks above): a fresh-install/offline testnet run has tip == 0 and would
+        // otherwise hide the simulated migration behind the fail-safe sentinel.
+        if MigrationSimulatorFlag.isEnabled && MigrationSimulatorClient.sharedEngine.isActive {
+            return true
+        }
         let tip = sdkSynchronizer.latestState().latestBlockHeight
         return tip > 0 && tip >= zcashSDKEnvironment.ironwoodActivationHeight()
     }
