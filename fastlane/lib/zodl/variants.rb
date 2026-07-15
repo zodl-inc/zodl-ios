@@ -2,11 +2,14 @@
 
 module Zodl
   # Maps each variant to its scheme/target/archive-config, App Store Connect
-  # bundle id, channel, and platform (iOS or macOS). Each variant is a separate
-  # target with its own bundle id, so build-number namespaces never overlap.
-  # "internal-testnet" expands to both iOS TestFlight variants. "mac" expands to
-  # both macOS variants (which share a target/bundle-id but differ by channel:
-  # TestFlight package vs. local notarized DMG).
+  # bundle id, channel, and platform (iOS or macOS). iOS variants are separate
+  # ASC apps with independent trains; mac-internal shares iOS internal's bundle
+  # id and rides that same app record's macOS platform train; mac-dmg shares
+  # the mac-internal target/bundle id too but has no ASC train at all (local
+  # notarized DMG only). "internal-testnet" expands to both iOS TestFlight
+  # variants. "mac" expands to both macOS variants (which share a
+  # target/bundle-id but differ by channel: TestFlight package vs. local
+  # notarized DMG).
   module Variants
     ATOMIC = {
       "internal" => {

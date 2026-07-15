@@ -113,6 +113,15 @@ lane :release do |options|
   # API-permission problem fails now instead of after the ~15-minute build.
   ensure_profiles(variants)
 
+  # sigh stashes every minted profile in the lane context, and build_app merges
+  # those into export_options by bundle id — clobbering the explicit per-channel
+  # provisioningProfiles map. Both mac profiles share one bundle id, so the merge
+  # would make the App Store export reference the Developer ID profile. The
+  # explicit maps below are the single source of truth; drop sigh's context.
+  lane_context.delete(SharedValues::SIGH_PROFILE_PATHS)
+  lane_context.delete(SharedValues::SIGH_PROFILE_PATH)
+  lane_context.delete(SharedValues::SIGH_PROFILE_TYPE)
+
   # A sibling of the repo (NOT $TMPDIR): the project references the local SDK
   # package at ../ZcashLightClientKit, which must resolve from inside the
   # worktree too.
@@ -210,7 +219,7 @@ def run_argv(argv, retries: 0)
       raise "#{argv.first} failed (exit #{status.exitstatus}): #{stderr.strip.empty? ? stdout.strip : stderr.strip}"
     end
     stdout
-  rescue RuntimeError => e
+  rescue RuntimeError, SystemCallError => e
     retry if attempts <= retries
     UI.user_error!(e.message)
   end
@@ -493,7 +502,10 @@ def ios_testflight(variant, cfg, version, build, paths, auth_xcargs)
 end
 
 def mac_testflight(variant, cfg, version, build, paths, auth_xcargs)
-  pkg_name = "#{variant}-#{version}-#{build}.pkg"
+  # gym/build_app strips only a trailing ".ipa" from output_name and appends
+  # ".pkg" itself for a macOS package export, so an output_name that already
+  # ends in ".pkg" comes out "….pkg.pkg". Pass an extension-less base name.
+  pkg_base = "#{variant}-#{version}-#{build}"
   with_system_rsync_first do
     build_app(
       project: paths[:project],
@@ -502,7 +514,7 @@ def mac_testflight(variant, cfg, version, build, paths, auth_xcargs)
       export_method: "app-store",
       destination: "generic/platform=macOS",
       output_directory: paths[:output_dir],
-      output_name: pkg_name,
+      output_name: pkg_base,
       clean: true,
       derived_data_path: paths[:derived_data],
       xcodebuild_formatter: XCODEBUILD_FORMATTER,
@@ -516,7 +528,7 @@ def mac_testflight(variant, cfg, version, build, paths, auth_xcargs)
       }
     )
   end
-  pkg = File.join(paths[:output_dir], pkg_name)
+  pkg = File.join(paths[:output_dir], "#{pkg_base}.pkg")
   UI.user_error!("expected the exported package at #{pkg}") unless File.exist?(pkg)
 
   upload_to_testflight(
@@ -568,7 +580,8 @@ def mac_dmg(variant, cfg, version, build, paths, auth_xcargs, repo_root)
 
   dmg = File.join(paths[:output_dir], Zodl::Dmg.filename(version: version, build: build))
   FileUtils.rm_f(dmg)
-  volicon = Dir[File.join(app, "Contents", "Resources", "*.icns")].first
+  icns = Dir[File.join(app, "Contents", "Resources", "*.icns")].sort
+  volicon = icns.find { |path| File.basename(path) == "AppIcon.icns" } || icns.first
   run_argv(
     Zodl::Dmg.create_dmg_command(app_name: "Zodl.app", source_dir: staging, dmg_path: dmg, volicon: volicon),
     retries: 1 # hdiutil occasionally fails with "Resource busy"; one retry clears it
@@ -594,7 +607,8 @@ def print_summary(variant, cfg, ref, sha, ctx, report, sdk)
   UI.message("  sdk            ../ZcashLightClientKit @ #{sdk[:sha] || 'MISSING'}#{sdk[:dirty] ? ' (dirty)' : ''}")
   UI.message("  ref            #{ref} @ #{sha[0, 8]}")
   UI.message("  version        #{ctx.requested_version} (project #{ctx.project_version})")
-  UI.message("  build          #{ctx.requested_build} (latest on ASC #{ctx.latest_build})")
+  latest = ctx.latest_build.nil? ? "n/a (no ASC train)" : ctx.latest_build
+  UI.message("  build          #{ctx.requested_build} (latest on ASC #{latest})")
   report.warnings.each { |w| UI.important("  warning: #{w}") }
   report.errors.each { |e| UI.error("  error:   #{e}") }
 end
