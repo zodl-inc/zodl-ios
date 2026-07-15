@@ -68,6 +68,9 @@ struct SmartBanner {
         var lastKnownBlocksRemaining: BlockHeight = -1
         var lastKnownErrorMessage = ""
         var lastKnownSyncPercentage = -1.0
+        // MOB-1483: latch for the Ironwood-activation flip check in `.synchronizerStateChanged` —
+        // nil until the first observation, then tracks the last-seen `isIronwoodActivated()`.
+        var lastObservedIronwoodActivation: Bool?
         var messageToBeShared: String?
         var migrationBannerVariant = MigrationBannerVariant.required
         var priorityContent: PriorityContent? = nil
@@ -136,6 +139,7 @@ struct SmartBanner {
         case migrationStateChanged(MigrationState)
         case migrationVariantLoaded(MigrationBannerVariant?)
         case migrationVariantUpdated(MigrationBannerVariant?)
+        case reevaluateMigrationOnActivationFlip
         case networkMonitorChanged(Bool)
         case openBanner
         case openBannerRequest
@@ -368,86 +372,16 @@ struct SmartBanner {
                 }
                 
             case .synchronizerStateChanged(let latestState):
-                let snapshot = SyncStatusSnapshot.snapshotFor(state: latestState.data.syncStatus)
-                
-                if let account = state.selectedWalletAccount, let accountBalance = latestState.data.accountsBalances[account.id] {
-                    state.spendableBalance = accountBalance.shieldedSpendableValue
-                }
-
-                if snapshot.syncStatus != state.synchronizerStatusSnapshot.syncStatus {
-                    state.synchronizerStatusSnapshot = snapshot
-                    
-                    var isSyncing = false
-                    if case let .syncing(syncProgress, isScanProgressComplete) = snapshot.syncStatus {
-                        state.lastKnownSyncPercentage = Double(syncProgress)
-                        state.lastKnownBlocksRemaining = max(
-                            0,
-                            latestState.data.latestBlockHeight - latestState.data.fullyScannedHeight
-                        )
-                        state.isScanProgressComplete = isScanProgressComplete
-                        isSyncing = true
-
-                        if state.priorityContent == .priority2 {
-                            return .send(.closeAndCleanupBanner)
-                        }
-                    }
-
-                    // error syncing check
-                    switch snapshot.syncStatus {
-                    case .upToDate:
-                        state.isSyncTimedOutAutoAppeareDisabled = false
-                        // Reset the syncing block-count so a re-eval of priority 4 after sync
-                        // completes (account change, reconnect) doesn't see the last `.syncing`
-                        // sample (which can still be >= the show threshold if the SDK skipped
-                        // a final low-remainder update) and spuriously re-show the banner.
-                        state.lastKnownBlocksRemaining = -1
-                        if state.priorityContent == .priority3 || state.priorityContent == .priority45 || state.priorityContent == .priority4 {
-                            return .send(.closeAndCleanupBanner)
-                        }
-                    case .error, .unprepared:
-                        if state.lastKnownErrorMessage != snapshot.message {
-                            state.lastKnownErrorMessage = snapshot.message
-                            return .send(.triggerPriority(.priority2))
-                        }
-                    default: break
-                    }
-                    
-                    if let account = state.selectedWalletAccount, let accountBalance = latestState.data.accountsBalances[account.id] {
-                        if state.priorityContent == .priority7 {
-                            if accountBalance.unshielded > zcashSDKEnvironment.shieldingThreshold() {
-                                return .send(.transparentBalanceUpdated(accountBalance.unshielded))
-                            } else {
-                                return .merge(
-                                    .send(.closeAndCleanupBanner),
-                                    .send(.closeSheetTapped)
-                                )
-                            }
-                        } else if state.transparentBalance < zcashSDKEnvironment.shieldingThreshold() && accountBalance.unshielded > zcashSDKEnvironment.shieldingThreshold() {
-                            return .merge(
-                                .send(.transparentBalanceUpdated(accountBalance.unshielded)),
-                                .send(.triggerPriority(.priority7))
-                            )
-                        }
-                    }
-                    
-                    // return of restoring/syncing
-                    // `rank` (not `rawValue`) so `priorityMigration`'s rank (1.5, between priority2
-                    // and priority3) correctly keeps this branch from replacing a showing migration
-                    // banner with priority3/priority4 — `rawValue` (-1) would give the same numeric
-                    // answer here today only by coincidence.
-                    let isSyncingHigherPriority = (state.priorityContent?.rank ?? 0) > State.PriorityContent.priority4.rank
-                    if isSyncing && (state.priorityContent == nil || isSyncingHigherPriority) {
-                        if state.walletStatus == .resyncing {
-                            //return .send(.triggerPriority(.priority45))
-                        } else if state.walletStatus == .restoring {
-                            return .send(.triggerPriority(.priority3))
-                        } else if state.lastKnownBlocksRemaining >= Constants.smartBannerSyncingBlocksThreshold {
-                            return .send(.triggerPriority(.priority4))
-                        }
-                    }
-                }
-
-                return .none
+                // MOB-1483 (W4): computed as two independent effects and merged, rather than
+                // folded into one flow — `syncStatusChangedEffect` below has many early-return
+                // branches (sync status change handling), and any one of those firing on the same
+                // tick as an activation flip must not silently swallow the flip's re-evaluation
+                // (a cold-launch tick is exactly where both are likely to coincide: the priority
+                // walk racing the first chain-tip fetch is the scenario `ironwoodActivationFlipEffect`
+                // exists to correct).
+                let activationFlipEffect = ironwoodActivationFlipEffect(state: &state)
+                let syncStatusEffect = syncStatusChangedEffect(state: &state, latestState: latestState)
+                return .merge(activationFlipEffect, syncStatusEffect)
 
             case .migrationStateChanged:
                 // The stream only tells us migration state changed, not what it resolved to — the
@@ -480,6 +414,15 @@ struct SmartBanner {
                     }
                 }
                 return .none
+
+            case .reevaluateMigrationOnActivationFlip:
+                // MOB-1483 (W4): identical fetch-and-route to `.migrationStateChanged` above —
+                // reused rather than duplicated, so an activation-day crossing (or a reorg back
+                // below the activation height) raises/lowers the banner through the same
+                // variant-fetch + `.migrationVariantUpdated` path.
+                return .run { [accountUUID = state.selectedWalletAccount?.id] send in
+                    await send(.migrationVariantUpdated(migrationManager.bannerVariant(accountUUID)))
+                }
 
                 // disconnected
             case .evaluatePriority1:
@@ -695,6 +638,123 @@ struct SmartBanner {
                 return .none
             }
         }
+    }
+
+    // MARK: - MOB-1483: Ironwood-activation flip (W4)
+
+    /// Detects an Ironwood-activation flip on every synchronizer tick and, when one occurs,
+    /// triggers a migration-variant re-evaluation through the existing raise/lower machinery
+    /// (`.reevaluateMigrationOnActivationFlip` mirrors `.migrationStateChanged`). Returned as a
+    /// separate effect from `syncStatusChangedEffect` and merged with it by the caller, so
+    /// neither can silently drop the other regardless of which of that function's several
+    /// early-return branches fires on the same tick.
+    ///
+    /// - First observation (`lastObservedIronwoodActivation == nil`): latches the current value.
+    ///   If already activated, the priority walk earlier in this same cold launch may have
+    ///   evaluated while the chain tip was still unknown (0) — re-evaluate once to close that race.
+    /// - Latched flip (`activated != lastObservedIronwoodActivation`): activation-day crossing
+    ///   raises the banner; a reorg back below the activation height lowers it again.
+    /// Unchanged latch: `.none`, no further state write — the steady-state cost of this check is
+    /// one cached-state read plus a comparison, every tick.
+    private func ironwoodActivationFlipEffect(state: inout State) -> Effect<Action> {
+        let activated = migrationManager.isIronwoodActivated()
+
+        guard let latch = state.lastObservedIronwoodActivation else {
+            state.lastObservedIronwoodActivation = activated
+            return activated ? .send(.reevaluateMigrationOnActivationFlip) : .none
+        }
+
+        guard activated != latch else {
+            return .none
+        }
+        state.lastObservedIronwoodActivation = activated
+        return .send(.reevaluateMigrationOnActivationFlip)
+    }
+
+    /// The pre-MOB-1483 body of `.synchronizerStateChanged`, unchanged — extracted verbatim so it
+    /// can be merged with `ironwoodActivationFlipEffect` above instead of racing it for the
+    /// case's single return value.
+    private func syncStatusChangedEffect(state: inout State, latestState: RedactableSynchronizerState) -> Effect<Action> {
+        let snapshot = SyncStatusSnapshot.snapshotFor(state: latestState.data.syncStatus)
+
+        if let account = state.selectedWalletAccount, let accountBalance = latestState.data.accountsBalances[account.id] {
+            state.spendableBalance = accountBalance.shieldedSpendableValue
+        }
+
+        if snapshot.syncStatus != state.synchronizerStatusSnapshot.syncStatus {
+            state.synchronizerStatusSnapshot = snapshot
+
+            var isSyncing = false
+            if case let .syncing(syncProgress, isScanProgressComplete) = snapshot.syncStatus {
+                state.lastKnownSyncPercentage = Double(syncProgress)
+                state.lastKnownBlocksRemaining = max(
+                    0,
+                    latestState.data.latestBlockHeight - latestState.data.fullyScannedHeight
+                )
+                state.isScanProgressComplete = isScanProgressComplete
+                isSyncing = true
+
+                if state.priorityContent == .priority2 {
+                    return .send(.closeAndCleanupBanner)
+                }
+            }
+
+            // error syncing check
+            switch snapshot.syncStatus {
+            case .upToDate:
+                state.isSyncTimedOutAutoAppeareDisabled = false
+                // Reset the syncing block-count so a re-eval of priority 4 after sync
+                // completes (account change, reconnect) doesn't see the last `.syncing`
+                // sample (which can still be >= the show threshold if the SDK skipped
+                // a final low-remainder update) and spuriously re-show the banner.
+                state.lastKnownBlocksRemaining = -1
+                if state.priorityContent == .priority3 || state.priorityContent == .priority45 || state.priorityContent == .priority4 {
+                    return .send(.closeAndCleanupBanner)
+                }
+            case .error, .unprepared:
+                if state.lastKnownErrorMessage != snapshot.message {
+                    state.lastKnownErrorMessage = snapshot.message
+                    return .send(.triggerPriority(.priority2))
+                }
+            default: break
+            }
+
+            if let account = state.selectedWalletAccount, let accountBalance = latestState.data.accountsBalances[account.id] {
+                if state.priorityContent == .priority7 {
+                    if accountBalance.unshielded > zcashSDKEnvironment.shieldingThreshold() {
+                        return .send(.transparentBalanceUpdated(accountBalance.unshielded))
+                    } else {
+                        return .merge(
+                            .send(.closeAndCleanupBanner),
+                            .send(.closeSheetTapped)
+                        )
+                    }
+                } else if state.transparentBalance < zcashSDKEnvironment.shieldingThreshold() && accountBalance.unshielded > zcashSDKEnvironment.shieldingThreshold() {
+                    return .merge(
+                        .send(.transparentBalanceUpdated(accountBalance.unshielded)),
+                        .send(.triggerPriority(.priority7))
+                    )
+                }
+            }
+
+            // return of restoring/syncing
+            // `rank` (not `rawValue`) so `priorityMigration`'s rank (1.5, between priority2
+            // and priority3) correctly keeps this branch from replacing a showing migration
+            // banner with priority3/priority4 — `rawValue` (-1) would give the same numeric
+            // answer here today only by coincidence.
+            let isSyncingHigherPriority = (state.priorityContent?.rank ?? 0) > State.PriorityContent.priority4.rank
+            if isSyncing && (state.priorityContent == nil || isSyncingHigherPriority) {
+                if state.walletStatus == .resyncing {
+                    //return .send(.triggerPriority(.priority45))
+                } else if state.walletStatus == .restoring {
+                    return .send(.triggerPriority(.priority3))
+                } else if state.lastKnownBlocksRemaining >= Constants.smartBannerSyncingBlocksThreshold {
+                    return .send(.triggerPriority(.priority4))
+                }
+            }
+        }
+
+        return .none
     }
 }
 

@@ -5,15 +5,20 @@
 //  Covers MOB-1467's Root-level migration BG session decision tree
 //  (Features/Root/RootInitialization.swift, `.initialization(.migrationBackgroundSession)` and
 //  `.appDelegate(.migrationBackgroundTaskExpired)`): every branch of the spec's ordered tree —
-//  plan-broken, sync-required (deferred and not), send (success/success-to-complete/failure/nil),
-//  and session expiration — driven with spy `MigrationBGSessionHandle`s (`rawTask: nil`, since a
-//  bare `BGProcessingTask` cannot be instantiated in unit tests; see that type's doc comment).
+//  the Ironwood-activation gate (MOB-1483), plan-broken, sync-required (deferred and not), send
+//  (success/success-to-complete/failure/nil), and session expiration — driven with spy
+//  `MigrationBGSessionHandle`s (`rawTask: nil`, since a bare `BGProcessingTask` cannot be
+//  instantiated in unit tests; see that type's doc comment).
 //
 //  `.serialized`: same precedent as `RootMigrationRoutingTests` — constructing `Root.State` builds
 //  `migrationCoordFlowState = MigrationCoordFlow.State.initial`, which reads the process-global
 //  `@Shared(.inMemory(.selectedWalletAccount))` key. Uses a plain `Store` (not `TestStore`) with
 //  `withDependencies` overrides and `LockIsolated` spies + polling, mirroring
 //  `RootMigrationRoutingTests`/`FlexaSecurityTests`.
+//
+//  `baseNoOpDependencies` defaults `migrationManager.isIronwoodActivated` to `true` — every branch
+//  below except the two Branch 1 (gated) tests exists to exercise post-activation behavior, so
+//  that's the natural shared baseline; the gated tests override it back to `false` locally.
 //
 
 import Foundation
@@ -23,7 +28,81 @@ import ComposableArchitecture
 @testable import zodl_internal
 
 @Suite(.serialized) @MainActor struct RootMigrationBackgroundTests {
-    // MARK: - Branch 1: Plan broken
+    // MARK: - Branch 1 (MOB-1483): Ironwood not yet activated
+
+    /// Pre-activation, the whole decision tree is a no-op: complete the handle immediately, with
+    /// zero notification/scheduler/executor calls — none of the later branches (plan-broken,
+    /// sync-required, send) are even consulted. `sdkSynchronizer`'s other migration-facing
+    /// dependencies are deliberately left at their `baseNoOpDependencies` defaults (which would
+    /// otherwise route into "plan broken") to prove the gate short-circuits before any of them
+    /// are read.
+    @Test func ironwoodNotActivatedCompletesSessionWithoutAnyWork() async {
+        let notifications = LockIsolated<[MigrationNotification]>([])
+        let scheduleNextWindowCalls = LockIsolated<Int>(0)
+        let executeNextPendingMigrationTransferCalls = LockIsolated<Int>(0)
+        let completeCalls = LockIsolated<[Bool]>([])
+
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let store = Store(initialState: Root.State.initial) {
+                Root()
+            } withDependencies: {
+                baseNoOpDependencies(&$0)
+                $0.migrationManager.isIronwoodActivated = { false }
+                $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _ in
+                    executeNextPendingMigrationTransferCalls.withValue { $0 += 1 }
+                    return nil
+                }
+                $0.migrationBGScheduler.scheduleNextWindow = { scheduleNextWindowCalls.withValue { $0 += 1 } }
+                $0.userNotifications.scheduleMigrationNotification = { notification, _ in
+                    notifications.withValue { $0.append(notification) }
+                }
+            }
+
+            let handle = MigrationBGSessionHandle(rawTask: nil) { success in completeCalls.withValue { $0.append(success) } }
+            store.send(.initialization(.migrationBackgroundSession(handle)))
+            await waitForRootStore { completeCalls.withValue { !$0.isEmpty } }
+
+            #expect(notifications.withValue { $0 }.isEmpty)
+            #expect(scheduleNextWindowCalls.withValue { $0 } == 0)
+            #expect(executeNextPendingMigrationTransferCalls.withValue { $0 } == 0)
+            #expect(completeCalls.withValue { $0 } == [true])
+        }
+    }
+
+    /// Mirrors `expiredSessionRearms` below, gated: the synchronizer still stops and the task
+    /// still completes/releases exactly as before (expiration handling is unconditional), but the
+    /// wakeup chain must NOT be kept alive — no `scheduleNextWindow` call, since branch 1 of the
+    /// session tree never arms it in the first place pre-activation.
+    @Test func ironwoodNotActivatedExpiredSessionDoesNotRearm() async {
+        let scheduleNextWindowCalls = LockIsolated<Int>(0)
+        let stopCalls = LockIsolated<Int>(0)
+
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let store = Store(initialState: Root.State.initial) {
+                Root()
+            } withDependencies: {
+                baseNoOpDependencies(&$0)
+                $0.sdkSynchronizer = SDKSynchronizerClient.mocked(
+                    stop: { stopCalls.withValue { $0 += 1 } }
+                )
+                $0.migrationManager.isIronwoodActivated = { false }
+                $0.migrationBGScheduler.scheduleNextWindow = { scheduleNextWindowCalls.withValue { $0 += 1 } }
+            }
+
+            store.send(.initialization(.appDelegate(.migrationBackgroundTaskExpired)))
+            await waitForRootStore { stopCalls.withValue { $0 } == 1 }
+
+            #expect(stopCalls.withValue { $0 } == 1)
+            #expect(scheduleNextWindowCalls.withValue { $0 } == 0)
+            #expect(store.state.bgTask == nil)
+        }
+    }
+
+    // MARK: - Branch 2: Plan broken
 
     /// `hasInvalidMigrationTransfers() == true` must post `.planNeedsUpdate` immediately (nil
     /// date), never re-arm (`scheduleNextWindow`/`scheduleFirstWindow` untouched), and complete
@@ -91,7 +170,7 @@ import ComposableArchitecture
         }
     }
 
-    // MARK: - Branch 2: Sync required
+    // MARK: - Branch 3: Sync required
 
     /// Within 10 min of a foreground broadcast (`isSyncDeferredAfterBroadcast() == true`): skip
     /// even the sync — re-arm only, complete the session. `state.bgTask` must NOT be touched (no
@@ -177,7 +256,7 @@ import ComposableArchitecture
         }
     }
 
-    // MARK: - Branch 3: Send
+    // MARK: - Branch 4: Send
 
     /// A successful broadcast that does NOT complete the migration: records the broadcast, posts
     /// `.transferComplete` (never `.migrationComplete`), re-arms, and completes the session.
@@ -348,7 +427,9 @@ import ComposableArchitecture
 
     /// `.migrationBackgroundTaskExpired` must re-arm — an expired session must never orphan the
     /// wakeup chain (re-submitting with the same identifier REPLACES the pending request, so this
-    /// is safe even stacked after branch 2's own up-front re-arm).
+    /// is safe even stacked after branch 3's own up-front re-arm). Post-activation (the
+    /// `baseNoOpDependencies` default) — see `ironwoodNotActivatedExpiredSessionDoesNotRearm`
+    /// above for the pre-activation counterpart, which must NOT re-arm.
     @Test func expiredSessionRearms() async {
         let scheduleNextWindowCalls = LockIsolated<Int>(0)
 
@@ -387,6 +468,7 @@ private func baseNoOpDependencies(_ values: inout DependencyValues) {
     values.migrationBGScheduler.scheduleNextWindow = { }
     values.migrationBGScheduler.cancelAll = { }
     values.migrationManager.bannerVariant = { _ in nil }
+    values.migrationManager.isIronwoodActivated = { true }
     values.migrationManager.reentryRoute = { .entry }
     values.migrationManager.migrationMode = { nil }
     values.migrationManager.setMigrationMode = { _ in }
