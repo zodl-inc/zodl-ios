@@ -15,9 +15,9 @@
             buildForAnalyzing = "YES">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "9E6E82502FE3DC15008A82EF"
-               BuildableName = "Zodl Internal.app"
-               BlueprintName = "zodlmac-internal"
+               BlueprintIdentifier = "3490719F3007BBE1008BD84F"
+               BuildableName = "Zodl Testnet.app"
+               BlueprintName = "zodlmac-testnet"
                ReferencedContainer = "container:secant.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
@@ -33,9 +33,9 @@
       <CodeCoverageTargets>
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "9E6E82502FE3DC15008A82EF"
-            BuildableName = "Zodl Internal.app"
-            BlueprintName = "zodlmac-internal"
+            BlueprintIdentifier = "3490719F3007BBE1008BD84F"
+            BuildableName = "Zodl Testnet.app"
+            BlueprintName = "zodlmac-testnet"
             ReferencedContainer = "container:secant.xcodeproj">
          </BuildableReference>
       </CodeCoverageTargets>
@@ -66,9 +66,9 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "9E6E82502FE3DC15008A82EF"
-            BuildableName = "Zodl Internal.app"
-            BlueprintName = "zodlmac-internal"
+            BlueprintIdentifier = "3490719F3007BBE1008BD84F"
+            BuildableName = "Zodl Testnet.app"
+            BlueprintName = "zodlmac-testnet"
             ReferencedContainer = "container:secant.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
@@ -83,9 +83,9 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "9E6E82502FE3DC15008A82EF"
-            BuildableName = "Zodl Internal.app"
-            BlueprintName = "zodlmac-internal"
+            BlueprintIdentifier = "3490719F3007BBE1008BD84F"
+            BuildableName = "Zodl Testnet.app"
+            BlueprintName = "zodlmac-testnet"
             ReferencedContainer = "container:secant.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>

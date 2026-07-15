@@ -91,7 +91,6 @@
 /* Begin PBXFileReference section */
 		0D4E7A1626B364180058B01E /* zodlTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = zodlTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		349071CE3007BBE1008BD84F /* Zodl Testnet.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Zodl Testnet.app"; sourceTree = BUILT_PRODUCTS_DIR; };
-		3490837E3007C030008BD84F /* zodlmac-internal copy-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; name = "zodlmac-internal copy-Info.plist"; path = "/Users/chlup/Developing/zec/work/real-ironwood-handoff/secant-ios-wallet/zodlmac-internal copy-Info.plist"; sourceTree = "<absolute>"; };
 		9E41FFBB2CB2814500783CFD /* zodl-testnet.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "zodl-testnet.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		9E4A01762B0C9ABD005AFC7E /* CHANGELOG.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = CHANGELOG.md; sourceTree = "<group>"; };
 		9E4AB2B72BA1BEE900F5D6DB /* zodl-production.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "zodl-production.app"; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -352,7 +351,6 @@
 				0D4E7A0626B364170058B01E /* Products */,
 				343CF3F429BB5A14009E44DF /* Frameworks */,
 				9E318C622CE37F5500FC342A /* Recovered References */,
-				3490837E3007C030008BD84F /* zodlmac-internal copy-Info.plist */,
 			);
 			sourceTree = "<group>";
 		};
