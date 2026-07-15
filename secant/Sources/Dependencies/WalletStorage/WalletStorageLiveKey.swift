@@ -120,6 +120,8 @@ extension WalletStorage {
         // string only — an unscoped testnet restore would overwrite the mainnet
         // seed entry). The prefix isolates every testnet key.
         storage.zcashStoredWalletPrefix = "testnet_"
+#else
+        storage.zcashStoredWalletPrefix = ""
 #endif
         return storage
     }
