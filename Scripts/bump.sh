@@ -9,9 +9,10 @@ Usage: Scripts/bump.sh --version <X.Y.Z> --build <n> --target <t>
 
   --version   marketing version to set (X.Y.Z)
   --build     build number to set
-  --target    scope of the bump: an Xcode target name (e.g. zodlmac-internal),
-              'ios' (all iOS app targets), or 'all' (every app target).
-              Targets are versioned independently — macOS does not track iOS.
+  --target    an Xcode target name (e.g. zodlmac-testnet), 'ios' (all iOS app
+              targets), 'mac' (all macOS app targets), or 'all' (every app
+              target). Targets are versioned independently — macOS does not
+              track iOS.
   -h, --help  show this help
 EOF
 }

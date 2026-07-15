@@ -72,8 +72,17 @@ lane :release do |options|
   installed_identities = run("security find-identity -v -p codesigning")
   sdk = sdk_facts(repo_root)
 
+  app_names = {}
   variants.each do |variant|
     cfg = Zodl::Variants.config(variant)
+    if cfg[:platform] == :macos
+      app_names[variant] = begin
+        Zodl::Pbxproj.product_name(pbxproj, target: cfg[:target])
+      rescue ArgumentError => e
+        UI.user_error!(e.message)
+      end
+      UI.user_error!("PRODUCT_NAME not found for target '#{cfg[:target]}' at #{sha[0, 8]}") if app_names[variant].nil?
+    end
     UI.message("Reconciling #{variant} against git, the project, and App Store Connect…")
     ctx = Zodl::Preflight::Context.new(
       variant: variant,
@@ -94,7 +103,7 @@ lane :release do |options|
       sdk_dirty: sdk[:dirty]
     )
     report = Zodl::Preflight.check(ctx)
-    print_summary(variant, cfg, ref, sha, ctx, report, sdk)
+    print_summary(variant, cfg, ref, sha, ctx, report, sdk, app_names[variant])
     UI.user_error!("Preflight failed for #{variant} — aborting.") unless report.ok?
   end
 
@@ -143,7 +152,7 @@ lane :release do |options|
       run_unit_tests(paths) unless truthy(options[:skip_tests])
       variants.each do |variant|
         UI.message("Building #{variant}…")
-        outcomes << build_and_upload(variant, version, build, paths, auth_xcargs, repo_root)
+        outcomes << build_and_upload(variant, version, build, paths, auth_xcargs, repo_root, app_names[variant])
       end
     end
   ensure
@@ -162,7 +171,7 @@ lane :bump do |options|
   version = options.fetch(:version)
   build   = Integer(options.fetch(:build))
   selector = options[:target].to_s
-  UI.user_error!("target is required — an Xcode target name, 'ios' (all iOS app targets), or 'all'") if selector.empty?
+  UI.user_error!("target is required — an Xcode target name, 'ios' (all iOS app targets), 'mac' (all macOS app targets), or 'all'") if selector.empty?
   UI.user_error!("version '#{version}' is not in X.Y.Z form") unless Zodl::Version.valid?(version)
   targets = begin
     Zodl::Variants.bump_targets(selector)
@@ -245,7 +254,7 @@ def asc_api_key
   )
 end
 
-# Lazily fetched so flows that never touch App Store Connect (a mac-dmg
+# Lazily fetched so flows that never touch App Store Connect (a DMG-channel
 # --dry-run has no TestFlight train to query) work without ASC credentials.
 def api_key
   @api_key ||= asc_api_key
@@ -429,7 +438,11 @@ def appstore_profile_name(variant)
   "ZODL #{variant} App Store"
 end
 
-DEVELOPER_ID_PROFILE_NAME = "ZODL mac-dmg Developer ID"
+# Developer ID profiles are per-variant — the DMG flavors sign different
+# bundle ids and cannot share a profile.
+def developer_id_profile_name(variant)
+  "ZODL #{variant} Developer ID"
+end
 
 # Create/refresh the distribution profile each variant exports with, so a
 # signing or API-permission problem fails now instead of after the ~15-minute
@@ -443,7 +456,7 @@ def ensure_profiles(variants)
       get_provisioning_profile(
         api_key: api_key,
         app_identifier: cfg[:app_identifier],
-        provisioning_name: DEVELOPER_ID_PROFILE_NAME,
+        provisioning_name: developer_id_profile_name(variant),
         platform: sigh_platform,
         developer_id: true,
         force: true
@@ -479,10 +492,10 @@ ensure
   ENV["PATH"] = previous_path
 end
 
-def build_and_upload(variant, version, build, paths, auth_xcargs, repo_root)
+def build_and_upload(variant, version, build, paths, auth_xcargs, repo_root, app_name)
   cfg = Zodl::Variants.config(variant)
   if cfg[:platform] == :macos
-    return mac_dmg(variant, cfg, version, build, paths, auth_xcargs, repo_root) if cfg[:channel] == :dmg
+    return mac_dmg(variant, cfg, version, build, paths, auth_xcargs, repo_root, app_name) if cfg[:channel] == :dmg
 
     mac_testflight(variant, cfg, version, build, paths, auth_xcargs)
   else
@@ -567,7 +580,7 @@ def mac_testflight(variant, cfg, version, build, paths, auth_xcargs)
   "#{variant} → TestFlight"
 end
 
-def mac_dmg(variant, cfg, version, build, paths, auth_xcargs, repo_root)
+def mac_dmg(variant, cfg, version, build, paths, auth_xcargs, repo_root, app_name)
   with_system_rsync_first do
     build_app(
       project: paths[:project],
@@ -584,14 +597,15 @@ def mac_dmg(variant, cfg, version, build, paths, auth_xcargs, repo_root)
         signingStyle: "manual",
         teamID: TEAM_ID,
         signingCertificate: "Developer ID Application",
-        provisioningProfiles: { cfg[:app_identifier] => DEVELOPER_ID_PROFILE_NAME }
+        provisioningProfiles: { cfg[:app_identifier] => developer_id_profile_name(variant) }
       }
     )
   end
-  app = File.join(paths[:output_dir], "Zodl.app")
+  bundle_name = "#{app_name}.app"
+  app = File.join(paths[:output_dir], bundle_name)
   UI.user_error!("expected the exported app at #{app}") unless File.directory?(app)
 
-  UI.message("Notarizing Zodl.app…")
+  UI.message("Notarizing #{bundle_name}…")
   notarize(package: app, bundle_id: cfg[:app_identifier], api_key: api_key, print_log: true)
 
   # create-dmg images the whole source folder, so stage a folder holding only
@@ -599,9 +613,9 @@ def mac_dmg(variant, cfg, version, build, paths, auth_xcargs, repo_root)
   staging = File.join(paths[:output_dir], "dmg-staging")
   FileUtils.rm_rf(staging)
   FileUtils.mkdir_p(staging)
-  run("ditto #{app.shellescape} #{File.join(staging, 'Zodl.app').shellescape}", must_succeed: true)
+  run("ditto #{app.shellescape} #{File.join(staging, bundle_name).shellescape}", must_succeed: true)
 
-  dmg = File.join(paths[:output_dir], Zodl::Dmg.filename(version: version, build: build))
+  dmg = File.join(paths[:output_dir], Zodl::Dmg.filename(flavor: cfg[:flavor], version: version, build: build))
   FileUtils.rm_f(dmg)
   icns = Dir[File.join(app, "Contents", "Resources", "*.icns")].sort
   volicon = icns.find { |path| File.basename(path) == "AppIcon.icns" } || icns.first
@@ -612,7 +626,7 @@ def mac_dmg(variant, cfg, version, build, paths, auth_xcargs, repo_root)
   background = File.join(File.dirname(paths[:output_dir]), "fastlane", "assets", "dmg-background.tiff")
   run_argv(
     Zodl::Dmg.create_dmg_command(
-      app_name: "Zodl.app", source_dir: staging, dmg_path: dmg,
+      app_name: bundle_name, source_dir: staging, dmg_path: dmg, volname: app_name,
       volicon: volicon, background: File.exist?(background) ? background : nil
     ),
     retries: 1 # hdiutil occasionally fails with "Resource busy"; one retry clears it
@@ -630,11 +644,12 @@ def mac_dmg(variant, cfg, version, build, paths, auth_xcargs, repo_root)
   "#{variant} → DMG at #{final}"
 end
 
-def print_summary(variant, cfg, ref, sha, ctx, report, sdk)
+def print_summary(variant, cfg, ref, sha, ctx, report, sdk, app_name)
   UI.message("──────── preflight: #{variant} ────────")
   UI.message("  scheme/target  #{cfg[:scheme]} / #{cfg[:target]} (#{cfg[:configuration]})")
   UI.message("  app            #{cfg[:app_identifier]}")
   UI.message("  channel        #{cfg[:channel]} (#{cfg[:platform]})")
+  UI.message("  app name       #{app_name}.app") if app_name
   UI.message("  sdk            ../ZcashLightClientKit @ #{sdk[:sha] || 'MISSING'}#{sdk[:dirty] ? ' (dirty)' : ''}")
   UI.message("  ref            #{ref} @ #{sha[0, 8]}")
   UI.message("  version        #{ctx.requested_version} (project #{ctx.project_version})")
