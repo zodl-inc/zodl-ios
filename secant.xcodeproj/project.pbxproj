@@ -59,7 +59,6 @@
 		9E6E823A2FE33B7E008A82EF /* ZcashLightClientKit in Frameworks */ = {isa = PBXBuildFile; productRef = 9E6E82392FE33B7E008A82EF /* ZcashLightClientKit */; };
 		9E6E82472FE34147008A82EF /* ZcashLightClientKit in Frameworks */ = {isa = PBXBuildFile; productRef = 9E6E82462FE34147008A82EF /* ZcashLightClientKit */; };
 		9E6E82492FE3414F008A82EF /* ZcashLightClientKit in Frameworks */ = {isa = PBXBuildFile; productRef = 9E6E82482FE3414F008A82EF /* ZcashLightClientKit */; };
-		9E6E824B2FE34156008A82EF /* ZcashLightClientKit in Frameworks */ = {isa = PBXBuildFile; productRef = 9E6E824A2FE34156008A82EF /* ZcashLightClientKit */; };
 		9E6E84612FE3DEA1008A82EF /* Atomics in Frameworks */ = {isa = PBXBuildFile; productRef = 9E6E84602FE3DEA1008A82EF /* Atomics */; };
 		9E6E84632FE3DEA5008A82EF /* BigDecimal in Frameworks */ = {isa = PBXBuildFile; productRef = 9E6E84622FE3DEA5008A82EF /* BigDecimal */; };
 		9E6E84652FE3DEAF008A82EF /* CasePaths in Frameworks */ = {isa = PBXBuildFile; productRef = 9E6E84642FE3DEAF008A82EF /* CasePaths */; };
@@ -226,7 +225,6 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				9E6E824B2FE34156008A82EF /* ZcashLightClientKit in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -2469,11 +2467,6 @@
 			productName = ZcashLightClientKit;
 		};
 		9E6E82482FE3414F008A82EF /* ZcashLightClientKit */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 9E34CAE92FE337E700238B7D /* XCLocalSwiftPackageReference "../ZcashLightClientKit" */;
-			productName = ZcashLightClientKit;
-		};
-		9E6E824A2FE34156008A82EF /* ZcashLightClientKit */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 9E34CAE92FE337E700238B7D /* XCLocalSwiftPackageReference "../ZcashLightClientKit" */;
 			productName = ZcashLightClientKit;
