@@ -157,6 +157,7 @@ struct WalletStorage {
         language: MnemonicLanguageType = .english,
         hasUserPassedPhraseBackupTest: Bool = false
     ) throws {
+        try ensureRelocated()
         // Future-proof of the bundle to potentially avoid migration. We enforce english mnemonic.
         guard language == .english else {
             throw WalletStorageError.unsupportedLanguage(language)
@@ -223,6 +224,7 @@ struct WalletStorage {
     /// (spend / export / first init). For birthday / backup-flag / existence use `exportWalletMetadata`
     /// / `areKeysPresent`, which never decrypt.
     func exportWallet(reason: String? = nil) async throws -> StoredWallet {
+        try ensureRelocated()
         // Restore/create primed the seed — reuse it once instead of an SE decrypt (and its prompt).
         if secureEnclave != nil, let primed = consumePrimedSeed() {
             return primed
@@ -293,6 +295,7 @@ struct WalletStorage {
     /// Reads the non-secret wallet metadata WITHOUT decrypting the seed (no biometric prompt). On macOS
     /// this is the separate plaintext item; on iOS it is projected from the single blob.
     func exportWalletMetadata() throws -> WalletMetadata {
+        try ensureRelocated()
         let reqData: Data?
 
         if secureEnclave != nil {
@@ -311,6 +314,7 @@ struct WalletStorage {
     }
 
     func areKeysPresent() throws -> Bool {
+        try ensureRelocated()
         let key = secureEnclave != nil ? Constants.zcashStoredWalletSeed : Constants.zcashStoredWallet
         let present = itemExists(forKey: key)
         return present
@@ -325,6 +329,7 @@ struct WalletStorage {
     }
 
     func updateBirthday(_ height: BlockHeight) throws {
+        try ensureRelocated()
         if secureEnclave != nil {
             var meta = try exportWalletMetadata()
             meta.birthday = Birthday(height)
@@ -343,6 +348,7 @@ struct WalletStorage {
     }
 
     func markUserPassedPhraseBackupTest(_ flag: Bool = true) throws {
+        try ensureRelocated()
         if secureEnclave != nil {
             var meta = try exportWalletMetadata()
             meta.hasUserPassedPhraseBackupTest = flag
@@ -368,6 +374,7 @@ struct WalletStorage {
     /// launch — no-op on iOS, and an auth-free version check short-circuits once migrated. So existing
     /// testers upgrade invisibly instead of landing on onboarding. See docs/macos/KEYCHAIN_SE_HARDENING.md.
     func migrateToSecureEnclaveIfNeeded() async throws {
+        try ensureRelocated()
         guard let secureEnclave, secureEnclave.isAvailable() else {
             return
         }
@@ -423,6 +430,8 @@ struct WalletStorage {
         }
     }
 
+    /// Deliberately NOT gated on `ensureRelocated()`: reset is the escape hatch out of a failed
+    /// relocation. It only deletes (deletes are never ACL-gated) and wipes BOTH keychains on macOS.
     func resetZashi() throws {
         clearPrimedSeed()
         try? deleteData(forKey: Constants.zcashStorageVersion)
@@ -452,6 +461,7 @@ struct WalletStorage {
     }
     
     func importAddressBookEncryptionKeys(_ keys: AddressBookEncryptionKeys) throws {
+        try ensureRelocated()
         do {
             guard let data = try encode(object: keys) else {
                 throw KeychainError.encoding
@@ -466,8 +476,9 @@ struct WalletStorage {
     }
     
     func exportAddressBookEncryptionKeys() throws -> AddressBookEncryptionKeys {
+        try ensureRelocated()
         let reqData: Data?
-        
+
         do {
             reqData = try data(forKey: Constants.zcashStoredAdressBookEncryptionKeys)
         } catch KeychainError.noDataFound {
@@ -488,6 +499,7 @@ struct WalletStorage {
     }
     
     func importUserMetadataEncryptionKeys(_ keys: UserMetadataEncryptionKeys, account: Account) throws {
+        try ensureRelocated()
         do {
             guard let data = try encode(object: keys) else {
                 throw KeychainError.encoding
@@ -502,8 +514,9 @@ struct WalletStorage {
     }
     
     func exportUserMetadataEncryptionKeys(account: Account) throws -> UserMetadataEncryptionKeys {
+        try ensureRelocated()
         let reqData: Data?
-        
+
         do {
             reqData = try data(forKey: Constants.accountMetadataFilename(account: account))
         } catch KeychainError.noDataFound {
@@ -524,12 +537,14 @@ struct WalletStorage {
     }
     
     func clearEncryptionKeys(_ account: Account) throws {
+        try ensureRelocated()
         try deleteData(forKey: Constants.accountMetadataFilename(account: account))
     }
     
     // MARK: - Remind Me
     
     func importWalletBackupReminder(_ reminder: ReminedMeTimestamp) throws {
+        try ensureRelocated()
         guard let data = try? encode(object: reminder) else {
             throw KeychainError.encoding
         }
@@ -544,8 +559,9 @@ struct WalletStorage {
     }
     
     func exportWalletBackupReminder() -> ReminedMeTimestamp? {
+        ensureRelocatedBestEffort()
         let reqData: Data?
-        
+
         do {
             reqData = try data(forKey: Constants.zcashStoredWalletBackupReminder)
         } catch {
@@ -560,6 +576,7 @@ struct WalletStorage {
     }
 
     func importShieldingReminder(_ reminder: ReminedMeTimestamp, accountName: String) throws {
+        try ensureRelocated()
         guard let data = try? encode(object: reminder) else {
             throw KeychainError.encoding
         }
@@ -574,8 +591,9 @@ struct WalletStorage {
     }
     
     func exportShieldingReminder(accountName: String) -> ReminedMeTimestamp? {
+        ensureRelocatedBestEffort()
         let reqData: Data?
-        
+
         do {
             reqData = try data(forKey: Constants.zcashStoredShieldingReminder(accountName: accountName))
         } catch {
@@ -590,6 +608,7 @@ struct WalletStorage {
     }
     
     func resetShieldingReminder(accountName: String) {
+        ensureRelocatedBestEffort()
         try? deleteData(forKey: Constants.zcashStoredShieldingReminder(accountName: accountName))
 
     }
@@ -597,6 +616,7 @@ struct WalletStorage {
     // MARK: - Acknowledged flags
     
     func importWalletBackupAcknowledged(_ acknowledged: Bool) throws {
+        try ensureRelocated()
         guard let data = try? encode(object: acknowledged) else {
             throw KeychainError.encoding
         }
@@ -611,8 +631,9 @@ struct WalletStorage {
     }
     
     func exportWalletBackupAcknowledged() -> Bool {
+        ensureRelocatedBestEffort()
         let reqData: Data?
-        
+
         do {
             reqData = try data(forKey: Constants.zcashStoredWalletBackupAcknowledged)
         } catch {
@@ -627,6 +648,7 @@ struct WalletStorage {
     }
     
     func importShieldingAcknowledged(_ acknowledged: Bool) throws {
+        try ensureRelocated()
         guard let data = try? encode(object: acknowledged) else {
             throw KeychainError.encoding
         }
@@ -641,8 +663,9 @@ struct WalletStorage {
     }
     
     func exportShieldingAcknowledged() -> Bool {
+        ensureRelocatedBestEffort()
         let reqData: Data?
-        
+
         do {
             reqData = try data(forKey: Constants.zcashStoredShieldingAcknowledged)
         } catch {
@@ -657,6 +680,7 @@ struct WalletStorage {
     }
 
     func importTorSetupFlag(_ enabled: Bool) throws {
+        try ensureRelocated()
         guard let data = try? encode(object: enabled) else {
             throw KeychainError.encoding
         }
@@ -671,8 +695,9 @@ struct WalletStorage {
     }
     
     func exportTorSetupFlag() -> Bool? {
+        ensureRelocatedBestEffort()
         let reqData: Data?
-        
+
         do {
             reqData = try data(forKey: Constants.zcashStoredTorSetupFlag)
         } catch {
@@ -689,6 +714,7 @@ struct WalletStorage {
     // MARK: - Voting Hotkey
 
     func importVotingHotkey(_ phrase: String, accountId: AccountUUID) throws {
+        try ensureRelocated()
         let hotkey = StoredVotingHotkey(seedPhrase: SeedPhrase(phrase), version: Constants.zcashKeychainVersion)
         let key = Constants.zcashStoredVotingHotkey(accountId: accountId)
         do {
@@ -702,6 +728,7 @@ struct WalletStorage {
     }
 
     func exportVotingHotkey(accountId: AccountUUID) throws -> StoredVotingHotkey {
+        try ensureRelocated()
         let key = Constants.zcashStoredVotingHotkey(accountId: accountId)
         let reqData: Data?
         do {
