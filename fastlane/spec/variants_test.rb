@@ -44,7 +44,7 @@ class ZodlVariantsTest < Minitest::Test
 
   def test_all_variants_declare_platform
     %w[internal testnet appstore].each { |v| assert_equal :ios, Zodl::Variants.config(v)[:platform], v }
-    %w[mac-internal mac-dmg].each { |v| assert_equal :macos, Zodl::Variants.config(v)[:platform], v }
+    %w[mac-internal mac-internal-dmg mac-testnet mac-testnet-dmg].each { |v| assert_equal :macos, Zodl::Variants.config(v)[:platform], v }
   end
 
   def test_config_mac_internal_mapping
@@ -56,24 +56,53 @@ class ZodlVariantsTest < Minitest::Test
     assert_equal :testflight, cfg[:channel]
   end
 
-  def test_config_mac_dmg_mapping
-    cfg = Zodl::Variants.config("mac-dmg")
+  def test_config_mac_internal_dmg_mapping
+    cfg = Zodl::Variants.config("mac-internal-dmg")
     assert_equal "zodlmac-internal", cfg[:scheme]
     assert_equal "Release-AppStore", cfg[:configuration]
     assert_equal "co.electriccoin.secant-testnet", cfg[:app_identifier]
     assert_equal :dmg, cfg[:channel]
   end
 
+  def test_config_mac_testnet_mapping
+    cfg = Zodl::Variants.config("mac-testnet")
+    assert_equal "zodlmac-testnet", cfg[:scheme]
+    assert_equal "zodlmac-testnet", cfg[:target]
+    assert_equal "Release-Testflight", cfg[:configuration]
+    assert_equal "co.ecc.zashi-testnet", cfg[:app_identifier]
+    assert_equal :testflight, cfg[:channel]
+  end
+
+  def test_config_mac_testnet_dmg_mapping
+    cfg = Zodl::Variants.config("mac-testnet-dmg")
+    assert_equal "zodlmac-testnet", cfg[:target]
+    assert_equal "Release-AppStore", cfg[:configuration]
+    assert_equal "co.ecc.zashi-testnet", cfg[:app_identifier]
+    assert_equal :dmg, cfg[:channel]
+  end
+
+  def test_mac_variants_declare_flavor
+    assert_equal "internal", Zodl::Variants.config("mac-internal")[:flavor]
+    assert_equal "internal", Zodl::Variants.config("mac-internal-dmg")[:flavor]
+    assert_equal "testnet", Zodl::Variants.config("mac-testnet")[:flavor]
+    assert_equal "testnet", Zodl::Variants.config("mac-testnet-dmg")[:flavor]
+  end
+
+  def test_mac_dmg_no_longer_exists
+    refute Zodl::Variants.valid?("mac-dmg")
+    assert_raises(ArgumentError) { Zodl::Variants.config("mac-dmg") }
+  end
+
   def test_expand_mac_combined
-    assert_equal %w[mac-internal mac-dmg], Zodl::Variants.expand("mac")
+    assert_equal %w[mac-internal mac-internal-dmg mac-testnet mac-testnet-dmg], Zodl::Variants.expand("mac")
   end
 
   def test_valid_accepts_mac_variants
-    %w[mac-internal mac-dmg mac].each { |v| assert Zodl::Variants.valid?(v), v }
+    %w[mac-internal mac-internal-dmg mac-testnet mac-testnet-dmg mac].each { |v| assert Zodl::Variants.valid?(v), v }
   end
 
   def test_bump_targets_all_covers_every_app_target_once
-    assert_equal %w[zodl-internal zodl-testnet zodl-production zodlmac-internal],
+    assert_equal %w[zodl-internal zodl-testnet zodl-production zodlmac-internal zodlmac-testnet],
                  Zodl::Variants.bump_targets("all")
   end
 
@@ -91,5 +120,10 @@ class ZodlVariantsTest < Minitest::Test
     assert_match(/zodlmac-internal/, error.message)
     assert_match(/ios/, error.message)
     assert_match(/all/, error.message)
+    assert_match(/'mac'/, error.message)
+  end
+
+  def test_bump_targets_mac_covers_only_mac_targets
+    assert_equal %w[zodlmac-internal zodlmac-testnet], Zodl::Variants.bump_targets("mac")
   end
 end
