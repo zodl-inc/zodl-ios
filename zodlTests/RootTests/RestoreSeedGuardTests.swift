@@ -33,7 +33,9 @@ import ComposableArchitecture
         store.dependencies.mainQueue = .immediate
         store.dependencies.zcashSDKEnvironment = .testnet
         store.dependencies.walletStorage = .noOp
-        store.dependencies.databaseFiles.areDbFilesPresentFor = { _ in dbPresent }
+        var databaseFiles = DatabaseFilesClient.noOp
+        databaseFiles.areDbFilesPresentFor = { _ in dbPresent }
+        store.dependencies.databaseFiles = databaseFiles
         store.dependencies.mnemonic = .liveValue
         store.dependencies.mnemonic.isValid = { _ in }
         store.dependencies.mnemonic.toSeed = { _ in [UInt8](repeating: 0, count: 32) }
