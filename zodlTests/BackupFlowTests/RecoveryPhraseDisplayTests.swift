@@ -51,7 +51,7 @@ import ComposableArchitecture
             RecoveryPhraseDisplay()
         } withDependencies: {
             $0.localAuthentication = .mockAuthenticationSucceeded
-            $0.walletStorage.exportWallet = { StoredWallet.placeholder }
+            $0.walletStorage.exportWallet = { _ in StoredWallet.placeholder }
         }
 
         await store.send(.recoveryPhraseUnhideRequested)
@@ -73,7 +73,7 @@ import ComposableArchitecture
             RecoveryPhraseDisplay()
         } withDependencies: {
             $0.localAuthentication = .mockAuthenticationSucceeded
-            $0.walletStorage.exportWallet = { throw ZcashError.synchronizerNotPrepared }
+            $0.walletStorage.exportWallet = { _ in throw ZcashError.synchronizerNotPrepared }
         }
 
         await store.send(.recoveryPhraseUnhideRequested)
