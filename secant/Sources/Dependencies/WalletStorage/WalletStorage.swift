@@ -86,6 +86,12 @@ struct WalletStorage {
     /// being stored as plaintext. Nil on iOS and in tests, where the legacy plaintext path is used.
     private let secureEnclave: SecureEnclaveClient?
     var zcashStoredWalletPrefix = ""
+    /// macOS live wiring sets this (WalletStorageLiveKey): every keychain query then targets the
+    /// iOS-style Data Protection keychain — access decided silently from the code signature —
+    /// instead of the legacy file-based login keychain, whose per-item signature ACLs throw
+    /// password dialogs at differently-signed builds (Xcode vs Developer ID vs TestFlight).
+    /// Existing items are relocated once by WalletStorage+KeychainRelocation. Never set on iOS.
+    var useDataProtectionKeychain = false
 
     /// Restore/create primes the just-supplied seed here (macOS / Secure-Enclave only) so the first-init
     /// burst — `prepare` plus the seed-derived metadata / address-book keys — reuses it instead of
@@ -730,7 +736,7 @@ struct WalletStorage {
     }
     
     func baseQuery(forAccount account: String = "", andKey forKey: String) -> [String: Any] {
-        let query: [String: AnyObject] = [
+        var query: [String: AnyObject] = [
             /// Uniquely identify this keychain accessor
             kSecAttrService as String: (zcashStoredWalletPrefix + forKey) as AnyObject,
             kSecAttrAccount as String: account as AnyObject,
@@ -741,6 +747,10 @@ struct WalletStorage {
             /// Thus, after restoring from a backup of a different device, these items will not be present.
             kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly
         ]
+
+        if useDataProtectionKeychain {
+            query[kSecUseDataProtectionKeychain as String] = true as AnyObject
+        }
 
         return query
     }
@@ -771,6 +781,9 @@ struct WalletStorage {
         if !account.isEmpty {
             query[kSecAttrAccount as String] = account
         }
+        if useDataProtectionKeychain {
+            query[kSecUseDataProtectionKeychain as String] = true
+        }
         return query
     }
 
@@ -790,11 +803,14 @@ struct WalletStorage {
     /// per-account items whose suffixes aren't known statically.
     func keychainKeys(withPrefix keyPrefix: String) -> [String] {
         let fullPrefix = zcashStoredWalletPrefix + keyPrefix
-        let query: [String: Any] = [
+        var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecMatchLimit as String: kSecMatchLimitAll,
             kSecReturnAttributes as String: kCFBooleanTrue as Any
         ]
+        if useDataProtectionKeychain {
+            query[kSecUseDataProtectionKeychain as String] = true
+        }
         var result: AnyObject?
         let status = secItem.copyMatching(query as CFDictionary, &result)
         guard status == errSecSuccess, let items = result as? [[String: Any]] else {
