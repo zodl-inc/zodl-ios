@@ -24,7 +24,7 @@ struct RestoreWalletCoordFlow {
     }
     
     @ObservableState
-    struct State {
+    struct State: Equatable {
         @Presents var alert: AlertState<Action>?
         var birthday: BlockHeight? = nil
         var isHelpSheetPresented = false
@@ -53,7 +53,7 @@ struct RestoreWalletCoordFlow {
         init() { }
     }
 
-    enum Action: BindableAction {
+    enum Action: BindableAction, Equatable {
         case alert(PresentationAction<Action>)
         case binding(BindingAction<RestoreWalletCoordFlow.State>)
         case commitRestore
@@ -233,3 +233,6 @@ extension AlertState where Action == RestoreWalletCoordFlow.Action {
         }
     }
 }
+
+extension RestoreWalletCoordFlow.Path.State: Equatable {}
+extension RestoreWalletCoordFlow.Path.Action: Equatable {}
