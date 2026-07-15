@@ -270,3 +270,40 @@ safe to launch as-is** (no Mac users yet; the gate is the friendly fallback).
 `seedFingerprint`), `RootInitialization.swift` (:460 eager derive, :495 fingerprint compare, migration
 trigger), `SmartBannerStore.swift` / `ResyncWalletStore.swift` (use metadata accessor), `Root/`
 (migration action). iOS paths untouched.
+
+## Data Protection keychain relocation (MOB-1485)
+
+The items this document describes originally lived in the **file-based login keychain**, whose
+per-item ACLs are bound to the creating app's code signature — so a differently-signed build
+(Xcode dev vs Developer ID DMG vs TestFlight) threw a password-only "wants to use your
+confidential information" dialog per item at launch. Since MOB-1485, the macOS live storage sets
+`WalletStorage.useDataProtectionKeychain`, which adds `kSecUseDataProtectionKeychain` to every
+keychain query: items live in the iOS-style Data Protection keychain, authorized silently from
+the code signature (Team ID + bundle ID, default access group — `kSecAttrAccessGroup` is
+deliberately never set, keeping internal/testnet isolated). The SE wrapping key needed no change:
+token-backed keys always lived in the DP domain (which is why it never password-prompted).
+
+Mechanics (`WalletStorage+KeychainRelocation.swift`):
+
+- **Lazy once-per-process gate:** every public accessor calls it first, so any first keychain
+  touch (including Splash's `areKeysPresent`) relocates before reading. Trigger is "the file
+  keychain still contains our items" — self-healing, no storage-version bump
+  (`zcashStorageVersion` keeps meaning the SE-split format, and the v2 migration composes on top:
+  a v1 plaintext blob relocates as-is, then splits inside the DP keychain).
+- **Crash-safe per item:** read file bytes (the one step an ACL can still gate — cross-signature
+  installs see one final prompt round) → write into DP (file bytes win over a crashed run's
+  duplicate) → read back and verify → only then delete the file original.
+- **Failure is sticky and loud:** any failure (including a denied prompt, `errSecAuthFailed`)
+  makes every throwing accessor throw `KeychainError.unknown(status)`, which
+  `walletInitializationState` routes to the OSStatusError screen. A denied relocation can never
+  read as "no wallet" — nobody gets sent to onboarding over a still-recoverable wallet.
+  Relaunching retries. Dev note: `errSecMissingEntitlement` (−34018) on the DP write means an
+  improperly signed/provisioned build.
+- **`resetZashi` is the escape hatch:** deliberately ungated (deletes are never ACL-gated) and it
+  additionally sweeps ZODL leftovers out of the file keychain.
+
+Ship notes: once relocated, older (file-keychain era) builds cannot see the wallet — downgrading
+means restoring from the mnemonic. `ThisDeviceOnly` is now genuinely enforced (no Migration
+Assistant / Time Machine carry-over; the mnemonic is the portable secret). Keychain Access and
+the `security` CLI no longer see the items — the `security delete-generic-password` rescue trick
+above only applies to pre-relocation installs.
