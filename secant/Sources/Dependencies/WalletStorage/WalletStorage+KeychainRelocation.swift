@@ -231,4 +231,23 @@ extension WalletStorage {
         }
         return nil
     }
+
+    /// macOS: after a reset wipes the DP keychain, also delete any of OUR items still sitting in
+    /// the legacy FILE keychain (un-relocated / half-relocated / failed relocation states).
+    /// Deletes never read item data, so this is promptless; foreign items are never touched.
+    /// Best-effort by design — reset is the escape hatch and must not throw over legacy leftovers.
+    func sweepLegacyFileKeychainItems() {
+        guard useDataProtectionKeychain else { return }
+        guard case .found(let leftovers) = legacyFileKeychainItems() else { return }
+        for item in leftovers {
+            var query: [String: Any] = [
+                kSecClass as String: kSecClassGenericPassword,
+                kSecAttrService as String: item.service
+            ]
+            if !item.account.isEmpty {
+                query[kSecAttrAccount as String] = item.account
+            }
+            _ = secItem.delete(query as CFDictionary)
+        }
+    }
 }
