@@ -1241,6 +1241,19 @@ import ComposableArchitecture
 
     // MARK: - Every flow-root back -> .flowFinished
 
+    @MainActor @Test func entryBackFinishesFlow() async {
+        // Entry is the NavigationStack root (not a `path` element): its back button can't pop
+        // anything, so `dismissRequired` must exit the whole flow (MOB-1466 fix — the button was
+        // previously wired to SwiftUI `dismiss()`, a no-op at the flow root).
+        let store = TestStore(initialState: MigrationCoordFlow.State()) {
+            MigrationCoordFlow()
+        }
+        store.exhaustivity = .off
+
+        await store.send(.entry(.dismissRequired))
+        await store.receive(\.flowFinished)
+    }
+
     @MainActor @Test func statusDoneFinishesFlow() async {
         var state = MigrationCoordFlow.State()
         state.path.append(.status(MigrationStatus.State(isFlowRoot: true)))

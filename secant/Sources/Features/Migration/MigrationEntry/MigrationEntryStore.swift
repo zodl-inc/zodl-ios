@@ -40,6 +40,10 @@ struct MigrationEntry {
         /// The orchard balance to migrate for the selected account, loaded on `onAppear`.
         case balanceLoaded(Zatoshi)
         case delegate(Delegate)
+        /// The nav-bar back button. Entry is the flow's root screen, so SwiftUI `dismiss()` is a
+        /// no-op here — the coordinator consumes this and exits the flow via `flowFinished`
+        /// (mirrors `SendForm.dismissRequired`).
+        case dismissRequired
         /// Inert for now; the "Find out more" destination (O-7) is undecided.
         case findOutMoreTapped
         case modeTapped(MigrationMode)
@@ -63,6 +67,9 @@ struct MigrationEntry {
                 return .none
 
             case .delegate:
+                return .none
+
+            case .dismissRequired:
                 return .none
 
             case .findOutMoreTapped:
