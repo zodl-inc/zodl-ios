@@ -582,8 +582,16 @@ def mac_dmg(variant, cfg, version, build, paths, auth_xcargs, repo_root)
   FileUtils.rm_f(dmg)
   icns = Dir[File.join(app, "Contents", "Resources", "*.icns")].sort
   volicon = icns.find { |path| File.basename(path) == "AppIcon.icns" } || icns.first
+  # Window background with the app→Applications arrow baked in (HiDPI TIFF,
+  # regenerable via fastlane/assets/render-dmg-background.swift). Resolved from
+  # the worktree (paths[:output_dir] is <worktree>/build) so the built ref's own
+  # asset is used; skipped gracefully if the ref predates it.
+  background = File.join(File.dirname(paths[:output_dir]), "fastlane", "assets", "dmg-background.tiff")
   run_argv(
-    Zodl::Dmg.create_dmg_command(app_name: "Zodl.app", source_dir: staging, dmg_path: dmg, volicon: volicon),
+    Zodl::Dmg.create_dmg_command(
+      app_name: "Zodl.app", source_dir: staging, dmg_path: dmg,
+      volicon: volicon, background: File.exist?(background) ? background : nil
+    ),
     retries: 1 # hdiutil occasionally fails with "Resource busy"; one retry clears it
   )
   run_argv(Zodl::Dmg.codesign_command(path: dmg))

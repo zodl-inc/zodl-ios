@@ -13,10 +13,13 @@ module Zodl
     end
 
     # `source_dir` must contain ONLY the app bundle; create-dmg turns the whole
-    # folder into the volume. `volicon` is optional (.icns); nil skips it.
-    def create_dmg_command(app_name:, source_dir:, dmg_path:, volname: "ZODL", volicon: nil)
+    # folder into the volume. `volicon` (.icns) and `background` (window-sized
+    # image, 600x400pt — the app→Applications arrow is baked into it) are
+    # optional; nil skips them.
+    def create_dmg_command(app_name:, source_dir:, dmg_path:, volname: "ZODL", volicon: nil, background: nil)
       command = ["create-dmg", "--volname", volname]
       command += ["--volicon", volicon] if volicon
+      command += ["--background", background] if background
       command + [
         "--window-pos", "200", "120",
         "--window-size", "600", "400",
