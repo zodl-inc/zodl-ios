@@ -111,6 +111,9 @@ extension WalletStorage {
     static var liveStorage: WalletStorage {
 #if os(macOS)
         var storage = WalletStorage(secItem: .live, secureEnclave: .liveValue)
+        // Data Protection keychain (MOB-1485): silent signature-based access instead of the login
+        // keychain's per-item ACL password dialogs. Existing items relocate once on first access.
+        storage.useDataProtectionKeychain = true
 #else
         var storage = WalletStorage(secItem: .live)
 #endif
