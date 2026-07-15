@@ -6,8 +6,8 @@ signing keys are stored in the repo or anywhere new**. A fail-closed *preflight*
 reconciles what you ask for against git, the project, and App Store Connect, and
 refuses to build on any mismatch.
 
-For the design rationale and the full check list see the
-[spec](superpowers/specs/2026-06-25-local-fastlane-release-automation-design.md).
+For the design rationale and history see the original ticket
+[MOB-1446](https://linear.app/zodl/issue/MOB-1446/build-some-kind-of-scriptsci-that-automate-ios-builds).
 `fastlane/README.md` is the one-screen quick reference.
 
 ## How it fits together
