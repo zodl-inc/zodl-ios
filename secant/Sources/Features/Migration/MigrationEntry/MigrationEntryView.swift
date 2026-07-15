@@ -64,7 +64,7 @@ struct MigrationEntryView: View {
                 .padding(.bottom, 24)
             }
             .screenHorizontalPadding()
-            .zashiBack()
+            .zashiBack() { store.send(.dismissRequired) }
         }
         .applyScreenBackground()
         .onAppear {

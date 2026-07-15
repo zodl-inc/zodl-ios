@@ -65,6 +65,10 @@ extension MigrationCoordFlow {
 
                 // MARK: - Entry
 
+            case .entry(.dismissRequired):
+                // Entry is the flow root: its back button has nothing to pop, it exits the flow.
+                return .send(.flowFinished)
+
             case .entry(.delegate(.chose(let mode))):
                 state.mode = mode
                 migrationManager.setMigrationMode(mode)
