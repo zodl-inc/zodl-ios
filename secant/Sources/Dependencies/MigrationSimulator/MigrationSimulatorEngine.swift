@@ -162,7 +162,20 @@ final class MigrationSimulatorEngine: @unchecked Sendable {
                 return MigrationSchedule(transfers: [proposal], estimatedDurationHours: 0)
             }
 
-            let notes = snapshot.notes.isEmpty ? [snapshot.orchardBalance] : snapshot.notes
+            // Pre-split preview (MOB-1480 QA fix): with the silent split running under the plan's
+            // Confirm CTA, `notes` still holds the single unsplit note at propose time — but the
+            // plan must show the post-split schedule the confirm will produce. `splitNotes` is
+            // pure in `(net, seed)`, so this preview and the actual split yield identical notes.
+            let notes: [Zatoshi]
+            if snapshot.notes.count > 1 {
+                notes = snapshot.notes
+            } else {
+                let previewed = MigrationSimulatorEngineDerivations.splitNotes(
+                    net: MigrationSimulatorEngineDerivations.netOfFee(snapshot.orchardBalance),
+                    seed: snapshot.rngSeed
+                )
+                notes = previewed.isEmpty ? [snapshot.orchardBalance] : previewed
+            }
             let transfers = notes.enumerated().map { index, note -> TransferProposal in
                 let dueAt = MigrationSimulatorEngineDerivations.dueAt(forTransferAt: index, isImmediate: false, now: now)
                 let height = MigrationSimulatorEngineDerivations.syntheticHeight(for: dueAt)
@@ -174,7 +187,10 @@ final class MigrationSimulatorEngine: @unchecked Sendable {
                     expiryHeight: height + MigrationSimulatorEngineDerivations.Constants.syntheticExpiryOffset
                 )
             }
-            return MigrationSchedule(transfers: transfers, estimatedDurationHours: notes.count * 6)
+            return MigrationSchedule(
+                transfers: transfers,
+                estimatedDurationHours: MigrationSimulatorEngineDerivations.scheduleDurationHours(transferCount: transfers.count)
+            )
         }
     }
 

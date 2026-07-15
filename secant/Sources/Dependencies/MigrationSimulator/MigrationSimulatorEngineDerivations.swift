@@ -14,6 +14,9 @@ import Foundation
 enum MigrationSimulatorEngineDerivations {
     enum Constants {
         static let fee = Zatoshi(10_000)
+        /// The first scheduled transfer is due shortly after commit (Michal's QA-specified cadence:
+        /// first in ~10 minutes, the rest `transferSpacing` apart).
+        static let firstTransferDelay: TimeInterval = 10 * 60
         /// Spacing between successive scheduled transfers.
         static let transferSpacing: TimeInterval = 6 * 3600
         /// A pending transfer more than this far past its `dueAt` reads as `.overdue`.
@@ -92,10 +95,20 @@ enum MigrationSimulatorEngineDerivations {
     /// `TransferProposal`) and `signAndStore()` (seeding each `SimulatorTransfer.dueAt`) — kept in
     /// one place so the two can never drift apart, which would desync a proposed transfer's
     /// stamped height from the `dueAt` it's actually signed/stored with. Immediate mode is always
-    /// due `now`; scheduled mode spaces transfers `transferSpacing` apart starting one spacing
-    /// unit out.
+    /// due `now`; scheduled mode puts the first transfer `firstTransferDelay` out (~10 minutes)
+    /// and spaces the rest `transferSpacing` apart after it.
     static func dueAt(forTransferAt index: Int, isImmediate: Bool, now: Date) -> Date {
-        isImmediate ? now : now.addingTimeInterval(Constants.transferSpacing * Double(index + 1))
+        isImmediate
+            ? now
+            : now.addingTimeInterval(Constants.firstTransferDelay + Constants.transferSpacing * Double(index))
+    }
+
+    /// Whole-hour (rounded up) span from commit to the last scheduled transfer's `dueAt` — the
+    /// `estimatedDurationHours` a scheduled plan/summary reports.
+    static func scheduleDurationHours(transferCount: Int) -> Int {
+        guard transferCount > 0 else { return 0 }
+        let span = Constants.firstTransferDelay + Constants.transferSpacing * Double(transferCount - 1)
+        return Int((span / 3600).rounded(.up))
     }
 
     // MARK: - Row derivation (transferRows / readout)
@@ -248,7 +261,7 @@ enum MigrationSimulatorEngineDerivations {
         let isComplete = snapshot.state == MigrationState.complete
         let estimatedDurationHours = snapshot.mode == MigrationMode.immediate
             ? 0
-            : snapshot.transfers.count * Int(Constants.transferSpacing / 3600)
+            : scheduleDurationHours(transferCount: snapshot.transfers.count)
 
         return MigrationSummary(
             transferred: transferred,

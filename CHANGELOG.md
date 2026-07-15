@@ -33,6 +33,7 @@ directly impact users rather than highlighting other crucial architectural updat
 
 ### Fixed
 - [MOB-1466] The back button on the "Move to Ironwood" entry screen now leaves the migration flow — it previously did nothing.
+- [MOB-1480] The simulated Confirm Transfer Plan now shows the full 3–5 transfer schedule (previewing the note split that runs on confirm) instead of a single transfer, with the first transfer due in about 10 minutes and the rest 6 hours apart.
 
 ## 3.7.2 build 1
 

@@ -321,10 +321,13 @@ import ComposableArchitecture
 
         let initialRows = engine.transferRows()
         #expect(initialRows[0].status == .active)
-        #expect(initialRows[0].hoursFromNow == 6)
+        // First transfer is due `firstTransferDelay` (~10 min) out — rounds to 0 hours.
+        #expect(initialRows[0].hoursFromNow == 0)
         #expect(initialRows[0].sentMinutesAgo == nil)
         #expect(initialRows[0].isBroadcasting == false)
         #expect(initialRows[1].status == .pending)
+        // Second transfer is one 6 h spacing after the first (10 min + 6 h rounds to 6).
+        #expect(initialRows[1].hoursFromNow == 6)
 
         engine.makeNextTransferDueNow()
         _ = await engine.executeNext(Self.networkPrivacy)
@@ -425,6 +428,39 @@ import ComposableArchitecture
 
         let nowHeight = MigrationSimulatorEngineDerivations.syntheticHeight(for: Date())
         #expect(abs(only.nextExecutableAfterHeight - nowHeight) <= 2)
+    }
+
+    // MARK: - propose() pre-split preview + cadence (MOB-1480 QA fixes)
+
+    @Test func proposeScheduledBeforeSplitPreviewsTheEventualSplit() async {
+        // Fresh scheduled wallet: the split hasn't run yet (it runs silently under the plan's
+        // Confirm CTA), but the plan must already show the full 3-5 transfer schedule the split
+        // will produce — not one monolithic transfer.
+        let engine = makeEngine()
+        engine.applyPreset(SimulatorPreset.freshRequired)
+
+        let schedule = await engine.propose()
+        #expect((3...5).contains(schedule.transfers.count))
+
+        // `splitNotes` is pure in (net, seed), so the preview and the actual split at confirm
+        // must yield the exact same notes, in order.
+        let proposal = await engine.prepareSplit()
+        #expect(schedule.transfers.map(\.amount) == proposal.outputNotes)
+    }
+
+    @Test func scheduledCadencePutsFirstTransferTenMinutesOutThenSixHourly() {
+        let now = Date(timeIntervalSince1970: 1_000_000)
+
+        let first = MigrationSimulatorEngineDerivations.dueAt(forTransferAt: 0, isImmediate: false, now: now)
+        let second = MigrationSimulatorEngineDerivations.dueAt(forTransferAt: 1, isImmediate: false, now: now)
+
+        #expect(first == now.addingTimeInterval(10 * 60))
+        #expect(second == now.addingTimeInterval(10 * 60 + 6 * 3600))
+
+        #expect(MigrationSimulatorEngineDerivations.scheduleDurationHours(transferCount: 0) == 0)
+        #expect(MigrationSimulatorEngineDerivations.scheduleDurationHours(transferCount: 1) == 1)
+        // 10 min + 4 spacings of 6 h, rounded up to whole hours.
+        #expect(MigrationSimulatorEngineDerivations.scheduleDurationHours(transferCount: 5) == 25)
     }
 
     // MARK: - Keystone (PCZT)
