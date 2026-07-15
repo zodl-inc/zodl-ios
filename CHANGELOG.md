@@ -15,6 +15,7 @@ directly impact users rather than highlighting other crucial architectural updat
 - [MOB-1482] `Scripts/bump.sh` now requires `--target` (an Xcode target name, `ios`, or `all`), so version bumps are explicitly scoped — bumping iOS no longer silently rewrites the independently-versioned macOS app.
 
 ### Fixed
+- [MOB-1485] macOS: launching a differently-signed build (Xcode vs DMG vs TestFlight) no longer triggers repeated "wants to use your confidential information" keychain password dialogs — wallet data now lives in the Data Protection keychain and existing items migrate over automatically on first launch.
 - [MOB-1482] The release preflight now validates `--version` against the `MARKETING_VERSION` of the variant's own target, so the macOS app can be versioned independently of the iOS app.
 
 ## 3.7.2 build 1
