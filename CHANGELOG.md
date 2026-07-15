@@ -7,9 +7,11 @@ directly impact users rather than highlighting other crucial architectural updat
 ## [Unreleased]
 
 ### Added
+- [MOB-1484] The macOS ZODL app now ships in two side-by-side flavors — Zodl Internal (mainnet) and Zodl Testnet — each buildable for TestFlight (`mac-internal`, `mac-testnet`) and as a notarized DMG (`mac-internal-dmg`, `mac-testnet-dmg`; `mac` builds all four). The testnet flavor has its own app icon.
 - [MOB-1482] The macOS ZODL app can now be built and shipped through the release tooling on two channels: TestFlight (`mac-internal`) and a notarized drag-to-Applications DMG for distribution outside the App Store (`mac-dmg`; combined variant `mac` builds both).
 
 ### Changed
+- [MOB-1484] The `mac-dmg` release variant was renamed to `mac-internal-dmg`; DMG artifacts are now named per flavor (`ZODL-internal-…`/`ZODL-testnet-…`); `Scripts/bump.sh` accepts `--target mac` for all macOS targets.
 - [MOB-1482] `Scripts/bump.sh` now requires `--target` (an Xcode target name, `ios`, or `all`), so version bumps are explicitly scoped — bumping iOS no longer silently rewrites the independently-versioned macOS app.
 
 ### Fixed

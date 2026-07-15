@@ -53,7 +53,13 @@ rbenv rehash
 #    fetches the bundler version pinned in Gemfile.lock, then the gems.
 bundle install
 
-# 6. (optional) the test runner for the wrapper scripts
+# 6. Build-output formatter and DMG tooling. xcbeautify renders xcodebuild
+#    output (the Fastfile pins it — without it Swift Testing failures are
+#    swallowed). create-dmg builds the drag-to-Applications disk image for the
+#    mac DMG variants.
+brew install xcbeautify create-dmg
+
+# 7. (optional) the test runner for the wrapper scripts
 brew install bats-core
 ```
 
@@ -83,9 +89,24 @@ tests; you do not need it to build or ship.
    `fastlane/.env` and `*.p8` are gitignored — they are never committed.
 2. **Partner keys.** Put `PartnerKeys.plist` at `secant/Resources/PartnerKeys.plist`
    (gitignored; required to build).
-3. **Signing.** You must already be able to Archive and upload the app from Xcode
-   by hand (Apple Distribution certificate, automatic signing, team `RLPRR8CPQG`).
-   The tooling reuses that identity; it does not manage certificates.
+3. **Signing certificates.** The tooling reuses identities from your login
+   keychain; it does not create or manage certificates. Baseline: you must
+   already be able to Archive and upload from Xcode by hand (automatic signing,
+   team `RLPRR8CPQG`). Required per variant:
+
+   | Variant(s) | Certificate(s) needed in the keychain |
+   |---|---|
+   | `internal`, `testnet`, `appstore` (iOS) | **Apple Distribution** |
+   | `mac-internal`, `mac-testnet` (macOS TestFlight) | **Apple Distribution** + **Mac Installer Distribution** (signs the uploaded `.pkg`) |
+   | `mac-internal-dmg`, `mac-testnet-dmg` (macOS DMG, outside the App Store) | **Developer ID Application** |
+
+   Apple Distribution and Mac Installer Distribution can be created by any team
+   **Admin** (Xcode → Settings → Accounts → Manage Certificates…, or the
+   developer portal). Developer ID Application can only be created by the
+   **Account Holder** — the hand-off flow is documented in
+   [docs/macos/DEVELOPER_ID_CERTIFICATE.md](macos/DEVELOPER_ID_CERTIFICATE.md).
+   Notarization (part of the DMG flow) needs **no certificate** — it
+   authenticates with the same App Store Connect API key from step 1.
 
 ### C. Quick check
 
@@ -96,15 +117,25 @@ bundle exec rake test        # tooling logic passes
 
 ## The variants
 
-Each variant is a **separate App Store Connect app**, so build numbers are
-independent — a build number only has to beat that variant's own history.
+Build numbers are validated against the variant's own App Store Connect train
+(app record + platform). The two mac flavors install side by side — different
+bundle ids, different `.app` names, different DMG names.
 
 | `--variant` | Scheme | App Store Connect app | Goes to |
 |---|---|---|---|
-| `internal` | `zodl-internal` | `co.electriccoin.secant-testnet` | TestFlight |
-| `testnet` | `zodl-testnet` | `co.ecc.zashi-testnet` | TestFlight |
-| `appstore` | `zodl-AppStore` | `co.electriccoin.secant-mainnet` | App Store |
-| `internal-testnet` | — | both of the above | builds `internal` then `testnet`, running tests once |
+| `internal` | `zodl-internal` | `co.electriccoin.secant-testnet` (iOS) | TestFlight |
+| `testnet` | `zodl-testnet` | `co.ecc.zashi-testnet` (iOS) | TestFlight |
+| `appstore` | `zodl-AppStore` | `co.electriccoin.secant-mainnet` (iOS) | App Store |
+| `mac-internal` | `zodlmac-internal` | `co.electriccoin.secant-testnet` (macOS) | TestFlight |
+| `mac-testnet` | `zodlmac-testnet` | `co.ecc.zashi-testnet` (macOS) | TestFlight |
+| `mac-internal-dmg` | `zodlmac-internal` | — (no upload) | notarized DMG in `build/` |
+| `mac-testnet-dmg` | `zodlmac-testnet` | — (no upload) | notarized DMG in `build/` |
+| `internal-testnet` | — | both iOS TestFlight apps | builds `internal` then `testnet`, running tests once |
+| `mac` | — | all four macOS variants | TestFlight + DMGs |
+
+DMG artifacts land at `build/ZODL-<flavor>-<version>-<build>.dmg` (e.g.
+`build/ZODL-testnet-3.7.1-7.dmg`) — signed, notarized, stapled, with a
+drag-to-Applications window.
 
 ## Everyday use — the release flow
 
@@ -148,6 +179,15 @@ sequence — start from wherever that app left off. (The build then waits for Ap
 Store Connect processing; submitting it for review is still done in App Store
 Connect.)
 
+**macOS builds** work the same way — pick the variant:
+
+```bash
+# TestFlight (internal = mainnet, testnet = testnet network):
+./Scripts/release.sh --variant mac-internal --ref ironwood-testnet-demo --version 3.7.1 --build 8
+# Notarized DMG for distribution outside the App Store:
+./Scripts/release.sh --variant mac-testnet-dmg --ref ironwood-testnet-demo --version 3.7.1 --build 8
+```
+
 ## Always check first with `--dry-run`
 
 Add `--dry-run` to run every preflight check and print the reconciliation summary
@@ -157,18 +197,25 @@ Add `--dry-run` to run every preflight check and print the reconciliation summar
 ./Scripts/release.sh --variant appstore --ref release/3.8.0 --version 3.8.0 --build 1 --dry-run
 ```
 
-The preflight blocks the build if: the version doesn't match the project's
-`MARKETING_VERSION` or the `release/X.Y.Z` branch; the build number duplicates or
-is lower than the variant's latest on App Store Connect; the ref isn't on
-`origin`; `PartnerKeys.plist` is missing/invalid; Xcode doesn't match
-`.xcode-version`; or no distribution signing identity is present. It *warns* (but
-proceeds) on a build-number gap or an uncommitted working tree.
+The preflight blocks the build if: the version doesn't match the **built
+target's** `MARKETING_VERSION` (targets are versioned independently — macOS
+does not track iOS) or the `release/X.Y.Z` branch; the build number duplicates
+or regresses the variant's own App Store Connect train (DMG variants have no
+train — only positivity is checked); the ref isn't on `origin`;
+`PartnerKeys.plist` is missing/invalid; Xcode doesn't match `.xcode-version`;
+a required signing identity is missing (named per variant — see the
+certificate matrix above); or the local `../ZcashLightClientKit` checkout is
+missing or its FFI lacks the platform's slice (macOS requires a lipo-verified
+universal slice). It *warns* on a build-number gap, an uncommitted working
+tree, or a dirty SDK checkout.
 
 ## Command reference
 
 ```
 Scripts/release.sh --variant <v> --ref <ref> --version <X.Y.Z> --build <n> [options]
-  --variant     internal | testnet | appstore | internal-testnet
+  --variant     internal | testnet | appstore | internal-testnet |
+                mac-internal | mac-internal-dmg | mac-testnet | mac-testnet-dmg |
+                mac  (mac = all four macOS variants)
   --ref         branch, tag, or commit to build (no checkout needed)
   --version     marketing version you intend to ship (X.Y.Z)
   --build       build number (integer)
@@ -177,10 +224,10 @@ Scripts/release.sh --variant <v> --ref <ref> --version <X.Y.Z> --build <n> [opti
   --skip-tests  skip the unit-test step
   -h, --help
 
-Scripts/bump.sh --version <X.Y.Z> --build <n> --target <target|ios|all>
-  --target      scope of the bump: an Xcode target name (e.g. zodlmac-internal),
-                'ios' (all iOS app targets), or 'all' (every app target) —
-                targets are versioned independently (macOS does not track iOS)
+Scripts/bump.sh --version <X.Y.Z> --build <n> --target <target|ios|mac|all>
+  --target      an Xcode target name (e.g. zodlmac-testnet), 'ios' (all iOS app targets),
+                'mac' (all macOS app targets), or 'all' (every app target) —
+                targets are versioned independently
 ```
 
 ## Troubleshooting (preflight messages)
@@ -193,7 +240,7 @@ Scripts/bump.sh --version <X.Y.Z> --build <n> --target <target|ios|all>
 | `Could not resolve ref …` | The branch/tag/commit isn't on `origin` or locally — push or fetch it. |
 | `PartnerKeys.plist is missing or invalid` | Place a valid plist at `secant/Resources/PartnerKeys.plist` (see `Scripts/validate-partner-keys.sh`). |
 | `Xcode version does not match .xcode-version` | Switch Xcode (e.g. `xcodes select`) to the pinned version, or update `.xcode-version`. |
-| `no distribution signing identity` | Ensure your Apple Distribution certificate is in the keychain — the same setup that lets you Archive manually. |
+| `missing signing identity in keychain: '<name>'` | Create/import that certificate (see the certificate matrix in section B). |
 | `Run through bundler …` | Use `./Scripts/release.sh` / `./Scripts/bump.sh` (or `bundle exec fastlane …`), not bare `fastlane`. |
 | TestFlight build stuck on *Missing Compliance* | Set `ITSAppUsesNonExemptEncryption` so the build clears export compliance automatically. |
 
