@@ -23,6 +23,25 @@ module Zodl
       }.uniq.sort
     end
 
+    # The target's PRODUCT_NAME with pbxproj quoting stripped and a literal
+    # $(TARGET_NAME) resolved to the target name — the .app bundle's base name.
+    # nil when the target or setting is absent; raises when the target's own
+    # configurations disagree (same policy as the version check).
+    def product_name(pbxproj, target:)
+      ids = config_ids(pbxproj, target: target)
+      return nil unless ids
+
+      values = ids.filter_map { |config_id|
+        block = config_block(pbxproj, config_id)
+        block && block[/PRODUCT_NAME = (.+?);/, 1]&.gsub(/\A"|"\z/, "")
+      }.uniq
+      if values.size > 1
+        raise ArgumentError, "target #{target.inspect} configurations disagree on PRODUCT_NAME: #{values.join(', ')}"
+      end
+
+      values.first == "$(TARGET_NAME)" ? target : values.first
+    end
+
     # Returns a copy of `pbxproj` with `key = value;` rewritten in each of
     # `target`'s configuration blocks. Blocks that don't carry the key are left
     # untouched (nothing is inserted). Raises on an unknown target.

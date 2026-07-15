@@ -10,6 +10,7 @@ class ZodlPbxprojTest < Minitest::Test
     			buildSettings = {
     				MARKETING_VERSION = 3.7.2;
     				PRODUCT_BUNDLE_IDENTIFIER = "co.example.ios";
+    				PRODUCT_NAME = "$(TARGET_NAME)";
     			};
     			name = Debug;
     		};
@@ -17,6 +18,7 @@ class ZodlPbxprojTest < Minitest::Test
     			isa = XCBuildConfiguration;
     			buildSettings = {
     				MARKETING_VERSION = 3.7.2;
+    				PRODUCT_NAME = "$(TARGET_NAME)";
     			};
     			name = "Release-Testflight";
     		};
@@ -25,6 +27,7 @@ class ZodlPbxprojTest < Minitest::Test
     			buildSettings = {
     				CURRENT_PROJECT_VERSION = 6;
     				MARKETING_VERSION = 3.7.1;
+    				PRODUCT_NAME = "Zodl Testnet";
     				SDKROOT = macosx;
     			};
     			name = Debug;
@@ -34,6 +37,7 @@ class ZodlPbxprojTest < Minitest::Test
     			buildSettings = {
     				CURRENT_PROJECT_VERSION = 6;
     				MARKETING_VERSION = 3.7.1;
+    				PRODUCT_NAME = "Zodl Testnet";
     			};
     			name = "Release-AppStore";
     		};
@@ -41,6 +45,7 @@ class ZodlPbxprojTest < Minitest::Test
     			isa = XCBuildConfiguration;
     			buildSettings = {
     				MARKETING_VERSION = 1.0.0;
+    				PRODUCT_NAME = One;
     			};
     			name = Debug;
     		};
@@ -48,6 +53,7 @@ class ZodlPbxprojTest < Minitest::Test
     			isa = XCBuildConfiguration;
     			buildSettings = {
     				MARKETING_VERSION = 2.0.0;
+    				PRODUCT_NAME = Two;
     			};
     			name = Release;
     		};
@@ -121,5 +127,21 @@ class ZodlPbxprojTest < Minitest::Test
     assert_raises(ArgumentError) do
       Zodl::Pbxproj.set_setting(FIXTURE, target: "nope", key: "MARKETING_VERSION", value: "1.0.0")
     end
+  end
+
+  def test_product_name_strips_quotes_around_names_with_spaces
+    assert_equal "Zodl Testnet", Zodl::Pbxproj.product_name(FIXTURE, target: "zodlmac-internal")
+  end
+
+  def test_product_name_resolves_target_name_macro
+    assert_equal "zodl-internal", Zodl::Pbxproj.product_name(FIXTURE, target: "zodl-internal")
+  end
+
+  def test_product_name_raises_when_configs_disagree
+    assert_raises(ArgumentError) { Zodl::Pbxproj.product_name(FIXTURE, target: "disagreeing") }
+  end
+
+  def test_product_name_nil_for_unknown_target
+    assert_nil Zodl::Pbxproj.product_name(FIXTURE, target: "nope")
   end
 end
