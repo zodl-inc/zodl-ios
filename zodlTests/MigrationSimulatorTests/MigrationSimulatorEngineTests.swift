@@ -658,6 +658,7 @@ import ComposableArchitecture
         isNextTransferDue: Bool = false
     ) -> MigrationBannerVariant? {
         MigrationDerivations.bannerVariant(
+            isIronwoodActivated: true,
             state: engine.currentState(),
             hasInvalid: engine.hasInvalid(),
             hasOverdue: engine.hasOverdue(),
@@ -675,6 +676,7 @@ import ComposableArchitecture
         isNextTransferDue: Bool = false
     ) -> MigrationReentryRoute {
         MigrationDerivations.reentryRoute(
+            isIronwoodActivated: true,
             state: engine.currentState(),
             hasInvalid: engine.hasInvalid(),
             hasOverdue: engine.hasOverdue(),
