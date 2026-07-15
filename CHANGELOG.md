@@ -9,6 +9,9 @@ directly impact users rather than highlighting other crucial architectural updat
 ### Added
 - [MOB-1482] The macOS ZODL app can now be built and shipped through the release tooling on two channels: TestFlight (`mac-internal`) and a notarized drag-to-Applications DMG for distribution outside the App Store (`mac-dmg`; combined variant `mac` builds both).
 
+### Changed
+- [MOB-1482] `Scripts/bump.sh` now requires `--target` (an Xcode target name, `ios`, or `all`), so version bumps are explicitly scoped — bumping iOS no longer silently rewrites the independently-versioned macOS app.
+
 ### Fixed
 - [MOB-1482] The release preflight now validates `--version` against the `MARKETING_VERSION` of the variant's own target, so the macOS app can be versioned independently of the iOS app.
 
