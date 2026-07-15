@@ -5,7 +5,6 @@ class ZodlSigningTest < Minitest::Test
   APPLE_DIST = '1) ABC123 "Apple Distribution: Electric Coin Co. (RLPRR8CPQG)"'
   IPHONE_DIST = '1) ABC123 "iPhone Distribution: Electric Coin Co. (RLPRR8CPQG)"'
   MAC_INSTALLER = '2) DEF456 "Mac Installer Distribution: Electric Coin Co. (RLPRR8CPQG)"'
-  LEGACY_INSTALLER = '2) DEF456 "3rd Party Mac Developer Installer: Electric Coin Co. (RLPRR8CPQG)"'
   DEV_ID = '3) FED789 "Developer ID Application: Electric Coin Co. (RLPRR8CPQG)"'
 
   def missing(platform, channel, installed)
@@ -29,10 +28,6 @@ class ZodlSigningTest < Minitest::Test
     assert_equal ["Apple Distribution", "Mac Installer Distribution"], missing(:macos, :testflight, "")
     assert_equal ["Mac Installer Distribution"], missing(:macos, :testflight, APPLE_DIST)
     assert_empty missing(:macos, :testflight, APPLE_DIST + "\n" + MAC_INSTALLER)
-  end
-
-  def test_mac_testflight_accepts_legacy_installer_name
-    assert_empty missing(:macos, :testflight, APPLE_DIST + "\n" + LEGACY_INSTALLER)
   end
 
   def test_mac_dmg_needs_developer_id

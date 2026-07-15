@@ -11,10 +11,7 @@ module Zodl
     REQUIREMENTS = {
       [:ios, :testflight] => [["Apple Distribution", "iPhone Distribution"]],
       [:ios, :appstore] => [["Apple Distribution", "iPhone Distribution"]],
-      [:macos, :testflight] => [
-        ["Apple Distribution"],
-        ["Mac Installer Distribution", "3rd Party Mac Developer Installer"]
-      ],
+      [:macos, :testflight] => [["Apple Distribution"], ["Mac Installer Distribution"]],
       [:macos, :dmg] => [["Developer ID Application"]]
     }.freeze
 

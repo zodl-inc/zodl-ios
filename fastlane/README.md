@@ -40,8 +40,13 @@ against git, the project, and App Store Connect, and refuses to build on any
 mismatch: wrong version (vs the project `MARKETING_VERSION` and the release
 branch), a duplicate or regressing build number (checked against the variant's
 own App Store Connect app), an unpushed ref, a missing/invalid `PartnerKeys.plist`,
-the wrong Xcode, or no distribution signing identity. macOS variants additionally require the matching certificates in the keychain (`mac-internal`: Apple Distribution + Mac Installer Distribution; `mac-dmg`: Developer ID Application — see docs/macos/DEVELOPER_ID_CERTIFICATE.md) and a local ../ZcashLightClientKit checkout with a universal macOS FFI slice. Run with `--dry-run` to see
-it without building.
+the wrong Xcode, no distribution signing identity, or a local ../ZcashLightClientKit
+checkout missing its platform's FFI slice — every variant needs this checkout, not
+just macOS. macOS variants additionally require the matching certificates in the
+keychain (`mac-internal`: Apple Distribution + Mac Installer Distribution;
+`mac-dmg`: Developer ID Application — see docs/macos/DEVELOPER_ID_CERTIFICATE.md)
+and a universal (arm64 + x86_64) macOS FFI slice in that checkout. Run with
+`--dry-run` to see it without building.
 
 ## Notifications
 
