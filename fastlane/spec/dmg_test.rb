@@ -20,8 +20,16 @@ class ZodlDmgTest < Minitest::Test
     assert_includes_run cmd, ["--app-drop-link", "450", "190"]
     assert_includes_run cmd, ["--hide-extension", "Zodl.app"]
     refute_includes cmd, "--volicon"
+    refute_includes cmd, "--background"
     # Output path then source dir, in that order, at the end.
     assert_equal ["/tmp/out.dmg", "/tmp/staging"], cmd.last(2)
+  end
+
+  def test_create_dmg_command_with_background
+    cmd = Zodl::Dmg.create_dmg_command(
+      app_name: "Zodl.app", source_dir: "/s", dmg_path: "/d.dmg", background: "/bg.tiff"
+    )
+    assert_includes_run cmd, ["--background", "/bg.tiff"]
   end
 
   def test_create_dmg_command_with_volicon
