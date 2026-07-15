@@ -34,14 +34,14 @@ import Security
 
     @Test func areKeysPresentTriggersRelocation() throws {
         let fake = InMemorySecItemStore()
-        fake.seedFile(service: "zcashStoredWalletSeed", data: Data([1]))
+        fake.seedFile(service: "zcashStoredWallet", data: Data([1]))
         let storage = makeStorage(fake)
 
         let present = try storage.areKeysPresent()
 
         #expect(present)
         #expect(fake.fileItems().isEmpty)
-        #expect(fake.dataProtectionItems()[InMemorySecItemStore.ItemKey(service: "zcashStoredWalletSeed", account: "")] == Data([1]))
+        #expect(fake.dataProtectionItems()[InMemorySecItemStore.ItemKey(service: "zcashStoredWallet", account: "")] == Data([1]))
     }
 
     @Test func throwingAccessorsThrowAfterDeniedRelocation() {
@@ -63,7 +63,7 @@ import Security
         let fake = InMemorySecItemStore()
         fake.seedFile(service: "zcashStoredWalletSeed", data: Data([1]))
         fake.seedFile(service: "zcashStoredWalletBackupAcknowledged", data: Data([1]))
-        fake.injectFileReadError(service: "zcashStoredWalletSeed", status: errSecAuthFailed)
+        fake.injectFileReadError(service: "zcashStoredWalletBackupAcknowledged", status: errSecAuthFailed)
         let storage = makeStorage(fake)
 
         #expect(storage.exportWalletBackupAcknowledged() == false)
