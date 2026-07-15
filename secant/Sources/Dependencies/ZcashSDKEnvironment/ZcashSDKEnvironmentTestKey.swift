@@ -16,6 +16,7 @@ extension ZcashSDKEnvironment: TestDependencyKey {
     static func test() -> Self {
         Self(
             latestCheckpoint: { 0 },
+            ironwoodActivationHeight: { BlockHeight(4_134_000) },
             endpoint: { defaultEndpoint(for: .testnet) },
             exchangeRateIPRateLimit: { 120 },
             exchangeRateStaleLimit: { 15 * 60 },

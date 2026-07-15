@@ -167,11 +167,17 @@ extension Root {
                 // `power_wifi_sync` task: stop the synchronizer and release `state.bgTask` (a
                 // sync-only session may have set it), then re-arm — an expired session must never
                 // orphan the wakeup chain. Re-submitting with the same identifier REPLACES the
-                // pending request, so this is safe even if branch 2's up-front re-arm already ran
+                // pending request, so this is safe even if branch 3's up-front re-arm already ran
                 // in this same session.
                 sdkSynchronizer.stop()
                 state.bgTask?.setTaskCompleted(success: false)
                 state.bgTask = nil
+                // MOB-1483: pre-activation, branch 1 of the decision tree below never arms in the
+                // first place — skip the re-arm here too, for the same reason: there's nothing to
+                // keep alive, so let the wakeup chain lapse rather than resurrect a stale one.
+                if !migrationManager.isIronwoodActivated() {
+                    return .none
+                }
                 return .run { [migrationBGScheduler] _ in await migrationBGScheduler.scheduleNextWindow() }
 
             case .initialization(.appDelegate(.migrationNotificationTapped)):
@@ -852,12 +858,17 @@ extension Root {
 
     /// The migration BG session's decision tree (spec "Root: BG session decision tree"), checked
     /// in this exact order:
-    /// 1. Plan broken (invalid transfer, or expired-attention state) — notify, do NOT re-arm.
-    /// 2. Sync required before the next transfer — either skip (deferred-after-broadcast) or run a
+    /// 1. Ironwood not yet activated (MOB-1483) — there is no migration work to do
+    ///    pre-activation. Complete the session immediately: no notification, no executor call,
+    ///    and deliberately no re-arm — a task chain armed before activation (or before this gate
+    ///    landed) is left to lapse here rather than kept alive; the next arm happens once
+    ///    `isIronwoodActivated()` flips true (self-healing).
+    /// 2. Plan broken (invalid transfer, or expired-attention state) — notify, do NOT re-arm.
+    /// 3. Sync required before the next transfer — either skip (deferred-after-broadcast) or run a
     ///    sync-only session that never broadcasts, reusing the existing `power_wifi_sync` sync-kick
     ///    machinery verbatim (`state.bgTask` + `.retryStart`; `synchronizerStateChanged` completes
     ///    the task on `.upToDate`/`.stopped`/`.error`).
-    /// 3. Otherwise, send: `executeNextPendingMigrationTransfer` and notify/re-arm per outcome.
+    /// 4. Otherwise, send: `executeNextPendingMigrationTransfer` and notify/re-arm per outcome.
     /// Every branch except the sync-only session completes `handle` itself (that session's
     /// completion is the existing `synchronizerStateChanged` machinery, exactly like the
     /// `power_wifi_sync` task it mirrors).
@@ -865,6 +876,10 @@ extension Root {
         state: inout Root.State,
         handle: MigrationBGSessionHandle
     ) -> Effect<Root.Action> {
+        if !migrationManager.isIronwoodActivated() {
+            return .run { _ in handle.complete(true) }
+        }
+
         let migrationState = sdkSynchronizer.getMigrationState()
         let isPlanBroken = sdkSynchronizer.hasInvalidMigrationTransfers()
             || migrationState == MigrationState.requiresAttention(AttentionReason.transferExpired)
