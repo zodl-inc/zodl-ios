@@ -12,12 +12,16 @@
 import Foundation
 import Security
 
-extension OSStatus: Error {}
-
 /// Once-per-process outcome of the keychain relocation.
 enum KeychainRelocationState: Equatable, Sendable {
     case notStarted
     case done
+    case failed(OSStatus)
+}
+
+/// Outcome of the file-keychain discovery scan.
+enum LegacyScanOutcome: Equatable {
+    case found([WalletStorage.LegacyItem])
     case failed(OSStatus)
 }
 
@@ -70,9 +74,9 @@ extension WalletStorage {
         }
         let leftovers: [LegacyItem]
         switch legacyFileKeychainItems() {
-        case .failure(let status):
+        case .failed(let status):
             return KeychainRelocationState.failed(status)
-        case .success(let items):
+        case .found(let items):
             leftovers = items
         }
         for item in leftovers {
@@ -86,7 +90,7 @@ extension WalletStorage {
     /// Attribute-only scan of the FILE keychain for items whose service belongs to this ZODL
     /// flavor. Attribute reads are never ACL-gated, so this is promptless. Sorted for
     /// deterministic processing order.
-    func legacyFileKeychainItems() -> Result<[LegacyItem], OSStatus> {
+    func legacyFileKeychainItems() -> LegacyScanOutcome {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecMatchLimit as String: kSecMatchLimitAll,
@@ -95,10 +99,10 @@ extension WalletStorage {
         var result: AnyObject?
         let status = secItem.copyMatching(query as CFDictionary, &result)
         if status == errSecItemNotFound {
-            return .success([])
+            return .found([])
         }
         guard status == errSecSuccess, let items = result as? [[String: Any]] else {
-            return .failure(status)
+            return .failed(status)
         }
         let owned = items.compactMap { attributes -> LegacyItem? in
             guard
@@ -108,7 +112,7 @@ extension WalletStorage {
             let account = attributes[kSecAttrAccount as String] as? String ?? ""
             return LegacyItem(service: service, account: account)
         }
-        return .success(owned.sorted())
+        return .found(owned.sorted())
     }
 
     /// Whether a file-keychain service string belongs to THIS flavor of ZODL. The flavor prefix
