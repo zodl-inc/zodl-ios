@@ -20,6 +20,7 @@ struct MigrationManagerTests {
 
     @Test func notStartedWithPositiveBalanceIsRequired() {
         let variant = MigrationDerivations.bannerVariant(
+            isIronwoodActivated: true,
             state: MigrationState.notStarted,
             hasInvalid: false,
             hasOverdue: false,
@@ -35,6 +36,7 @@ struct MigrationManagerTests {
 
     @Test func notStartedWithZeroBalanceIsNil() {
         let variant = MigrationDerivations.bannerVariant(
+            isIronwoodActivated: true,
             state: MigrationState.notStarted,
             hasInvalid: false,
             hasOverdue: false,
@@ -50,6 +52,7 @@ struct MigrationManagerTests {
 
     @Test func readyToProposeWithPositiveBalanceIsRequired() {
         let variant = MigrationDerivations.bannerVariant(
+            isIronwoodActivated: true,
             state: MigrationState.readyToPropose,
             hasInvalid: false,
             hasOverdue: false,
@@ -65,6 +68,7 @@ struct MigrationManagerTests {
 
     @Test func readyToProposeWithZeroBalanceIsNil() {
         let variant = MigrationDerivations.bannerVariant(
+            isIronwoodActivated: true,
             state: MigrationState.readyToPropose,
             hasInvalid: false,
             hasOverdue: false,
@@ -80,6 +84,7 @@ struct MigrationManagerTests {
 
     @Test func splitPendingConfirmationIsSplitting() {
         let variant = MigrationDerivations.bannerVariant(
+            isIronwoodActivated: true,
             state: MigrationState.splitPendingConfirmation,
             hasInvalid: false,
             hasOverdue: false,
@@ -102,6 +107,7 @@ struct MigrationManagerTests {
         )
 
         let variant = MigrationDerivations.bannerVariant(
+            isIronwoodActivated: true,
             state: MigrationState.inProgress(progress),
             hasInvalid: false,
             hasOverdue: false,
@@ -124,6 +130,7 @@ struct MigrationManagerTests {
         )
 
         let variant = MigrationDerivations.bannerVariant(
+            isIronwoodActivated: true,
             state: MigrationState.inProgress(progress),
             hasInvalid: false,
             hasOverdue: false,
@@ -146,6 +153,7 @@ struct MigrationManagerTests {
         )
 
         let variant = MigrationDerivations.bannerVariant(
+            isIronwoodActivated: true,
             state: MigrationState.inProgress(progress),
             hasInvalid: false,
             hasOverdue: false,
@@ -172,6 +180,7 @@ struct MigrationManagerTests {
         )
 
         let variant = MigrationDerivations.bannerVariant(
+            isIronwoodActivated: true,
             state: MigrationState.inProgress(progress),
             hasInvalid: false,
             hasOverdue: false,
@@ -187,6 +196,7 @@ struct MigrationManagerTests {
 
     @Test func requiresAttentionTransferStalledIsTransferWaiting() {
         let variant = MigrationDerivations.bannerVariant(
+            isIronwoodActivated: true,
             state: MigrationState.requiresAttention(AttentionReason.transferStalled(transferNumber: 3)),
             hasInvalid: false,
             hasOverdue: false,
@@ -202,6 +212,7 @@ struct MigrationManagerTests {
 
     @Test func requiresAttentionInvalidTransferIsUpdatePlan() {
         let variant = MigrationDerivations.bannerVariant(
+            isIronwoodActivated: true,
             state: MigrationState.requiresAttention(AttentionReason.invalidTransfer(transferId: "t1")),
             hasInvalid: true,
             hasOverdue: false,
@@ -225,6 +236,7 @@ struct MigrationManagerTests {
         ]
 
         let variant = MigrationDerivations.bannerVariant(
+            isIronwoodActivated: true,
             state: MigrationState.requiresAttention(AttentionReason.transferExpired),
             hasInvalid: false,
             hasOverdue: false,
@@ -245,6 +257,7 @@ struct MigrationManagerTests {
         ]
 
         let variant = MigrationDerivations.bannerVariant(
+            isIronwoodActivated: true,
             state: MigrationState.requiresAttention(AttentionReason.transferExpired),
             hasInvalid: false,
             hasOverdue: false,
@@ -260,6 +273,7 @@ struct MigrationManagerTests {
 
     @Test func requiresAttentionTransferExpiredFallsBackToOneAndZeroWithNoRowsAtAll() {
         let variant = MigrationDerivations.bannerVariant(
+            isIronwoodActivated: true,
             state: MigrationState.requiresAttention(AttentionReason.transferExpired),
             hasInvalid: false,
             hasOverdue: false,
@@ -275,6 +289,7 @@ struct MigrationManagerTests {
 
     @Test func completeUnacknowledgedIsComplete() {
         let variant = MigrationDerivations.bannerVariant(
+            isIronwoodActivated: true,
             state: MigrationState.complete,
             hasInvalid: false,
             hasOverdue: false,
@@ -290,6 +305,7 @@ struct MigrationManagerTests {
 
     @Test func completeAcknowledgedIsNil() {
         let variant = MigrationDerivations.bannerVariant(
+            isIronwoodActivated: true,
             state: MigrationState.complete,
             hasInvalid: false,
             hasOverdue: false,
@@ -310,6 +326,7 @@ struct MigrationManagerTests {
         // `reconcileClearsAcknowledgedFlagWhenStateIsNotComplete` /
         // `reconcileKeepsAcknowledgedFlagWhenStateIsComplete` below, not this pure table).
         let variant = MigrationDerivations.bannerVariant(
+            isIronwoodActivated: true,
             state: MigrationState.notStarted,
             hasInvalid: false,
             hasOverdue: false,
@@ -323,6 +340,24 @@ struct MigrationManagerTests {
         #expect(variant == MigrationBannerVariant.required)
     }
 
+    @Test func gateClosedBeatsMaximallyOfferingBannerInput() {
+        // MOB-1483: `isIronwoodActivated: false` must win over even the input that otherwise
+        // produces the strongest banner (`notStarted` + a positive balance -> `.required`).
+        let variant = MigrationDerivations.bannerVariant(
+            isIronwoodActivated: false,
+            state: MigrationState.notStarted,
+            hasInvalid: false,
+            hasOverdue: false,
+            isManualDelivery: false,
+            isNextTransferDue: false,
+            orchardBalance: Zatoshi(1),
+            isCompleteAcknowledged: false,
+            transferRows: []
+        )
+
+        #expect(variant == nil)
+    }
+
     // MARK: - reentryRoute
 
     @Test func hasInvalidTransfersWinsOverEverythingElse() {
@@ -334,6 +369,7 @@ struct MigrationManagerTests {
         )
 
         let route = MigrationDerivations.reentryRoute(
+            isIronwoodActivated: true,
             state: MigrationState.complete,
             hasInvalid: true,
             hasOverdue: true,
@@ -346,8 +382,36 @@ struct MigrationManagerTests {
         #expect(route == MigrationReentryRoute.recovery(isExpired: false))
     }
 
+    @Test func gateClosedBeatsMaximallyOfferingReentryInput() {
+        // MOB-1483: `isIronwoodActivated: false` must win over even the top of the priority
+        // chain — this is the same maximally-offering input as
+        // `hasInvalidTransfersWinsOverEverythingElse` (which would-be produce `.recovery`, and
+        // with `hasInvalid` false would-be produce `.statusResume`), but with the gate closed it
+        // must still be `.entry`.
+        let progress = MigrationProgress(
+            completedTransfers: 1,
+            totalTransfers: 2,
+            remainingOrchard: Zatoshi.zero,
+            nextTransferReadyAtHeight: nil
+        )
+
+        let route = MigrationDerivations.reentryRoute(
+            isIronwoodActivated: false,
+            state: MigrationState.complete,
+            hasInvalid: true,
+            hasOverdue: true,
+            isManualDelivery: true,
+            isNextTransferDue: true,
+            isCompleteAcknowledged: false,
+            progress: progress
+        )
+
+        #expect(route == MigrationReentryRoute.entry)
+    }
+
     @Test func invalidTransferWithTransferExpiredAttentionReasonIsExpiredRecovery() {
         let route = MigrationDerivations.reentryRoute(
+            isIronwoodActivated: true,
             state: MigrationState.requiresAttention(AttentionReason.transferExpired),
             hasInvalid: true,
             hasOverdue: false,
@@ -362,6 +426,7 @@ struct MigrationManagerTests {
 
     @Test func invalidTransferWithOtherAttentionReasonIsNonExpiredRecovery() {
         let route = MigrationDerivations.reentryRoute(
+            isIronwoodActivated: true,
             state: MigrationState.requiresAttention(AttentionReason.invalidTransfer(transferId: "t1")),
             hasInvalid: true,
             hasOverdue: false,
@@ -376,6 +441,7 @@ struct MigrationManagerTests {
 
     @Test func hasOverdueWinsOverInProgressAndComplete() {
         let route = MigrationDerivations.reentryRoute(
+            isIronwoodActivated: true,
             state: MigrationState.complete,
             hasInvalid: false,
             hasOverdue: true,
@@ -397,6 +463,7 @@ struct MigrationManagerTests {
         )
 
         let route = MigrationDerivations.reentryRoute(
+            isIronwoodActivated: true,
             state: MigrationState.inProgress(progress),
             hasInvalid: false,
             hasOverdue: false,
@@ -418,6 +485,7 @@ struct MigrationManagerTests {
         )
 
         let route = MigrationDerivations.reentryRoute(
+            isIronwoodActivated: true,
             state: MigrationState.inProgress(progress),
             hasInvalid: false,
             hasOverdue: false,
@@ -439,6 +507,7 @@ struct MigrationManagerTests {
         )
 
         let route = MigrationDerivations.reentryRoute(
+            isIronwoodActivated: true,
             state: MigrationState.inProgress(progress),
             hasInvalid: false,
             hasOverdue: false,
@@ -460,6 +529,7 @@ struct MigrationManagerTests {
         )
 
         let route = MigrationDerivations.reentryRoute(
+            isIronwoodActivated: true,
             state: MigrationState.inProgress(progress),
             hasInvalid: false,
             hasOverdue: false,
@@ -474,6 +544,7 @@ struct MigrationManagerTests {
 
     @Test func completeUnacknowledgedIsCompleteRoute() {
         let route = MigrationDerivations.reentryRoute(
+            isIronwoodActivated: true,
             state: MigrationState.complete,
             hasInvalid: false,
             hasOverdue: false,
@@ -488,6 +559,7 @@ struct MigrationManagerTests {
 
     @Test func completeAcknowledgedFallsThroughToEntry() {
         let route = MigrationDerivations.reentryRoute(
+            isIronwoodActivated: true,
             state: MigrationState.complete,
             hasInvalid: false,
             hasOverdue: false,
@@ -502,6 +574,7 @@ struct MigrationManagerTests {
 
     @Test func splitPendingConfirmationIsNoteSplitProgress() {
         let route = MigrationDerivations.reentryRoute(
+            isIronwoodActivated: true,
             state: MigrationState.splitPendingConfirmation,
             hasInvalid: false,
             hasOverdue: false,
@@ -516,6 +589,7 @@ struct MigrationManagerTests {
 
     @Test func notStartedIsEntry() {
         let route = MigrationDerivations.reentryRoute(
+            isIronwoodActivated: true,
             state: MigrationState.notStarted,
             hasInvalid: false,
             hasOverdue: false,
@@ -530,6 +604,7 @@ struct MigrationManagerTests {
 
     @Test func readyToProposeIsEntry() {
         let route = MigrationDerivations.reentryRoute(
+            isIronwoodActivated: true,
             state: MigrationState.readyToPropose,
             hasInvalid: false,
             hasOverdue: false,
@@ -546,6 +621,7 @@ struct MigrationManagerTests {
         // §4.3 priority order, verified as one table so a future reordering trips a single test.
         struct Row {
             let name: String
+            let isIronwoodActivated: Bool
             let hasInvalid: Bool
             let hasOverdue: Bool
             let isManualDelivery: Bool
@@ -563,8 +639,22 @@ struct MigrationManagerTests {
         )
 
         let rows: [Row] = [
+            // MOB-1483: the activation gate outranks every other row — a closed gate beats even
+            // the highest-priority pre-gate input (`hasInvalid`, which would otherwise win row 1).
+            Row(
+                name: "0: gate closed",
+                isIronwoodActivated: false,
+                hasInvalid: true,
+                hasOverdue: false,
+                isManualDelivery: false,
+                isNextTransferDue: false,
+                isCompleteAcknowledged: false,
+                state: MigrationState.requiresAttention(AttentionReason.invalidTransfer(transferId: "t1")),
+                expected: MigrationReentryRoute.entry
+            ),
             Row(
                 name: "1: recovery",
+                isIronwoodActivated: true,
                 hasInvalid: true,
                 hasOverdue: false,
                 isManualDelivery: false,
@@ -575,6 +665,7 @@ struct MigrationManagerTests {
             ),
             Row(
                 name: "2: statusResume",
+                isIronwoodActivated: true,
                 hasInvalid: false,
                 hasOverdue: true,
                 isManualDelivery: false,
@@ -585,6 +676,7 @@ struct MigrationManagerTests {
             ),
             Row(
                 name: "3: reviewManual",
+                isIronwoodActivated: true,
                 hasInvalid: false,
                 hasOverdue: false,
                 isManualDelivery: true,
@@ -595,6 +687,7 @@ struct MigrationManagerTests {
             ),
             Row(
                 name: "4: statusProgress",
+                isIronwoodActivated: true,
                 hasInvalid: false,
                 hasOverdue: false,
                 isManualDelivery: false,
@@ -605,6 +698,7 @@ struct MigrationManagerTests {
             ),
             Row(
                 name: "5: complete",
+                isIronwoodActivated: true,
                 hasInvalid: false,
                 hasOverdue: false,
                 isManualDelivery: false,
@@ -615,6 +709,7 @@ struct MigrationManagerTests {
             ),
             Row(
                 name: "6: noteSplitProgress",
+                isIronwoodActivated: true,
                 hasInvalid: false,
                 hasOverdue: false,
                 isManualDelivery: false,
@@ -625,6 +720,7 @@ struct MigrationManagerTests {
             ),
             Row(
                 name: "7: entry",
+                isIronwoodActivated: true,
                 hasInvalid: false,
                 hasOverdue: false,
                 isManualDelivery: false,
@@ -637,6 +733,7 @@ struct MigrationManagerTests {
 
         for row in rows {
             let route = MigrationDerivations.reentryRoute(
+                isIronwoodActivated: row.isIronwoodActivated,
                 state: row.state,
                 hasInvalid: row.hasInvalid,
                 hasOverdue: row.hasOverdue,
@@ -910,7 +1007,17 @@ struct MigrationManagerTests {
         #expect(storage.isCompleteAcknowledged() == true)
 
         withDependencies {
-            $0.sdkSynchronizer = SDKSynchronizerClient.noOp
+            // MOB-1483: `reconcile()` now gates on `isIronwoodActivated()` first — open the gate
+            // (tip past the ambient `ZcashSDKEnvironment.testValue` activation height) so this
+            // test still exercises the stale-acknowledge reset it's actually about. `latestState`
+            // is a `let` on the client, so it must be set through the `mocked(latestState:)` base.
+            $0.sdkSynchronizer = SDKSynchronizerClient.mocked(
+                latestState: {
+                    var state = SynchronizerState.zero
+                    state.latestBlockHeight = 5_000_000
+                    return state
+                }
+            )
             $0.sdkSynchronizer.getMigrationState = {
                 MigrationState.inProgress(
                     MigrationProgress(completedTransfers: 1, totalTransfers: 5, remainingOrchard: Zatoshi(1), nextTransferReadyAtHeight: nil)
@@ -936,13 +1043,178 @@ struct MigrationManagerTests {
         #expect(storage.isCompleteAcknowledged() == true)
 
         withDependencies {
-            $0.sdkSynchronizer = SDKSynchronizerClient.noOp
+            // MOB-1483: open the gate — see the comment in
+            // `reconcileClearsAcknowledgedFlagWhenStateIsNotComplete` above.
+            $0.sdkSynchronizer = SDKSynchronizerClient.mocked(
+                latestState: {
+                    var state = SynchronizerState.zero
+                    state.latestBlockHeight = 5_000_000
+                    return state
+                }
+            )
             $0.sdkSynchronizer.getMigrationState = { MigrationState.complete }
         } operation: {
             let impl = MigrationManagerImpl(gateStorage: storage)
             impl.reconcile()
         }
 
+        #expect(storage.isCompleteAcknowledged() == true)
+    }
+
+    // MARK: - isIronwoodActivated(): MOB-1483 activation gate
+    //
+    // `MigrationManagerImpl.isIronwoodActivated() == tip > 0 && tip >= ironwoodActivationHeight`.
+    // `tip > 0` is the fail-safe sentinel: an unsynced cached tip (0, before the first server
+    // round-trip) must read as "not activated," independent of whatever height is configured.
+
+    @Test func isIronwoodActivatedFalseWhenTipIsUnknown() {
+        let result = withDependencies {
+            $0.sdkSynchronizer = SDKSynchronizerClient.mocked() // `mocked()` keeps `latestState` at `.zero` — tip == 0: unsynced
+            $0.zcashSDKEnvironment.ironwoodActivationHeight = { 0 } // even a trivially-met height must not matter
+        } operation: {
+            MigrationManagerImpl().isIronwoodActivated()
+        }
+
+        #expect(result == false)
+    }
+
+    @Test func isIronwoodActivatedFalseWhenTipIsBelowActivationHeight() {
+        let result = withDependencies {
+            $0.sdkSynchronizer = SDKSynchronizerClient.mocked(
+                latestState: {
+                    var state = SynchronizerState.zero
+                    state.latestBlockHeight = 99
+                    return state
+                }
+            )
+            $0.zcashSDKEnvironment.ironwoodActivationHeight = { 100 }
+        } operation: {
+            MigrationManagerImpl().isIronwoodActivated()
+        }
+
+        #expect(result == false)
+    }
+
+    @Test func isIronwoodActivatedTrueAtExactActivationHeight() {
+        let result = withDependencies {
+            $0.sdkSynchronizer = SDKSynchronizerClient.mocked(
+                latestState: {
+                    var state = SynchronizerState.zero
+                    state.latestBlockHeight = 100
+                    return state
+                }
+            )
+            $0.zcashSDKEnvironment.ironwoodActivationHeight = { 100 }
+        } operation: {
+            MigrationManagerImpl().isIronwoodActivated()
+        }
+
+        #expect(result == true)
+    }
+
+    @Test func isIronwoodActivatedTrueWhenTipIsPastActivationHeight() {
+        let result = withDependencies {
+            $0.sdkSynchronizer = SDKSynchronizerClient.mocked(
+                latestState: {
+                    var state = SynchronizerState.zero
+                    state.latestBlockHeight = 500
+                    return state
+                }
+            )
+            $0.zcashSDKEnvironment.ironwoodActivationHeight = { 100 }
+        } operation: {
+            MigrationManagerImpl().isIronwoodActivated()
+        }
+
+        #expect(result == true)
+    }
+
+    // MARK: - reconcile(): Ironwood activation gate (MOB-1483)
+    //
+    // `reconcile()` must skip `initializeMigrationPostUpgrade()` and the acknowledged-flag
+    // maintenance entirely while Ironwood is not activated on the current network — there is
+    // nothing to reconcile pre-activation. `initializeMigrationPostUpgrade` / `getMigrationState`
+    // are wrapped in `LockIsolated<Int>` call counters (the `RootMigrationBackgroundTests` spy
+    // precedent) asserted `== 0`; `gateStorage`'s persisted flag is asserted unchanged as evidence
+    // `clearAcknowledgedComplete()` was never reached either. (`sdkSynchronizer.latestState()`
+    // itself *is* called — that's the gate check.)
+
+    @Test func reconcileSkipsSDKAndStorageCallsWhenIronwoodIsNotActivated() throws {
+        let userDefaults = try #require(
+            UserDefaults(suiteName: "testReconcileSkipsSDKAndStorageCallsWhenIronwoodIsNotActivated"),
+            "MigrationGateStorage: UserDefaults failed to initialize"
+        )
+        defer {
+            userDefaults.removePersistentDomain(forName: "testReconcileSkipsSDKAndStorageCallsWhenIronwoodIsNotActivated")
+        }
+
+        let storage = MigrationGateStorage(userDefaults: userDefaults)
+        storage.acknowledgeComplete()
+        #expect(storage.isCompleteAcknowledged() == true)
+
+        let initializeCalls = LockIsolated<Int>(0)
+        let getMigrationStateCalls = LockIsolated<Int>(0)
+
+        withDependencies {
+            // Tip 0 == "no server round-trip yet": the gate's own fail-safe sentinel, independent
+            // of whatever height `zcashSDKEnvironment.ironwoodActivationHeight()` reports.
+            // `mocked()` keeps `latestState` at `.zero` (it's a `let` on the client).
+            $0.sdkSynchronizer = SDKSynchronizerClient.mocked()
+            $0.sdkSynchronizer.initializeMigrationPostUpgrade = { initializeCalls.withValue { $0 += 1 } }
+            $0.sdkSynchronizer.getMigrationState = {
+                getMigrationStateCalls.withValue { $0 += 1 }
+                return MigrationState.notStarted
+            }
+        } operation: {
+            let impl = MigrationManagerImpl(gateStorage: storage)
+            impl.reconcile()
+        }
+
+        #expect(initializeCalls.withValue { $0 } == 0)
+        #expect(getMigrationStateCalls.withValue { $0 } == 0)
+        // Unchanged (still true): `clearAcknowledgedComplete()` was never reached either.
+        #expect(storage.isCompleteAcknowledged() == true)
+    }
+
+    @Test func reconcileSkipsSDKAndStorageCallsWhenTipIsBelowActivationHeight() throws {
+        let userDefaults = try #require(
+            UserDefaults(suiteName: "testReconcileSkipsSDKAndStorageCallsWhenTipIsBelowActivationHeight"),
+            "MigrationGateStorage: UserDefaults failed to initialize"
+        )
+        defer {
+            userDefaults.removePersistentDomain(forName: "testReconcileSkipsSDKAndStorageCallsWhenTipIsBelowActivationHeight")
+        }
+
+        let storage = MigrationGateStorage(userDefaults: userDefaults)
+        storage.acknowledgeComplete()
+        #expect(storage.isCompleteAcknowledged() == true)
+
+        let initializeCalls = LockIsolated<Int>(0)
+        let getMigrationStateCalls = LockIsolated<Int>(0)
+
+        withDependencies {
+            // A known, synced tip that simply hasn't reached activation yet — distinct from the
+            // tip == 0 sentinel case above, exercising the actual height comparison.
+            $0.sdkSynchronizer = SDKSynchronizerClient.mocked(
+                latestState: {
+                    var state = SynchronizerState.zero
+                    state.latestBlockHeight = 99
+                    return state
+                }
+            )
+            $0.zcashSDKEnvironment.ironwoodActivationHeight = { 100 }
+            $0.sdkSynchronizer.initializeMigrationPostUpgrade = { initializeCalls.withValue { $0 += 1 } }
+            $0.sdkSynchronizer.getMigrationState = {
+                getMigrationStateCalls.withValue { $0 += 1 }
+                return MigrationState.notStarted
+            }
+        } operation: {
+            let impl = MigrationManagerImpl(gateStorage: storage)
+            impl.reconcile()
+        }
+
+        #expect(initializeCalls.withValue { $0 } == 0)
+        #expect(getMigrationStateCalls.withValue { $0 } == 0)
         #expect(storage.isCompleteAcknowledged() == true)
     }
 }

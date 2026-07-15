@@ -342,6 +342,154 @@ import ComposableArchitecture
         #expect(store.state.isOpen)
     }
 
+    // MARK: - Reactive trigger: Ironwood-activation flip (MOB-1483)
+
+    /// First-ever observation, gate closed: latches `false` and triggers nothing — no
+    /// `.reevaluateMigrationOnActivationFlip`, no further receives. (Exhaustive `TestStore` mode
+    /// is itself the proof: an unasserted action here would fail the test.)
+    @MainActor @Test func synchronizerStateChangedFirstObservationGateClosedLatchesWithoutTriggering() async {
+        let store = TestStore(initialState: SmartBanner.State()) {
+            SmartBanner()
+        } withDependencies: {
+            $0.migrationManager.isIronwoodActivated = { false }
+        }
+
+        await store.send(.synchronizerStateChanged(SynchronizerState.zero.redacted)) {
+            $0.lastObservedIronwoodActivation = false
+        }
+    }
+
+    /// First-ever observation, gate already open: latches `true` and ALSO triggers a
+    /// re-evaluation — the cold-launch race this latch exists to close (the priority walk may
+    /// have run while the chain tip was still unknown, i.e. before `isIronwoodActivated()` could
+    /// answer `true`).
+    @MainActor @Test func synchronizerStateChangedFirstObservationGateOpenAlsoTriggersReevaluation() async {
+        let account = walletAccount(idByte: 9)
+        var state = SmartBanner.State()
+        state.$selectedWalletAccount.withLock { $0 = account }
+        let store = TestStore(initialState: state) {
+            SmartBanner()
+        } withDependencies: {
+            $0.migrationManager.isIronwoodActivated = { true }
+            $0.migrationManager.bannerVariant = { accountUUID in
+                #expect(accountUUID == account.id)
+                // `.complete`, not the `State()` default (`.required`), so the assignment is an
+                // observable change — proves the loaded variant actually lands in state.
+                return MigrationBannerVariant.complete
+            }
+        }
+        store.dependencies.mainQueue = .immediate
+
+        await store.send(.synchronizerStateChanged(SynchronizerState.zero.redacted)) {
+            $0.lastObservedIronwoodActivation = true
+        }
+        await store.receive(\.reevaluateMigrationOnActivationFlip)
+        await store.receive(\.migrationVariantUpdated) {
+            $0.migrationBannerVariant = MigrationBannerVariant.complete
+        }
+        await store.receive(\.triggerPriority) {
+            $0.priorityContentRequested = .priorityMigration
+        }
+        await store.receive(\.openBannerRequest) {
+            $0.priorityContent = .priorityMigration
+        }
+        await store.receive(\.openBanner) {
+            $0.delay = 1.0
+            $0.isOpen = true
+        }
+    }
+
+    /// Latched flip false -> true (activation-day crossing): updates the latch and triggers
+    /// exactly one re-evaluation, which raises the banner through the ordinary
+    /// `.migrationVariantUpdated` route — exhaustive `TestStore` mode proves "exactly one" (a
+    /// second, spurious trigger would surface as an unasserted action).
+    @MainActor @Test func synchronizerStateChangedActivationFlipToTrueRaisesMigrationBanner() async {
+        let account = walletAccount(idByte: 11)
+        var state = SmartBanner.State()
+        state.$selectedWalletAccount.withLock { $0 = account }
+        state.lastObservedIronwoodActivation = false
+        let store = TestStore(initialState: state) {
+            SmartBanner()
+        } withDependencies: {
+            $0.migrationManager.isIronwoodActivated = { true }
+            $0.migrationManager.bannerVariant = { accountUUID in
+                #expect(accountUUID == account.id)
+                return MigrationBannerVariant.complete
+            }
+        }
+        store.dependencies.mainQueue = .immediate
+
+        await store.send(.synchronizerStateChanged(SynchronizerState.zero.redacted)) {
+            $0.lastObservedIronwoodActivation = true
+        }
+        await store.receive(\.reevaluateMigrationOnActivationFlip)
+        await store.receive(\.migrationVariantUpdated) {
+            $0.migrationBannerVariant = MigrationBannerVariant.complete
+        }
+        await store.receive(\.triggerPriority) {
+            $0.priorityContentRequested = .priorityMigration
+        }
+        await store.receive(\.openBannerRequest) {
+            $0.priorityContent = .priorityMigration
+        }
+        await store.receive(\.openBanner) {
+            $0.delay = 1.0
+            $0.isOpen = true
+        }
+    }
+
+    /// Latched flip true -> false (a reorg back below the activation height): updates the latch
+    /// and triggers a re-evaluation, which lowers an already-showing migration banner through the
+    /// same close-and-rewalk path `.migrationStateChanged`'s nil-variant case uses. `.off`
+    /// exhaustivity mirrors `migrationStateChangedWithNilVariantWhileMigrationShowingClosesAndRewalks`
+    /// above — only the hop into the rewalk is asserted in detail, not every step of it.
+    @MainActor @Test func synchronizerStateChangedActivationFlipToFalseLowersMigrationBanner() async {
+        var state = SmartBanner.State()
+        state.lastObservedIronwoodActivation = true
+        state.priorityContent = .priorityMigration
+        state.priorityContentRequested = .priorityMigration
+        state.isOpen = true
+        state.migrationBannerVariant = MigrationBannerVariant.complete
+        let store = TestStore(initialState: state) {
+            SmartBanner()
+        } withDependencies: {
+            $0.migrationManager.isIronwoodActivated = { false }
+            $0.migrationManager.bannerVariant = { _ in nil }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.synchronizerStateChanged(SynchronizerState.zero.redacted)) {
+            $0.lastObservedIronwoodActivation = false
+        }
+        await store.receive(\.reevaluateMigrationOnActivationFlip)
+        await store.receive(\.migrationVariantUpdated)
+        await store.receive(\.closeBanner) {
+            $0.isOpen = false
+            $0.priorityContentRequested = nil
+            $0.priorityContent = nil
+        }
+        await store.receive(\.openBannerRequest)
+        await store.receive(\.evaluatePriority1)
+        // The re-walk continues (evaluatePriority2 -> evaluatePriorityMigration -> ...); with the
+        // same `nil`-returning override it walks all the way down without re-triggering migration.
+        #expect(store.state.priorityContent == nil)
+    }
+
+    /// Second identical tick (latch already `false`, gate still closed): no spam — zero further
+    /// triggers. Exhaustive `TestStore` mode is the proof (a stray `.reevaluateMigrationOnActivationFlip`
+    /// would fail the test as an unasserted action).
+    @MainActor @Test func synchronizerStateChangedUnchangedActivationTriggersNothing() async {
+        var state = SmartBanner.State()
+        state.lastObservedIronwoodActivation = false
+        let store = TestStore(initialState: state) {
+            SmartBanner()
+        } withDependencies: {
+            $0.migrationManager.isIronwoodActivated = { false }
+        }
+
+        await store.send(.synchronizerStateChanged(SynchronizerState.zero.redacted))
+    }
+
     // MARK: - Tap
 
     @MainActor @Test func smartBannerContentTappedWithMigrationShowingRequestsMigrationScreen() async {

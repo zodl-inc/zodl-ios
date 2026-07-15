@@ -17,6 +17,7 @@ directly impact users rather than highlighting other crucial architectural updat
 - [MOB-1466] Ironwood migration screens are wired into a complete guided flow (entry, scheduling, status, recovery) driven by migration state, with a Home banner entry point — dormant until the migration SDK ships.
 - [MOB-1467] Scheduled Ironwood migration transfers can now send from background tasks, with local notifications for progress, required actions, and manual-mode send reminders — dormant until the migration SDK ships.
 - [MOB-1468] Keystone hardware-wallet accounts can complete the Ironwood migration — transfers are signed by QR in a single batched session — dormant until the migration SDK and Keystone batch support ship.
+- [MOB-1483] The Ironwood migration is only offered once the network has actually activated Ironwood — before the chain tip reaches the activation height there is no migration banner, no way into the flow, and no migration background work or notifications. The offer appears automatically once the activated network is detected, without restarting the app.
 
 ### Fixed
 - [#1920] Connecting a Keystone hardware wallet that fails now shows a clear "Connection Failed" message (with Contact Support and Cancel options) instead of silently doing nothing. Cancel leaves the flow so the user is never stuck on the connection screen. The support message includes a safe error identifier and never exposes any wallet keys.

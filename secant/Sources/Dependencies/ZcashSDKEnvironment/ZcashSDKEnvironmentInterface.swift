@@ -115,6 +115,9 @@ extension ZcashSDKEnvironment {
 @DependencyClient
 struct ZcashSDKEnvironment {
     var latestCheckpoint: @Sendable () -> BlockHeight = { 0 }
+    // Fail-closed default: an unconfigured environment must never report Ironwood as activated
+    // (`{ 0 }` would open the activation gate for any synced tip).
+    var ironwoodActivationHeight: @Sendable () -> BlockHeight = { BlockHeight.max }
     var endpoint: @Sendable () -> LightWalletEndpoint = {
         LightWalletEndpoint(address: "", port: 0, secure: false, singleCallTimeoutInMillis: 0, streamingCallTimeoutInMillis: 0)
     }

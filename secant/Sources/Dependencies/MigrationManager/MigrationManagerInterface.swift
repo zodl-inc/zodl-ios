@@ -24,6 +24,10 @@ struct MigrationManagerClient: Sendable {
     // Derivations (pure given SDK members + persistence; unit-tested as tables)
     var bannerVariant: @Sendable (_ accountUUID: AccountUUID?) async -> MigrationBannerVariant? = { _ in nil }
     var reentryRoute: @Sendable () -> MigrationReentryRoute = { .entry }
+    // MOB-1483: "Ironwood (NU6.3) activated on the current network" — gates `bannerVariant`,
+    // `reentryRoute`, and `reconcile()`. Defaults closed so a test that doesn't override it stays
+    // fail-safe instead of trapping via the macro's `unimplemented`.
+    var isIronwoodActivated: @Sendable () -> Bool = { false }
     var orchardBalanceToMigrate: @Sendable (_ accountUUID: AccountUUID?) async -> Zatoshi = { _ in .zero }
     // Persistence (UserDefaults-backed; keys in SharedStateKeys.swift)
     var migrationMode: @Sendable () -> MigrationMode?
