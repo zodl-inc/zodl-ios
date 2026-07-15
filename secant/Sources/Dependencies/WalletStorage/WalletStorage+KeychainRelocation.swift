@@ -11,6 +11,7 @@
 
 import Foundation
 import Security
+import os
 
 /// Once-per-process outcome of the keychain relocation.
 enum KeychainRelocationState: Equatable, Sendable {
