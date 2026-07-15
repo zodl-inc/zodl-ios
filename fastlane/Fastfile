@@ -13,6 +13,7 @@ require_relative "lib/zodl/build_paths"
 require_relative "lib/zodl/notify"
 require_relative "lib/zodl/signing"
 require_relative "lib/zodl/dmg"
+require_relative "lib/zodl/pbxproj"
 
 # Refuse to run outside bundler so the pinned gem versions in Gemfile.lock are
 # always used. The Scripts/*.sh wrappers invoke `bundle exec fastlane`.
@@ -66,7 +67,7 @@ lane :release do |options|
   run("git -C #{repo_root.shellescape} fetch --quiet --tags origin", must_succeed: true)
   sha = resolve_sha(repo_root, ref)
   branch_version = Zodl::Version.from_branch(ref)
-  project_version = marketing_version_at(repo_root, sha)
+  pbxproj = pbxproj_at(repo_root, sha)
 
   installed_identities = run("security find-identity -v -p codesigning")
   sdk = sdk_facts(repo_root)
@@ -78,7 +79,7 @@ lane :release do |options|
       variant: variant,
       requested_version: version,
       requested_build: build,
-      project_version: project_version,
+      project_version: marketing_version_for(pbxproj, cfg[:target]),
       branch_version: branch_version,
       latest_build: cfg[:channel] == :dmg ? nil : latest_build_number(cfg[:app_identifier], version, cfg[:platform]),
       ref_on_origin: ref_on_origin?(repo_root, sha),
@@ -283,11 +284,22 @@ rescue StandardError => e
   UI.user_error!("Could not fetch the latest build number for #{app_identifier} #{version} from App Store Connect (#{e.message}). Re-run once App Store Connect is reachable.")
 end
 
-# MARKETING_VERSION as committed at `sha`. All app targets share one value, so
-# the first MARKETING_VERSION line in the project at that commit is correct.
-def marketing_version_at(repo_root, sha)
-  line = run("git -C #{repo_root.shellescape} show #{sha}:secant.xcodeproj/project.pbxproj | grep -m1 'MARKETING_VERSION ='")
-  line[/MARKETING_VERSION = ([^;]+);/, 1]&.strip
+# The project file as committed at `sha` — the version source of truth for the
+# ref being built (NOT the current checkout).
+def pbxproj_at(repo_root, sha)
+  run("git -C #{repo_root.shellescape} show #{sha}:#{Zodl::BuildPaths::PROJECT}/project.pbxproj", must_succeed: true)
+end
+
+# MARKETING_VERSION of the variant's own target. Targets are versioned
+# independently (the macOS app does not track the iOS version), so the check
+# must read the target this variant actually builds — never a whole-file first
+# match. nil (target/setting not found) skips the preflight version check.
+def marketing_version_for(pbxproj, target)
+  versions = Zodl::Pbxproj.marketing_versions(pbxproj, target: target)
+  if versions.size > 1
+    UI.user_error!("target '#{target}' configurations disagree on MARKETING_VERSION (#{versions.join(', ')}) — align them in the project")
+  end
+  versions.first
 end
 
 # Sets MARKETING_VERSION on all targets directly in the pbxproj. agvtool's
