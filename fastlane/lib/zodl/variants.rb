@@ -2,14 +2,12 @@
 
 module Zodl
   # Maps each variant to its scheme/target/archive-config, App Store Connect
-  # bundle id, channel, and platform (iOS or macOS). iOS variants are separate
-  # ASC apps with independent trains; mac-internal shares iOS internal's bundle
-  # id and rides that same app record's macOS platform train; mac-dmg shares
-  # the mac-internal target/bundle id too but has no ASC train at all (local
-  # notarized DMG only). "internal-testnet" expands to both iOS TestFlight
-  # variants. "mac" expands to both macOS variants (which share a
-  # target/bundle-id but differ by channel: TestFlight package vs. local
-  # notarized DMG).
+  # bundle id, channel, platform (iOS or macOS), and flavor (mac only). iOS
+  # variants are separate ASC apps with independent trains. macOS comes in two
+  # flavors (internal=mainnet ASC app, testnet=separate ASC app), each with two
+  # channels (testflight package, local notarized dmg). flavor: names the
+  # artifact family. "internal-testnet" expands to both iOS TestFlight variants.
+  # "mac" expands to all four macOS variants.
   module Variants
     ATOMIC = {
       "internal" => {
@@ -32,19 +30,31 @@ module Zodl
         scheme: "zodlmac-internal", target: "zodlmac-internal",
         configuration: "Release-Testflight",
         app_identifier: "co.electriccoin.secant-testnet",
-        channel: :testflight, platform: :macos
+        channel: :testflight, platform: :macos, flavor: "internal"
       },
-      "mac-dmg" => {
+      "mac-internal-dmg" => {
         scheme: "zodlmac-internal", target: "zodlmac-internal",
         configuration: "Release-AppStore",
         app_identifier: "co.electriccoin.secant-testnet",
-        channel: :dmg, platform: :macos
+        channel: :dmg, platform: :macos, flavor: "internal"
+      },
+      "mac-testnet" => {
+        scheme: "zodlmac-testnet", target: "zodlmac-testnet",
+        configuration: "Release-Testflight",
+        app_identifier: "co.ecc.zashi-testnet",
+        channel: :testflight, platform: :macos, flavor: "testnet"
+      },
+      "mac-testnet-dmg" => {
+        scheme: "zodlmac-testnet", target: "zodlmac-testnet",
+        configuration: "Release-AppStore",
+        app_identifier: "co.ecc.zashi-testnet",
+        channel: :dmg, platform: :macos, flavor: "testnet"
       }
     }.freeze
 
     COMBINED = {
       "internal-testnet" => %w[internal testnet],
-      "mac" => %w[mac-internal mac-dmg]
+      "mac" => %w[mac-internal mac-internal-dmg mac-testnet mac-testnet-dmg]
     }.freeze
 
     module_function
@@ -65,20 +75,22 @@ module Zodl
     end
 
     # Resolves a bump --target selector to Xcode target names: an exact target
-    # name bumps just that target, "ios" every iOS app target, "all" every app
-    # target. Targets are versioned independently (macOS does not track iOS),
-    # so the caller must always say which scope it means.
+    # name bumps just that target, "ios" every iOS app target, "mac" every macOS
+    # app target, "all" every app target. Targets are versioned independently
+    # (macOS does not track iOS), so the caller must always say which scope it
+    # means.
     def bump_targets(selector)
       targets = ATOMIC.values
       case selector
       when "all" then targets.map { |cfg| cfg[:target] }.uniq
       when "ios" then targets.select { |cfg| cfg[:platform] == :ios }.map { |cfg| cfg[:target] }.uniq
+      when "mac" then targets.select { |cfg| cfg[:platform] == :macos }.map { |cfg| cfg[:target] }.uniq
       else
         known = targets.map { |cfg| cfg[:target] }.uniq
         return [selector] if known.include?(selector)
 
         raise ArgumentError,
-              "unknown bump target #{selector.inspect} — use one of: #{known.join(', ')}, or 'ios' / 'all'"
+              "unknown bump target #{selector.inspect} — use one of: #{known.join(', ')}, or 'ios' / 'mac' / 'all'"
       end
     end
   end
