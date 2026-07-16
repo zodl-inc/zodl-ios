@@ -264,6 +264,14 @@ extension MigrationCoordFlow {
                     return .send(.flowFinished)
                 }
 
+                // MOB-1487 dust lane: this Sending sits over the complete screen ("Migrate
+                // anyway") — closing it ends the flow with the same bookkeeping as "Got it".
+                let hasCompleteBeneath = state.path.contains { $0.is(\.complete) }
+                if hasCompleteBeneath {
+                    migrationManager.acknowledgeComplete()
+                    return .send(.flowFinished)
+                }
+
                 let hasStatusBeneath = state.path.contains { $0.is(\.status) }
                 if hasStatusBeneath {
                     return .run { [sdkSynchronizer] send in
@@ -341,6 +349,15 @@ extension MigrationCoordFlow {
                 }
 
                 // MARK: - Flow-root closes / terminal delegates -> .flowFinished
+
+                // MOB-1487 dust lane: "Migrate anyway" sweeps the remainder through the Sending
+                // screen (migrated-copy variant) pushed over the complete screen.
+            case .path(.element(id: _, action: .complete(.delegate(.migrateAnyway)))):
+                var sendingState = MigrationSending.State(totalCount: 1)
+                sendingState.networkPrivacyOptions = state.networkPrivacyOptions
+                sendingState.usesMigratedCopy = true
+                state.path.append(.sending(sendingState))
+                return .none
 
             case .path(.element(id: _, action: .complete(.delegate(.done)))):
                 migrationManager.acknowledgeComplete()
@@ -575,7 +592,12 @@ extension MigrationCoordFlow {
             transfersSent: summary.transfersSent,
             transfersTotal: summary.transfersTotal,
             durationHours: summary.estimatedDurationHours,
-            isFlowRoot: isFlowRoot
+            isFlowRoot: isFlowRoot,
+            // MOB-1487: a previously locked remainder re-enters on the locked confirmation
+            // instead of re-offering resolution (offered/none derive from `dust` otherwise).
+            dustResolution: sdkSynchronizer.isMigrationDustLocked()
+                ? MigrationComplete.State.DustResolution.locked
+                : nil
         )
     }
 

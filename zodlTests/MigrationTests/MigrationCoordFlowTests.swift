@@ -212,6 +212,38 @@ import ComposableArchitecture
         #expect(completeState.durationHours == 24)
     }
 
+    // MOB-1487: a previously locked dust remainder re-enters on the locked confirmation instead
+    // of re-offering resolution — `completeState(isFlowRoot:)` reads `isMigrationDustLocked()` and
+    // pins `dustResolution` to `.locked` (nil otherwise, letting `MigrationComplete.State`'s own
+    // init derive offered/none from `dust`).
+    @MainActor @Test func onAppearWithCompleteRouteAndLockedDustDerivesLockedDustResolution() async {
+        let summary = MigrationSummary(
+            transferred: Zatoshi(1_245_800_000),
+            dust: Zatoshi(800_000),
+            transfersSent: 5,
+            transfersTotal: 5,
+            estimatedDurationHours: 24
+        )
+        let store = TestStore(initialState: MigrationCoordFlow.State()) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.migrationManager.reentryRoute = { .complete }
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.migrationSummary = { summary }
+            $0.sdkSynchronizer.isMigrationDustLocked = { true }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.onAppear)
+        await store.receive(\.pushNextPermissionStep)
+
+        guard case let .complete(completeState) = try? #require(store.state.path.last) else {
+            Issue.record("Expected .complete on the path")
+            return
+        }
+        #expect(completeState.dustResolution == MigrationComplete.State.DustResolution.locked)
+    }
+
     @MainActor @Test func onAppearWithNoteSplitProgressRouteAppendsFlowRootSplittingScreen() async {
         let store = TestStore(initialState: MigrationCoordFlow.State()) {
             MigrationCoordFlow()
@@ -1304,6 +1336,51 @@ import ComposableArchitecture
         store.exhaustivity = .off
 
         await store.send(.path(.element(id: 0, action: .complete(.delegate(.done)))))
+        await store.receive(\.flowFinished)
+
+        #expect(acknowledgeCalls.value == 1)
+    }
+
+    // MARK: - MOB-1487: dust lane ("Migrate anyway" over Migration Complete)
+
+    @MainActor @Test func completeMigrateAnywayPushesSendingConfiguredForDustLane() async {
+        var state = MigrationCoordFlow.State()
+        state.networkPrivacyOptions = NetworkPrivacyOptions(useTor: true, submissionEndpoint: nil)
+        state.path.append(.complete(MigrationComplete.State(isFlowRoot: true)))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 0, action: .complete(.delegate(.migrateAnyway)))))
+
+        guard case let .sending(sendingState) = try? #require(store.state.path.last) else {
+            Issue.record("Expected .sending pushed on top of .complete")
+            return
+        }
+        #expect(sendingState.totalCount == 1)
+        #expect(sendingState.usesMigratedCopy == true)
+        #expect(sendingState.networkPrivacyOptions == NetworkPrivacyOptions(useTor: true, submissionEndpoint: nil))
+    }
+
+    @MainActor @Test func sendingClosedOverCompleteAcknowledgesCompleteAndFinishesFlow() async {
+        // MOB-1487: this Sending sits over the complete screen (reached via "Migrate anyway") —
+        // closing it must end the flow with the same bookkeeping as the complete screen's own
+        // "Got it" (`completeDoneAcknowledgesCompleteAndFinishesFlow` above), even though `.sending`
+        // is on top and the flow is NOT in `.immediate` mode.
+        let acknowledgeCalls = LockIsolated<Int>(0)
+        var state = MigrationCoordFlow.State()
+        state.mode = .privateScheduled
+        state.path.append(.complete(MigrationComplete.State(isFlowRoot: true)))
+        state.path.append(.sending(MigrationSending.State(phase: .success, usesMigratedCopy: true)))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.migrationManager.acknowledgeComplete = { acknowledgeCalls.withValue { $0 += 1 } }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 1, action: .sending(.delegate(.closed)))))
         await store.receive(\.flowFinished)
 
         #expect(acknowledgeCalls.value == 1)

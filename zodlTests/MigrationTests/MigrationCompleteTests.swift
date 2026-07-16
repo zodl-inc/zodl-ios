@@ -10,6 +10,14 @@
 //  roots, but there is no back-control behavior to gate here. No SDK calls, no navigation. No
 //  shared/global state -> no `.serialized`.
 //
+//  MOB-1487 (round 2): adds the dust-resolution machinery. `dustResolution` derives from `dust` at
+//  init (`.offered` when > `.zero`, else `.none`) unless a caller pins it explicitly — covered below
+//  alongside the `lockBalanceTapped` -> `sdkSynchronizer.lockMigrationDust()` -> `.locked`/`.offered`
+//  (+alert) round trip, the `.offered`-only guard on `lockBalanceTapped`, `migrateAnywayTapped`'s
+//  delegate, and the alert dismiss path. `lockMigrationDust` is overridden directly on the
+//  dependency (`$0.sdkSynchronizer.lockMigrationDust = ...`), matching how the other Migration
+//  reducer tests override SDK members. Still no shared/global state -> no `.serialized`.
+//
 
 import Testing
 import Foundation
@@ -18,6 +26,8 @@ import ComposableArchitecture
 @testable import zodl_internal
 
 @Suite struct MigrationCompleteTests {
+    private struct LockDustFailure: Error { }
+
     @MainActor @Test func defaultStateIsAllZeroWithNoDust() async {
         let state = MigrationComplete.State()
 
@@ -28,6 +38,8 @@ import ComposableArchitecture
         #expect(state.durationHours == 0)
         #expect(state.hasDust == false)
         #expect(state.isFlowRoot == false)
+        #expect(state.dustResolution == MigrationComplete.State.DustResolution.none)
+        #expect(state.alert == nil)
     }
 
     @MainActor @Test func hasDustIsFalseWhenDustIsZero() async {
@@ -57,5 +69,125 @@ import ComposableArchitecture
         }
 
         await store.send(.delegate(.done))
+    }
+
+    // MARK: - MOB-1487: dustResolution derivation
+
+    @MainActor @Test func dustResolutionDefaultsToNoneWhenDustIsZero() async {
+        let state = MigrationComplete.State(dust: Zatoshi.zero)
+
+        #expect(state.dustResolution == MigrationComplete.State.DustResolution.none)
+    }
+
+    @MainActor @Test func dustResolutionDefaultsToOfferedWhenDustIsNonzero() async {
+        let state = MigrationComplete.State(dust: Zatoshi(31_000))
+
+        #expect(state.dustResolution == MigrationComplete.State.DustResolution.offered)
+    }
+
+    @MainActor @Test func explicitDustResolutionOverridesTheDerivedDefault() async {
+        // The coordinator's `completeState(isFlowRoot:)` never names this parameter, so the derived
+        // default is what drives the shipped app -- this only exercises the escape hatch tests use
+        // to pin a specific sub-state (e.g. landing directly on `.locked`) without replaying the
+        // reducer transitions that would normally produce it.
+        let state = MigrationComplete.State(dust: Zatoshi(31_000), dustResolution: .locked)
+
+        #expect(state.dustResolution == MigrationComplete.State.DustResolution.locked)
+    }
+
+    // MARK: - MOB-1487: lockBalanceTapped is a no-op outside `.offered`
+
+    @MainActor @Test func lockBalanceTappedIsNoOpWhenDustResolutionIsNone() async {
+        let store = TestStore(initialState: MigrationComplete.State(dust: Zatoshi.zero)) {
+            MigrationComplete()
+        }
+
+        // dustResolution == .none here (derived) -- lockBalanceTapped only starts from `.offered`,
+        // so this produces neither a state change nor an effect.
+        await store.send(.lockBalanceTapped)
+    }
+
+    @MainActor @Test func lockBalanceTappedIsNoOpWhenDustResolutionIsAlreadyLocked() async {
+        let store = TestStore(
+            initialState: MigrationComplete.State(dust: Zatoshi(31_000), dustResolution: .locked)
+        ) {
+            MigrationComplete()
+        }
+
+        await store.send(.lockBalanceTapped)
+    }
+
+    // MARK: - MOB-1487: lockBalanceTapped happy path
+
+    @MainActor @Test func lockBalanceTappedSucceedsGoesOfferedToLockingToLocked() async {
+        let store = TestStore(initialState: MigrationComplete.State(dust: Zatoshi(31_000))) {
+            MigrationComplete()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.lockMigrationDust = { }
+        }
+
+        #expect(store.state.dustResolution == MigrationComplete.State.DustResolution.offered)
+
+        await store.send(.lockBalanceTapped) {
+            $0.dustResolution = .locking
+        }
+        await store.receive(.lockDustSucceeded) {
+            $0.dustResolution = .locked
+        }
+    }
+
+    // MARK: - MOB-1487: lockBalanceTapped failure path
+
+    @MainActor @Test func lockBalanceTappedFailureRevertsToOfferedAndPresentsAlert() async {
+        let store = TestStore(initialState: MigrationComplete.State(dust: Zatoshi(31_000))) {
+            MigrationComplete()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.lockMigrationDust = { throw LockDustFailure() }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.lockBalanceTapped)
+        await store.receive(\.lockDustFailed)
+
+        #expect(store.state.dustResolution == MigrationComplete.State.DustResolution.offered)
+        #expect(store.state.alert != nil)
+    }
+
+    @MainActor @Test func alertDismissClearsAlertState() async {
+        var state = MigrationComplete.State(dust: Zatoshi(31_000))
+        state.alert = AlertState.lockFailed()
+        let store = TestStore(initialState: state) {
+            MigrationComplete()
+        }
+
+        await store.send(.alert(.dismiss)) {
+            $0.alert = nil
+        }
+    }
+
+    // MARK: - MOB-1487: migrateAnywayTapped
+
+    @MainActor @Test func migrateAnywayTappedEmitsDelegateMigrateAnyway() async {
+        let store = TestStore(initialState: MigrationComplete.State(dust: Zatoshi(31_000))) {
+            MigrationComplete()
+        }
+
+        await store.send(.migrateAnywayTapped)
+        await store.receive(.delegate(.migrateAnyway))
+    }
+
+    // MARK: - MOB-1487: gotItTapped from `.locked` behaves exactly like from `.none`
+
+    @MainActor @Test func gotItTappedFromLockedEmitsDelegateDone() async {
+        let store = TestStore(
+            initialState: MigrationComplete.State(dust: Zatoshi(31_000), dustResolution: .locked)
+        ) {
+            MigrationComplete()
+        }
+
+        await store.send(.gotItTapped)
+        await store.receive(.delegate(.done))
     }
 }

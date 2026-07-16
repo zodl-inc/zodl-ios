@@ -242,6 +242,42 @@ final class MigrationSimulatorEngine: @unchecked Sendable {
         return await performSend(targetIndex: targetIndex)
     }
 
+    // MARK: - Dust resolution (MOB-1487)
+
+    /// "Lock balance" on Migration Complete: marks the dust remainder unspendable. Persisted so
+    /// re-entering the complete screen lands on the locked confirmation instead of re-offering.
+    func lockDust() {
+        withSnapshot { snapshot in
+            guard snapshot.dustRemainder.amount > 0 else { return }
+            snapshot.isDustLocked = true
+            snapshot.lastBackgroundRunSummary = "dust locked"
+        }
+    }
+
+    func isDustLocked() -> Bool {
+        withSnapshot { $0.isDustLocked }
+    }
+
+    /// "Migrate anyway" on Migration Complete: broadcasts the dust remainder as one final
+    /// transfer. Same broadcast latency as `performSend`; `nil` when there is nothing sweepable
+    /// (no dust, or already locked) so the Sending screen's failure sheet surfaces misuse.
+    func migrateDust() async -> TransferResult? {
+        let hasSweepableDust = withSnapshot { snapshot in
+            snapshot.dustRemainder.amount > 0 && !snapshot.isDustLocked
+        }
+        guard hasSweepableDust else { return nil }
+
+        try? await Task.sleep(for: .seconds(MigrationSimulatorEngineDerivations.Constants.broadcastLatency))
+
+        return withSnapshot { snapshot -> TransferResult? in
+            guard snapshot.dustRemainder.amount > 0, !snapshot.isDustLocked else { return nil }
+            snapshot.dustRemainder = Zatoshi.zero
+            snapshot.orchardBalance = Zatoshi.zero
+            snapshot.lastBackgroundRunSummary = "dust migrated"
+            return TransferResult.success(txId: MigrationSimulatorEngineDerivations.makeTxId(prefix: "dust", discriminator: "sweep"))
+        }
+    }
+
     // MARK: - Recovery
 
     func restart() async -> MigrationSchedule {
@@ -405,7 +441,9 @@ final class MigrationSimulatorEngine: @unchecked Sendable {
                     splitFailureArmed: snapshot.armedSplitFailure
                 ),
                 isSplitPending: snapshot.state == MigrationState.splitPendingConfirmation,
-                lastBackgroundRunSummary: snapshot.lastBackgroundRunSummary
+                lastBackgroundRunSummary: snapshot.lastBackgroundRunSummary,
+                dustRemainder: snapshot.dustRemainder,
+                isDustLocked: snapshot.isDustLocked
             )
         }
     }

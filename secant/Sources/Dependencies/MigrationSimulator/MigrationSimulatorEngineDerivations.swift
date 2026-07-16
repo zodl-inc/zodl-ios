@@ -330,6 +330,9 @@ enum MigrationSimulatorEngineDerivations {
     static func applyPreset(_ preset: SimulatorPreset, to snapshot: inout SimulatorSnapshot, now: Date) {
         snapshot.armedTransferResult = nil
         snapshot.armedSplitFailure = false
+        // MOB-1487: presets fully determine dust state — a lock acknowledged in a prior run must
+        // not leak into a freshly seeded scenario.
+        snapshot.isDustLocked = false
         snapshot.lastBackgroundRunSummary = "applied preset \(preset.rawValue)"
 
         switch preset {
@@ -405,7 +408,9 @@ enum MigrationSimulatorEngineDerivations {
 
         case SimulatorPreset.completeWithDust:
             seedPresetSchedule(&snapshot, now: now, sentCount: Constants.presetTransferCount)
-            snapshot.dustRemainder = Zatoshi(5_000)
+            // 0.008 ZEC — the Final Designs mock's dust figure (frames 3836:*), safely under the
+            // "less than 0.01 ZEC" the dust note promises (MOB-1487).
+            snapshot.dustRemainder = Zatoshi(800_000)
             snapshot.orchardBalance = snapshot.dustRemainder
             snapshot.state = MigrationState.complete
         }

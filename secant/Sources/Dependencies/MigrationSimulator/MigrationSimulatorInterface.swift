@@ -33,7 +33,9 @@ struct MigrationSimulatorClient: Sendable {
             signedBatchCount: 0,
             armedResultDescription: nil,
             isSplitPending: false,
-            lastBackgroundRunSummary: nil
+            lastBackgroundRunSummary: nil,
+            dustRemainder: Zatoshi.zero,
+            isDustLocked: false
         )
     }
     var setActive: @Sendable (Bool) -> Void
