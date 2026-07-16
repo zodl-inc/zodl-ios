@@ -106,13 +106,15 @@ struct MigrationTransferTimeline: View {
     private func connectorColor(for status: MigrationTransferRow.Status) -> Colorable {
         switch badgeStyle(for: status) {
         case .sent:
-            return Design.Utility.SuccessGreen._500
+            return Design.Utility.SuccessGreen._600
         case .active:
             // Dark only while nothing has sent yet; once a row is sent, the active row's segment
             // renders the same pending gray as a queued row.
-            return hasSentRow ? Design.Surfaces.strokeSecondary : Design.Text.primary
+            return hasSentRow ? Design.Surfaces.strokePrimary : Design.Text.primary
         case .pending:
-            return Design.Surfaces.strokeSecondary
+            // strokePrimary per the dark mocks (5/7 sampled; Confirm-Plan mock internally
+            // inconsistent, majority followed — MOB-1487 R3).
+            return Design.Surfaces.strokePrimary
         case .warning:
             return Design.Utility.WarningYellow._500
         }

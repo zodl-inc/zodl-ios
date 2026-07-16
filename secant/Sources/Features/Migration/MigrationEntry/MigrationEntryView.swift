@@ -159,7 +159,7 @@ struct MigrationEntryView: View {
                     .overlay {
                         if isWarning {
                             RoundedRectangle(cornerRadius: Design.Radius._2xl + 2)
-                                .stroke(Design.Utility.WarningYellow._200.color(colorScheme), lineWidth: 2)
+                                .stroke(Design.Utility.WarningYellow._100.color(colorScheme), lineWidth: 2)
                                 .padding(-2)
                         }
                     }
@@ -185,7 +185,7 @@ struct MigrationEntryView: View {
 
             if isSelected {
                 Circle()
-                    .fill(isWarning ? .white : Design.Checkboxes.onFg.color(colorScheme))
+                    .fill(Design.Checkboxes.onFg.color(colorScheme))
                     .frame(width: 8, height: 8)
             }
         }
