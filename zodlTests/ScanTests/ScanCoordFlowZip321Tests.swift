@@ -65,6 +65,9 @@ import ZcashPaymentURI
             $0.numberFormatter = .liveValue
             $0.walletStorage = .noOp
             $0.zcashSDKEnvironment = .testnet
+            // MOB-1487 R3: ZIP-321 amounts funnel through SendForm's zecAmountUpdated, which now
+            // runs the Orchard-spend disclaimer check — pin the gate closed for these tests.
+            $0.migrationManager.isIronwoodActivated = { false }
             $0.sdkSynchronizer = .noOp
             $0.sdkSynchronizer.proposeTransfer = { _, recipient, _, _ in
                 proposeCalls.withValue { $0.append(recipient) }

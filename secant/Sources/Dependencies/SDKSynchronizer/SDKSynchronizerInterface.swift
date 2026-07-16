@@ -162,6 +162,10 @@ struct SDKSynchronizerClient: Sendable {
     var lockMigrationDust: @Sendable () async throws -> Void = { }
     var migrateMigrationDust: @Sendable (NetworkPrivacyOptions) async -> TransferResult? = { _ in nil }
     var isMigrationDustLocked: @Sendable () -> Bool = { false }
+    // [ext] MOB-1487 R3: would a regular send of `amount` draw on (unlocked) Orchard notes? Drives
+    // the send-form privacy disclaimer once Ironwood is active. Real implementation is a
+    // note-selection dry-run; the `false` default keeps production dormant until the SDK lands.
+    var sendRequiresOrchardFunds: @Sendable (Zatoshi) async -> Bool = { _ in false }
     // Keystone (PCZT)
     var proposeNoteSplitPCZT: @Sendable () async -> Pczt = { Pczt() }                                         // [ext]
     var proposeMigrationPCZTs: @Sendable (MigrationSchedule) async -> [Pczt] = { _ in [] }                    // [ext]
