@@ -165,4 +165,42 @@ import Security
         #expect(fake.dataProtectionItems()[InMemorySecItemStore.ItemKey(service: "zcashStoredWalletSeed", account: "")] == Data([1]))
         #expect(fake.fileItems().isEmpty)
     }
+
+    /// THE shipped regression (caught on a real Mac via secd's log): on macOS, SecItem calls
+    /// WITHOUT `kSecUseDataProtectionKeychain` operate on BOTH keychain implementations. The
+    /// original engine scanned and deleted unscoped, so every launch re-discovered the app's own
+    /// DP items as "legacy file leftovers" and the delete-the-original step destroyed the freshly
+    /// written DP copy — the wallet vanished on every relaunch.
+    @Test func relocatedWalletSurvivesRelaunches() throws {
+        let fake = InMemorySecItemStore()
+        fake.seedFile(service: "zcashStoredWalletSeed", data: Data([1]))
+        let seedKey = InMemorySecItemStore.ItemKey(service: "zcashStoredWalletSeed", account: "")
+
+        let firstLaunch = makeStorage(fake)
+        try firstLaunch.ensureRelocated()
+        #expect(fake.dataProtectionItems()[seedKey] == Data([1]))
+        #expect(fake.fileItems().isEmpty)
+
+        // Relaunch = fresh process = fresh once-per-process gate over the same keychain state.
+        let secondLaunch = makeStorage(fake)
+        try secondLaunch.ensureRelocated()
+        #expect(fake.dataProtectionItems()[seedKey] == Data([1]))
+
+        let thirdLaunch = makeStorage(fake)
+        try thirdLaunch.ensureRelocated()
+        #expect(fake.dataProtectionItems()[seedKey] == Data([1]))
+    }
+
+    /// A wallet living purely in the DP keychain (fresh install, or any launch after relocation)
+    /// must be invisible to the legacy scan: no re-relocation, no reads, no deletes.
+    @Test func scanIgnoresDataProtectionItems() throws {
+        let fake = InMemorySecItemStore()
+        fake.seedDataProtection(service: "zcashStoredWalletSeed", data: Data([7]))
+        let storage = makeStorage(fake)
+
+        try storage.ensureRelocated()
+
+        #expect(fake.dataProtectionItems()[InMemorySecItemStore.ItemKey(service: "zcashStoredWalletSeed", account: "")] == Data([7]))
+        #expect(fake.dataReadCount(service: "zcashStoredWalletSeed", dataProtection: true) == 0)
+    }
 }
