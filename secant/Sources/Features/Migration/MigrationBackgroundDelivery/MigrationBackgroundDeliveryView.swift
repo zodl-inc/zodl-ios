@@ -109,10 +109,11 @@ struct MigrationBackgroundDeliveryView: View {
 
     // MARK: - Skip button
 
-    // `ZashiButton`'s `Type` enum has no per-instance color hook, so this reproduces a custom hybrid
-    // locally: `Destructive1` background fill with the warning label/border colors swapped in
-    // (MOB-1478 W8; round-2 fill update MOB-1487; same override duplicated in
-    // MigrationNotificationsView rather than touching the shared component).
+    // `ZashiButton`'s `Type` enum has no per-instance color hook, so this reproduces a custom style
+    // locally: fill, border, and label are all `WarningYellow` ramp steps — the dark mock binds the
+    // fill to `._50` too, so this is no longer a `Destructive1` hybrid (MOB-1478 W8; round-2 fill
+    // update MOB-1487; MOB-1487 R3 dark pass; same override duplicated in MigrationNotificationsView
+    // rather than touching the shared component).
     @ViewBuilder private var skipButton: some View {
         Button {
             store.send(.skipTapped)
@@ -126,7 +127,7 @@ struct MigrationBackgroundDeliveryView: View {
                 .frame(maxWidth: .infinity)
                 .background {
                     RoundedRectangle(cornerRadius: Design.Radius._xl)
-                        .fill(Design.Btns.Destructive1.bg.color(colorScheme))
+                        .fill(Design.Utility.WarningYellow._50.color(colorScheme))
                         .overlay {
                             RoundedRectangle(cornerRadius: Design.Radius._xl)
                                 .stroke(Design.Utility.WarningYellow._300.color(colorScheme), lineWidth: 1)

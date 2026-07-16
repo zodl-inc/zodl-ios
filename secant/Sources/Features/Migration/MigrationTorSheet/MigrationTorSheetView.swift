@@ -51,7 +51,9 @@ struct MigrationTorSheetView: View {
 
     @ViewBuilder private var torBadge: some View {
         Circle()
-            .fill(Design.Surfaces.bgAlt.color(colorScheme))
+            // Dark mock samples #333A41 (no exact token) — fixed obsidian is the nearest safe fix;
+            // bgAlt inverts (MOB-1487 R3 dark pass).
+            .fill(Asset.Colors.ZDesign.Base.obsidian.color)
             .frame(width: 48, height: 48)
             .overlay {
                 Asset.Assets.Partners.torLogo.image
