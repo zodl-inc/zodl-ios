@@ -44,6 +44,10 @@ struct OSStatusError {
         case sendSupportMail
         case sendSupportMailFinished
         case shareFinished
+        /// macOS: the failed-relocation recovery affordance (MOB-1485). Root intercepts
+        /// `.osStatusError(.startOverTapped)`, presents the `wipeRequest` confirmation, and runs
+        /// the standard reset flow.
+        case startOverTapped
     }
 
     init() {}
@@ -73,6 +77,10 @@ struct OSStatusError {
                 
             case .shareFinished:
                 state.isExportingData = false
+                return .none
+
+            case .startOverTapped:
+                // Root intercepts this (RootInitialization) — nothing to do locally.
                 return .none
             }
         }

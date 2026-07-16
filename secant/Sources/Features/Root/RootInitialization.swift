@@ -622,6 +622,12 @@ extension Root {
                 }
                 .cancellable(id: state.CancelId, cancelInFlight: true)
                 
+            case .osStatusError(.startOverTapped):
+                // macOS OSStatusError screen's "Reset Zodl" (MOB-1485): confirm before wiping —
+                // the alert's destructive button runs the standard resetZashi flow.
+                state.alert = AlertState.wipeRequest()
+                return .none
+
             case .initialization(.resetZashiRequest(let areMetadataPreserved)):
                 state.areMetadataPreserved = areMetadataPreserved
                 return .send(.initialization(.resetZashi))

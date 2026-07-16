@@ -299,8 +299,13 @@ Mechanics (`WalletStorage+KeychainRelocation.swift`):
   read as "no wallet" — nobody gets sent to onboarding over a still-recoverable wallet.
   Relaunching retries. Dev note: `errSecMissingEntitlement` (−34018) on the DP write means an
   improperly signed/provisioned build.
-- **`resetZashi` is the escape hatch:** deliberately ungated (deletes are never ACL-gated) and it
-  additionally sweeps ZODL leftovers out of the file keychain.
+- **`resetZashi` is the escape hatch:** deliberately ungated (deletes are never ACL-gated), it
+  additionally sweeps ZODL leftovers out of the file keychain, and it clears the sticky gate so
+  the next access re-derives from reality (without that, Root's post-reset verification read
+  would rethrow the stale failure and mis-report a successful wipe). The macOS OSStatusError
+  screen exposes it as a confirmed "Reset Zodl" action (`OSStatusError.Action.startOverTapped` →
+  Root's `wipeRequest` alert → the standard reset flow), so the hatch is reachable from exactly
+  the failed-relocation state it exists for.
 
 Ship notes: once relocated, older (file-keychain era) builds cannot see the wallet — downgrading
 means restoring from the mnemonic. `ThisDeviceOnly` is now genuinely enforced (no Migration

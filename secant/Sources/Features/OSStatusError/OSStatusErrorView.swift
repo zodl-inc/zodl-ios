@@ -58,6 +58,17 @@ struct OSStatusErrorView: View {
                         store.send(.sendSupportMail)
                     }
                     .padding(.bottom, 24)
+
+                    #if os(macOS)
+                    // Failed-relocation recovery (MOB-1485): relaunching retries the keychain
+                    // migration automatically, but if the state is genuinely stuck this is the
+                    // reset escape hatch — Root confirms via the wipeRequest alert, then runs
+                    // the standard resetZashi flow (wipes both keychains + SDK data).
+                    ZashiButton(String(localizable: .settingsDeleteZashi), type: .destructive1) {
+                        store.send(.startOverTapped)
+                    }
+                    .padding(.bottom, 24)
+                    #endif
                 }
                 
                 if let supportData = store.supportData {

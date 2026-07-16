@@ -7,6 +7,7 @@ directly impact users rather than highlighting other crucial architectural updat
 ## [Unreleased]
 
 ### Added
+- [MOB-1485] macOS: the keychain-error screen now offers a confirmed "Reset Zodl" action, so a wallet stuck on a failed keychain migration can be wiped and set up fresh without hunting for workarounds (recovery-phrase restore still applies).
 - [MOB-1484] The macOS ZODL app now ships in two side-by-side flavors — Zodl Internal (mainnet) and Zodl Testnet — each buildable for TestFlight (`mac-internal`, `mac-testnet`) and as a notarized DMG (`mac-internal-dmg`, `mac-testnet-dmg`; `mac` builds all four). The testnet flavor has its own app icon.
 - [MOB-1482] The macOS ZODL app can now be built and shipped through the release tooling on two channels: TestFlight (`mac-internal`) and a notarized drag-to-Applications DMG for distribution outside the App Store (`mac-dmg`; combined variant `mac` builds both).
 
