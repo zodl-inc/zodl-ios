@@ -37,7 +37,8 @@ import ComposableArchitecture
 
         #expect(engine.currentState() == MigrationState.notStarted)
         #expect(engine.orchardBalance() == Self.defaultBalance)
-        #expect(engine.isActive == true)
+        // Opt-in: a fresh install starts with the simulation OFF (panel toggle turns it on).
+        #expect(engine.isActive == false)
         #expect(engine.isNoteSplitNeeded() == true)
         #expect(engine.hasOverdue() == false)
         #expect(engine.hasInvalid() == false)
@@ -47,10 +48,26 @@ import ComposableArchitecture
     @Test func setActiveTogglesAndReflectsInReadout() {
         let engine = makeEngine()
 
+        engine.setActive(true)
+
+        #expect(engine.isActive == true)
+        #expect(engine.readout().isActive == true)
+
         engine.setActive(false)
 
         #expect(engine.isActive == false)
         #expect(engine.readout().isActive == false)
+    }
+
+    @Test func resetPreservesTheActivationToggle() {
+        let engine = makeEngine()
+        engine.setActive(true)
+        engine.advanceTime(by: 3600)
+
+        engine.reset()
+
+        #expect(engine.isActive == true)
+        #expect(engine.readout().timeOffset == 0)
     }
 
     @Test func resetReturnsToSeededDefault() {
