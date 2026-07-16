@@ -18754,7 +18754,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Choosing this option may require 'dust' be left in the Orchard pool \u2013 a small amount 0.0005 ZEC or less that won't be transferred."
+            "value" : "Choosing this option may require a small amount (less than 0.01 ZEC) to be left in the Orchard pool, and which won't be transferred."
           }
         }
       }
@@ -19027,7 +19027,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Your full balance will be revealed on-chain. Crossing the pool boundary exposes the transaction amount. We recommend selecting Migrate with Privacy instead."
+            "value" : "All funds transferred in this transaction will be revealed on-chain."
           }
         },
         "es" : {
@@ -19044,7 +19044,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Amounts transferred across pools are visible on-chain."
+            "value" : "The amount of an individual transfer across pools is revealed on-chain."
           }
         },
         "es" : {
@@ -19740,13 +19740,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Skip — I'll open the app"
+            "value" : "Skip"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Omitir: yo abriré la app"
+            "value" : "Omitir"
           }
         }
       }
@@ -19808,7 +19808,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Review the plan below \u2014 once confirmed, each transfer sends at its scheduled window over the next %1$lld hours."
+            "value" : "Review the plan below \u2014 once confirmed, each transfer sends at its scheduled window over the next ~%1$lld hours."
           }
         },
         "es" : {
@@ -20125,6 +20125,28 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Tu ZEC se envi\u00f3 correctamente a Ironwood."
+          }
+        }
+      }
+    },
+    "migrationSending.subtitleMigrated" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your ZEC is being migrated to Ironwood\u2026"
+          }
+        }
+      }
+    },
+    "migrationSending.sentSubtitleMigrated" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your ZEC was successfully migrated to Ironwood."
           }
         }
       }
@@ -20784,12 +20806,12 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Dust balance remaining"
+            "value" : "Orchard balance remaining"
           }
         },
         "es" : {
           "stringUnit" : {
-            "state" : "translated",
+            "state" : "needs_review",
             "value" : "Saldo de polvo restante"
           }
         }
@@ -20801,13 +20823,68 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%1$@ stayed in Orchard \u2014 the amount is below the transfer threshold."
+            "value" : "%1$@ stayed in Orchard. An amount this specific can identify you on the network. To protect your privacy, we recommend locking this balance rather than migrating it."
           }
         },
         "es" : {
           "stringUnit" : {
-            "state" : "translated",
+            "state" : "needs_review",
             "value" : "%1$@ permaneci\u00f3 en Orchard \u2014 el monto est\u00e1 por debajo del umbral de transferencia."
+          }
+        }
+      }
+    },
+    "migrationComplete.lockedTitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Orchard balance locked"
+          }
+        }
+      }
+    },
+    "migrationComplete.lockedBody" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ is now locked in Orchard. Locking keeps this amount unspendable to protect your privacy."
+          }
+        }
+      }
+    },
+    "migrationComplete.lockBalance" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lock balance"
+          }
+        }
+      }
+    },
+    "migrationComplete.lockingBalance" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Locking balance"
+          }
+        }
+      }
+    },
+    "migrationComplete.migrateAnyway" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Migrate anyway"
           }
         }
       }
