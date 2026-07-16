@@ -8,6 +8,14 @@
 //  TestFlight) threw password dialogs at launch; the DP keychain authorizes silently from the
 //  code signature. See docs/macos/KEYCHAIN_SE_HARDENING.md, "Data Protection keychain relocation".
 //
+//  PLATFORM RULE (learned the hard way, verified via secd's log on a real Mac): on macOS,
+//  SecItem calls WITHOUT `kSecUseDataProtectionKeychain` are NOT scoped to the file keychain —
+//  SecItemCopyMatching sees, and SecItemDelete deletes, Data Protection items too. Every
+//  file-keychain operation here therefore goes through the `fileKeychain*` client primitives,
+//  which the live client scopes via `SecKeychainItemRef`. An unscoped call would re-discover the
+//  app's own DP items as "legacy leftovers" and the delete-the-original step would destroy the
+//  freshly relocated DP copy — the wallet would vanish on every relaunch.
+//
 
 import Foundation
 import Security
@@ -31,6 +39,14 @@ extension WalletStorage {
     struct LegacyItem: Equatable, Comparable {
         let service: String
         let account: String
+        /// The legacy engine's handle (`SecKeychainItemRef`) for THIS file-keychain item — the
+        /// only way to read or delete exactly the file copy and never a same-named DP item.
+        /// Excluded from equality/ordering: it is an opaque handle, not identity.
+        let ref: CFTypeRef
+
+        static func == (lhs: LegacyItem, rhs: LegacyItem) -> Bool {
+            (lhs.service, lhs.account) == (rhs.service, rhs.account)
+        }
 
         static func < (lhs: LegacyItem, rhs: LegacyItem) -> Bool {
             (lhs.service, lhs.account) < (rhs.service, rhs.account)
@@ -88,17 +104,13 @@ extension WalletStorage {
         return KeychainRelocationState.done
     }
 
-    /// Attribute-only scan of the FILE keychain for items whose service belongs to this ZODL
-    /// flavor. Attribute reads are never ACL-gated, so this is promptless. Sorted for
-    /// deterministic processing order.
+    /// Attribute-only scan for FILE-keychain items whose service belongs to this ZODL flavor.
+    /// Attribute reads are never ACL-gated, so this is promptless. The client primitive returns
+    /// only genuinely file-backed items (each with its `SecKeychainItemRef`), so items already in
+    /// the DP keychain can never be re-discovered here. Sorted for deterministic processing order.
     func legacyFileKeychainItems() -> LegacyScanOutcome {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecMatchLimit as String: kSecMatchLimitAll,
-            kSecReturnAttributes as String: kCFBooleanTrue as Any
-        ]
-        var result: AnyObject?
-        let status = secItem.copyMatching(query as CFDictionary, &result)
+        var result: CFTypeRef?
+        let status = secItem.fileKeychainItems(&result)
         if status == errSecItemNotFound {
             return .found([])
         }
@@ -108,10 +120,11 @@ extension WalletStorage {
         let owned = items.compactMap { attributes -> LegacyItem? in
             guard
                 let service = attributes[kSecAttrService as String] as? String,
-                isOwnedService(service)
+                isOwnedService(service),
+                let ref = attributes[kSecValueRef as String]
             else { return nil }
             let account = attributes[kSecAttrAccount as String] as? String ?? ""
-            return LegacyItem(service: service, account: account)
+            return LegacyItem(service: service, account: account, ref: ref as CFTypeRef)
         }
         return .found(owned.sorted())
     }
@@ -147,22 +160,15 @@ extension WalletStorage {
         return prefixFamilies.contains { bare.hasPrefix($0) }
     }
 
-    /// Moves one item: read file bytes → write into DP (file bytes win over a crashed run's
+    /// Moves one item: read the file bytes → write into DP (file bytes win over a crashed run's
     /// duplicate) → read back and verify → only then delete the file original. Returns nil on
-    /// success, the failing OSStatus otherwise. The file data read is the only step a
-    /// login-keychain ACL can gate — on cross-signature installs this is the one final prompt.
+    /// success, the failing OSStatus otherwise. The file read and delete are pinned to the item's
+    /// `SecKeychainItemRef` — a service-name query without the DP flag would also hit the DP copy
+    /// this very function just wrote. The file data read is the only step a login-keychain ACL
+    /// can gate — on cross-signature installs this is the one final prompt.
     private func relocate(_ item: LegacyItem) -> OSStatus? {
-        var fileQuery: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: item.service,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-            kSecReturnData as String: kCFBooleanTrue as Any
-        ]
-        if !item.account.isEmpty {
-            fileQuery[kSecAttrAccount as String] = item.account
-        }
-        var fileResult: AnyObject?
-        let readStatus = secItem.copyMatching(fileQuery as CFDictionary, &fileResult)
+        var fileResult: CFTypeRef?
+        let readStatus = secItem.fileKeychainReadData(item.ref, &fileResult)
         if readStatus == errSecItemNotFound {
             return nil
         }
@@ -219,14 +225,7 @@ extension WalletStorage {
             return errSecDecode
         }
 
-        var deleteQuery: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: item.service
-        ]
-        if !item.account.isEmpty {
-            deleteQuery[kSecAttrAccount as String] = item.account
-        }
-        let deleteStatus = secItem.delete(deleteQuery as CFDictionary)
+        let deleteStatus = secItem.fileKeychainDeleteItem(item.ref)
         guard deleteStatus == errSecSuccess || deleteStatus == errSecItemNotFound else {
             return deleteStatus
         }
@@ -235,20 +234,14 @@ extension WalletStorage {
 
     /// macOS: after a reset wipes the DP keychain, also delete any of OUR items still sitting in
     /// the legacy FILE keychain (un-relocated / half-relocated / failed relocation states).
-    /// Deletes never read item data, so this is promptless; foreign items are never touched.
-    /// Best-effort by design — reset is the escape hatch and must not throw over legacy leftovers.
+    /// Deletes go by `SecKeychainItemRef` (file-only, never read item data), so this is promptless
+    /// and can never touch the DP keychain; foreign items are never touched. Best-effort by
+    /// design — reset is the escape hatch and must not throw over legacy leftovers.
     func sweepLegacyFileKeychainItems() {
         guard useDataProtectionKeychain else { return }
         guard case .found(let leftovers) = legacyFileKeychainItems() else { return }
         for item in leftovers {
-            var query: [String: Any] = [
-                kSecClass as String: kSecClassGenericPassword,
-                kSecAttrService as String: item.service
-            ]
-            if !item.account.isEmpty {
-                query[kSecAttrAccount as String] = item.account
-            }
-            _ = secItem.delete(query as CFDictionary)
+            _ = secItem.fileKeychainDeleteItem(item.ref)
         }
     }
 

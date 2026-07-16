@@ -285,14 +285,28 @@ token-backed keys always lived in the DP domain (which is why it never password-
 
 Mechanics (`WalletStorage+KeychainRelocation.swift`):
 
+- **THE platform rule (learned from a wallet-destroying regression, verified via `secd`'s log on
+  a real Mac):** on macOS, SecItem calls **without** `kSecUseDataProtectionKeychain` are *not*
+  scoped to the file keychain — `SecItemCopyMatching` sees, and `SecItemDelete` deletes, Data
+  Protection items too. The first cut of this engine scanned and deleted unscoped: every launch
+  re-discovered the app's own DP items as "legacy leftovers" and the delete-the-original step
+  destroyed the freshly relocated DP copy — the wallet vanished on every relaunch. All
+  file-keychain operations therefore go through the `SecItemClient.fileKeychain*` primitives,
+  which scope by `SecKeychainItemRef`: only file items are backed by one (the macOS 26 SDK
+  removed `SecKeychainCopySearchList`/`SecKeychainCopyDefault`, so `kSecMatchSearchList` scoping
+  is no longer constructible), making the ref both the file/DP discriminator for the scan and the
+  precision handle for the per-item read (`kSecMatchItemList`) and delete
+  (`SecKeychainItemDelete`).
 - **Lazy once-per-process gate:** every public accessor calls it first, so any first keychain
   touch (including Splash's `areKeysPresent`) relocates before reading. Trigger is "the file
-  keychain still contains our items" — self-healing, no storage-version bump
-  (`zcashStorageVersion` keeps meaning the SE-split format, and the v2 migration composes on top:
-  a v1 plaintext blob relocates as-is, then splits inside the DP keychain).
-- **Crash-safe per item:** read file bytes (the one step an ACL can still gate — cross-signature
-  installs see one final prompt round) → write into DP (file bytes win over a crashed run's
-  duplicate) → read back and verify → only then delete the file original.
+  keychain still contains our items" (ref-discriminated, so DP items can never re-trigger it) —
+  self-healing, no storage-version bump (`zcashStorageVersion` keeps meaning the SE-split format,
+  and the v2 migration composes on top: a v1 plaintext blob relocates as-is, then splits inside
+  the DP keychain).
+- **Crash-safe per item:** read file bytes by ref (the one step an ACL can still gate —
+  cross-signature installs see one final prompt round) → write into DP (file bytes win over a
+  crashed run's duplicate) → read back and verify → only then delete the file original, by its
+  `SecKeychainItemRef`, never by a service-name query.
 - **Failure is sticky and loud:** any failure (including a denied prompt, `errSecAuthFailed`)
   makes every throwing accessor throw `KeychainError.unknown(status)`, which
   `walletInitializationState` routes to the OSStatusError screen. A denied relocation can never

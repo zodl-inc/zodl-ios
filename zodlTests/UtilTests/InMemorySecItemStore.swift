@@ -3,11 +3,17 @@
 //  zodlTests
 //
 //  Stateful in-memory keychain double for WalletStorage tests (the fake deferred in
-//  WalletStoragePureTests). Two independent stores model macOS routing: queries carrying
-//  kSecUseDataProtectionKeychain hit the "data protection" store, all others the "file"
-//  (login-keychain) store. Item identity is (service, account), like the real keychain.
-//  Injected read errors simulate a denied login-keychain ACL prompt: they fire only on
-//  DATA reads (kSecReturnData) — attribute scans stay promptless, like the real thing.
+//  WalletStoragePureTests). Two independent stores model REAL macOS SecItem routing, verified
+//  against a live Mac (MOB-1485 regression):
+//    - queries carrying `kSecUseDataProtectionKeychain: true` hit ONLY the "data protection" store;
+//    - queries WITHOUT the flag are NOT file-only — SecItemCopyMatching consults, and
+//      SecItemDelete deletes from, BOTH implementations (file first, then data protection);
+//    - only the dedicated `fileKeychain*` client primitives are scoped to the file (login
+//      keychain) store, mirroring the live client's SecKeychainItemRef-based scoping.
+//  File items surface an opaque ref token under `kSecValueRef` (data-protection items never do),
+//  like the real unflagged scan. Item identity is (service, account), like the real keychain.
+//  Injected read errors simulate a denied login-keychain ACL prompt: they fire only on DATA
+//  reads (attribute scans stay promptless, like the real thing).
 //
 
 import Foundation
@@ -29,6 +35,10 @@ final class InMemorySecItemStore: Sendable {
         var dataReads: [String: Int] = [:]
     }
 
+    /// ASCII unit separator — cannot collide with the test suites' service/account strings.
+    private static let refSeparator: Character = "\u{1F}"
+    private static let refPrefix = "fileref\(refSeparator)"
+
     private let state = OSAllocatedUnfairLock(initialState: Stores())
 
     var client: SecItemClient {
@@ -36,7 +46,10 @@ final class InMemorySecItemStore: Sendable {
             copyMatching: { [self] query, result in copyMatching(query, &result) },
             add: { [self] attributes, result in add(attributes, &result) },
             update: { [self] query, attributes in update(query, attributes) },
-            delete: { [self] query in delete(query) }
+            delete: { [self] query in delete(query) },
+            fileKeychainItems: { [self] result in fileKeychainItems(&result) },
+            fileKeychainReadData: { [self] ref, result in fileKeychainReadData(ref, &result) },
+            fileKeychainDeleteItem: { [self] ref in fileKeychainDeleteItem(ref) }
         )
     }
 
@@ -82,10 +95,32 @@ final class InMemorySecItemStore: Sendable {
         "\(dataProtection ? "dp" : "file"):\(service):\(account)"
     }
 
+    // MARK: - File-item ref tokens (stand-ins for SecKeychainItemRef)
+
+    private static func fileRef(_ key: ItemKey) -> CFTypeRef {
+        "\(refPrefix)\(key.service)\(refSeparator)\(key.account)" as NSString
+    }
+
+    private static func parseFileRef(_ ref: CFTypeRef) -> ItemKey? {
+        guard let token = ref as? String, token.hasPrefix(refPrefix) else { return nil }
+        let body = token.dropFirst(refPrefix.count)
+        guard let separator = body.firstIndex(of: refSeparator) else { return nil }
+        return ItemKey(
+            service: String(body[..<separator]),
+            account: String(body[body.index(after: separator)...])
+        )
+    }
+
     // MARK: - SecItem semantics
 
     private static func fields(_ raw: CFDictionary) -> [String: Any]? {
         (raw as NSDictionary) as? [String: Any]
+    }
+
+    /// The stores a query operates on (`true` = data protection), in real macOS routing order:
+    /// the flag scopes to the data-protection store alone; NO flag means BOTH stores, file first.
+    private static func routedStores(isDataProtection: Bool) -> [Bool] {
+        isDataProtection ? [true] : [false, true]
     }
 
     private func copyMatching(_ rawQuery: CFDictionary, _ result: inout CFTypeRef?) -> OSStatus {
@@ -100,33 +135,42 @@ final class InMemorySecItemStore: Sendable {
         // withLockUnchecked: the closure writes the caller's non-Sendable `inout CFTypeRef?`, which
         // the checked `withLock` (a `@Sendable` closure) rejects under Swift 6 strict concurrency.
         return state.withLockUnchecked { stores in
-            let table = isDP ? stores.dataProtection : stores.file
-            let matches = table
-                .filter { key, _ in
-                    (service == nil || key.service == service) && (account == nil || key.account == account)
-                }
-                .sorted { ($0.key.service, $0.key.account) < ($1.key.service, $1.key.account) }
+            var matches: [(key: ItemKey, data: Data, isDP: Bool)] = []
+            for isDPStore in Self.routedStores(isDataProtection: isDP) {
+                let items = isDPStore ? stores.dataProtection : stores.file
+                matches += items
+                    .filter { key, _ in
+                        (service == nil || key.service == service) && (account == nil || key.account == account)
+                    }
+                    .sorted { ($0.key.service, $0.key.account) < ($1.key.service, $1.key.account) }
+                    .map { (key: $0.key, data: $0.value, isDP: isDPStore) }
+            }
             guard let first = matches.first else { return errSecItemNotFound }
 
             if wantsAttributes && matchAll {
-                let attributes = matches.map { key, _ -> [String: Any] in
-                    [
-                        kSecAttrService as String: key.service,
-                        kSecAttrAccount as String: key.account
+                let attributes = matches.map { match -> [String: Any] in
+                    var item: [String: Any] = [
+                        kSecAttrService as String: match.key.service,
+                        kSecAttrAccount as String: match.key.account
                     ]
+                    // Only file-keychain items are SecKeychainItemRef-backed.
+                    if !match.isDP {
+                        item[kSecValueRef as String] = Self.fileRef(match.key)
+                    }
+                    return item
                 }
                 result = attributes as CFTypeRef
                 return errSecSuccess
             }
 
             if wantsData {
-                let errors = isDP ? stores.dataProtectionReadErrors : stores.fileReadErrors
+                let errors = first.isDP ? stores.dataProtectionReadErrors : stores.fileReadErrors
                 if let injected = errors[first.key] {
                     return injected
                 }
-                let counter = Self.readCounterKey(service: first.key.service, account: first.key.account, dataProtection: isDP)
+                let counter = Self.readCounterKey(service: first.key.service, account: first.key.account, dataProtection: first.isDP)
                 stores.dataReads[counter, default: 0] += 1
-                result = first.value as CFTypeRef
+                result = first.data as CFTypeRef
             }
             return errSecSuccess
         }
@@ -142,6 +186,8 @@ final class InMemorySecItemStore: Sendable {
         let account = attributes[kSecAttrAccount as String] as? String ?? ""
         let key = ItemKey(service: service, account: account)
         return state.withLock { stores in
+            // Adds are the one verb that never spans stores: flagged → data protection,
+            // unflagged → the default file (login) keychain.
             if isDP {
                 if stores.dataProtection[key] != nil { return errSecDuplicateItem }
                 stores.dataProtection[key] = data
@@ -163,20 +209,23 @@ final class InMemorySecItemStore: Sendable {
         let service = query[kSecAttrService as String] as? String
         let account = query[kSecAttrAccount as String] as? String
         return state.withLock { stores in
-            var table = isDP ? stores.dataProtection : stores.file
-            let keys = table.keys.filter {
-                (service == nil || $0.service == service) && (account == nil || $0.account == account)
+            var updatedAny = false
+            for isDPStore in Self.routedStores(isDataProtection: isDP) {
+                var items = isDPStore ? stores.dataProtection : stores.file
+                let keys = items.keys.filter {
+                    (service == nil || $0.service == service) && (account == nil || $0.account == account)
+                }
+                for key in keys {
+                    items[key] = newData
+                    updatedAny = true
+                }
+                if isDPStore {
+                    stores.dataProtection = items
+                } else {
+                    stores.file = items
+                }
             }
-            guard !keys.isEmpty else { return errSecItemNotFound }
-            for key in keys {
-                table[key] = newData
-            }
-            if isDP {
-                stores.dataProtection = table
-            } else {
-                stores.file = table
-            }
-            return errSecSuccess
+            return updatedAny ? errSecSuccess : errSecItemNotFound
         }
     }
 
@@ -186,19 +235,65 @@ final class InMemorySecItemStore: Sendable {
         let service = query[kSecAttrService as String] as? String
         let account = query[kSecAttrAccount as String] as? String
         return state.withLock { stores in
-            var table = isDP ? stores.dataProtection : stores.file
-            let keys = table.keys.filter {
-                (service == nil || $0.service == service) && (account == nil || $0.account == account)
+            var deletedAny = false
+            for isDPStore in Self.routedStores(isDataProtection: isDP) {
+                var items = isDPStore ? stores.dataProtection : stores.file
+                let keys = items.keys.filter {
+                    (service == nil || $0.service == service) && (account == nil || $0.account == account)
+                }
+                for key in keys {
+                    items[key] = nil
+                    deletedAny = true
+                }
+                if isDPStore {
+                    stores.dataProtection = items
+                } else {
+                    stores.file = items
+                }
             }
-            guard !keys.isEmpty else { return errSecItemNotFound }
-            for key in keys {
-                table[key] = nil
+            return deletedAny ? errSecSuccess : errSecItemNotFound
+        }
+    }
+
+    // MARK: - File-keychain-only primitives (mirroring the live SecKeychainItemRef scoping)
+
+    private func fileKeychainItems(_ result: inout CFTypeRef?) -> OSStatus {
+        state.withLockUnchecked { stores in
+            guard !stores.file.isEmpty else { return errSecItemNotFound }
+            let attributes = stores.file
+                .sorted { ($0.key.service, $0.key.account) < ($1.key.service, $1.key.account) }
+                .map { key, _ -> [String: Any] in
+                    [
+                        kSecAttrService as String: key.service,
+                        kSecAttrAccount as String: key.account,
+                        kSecValueRef as String: Self.fileRef(key)
+                    ]
+                }
+            result = attributes as CFTypeRef
+            return errSecSuccess
+        }
+    }
+
+    private func fileKeychainReadData(_ ref: CFTypeRef, _ result: inout CFTypeRef?) -> OSStatus {
+        guard let key = Self.parseFileRef(ref) else { return errSecParam }
+        return state.withLockUnchecked { stores in
+            guard let data = stores.file[key] else { return errSecItemNotFound }
+            if let injected = stores.fileReadErrors[key] {
+                return injected
             }
-            if isDP {
-                stores.dataProtection = table
-            } else {
-                stores.file = table
-            }
+            let counter = Self.readCounterKey(service: key.service, account: key.account, dataProtection: false)
+            stores.dataReads[counter, default: 0] += 1
+            result = data as CFTypeRef
+            return errSecSuccess
+        }
+    }
+
+    private func fileKeychainDeleteItem(_ ref: CFTypeRef) -> OSStatus {
+        guard let key = Self.parseFileRef(ref) else { return errSecParam }
+        return state.withLock { stores in
+            stores.file[key] = nil
+            // SecKeychainItemDelete on an already-gone item "does nothing and returns
+            // errSecSuccess" (SecKeychainItem.h) — model the same.
             return errSecSuccess
         }
     }

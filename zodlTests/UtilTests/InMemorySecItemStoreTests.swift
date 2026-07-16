@@ -95,4 +95,71 @@ import Security
         ]
         #expect(fake.client.delete(query as CFDictionary) == errSecItemNotFound)
     }
+
+    /// Real macOS routing (the MOB-1485 regression): a delete WITHOUT the DP flag removes
+    /// matching items from BOTH keychain implementations.
+    @Test func unflaggedDeleteRemovesFromBothStores() {
+        let fake = InMemorySecItemStore()
+        fake.seedFile(service: "svc", data: Data([1]))
+        fake.seedDataProtection(service: "svc", data: Data([2]))
+
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: "svc"
+        ]
+        #expect(fake.client.delete(query as CFDictionary) == errSecSuccess)
+        #expect(fake.fileItems().isEmpty)
+        #expect(fake.dataProtectionItems().isEmpty)
+    }
+
+    /// Unflagged attribute scans see BOTH stores; only file items carry a `kSecValueRef` handle
+    /// (the live discriminator for what is genuinely a legacy file item).
+    @Test func unflaggedScanSeesBothStoresButOnlyFileItemsCarryRefs() throws {
+        let fake = InMemorySecItemStore()
+        fake.seedFile(service: "file-svc", data: Data([1]))
+        fake.seedDataProtection(service: "dp-svc", data: Data([2]))
+
+        let scan: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecMatchLimit as String: kSecMatchLimitAll,
+            kSecReturnAttributes as String: kCFBooleanTrue as Any
+        ]
+        var result: CFTypeRef?
+        #expect(fake.client.copyMatching(scan as CFDictionary, &result) == errSecSuccess)
+        let items = try #require(result as? [[String: Any]])
+        #expect(items.count == 2)
+        for item in items {
+            let service = item[kSecAttrService as String] as? String
+            let hasRef = item[kSecValueRef as String] != nil
+            #expect(hasRef == (service == "file-svc"))
+        }
+    }
+
+    /// The dedicated file-keychain primitives are scoped to the file store alone.
+    @Test func fileKeychainPrimitivesTouchOnlyTheFileStore() throws {
+        let fake = InMemorySecItemStore()
+        fake.seedFile(service: "svc", data: Data([1]))
+        fake.seedDataProtection(service: "svc", data: Data([2]))
+
+        var scanResult: CFTypeRef?
+        #expect(fake.client.fileKeychainItems(&scanResult) == errSecSuccess)
+        let items = try #require(scanResult as? [[String: Any]])
+        #expect(items.count == 1)
+        let ref = try #require(items[0][kSecValueRef as String].map { $0 as CFTypeRef })
+
+        var readResult: CFTypeRef?
+        #expect(fake.client.fileKeychainReadData(ref, &readResult) == errSecSuccess)
+        #expect(readResult as? Data == Data([1]))
+
+        #expect(fake.client.fileKeychainDeleteItem(ref) == errSecSuccess)
+        #expect(fake.fileItems().isEmpty)
+        #expect(fake.dataProtectionItems()[InMemorySecItemStore.ItemKey(service: "svc", account: "")] == Data([2]))
+
+        // Deleting an already-gone item succeeds, like SecKeychainItemDelete.
+        #expect(fake.client.fileKeychainDeleteItem(ref) == errSecSuccess)
+
+        // Empty file store scans as errSecItemNotFound, like the real thing.
+        var emptyResult: CFTypeRef?
+        #expect(fake.client.fileKeychainItems(&emptyResult) == errSecItemNotFound)
+    }
 }
