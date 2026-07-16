@@ -216,6 +216,7 @@ struct MigrationSimulatorPanelView: View {
         signed batches: \(readout.signedBatchCount)
         armed result: \(readout.armedResultDescription ?? "none")
         last bg run: \(readout.lastBackgroundRunSummary ?? "none")
+        dust: \(readout.dustRemainder.amount > 0 ? "\(readout.dustRemainder.decimalZashiFullFormatted()) ZEC\(readout.isDustLocked ? " · locked" : "")" : "none")
         """
     }
 

@@ -121,8 +121,7 @@ struct MigrationNotificationsView: View {
     // MARK: - Footer note
 
     // Both variants render the same (scheduled) copy — the design no longer differentiates the
-    // footer note by variant (MOB-1487; `footerManual` retired from use here, key left in the
-    // catalog for centralized cleanup).
+    // footer note by variant (MOB-1487; the `footerManual` key is retired from the catalog).
     @ViewBuilder private var footerNote: some View {
         HStack(alignment: .top, spacing: 8) {
             Asset.Assets.infoOutline.image
