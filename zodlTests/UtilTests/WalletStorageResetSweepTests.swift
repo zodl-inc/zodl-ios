@@ -58,4 +58,25 @@ import Security
 
         #expect(fake.fileItems().isEmpty)
     }
+
+    @Test func resetAfterFailedRelocationClearsStickyGate() throws {
+        let fake = InMemorySecItemStore()
+        fake.seedFile(service: "zcashStoredWalletSeed", data: Data([1]))
+        fake.injectFileReadError(service: "zcashStoredWalletSeed", status: errSecAuthFailed)
+        let storage = makeStorage(fake)
+
+        #expect(throws: WalletStorage.KeychainError.unknown(errSecAuthFailed)) {
+            _ = try storage.areKeysPresent()
+        }
+
+        try storage.resetZashi()
+
+        // The sweep emptied the file keychain, so the failed gate is stale — a successful reset
+        // re-derives it and the storage works again as a fresh, walletless install. Without this,
+        // the post-reset verification read in Root's resetZashiFinishProcessing would rethrow the
+        // stale failure and mis-report a successful wipe as "corrupted data".
+        #expect(try storage.areKeysPresent() == false)
+        try storage.importWalletBackupAcknowledged(true)
+        #expect(storage.exportWalletBackupAcknowledged() == true)
+    }
 }
