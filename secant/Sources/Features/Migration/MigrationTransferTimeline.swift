@@ -7,6 +7,15 @@
 //  consumer of this row list. Screens own their own caption copy via the `caption` closure;
 //  everything else (badge mapping, connector color, amount + fiat display) lives here.
 //
+//  MOB-1487: restyled to the "Final Designs" canvas (frame 3508:11442 family + 3480:7638 +
+//  3491:10311/10426/10549) — title/amount drop to 14pt medium, caption/fiat to 12pt regular, the
+//  connector thickens 1.5 -> 2pt, and the connector coloring rule changes: the active row's
+//  trailing segment is dark only until some row in the list has sent (confirmed across the mock
+//  frames — Confirm Transfer Plan's untouched list keeps a dark segment under Transfer 1, while
+//  Resume's stalled Transfer 3 — also badge-active via `.overdue` — renders its segment
+//  pending-gray once Transfers 1-2 are sent). The reschedule skeleton placeholder resizes
+//  72x12 -> 60x16 (corner radius unchanged, confirmed against the Figma skeleton Rectangle).
+//
 
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
@@ -36,13 +45,13 @@ struct MigrationTransferTimeline: View {
                 if !isLast {
                     Rectangle()
                         .fill(connectorColor(for: row.status).color(colorScheme))
-                        .frame(width: 1.5, height: 28)
+                        .frame(width: 2, height: 28)
                 }
             }
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(String(localizable: .migrationPlanTransferN(row.index + 1)))
-                    .zFont(.semiBold, size: 16, style: Design.Text.primary)
+                    .zFont(.medium, size: 14, style: Design.Text.primary)
 
                 captionOrSkeleton(for: row)
             }
@@ -52,11 +61,11 @@ struct MigrationTransferTimeline: View {
 
             VStack(alignment: .trailing, spacing: 2) {
                 Text("\(row.amount.decimalString()) ZEC")
-                    .zFont(.semiBold, size: 16, style: Design.Text.primary)
+                    .zFont(.medium, size: 14, style: Design.Text.primary)
 
                 if let currencyConversion {
                     Text(currencyConversion.convert(row.amount))
-                        .zFont(size: 13, style: Design.Text.tertiary)
+                        .zFont(size: 12, style: Design.Text.tertiary)
                 }
             }
             .padding(.top, 2)
@@ -68,10 +77,10 @@ struct MigrationTransferTimeline: View {
         if skeletonPendingCaptions && row.status != .sent {
             RoundedRectangle(cornerRadius: 4)
                 .fill(Design.Surfaces.bgTertiary.color(colorScheme))
-                .frame(width: 72, height: 12)
+                .frame(width: 60, height: 16)
         } else {
             Text(caption(row))
-                .zFont(size: 14, style: Design.Text.tertiary)
+                .zFont(size: 12, style: Design.Text.tertiary)
         }
     }
 
@@ -88,12 +97,20 @@ struct MigrationTransferTimeline: View {
         }
     }
 
+    /// MOB-1487: whether any row in the list has already sent — gates the active row's trailing
+    /// connector segment (see `connectorColor(for:)`).
+    private var hasSentRow: Bool {
+        rows.contains { $0.status == .sent }
+    }
+
     private func connectorColor(for status: MigrationTransferRow.Status) -> Colorable {
         switch badgeStyle(for: status) {
         case .sent:
             return Design.Utility.SuccessGreen._500
         case .active:
-            return Design.Text.primary
+            // Dark only while nothing has sent yet; once a row is sent, the active row's segment
+            // renders the same pending gray as a queued row.
+            return hasSentRow ? Design.Surfaces.strokeSecondary : Design.Text.primary
         case .pending:
             return Design.Surfaces.strokeSecondary
         case .warning:
