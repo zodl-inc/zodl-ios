@@ -203,31 +203,35 @@ private extension View {
 // MARK: - Mock data
 
 private extension IdentifiedArray where ID == MigrationTransferRow.ID, Element == MigrationTransferRow {
-    /// The 5-transfer set from the Figma frames (3.51220 / 2.87410 / 2.43100 / 1.99830 / 1.64240 ZEC).
-    /// MOB-1478 W7: Transfer 2 exercises sub-hour `sentMinutesAgo` ("Sent 18 min ago") and Transfer 3
-    /// exercises `isBroadcasting` ("Sending now"), matching the updated S10-progress frame.
+    /// The 6-transfer set from the "Final Designs" canvas (10.00 / 1.00 / 1.00 / 0.2 / 0.2 /
+    /// 0.05 ZEC). MOB-1478 W7: Transfer 2 exercises sub-hour `sentMinutesAgo` ("Sent 18 min ago")
+    /// and Transfer 3 exercises `isBroadcasting` ("Sending now"), matching the updated S10-progress
+    /// frame.
     static var previewProgressRows: Self {
         [
-            MigrationTransferRow(id: "0", index: 0, amount: Zatoshi(351_220_000), status: .sent, hoursFromNow: 6),
+            MigrationTransferRow(id: "0", index: 0, amount: Zatoshi(1_000_000_000), status: .sent, hoursFromNow: 6),
             MigrationTransferRow(
-                id: "1", index: 1, amount: Zatoshi(287_410_000), status: .sent, hoursFromNow: 0, sentMinutesAgo: 18
+                id: "1", index: 1, amount: Zatoshi(100_000_000), status: .sent, hoursFromNow: 0, sentMinutesAgo: 18
             ),
             MigrationTransferRow(
-                id: "2", index: 2, amount: Zatoshi(243_100_000), status: .active, hoursFromNow: 0, isBroadcasting: true
+                id: "2", index: 2, amount: Zatoshi(100_000_000), status: .active, hoursFromNow: 0, isBroadcasting: true
             ),
-            MigrationTransferRow(id: "3", index: 3, amount: Zatoshi(199_830_000), status: .pending, hoursFromNow: 12),
-            MigrationTransferRow(id: "4", index: 4, amount: Zatoshi(164_240_000), status: .pending, hoursFromNow: 18)
+            MigrationTransferRow(id: "3", index: 3, amount: Zatoshi(20_000_000), status: .pending, hoursFromNow: 12),
+            MigrationTransferRow(id: "4", index: 4, amount: Zatoshi(20_000_000), status: .pending, hoursFromNow: 18),
+            MigrationTransferRow(id: "5", index: 5, amount: Zatoshi(5_000_000), status: .pending, hoursFromNow: 36)
         ]
     }
 
-    /// The resume/re-scheduling frame: two sent, one overdue, two pending.
+    /// The resume/re-scheduling frame (Figma B8 · Migration in Progress): two sent, one overdue,
+    /// three pending.
     static var previewResumeRows: Self {
         [
-            MigrationTransferRow(id: "0", index: 0, amount: Zatoshi(351_220_000), status: .sent, hoursFromNow: 18),
-            MigrationTransferRow(id: "1", index: 1, amount: Zatoshi(287_410_000), status: .sent, hoursFromNow: 11),
-            MigrationTransferRow(id: "2", index: 2, amount: Zatoshi(243_100_000), status: .overdue, hoursFromNow: 5),
-            MigrationTransferRow(id: "3", index: 3, amount: Zatoshi(199_830_000), status: .pending, hoursFromNow: 1),
-            MigrationTransferRow(id: "4", index: 4, amount: Zatoshi(164_240_000), status: .pending, hoursFromNow: 7)
+            MigrationTransferRow(id: "0", index: 0, amount: Zatoshi(1_000_000_000), status: .sent, hoursFromNow: 18),
+            MigrationTransferRow(id: "1", index: 1, amount: Zatoshi(100_000_000), status: .sent, hoursFromNow: 6),
+            MigrationTransferRow(id: "2", index: 2, amount: Zatoshi(100_000_000), status: .overdue, hoursFromNow: 5),
+            MigrationTransferRow(id: "3", index: 3, amount: Zatoshi(20_000_000), status: .pending, hoursFromNow: 12),
+            MigrationTransferRow(id: "4", index: 4, amount: Zatoshi(20_000_000), status: .pending, hoursFromNow: 18),
+            MigrationTransferRow(id: "5", index: 5, amount: Zatoshi(5_000_000), status: .pending, hoursFromNow: 36)
         ]
     }
 
@@ -236,11 +240,14 @@ private extension IdentifiedArray where ID == MigrationTransferRow.ID, Element =
     /// "Sending now" — the reschedule only re-queues it, broadcasting hasn't started yet.
     static var previewRescheduleConfirmedRows: Self {
         [
-            MigrationTransferRow(id: "0", index: 0, amount: Zatoshi(351_220_000), status: .sent, hoursFromNow: 18),
-            MigrationTransferRow(id: "1", index: 1, amount: Zatoshi(287_410_000), status: .sent, hoursFromNow: 11),
-            MigrationTransferRow(id: "2", index: 2, amount: Zatoshi(243_100_000), status: .active, hoursFromNow: 3),
-            MigrationTransferRow(id: "3", index: 3, amount: Zatoshi(199_830_000), status: .pending, hoursFromNow: 9),
-            MigrationTransferRow(id: "4", index: 4, amount: Zatoshi(164_240_000), status: .pending, hoursFromNow: 15)
+            MigrationTransferRow(id: "0", index: 0, amount: Zatoshi(1_000_000_000), status: .sent, hoursFromNow: 6),
+            MigrationTransferRow(
+                id: "1", index: 1, amount: Zatoshi(100_000_000), status: .sent, hoursFromNow: 0, sentMinutesAgo: 18
+            ),
+            MigrationTransferRow(id: "2", index: 2, amount: Zatoshi(100_000_000), status: .active, hoursFromNow: 6),
+            MigrationTransferRow(id: "3", index: 3, amount: Zatoshi(20_000_000), status: .pending, hoursFromNow: 12),
+            MigrationTransferRow(id: "4", index: 4, amount: Zatoshi(20_000_000), status: .pending, hoursFromNow: 18),
+            MigrationTransferRow(id: "5", index: 5, amount: Zatoshi(5_000_000), status: .pending, hoursFromNow: 36)
         ]
     }
 }
@@ -305,7 +312,7 @@ private extension IdentifiedArray where ID == MigrationTransferRow.ID, Element =
         MigrationStatusView(
             store: StoreOf<MigrationStatus>(
                 initialState: MigrationStatus.State(
-                    presentation: .rescheduleConfirmed(first: 3, last: 5),
+                    presentation: .rescheduleConfirmed(first: 3, last: 6),
                     rows: .previewRescheduleConfirmedRows,
                     totalDurationHours: 24
                 )

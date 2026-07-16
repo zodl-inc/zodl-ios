@@ -10,6 +10,11 @@
 //  MOB-1478 (W4): `confirmTapped` now silently splits first when needed — a failure presents the
 //  same Cancel/Retry bottom sheet `MigrationNoteSplit` uses (this screen had no failure path before).
 //
+//  MOB-1487: restyled to the Figma canvas "Final Designs" (frame 3508:11442 family) — the footer's
+//  "Amounts are randomized" info row is removed (nothing sits between the list and Confirm in the
+//  new mock); the timeline restyle itself (badge/connector/typography) lives in
+//  `MigrationTransferTimeline`/`MigrationStepBadge`.
+//
 
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
@@ -42,9 +47,6 @@ struct MigrationTransferPlanView: View {
                     }
                     .padding(.vertical, 1)
                 }
-
-                footerNote
-                    .padding(.top, 16)
 
                 ZashiButton(String(localizable: .generalConfirm)) {
                     store.send(.confirmTapped)
@@ -115,19 +117,6 @@ struct MigrationTransferPlanView: View {
             : String(localizable: .migrationPlanEtaHours(hoursFromNow))
     }
 
-    // MARK: - Footer note
-
-    @ViewBuilder private var footerNote: some View {
-        HStack(spacing: 8) {
-            Asset.Assets.infoOutline.image
-                .zImage(size: 16, style: Design.Text.tertiary)
-
-            Text(localizable: .migrationPlanRandomizedNote)
-                .zFont(size: 12, style: Design.Text.tertiary)
-        }
-        .frame(maxWidth: .infinity, alignment: .center)
-    }
-
     // MARK: - Failure sheet (MOB-1478 W4 — silent note split)
 
     /// Mirrors `MigrationNoteSplitView`'s failure sheet exactly (same strings, same Cancel/Retry
@@ -172,14 +161,18 @@ struct MigrationTransferPlanView: View {
 // MARK: - Mock data
 
 private extension IdentifiedArray where ID == MigrationTransferRow.ID, Element == MigrationTransferRow {
-    /// The 5-transfer set from the Figma frames (3.51220 / 2.87410 / 2.43100 / 1.99830 / 1.64240 ZEC).
+    /// The 6-transfer set from the "Final Designs" canvas, frame 3508:11442 (10.00 / 1.00 / 1.00 /
+    /// 0.2 / 0.2 / 0.05 ZEC). Transfer 1 stays `.active` (dark badge, dark trailing connector
+    /// segment per the frame's Avatar fill) even though its ETA is a real "in ~6 hours" rather than
+    /// "ready now" — nothing has actually started sending on this pre-commit screen.
     static var previewRows: Self {
         [
-            MigrationTransferRow(id: "0", index: 0, amount: Zatoshi(351_220_000), status: .active, hoursFromNow: 0),
-            MigrationTransferRow(id: "1", index: 1, amount: Zatoshi(287_410_000), status: .pending, hoursFromNow: 6),
-            MigrationTransferRow(id: "2", index: 2, amount: Zatoshi(243_100_000), status: .pending, hoursFromNow: 12),
-            MigrationTransferRow(id: "3", index: 3, amount: Zatoshi(199_830_000), status: .pending, hoursFromNow: 18),
-            MigrationTransferRow(id: "4", index: 4, amount: Zatoshi(164_240_000), status: .pending, hoursFromNow: 24)
+            MigrationTransferRow(id: "0", index: 0, amount: Zatoshi(1_000_000_000), status: .active, hoursFromNow: 6),
+            MigrationTransferRow(id: "1", index: 1, amount: Zatoshi(100_000_000), status: .pending, hoursFromNow: 12),
+            MigrationTransferRow(id: "2", index: 2, amount: Zatoshi(100_000_000), status: .pending, hoursFromNow: 18),
+            MigrationTransferRow(id: "3", index: 3, amount: Zatoshi(20_000_000), status: .pending, hoursFromNow: 24),
+            MigrationTransferRow(id: "4", index: 4, amount: Zatoshi(20_000_000), status: .pending, hoursFromNow: 30),
+            MigrationTransferRow(id: "5", index: 5, amount: Zatoshi(5_000_000), status: .pending, hoursFromNow: 36)
         ]
     }
 
@@ -204,7 +197,7 @@ private extension IdentifiedArray where ID == MigrationTransferRow.ID, Element =
                 initialState: MigrationTransferPlan.State(
                     variant: .scheduled,
                     rows: .previewRows,
-                    totalDurationHours: 24
+                    totalDurationHours: 36
                 )
             ) {
                 MigrationTransferPlan()
@@ -220,7 +213,7 @@ private extension IdentifiedArray where ID == MigrationTransferRow.ID, Element =
                 initialState: MigrationTransferPlan.State(
                     variant: .manual,
                     rows: .previewRows,
-                    totalDurationHours: 24
+                    totalDurationHours: 36
                 )
             ) {
                 MigrationTransferPlan()
