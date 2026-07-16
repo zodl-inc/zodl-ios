@@ -61,7 +61,10 @@ struct SimulatorSnapshot: Equatable, Sendable, Codable {
     static func seeded(rngSeed: UInt64 = MigrationSimulatorEngineDerivations.Constants.defaultRNGSeed) -> SimulatorSnapshot {
         SimulatorSnapshot(
             schemaVersion: SimulatorSnapshot.currentSchemaVersion,
-            isActive: true,
+            // Opt-in: a fresh install simulates nothing until the debug panel's toggle turns the
+            // simulation on (Michal 2026-07-15; the long-press panel entry is flag-gated only, so
+            // it stays reachable while inactive).
+            isActive: false,
             orchardBalance: MigrationSimulatorEngineDerivations.Constants.defaultOrchardBalance,
             notes: [MigrationSimulatorEngineDerivations.Constants.defaultOrchardBalance],
             mode: MigrationMode.privateScheduled,
@@ -102,7 +105,7 @@ struct SimulatorSnapshot: Equatable, Sendable, Codable {
 
     init(
         schemaVersion: Int,
-        isActive: Bool = true,
+        isActive: Bool = false,
         orchardBalance: Zatoshi,
         notes: [Zatoshi],
         mode: MigrationMode,

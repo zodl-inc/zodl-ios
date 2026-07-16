@@ -123,6 +123,7 @@ import URKit
         let counters = CallCounters()
         var client = makeBaseClient(counters)
         let engine = MigrationSimulatorEngine(store: MigrationSimulatorStateStore.ephemeral())
+        engine.setActive(true) // the fresh-seed default is inactive (opt-in simulation)
         client.applySimulatedMigration(engine: engine)
 
         // Active: reads the engine's real (fresh-seeded) state, never the sentinel.
@@ -157,6 +158,7 @@ import URKit
         let counters = CallCounters()
         var client = makeBaseClient(counters)
         let engine = MigrationSimulatorEngine(store: MigrationSimulatorStateStore.ephemeral())
+        engine.setActive(true) // the fresh-seed default is inactive (opt-in simulation)
         client.applySimulatedMigration(engine: engine)
 
         // Fresh engine default (privateScheduled / notStarted / 1 note) answers true; the sentinel
@@ -175,6 +177,7 @@ import URKit
         let counters = CallCounters()
         var client = makeBaseClient(counters)
         let engine = MigrationSimulatorEngine(store: MigrationSimulatorStateStore.ephemeral())
+        engine.setActive(true) // the fresh-seed default is inactive (opt-in simulation)
         engine.selectMode(MigrationMode.immediate)
         client.applySimulatedMigration(engine: engine)
 
@@ -223,6 +226,7 @@ import URKit
         let counters = CallCounters()
         var client = makeBaseClient(counters)
         let engine = MigrationSimulatorEngine(store: MigrationSimulatorStateStore.ephemeral())
+        engine.setActive(true) // the fresh-seed default is inactive (opt-in simulation)
         client.applySimulatedMigration(engine: engine)
 
         let noteSplitPCZT = await client.proposeNoteSplitPCZT()
@@ -270,6 +274,7 @@ import URKit
         let counters = CallCounters()
         var client = makeBaseClient(counters)
         let engine = MigrationSimulatorEngine(store: MigrationSimulatorStateStore.ephemeral())
+        engine.setActive(true) // the fresh-seed default is inactive (opt-in simulation)
         client.applySimulatedMigration(engine: engine)
 
         // Active + empty batch -> nil without reaching KeystoneSDK/URKit or the sentinel.
@@ -288,6 +293,7 @@ import URKit
         let counters = CallCounters()
         var client = makeBaseClient(counters)
         let engine = MigrationSimulatorEngine(store: MigrationSimulatorStateStore.ephemeral())
+        engine.setActive(true) // the fresh-seed default is inactive (opt-in simulation)
         client.applySimulatedMigration(engine: engine)
 
         let syntheticHeight = MigrationSimulatorEngineDerivations.syntheticHeight(for: Date())
