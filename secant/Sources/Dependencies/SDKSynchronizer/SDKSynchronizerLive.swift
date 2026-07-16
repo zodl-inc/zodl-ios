@@ -409,6 +409,7 @@ extension SDKSynchronizerClient: DependencyKey {
                 }
             },
             isMigrationDustLocked: { false },
+            sendRequiresOrchardFunds: { _ in false },
             proposeNoteSplitPCZT: { Pczt() },
             proposeMigrationPCZTs: { _ in [] },
             storeSignedMigrationTransactions: { _ in },

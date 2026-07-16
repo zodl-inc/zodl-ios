@@ -229,6 +229,17 @@ extension SDKSynchronizerClient {
         self.isMigrationDustLocked = {
             engine.isActive ? engine.isDustLocked() : originalIsMigrationDustLocked()
         }
+
+        // MOB-1487 R3: the send-form Orchard disclaimer — any positive amount counts as touching
+        // Orchard while the simulated wallet still holds an unlocked Orchard balance.
+        let originalSendRequiresOrchardFunds = self.sendRequiresOrchardFunds
+        self.sendRequiresOrchardFunds = { amount in
+            if engine.isActive {
+                return amount.amount > 0 && engine.orchardBalance().amount > 0 && !engine.isDustLocked()
+            } else {
+                return await originalSendRequiresOrchardFunds(amount)
+            }
+        }
     }
 
     // MARK: - Keystone / PCZT (spec §5.2 "Keystone" rows + §7)

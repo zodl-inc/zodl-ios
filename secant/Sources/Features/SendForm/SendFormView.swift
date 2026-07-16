@@ -175,12 +175,20 @@ struct SendFormView: View {
                                             }
                                         }
                                         
-                                        ZashiButton(String(localizable: .sendReview)) {
-                                            store.send(.reviewTapped)
+                                        if store.isOrchardSpendDisclaimerVisible {
+                                            orchardSpendDisclaimerCard()
+                                                .padding(.top, 40)
+
+                                            orchardSpendWarningButton()
+                                                .padding(.top, 16)
+                                        } else {
+                                            ZashiButton(String(localizable: .sendReview)) {
+                                                store.send(.reviewTapped)
+                                            }
+                                            .disabled(!store.isValidForm)
+                                            .padding(.top, 40)
+                                            .accessibilityIdentifier(AccessibilityID.SendForm.reviewButton)
                                         }
-                                        .disabled(!store.isValidForm)
-                                        .padding(.top, 40)
-                                        .accessibilityIdentifier(AccessibilityID.SendForm.reviewButton)
                                     }
                                 }
                                 .screenHorizontalPadding()
@@ -309,6 +317,58 @@ struct SendFormView: View {
                         .stroke(Design.Btns.Secondary.border.color(colorScheme))
                 }
         }
+    }
+
+    // MARK: - MOB-1487 R3: Orchard-spend disclaimer
+
+    @ViewBuilder private func orchardSpendDisclaimerCard() -> some View {
+        HStack(alignment: .top, spacing: 16) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(localizable: .sendOrchardDisclaimerTitle)
+                    .zFont(.medium, size: 14, style: Design.Utility.WarningYellow._700)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Text(localizable: .sendOrchardDisclaimerBody)
+                    .zFont(size: 14, style: Design.Utility.WarningYellow._700)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Asset.Assets.infoOutline.image
+                .zImage(size: 16, style: Design.Utility.WarningYellow._700)
+        }
+        .padding(16)
+        .background {
+            RoundedRectangle(cornerRadius: Design.Radius._2xl)
+                .fill(Design.Utility.WarningYellow._50.color(colorScheme))
+        }
+    }
+
+    // `ZashiButton`'s `Type` enum has no per-instance color hook, so this reproduces the Review
+    // button locally with the warning palette swapped in (mirrors the `skipButton` precedent in
+    // MigrationNotificationsView.swift:144-164) while the Orchard-spend disclaimer is visible.
+    @ViewBuilder private func orchardSpendWarningButton() -> some View {
+        Button {
+            store.send(.reviewTapped)
+        } label: {
+            Text(localizable: .sendReview)
+                .zFont(.semiBold, size: 16, style: Design.Utility.WarningYellow._700)
+                .fixedSize()
+                .minimumScaleFactor(0.5)
+                .padding(.horizontal, 18)
+                .padding(.vertical, 12)
+                .frame(maxWidth: .infinity)
+                .background {
+                    RoundedRectangle(cornerRadius: Design.Radius._xl)
+                        .fill(Design.Utility.WarningYellow._50.color(colorScheme))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: Design.Radius._xl)
+                                .stroke(Design.Utility.WarningYellow._300.color(colorScheme), lineWidth: 1)
+                        }
+                }
+        }
+        .disabled(!store.isValidForm)
+        .accessibilityIdentifier(AccessibilityID.SendForm.reviewButton)
     }
 
     @ViewBuilder private func currencyUnavailableSheetContent() -> some View {
