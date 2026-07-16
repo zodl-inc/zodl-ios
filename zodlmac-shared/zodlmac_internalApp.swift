@@ -39,9 +39,18 @@ struct zodlmac_internalApp: App {
     var body: some Scene {
         // App Review Guideline 4 (external-testing finding, 2026-07-02): closing the main window
         // left NO menu item to reopen it (single fixed window, ⌘N removed, File menu dropped).
-        // `Window` — SwiftUI's single-window scene — is the remedy: reopenable via the Window
-        // menu + Dock icon; the app keeps running while closed (sync pauses via
-        // scenePhase.background, resumes on reopen).
+        // `Window` — SwiftUI's single-window scene — is the remedy, with a consequence we KEEP
+        // deliberately (verified 2026-07-16, MOB-1486): because this window is the app's ONLY
+        // scene, macOS QUITS the app when it closes — "If your app uses a single window as its
+        // primary scene, the app quits when the window closes" (SwiftUI `Window` docs). That is
+        // the platform convention for single-window apps AND a security property this wallet
+        // relies on: everything in memory — including a partially typed recovery phrase on the
+        // restore screen — dies with the process. The pre-2026-07-02 `WindowGroup` build kept
+        // running windowless, which is exactly where the external security audit reproduced the
+        // "typed recovery phrase reappears after close→reopen" finding.
+        // ⚠️ Adding ANY second scene (a Settings window, menu-bar extra, auxiliary panel)
+        // silently restores keep-running-after-close semantics and resurrects that finding — if
+        // you do, wipe `Root.State.onboardingState` on main-window close first (see MOB-1486).
         // B4-20: the scene title MUST stay EMPTY — SwiftUI re-asserts it onto the NSWindow on
         // every navigation push, and a non-empty title becomes the "← Zodl" back-button fallback
         // on every pushed screen (a one-time title blank does NOT stick). The Window-menu reopen
@@ -109,9 +118,11 @@ struct zodlmac_internalApp: App {
     }
 }
 
-/// Guideline 4: an EXPLICIT "Zodl" item in the Window menu that reopens (or focuses) the main
-/// window after the user closes it. Explicit because the scene's automatic item is derived from
-/// the scene title, which must stay empty (see the `Window("")` comment — B4-20).
+/// Guideline 4: an EXPLICIT "Zodl" item in the Window menu that focuses (or deminiaturizes) the
+/// main window. Closing the window quits the app (single-`Window` scene — see the scene comment,
+/// MOB-1486), so "reopen after close" no longer arises; the item stays for the minimized case
+/// and App Review parity. Explicit because the scene's automatic item is derived from the scene
+/// title, which must stay empty (see the `Window("")` comment — B4-20).
 private struct ZodlWindowCommands: Commands {
     @Environment(\.openWindow) private var openWindow
 

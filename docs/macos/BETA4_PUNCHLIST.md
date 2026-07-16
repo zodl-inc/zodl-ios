@@ -228,12 +228,16 @@ class. Recommend (a) for Beta4, (b) stays on the Foundations track.
 
 ## B4-13 · App Review Guideline 4 (external testing): no menu item to reopen the closed main window
 **FIXED `f8970b6d`.** `WindowGroup("")` → `Window("Zodl", id: "main")` — the single-window scene
-adds a persistent "Zodl" reopen item to the Window menu (MacMenuSimplifier keeps that menu);
-Dock click reopens too. Keep-running behavior preserved (sync pauses on close via
-scenePhase.background, resumes on reopen); NSWindow title blanked in FixedWindowConfigurator so
-the "← Zodl" nav-fallback fix stays. ALTERNATIVE (if closed-means-quit is preferred): 3-line
-NSApplicationDelegateAdaptor with `applicationShouldTerminateAfterLastWindowClosed = true` —
-Apple sanctions either. Verify: close → Window menu → Zodl reopens; startup pops still gone.
+adds a persistent "Zodl" reopen item to the Window menu (MacMenuSimplifier keeps that menu).
+CORRECTION (2026-07-16, MOB-1486): "keep-running behavior preserved" was WRONG — a
+single-`Window` app quits when its window closes (documented SwiftUI behavior), so the scene
+swap silently delivered the ALTERNATIVE below. Closed-means-quit is verified and DELIBERATELY
+KEPT: platform convention for single-window apps, and it kills the security-audit finding of a
+typed recovery phrase surviving close→reopen (real on the pre-swap `WindowGroup` builds the
+auditors tested). NSWindow title blanked in FixedWindowConfigurator so the "← Zodl" nav-fallback
+fix stays. (Original alternative, now the actual behavior with zero code:
+`applicationShouldTerminateAfterLastWindowClosed = true` — Apple sanctions either.)
+Verify: close → app quits (no Dock dot); relaunch starts clean; startup pops still gone.
 
 ## B4-14 · Swap/Pay auto-status loop dies on one dropped request (row stuck "Paying…")
 **FIXED.** Field case: crosspay deposit mined (17 confs, amounts correct — 57,557 ≥ minAmountIn
