@@ -329,7 +329,12 @@ final class MigrationSimulatorEngine: @unchecked Sendable {
     // MARK: - Debug controls
 
     func reset() {
-        replaceSnapshot(SimulatorSnapshot.seeded())
+        // Reset re-seeds the simulation's DATA but preserves the activation toggle — the panel's
+        // "Reset simulation" must not silently turn the (opt-in) simulation back off.
+        let wasActive = isActive
+        var fresh = SimulatorSnapshot.seeded()
+        fresh.isActive = wasActive
+        replaceSnapshot(fresh)
     }
 
     func seed(orchard: Zatoshi, noteCount: Int) {
