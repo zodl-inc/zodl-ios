@@ -36,6 +36,9 @@ struct SendForm {
         var isInsufficientBalance = false
         var isLatestInputFiat = false
         var isNotAddressInAddressBook = false
+        // MOB-1487 R3: sent amount would draw on (unlocked) Orchard notes while Ironwood is
+        // active — drives the send-form privacy disclaimer and the Review button's warning skin.
+        var isOrchardSpendDisclaimerVisible = false
         var isSheetTexAddressVisible = false
         var isValidAddress = false
         var isValidTransparentAddress = false
@@ -216,6 +219,7 @@ struct SendForm {
         case memo(MessageEditor.Action)
         case onAppear
         case onDisapear
+        case orchardSpendCheckResult(Bool)
         case proposal(Proposal)
         case requestsAddressFocusResolved
         case requestZec(ParserResult)
@@ -233,10 +237,15 @@ struct SendForm {
     @Dependency(\.audioServices) var audioServices
     @Dependency(\.derivationTool) var derivationTool
     @Dependency(\.exchangeRate) var exchangeRate
+    @Dependency(\.migrationManager) var migrationManager
     @Dependency(\.numberFormatter) var numberFormatter
     @Dependency(\.sdkSynchronizer) var sdkSynchronizer
     @Dependency(\.userStoredPreferences) var userStoredPreferences
     @Dependency(\.zcashSDKEnvironment) var zcashSDKEnvironment
+
+    private enum CancelID {
+        case orchardSpendCheck
+    }
 
     init() { }
     
@@ -402,8 +411,9 @@ struct SendForm {
                 state.isValidTransparentAddress = false
                 state.isValidTexAddress = false
                 state.isNotAddressInAddressBook = false
-                return .none
-                
+                state.isOrchardSpendDisclaimerVisible = false
+                return .cancel(id: CancelID.orchardSpendCheck)
+
             case .syncAmounts(let zecToCurrency):
                 guard let currencyConversion = state.currencyConversion else {
                     return .none
@@ -546,8 +556,16 @@ struct SendForm {
             case .zecAmountUpdated(let newValue):
                 state.zecAmountText = newValue
                 state.isLatestInputFiat = false
-                return .send(.syncAmounts(true))
-                
+                let orchardSpendCheck = orchardSpendCheckEffect(state: &state)
+                return .merge(
+                    .send(.syncAmounts(true)),
+                    orchardSpendCheck
+                )
+
+            case let .orchardSpendCheckResult(requiresOrchardFunds):
+                state.isOrchardSpendDisclaimerVisible = requiresOrchardFunds
+                return .none
+
             case .dismissRequired:
                 return .none
                 
@@ -559,6 +577,39 @@ struct SendForm {
                 return .none
             }
         }
+    }
+
+    // MARK: - MOB-1487 R3: Orchard-spend disclaimer
+
+    /// Computes the Orchard-spend disclaimer effect for the amount currently in `zecAmountText`.
+    /// Parses via the `numberFormatter` dependency directly — mirroring `State.amount`'s getter —
+    /// rather than through `state.amount`/`state.isValidAmount`, which are hardcoded under
+    /// `_XCTIsTesting` and would make this undetectable in tests. Runs the
+    /// `sendRequiresOrchardFunds` dry-run only once Ironwood is active and a positive amount is
+    /// entered; otherwise drops the flag and cancels any in-flight dry-run without ever calling
+    /// the stub.
+    private func orchardSpendCheckEffect(state: inout State) -> Effect<Action> {
+        guard
+            migrationManager.isIronwoodActivated(),
+            let number = numberFormatter.number(state.zecAmountText.data)
+        else {
+            state.isOrchardSpendDisclaimerVisible = false
+            return .cancel(id: CancelID.orchardSpendCheck)
+        }
+
+        let parsedAmount = Zatoshi(
+            NSDecimalNumber(decimal: number.decimalValue * Decimal(Zatoshi.Constants.oneZecInZatoshi)).roundedZec.int64Value
+        )
+
+        guard parsedAmount.amount > 0 else {
+            state.isOrchardSpendDisclaimerVisible = false
+            return .cancel(id: CancelID.orchardSpendCheck)
+        }
+
+        return .run { send in
+            await send(.orchardSpendCheckResult(await sdkSynchronizer.sendRequiresOrchardFunds(parsedAmount)))
+        }
+        .cancellable(id: CancelID.orchardSpendCheck, cancelInFlight: true)
     }
 }
 
