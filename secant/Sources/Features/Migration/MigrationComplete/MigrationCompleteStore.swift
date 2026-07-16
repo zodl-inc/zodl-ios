@@ -19,6 +19,19 @@
 //  wire up later (delegate wiring is a separate serialized stream) — no local state change.
 //  `gotItTapped` is unchanged and reachable from `.none`/`.locked`.
 //
+//  MOB-1487 (round 3, Figma 3925:24209): adds the "Lock balance" explainer sheet's presentation
+//  state — `isLockExplainerPresented`, toggled by an explicit present/dismiss action pair
+//  (`lockExplainerHelpTapped` sets it true, `lockExplainerDismissed` sets it false) rather than
+//  `BindableAction`/`BindingReducer`. This mirrors `MigrationCoordFlow`'s Tor-sheet (a manual
+//  `Binding(get:set:)` in the view), not `SwapAndPayCoordFlow`'s bindable-store pattern, because
+//  there's exactly one sheet and no cross-screen state to round-trip — consistent with this
+//  reducer's existing plain (non-bindable) `Action` enum. Neither action is gated on
+//  `dustResolution`; the trailing help button that sends `lockExplainerHelpTapped` is only ever
+//  shown by the view when `dustResolution != .none`, so the reducer doesn't need its own guard
+//  (unlike `lockBalanceTapped`'s `.offered`-only guard, which protects a real SDK side effect).
+//  `lockExplainerDismissed` is intentionally distinct from `gotItTapped` — it closes only the
+//  sheet, never the screen.
+//
 
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
@@ -44,6 +57,12 @@ struct MigrationComplete {
         /// Carried for consistency with the other re-entry-root screens; this screen has no back
         /// control to gate (`.navigationBarBackButtonHidden()`, no custom leading toolbar item).
         var isFlowRoot = false
+        /// MOB-1487 (round 3): presentation flag for the "Lock balance" explainer sheet. Toggled by
+        /// `lockExplainerHelpTapped` (nav-bar help button) / `lockExplainerDismissed` (the sheet's
+        /// own "Got it" button and swipe-to-dismiss both route through it). Deliberately not part of
+        /// the memberwise `init` below — like `alert`, it's presentation-only state that tests
+        /// mutate directly on a case that needs to start with the sheet already up.
+        var isLockExplainerPresented = false
 
         var hasDust: Bool {
             dust.amount > 0
@@ -75,6 +94,8 @@ struct MigrationComplete {
         case lockBalanceTapped
         case lockDustFailed(ZcashError)
         case lockDustSucceeded
+        case lockExplainerDismissed
+        case lockExplainerHelpTapped
         case migrateAnywayTapped
 
         enum Delegate: Equatable {
@@ -122,6 +143,14 @@ struct MigrationComplete {
 
             case .lockDustSucceeded:
                 state.dustResolution = .locked
+                return .none
+
+            case .lockExplainerDismissed:
+                state.isLockExplainerPresented = false
+                return .none
+
+            case .lockExplainerHelpTapped:
+                state.isLockExplainerPresented = true
                 return .none
 
             case .migrateAnywayTapped:

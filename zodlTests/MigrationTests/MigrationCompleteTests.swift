@@ -18,6 +18,13 @@
 //  dependency (`$0.sdkSynchronizer.lockMigrationDust = ...`), matching how the other Migration
 //  reducer tests override SDK members. Still no shared/global state -> no `.serialized`.
 //
+//  MOB-1487 (round 3): adds the lock explainer sheet's presentation pair — `lockExplainerHelpTapped`
+//  sets `isLockExplainerPresented` true, `lockExplainerDismissed` sets it false. Neither is gated on
+//  `dustResolution` (the view alone decides when to show the trigger), so there's nothing to pin
+//  beyond the default state. `isLockExplainerPresented` isn't part of the memberwise `init` (like
+//  `alert`, it's presentation-only), so the dismiss test mutates it directly before constructing the
+//  `TestStore`, matching `alertDismissClearsAlertState`'s existing idiom below.
+//
 
 import Testing
 import Foundation
@@ -40,6 +47,7 @@ import ComposableArchitecture
         #expect(state.isFlowRoot == false)
         #expect(state.dustResolution == MigrationComplete.State.DustResolution.none)
         #expect(state.alert == nil)
+        #expect(state.isLockExplainerPresented == false)
     }
 
     @MainActor @Test func hasDustIsFalseWhenDustIsZero() async {
@@ -176,6 +184,30 @@ import ComposableArchitecture
 
         await store.send(.migrateAnywayTapped)
         await store.receive(.delegate(.migrateAnyway))
+    }
+
+    // MARK: - MOB-1487 (round 3): lock explainer sheet present/dismiss pair
+
+    @MainActor @Test func lockExplainerHelpTappedPresentsLockExplainer() async {
+        let store = TestStore(initialState: MigrationComplete.State(dust: Zatoshi(31_000))) {
+            MigrationComplete()
+        }
+
+        await store.send(.lockExplainerHelpTapped) {
+            $0.isLockExplainerPresented = true
+        }
+    }
+
+    @MainActor @Test func lockExplainerDismissedClearsLockExplainerPresented() async {
+        var state = MigrationComplete.State(dust: Zatoshi(31_000))
+        state.isLockExplainerPresented = true
+        let store = TestStore(initialState: state) {
+            MigrationComplete()
+        }
+
+        await store.send(.lockExplainerDismissed) {
+            $0.isLockExplainerPresented = false
+        }
     }
 
     // MARK: - MOB-1487: gotItTapped from `.locked` behaves exactly like from `.none`
