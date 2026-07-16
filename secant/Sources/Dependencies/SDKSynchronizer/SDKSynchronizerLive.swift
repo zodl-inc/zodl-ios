@@ -355,20 +355,20 @@ extension SDKSynchronizerClient: DependencyKey {
             rescheduleStalledMigrationTransfer: { },
             recreateInvalidMigrationTransfer: { },
             migrationSummary: { MigrationSummary.zero },
-            // MOB-1478 (W7): unlike the inert stubs around it, this one carries fixture rows —
-            // `MigrationStatus` is otherwise unreachable in any demo/QA state. The five rows mirror
-            // the updated Figma S10-progress frame and exercise every caption branch: sent-hours-ago,
+            // MOB-1487: unlike the inert stubs around it, this one carries fixture rows —
+            // `MigrationStatus` is otherwise unreachable in any demo/QA state. The six rows mirror
+            // the "Final Designs" S10-progress frame and exercise every caption branch: sent-hours-ago,
             // sent-minutes-ago (Transfer 2, under an hour), actively-broadcasting (Transfer 3), and
-            // two pending ETAs.
+            // three pending ETAs.
             migrationTransfers: {
                 [
                     MigrationTransferRow(
-                        id: "0", index: 0, amount: Zatoshi(351_220_000), status: .sent, hoursFromNow: 6
+                        id: "0", index: 0, amount: Zatoshi(1_000_000_000), status: .sent, hoursFromNow: 6
                     ),
                     MigrationTransferRow(
                         id: "1",
                         index: 1,
-                        amount: Zatoshi(287_410_000),
+                        amount: Zatoshi(100_000_000),
                         status: .sent,
                         hoursFromNow: 0,
                         sentMinutesAgo: 18
@@ -376,19 +376,40 @@ extension SDKSynchronizerClient: DependencyKey {
                     MigrationTransferRow(
                         id: "2",
                         index: 2,
-                        amount: Zatoshi(243_100_000),
+                        amount: Zatoshi(100_000_000),
                         status: .active,
                         hoursFromNow: 0,
                         isBroadcasting: true
                     ),
                     MigrationTransferRow(
-                        id: "3", index: 3, amount: Zatoshi(199_830_000), status: .pending, hoursFromNow: 12
+                        id: "3", index: 3, amount: Zatoshi(20_000_000), status: .pending, hoursFromNow: 12
                     ),
                     MigrationTransferRow(
-                        id: "4", index: 4, amount: Zatoshi(164_240_000), status: .pending, hoursFromNow: 18
+                        id: "4", index: 4, amount: Zatoshi(20_000_000), status: .pending, hoursFromNow: 18
+                    ),
+                    MigrationTransferRow(
+                        id: "5", index: 5, amount: Zatoshi(5_000_000), status: .pending, hoursFromNow: 36
                     )
                 ]
             },
+            // MOB-1487: no SDK primitives yet — the lock stub succeeds after a short pause so the
+            // "Locking balance" in-flight state is observable during QA (non-broadcast, unguarded);
+            // the dust sweep is a broadcast, so its stub takes the transaction guard like the other
+            // broadcast-path stubs and is correct-by-construction once real broadcasting lands.
+            lockMigrationDust: {
+                try await Task.sleep(nanoseconds: 800_000_000)
+            },
+            migrateMigrationDust: { _ in
+                @Dependency(\.transactionGuard) var transactionGuard
+                do {
+                    return try await transactionGuard.withSubmission {
+                        TransferResult.success(txId: "")
+                    }
+                } catch {
+                    return TransferResult.networkError(retryable: true)
+                }
+            },
+            isMigrationDustLocked: { false },
             proposeNoteSplitPCZT: { Pczt() },
             proposeMigrationPCZTs: { _ in [] },
             storeSignedMigrationTransactions: { _ in },

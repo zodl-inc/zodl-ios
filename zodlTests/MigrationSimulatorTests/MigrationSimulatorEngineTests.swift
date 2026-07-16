@@ -697,10 +697,77 @@ import ComposableArchitecture
         let engine = makeEngine()
         engine.applyPreset(SimulatorPreset.completeWithDust)
 
-        #expect(engine.orchardBalance() == Zatoshi(5_000))
-        #expect(engine.summary().dust == Zatoshi(5_000))
+        #expect(engine.orchardBalance() == Zatoshi(800_000))
+        #expect(engine.summary().dust == Zatoshi(800_000))
         #expect(bannerVariant(for: engine) == MigrationBannerVariant.complete)
         #expect(reentryRoute(for: engine) == MigrationReentryRoute.complete)
+    }
+
+    // MARK: - Dust resolution (MOB-1487)
+
+    @Test func lockDustWithDustPresentLocksAndLeavesDustAmountReadable() {
+        let engine = makeEngine()
+        engine.applyPreset(SimulatorPreset.completeWithDust)
+
+        engine.lockDust()
+
+        #expect(engine.isDustLocked() == true)
+        #expect(engine.readout().dustRemainder == Zatoshi(800_000))
+        #expect(engine.summary().dust == Zatoshi(800_000))
+    }
+
+    @Test func lockDustWithNoDustLeavesItUnlocked() {
+        let engine = makeEngine()
+        engine.applyPreset(SimulatorPreset.complete)
+
+        engine.lockDust()
+
+        #expect(engine.isDustLocked() == false)
+    }
+
+    @Test func migrateDustWithUnlockedDustSucceedsAndZeroesBalance() async {
+        let engine = makeEngine()
+        engine.applyPreset(SimulatorPreset.completeWithDust)
+
+        let result = await engine.migrateDust()
+
+        guard case TransferResult.success? = result else {
+            Issue.record("Expected migrateDust to succeed with unlocked dust present")
+            return
+        }
+        #expect(engine.readout().dustRemainder == Zatoshi.zero)
+        #expect(engine.orchardBalance() == Zatoshi.zero)
+    }
+
+    @Test func migrateDustAfterLockDustReturnsNilAndLeavesDustUnchanged() async {
+        let engine = makeEngine()
+        engine.applyPreset(SimulatorPreset.completeWithDust)
+        engine.lockDust()
+
+        let result = await engine.migrateDust()
+
+        #expect(result == nil)
+        #expect(engine.readout().dustRemainder == Zatoshi(800_000))
+    }
+
+    @Test func migrateDustWithNoDustReturnsNil() async {
+        let engine = makeEngine()
+        engine.applyPreset(SimulatorPreset.complete)
+
+        let result = await engine.migrateDust()
+
+        #expect(result == nil)
+    }
+
+    @Test func applyPresetResetsAPreviouslyLockedDust() {
+        let engine = makeEngine()
+        engine.applyPreset(SimulatorPreset.completeWithDust)
+        engine.lockDust()
+        #expect(engine.isDustLocked() == true)
+
+        engine.applyPreset(SimulatorPreset.completeWithDust)
+
+        #expect(engine.isDustLocked() == false)
     }
 
     // MARK: - Derivation-table helpers

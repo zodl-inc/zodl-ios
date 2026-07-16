@@ -11,6 +11,11 @@
 //  (MOB-1466). The `closeTapped` / `viewTransactionTapped` delegates are consumed by
 //  `MigrationCoordFlowCoordinator` (MOB-1466).
 //
+//  This same screen is reused, unchanged behaviorally, for the "Migrate anyway" dust lane
+//  (MOB-1487): `usesMigratedCopy` swaps in the migrated-copy strings (subtitle/sent subtitle only —
+//  titles and buttons stay the same) when the coordinator sets it; it defaults to false so the
+//  existing lanes are unaffected.
+//
 
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
@@ -36,6 +41,11 @@ struct MigrationSending {
         var sentCount = 0
         /// Submission options for `executeNextPendingMigrationTransfer`, injected by the coordinator.
         var networkPrivacyOptions = NetworkPrivacyOptions(useTor: false, submissionEndpoint: nil)
+        /// When true, this instance is the "Migrate anyway" dust lane (MOB-1487): the view shows
+        /// the migrated-copy strings and `onAppear` executes the dedicated dust sweep instead of
+        /// the next scheduled transfer. Coordinator-configured; defaults to false so existing
+        /// lanes are unaffected.
+        var usesMigratedCopy = false
 
         init(
             phase: Phase = .sending,
@@ -43,7 +53,8 @@ struct MigrationSending {
             txId: String = "",
             totalCount: Int = 1,
             sentCount: Int = 0,
-            networkPrivacyOptions: NetworkPrivacyOptions = NetworkPrivacyOptions(useTor: false, submissionEndpoint: nil)
+            networkPrivacyOptions: NetworkPrivacyOptions = NetworkPrivacyOptions(useTor: false, submissionEndpoint: nil),
+            usesMigratedCopy: Bool = false
         ) {
             self.phase = phase
             self.isFailurePresented = isFailurePresented
@@ -51,6 +62,7 @@ struct MigrationSending {
             self.totalCount = totalCount
             self.sentCount = sentCount
             self.networkPrivacyOptions = networkPrivacyOptions
+            self.usesMigratedCopy = usesMigratedCopy
         }
     }
 
@@ -104,11 +116,11 @@ struct MigrationSending {
                 return .none
 
             case .onAppear:
-                return executeNextTransfer(options: state.networkPrivacyOptions)
+                return executeNextTransfer(options: state.networkPrivacyOptions, isDustLane: state.usesMigratedCopy)
 
             case .retryTapped:
                 state.isFailurePresented = false
-                return executeNextTransfer(options: state.networkPrivacyOptions)
+                return executeNextTransfer(options: state.networkPrivacyOptions, isDustLane: state.usesMigratedCopy)
 
             case .transferResult(let result):
                 switch result {
@@ -120,7 +132,7 @@ struct MigrationSending {
 
                     let nextEffect: Effect<Action> = state.sentCount >= state.totalCount
                         ? .send(.allTransfersSent)
-                        : executeNextTransfer(options: state.networkPrivacyOptions)
+                        : executeNextTransfer(options: state.networkPrivacyOptions, isDustLane: state.usesMigratedCopy)
 
                     // scheduleNextWindow() is async (MOB-1467) — concatenated ahead of the
                     // follow-up effect so it still runs to completion before the next transfer
@@ -142,9 +154,14 @@ struct MigrationSending {
         }
     }
 
-    private func executeNextTransfer(options: NetworkPrivacyOptions) -> Effect<Action> {
+    /// The dust lane ("Migrate anyway", MOB-1487) executes the dedicated dust sweep — never
+    /// `executeNextPendingMigrationTransfer`, which is the scheduled-transfer path a background
+    /// poll also drives and which must not move unconsented dust.
+    private func executeNextTransfer(options: NetworkPrivacyOptions, isDustLane: Bool) -> Effect<Action> {
         .run { send in
-            let result = await sdkSynchronizer.executeNextPendingMigrationTransfer(options)
+            let result = isDustLane
+                ? await sdkSynchronizer.migrateMigrationDust(options)
+                : await sdkSynchronizer.executeNextPendingMigrationTransfer(options)
             await send(.transferResult(result))
         }
     }

@@ -8,7 +8,9 @@
 //  dismissal (cancel/retry), and (MOB-1466) `onAppear` executing `totalCount` transfers strictly in
 //  sequence via `executeNextPendingMigrationTransfer`, recording a broadcast +
 //  scheduling the next background window after each success, presenting the failure sheet on
-//  failure/`nil`, and retry re-running only the failed step. No shared/global state ->
+//  failure/`nil`, and retry re-running only the failed step. Also covers (MOB-1487)
+//  `usesMigratedCopy` defaulting to false and being settable via init — the view's copy-switching
+//  itself is layout, not reducer, behavior and isn't exercised here. No shared/global state ->
 //  no `.serialized`.
 //
 
@@ -27,6 +29,18 @@ import ComposableArchitecture
         #expect(state.txId == "")
         #expect(state.totalCount == 1)
         #expect(state.sentCount == 0)
+        #expect(state.usesMigratedCopy == false)
+    }
+
+    @MainActor @Test func usesMigratedCopyDefaultsFalseButCanBeSetTrueViaInit() async {
+        let defaultState = MigrationSending.State()
+        let migratedState = MigrationSending.State(usesMigratedCopy: true)
+
+        #expect(defaultState.usesMigratedCopy == false)
+        #expect(migratedState.usesMigratedCopy == true)
+        // Unrelated defaults are untouched by the new trailing init parameter.
+        #expect(migratedState.phase == MigrationSending.State.Phase.sending)
+        #expect(migratedState.totalCount == 1)
     }
 
     @MainActor @Test func closeTappedEmitsDelegateClosed() async {
@@ -160,6 +174,78 @@ import ComposableArchitecture
         }
 
         #expect(capturedOptions.value == options)
+    }
+
+    // MARK: - Dust lane (MOB-1487): "Migrate anyway" sweeps the remainder, not the scheduled path
+
+    @MainActor @Test func onAppearWithDustLaneExecutesMigrateMigrationDustInsteadOfScheduledTransfer() async {
+        let migrateDustCalls = LockIsolated<Int>(0)
+        let executeNextCalls = LockIsolated<Int>(0)
+        let recordBroadcastCalls = LockIsolated<Int>(0)
+        let scheduleNextWindowCalls = LockIsolated<Int>(0)
+        let state = MigrationSending.State(totalCount: 1, usesMigratedCopy: true)
+        let store = TestStore(initialState: state) {
+            MigrationSending()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.migrateMigrationDust = { _ in
+                migrateDustCalls.withValue { $0 += 1 }
+                return .success(txId: "tx-dust")
+            }
+            $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _ in
+                executeNextCalls.withValue { $0 += 1 }
+                return .success(txId: "tx-wrong-lane")
+            }
+            $0.migrationManager.recordMigrationBroadcast = { recordBroadcastCalls.withValue { $0 += 1 } }
+            $0.migrationBGScheduler.scheduleNextWindow = { scheduleNextWindowCalls.withValue { $0 += 1 } }
+        }
+
+        await store.send(.onAppear)
+        await store.receive(\.transferResult) {
+            $0.sentCount = 1
+            $0.txId = "tx-dust"
+        }
+        await store.receive(\.allTransfersSent) {
+            $0.phase = .success
+        }
+
+        #expect(migrateDustCalls.value == 1)
+        #expect(executeNextCalls.value == 0)
+        #expect(recordBroadcastCalls.value == 1)
+        #expect(scheduleNextWindowCalls.value == 1)
+    }
+
+    @MainActor @Test func onAppearWithoutDustLaneExecutesScheduledTransferNotMigrateMigrationDust() async {
+        let migrateDustCalls = LockIsolated<Int>(0)
+        let executeNextCalls = LockIsolated<Int>(0)
+        let state = MigrationSending.State(totalCount: 1, usesMigratedCopy: false)
+        let store = TestStore(initialState: state) {
+            MigrationSending()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _ in
+                executeNextCalls.withValue { $0 += 1 }
+                return .success(txId: "tx-0")
+            }
+            $0.sdkSynchronizer.migrateMigrationDust = { _ in
+                migrateDustCalls.withValue { $0 += 1 }
+                return .success(txId: "tx-dust")
+            }
+            $0.migrationManager.recordMigrationBroadcast = { }
+            $0.migrationBGScheduler.scheduleNextWindow = { }
+        }
+
+        await store.send(.onAppear)
+        await store.receive(\.transferResult) {
+            $0.sentCount = 1
+            $0.txId = "tx-0"
+        }
+        await store.receive(\.allTransfersSent) {
+            $0.phase = .success
+        }
+
+        #expect(executeNextCalls.value == 1)
+        #expect(migrateDustCalls.value == 0)
     }
 
     // MARK: - Failure / nil result: presents failure sheet, stops the sequence

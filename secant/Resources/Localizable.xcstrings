@@ -19683,23 +19683,6 @@
         }
       }
     },
-    "migrationNotifications.footerManual" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Without notifications, we can't tell you when it's time to send your next transfer, which may delay your migration."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Sin notificaciones, no podemos avisarte cuándo es momento de enviar tu próxima transferencia, lo que podría retrasar tu migración."
-          }
-        }
-      }
-    },
     "migration.skipOpenApp" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -19860,17 +19843,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "in ~%1$lld hours"
-          }
-        }
-      }
-    },
-    "migrationPlan.randomizedNote" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Amounts are randomized to reduce linkability."
           }
         }
       }

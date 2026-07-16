@@ -153,6 +153,15 @@ struct SDKSynchronizerClient: Sendable {
     // Progress UI
     var migrationSummary: @Sendable () -> MigrationSummary = { MigrationSummary.zero }                        // [ext]
     var migrationTransfers: @Sendable () -> [MigrationTransferRow] = { [] }                                   // [ext]
+    // Dust resolution — [ext]: MOB-1487. `lockMigrationDust` marks the identifying Orchard
+    // remainder unspendable instead of migrating it (Migration Complete's "Lock balance");
+    // `migrateMigrationDust` broadcasts the remainder as one final transfer ("Migrate anyway") —
+    // deliberately NOT `executeNextPendingMigrationTransfer`, which a background poll may call
+    // with no pending transfers and must never sweep dust the user hasn't consented to move.
+    // No SDK primitives exist yet; signatures adjust at rust integration.
+    var lockMigrationDust: @Sendable () async throws -> Void = { }
+    var migrateMigrationDust: @Sendable (NetworkPrivacyOptions) async -> TransferResult? = { _ in nil }
+    var isMigrationDustLocked: @Sendable () -> Bool = { false }
     // Keystone (PCZT)
     var proposeNoteSplitPCZT: @Sendable () async -> Pczt = { Pczt() }                                         // [ext]
     var proposeMigrationPCZTs: @Sendable (MigrationSchedule) async -> [Pczt] = { _ in [] }                    // [ext]
