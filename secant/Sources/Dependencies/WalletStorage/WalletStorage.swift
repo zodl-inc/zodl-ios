@@ -459,6 +459,7 @@ struct WalletStorage {
         }
         try? deleteData(forKey: Constants.zcashStoredVotingHotkey)
         sweepLegacyFileKeychainItems()
+        resetRelocationGate()
     }
     
     func importAddressBookEncryptionKeys(_ keys: AddressBookEncryptionKeys) throws {

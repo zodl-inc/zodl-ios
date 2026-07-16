@@ -251,4 +251,15 @@ extension WalletStorage {
             _ = secItem.delete(query as CFDictionary)
         }
     }
+
+    /// After a reset, a previously-failed relocation is stale: the sweep just emptied the file
+    /// keychain of our items, so the next access must re-derive the gate from reality (trivially
+    /// `done` after a successful sweep; a genuine retry if the scan could not run). Without this,
+    /// the sticky failure would outlive the reset and Root's post-reset verification read would
+    /// mis-report a successful wipe as an error.
+    func resetRelocationGate() {
+        relocationGate.withLock { state in
+            state = KeychainRelocationState.notStarted
+        }
+    }
 }
