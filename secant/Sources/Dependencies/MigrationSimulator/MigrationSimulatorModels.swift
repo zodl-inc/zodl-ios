@@ -56,7 +56,7 @@ struct SimulatorTransfer: Equatable, Sendable, Codable, Identifiable {
 /// reseeds on any decode failure or version mismatch rather than attempting migration.
 struct SimulatorSnapshot: Equatable, Sendable, Codable {
     /// Bump whenever this shape changes; the store treats a mismatch like a decode failure.
-    static let currentSchemaVersion = 1
+    static let currentSchemaVersion = 2
 
     static func seeded(rngSeed: UInt64 = MigrationSimulatorEngineDerivations.Constants.defaultRNGSeed) -> SimulatorSnapshot {
         SimulatorSnapshot(
@@ -78,7 +78,8 @@ struct SimulatorSnapshot: Equatable, Sendable, Codable {
             signedBatchCount: 0,
             rngSeed: rngSeed,
             lastBackgroundRunSummary: nil,
-            dustRemainder: Zatoshi.zero
+            dustRemainder: Zatoshi.zero,
+            isDustLocked: false
         )
     }
 
@@ -102,6 +103,9 @@ struct SimulatorSnapshot: Equatable, Sendable, Codable {
     var lastBackgroundRunSummary: String?
     /// Balance left over once every transfer has been sent (usually `.zero`).
     var dustRemainder: Zatoshi
+    /// MOB-1487: "Lock balance" acknowledged — the dust remainder is marked unspendable and the
+    /// complete screen re-enters on its locked confirmation instead of re-offering resolution.
+    var isDustLocked: Bool
 
     init(
         schemaVersion: Int,
@@ -119,7 +123,8 @@ struct SimulatorSnapshot: Equatable, Sendable, Codable {
         signedBatchCount: Int,
         rngSeed: UInt64,
         lastBackgroundRunSummary: String?,
-        dustRemainder: Zatoshi
+        dustRemainder: Zatoshi,
+        isDustLocked: Bool
     ) {
         self.schemaVersion = schemaVersion
         self.isActive = isActive
@@ -137,6 +142,7 @@ struct SimulatorSnapshot: Equatable, Sendable, Codable {
         self.rngSeed = rngSeed
         self.lastBackgroundRunSummary = lastBackgroundRunSummary
         self.dustRemainder = dustRemainder
+        self.isDustLocked = isDustLocked
     }
 }
 
@@ -175,6 +181,9 @@ struct SimulatorReadout: Equatable, Sendable {
     var armedResultDescription: String?
     var isSplitPending: Bool
     var lastBackgroundRunSummary: String?
+    /// MOB-1487: dust remainder + lock acknowledgement, surfaced in the panel's status readout.
+    var dustRemainder: Zatoshi
+    var isDustLocked: Bool
 
     init(
         isActive: Bool,
@@ -186,7 +195,9 @@ struct SimulatorReadout: Equatable, Sendable {
         signedBatchCount: Int,
         armedResultDescription: String?,
         isSplitPending: Bool,
-        lastBackgroundRunSummary: String?
+        lastBackgroundRunSummary: String?,
+        dustRemainder: Zatoshi,
+        isDustLocked: Bool
     ) {
         self.isActive = isActive
         self.state = state
@@ -198,5 +209,7 @@ struct SimulatorReadout: Equatable, Sendable {
         self.armedResultDescription = armedResultDescription
         self.isSplitPending = isSplitPending
         self.lastBackgroundRunSummary = lastBackgroundRunSummary
+        self.dustRemainder = dustRemainder
+        self.isDustLocked = isDustLocked
     }
 }

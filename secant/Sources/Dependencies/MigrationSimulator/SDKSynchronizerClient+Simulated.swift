@@ -35,6 +35,7 @@ extension SDKSynchronizerClient {
         applySimulatedBackgroundExecution(engine: engine)
         applySimulatedRecovery(engine: engine)
         applySimulatedProgressUI(engine: engine)
+        applySimulatedDustResolution(engine: engine)
         applySimulatedKeystone(engine: engine)
         applySimulatedLifecycleAndTimestamp(engine: engine)
     }
@@ -197,6 +198,36 @@ extension SDKSynchronizerClient {
         let originalMigrationTransfers = self.migrationTransfers
         self.migrationTransfers = {
             engine.isActive ? engine.transferRows() : originalMigrationTransfers()
+        }
+    }
+
+    // MARK: - Dust resolution (MOB-1487)
+
+    /// Lock gets a short simulated latency so the "Locking balance" in-flight state is visible;
+    /// the sweep's latency lives in `engine.migrateDust()` (mirrors `performSend`).
+    private mutating func applySimulatedDustResolution(engine: MigrationSimulatorEngine) {
+        let originalLockMigrationDust = self.lockMigrationDust
+        self.lockMigrationDust = {
+            if engine.isActive {
+                try await Task.sleep(for: .seconds(0.5))
+                engine.lockDust()
+            } else {
+                try await originalLockMigrationDust()
+            }
+        }
+
+        let originalMigrateMigrationDust = self.migrateMigrationDust
+        self.migrateMigrationDust = { options in
+            if engine.isActive {
+                return await engine.migrateDust()
+            } else {
+                return await originalMigrateMigrationDust(options)
+            }
+        }
+
+        let originalIsMigrationDustLocked = self.isMigrationDustLocked
+        self.isMigrationDustLocked = {
+            engine.isActive ? engine.isDustLocked() : originalIsMigrationDustLocked()
         }
     }
 

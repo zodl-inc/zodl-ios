@@ -7,6 +7,10 @@
 //  `viewTransactionTapped` delegates are emitted but consumed by nobody yet — chaining is the
 //  coordinator's job (phase 3).
 //
+//  Also reused for the "Migrate anyway" dust lane (MOB-1487): when `store.usesMigratedCopy` is
+//  true, the sending/sent subtitles swap to the migrated-copy strings; titles and buttons are
+//  identical in both variants.
+//
 
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
@@ -73,7 +77,7 @@ struct MigrationSendingView: View {
                 .zFont(.semiBold, size: 28, style: Design.Text.primary)
                 .padding(.top, 16)
 
-            Text(localizable: .migrationSendingSubtitle)
+            Text(localizable: store.usesMigratedCopy ? .migrationSendingSubtitleMigrated : .migrationSendingSubtitle)
                 .zFont(size: 14, style: Design.Text.primary)
                 .multilineTextAlignment(.center)
         }
@@ -93,7 +97,7 @@ struct MigrationSendingView: View {
                 .zFont(.semiBold, size: 28, style: Design.Text.primary)
                 .padding(.top, 16)
 
-            Text(localizable: .migrationSendingSentSubtitle)
+            Text(localizable: store.usesMigratedCopy ? .migrationSendingSentSubtitleMigrated : .migrationSendingSentSubtitle)
                 .zFont(size: 14, style: Design.Text.primary)
                 .multilineTextAlignment(.center)
                 .lineSpacing(1.5)
