@@ -17,11 +17,16 @@
 //
 //  MOB-1478 (W2/W3/W4) reshapes the scheduled entry chain and replaces the full-screen Network
 //  Privacy step with a coordinator-owned Tor bottom sheet: `torSheetState`/`isTorSheetPresented`/
-//  `pendingTorDestination` back a single sheet presented from either Entry (immediate) or How This
-//  Works (scheduled) — see `MigrationCoordFlowCoordinator`'s Tor-sheet section. Note splitting also
-//  leaves forward routing entirely (silent-after-commit, under the TransferPlan/ReviewTransfer
-//  commit CTAs) — `MigrationNoteSplit` is re-entry-only now, so its Keystone signing folds into
-//  `TransferPlan`'s batch and `KeystoneSigningContext` no longer has a `.noteSplit` case.
+//  `pendingTorDestination` back a single sheet presented from Entry (immediate) — see
+//  `MigrationCoordFlowCoordinator`'s Tor-sheet section. Note splitting also leaves forward routing
+//  entirely (silent-after-commit, under the TransferPlan/ReviewTransfer commit CTAs) —
+//  `MigrationNoteSplit` is re-entry-only now, so its Keystone signing folds into `TransferPlan`'s
+//  batch and `KeystoneSigningContext` no longer has a `.noteSplit` case.
+//
+//  MOB-1487 (round 3): the scheduled/private path now routes ALL migration transactions over Tor
+//  unconditionally — How This Works no longer gates on the Tor sheet, so the sheet is presented
+//  from Entry (immediate) only and `PendingTorDestination` dropped its `.permissionChain` case. See
+//  `MigrationCoordFlowCoordinator.swift`'s scheduled-lane row for the persisted-`useTor` rationale.
 //
 
 import SwiftUI
@@ -43,12 +48,11 @@ struct MigrationCoordFlow {
 
     /// MOB-1478 (W2): which destination the coordinator stashed while the Tor bottom sheet is
     /// presented — resumed once the user confirms ("Got it") or swipes the sheet away (identical
-    /// outcome, using whatever toggle state is showing at that moment).
+    /// outcome, using whatever toggle state is showing at that moment). MOB-1487 (round 3): the
+    /// sheet is Entry-immediate-only now, so `.reviewTransfer` is the sole destination.
     enum PendingTorDestination: Equatable {
         /// Immediate mode: push Review Transfer directly.
         case reviewTransfer
-        /// Scheduled mode: resume the permission-step chain (`nextPermissionStepResult()`).
-        case permissionChain
     }
 
     @Reducer(state: .equatable)
@@ -98,9 +102,9 @@ struct MigrationCoordFlow {
     /// Result of the async permission-step helper (`nextPermissionStepResult()`): the screen to push
     /// (`nil` once every permission step is satisfied and the flow can proceed straight to the plan
     /// screen the caller already knows to push). MOB-1478 (W2): Tor resolution no longer happens
-    /// inside this chain — the Tor bottom sheet gate runs once, earlier, immediately after How This
-    /// Works — so this struct dropped its `forcedUseTor` flag along with the deleted Network Privacy
-    /// step.
+    /// inside this chain — this struct dropped its `forcedUseTor` flag along with the deleted
+    /// Network Privacy step. MOB-1487 (round 3): the scheduled lane now force-sets and persists
+    /// `useTor` unconditionally immediately before this chain runs, with no sheet and no gate.
     struct PermissionStepResult: Equatable {
         var pathState: Path.State?
     }

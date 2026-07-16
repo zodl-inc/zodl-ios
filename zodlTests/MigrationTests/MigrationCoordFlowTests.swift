@@ -16,11 +16,12 @@
 //  calls store).
 //
 //  MOB-1478 reshapes the scheduled entry chain and adds the Tor bottom sheet:
-//  - W2/W3: Entry (immediate) and How This Works (scheduled) both gate on the same
-//    `walletStorage.exportTorSetupFlag()` check the old Network Privacy screen used, before either
-//    pushing straight through (flag set) or presenting the coordinator-owned Tor sheet (flag unset)
-//    and stashing the pending destination; "Got it" and swipe-dismissal (`torSheetPresentationChanged
-//    (false)`) both persist + resume identically.
+//  - W2/W3: Entry (immediate) originally gated on the same `walletStorage.exportTorSetupFlag()`
+//    check the old Network Privacy screen used, before either pushing straight through (flag set)
+//    or presenting the coordinator-owned Tor sheet (flag unset) and stashing the pending
+//    destination; "Got it" and swipe-dismissal (`torSheetPresentationChanged(false)`) both persist +
+//    resume identically. How This Works (scheduled) used to gate the same way — see MOB-1487
+//    (round 3, below) for its current, unconditional behavior.
 //  - W4: note splitting no longer gates or appears in forward routing at all — `MigrationNoteSplit`
 //    is re-entry-only, and its old Keystone signing context folded into `TransferPlan`'s batch (a
 //    signed-PCZT array can now be longer when the split was needed, but the coordinator still treats
@@ -30,6 +31,17 @@
 //  - W8: the Notifications variant now reaches `.manual` when delivery is manual (was previously
 //    unreachable).
 //  - W10: the Keystone scan push sets `instructions`/`forceLibraryToHide`.
+//
+//  MOB-1487 (round 3): the scheduled/private path routes ALL migration transactions over Tor
+//  unconditionally — How This Works no longer reads `walletStorage.exportTorSetupFlag()` or
+//  presents the Tor sheet at all; it always sets `useTor = true` and persists it, then proceeds
+//  straight to the permission chain. `howItWorksContinuedAlwaysSetsUseTorPersistsAndProceedsRegardless
+//  OfTorFlag` covers this with the flag stubbed `false` (the value that used to present the sheet),
+//  proving the gate is gone rather than merely defaulted open. The Tor sheet is immediate-mode-only
+//  now: `PendingTorDestination.permissionChain` is gone, so the old sheet-in-scheduled-mode tests
+//  were deleted rather than adapted (the scenario is unreachable). The immediate flag-on shortcut
+//  also now persists (previously a gap — only the sheet's own confirm did), covered by extending
+//  `entryChoseImmediateWithTorFlagOnSkipsTorSheetAndPushesReview`.
 //
 //  `.serialized`: every `MigrationCoordFlow.State()` carries a `MigrationEntry.State` (`entryState`),
 //  which reads the process-global `@Shared(.inMemory(.selectedWalletAccount))` on init — matching the
@@ -295,10 +307,12 @@ import ComposableArchitecture
     @MainActor @Test func entryChoseImmediateWithTorFlagOnSkipsTorSheetAndPushesReview() async {
         let setMigrationModeCalls = LockIsolated<[MigrationMode]>([])
         let selectMigrationModeCalls = LockIsolated<[MigrationMode]>([])
+        let setOptionsCalls = LockIsolated<[NetworkPrivacyOptions]>([])
         let store = TestStore(initialState: MigrationCoordFlow.State()) {
             MigrationCoordFlow()
         } withDependencies: {
             $0.migrationManager.setMigrationMode = { mode in setMigrationModeCalls.withValue { $0.append(mode) } }
+            $0.migrationManager.setNetworkPrivacyOptions = { options in setOptionsCalls.withValue { $0.append(options) } }
             $0.sdkSynchronizer = .noOp
             $0.sdkSynchronizer.selectMigrationMode = { mode in selectMigrationModeCalls.withValue { $0.append(mode) } }
             $0.walletStorage = .noOp
@@ -312,6 +326,10 @@ import ComposableArchitecture
         #expect(setMigrationModeCalls.value == [MigrationMode.immediate])
         #expect(selectMigrationModeCalls.value == [MigrationMode.immediate])
         #expect(store.state.networkPrivacyOptions.useTor == true)
+        // MOB-1487 (round 3): the flag-on shortcut now also persists — previously only the sheet's
+        // own confirm did (a pre-existing gap; a background send reads the persisted copy, not this
+        // in-memory state).
+        #expect(setOptionsCalls.value == [NetworkPrivacyOptions(useTor: true, submissionEndpoint: nil)])
         #expect(store.state.isTorSheetPresented == false)
         guard case let .reviewTransfer(reviewState) = try? #require(store.state.path.last) else {
             Issue.record("Expected .reviewTransfer on the path (Tor sheet skipped)")
@@ -395,34 +413,11 @@ import ComposableArchitecture
         }
     }
 
-    @MainActor @Test func torSheetGotItInScheduledModeResumesPermissionChainAndPushesTransferPlan() async {
-        var state = MigrationCoordFlow.State()
-        state.mode = .privateScheduled
-        state.torSheetState = MigrationTorSheet.State(isTorOn: false)
-        state.isTorSheetPresented = true
-        state.pendingTorDestination = .permissionChain
-        let store = TestStore(initialState: state) {
-            MigrationCoordFlow()
-        } withDependencies: {
-            $0.migrationManager.setNetworkPrivacyOptions = { _ in }
-            $0.migrationBGScheduler.backgroundRefreshStatus = { .available }
-            $0.userNotifications.authorizationStatus = { .authorized }
-            $0.migrationManager.isManualDelivery = { false }
-            $0.sdkSynchronizer = .noOp
-        }
-        store.exhaustivity = .off
-
-        await store.send(.torSheet(.delegate(.gotIt)))
-        await store.receive(\.pushNextPermissionStep)
-
-        #expect(store.state.isTorSheetPresented == false)
-        #expect(store.state.pendingTorDestination == nil)
-        guard case let .transferPlan(planState) = try? #require(store.state.path.last) else {
-            Issue.record("Expected .transferPlan pushed")
-            return
-        }
-        #expect(planState.variant == MigrationTransferPlan.State.Variant.scheduled)
-    }
+    // MOB-1487 (round 3): `torSheetGotItInScheduledModeResumesPermissionChainAndPushesTransferPlan`
+    // removed — `PendingTorDestination.permissionChain` is gone and the scheduled lane never
+    // presents the sheet any more, so this scenario is unreachable. Coverage for the scheduled
+    // lane's new unconditional behavior lives in `howItWorksContinuedAlwaysSetsUseTorPersistsAnd
+    // ProceedsRegardlessOfTorFlag` below.
 
     @MainActor @Test func torSheetPresentationChangedToFalseWithNothingPendingIsANoOp() async {
         let store = TestStore(initialState: MigrationCoordFlow.State()) {
@@ -791,9 +786,13 @@ import ComposableArchitecture
         }
     }
 
-    // MARK: - HowItWorks (MOB-1478 W3) -> Tor sheet gate (W2) -> permission steps
+    // MARK: - HowItWorks (MOB-1487 round 3): unconditional Tor, no sheet, regardless of the flag
 
-    @MainActor @Test func howItWorksContinuedWithTorFlagOnSkipsTorSheetAndGoesStraightToPermissionSteps() async {
+    @MainActor @Test func howItWorksContinuedAlwaysSetsUseTorPersistsAndProceedsRegardlessOfTorFlag() async {
+        // The scheduled/private path routes ALL migration transactions over Tor unconditionally —
+        // stubbing the flag `false` (the value that used to present the sheet) specifically proves
+        // the gate is gone entirely, not just defaulted open.
+        let setOptionsCalls = LockIsolated<[NetworkPrivacyOptions]>([])
         var state = MigrationCoordFlow.State()
         state.mode = .privateScheduled
         state.path.append(.howItWorks(MigrationHowItWorks.State()))
@@ -801,7 +800,8 @@ import ComposableArchitecture
             MigrationCoordFlow()
         } withDependencies: {
             $0.walletStorage = .noOp
-            $0.walletStorage.exportTorSetupFlag = { true }
+            $0.walletStorage.exportTorSetupFlag = { false }
+            $0.migrationManager.setNetworkPrivacyOptions = { options in setOptionsCalls.withValue { $0.append(options) } }
             $0.migrationBGScheduler.backgroundRefreshStatus = { .available }
             $0.userNotifications.authorizationStatus = { .authorized }
             $0.migrationManager.isManualDelivery = { false }
@@ -812,36 +812,16 @@ import ComposableArchitecture
         await store.send(.path(.element(id: 0, action: .howItWorks(.delegate(.continueTapped)))))
         await store.receive(\.pushNextPermissionStep)
 
-        #expect(store.state.networkPrivacyOptions.useTor == true)
+        let expectedOptions = NetworkPrivacyOptions(useTor: true, submissionEndpoint: nil)
+        #expect(store.state.networkPrivacyOptions == expectedOptions)
+        #expect(setOptionsCalls.value == [expectedOptions])
         #expect(store.state.isTorSheetPresented == false)
+        #expect(store.state.pendingTorDestination == nil)
         guard case let .transferPlan(planState) = try? #require(store.state.path.last) else {
-            Issue.record("Expected .transferPlan pushed (Tor sheet + all permission steps skipped)")
+            Issue.record("Expected .transferPlan pushed (no Tor sheet on the scheduled lane, ever)")
             return
         }
         #expect(planState.variant == MigrationTransferPlan.State.Variant.scheduled)
-    }
-
-    @MainActor @Test func howItWorksContinuedWithTorFlagOffPresentsTorSheetAndStashesPermissionChainDestination() async {
-        var state = MigrationCoordFlow.State()
-        state.mode = .privateScheduled
-        state.path.append(.howItWorks(MigrationHowItWorks.State()))
-        let store = TestStore(initialState: state) {
-            MigrationCoordFlow()
-        } withDependencies: {
-            $0.walletStorage = .noOp
-            $0.walletStorage.exportTorSetupFlag = { false }
-        }
-        store.exhaustivity = .off
-
-        await store.send(.path(.element(id: 0, action: .howItWorks(.delegate(.continueTapped)))))
-
-        #expect(store.state.isTorSheetPresented == true)
-        #expect(store.state.pendingTorDestination == MigrationCoordFlow.PendingTorDestination.permissionChain)
-        // How This Works stays on top — nothing pushed yet, the sheet gates the push.
-        guard case .howItWorks = try? #require(store.state.path.last) else {
-            Issue.record("Expected .howItWorks still on top")
-            return
-        }
     }
 
     // MARK: - Scheduled flow (§6.2): permission-step skip combinations

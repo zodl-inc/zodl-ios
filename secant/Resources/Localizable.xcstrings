@@ -11769,6 +11769,28 @@
         }
       }
     },
+    "send.orchardDisclaimerTitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This send requires spending Orchard funds"
+          }
+        }
+      }
+    },
+    "send.orchardDisclaimerBody" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "We recommend migrating your funds first to avoid leaking the transaction amount on-chain."
+          }
+        }
+      }
+    },
     "send.addressNotInBook" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -18775,7 +18797,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Moving funds between Zcash pools reveals the amount of each transfer. We split your balance into smaller transfers, spaced over time, so they're harder to correlate."
+            "value" : "Moving funds between Zcash pools reveals the amount of each transfer. We split your balance into smaller transfers, spaced over time, so they're harder to correlate. All transactions are routed through Tor to protect your IP address."
           }
         }
       }
@@ -20823,6 +20845,50 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Migrate anyway"
+          }
+        }
+      }
+    },
+    "migrationComplete.lockExplainerTitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "What does locking do?"
+          }
+        }
+      }
+    },
+    "migrationComplete.lockExplainerBody1" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Locking marks this balance as ^[unspendable](style: 'boldPrimary'), so it can't compromise your privacy in future transactions."
+          }
+        }
+      }
+    },
+    "migrationComplete.lockExplainerBody2" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The lock applies only to ^[this ZODL/Keystone instance](style: 'boldPrimary'). Restoring your wallet removes it."
+          }
+        }
+      }
+    },
+    "migrationComplete.lockExplainerBody3" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "A future release will let you ^[unlock the funds](style: 'boldPrimary') again."
           }
         }
       }

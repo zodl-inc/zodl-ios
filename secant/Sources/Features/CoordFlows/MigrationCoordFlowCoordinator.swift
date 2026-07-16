@@ -18,9 +18,10 @@
 //
 //  MOB-1478 reshapes the scheduled entry chain and the note-split lifecycle:
 //  - W2: the full-screen Network Privacy step is replaced by a coordinator-owned Tor bottom sheet.
-//    `presentTorSheet`/`confirmTorSheet` gate the two points that used to push Network Privacy —
-//    Entry (immediate mode) and How This Works (scheduled mode) — behind the same
-//    `walletStorage.exportTorSetupFlag()` check as before.
+//    `presentTorSheet`/`confirmTorSheet` originally gated both points that used to push Network
+//    Privacy — Entry (immediate mode) and How This Works (scheduled mode) — behind the same
+//    `walletStorage.exportTorSetupFlag()` check. MOB-1487 (round 3, below) removed the How This
+//    Works gate entirely, so the sheet is Entry (immediate)-only now.
 //  - W3: Entry's scheduled/private path now always pushes the new `howItWorks` screen (no more
 //    `isNoteSplitNeeded()` branch at Entry).
 //  - W4: note splitting leaves forward routing entirely — `MigrationNoteSplit` is reached only via
@@ -38,6 +39,16 @@
 //  so there is no scanned result to read instead) and running the identical store/resume chain the
 //  real round-trip uses. `resumeAfterKeystoneSigning` pops 1 or 2 path elements depending on whether
 //  `scan` is actually on top, so that one shared resume path stays correct for both callers.
+//
+//  MOB-1487 (round 3): the scheduled/private path routes ALL migration transactions over Tor
+//  unconditionally, per the Core/Wallet decision (2026-07-16) — How This Works no longer reads
+//  `walletStorage.exportTorSetupFlag()` or presents the Tor sheet; it always sets
+//  `networkPrivacyOptions.useTor = true`, persists it via `migrationManager.setNetworkPrivacyOptions`
+//  (background sends read the persisted copy, not the in-memory `state`), then proceeds straight to
+//  the permission chain. At real-SDK time, Tor-unavailable is a fail + retry — there is no direct-
+//  connection fallback. The Tor sheet becomes immediate-mode-only: its flag-on shortcut (Entry) now
+//  also persists (previously only the sheet's own confirm did), and `PendingTorDestination` dropped
+//  its `.permissionChain` case since the sheet never resumes the permission chain any more.
 //
 
 import Foundation
@@ -77,11 +88,14 @@ extension MigrationCoordFlow {
                 switch mode {
                 case .immediate:
                     // Skip the Tor sheet iff the app-wide Tor setup flag is on — in that case
-                    // `useTor` is implicitly `true` and Review is pushed directly; otherwise the
-                    // sheet is shown so the user can opt in explicitly. Both checks here are
-                    // synchronous SDK/dependency reads, so no effect is needed.
+                    // `useTor` is implicitly `true`, persisted the same way the sheet's own confirm
+                    // does (so a background send effect reads the same persisted value), and Review
+                    // is pushed directly; otherwise the sheet is shown so the user can opt in
+                    // explicitly. Both checks here are synchronous SDK/dependency reads, so no
+                    // effect is needed.
                     if walletStorage.exportTorSetupFlag() == true {
                         state.networkPrivacyOptions.useTor = true
+                        migrationManager.setNetworkPrivacyOptions(state.networkPrivacyOptions)
                         state.path.append(.reviewTransfer(MigrationReviewTransfer.State(mode: .immediate)))
                     } else {
                         presentTorSheet(destination: .reviewTransfer, state: &state)
@@ -93,19 +107,19 @@ extension MigrationCoordFlow {
                     return .none
                 }
 
-                // MARK: - HowItWorks (MOB-1478 W3)
+                // MARK: - HowItWorks (MOB-1478 W3, MOB-1487 round 3)
 
             case .path(.element(id: _, action: .howItWorks(.delegate(.continueTapped)))):
-                // Same Tor-sheet gate as Entry's immediate branch above, just reached later in the
-                // scheduled chain.
-                if walletStorage.exportTorSetupFlag() == true {
-                    state.networkPrivacyOptions.useTor = true
-                    return .run { send in
-                        await send(.pushNextPermissionStep(await nextPermissionStepResult()))
-                    }
+                // MOB-1487 (round 3): the privacy path routes ALL migration transactions over Tor
+                // per the Core/Wallet decision (2026-07-16) — no Tor-sheet gate, no opt-out. Persist
+                // immediately (background sends read the persisted copy, not this in-memory state)
+                // and proceed straight to the permission chain. At real-SDK time, Tor-unavailable is
+                // a fail + retry — there is no direct-connection fallback.
+                state.networkPrivacyOptions.useTor = true
+                migrationManager.setNetworkPrivacyOptions(state.networkPrivacyOptions)
+                return .run { send in
+                    await send(.pushNextPermissionStep(await nextPermissionStepResult()))
                 }
-                presentTorSheet(destination: .permissionChain, state: &state)
-                return .none
 
                 // MARK: - Tor bottom sheet (MOB-1478 W2)
 
@@ -465,11 +479,6 @@ extension MigrationCoordFlow {
         case .reviewTransfer:
             state.path.append(.reviewTransfer(MigrationReviewTransfer.State(mode: .immediate)))
             return .none
-
-        case .permissionChain:
-            return .run { send in
-                await send(.pushNextPermissionStep(await nextPermissionStepResult()))
-            }
         }
     }
 
@@ -505,12 +514,12 @@ extension MigrationCoordFlow {
 
     // MARK: - Permission-step routing
 
-    /// Shared helper (used after How This Works/the Tor sheet, and each permission screen's
-    /// continue/skip): computes the next needed screen in order — `backgroundDelivery` iff
-    /// background refresh isn't `.available` -> `notifications` iff authorization is still
-    /// `.notDetermined` (granted/denied both skip, per §5 S4) -> `transferPlan`. MOB-1478 (W2): Tor
-    /// resolution no longer lives in this chain — the bottom-sheet gate already ran once, earlier,
-    /// immediately after How This Works.
+    /// Shared helper (used after How This Works and each permission screen's continue/skip):
+    /// computes the next needed screen in order — `backgroundDelivery` iff background refresh isn't
+    /// `.available` -> `notifications` iff authorization is still `.notDetermined` (granted/denied
+    /// both skip, per §5 S4) -> `transferPlan`. MOB-1478 (W2): Tor resolution no longer lives in
+    /// this chain. MOB-1487 (round 3): there is no gate left to run, either — `useTor` is force-set
+    /// and persisted unconditionally immediately before this is called, from How This Works.
     private func nextPermissionStepResult() async -> MigrationCoordFlow.PermissionStepResult {
         if await migrationBGScheduler.backgroundRefreshStatus() != .available {
             return MigrationCoordFlow.PermissionStepResult(pathState: .backgroundDelivery(MigrationBackgroundDelivery.State()))
