@@ -2,10 +2,10 @@
 //  MigrationNotificationsView.swift
 //  zodl
 //
-//  "Allow Notifications" screen (MOB-1462, Figma S4 scheduled · 2840:4728 / manual · 2867:1921).
-//  Visually complete per Figma; `allowTapped` (notification authorization request) is declared but
-//  inert — wiring it up lands in MOB-1466. The `skipTapped` delegate is emitted but consumed by
-//  nobody yet.
+//  "Allow Notifications" screen (MOB-1462, round-2 canvas "Final Designs" — Figma S4 scheduled ·
+//  3480:9620 / manual · 3484:13186). Visually complete per Figma; `allowTapped` (notification
+//  authorization request) is declared but inert — wiring it up lands in MOB-1466. The `skipTapped`
+//  delegate is emitted but consumed by nobody yet.
 //
 
 import ComposableArchitecture
@@ -120,21 +120,15 @@ struct MigrationNotificationsView: View {
 
     // MARK: - Footer note
 
+    // Both variants render the same (scheduled) copy — the design no longer differentiates the
+    // footer note by variant (MOB-1487; `footerManual` retired from use here, key left in the
+    // catalog for centralized cleanup).
     @ViewBuilder private var footerNote: some View {
-        let text: String = {
-            switch store.variant {
-            case .scheduled:
-                return String(localizable: .migrationNotificationsFooterScheduled)
-            case .manual:
-                return String(localizable: .migrationNotificationsFooterManual)
-            }
-        }()
-
         HStack(alignment: .top, spacing: 8) {
             Asset.Assets.infoOutline.image
                 .zImage(size: 16, style: Design.Utility.WarningYellow._700)
 
-            Text(text)
+            Text(localizable: .migrationNotificationsFooterScheduled)
                 .zFont(size: 12, style: Design.Utility.WarningYellow._700)
                 .multilineTextAlignment(.leading)
                 .fixedSize(horizontal: false, vertical: true)
@@ -144,9 +138,10 @@ struct MigrationNotificationsView: View {
 
     // MARK: - Skip button
 
-    // `ZashiButton`'s `Type` enum has no per-instance color hook, so this reproduces its `.tertiary`
-    // layout locally with the warning label/border swapped in (MOB-1478 W8; same override duplicated
-    // in MigrationBackgroundDeliveryView rather than touching the shared component).
+    // `ZashiButton`'s `Type` enum has no per-instance color hook, so this reproduces a custom hybrid
+    // locally: `Destructive1` background fill with the warning label/border colors swapped in
+    // (MOB-1478 W8; round-2 fill update MOB-1487; same override duplicated in
+    // MigrationBackgroundDeliveryView rather than touching the shared component).
     @ViewBuilder private var skipButton: some View {
         Button {
             store.send(.skipTapped)
@@ -160,7 +155,7 @@ struct MigrationNotificationsView: View {
                 .frame(maxWidth: .infinity)
                 .background {
                     RoundedRectangle(cornerRadius: Design.Radius._xl)
-                        .fill(Design.Btns.Tertiary.bg.color(colorScheme))
+                        .fill(Design.Btns.Destructive1.bg.color(colorScheme))
                         .overlay {
                             RoundedRectangle(cornerRadius: Design.Radius._xl)
                                 .stroke(Design.Utility.WarningYellow._300.color(colorScheme), lineWidth: 1)

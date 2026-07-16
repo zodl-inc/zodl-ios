@@ -3,7 +3,8 @@
 //  zodl
 //
 //  "Move to Ironwood" entry screen (MOB-1460, Figma S1 · 2867:10445 privacy selected /
-//  2867:5641 + 2867:5731 immediate selected). Visually complete per Figma; the delegate emitted by
+//  2867:5641 + 2867:5731 immediate selected; MOB-1487 round 2 restyle · canvas "Final Designs" ·
+//  3480:6578 privacy / 3480:5841 immediate). Visually complete per Figma; the delegate emitted by
 //  `nextTapped` is consumed by nobody yet — chaining into the rest of the migration flow lands in
 //  MOB-1466.
 //
@@ -131,7 +132,7 @@ struct MigrationEntryView: View {
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title)
-                        .zFont(.semiBold, size: 16, style: isWarning ? Design.Utility.WarningYellow._600 : Design.Text.primary)
+                        .zFont(.semiBold, size: 16, style: isWarning ? Design.Utility.WarningYellow._700 : Design.Text.primary)
 
                     Text(subtitle)
                         .zFont(size: 14, style: Design.Text.tertiary)
@@ -151,11 +152,17 @@ struct MigrationEntryView: View {
                             RoundedRectangle(cornerRadius: Design.Radius._2xl)
                                 .strokeBorder(
                                     isWarning ? Design.Utility.WarningYellow._500.color(colorScheme) : Design.Checkboxes.onBg.color(colorScheme),
-                                    lineWidth: 2
+                                    lineWidth: isWarning ? 1 : 2
                                 )
                         }
                     }
-                    .shadow(color: isWarning ? Design.Utility.WarningYellow._200.color(colorScheme) : .clear, radius: 4)
+                    .overlay {
+                        if isWarning {
+                            RoundedRectangle(cornerRadius: Design.Radius._2xl + 2)
+                                .stroke(Design.Utility.WarningYellow._200.color(colorScheme), lineWidth: 2)
+                                .padding(-2)
+                        }
+                    }
             }
         }
         .buttonStyle(.plain)
@@ -166,7 +173,7 @@ struct MigrationEntryView: View {
             Circle()
                 .fill(
                     isSelected
-                        ? (isWarning ? Design.Utility.WarningYellow._500.color(colorScheme) : Design.Checkboxes.onBg.color(colorScheme))
+                        ? (isWarning ? Design.Utility.WarningYellow._600.color(colorScheme) : Design.Checkboxes.onBg.color(colorScheme))
                         : Design.Checkboxes.offBg.color(colorScheme)
                 )
                 .overlay {
@@ -198,19 +205,23 @@ struct MigrationEntryView: View {
                 .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 16)
     }
 
     // MARK: - Footer note
 
     @ViewBuilder private var footerNote: some View {
-        HStack(spacing: 8) {
+        HStack(alignment: .top, spacing: 8) {
             Asset.Assets.infoOutline.image
                 .zImage(size: 16, style: Design.Text.tertiary)
 
             Text(localizable: .migrationEntryFooterNote)
                 .zFont(size: 12, style: Design.Text.tertiary)
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
         }
-        .frame(maxWidth: .infinity, alignment: .center)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 16)
     }
 }
 

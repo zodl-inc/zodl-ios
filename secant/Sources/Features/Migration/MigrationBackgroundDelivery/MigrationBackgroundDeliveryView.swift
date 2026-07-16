@@ -2,10 +2,11 @@
 //  MigrationBackgroundDeliveryView.swift
 //  zodl
 //
-//  "Allow Background Delivery" screen (MOB-1462, Figma S3 · 2840:4480). `allowTapped` opens the
-//  Settings deep-link; `scenePhaseActive` re-checks Background App Refresh on return and the store
-//  auto-advances once it's available (MOB-1466). The `skipTapped` delegate is emitted but consumed
-//  by nobody yet — chaining is the coordinator's job (phase 3).
+//  "Allow Background Delivery" screen (MOB-1462, round-2 canvas "Final Designs" — Figma S3 ·
+//  3484:12873). `allowTapped` opens the Settings deep-link; `scenePhaseActive` re-checks Background
+//  App Refresh on return and the store auto-advances once it's available (MOB-1466). The
+//  `skipTapped` delegate is emitted but consumed by nobody yet — chaining is the coordinator's job
+//  (phase 3).
 //
 
 import ComposableArchitecture
@@ -108,9 +109,10 @@ struct MigrationBackgroundDeliveryView: View {
 
     // MARK: - Skip button
 
-    // `ZashiButton`'s `Type` enum has no per-instance color hook, so this reproduces its `.tertiary`
-    // layout locally with the warning label/border swapped in (MOB-1478 W8; same override duplicated
-    // in MigrationNotificationsView rather than touching the shared component).
+    // `ZashiButton`'s `Type` enum has no per-instance color hook, so this reproduces a custom hybrid
+    // locally: `Destructive1` background fill with the warning label/border colors swapped in
+    // (MOB-1478 W8; round-2 fill update MOB-1487; same override duplicated in
+    // MigrationNotificationsView rather than touching the shared component).
     @ViewBuilder private var skipButton: some View {
         Button {
             store.send(.skipTapped)
@@ -124,7 +126,7 @@ struct MigrationBackgroundDeliveryView: View {
                 .frame(maxWidth: .infinity)
                 .background {
                     RoundedRectangle(cornerRadius: Design.Radius._xl)
-                        .fill(Design.Btns.Tertiary.bg.color(colorScheme))
+                        .fill(Design.Btns.Destructive1.bg.color(colorScheme))
                         .overlay {
                             RoundedRectangle(cornerRadius: Design.Radius._xl)
                                 .stroke(Design.Utility.WarningYellow._300.color(colorScheme), lineWidth: 1)
