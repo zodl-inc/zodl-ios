@@ -13,8 +13,23 @@
 //  the illustration for a compact coins-swap badge and drops the success gradient for the flat
 //  screen background, then renders the dust callout as either an amber "still needs a decision"
 //  card (`.offered`/`.locking`, with the "Migrate anyway" escape hatch) or a neutral "done" card
-//  (`.locked`, no button, no info icon). The primary CTA slot swaps between "Lock balance",
-//  an in-flight "Locking balance" spinner button, and "Got it" accordingly.
+//  (`.locked`, no button, tertiary-tinted info icon). The primary CTA slot swaps between "Lock
+//  balance", an in-flight "Locking balance" spinner button, and "Got it" accordingly.
+//
+//  MOB-1487 (round 3, Figma 3925:24209 / locked callout 3836:8643): adds a "What does locking do?"
+//  explainer sheet, reachable via a trailing nav-bar help button shown whenever `dustResolution !=
+//  .none`. The sheet is a plain `zashiSheet` over `store.isLockExplainerPresented` — a manual
+//  `Binding(get:set:)` driving `lockExplainerHelpTapped`/`lockExplainerDismissed` (mirroring
+//  `MigrationCoordFlow`'s Tor-sheet, not `SwapAndPayCoordFlow`'s `BindableAction` binding, since
+//  there's exactly one flag and no cross-screen state) — its three body paragraphs reuse
+//  `attributedCalloutText` verbatim against static (unparameterized) localized keys, and its "Got
+//  it" button sends `lockExplainerDismissed`, NOT `gotItTapped`, so it closes only the sheet. The
+//  dust callout's info icon no longer hides for `.locked`; it now always shows, tinted tertiary
+//  when `.locked` and warning-yellow otherwise. The header badge's circle fill switched from the
+//  adaptive `Design.Surfaces.bgAlt` to the fixed `obsidian` swatch — `bgAlt` inverts to near-white
+//  in dark mode, which hid the white `coinsSwap` glyph; no dark Figma mock exists for this badge,
+//  but the bug is objective (the glyph is a fixed white and doesn't depend on colorScheme, so its
+//  background can't either).
 //
 
 import ComposableArchitecture
@@ -76,7 +91,69 @@ struct MigrationCompleteView: View {
         .padding(.vertical, 1)
         .screenHorizontalPadding()
         .navigationBarBackButtonHidden()
+        .navigationBarItems(trailing: trailingNavItem)
         .alert($store.scope(state: \.alert, action: \.alert))
+        .zashiSheet(
+            isPresented: Binding(
+                get: { store.isLockExplainerPresented },
+                set: { presented in
+                    if !presented {
+                        store.send(.lockExplainerDismissed)
+                    }
+                }
+            )
+        ) {
+            lockExplainerSheetContent()
+        }
+    }
+
+    // MARK: - Lock explainer sheet
+
+    /// Trailing nav-bar trigger for the explainer sheet — shown for every dust state that isn't
+    /// `.none` (the screen has no back button at all, so this is the only nav-bar item; adding it
+    /// doesn't touch `navigationBarBackButtonHidden()` above).
+    @ViewBuilder private var trailingNavItem: some View {
+        if store.dustResolution != .none {
+            Button {
+                store.send(.lockExplainerHelpTapped)
+            } label: {
+                Asset.Assets.Icons.help.image
+                    .zImage(size: 24, style: Design.Text.primary)
+                    .padding(Design.Spacing.navBarButtonPadding)
+            }
+        }
+    }
+
+    @ViewBuilder private func lockExplainerSheetContent() -> some View {
+        VStack(alignment: .leading, spacing: 32) {
+            Text(localizable: .migrationCompleteLockExplainerTitle)
+                .zFont(.semiBold, size: 20, style: Design.Text.primary)
+
+            VStack(alignment: .leading, spacing: 12) {
+                attributedCalloutText(
+                    markdown: String(localizable: .migrationCompleteLockExplainerBody1),
+                    baseStyle: Design.Text.tertiary,
+                    boldColor: nil
+                )
+
+                attributedCalloutText(
+                    markdown: String(localizable: .migrationCompleteLockExplainerBody2),
+                    baseStyle: Design.Text.tertiary,
+                    boldColor: nil
+                )
+
+                attributedCalloutText(
+                    markdown: String(localizable: .migrationCompleteLockExplainerBody3),
+                    baseStyle: Design.Text.tertiary,
+                    boldColor: nil
+                )
+            }
+
+            ZashiButton(String(localizable: .migrationGotIt)) {
+                store.send(.lockExplainerDismissed)
+            }
+            .padding(.bottom, Design.Spacing.sheetBottomSpace)
+        }
     }
 
     // MARK: - Header illustration / badge
@@ -97,7 +174,8 @@ struct MigrationCompleteView: View {
     /// `dustResolution`, only whether there's a dust decision to show at all.
     @ViewBuilder private var dustResolutionBadge: some View {
         Circle()
-            .fill(Design.Surfaces.bgAlt.color(colorScheme))
+            // Fixed obsidian, not `bgAlt` — `bgAlt` inverts to near-white in dark mode, hiding this white glyph (MOB-1487 R3 dark pass).
+            .fill(Asset.Colors.ZDesign.Base.obsidian.color)
             .frame(width: 40, height: 40)
             .overlay {
                 Asset.Assets.Icons.coinsSwap.image
@@ -160,10 +238,10 @@ struct MigrationCompleteView: View {
 
                 Spacer()
 
-                if store.dustResolution != .locked {
-                    Asset.Assets.infoOutline.image
-                        .zImage(size: 16, style: Design.Utility.WarningYellow._700)
-                }
+                // MOB-1487 (round 3, Figma 3836:8643): the info icon shows in every dust state now
+                // (previously hidden for `.locked`) — only the tint still depends on `dustResolution`.
+                Asset.Assets.infoOutline.image
+                    .zImage(size: 16, style: calloutIconStyle)
             }
 
             calloutBody
@@ -188,6 +266,10 @@ struct MigrationCompleteView: View {
 
     private var calloutTitleStyle: Colorable {
         store.dustResolution == .locked ? Design.Text.primary : Design.Utility.WarningYellow._700
+    }
+
+    private var calloutIconStyle: Colorable {
+        store.dustResolution == .locked ? Design.Text.tertiary : Design.Utility.WarningYellow._700
     }
 
     private var calloutBackgroundStyle: Colorable {
