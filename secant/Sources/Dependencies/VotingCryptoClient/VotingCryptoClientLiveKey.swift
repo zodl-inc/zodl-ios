@@ -267,23 +267,6 @@ extension VotingCryptoClient: DependencyKey {
             extractOrchardFvkFromUfvk: { ufvkStr, networkId in
                 Data(try VotingRustBackend.extractOrchardFvk(ufvk: ufvkStr, networkId: networkId))
             },
-            decomposeWeight: { weight in
-                (try? VotingRustBackend.decomposeWeight(weight)) ?? []
-            },
-            encryptShares: { roundId, shares in
-                let backend = try await dbActor.backend()
-                let wireShares: [VotingWireEncryptedShare] = try backend.encryptShares(
-                    roundId: roundId,
-                    shares: shares
-                )
-                return wireShares.map { (share: VotingWireEncryptedShare) -> EncryptedShare in
-                    EncryptedShare(
-                        c1: Data(share.ciphertext1),
-                        c2: Data(share.ciphertext2),
-                        shareIndex: share.shareIndex
-                    )
-                }
-            },
             // swiftlint:disable:next line_length
             buildVoteCommitment: { roundId, bundleIndex, hotkeySeed, networkId, proposalId, choice, numOptions, vanAuthPath, vanPosition, anchorHeight, singleShare in
                 AsyncThrowingStream<VoteCommitmentBuildEvent, Error> { continuation in
@@ -310,36 +293,16 @@ extension VotingCryptoClient: DependencyKey {
                                 }
                             )
                             publishState(backend: backend, roundId: roundId)
-                            let vanNullifier: Data = Data(result.vanNullifier)
-                            let voteAuthorityNoteNew: Data = Data(result.voteAuthorityNoteNew)
-                            let voteCommitment: Data = Data(result.voteCommitment)
-                            let proof: Data = Data(result.proof)
-                            let sharesHash: Data = Data(result.sharesHash)
-                            let rVpkBytes: Data = Data(result.rVpkBytes)
-                            let alphaV: Data = Data(result.alphaV)
-                            let encShares: [EncryptedShare] = result.encShares.map { share in
-                                EncryptedShare(
-                                    c1: Data(share.ciphertext1),
-                                    c2: Data(share.ciphertext2),
-                                    shareIndex: share.shareIndex
-                                )
-                            }
-                            let shareBlindFactors: [Data] = result.shareBlinds.map { Data($0) }
-                            let shareComms: [Data] = result.shareComms.map { Data($0) }
                             let bundle = VoteCommitmentBundle(
-                                vanNullifier: vanNullifier,
-                                voteAuthorityNoteNew: voteAuthorityNoteNew,
-                                voteCommitment: voteCommitment,
-                                proposalId: proposalId,
-                                proof: proof,
-                                encShares: encShares,
-                                anchorHeight: result.anchorHeight,
-                                voteRoundId: result.voteRoundId,
-                                sharesHash: sharesHash,
-                                shareBlindFactors: shareBlindFactors,
-                                shareComms: shareComms,
-                                rVpkBytes: rVpkBytes,
-                                alphaV: alphaV
+                                vanNullifier: Data(result.bundle.vanNullifier),
+                                voteAuthorityNoteNew: Data(result.bundle.voteAuthorityNoteNew),
+                                voteCommitment: Data(result.bundle.voteCommitment),
+                                proposalId: result.bundle.proposalId,
+                                proof: Data(result.bundle.proof),
+                                anchorHeight: result.bundle.anchorHeight,
+                                voteRoundId: result.bundle.voteRoundId,
+                                rVpkBytes: Data(result.bundle.rVpkBytes),
+                                voteAuthSig: Data(result.voteAuthSig)
                             )
                             continuation.yield(.completed(bundle))
                             continuation.finish()
@@ -349,71 +312,70 @@ extension VotingCryptoClient: DependencyKey {
                     }
                 }
             },
-            buildSharePayloads: { encShares, commitment, voteDecision, numOptions, vcTreePosition, singleShare in
+            recordVcPosition: { roundId, bundleIndex, proposalId, vcTreePosition in
                 let backend = try await dbActor.backend()
-                let sdkShares = encShares.map {
-                    VotingWireEncryptedShare(
-                        ciphertext1: [UInt8]($0.c1),
-                        ciphertext2: [UInt8]($0.c2),
-                        shareIndex: $0.shareIndex
-                    )
-                }
-                let vanNullifier: [UInt8] = [UInt8](commitment.vanNullifier)
-                let voteAuthorityNoteNew: [UInt8] = [UInt8](commitment.voteAuthorityNoteNew)
-                let voteCommitment: [UInt8] = [UInt8](commitment.voteCommitment)
-                let proof: [UInt8] = [UInt8](commitment.proof)
-                let sharesHash: [UInt8] = [UInt8](commitment.sharesHash)
-                let shareBlinds: [[UInt8]] = commitment.shareBlindFactors.map { [UInt8]($0) }
-                let shareComms: [[UInt8]] = commitment.shareComms.map { [UInt8]($0) }
-                let rVpkBytes: [UInt8] = [UInt8](commitment.rVpkBytes)
-                let alphaV: [UInt8] = [UInt8](commitment.alphaV)
-                let sdkCommitment = VotingVoteCommitmentBundle(
-                    vanNullifier: vanNullifier,
-                    voteAuthorityNoteNew: voteAuthorityNoteNew,
-                    voteCommitment: voteCommitment,
-                    proposalId: commitment.proposalId,
-                    proof: proof,
-                    encShares: sdkShares,
-                    anchorHeight: commitment.anchorHeight,
-                    voteRoundId: commitment.voteRoundId,
-                    sharesHash: sharesHash,
-                    shareBlinds: shareBlinds,
-                    shareComms: shareComms,
-                    rVpkBytes: rVpkBytes,
-                    alphaV: alphaV
+                try backend.recordVcPosition(
+                    roundId: roundId,
+                    bundleIndex: bundleIndex,
+                    proposalId: proposalId,
+                    vcTreePosition: vcTreePosition
                 )
-                let payloads = try backend.buildSharePayloads(
-                    commitment: sdkCommitment,
-                    voteDecision: voteDecision.ffiValue,
-                    numOptions: numOptions,
-                    voteCommitmentTreePosition: vcTreePosition,
-                    singleShare: singleShare
+            },
+            recoverCommittedVote: { roundId, bundleIndex, proposalId in
+                let backend = try await dbActor.backend()
+                let recovered = try backend.recoverCommittedVote(
+                    roundId: roundId,
+                    bundleIndex: bundleIndex,
+                    proposalId: proposalId
                 )
-                return payloads.map { payload in
-                    let encShare = EncryptedShare(
-                        c1: Data(payload.encShare.ciphertext1),
-                        c2: Data(payload.encShare.ciphertext2),
-                        shareIndex: payload.encShare.shareIndex
-                    )
-                    let allEncShares = payload.allEncShares.map { wire in
-                        EncryptedShare(
-                            c1: Data(wire.ciphertext1),
-                            c2: Data(wire.ciphertext2),
-                            shareIndex: wire.shareIndex
-                        )
-                    }
-                    let shareComms = payload.shareComms.map { Data($0) }
-                    return SharePayload(
+                let committed = recovered.committedVote
+                let bundle = VoteCommitmentBundle(
+                    vanNullifier: Data(committed.bundle.vanNullifier),
+                    voteAuthorityNoteNew: Data(committed.bundle.voteAuthorityNoteNew),
+                    voteCommitment: Data(committed.bundle.voteCommitment),
+                    proposalId: committed.bundle.proposalId,
+                    proof: Data(committed.bundle.proof),
+                    anchorHeight: committed.bundle.anchorHeight,
+                    voteRoundId: committed.bundle.voteRoundId,
+                    rVpkBytes: Data(committed.bundle.rVpkBytes),
+                    voteAuthSig: Data(committed.voteAuthSig)
+                )
+                let payloads = committed.sharePayloads.map { payload in
+                    SharePayload(
                         sharesHash: Data(payload.sharesHash),
                         proposalId: payload.proposalId,
                         voteDecision: payload.voteDecision,
-                        encShare: encShare,
+                        encShare: EncryptedShare(
+                            c1: Data(payload.encShare.ciphertext1),
+                            c2: Data(payload.encShare.ciphertext2),
+                            shareIndex: payload.encShare.shareIndex
+                        ),
                         treePosition: payload.treePosition,
-                        allEncShares: allEncShares,
-                        shareComms: shareComms,
+                        allEncShares: payload.allEncShares.map { wire in
+                            EncryptedShare(
+                                c1: Data(wire.ciphertext1),
+                                c2: Data(wire.ciphertext2),
+                                shareIndex: wire.shareIndex
+                            )
+                        },
+                        shareComms: payload.shareComms.map { Data($0) },
                         primaryBlind: Data(payload.primaryBlind)
                     )
                 }
+                return RecoveredCommittedVote(
+                    bundle: bundle,
+                    sharePayloads: payloads,
+                    vcTreePosition: recovered.vcTreePosition
+                )
+            },
+            scheduledShareSubmitAt: { nowSeconds, ceremonyStartSeconds, voteEndSeconds, singleShare, entropy in
+                try VotingRustBackend.scheduledShareSubmitAt(
+                    nowSeconds: nowSeconds,
+                    ceremonyStartSeconds: ceremonyStartSeconds,
+                    voteEndSeconds: voteEndSeconds,
+                    singleShare: singleShare,
+                    entropy: entropy
+                )
             },
             getDelegationSubmission: { roundId, bundleIndex, walletDbPath, accountUuid, hotkeySecret, roundName, senderSeed in
                 let backend = try await dbActor.backend()
@@ -502,16 +464,6 @@ extension VotingCryptoClient: DependencyKey {
                 let backend = try await dbActor.backend()
                 try backend.resetTreeClient()
             },
-            signCastVote: { hotkeySeed, networkId, bundle in
-                let sig = try VotingRustBackend.signCastVote(
-                    hotkeySeed: hotkeySeed,
-                    networkId: networkId,
-                    commitment: bundle.toSDK()
-                )
-                return CastVoteSignature(
-                    voteAuthSig: Data(sig.voteAuthSig)
-                )
-            },
             extractNcRoot: { treeStateBytes in
                 Data(try VotingRustBackend.extractNcRoot(treeState: [UInt8](treeStateBytes)))
             },
@@ -561,38 +513,9 @@ extension VotingCryptoClient: DependencyKey {
                     )
                 }
             },
-            storeVoteCommitmentBundle: { roundId, bundleIndex, proposalId, bundle, vcTreePosition in
-                let backend = try await dbActor.backend()
-                let json = String(data: try JSONEncoder().encode(bundle), encoding: .utf8) ?? "{}"
-                try backend.storeCommitmentBundle(
-                    roundId: roundId,
-                    bundleIndex: bundleIndex,
-                    proposalId: proposalId,
-                    bundleJson: json,
-                    voteCommitmentTreePosition: vcTreePosition
-                )
-            },
-            getVoteCommitmentBundle: { roundId, bundleIndex, proposalId in
-                let backend = try await dbActor.backend()
-                guard let result = try backend.getCommitmentBundle(roundId: roundId, bundleIndex: bundleIndex, proposalId: proposalId) else { return nil }
-                return try JSONDecoder().decode(VoteCommitmentBundle.self, from: Data(result.bundleJson.utf8))
-            },
-            getVoteCommitmentBundleWithPosition: { roundId, bundleIndex, proposalId in
-                let backend = try await dbActor.backend()
-                guard let result = try backend.getCommitmentBundle(roundId: roundId, bundleIndex: bundleIndex, proposalId: proposalId) else { return nil }
-                let bundle = try JSONDecoder().decode(VoteCommitmentBundle.self, from: Data(result.bundleJson.utf8))
-                return (bundle: bundle, vcTreePosition: result.voteCommitmentTreePosition)
-            },
             clearRecoveryState: { roundId in
                 let backend = try await dbActor.backend()
                 try backend.clearRecoveryState(roundId: roundId)
-            },
-            computeShareNullifier: { voteCommitment, shareIndex, primaryBlind in
-                try VotingRustBackend.computeShareNullifier(
-                    voteCommitment: voteCommitment,
-                    shareIndex: shareIndex,
-                    primaryBlind: primaryBlind
-                )
             },
             recordShareDelegation: { roundId, bundleIndex, proposalId, shareIndex, sentToURLs, nullifier, submitAt in
                 let backend = try await dbActor.backend()
@@ -762,32 +685,6 @@ private extension NoteInfo {
             rseed: rseedBytes,
             scope: scope,
             ufvkStr: ufvkStr
-        )
-    }
-}
-
-private extension VoteCommitmentBundle {
-    func toSDK() -> VotingVoteCommitmentBundle {
-        VotingVoteCommitmentBundle(
-            vanNullifier: [UInt8](vanNullifier),
-            voteAuthorityNoteNew: [UInt8](voteAuthorityNoteNew),
-            voteCommitment: [UInt8](voteCommitment),
-            proposalId: proposalId,
-            proof: [UInt8](proof),
-            encShares: encShares.map {
-                VotingWireEncryptedShare(
-                    ciphertext1: [UInt8]($0.c1),
-                    ciphertext2: [UInt8]($0.c2),
-                    shareIndex: $0.shareIndex
-                )
-            },
-            anchorHeight: anchorHeight,
-            voteRoundId: voteRoundId,
-            sharesHash: [UInt8](sharesHash),
-            shareBlinds: shareBlindFactors.map { [UInt8]($0) },
-            shareComms: shareComms.map { [UInt8]($0) },
-            rVpkBytes: [UInt8](rVpkBytes),
-            alphaV: [UInt8](alphaV)
         )
     }
 }

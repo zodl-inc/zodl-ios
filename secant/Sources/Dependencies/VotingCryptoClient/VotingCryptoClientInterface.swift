@@ -121,11 +121,10 @@ struct VotingCryptoClient {
         = { _, _, _, _, _, _, _, _ in AsyncThrowingStream { $0.finish() } }
     /// Extract Orchard FVK bytes from a UFVK string.
     var extractOrchardFvkFromUfvk: @Sendable (_ ufvkStr: String, _ networkId: UInt32) throws -> Data
-    var decomposeWeight: @Sendable (_ weight: UInt64) -> [UInt64] = { _ in [] }
-    var encryptShares: @Sendable (
-        _ roundId: String,
-        _ shares: [UInt64]
-    ) async throws -> [EncryptedShare]
+    /// One-shot vote commit: proof, share split + encryption, cast-vote
+    /// signature, and recovery persistence all happen inside the crate; the
+    /// completed event carries the bundle (including `voteAuthSig`).
+    /// Idempotent — re-running after a crash returns the persisted commit.
     var buildVoteCommitment: @Sendable (
         _ roundId: String,
         _ bundleIndex: UInt32,
@@ -140,14 +139,31 @@ struct VotingCryptoClient {
         _ singleShare: Bool
     ) -> AsyncThrowingStream<VoteCommitmentBuildEvent, Error>
         = { _, _, _, _, _, _, _, _, _, _, _ in AsyncThrowingStream { $0.finish() } }
-    var buildSharePayloads: @Sendable (
-        _ encShares: [EncryptedShare],
-        _ commitment: VoteCommitmentBundle,
-        _ voteDecision: VoteChoice,
-        _ numOptions: UInt32,
-        _ vcTreePosition: UInt64,
-        _ singleShare: Bool
-    ) async throws -> [SharePayload]
+    /// Record the confirmed vote-commitment tree position (from the cast-vote
+    /// TX's `leaf_index`) into crate recovery state.
+    var recordVcPosition: @Sendable (
+        _ roundId: String,
+        _ bundleIndex: UInt32,
+        _ proposalId: UInt32,
+        _ vcTreePosition: UInt64
+    ) async throws -> Void
+    /// Reconstruct a committed vote (bundle + helper-share payloads at the
+    /// stored VC position) from crate recovery state. Throws when no
+    /// committed vote exists for the key.
+    var recoverCommittedVote: @Sendable (
+        _ roundId: String,
+        _ bundleIndex: UInt32,
+        _ proposalId: UInt32
+    ) async throws -> RecoveredCommittedVote
+    /// Crate-scheduled helper-share submit time (Unix seconds, 0 = immediate).
+    /// Pass 8 fresh CSPRNG bytes per share; the crate owns the sampling.
+    var scheduledShareSubmitAt: @Sendable (
+        _ nowSeconds: UInt64,
+        _ ceremonyStartSeconds: UInt64,
+        _ voteEndSeconds: UInt64,
+        _ singleShare: Bool,
+        _ entropy: [UInt8]
+    ) throws -> UInt64
     /// Reconstruct the full chain-ready delegation TX payload from DB + seed.
     /// Call after `buildAndProveDelegation` completes. The wallet seed is used
     /// only to sign the crate-produced signing request locally; it never
@@ -177,13 +193,6 @@ struct VotingCryptoClient {
     /// Drop the in-memory TreeClient so the next `syncVoteTree` starts fresh.
     /// Recovers from stale state after commitment tree timeout.
     var resetTreeClient: @Sendable () async throws -> Void
-    /// Decompress r_vpk and sign the canonical cast-vote sighash.
-    /// Call after `buildVoteCommitment` completes, before `submitVoteCommitment`.
-    var signCastVote: @Sendable (
-        _ hotkeySeed: [UInt8],
-        _ networkId: UInt32,
-        _ bundle: VoteCommitmentBundle
-    ) async throws -> CastVoteSignature
     /// Extract the Orchard nc_root from a protobuf-encoded TreeState.
     var extractNcRoot: @Sendable (_ treeStateBytes: Data) throws -> Data
 
@@ -224,27 +233,6 @@ struct VotingCryptoClient {
     var loadKeystoneBundleSignatures: @Sendable (
         _ roundId: String
     ) async throws -> [KeystoneBundleSignatureInfo]
-    /// Persist the vote commitment bundle + VC tree position before TX submission.
-    /// Required for share delegation if the app crashes between TX confirm and share send.
-    var storeVoteCommitmentBundle: @Sendable (
-        _ roundId: String,
-        _ bundleIndex: UInt32,
-        _ proposalId: UInt32,
-        _ bundle: VoteCommitmentBundle,
-        _ vcTreePosition: UInt64
-    ) async throws -> Void
-    /// Load a persisted vote commitment bundle (nil if never stored).
-    var getVoteCommitmentBundle: @Sendable (
-        _ roundId: String,
-        _ bundleIndex: UInt32,
-        _ proposalId: UInt32
-    ) async throws -> VoteCommitmentBundle?
-    /// Load a persisted vote commitment bundle with its VC tree position (needed for share resubmission).
-    var getVoteCommitmentBundleWithPosition: @Sendable (
-        _ roundId: String,
-        _ bundleIndex: UInt32,
-        _ proposalId: UInt32
-    ) async throws -> (bundle: VoteCommitmentBundle, vcTreePosition: UInt64)?
     /// Clear recovery state for a round (keystone sigs, TX hashes).
     var clearRecoveryState: @Sendable (
         _ roundId: String
@@ -252,9 +240,9 @@ struct VotingCryptoClient {
 
     // --- Share delegation tracking ---
 
-    /// Compute the nullifier for a vote share (pure function, no DB needed).
-    var computeShareNullifier: @Sendable (_ voteCommitment: [UInt8], _ shareIndex: UInt32, _ primaryBlind: [UInt8]) throws -> String
-    /// Record a share delegation after sending to helper servers.
+    /// Record a share delegation after sending to helper servers. The crate
+    /// computes and persists the share nullifier itself — pass an empty
+    /// `nullifier` (non-empty values are only shape-validated).
     var recordShareDelegation: @Sendable (_ roundId: String, _ bundleIndex: UInt32, _ proposalId: UInt32, _ shareIndex: UInt32, _ sentToURLs: [String], _ nullifier: [UInt8], _ submitAt: UInt64) async throws -> Void
     /// Get all share delegations for a round.
     var getShareDelegations: @Sendable (_ roundId: String) async throws -> [VotingShareDelegation]
