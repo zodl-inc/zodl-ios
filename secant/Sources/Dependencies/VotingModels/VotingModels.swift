@@ -269,7 +269,9 @@ struct VotingHotkey: Equatable, Sendable {
 // MARK: - Voting PCZT
 
 /// Result of building a voting PCZT for Keystone signing.
-/// Contains the serialized PCZT bytes plus all metadata needed for ZKP #1 witness construction.
+/// The 1.0 `zcash_voting` crate stores the delegation witness data in the
+/// voting DB itself; the wire result carries only what the signing ceremony
+/// needs. Full registration payloads come from `getDelegationSubmission`.
 struct VotingPcztResult: Equatable, Sendable {
     /// Serialized PCZT bytes for UR-encoding and Keystone signing.
     let pcztBytes: Data
@@ -277,28 +279,6 @@ struct VotingPcztResult: Equatable, Sendable {
     let pcztSighash: Data
     /// Randomized verification key (32 bytes).
     let rk: Data // swiftlint:disable:this identifier_name
-    /// Spend auth randomizer scalar (32 bytes).
-    let alpha: Data
-    /// Signed note nullifier (32 bytes). Public input to ZKP #1.
-    let nfSigned: Data
-    /// Output note commitment (32 bytes). Public input to ZKP #1.
-    let cmxNew: Data
-    /// Governance nullifiers, always padded to 5.
-    let govNullifiers: [Data]
-    /// 32-byte governance commitment (VAN).
-    let van: Data
-    /// 32-byte blinding factor used for VAN.
-    let vanCommRand: Data
-    /// Random nullifiers used for padded dummy notes.
-    let dummyNullifiers: [Data]
-    /// Constrained rho for the signed note (32 bytes).
-    let rhoSigned: Data
-    /// Extracted note commitments (cmx) for padded dummy notes.
-    let paddedCmx: [Data]
-    /// Signed note rseed (32 bytes).
-    let rseedSigned: Data
-    /// Output note rseed (32 bytes).
-    let rseedOutput: Data
     /// Canonical delegation action payload for cosmos chain submission.
     let actionBytes: Data
     /// Index of the governance action within the PCZT's Orchard bundle.
@@ -308,34 +288,12 @@ struct VotingPcztResult: Equatable, Sendable {
         pcztBytes: Data,
         pcztSighash: Data,
         rk: Data, // swiftlint:disable:this identifier_name
-        alpha: Data,
-        nfSigned: Data,
-        cmxNew: Data,
-        govNullifiers: [Data],
-        van: Data,
-        vanCommRand: Data,
-        dummyNullifiers: [Data],
-        rhoSigned: Data,
-        paddedCmx: [Data],
-        rseedSigned: Data,
-        rseedOutput: Data,
         actionBytes: Data,
         actionIndex: UInt32
     ) {
         self.pcztBytes = pcztBytes
         self.pcztSighash = pcztSighash
         self.rk = rk
-        self.alpha = alpha
-        self.nfSigned = nfSigned
-        self.cmxNew = cmxNew
-        self.govNullifiers = govNullifiers
-        self.van = van
-        self.vanCommRand = vanCommRand
-        self.dummyNullifiers = dummyNullifiers
-        self.rhoSigned = rhoSigned
-        self.paddedCmx = paddedCmx
-        self.rseedSigned = rseedSigned
-        self.rseedOutput = rseedOutput
         self.actionBytes = actionBytes
         self.actionIndex = actionIndex
     }
