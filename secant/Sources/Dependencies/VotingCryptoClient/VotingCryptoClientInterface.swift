@@ -61,21 +61,22 @@ struct VotingCryptoClient {
     var verifyWitness: @Sendable (_ witness: WitnessData) async throws -> Bool
 
     // --- Crypto operations ---
-    var generateHotkey: @Sendable (_ roundId: String, _ seed: [UInt8]) async throws -> VotingHotkey
+    /// Reconstruct the account's voting hotkey from its 64-byte stored secret
+    /// (the app derives it from the per-account voting hotkey phrase).
+    /// Deterministic: the same secret always yields the same hotkey.
+    var generateHotkey: @Sendable (_ roundId: String, _ storedSecret: [UInt8]) async throws -> VotingHotkey
     /// Build a voting PCZT for Keystone signing.
     /// The PCZT's single Orchard action IS the voting dummy action, so Keystone's
     /// SpendAuth signature will be over the voting-bound ZIP-244 sighash.
+    /// The crate gathers notes and the account FVK from the wallet DB itself
+    /// (UFVK-only Keystone accounts included) — no seed or FVK crosses this API.
     var buildVotingPczt: @Sendable (
         _ roundId: String,
         _ bundleIndex: UInt32,
-        _ notes: [NoteInfo],
-        _ senderSeed: [UInt8],
-        _ hotkeySeed: [UInt8],
-        _ networkId: UInt32,
-        _ accountIndex: UInt32,
-        _ roundName: String,
-        _ orchardFvkOverride: Data?,
-        _ keystoneSeedFingerprintOverride: Data?
+        _ walletDbPath: String,
+        _ accountUuid: String,
+        _ hotkeySecret: [UInt8],
+        _ roundName: String
     ) async throws -> VotingPcztResult
     var storeTreeState: @Sendable (_ roundId: String, _ treeState: Data) async throws -> Void
     var extractSpendAuthSignatureFromSignedPczt: @Sendable (
@@ -110,15 +111,14 @@ struct VotingCryptoClient {
     var buildAndProveDelegation: @Sendable (
         _ roundId: String,
         _ bundleIndex: UInt32,
-        _ bundleNotes: [NoteInfo],
-        _ senderSeed: [UInt8],
-        _ hotkeySeed: [UInt8],
-        _ networkId: UInt32,
-        _ accountIndex: UInt32,
+        _ walletDbPath: String,
+        _ accountUuid: String,
+        _ hotkeySecret: [UInt8],
+        _ roundName: String,
         _ pirEndpoints: [String],
         _ expectedSnapshotHeight: UInt64
     ) -> AsyncThrowingStream<ProofEvent, Error>
-        = { _, _, _, _, _, _, _, _, _ in AsyncThrowingStream { $0.finish() } }
+        = { _, _, _, _, _, _, _, _ in AsyncThrowingStream { $0.finish() } }
     /// Extract Orchard FVK bytes from a UFVK string.
     var extractOrchardFvkFromUfvk: @Sendable (_ ufvkStr: String, _ networkId: UInt32) throws -> Data
     var decomposeWeight: @Sendable (_ weight: UInt64) -> [UInt64] = { _ in [] }
@@ -149,13 +149,17 @@ struct VotingCryptoClient {
         _ singleShare: Bool
     ) async throws -> [SharePayload]
     /// Reconstruct the full chain-ready delegation TX payload from DB + seed.
-    /// Call after `buildAndProveDelegation` completes.
+    /// Call after `buildAndProveDelegation` completes. The wallet seed is used
+    /// only to sign the crate-produced signing request locally; it never
+    /// enters the voting crate.
     var getDelegationSubmission: @Sendable (
         _ roundId: String,
         _ bundleIndex: UInt32,
-        _ senderSeed: [UInt8],
-        _ networkId: UInt32,
-        _ accountIndex: UInt32
+        _ walletDbPath: String,
+        _ accountUuid: String,
+        _ hotkeySecret: [UInt8],
+        _ roundName: String,
+        _ senderSeed: [UInt8]
     ) async throws -> DelegationRegistration
     /// Reconstruct the delegation TX payload using a Keystone-provided signature.
     /// Uses the externally-provided signature and ZIP-244 sighash instead of

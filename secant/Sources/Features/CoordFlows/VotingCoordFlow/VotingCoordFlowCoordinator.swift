@@ -1723,8 +1723,7 @@ extension VotingCoordFlow {
 
         let network = zcashSDKEnvironment.network()
         let networkId: UInt32 = network.networkType.votingRustNetworkId
-        let accountIndex = votingAccountIndex(for: state.selectedWalletAccount)
-        let seedFingerprint = votingSeedFingerprint(for: state.selectedWalletAccount)
+        let walletDbPath = databaseFiles.dataDbURLFor(network).path
         guard
             let chainNodeUrl = state.serviceConfig?.voteServers.first?.url,
             let voteServerURLs = state.serviceConfig?.voteServers.map(\.url).nonEmpty,
@@ -1734,6 +1733,7 @@ extension VotingCoordFlow {
             LoggerProxy.error("serviceConfig/activeSession/selectedAccount unexpectedly nil during vote submission; aborting")
             return .none
         }
+        let accountUuid = accountId.votingUuidString
         let expectedSnapshotHeight = activeSession.snapshotHeight
         let bundleCount = session.bundleCount
         let singleShare = activeSession.isLastMoment
@@ -1777,15 +1777,14 @@ extension VotingCoordFlow {
                     try await Self.runDelegationPipeline(
                         roundId: roundId,
                         cachedNotes: cachedNotes,
+                        walletDbPath: walletDbPath,
+                        accountUuid: accountUuid,
+                        hotkeySecret: hotkeySeed,
                         senderSeed: senderSeed,
-                        hotkeySeed: hotkeySeed,
-                        networkId: networkId,
-                        accountIndex: accountIndex,
                         roundName: roundName,
                         pirEndpoints: pirEndpoints,
                         expectedSnapshotHeight: expectedSnapshotHeight,
                         delegationPrepared: delegationPrepared,
-                        seedFingerprint: seedFingerprint,
                         votingCrypto: votingCrypto,
                         votingAPI: votingAPI,
                         send: send
@@ -2019,7 +2018,6 @@ extension VotingCoordFlow {
         else { return .none }
         guard
             let pirEndpoints = state.serviceConfig?.pirEndpoints.map(\.url).nonEmpty,
-            let seedFingerprint = votingSeedFingerprint(for: state.selectedWalletAccount),
             let accountId = state.selectedWalletAccount?.id
         else {
             return .none
@@ -2035,12 +2033,13 @@ extension VotingCoordFlow {
         let bundleCount = session.bundleCount
         let network = zcashSDKEnvironment.network()
         let networkId: UInt32 = network.networkType.votingRustNetworkId
-        let accountIndex = votingAccountIndex(for: state.selectedWalletAccount)
+        let walletDbPath = databaseFiles.dataDbURLFor(network).path
+        let accountUuid = accountId.votingUuidString
         let roundName = activeSession.title
 
         return .run { [votingCrypto, mnemonic, walletStorage] send in
             let hotkeyPhrase = try walletStorage.exportVotingHotkey(accountId).seedPhrase.value()
-            let hotkeySeed = try mnemonic.toSeed(hotkeyPhrase)
+            let hotkeySecret = try mnemonic.toSeed(hotkeyPhrase)
             let noteChunks = cachedNotes.smartBundles().bundles
             guard Int(bundleCount) <= noteChunks.count else {
                 throw VotingFlowError.inconsistentBundleSetup(
@@ -2058,23 +2057,15 @@ extension VotingCoordFlow {
                 }
 
                 let bundleNotes = noteChunks[Int(bundleIndex)]
-                guard let firstNote = bundleNotes.first else { continue }
-                let orchardFvk = try votingCrypto.extractOrchardFvkFromUfvk(
-                    firstNote.ufvkStr,
-                    networkId
-                )
+                guard !bundleNotes.isEmpty else { continue }
 
                 _ = try await votingCrypto.buildVotingPczt(
                     roundId,
                     bundleIndex,
-                    bundleNotes,
-                    emptySenderSeed,
-                    hotkeySeed,
-                    networkId,
-                    accountIndex,
-                    roundName,
-                    orchardFvk,
-                    seedFingerprint
+                    walletDbPath,
+                    accountUuid,
+                    hotkeySecret,
+                    roundName
                 )
 
                 let result = try await votingCrypto.precomputeDelegationPir(
@@ -2572,28 +2563,9 @@ extension VotingCoordFlow {
             return .none
         }
 
-        let keystoneMetadata: (seedFingerprint: Data, accountIndex: UInt32)?
-        if let account = state.selectedWalletAccount {
-            guard
-                let zip32AccountIndex = account.zip32AccountIndex,
-                let seedFingerprint = account.seedFingerprint,
-                seedFingerprint.count == 32
-            else {
-                return .send(.delegationProofFailed(
-                    roundId: roundId,
-                    error: VotingFlowError.missingSigningAccount.localizedDescription
-                ))
-            }
-            keystoneMetadata = (Data(seedFingerprint), UInt32(zip32AccountIndex.index))
-        } else {
-            keystoneMetadata = nil
-        }
-
         let cachedNotes = session.walletNotes
         let network = zcashSDKEnvironment.network()
-        let networkId: UInt32 = network.networkType.votingRustNetworkId
-        let accountIndex: UInt32 = keystoneMetadata?.accountIndex ?? 0
-        let keystoneSeedFingerprint = keystoneMetadata?.seedFingerprint
+        let walletDbPath = databaseFiles.dataDbURLFor(network).path
         let roundName = activeSession.title
         let keystoneBundleIndex = nextBundleIndex
         let bundleCount = session.bundleCount
@@ -2615,6 +2587,7 @@ extension VotingCoordFlow {
             LoggerProxy.error("selectedAccount unexpectedly nil during Keystone delegation; aborting")
             return .none
         }
+        let accountUuid = accountId.votingUuidString
 
         mutateSession(&state, roundId: roundId) {
             $0.currentKeystoneBundleIndex = keystoneBundleIndex
@@ -2626,23 +2599,15 @@ extension VotingCoordFlow {
             let bgTaskId = await backgroundTask.beginTask("Keystone PCZT prep")
             do {
                 let hotkeyPhrase = try walletStorage.exportVotingHotkey(accountId).seedPhrase.value()
-                let hotkeySeed = try mnemonic.toSeed(hotkeyPhrase)
-                let bundleNotes = noteChunks[Int(keystoneBundleIndex)]
-                let orchardFvk = try votingCrypto.extractOrchardFvkFromUfvk(
-                    bundleNotes[0].ufvkStr, networkId
-                )
+                let hotkeySecret = try mnemonic.toSeed(hotkeyPhrase)
                 LoggerProxy.info("Keystone: preparing PCZT for bundle \(keystoneBundleIndex + 1)/\(bundleCount)")
                 let govPczt = try await votingCrypto.buildVotingPczt(
                     roundId,
                     keystoneBundleIndex,
-                    bundleNotes,
-                    emptySenderSeed,
-                    hotkeySeed,
-                    networkId,
-                    accountIndex,
-                    roundName,
-                    orchardFvk,
-                    keystoneSeedFingerprint
+                    walletDbPath,
+                    accountUuid,
+                    hotkeySecret,
+                    roundName
                 )
                 let redactedPczt = try await sdkSynchronizer.redactPCZTForSigner(govPczt.pcztBytes)
                 await backgroundTask.endTask(bgTaskId)
@@ -2801,10 +2766,8 @@ extension VotingCoordFlow {
         let expectedSnapshotHeight = activeSession.snapshotHeight
         let cachedNotes = session.walletNotes
         let network = zcashSDKEnvironment.network()
-        let networkId: UInt32 = network.networkType.votingRustNetworkId
-        let accountIndex: UInt32 = state.selectedWalletAccount
-            .flatMap(\.zip32AccountIndex)
-            .map { UInt32($0.index) } ?? 0
+        let walletDbPath = databaseFiles.dataDbURLFor(network).path
+        let roundName = activeSession.title
         guard
             let pirEndpoints = state.serviceConfig?.pirEndpoints.map(\.url),
             !pirEndpoints.isEmpty,
@@ -2813,6 +2776,7 @@ extension VotingCoordFlow {
             LoggerProxy.error("serviceConfig/selectedAccount unexpectedly nil during Keystone delegation proof")
             return .none
         }
+        let accountUuid = accountId.votingUuidString
         let bundleCount = session.bundleCount
         let storedSignatures = session.keystoneBundleSignatures.sorted { $0.bundleIndex < $1.bundleIndex }
         let initiallyCompletedBundles = session.completedKeystoneDelegationBundleIndices
@@ -2829,10 +2793,8 @@ extension VotingCoordFlow {
         return .run { [backgroundTask, votingCrypto, votingAPI, mnemonic, walletStorage] send in
             let bgTaskId = await backgroundTask.beginTask("Keystone delegation proof")
             do {
-                let senderPhrase = try walletStorage.exportWallet().seedPhrase.value()
-                let senderSeed = try mnemonic.toSeed(senderPhrase)
                 let hotkeyPhrase = try walletStorage.exportVotingHotkey(accountId).seedPhrase.value()
-                let hotkeySeed = try mnemonic.toSeed(hotkeyPhrase)
+                let hotkeySecret = try mnemonic.toSeed(hotkeyPhrase)
                 let normalizedInitialCompletedBundles = initiallyCompletedBundles.filter { $0 < bundleCount }
                 var completedBundles = normalizedInitialCompletedBundles
                 for idx: UInt32 in 0..<bundleCount {
@@ -2872,18 +2834,16 @@ extension VotingCoordFlow {
                         await send(.delegationProofProgress(roundId: roundId, progress: overallProgress))
                         continue
                     }
-                    let bundleNotes = noteChunks[Int(bundleIdx)]
                     let completedBeforeBundle = completedBundles.count
                     LoggerProxy.info("Keystone batch: proving bundle \(bundleIdx + 1)/\(bundleCount)")
 
                     for try await event in votingCrypto.buildAndProveDelegation(
                         roundId,
                         bundleIdx,
-                        bundleNotes,
-                        senderSeed,
-                        hotkeySeed,
-                        networkId,
-                        accountIndex,
+                        walletDbPath,
+                        accountUuid,
+                        hotkeySecret,
+                        roundName,
                         pirEndpoints,
                         expectedSnapshotHeight
                     ) {
@@ -3512,15 +3472,14 @@ extension VotingCoordFlow {
     static func runDelegationPipeline(
         roundId: String,
         cachedNotes: [NoteInfo],
+        walletDbPath: String,
+        accountUuid: String,
+        hotkeySecret: [UInt8],
         senderSeed: [UInt8],
-        hotkeySeed: [UInt8],
-        networkId: UInt32,
-        accountIndex: UInt32,
         roundName: String,
         pirEndpoints: [String],
         expectedSnapshotHeight: UInt64,
         delegationPrepared: Bool = false,
-        seedFingerprint: Data? = nil,
         votingCrypto: VotingCryptoClient,
         votingAPI: VotingAPIClient,
         send: Send<Action>,
@@ -3554,7 +3513,7 @@ extension VotingCoordFlow {
 
             let registration: DelegationRegistration
             if let cachedRegistration = try? await votingCrypto.getDelegationSubmission(
-                roundId, bundleIndex, senderSeed, networkId, accountIndex
+                roundId, bundleIndex, walletDbPath, accountUuid, hotkeySecret, roundName, senderSeed
             ) {
                 LoggerProxy.debug("Delegation bundle \(bundleIndex + 1)/\(bundleCount) using cached submission")
                 registration = cachedRegistration
@@ -3562,19 +3521,15 @@ extension VotingCoordFlow {
                 if delegationPrepared {
                     LoggerProxy.debug("Delegation bundle \(bundleIndex + 1)/\(bundleCount) using precomputed PIR data")
                 } else {
-                    let orchardFvk = try seedFingerprint.map { _ in
-                        try votingCrypto.extractOrchardFvkFromUfvk(bundleNotes[0].ufvkStr, networkId)
-                    }
                     _ = try await votingCrypto.buildVotingPczt(
-                        roundId, bundleIndex, bundleNotes,
-                        senderSeed, hotkeySeed, networkId, accountIndex, roundName,
-                        orchardFvk, seedFingerprint
+                        roundId, bundleIndex, walletDbPath,
+                        accountUuid, hotkeySecret, roundName
                     )
                 }
 
                 for try await event in votingCrypto.buildAndProveDelegation(
-                    roundId, bundleIndex, bundleNotes,
-                    senderSeed, hotkeySeed, networkId, accountIndex,
+                    roundId, bundleIndex, walletDbPath,
+                    accountUuid, hotkeySecret, roundName,
                     pirEndpoints, expectedSnapshotHeight
                 ) {
                     switch event {
@@ -3588,7 +3543,7 @@ extension VotingCoordFlow {
                 }
 
                 registration = try await votingCrypto.getDelegationSubmission(
-                    roundId, bundleIndex, senderSeed, networkId, accountIndex
+                    roundId, bundleIndex, walletDbPath, accountUuid, hotkeySecret, roundName, senderSeed
                 )
             }
             let delegTxResult = try await votingAPI.submitDelegation(registration)

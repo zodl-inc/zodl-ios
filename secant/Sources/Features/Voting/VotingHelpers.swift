@@ -13,23 +13,6 @@ import Foundation
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
 
-/// Empty placeholder used as the `senderSeed` parameter when the SDK call
-/// path doesn't need it (Keystone signing builds the PCZT externally).
-let emptySenderSeed: [UInt8] = []
-
-/// Pull the 32-byte seed fingerprint from a wallet account (Keystone path).
-func votingSeedFingerprint(for account: WalletAccount?) -> Data? {
-    if let seedFingerprint = account?.seedFingerprint, seedFingerprint.count == 32 {
-        return Data(seedFingerprint)
-    }
-    return nil
-}
-
-/// Resolve the ZIP-32 account index for a wallet account; defaults to 0.
-func votingAccountIndex(for account: WalletAccount?) -> UInt32 {
-    account.flatMap(\.zip32AccountIndex).map { UInt32($0.index) } ?? 0
-}
-
 // MARK: - Voting namespace (helpers only — no reducer)
 
 enum Voting {
@@ -559,6 +542,23 @@ extension NetworkType {
         // Regtest (custom activation heights) uses testnet consensus semantics for voting.
         case .testnet, .regtest: 0
         }
+    }
+}
+
+// MARK: - Wallet account UUID string for the voting FFI
+
+extension AccountUUID {
+    /// Hyphenated UUID string of this wallet account id, as
+    /// `zcash_voting` expects for its `account_uuid` inputs.
+    var votingUuidString: String {
+        let hex = id.map { String(format: "%02x", $0) }.joined()
+        guard hex.count == 32 else { return hex }
+        let part: (Int, Int) -> Substring = { start, length in
+            let from = hex.index(hex.startIndex, offsetBy: start)
+            let to = hex.index(from, offsetBy: length)
+            return hex[from..<to]
+        }
+        return "\(part(0, 8))-\(part(8, 4))-\(part(12, 4))-\(part(16, 4))-\(part(20, 12))"
     }
 }
 
