@@ -146,7 +146,11 @@ import Testing
         state.roundCache[activeRoundId] = session
         state.allRounds = [RoundListItem(roundNumber: 1, session: votingSession())]
 
-        _ = VotingCoordFlow().reduceAuthenticationSucceeded(&state, roundId: activeRoundId)
+        withDependencies {
+            $0.databaseFiles.dataDbURLFor = { _ in URL(fileURLWithPath: "/tmp/wallet.db") }
+        } operation: {
+            _ = VotingCoordFlow().reduceAuthenticationSucceeded(&state, roundId: activeRoundId)
+        }
 
         let updated = tryUnwrap(state.roundCache[activeRoundId])
         #expect(!state.pendingBatchSubmission)
@@ -466,6 +470,7 @@ import Testing
         let store = Store(initialState: authorizationState(signatures: [sig], completedBundles: [0])) {
             VotingCoordFlow()
         } withDependencies: {
+            $0.databaseFiles.dataDbURLFor = { _ in URL(fileURLWithPath: "/tmp/wallet.db") }
             self.configureKeystoneAuthorizationDependencies(&$0, recorder: recorder)
         }
 
@@ -496,6 +501,7 @@ import Testing
         let store = Store(initialState: authorizationState(signatures: [sig], completedBundles: [])) {
             VotingCoordFlow()
         } withDependencies: {
+            $0.databaseFiles.dataDbURLFor = { _ in URL(fileURLWithPath: "/tmp/wallet.db") }
             self.configureKeystoneAuthorizationDependencies(
                 &$0,
                 recorder: recorder,
@@ -533,6 +539,7 @@ import Testing
         let store = Store(initialState: authorizationState(signatures: [sig], completedBundles: [])) {
             VotingCoordFlow()
         } withDependencies: {
+            $0.databaseFiles.dataDbURLFor = { _ in URL(fileURLWithPath: "/tmp/wallet.db") }
             self.configureKeystoneAuthorizationDependencies(
                 &$0,
                 recorder: recorder,
@@ -574,6 +581,7 @@ import Testing
         ) {
             VotingCoordFlow()
         } withDependencies: {
+            $0.databaseFiles.dataDbURLFor = { _ in URL(fileURLWithPath: "/tmp/wallet.db") }
             self.configureKeystoneAuthorizationDependencies(
                 &$0,
                 recorder: recorder,
@@ -616,12 +624,12 @@ import Testing
         let store = Store(initialState: state) {
             VotingCoordFlow()
         } withDependencies: {
+            $0.databaseFiles.dataDbURLFor = { _ in URL(fileURLWithPath: "/tmp/wallet.db") }
             $0.backgroundTask = .noOp
             $0.mnemonic = .noOp
             $0.sdkSynchronizer = .noOp
             $0.walletStorage = .noOp
-            $0.votingCrypto.extractOrchardFvkFromUfvk = { _, _ in Data([0x01]) }
-            $0.votingCrypto.buildVotingPczt = { _, bundleIndex, _, _, _, _, _, _, _, _ in
+            $0.votingCrypto.buildVotingPczt = { _, bundleIndex, _, _, _, _ in
                 recorder.record("pczt:\(bundleIndex)")
                 return Self.makeVotingPcztResult(pcztSighash: Data(repeating: UInt8(bundleIndex + 5), count: 32))
             }
@@ -692,10 +700,10 @@ import Testing
         try await VotingCoordFlow.runDelegationPipeline(
             roundId: "aabb",
             cachedNotes: [note(value: ballotDivisor, position: 0)],
+            walletDbPath: "/tmp/wallet.db",
+            accountUuid: "00000000-0000-0000-0000-000000000000",
+            hotkeySecret: [],
             senderSeed: [],
-            hotkeySeed: [],
-            networkId: 1,
-            accountIndex: 0,
             roundName: "Round",
             pirEndpoints: ["https://pir.example.com"],
             expectedSnapshotHeight: 1,
@@ -714,10 +722,10 @@ import Testing
         let recorder = RecoveryOrderRecorder()
         var votingCrypto = VotingCryptoClient()
         votingCrypto.getDelegationTxHash = { _, _ in .present("cached-tx") }
-        votingCrypto.buildVotingPczt = { _, _, _, _, _, _, _, _, _, _ in
+        votingCrypto.buildVotingPczt = { _, _, _, _, _, _ in
             Self.makeVotingPcztResult()
         }
-        votingCrypto.getDelegationSubmission = { _, _, _, _, _ in
+        votingCrypto.getDelegationSubmission = { _, _, _, _, _, _, _ in
             await recorder.record("registration")
             return Self.makeDelegationRegistration()
         }
@@ -744,10 +752,10 @@ import Testing
         try await VotingCoordFlow.runDelegationPipeline(
             roundId: "aabb",
             cachedNotes: [note(value: ballotDivisor, position: 0)],
+            walletDbPath: "/tmp/wallet.db",
+            accountUuid: "00000000-0000-0000-0000-000000000000",
+            hotkeySecret: [],
             senderSeed: [],
-            hotkeySeed: [],
-            networkId: 1,
-            accountIndex: 0,
             roundName: "Round",
             pirEndpoints: ["https://pir.example.com"],
             expectedSnapshotHeight: 1,
@@ -908,17 +916,6 @@ import Testing
             pcztBytes: Data([0x01]),
             pcztSighash: pcztSighash,
             rk: Data(repeating: 0x01, count: 32),
-            alpha: Data(repeating: 0x02, count: 32),
-            nfSigned: Data(repeating: 0x03, count: 32),
-            cmxNew: Data(repeating: 0x04, count: 32),
-            govNullifiers: [Data(repeating: 0x05, count: 32)],
-            van: Data(repeating: 0x06, count: 32),
-            vanCommRand: Data(repeating: 0x07, count: 32),
-            dummyNullifiers: [],
-            rhoSigned: Data(repeating: 0x08, count: 32),
-            paddedCmx: [],
-            rseedSigned: Data(repeating: 0x09, count: 32),
-            rseedOutput: Data(repeating: 0x0A, count: 32),
             actionBytes: Data([0x0B]),
             actionIndex: 0
         )
@@ -1010,7 +1007,7 @@ import Testing
             }
             return .notFound
         }
-        dependencies.votingCrypto.buildAndProveDelegation = { _, bundleIndex, _, _, _, _, _, _, _ in
+        dependencies.votingCrypto.buildAndProveDelegation = { _, bundleIndex, _, _, _, _, _, _ in
             recorder.record("prove:\(bundleIndex)")
             return AsyncThrowingStream { continuation in
                 if bundleIndex == failingProofBundleIndex {

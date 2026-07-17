@@ -176,91 +176,31 @@ extension VotingCryptoClient: DependencyKey {
                 )
                 return try VotingRustBackend.verifyWitness(sdkWitness)
             },
-            generateHotkey: { roundId, seed in
+            generateHotkey: { roundId, storedSecret in
                 let backend = try await dbActor.backend()
-                let hotkey = try backend.generateHotkey(seed: seed)
+                let hotkey = try backend.generateHotkey(storedSecret: storedSecret)
                 return VotingHotkey(
                     secretKey: Data(hotkey.secretKey),
                     publicKey: Data(hotkey.publicKey),
                     address: hotkey.address
                 )
             },
-            // swiftlint:disable:next line_length
-            buildVotingPczt: { roundId, bundleIndex, notes, senderSeed, hotkeySeed, networkId, accountIndex, roundName, orchardFvkOverride, keystoneSeedFingerprintOverride in
+            buildVotingPczt: { roundId, bundleIndex, walletDbPath, accountUuid, hotkeySecret, roundName in
                 let backend = try await dbActor.backend()
-                _ = try backend.generateHotkey(seed: hotkeySeed)
-                let inputs: VotingDelegationInputs
-                let actualFvkBytes: [UInt8]
-                if let orchardFvkOverride {
-                    guard let keystoneSeedFingerprintOverride else {
-                        throw VotingCryptoError.invalidKeystoneMetadata
-                    }
-                    inputs = try VotingRustBackend.generateDelegationInputs(
-                        senderFvk: [UInt8](orchardFvkOverride),
-                        hotkeySeed: hotkeySeed,
-                        networkId: networkId,
-                        seedFingerprint: [UInt8](keystoneSeedFingerprintOverride)
-                    )
-                    actualFvkBytes = [UInt8](orchardFvkOverride)
-                } else {
-                    inputs = try VotingRustBackend.generateDelegationInputs(
-                        senderSeed: senderSeed,
-                        hotkeySeed: hotkeySeed,
-                        networkId: networkId,
-                        accountIndex: accountIndex
-                    )
-                    actualFvkBytes = inputs.fvkBytes
-                }
-                let sdkNotes = notes.map { $0.toSDK() }
-                // NU6 consensus branch ID; BIP44 coin type 133 = Zcash mainnet, 1 = testnet
-                // (`network_id` 1 / 0 per `parse_network` in libzcashlc).
-                let consensusBranchId: UInt32 = 0xC8E7_1055
-                let coinType: UInt32 = networkId == 1 ? 133 : 1
                 let result = try backend.buildPczt(VotingBuildPcztParams(
                     roundId: roundId,
                     bundleIndex: bundleIndex,
-                    notes: sdkNotes,
-                    fvk: actualFvkBytes,
-                    hotkeyRawAddress: inputs.hotkeyRawAddress,
-                    consensusBranchId: consensusBranchId,
-                    coinType: coinType,
-                    seedFingerprint: inputs.seedFingerprint,
-                    accountIndex: accountIndex,
-                    roundName: roundName,
-                    addressIndex: 0
+                    walletDbPath: walletDbPath,
+                    accountUuid: accountUuid,
+                    hotkeySecret: hotkeySecret,
+                    roundName: roundName
                 ))
                 publishState(backend: backend, roundId: roundId)
-                let pcztBytes: Data = Data(result.pcztBytes)
-                let pcztSighash: Data = Data(result.pcztSighash)
-                let rk: Data = Data(result.randomizedKey)
-                let alpha: Data = Data(result.alpha)
-                let nfSigned: Data = Data(result.nfSigned)
-                let cmxNew: Data = Data(result.cmxNew)
-                let govNullifiers: [Data] = result.govNullifiers.map { Data($0) }
-                let van: Data = Data(result.van)
-                let vanCommRand: Data = Data(result.vanCommRand)
-                let dummyNullifiers: [Data] = result.dummyNullifiers.map { Data($0) }
-                let rhoSigned: Data = Data(result.rhoSigned)
-                let paddedCmx: [Data] = result.paddedCmx.map { Data($0) }
-                let rseedSigned: Data = Data(result.rseedSigned)
-                let rseedOutput: Data = Data(result.rseedOutput)
-                let actionBytes: Data = Data(result.actionBytes)
                 return VotingPcztResult(
-                    pcztBytes: pcztBytes,
-                    pcztSighash: pcztSighash,
-                    rk: rk,
-                    alpha: alpha,
-                    nfSigned: nfSigned,
-                    cmxNew: cmxNew,
-                    govNullifiers: govNullifiers,
-                    van: van,
-                    vanCommRand: vanCommRand,
-                    dummyNullifiers: dummyNullifiers,
-                    rhoSigned: rhoSigned,
-                    paddedCmx: paddedCmx,
-                    rseedSigned: rseedSigned,
-                    rseedOutput: rseedOutput,
-                    actionBytes: actionBytes,
+                    pcztBytes: Data(result.pcztBytes),
+                    pcztSighash: Data(result.pcztSighash),
+                    rk: Data(result.randomizedKey),
+                    actionBytes: Data(result.actionBytes),
                     actionIndex: result.actionIndex
                 )
             },
@@ -294,26 +234,20 @@ extension VotingCryptoClient: DependencyKey {
                 )
             },
             // swiftlint:disable:next line_length
-            buildAndProveDelegation: { roundId, bundleIndex, bundleNotes, senderSeed, hotkeySeed, networkId, accountIndex, pirEndpoints, expectedSnapshotHeight in
+            buildAndProveDelegation: { roundId, bundleIndex, walletDbPath, accountUuid, hotkeySecret, roundName, pirEndpoints, expectedSnapshotHeight in
                 AsyncThrowingStream<ProofEvent, Error> { continuation in
                     Task.detached {
                         do {
                             let backend = try await dbActor.backend()
-                            let inputs = try VotingRustBackend.generateDelegationInputs(
-                                senderSeed: senderSeed,
-                                hotkeySeed: hotkeySeed,
-                                networkId: networkId,
-                                accountIndex: accountIndex
-                            )
-                            let sdkNotes = bundleNotes.map { $0.toSDK() }
                             let result = try await backend.buildAndProveDelegation(
                                 roundId: roundId,
                                 bundleIndex: bundleIndex,
-                                notes: sdkNotes,
-                                hotkeyRawAddress: inputs.hotkeyRawAddress,
+                                walletDbPath: walletDbPath,
+                                accountUuid: accountUuid,
+                                hotkeySecret: hotkeySecret,
+                                roundName: roundName,
                                 pirEndpoints: pirEndpoints,
                                 expectedSnapshotHeight: expectedSnapshotHeight,
-                                networkId: networkId,
                                 progress: { progress in
                                     continuation.yield(.progress(progress))
                                 }
@@ -364,7 +298,7 @@ extension VotingCryptoClient: DependencyKey {
                             let result = try await backend.buildVoteCommitment(
                                 roundId: roundId,
                                 bundleIndex: bundleIndex,
-                                hotkeySeed: hotkeySeed,
+                                hotkeySecret: hotkeySeed,
                                 networkId: networkId,
                                 proposalId: proposalId,
                                 choice: choice.ffiValue,
@@ -481,14 +415,16 @@ extension VotingCryptoClient: DependencyKey {
                     )
                 }
             },
-            getDelegationSubmission: { roundId, bundleIndex, senderSeed, networkId, accountIndex in
+            getDelegationSubmission: { roundId, bundleIndex, walletDbPath, accountUuid, hotkeySecret, roundName, senderSeed in
                 let backend = try await dbActor.backend()
                 let sub = try backend.getDelegationSubmission(
                     roundId: roundId,
                     bundleIndex: bundleIndex,
-                    senderSeed: senderSeed,
-                    networkId: networkId,
-                    accountIndex: accountIndex
+                    walletDbPath: walletDbPath,
+                    accountUuid: accountUuid,
+                    hotkeySecret: hotkeySecret,
+                    roundName: roundName,
+                    senderSeed: senderSeed
                 )
                 let voteRoundIdBytes = Data(hexString: sub.voteRoundId)
                 let rk: Data = Data(sub.randomizedKey)
@@ -715,7 +651,10 @@ private actor DatabaseActor {
             _backend = nil
         }
         let b = VotingRustBackend()
-        try b.open(path: path)
+        try b.open(
+            path: path,
+            networkId: TargetConstants.zcashNetwork.networkType.votingRustNetworkId
+        )
         _backend = b
     }
 
