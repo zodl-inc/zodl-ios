@@ -1741,14 +1741,10 @@ extension VotingCoordFlow {
         let cachedNotes = session.walletNotes
         let roundName = activeSession.title
 
-        let submitAtDeadline: Double?
-        if singleShare {
-            submitAtDeadline = nil
-        } else if let buffer = activeSession.lastMomentBuffer {
-            submitAtDeadline = activeSession.voteEndTime.timeIntervalSince1970 - buffer
-        } else {
-            submitAtDeadline = nil
-        }
+        // The crate's submit-time policy derives the delay window from the
+        // ceremony timing itself (`scheduledShareSubmitAt`).
+        let ceremonyStartSeconds = UInt64(max(0, activeSession.ceremonyStart.timeIntervalSince1970))
+        let voteEndSeconds = UInt64(max(0, activeSession.voteEndTime.timeIntervalSince1970))
 
         return .run { [backgroundTask, votingAPI, votingCrypto, mnemonic, walletStorage] send in
             let bgTaskId = await backgroundTask.beginTask("Batch vote submission")
@@ -1849,15 +1845,16 @@ extension VotingCoordFlow {
                         await send(.voteSubmissionStepUpdated(roundId: roundId, step: .preparingProof))
 
                         // Crash recovery: if this bundle's TX already landed on-chain,
-                        // skip to share delegation rather than re-proving.
+                        // skip to share delegation rather than re-proving. (A crash
+                        // before TX submission needs no probe — the crate's commit is
+                        // idempotent and returns the persisted vote on re-run.)
                         if try await Self.tryRecoverInflightVote(
                             roundId: roundId,
                             bundleIndex: bundleIndex,
                             proposalId: proposalId,
-                            choice: choice,
-                            numOptions: numOptions,
+                            ceremonyStartSeconds: ceremonyStartSeconds,
+                            voteEndSeconds: voteEndSeconds,
                             singleShare: singleShare,
-                            submitAtDeadline: submitAtDeadline,
                             shareServerURLs: &shareServerURLs,
                             votingCrypto: votingCrypto,
                             votingAPI: votingAPI,
@@ -1883,9 +1880,7 @@ extension VotingCoordFlow {
                             throw VotingFlowError.missingVoteCommitmentBundle
                         }
 
-                        try await votingCrypto.storeVoteCommitmentBundle(roundId, bundleIndex, proposalId, builtBundle, 0)
-
-                        let castVoteSig = try await votingCrypto.signCastVote(hotkeySeed, networkId, builtBundle)
+                        let castVoteSig = CastVoteSignature(voteAuthSig: builtBundle.voteAuthSig)
 
                         await send(.voteSubmissionStepUpdated(roundId: roundId, step: .confirming))
                         let txResult = try await votingAPI.submitVoteCommitment(builtBundle, castVoteSig)
@@ -1919,20 +1914,17 @@ extension VotingCoordFlow {
                         }
 
                         try await votingCrypto.storeVanPosition(roundId, bundleIndex, vanIdx)
+                        try await votingCrypto.recordVcPosition(roundId, bundleIndex, proposalId, vcIdx)
 
                         await send(.voteSubmissionStepUpdated(roundId: roundId, step: .sendingShares))
-                        var payloads = try await votingCrypto.buildSharePayloads(
-                            builtBundle.encShares, builtBundle, choice, numOptions, vcIdx, singleShare
-                        )
-                        let nowSec = Date().timeIntervalSince1970
+                        let recovered = try await votingCrypto.recoverCommittedVote(roundId, bundleIndex, proposalId)
+                        var payloads = recovered.sharePayloads
+                        let nowSeconds = UInt64(max(0, Date().timeIntervalSince1970))
                         for i in payloads.indices {
-                            if let deadline = submitAtDeadline, deadline > nowSec {
-                                payloads[i].submitAt = UInt64(nowSec + Double.random(in: 0..<(deadline - nowSec)))
-                            } else {
-                                payloads[i].submitAt = 0
-                            }
+                            payloads[i].submitAt = try votingCrypto.scheduledShareSubmitAt(
+                                nowSeconds, ceremonyStartSeconds, voteEndSeconds, singleShare, votingSubmitAtEntropy()
+                            )
                         }
-                        try await votingCrypto.storeVoteCommitmentBundle(roundId, bundleIndex, proposalId, builtBundle, vcIdx)
                         let batchDelegationResult = try await Voting.delegateSharesWithFallback(
                             payloads,
                             roundId: roundId,
@@ -1944,18 +1936,12 @@ extension VotingCoordFlow {
                             guard let payload = payloads.first(where: {
                                 $0.encShare.shareIndex == info.shareIndex && $0.proposalId == info.proposalId
                             }) else { continue }
-                            let blindIndex = Int(info.shareIndex)
-                            guard blindIndex < builtBundle.shareBlindFactors.count else { continue }
                             do {
-                                let nullifierHex = try votingCrypto.computeShareNullifier(
-                                    [UInt8](builtBundle.voteCommitment),
-                                    info.shareIndex,
-                                    [UInt8](builtBundle.shareBlindFactors[blindIndex])
-                                )
+                                // The crate computes and persists the share nullifier itself.
                                 try await votingCrypto.recordShareDelegation(
                                     roundId, bundleIndex, info.proposalId,
                                     info.shareIndex, info.acceptedByServers,
-                                    [UInt8](votingDataFromHex(nullifierHex)), payload.submitAt
+                                    [], payload.submitAt
                                 )
                             } catch {
                                 LoggerProxy.warn("Batch: failed to record share delegation for share \(info.shareIndex): \(error)")
@@ -2104,9 +2090,6 @@ extension VotingCoordFlow {
             return .none
         }
 
-        let votes = session.votes
-        let proposals = activeSession.proposals
-        let singleShare = activeSession.isLastMoment
         let voteEndTime = UInt64(activeSession.voteEndTime.timeIntervalSince1970)
 
         return .run { [votingAPI, votingCrypto] send in
@@ -2145,27 +2128,14 @@ extension VotingCoordFlow {
                 guard let first = shares.first else { continue }
                 let bundleIndex = first.bundleIndex
                 let proposalId = first.proposalId
-                guard
-                    let result = try? await votingCrypto.getVoteCommitmentBundleWithPosition(
+
+                do {
+                    let recoveredVote = try await votingCrypto.recoverCommittedVote(
                         roundId,
                         bundleIndex,
                         proposalId
-                    ),
-                    let choice = votes[proposalId]
-                else {
-                    continue
-                }
-
-                let numOptions = UInt32(proposals.first { $0.id == proposalId }?.options.count ?? 3)
-                do {
-                    var payloads = try await votingCrypto.buildSharePayloads(
-                        result.bundle.encShares,
-                        result.bundle,
-                        choice,
-                        numOptions,
-                        result.vcTreePosition,
-                        singleShare
                     )
+                    var payloads = recoveredVote.sharePayloads
                     for index in payloads.indices {
                         payloads[index].submitAt = 0
                     }
@@ -3379,10 +3349,9 @@ extension VotingCoordFlow {
         roundId: String,
         bundleIndex: UInt32,
         proposalId: UInt32,
-        choice: VoteChoice,
-        numOptions: UInt32,
+        ceremonyStartSeconds: UInt64,
+        voteEndSeconds: UInt64,
         singleShare: Bool,
-        submitAtDeadline: Double?,
         shareServerURLs: inout [String],
         votingCrypto: VotingCryptoClient,
         votingAPI: VotingAPIClient,
@@ -3405,30 +3374,19 @@ extension VotingCoordFlow {
         }
 
         try await votingCrypto.storeVanPosition(roundId, bundleIndex, vanIdx)
-
-        guard let savedBundle = try? await votingCrypto.getVoteCommitmentBundle(roundId, bundleIndex, proposalId) else {
-            LoggerProxy.error(
-                """
-                Recovered on-chain vote \(proposalId) for bundle \(bundleIndex), \
-                but the saved commitment bundle is missing; cannot delegate tally shares.
-                """
-            )
-            throw VotingFlowError.missingVoteCommitmentBundle
-        }
-
-        try await votingCrypto.storeVoteCommitmentBundle(roundId, bundleIndex, proposalId, savedBundle, vcIdx)
+        try await votingCrypto.recordVcPosition(roundId, bundleIndex, proposalId, vcIdx)
         await send(.voteSubmissionStepUpdated(roundId: roundIdAction(), step: .sendingShares))
 
-        var payloads = try await votingCrypto.buildSharePayloads(
-            savedBundle.encShares, savedBundle, choice, numOptions, vcIdx, singleShare
-        )
-        let now = Date().timeIntervalSince1970
+        // Crate recovery state reconstructs the payloads at the recorded
+        // VC position; if the committed vote is missing the throw surfaces
+        // as a bundle failure for this proposal.
+        let recoveredVote = try await votingCrypto.recoverCommittedVote(roundId, bundleIndex, proposalId)
+        var payloads = recoveredVote.sharePayloads
+        let nowSeconds = UInt64(max(0, Date().timeIntervalSince1970))
         for i in payloads.indices {
-            if let deadline = submitAtDeadline, deadline > now {
-                payloads[i].submitAt = UInt64(now + Double.random(in: 0..<(deadline - now)))
-            } else {
-                payloads[i].submitAt = 0
-            }
+            payloads[i].submitAt = try votingCrypto.scheduledShareSubmitAt(
+                nowSeconds, ceremonyStartSeconds, voteEndSeconds, singleShare, votingSubmitAtEntropy()
+            )
         }
 
         let recoveryResult = try await Voting.delegateSharesWithFallback(
@@ -3442,18 +3400,12 @@ extension VotingCoordFlow {
             guard let payload = payloads.first(where: {
                 $0.encShare.shareIndex == info.shareIndex && $0.proposalId == info.proposalId
             }) else { continue }
-            let blindIdx = Int(info.shareIndex)
-            guard blindIdx < savedBundle.shareBlindFactors.count else { continue }
             do {
-                let nfHex = try votingCrypto.computeShareNullifier(
-                    [UInt8](savedBundle.voteCommitment),
-                    info.shareIndex,
-                    [UInt8](savedBundle.shareBlindFactors[blindIdx])
-                )
+                // The crate computes and persists the share nullifier itself.
                 try await votingCrypto.recordShareDelegation(
                     roundId, bundleIndex, info.proposalId,
                     info.shareIndex, info.acceptedByServers,
-                    [UInt8](votingDataFromHex(nfHex)), payload.submitAt
+                    [], payload.submitAt
                 )
             } catch {
                 LoggerProxy.warn("Batch recovery: failed to record share delegation for share \(info.shareIndex): \(error)")
