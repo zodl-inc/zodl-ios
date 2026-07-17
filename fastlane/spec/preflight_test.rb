@@ -4,7 +4,7 @@ require "zodl/preflight"
 class ZodlPreflightTest < Minitest::Test
   def facts(**overrides)
     base = {
-      variant: "appstore", requested_version: "3.8.0", requested_build: 3,
+      variant: "ios-appstore", requested_version: "3.8.0", requested_build: 3,
       project_version: "3.8.0", branch_version: "3.8.0", latest_build: 2,
       ref_on_origin: true, dirty_tree: false, partner_keys_error: nil,
       xcode_ok: true, missing_signing_identities: [], sdk_checkout_ok: true,

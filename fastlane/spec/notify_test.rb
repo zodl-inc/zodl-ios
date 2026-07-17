@@ -22,15 +22,15 @@ class ZodlNotifyTest < Minitest::Test
   # --- payload -----------------------------------------------------------
 
   def test_payload_success_uses_ping_and_testflight_message
-    fields = Zodl::Notify.payload(event: :success, variants: ["appstore"], version: "3.8.0", build: 3)
+    fields = Zodl::Notify.payload(event: :success, variants: ["ios-appstore"], version: "3.8.0", build: 3)
     assert_equal "ZODL release ✅", fields[:title]
-    assert_equal "appstore 3.8.0 (3)", fields[:subtitle]
+    assert_equal "ios-appstore 3.8.0 (3)", fields[:subtitle]
     assert_equal "Uploaded to TestFlight", fields[:message]
     assert_equal "Ping", fields[:sound]
   end
 
   def test_payload_dry_run_uses_ping_and_preflight_message
-    fields = Zodl::Notify.payload(event: :dry_run_ok, variants: ["appstore"], version: "3.8.0", build: 3)
+    fields = Zodl::Notify.payload(event: :dry_run_ok, variants: ["ios-appstore"], version: "3.8.0", build: 3)
     assert_equal "ZODL dry run ✅", fields[:title]
     assert_equal "Preflight passed", fields[:message]
     assert_equal "Ping", fields[:sound]
@@ -38,11 +38,11 @@ class ZodlNotifyTest < Minitest::Test
 
   def test_payload_failure_uses_basso_and_first_line_of_reason
     fields = Zodl::Notify.payload(
-      event: :failure, variants: ["appstore"], version: "3.8.0", build: 3,
-      reason: "Preflight failed for appstore — aborting.\nsecond line ignored"
+      event: :failure, variants: ["ios-appstore"], version: "3.8.0", build: 3,
+      reason: "Preflight failed for ios-appstore — aborting.\nsecond line ignored"
     )
     assert_equal "ZODL release ❌", fields[:title]
-    assert_equal "Preflight failed for appstore — aborting.", fields[:message]
+    assert_equal "Preflight failed for ios-appstore — aborting.", fields[:message]
     assert_equal "Basso", fields[:sound]
   end
 
@@ -53,8 +53,8 @@ class ZodlNotifyTest < Minitest::Test
   end
 
   def test_payload_joins_multiple_variants
-    fields = Zodl::Notify.payload(event: :success, variants: ["internal", "testnet"], version: "3.8.0", build: 4)
-    assert_equal "internal, testnet 3.8.0 (4)", fields[:subtitle]
+    fields = Zodl::Notify.payload(event: :success, variants: ["ios-internal", "ios-testnet"], version: "3.8.0", build: 4)
+    assert_equal "ios-internal, ios-testnet 3.8.0 (4)", fields[:subtitle]
   end
 
   def test_payload_rejects_unknown_event
@@ -68,7 +68,7 @@ class ZodlNotifyTest < Minitest::Test
   end
 
   def test_success_message_defaults_without_outcomes
-    fields = Zodl::Notify.payload(event: :success, variants: ["internal"], version: "3.8.0", build: 1)
+    fields = Zodl::Notify.payload(event: :success, variants: ["ios-internal"], version: "3.8.0", build: 1)
     assert_equal "Uploaded to TestFlight", fields[:message]
   end
 
@@ -100,7 +100,7 @@ class ZodlNotifyTest < Minitest::Test
   def test_post_invokes_runner_with_payload
     captured = nil
     result = Zodl::Notify.post(
-      event: :success, variants: ["appstore"], version: "3.8.0", build: 3,
+      event: :success, variants: ["ios-appstore"], version: "3.8.0", build: 3,
       runner: ->(fields) { captured = fields }
     )
     assert result

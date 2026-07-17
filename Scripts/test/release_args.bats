@@ -6,25 +6,25 @@ setup() {
 }
 
 @test "translates GNU flags to fastlane key:value" {
-  run "$RELEASE" --variant appstore --ref release/3.8.0 --version 3.8.0 --build 3
+  run "$RELEASE" --variant ios-appstore --ref release/3.8.0 --version 3.8.0 --build 3
   [ "$status" -eq 0 ]
-  [[ "$output" == *"release variant:appstore ref:release/3.8.0 version:3.8.0 build:3"* ]]
+  [[ "$output" == *"release variant:ios-appstore ref:release/3.8.0 version:3.8.0 build:3"* ]]
 }
 
 @test "forwards --dry-run as dry_run:true" {
-  run "$RELEASE" --variant testnet --ref main --version 3.8.0 --build 1 --dry-run
+  run "$RELEASE" --variant ios-testnet --ref main --version 3.8.0 --build 1 --dry-run
   [ "$status" -eq 0 ]
   [[ "$output" == *"dry_run:true"* ]]
 }
 
 @test "missing --build exits 2" {
-  run "$RELEASE" --variant appstore --ref main --version 3.8.0
+  run "$RELEASE" --variant ios-appstore --ref main --version 3.8.0
   [ "$status" -eq 2 ]
   [[ "$output" == *"--build is required"* ]]
 }
 
 @test "unknown flag exits 2" {
-  run "$RELEASE" --variant appstore --bogus x
+  run "$RELEASE" --variant ios-appstore --bogus x
   [ "$status" -eq 2 ]
 }
 

@@ -6,22 +6,21 @@ module Zodl
   # variants are separate ASC apps with independent trains. macOS comes in two
   # flavors (internal=mainnet ASC app, testnet=separate ASC app), each with two
   # channels (testflight package, local notarized dmg). flavor: names the
-  # artifact family. "internal-testnet" expands to both iOS TestFlight variants.
-  # "mac" expands to all four macOS variants.
+  # artifact family. "ios-internal-testnet" expands to both iOS TestFlight variants.
   module Variants
     ATOMIC = {
-      "internal" => {
+      "ios-internal" => {
         scheme: "zodl-internal", target: "zodl-internal",
         configuration: "Release-Testflight",
         app_identifier: "co.electriccoin.secant-testnet",
         channel: :testflight, platform: :ios
       },
-      "testnet" => {
+      "ios-testnet" => {
         scheme: "zodl-testnet", target: "zodl-testnet",
         configuration: "Release-Testflight",
         app_identifier: "co.ecc.zashi-testnet", channel: :testflight, platform: :ios
       },
-      "appstore" => {
+      "ios-appstore" => {
         scheme: "zodl-AppStore", target: "zodl-production",
         configuration: "Release-AppStore",
         app_identifier: "co.electriccoin.secant-mainnet", channel: :appstore, platform: :ios
@@ -53,8 +52,7 @@ module Zodl
     }.freeze
 
     COMBINED = {
-      "internal-testnet" => %w[internal testnet],
-      "mac" => %w[mac-internal mac-internal-dmg mac-testnet mac-testnet-dmg]
+      "ios-internal-testnet" => %w[ios-internal ios-testnet]
     }.freeze
 
     module_function

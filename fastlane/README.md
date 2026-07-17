@@ -19,13 +19,13 @@ Xcode identity — no keys are stored in the repo or anywhere new.
 
 Build a variant:
 
-    ./Scripts/release.sh --variant appstore --ref release/3.8.0 --version 3.8.0 --build 3
+    ./Scripts/release.sh --variant ios-appstore --ref release/3.8.0 --version 3.8.0 --build 3
 
-`--variant` is one of `internal`, `testnet`, `appstore`, `internal-testnet` (builds internal then testnet, running tests once), `mac-internal`, `mac-internal-dmg`, `mac-testnet`, `mac-testnet-dmg` (macOS → TestFlight or notarized DMG), or `mac` (all four macOS variants). DMG artifacts land at `build/ZODL-<flavor>-<version>-<build>.dmg` (e.g. `build/ZODL-testnet-3.7.1-7.dmg`). `--ref` is any branch, tag, or commit.
+`--variant` is one of `ios-internal`, `ios-testnet`, `ios-appstore`, `ios-internal-testnet` (builds ios-internal then ios-testnet, running tests once), `mac-internal`, `mac-internal-dmg`, `mac-testnet`, `mac-testnet-dmg` (macOS → TestFlight or notarized DMG). DMG artifacts land at `build/ZODL-<flavor>-<version>-<build>.dmg` (e.g. `build/ZODL-testnet-3.7.1-7.dmg`). `--ref` is any branch, tag, or commit.
 
 Dry run (all checks, no build):
 
-    ./Scripts/release.sh --variant appstore --ref release/3.8.0 --version 3.8.0 --build 3 --dry-run
+    ./Scripts/release.sh --variant ios-appstore --ref release/3.8.0 --version 3.8.0 --build 3 --dry-run
 
 Bump the marketing version + build (the deliberate version-change step, run in `main`):
 

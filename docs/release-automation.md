@@ -96,7 +96,7 @@ tests; you do not need it to build or ship.
 
    | Variant(s) | Certificate(s) needed in the keychain |
    |---|---|
-   | `internal`, `testnet`, `appstore` (iOS) | **Apple Distribution** |
+   | `ios-internal`, `ios-testnet`, `ios-appstore` (iOS) | **Apple Distribution** |
    | `mac-internal`, `mac-testnet` (macOS TestFlight) | **Apple Distribution** + **Mac Installer Distribution** (signs the uploaded `.pkg`) |
    | `mac-internal-dmg`, `mac-testnet-dmg` (macOS DMG, outside the App Store) | **Developer ID Application** |
 
@@ -123,15 +123,14 @@ bundle ids, different `.app` names, different DMG names.
 
 | `--variant` | Scheme | App Store Connect app | Goes to |
 |---|---|---|---|
-| `internal` | `zodl-internal` | `co.electriccoin.secant-testnet` (iOS) | TestFlight |
-| `testnet` | `zodl-testnet` | `co.ecc.zashi-testnet` (iOS) | TestFlight |
-| `appstore` | `zodl-AppStore` | `co.electriccoin.secant-mainnet` (iOS) | App Store |
+| `ios-internal` | `zodl-internal` | `co.electriccoin.secant-testnet` (iOS) | TestFlight |
+| `ios-testnet` | `zodl-testnet` | `co.ecc.zashi-testnet` (iOS) | TestFlight |
+| `ios-appstore` | `zodl-AppStore` | `co.electriccoin.secant-mainnet` (iOS) | App Store |
 | `mac-internal` | `zodlmac-internal` | `co.electriccoin.secant-testnet` (macOS) | TestFlight |
 | `mac-testnet` | `zodlmac-testnet` | `co.ecc.zashi-testnet` (macOS) | TestFlight |
 | `mac-internal-dmg` | `zodlmac-internal` | — (no upload) | notarized DMG in `build/` |
 | `mac-testnet-dmg` | `zodlmac-testnet` | — (no upload) | notarized DMG in `build/` |
-| `internal-testnet` | — | both iOS TestFlight apps | builds `internal` then `testnet`, running tests once |
-| `mac` | — | all four macOS variants | TestFlight + DMGs |
+| `ios-internal-testnet` | — | both iOS TestFlight apps | builds `ios-internal` then `ios-testnet`, running tests once |
 
 DMG artifacts land at `build/ZODL-<flavor>-<version>-<build>.dmg` (e.g.
 `build/ZODL-testnet-3.7.1-7.dmg`) — signed, notarized, stapled, with a
@@ -158,23 +157,23 @@ git push -u origin release/3.8.0
 from any checkout, e.g. while still on `main`:
 
 ```bash
-./Scripts/release.sh --variant internal-testnet --ref release/3.8.0 --version 3.8.0 --build 1
+./Scripts/release.sh --variant ios-internal-testnet --ref release/3.8.0 --version 3.8.0 --build 1
 ```
 
 **3. Need a fix?** Commit and push it on `release/3.8.0`, then rebuild with the next
 build number:
 
 ```bash
-./Scripts/release.sh --variant internal-testnet --ref release/3.8.0 --version 3.8.0 --build 2
+./Scripts/release.sh --variant ios-internal-testnet --ref release/3.8.0 --version 3.8.0 --build 2
 ```
 
 **4. Ship to the App Store** when you're happy:
 
 ```bash
-./Scripts/release.sh --variant appstore --ref release/3.8.0 --version 3.8.0 --build 1
+./Scripts/release.sh --variant ios-appstore --ref release/3.8.0 --version 3.8.0 --build 1
 ```
 
-`appstore` is its own App Store Connect app, so its build numbers are a separate
+`ios-appstore` is its own App Store Connect app, so its build numbers are a separate
 sequence — start from wherever that app left off. (The build then waits for App
 Store Connect processing; submitting it for review is still done in App Store
 Connect.)
@@ -194,7 +193,7 @@ Add `--dry-run` to run every preflight check and print the reconciliation summar
 **without building** — the cheap way to confirm your intent is correct:
 
 ```bash
-./Scripts/release.sh --variant appstore --ref release/3.8.0 --version 3.8.0 --build 1 --dry-run
+./Scripts/release.sh --variant ios-appstore --ref release/3.8.0 --version 3.8.0 --build 1 --dry-run
 ```
 
 The preflight blocks the build if: the version doesn't match the **built
@@ -213,9 +212,8 @@ tree, or a dirty SDK checkout.
 
 ```
 Scripts/release.sh --variant <v> --ref <ref> --version <X.Y.Z> --build <n> [options]
-  --variant     internal | testnet | appstore | internal-testnet |
-                mac-internal | mac-internal-dmg | mac-testnet | mac-testnet-dmg |
-                mac  (mac = all four macOS variants)
+  --variant     ios-internal | ios-testnet | ios-appstore | ios-internal-testnet |
+                mac-internal | mac-internal-dmg | mac-testnet | mac-testnet-dmg
   --ref         branch, tag, or commit to build (no checkout needed)
   --version     marketing version you intend to ship (X.Y.Z)
   --build       build number (integer)
