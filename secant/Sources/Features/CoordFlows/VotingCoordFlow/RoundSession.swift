@@ -198,9 +198,9 @@ enum BatchSubmissionStatus: Equatable {
 /// progress indicator on the Confirm Submission view.
 enum VoteSubmissionStep: Equatable {
     case authorizingVote    // delegation proof (ZKP #1)
-    case preparingProof     // syncVoteTree + generateVanWitness + buildVoteCommitment + signCastVote + submitVoteCommitment
+    case preparingProof     // syncVoteTree + generateVanWitness + buildVoteCommitment (one-shot commit) + submitVoteCommitment
     case confirming         // fetchTxConfirmation poll
-    case sendingShares      // buildSharePayloads + delegateShares
+    case sendingShares      // recordVcPosition + recoverCommittedVote + delegateShares
 
     var label: String {
         switch self {

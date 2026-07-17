@@ -545,6 +545,16 @@ extension NetworkType {
     }
 }
 
+// MARK: - Submit-time entropy for the voting FFI
+
+/// Eight fresh CSPRNG bytes for the crate's helper-share submit-time
+/// sampling (`scheduledShareSubmitAt`). One call per share.
+func votingSubmitAtEntropy() -> [UInt8] {
+    var generator = SystemRandomNumberGenerator()
+    let sample = generator.next()
+    return withUnsafeBytes(of: sample.littleEndian) { [UInt8]($0) }
+}
+
 // MARK: - Wallet account UUID string for the voting FFI
 
 extension AccountUUID {
@@ -564,7 +574,7 @@ extension AccountUUID {
 
 // MARK: - Hex helpers
 
-/// Convert hex string to Data (used for share confirmation polling and API parsing).
+/// Convert hex string to Data (kept for share-status polling and API parsing).
 func votingDataFromHex(_ hex: String) -> Data {
     var data = Data()
     var idx = hex.startIndex
