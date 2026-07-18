@@ -112,8 +112,8 @@ struct MigrationRecoveryView: View {
 
                 if !isLast {
                     Rectangle()
-                        .fill(Design.Surfaces.strokeSecondary.color(colorScheme))
-                        .frame(width: 1.5, height: 20)
+                        .fill(Design.Surfaces.bgAlt.color(colorScheme))
+                        .frame(width: 2, height: 20)
                 }
             }
 

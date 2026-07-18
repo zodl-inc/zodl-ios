@@ -31,6 +31,15 @@
 //  but the bug is objective (the glyph is a fixed white and doesn't depend on colorScheme, so its
 //  background can't either).
 //
+//  MOB-1494 (W5, verified against the new dark Figma mocks): the round 3 fixed-obsidian workaround
+//  above turns out to be wrong now that a dark mock for this badge exists — it shows the badge
+//  INVERTING in dark mode (white circle + dark glyph), not staying obsidian. The circle fill goes
+//  back to the adaptive `Design.Surfaces.bgAlt`; the `coinsSwap` glyph and the green check
+//  mini-badge's outer ring both move from fixed `.white` to `Design.Surfaces.bgPrimary` so they
+//  invert opposite the circle in each mode; the mini-badge's circle fill moves from
+//  `Design.Utility.SuccessGreen._500` (same shade in both modes) to `Design.Avatars.status`, the
+//  Figma-matched semantic token for this avatar-status-dot use, which shifts shade per colorScheme.
+//
 
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
@@ -174,20 +183,19 @@ struct MigrationCompleteView: View {
     /// `dustResolution`, only whether there's a dust decision to show at all.
     @ViewBuilder private var dustResolutionBadge: some View {
         Circle()
-            // Fixed obsidian, not `bgAlt` — `bgAlt` inverts to near-white in dark mode, hiding this white glyph (MOB-1487 R3 dark pass).
-            .fill(Asset.Colors.ZDesign.Base.obsidian.color)
+            .fill(Design.Surfaces.bgAlt.color(colorScheme))
             .frame(width: 40, height: 40)
             .overlay {
                 Asset.Assets.Icons.coinsSwap.image
-                    .zImage(size: 24, color: .white)
+                    .zImage(size: 24, style: Design.Surfaces.bgPrimary)
             }
             .overlay(alignment: .bottomTrailing) {
                 Circle()
-                    .fill(Design.Utility.SuccessGreen._500.color(colorScheme))
+                    .fill(Design.Avatars.status.color(colorScheme))
                     .frame(width: 18, height: 18)
                     .overlay {
                         Circle()
-                            .stroke(.white, lineWidth: 2)
+                            .stroke(Design.Surfaces.bgPrimary.color(colorScheme), lineWidth: 2)
                     }
                     .overlay {
                         Asset.Assets.check.image
