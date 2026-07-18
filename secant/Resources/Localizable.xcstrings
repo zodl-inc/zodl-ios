@@ -9815,12 +9815,12 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%1$lld of %2$lld transfers done ~ %3$lld%% complete"
+            "value" : "%1$lld of %2$lld transfers done · %3$lld%% complete"
           }
         },
         "es" : {
           "stringUnit" : {
-            "state" : "translated",
+            "state" : "needs_review",
             "value" : "%1$lld de %2$lld transferencias hechas ~ %3$lld%% completo"
           }
         }
@@ -10080,7 +10080,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "The lock applies only to ^[this ZODL/Keystone instance](style: 'boldPrimary'). Restoring your wallet removes it."
+            "value" : "The lock lives on ^[this ZODL/Keystone instance only.](style: 'boldPrimary') Restoring your wallet won't carry it over."
           }
         }
       }
@@ -10091,7 +10091,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "A future release will let you ^[unlock the funds](style: 'boldPrimary') again."
+            "value" : "A future release will let you ^[unlock this balance.](style: 'boldPrimary')"
           }
         }
       }
@@ -10418,6 +10418,28 @@
         }
       }
     },
+    "migrationHowItWorks.approveOnceDesc" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ZODL handles the rest, sending each transfer automatically in its scheduled window while the app runs in the background."
+          }
+        }
+      }
+    },
+    "migrationHowItWorks.approveOnceTitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Approve once"
+          }
+        }
+      }
+    },
     "migrationHowItWorks.continue" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -10490,7 +10512,29 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Moving funds between Zcash pools reveals the amount of each transfer. We split your balance into smaller transfers, spaced over time, so they're harder to correlate. All transactions are routed through Tor to protect your IP address."
+            "value" : "Moving funds between Zcash pools reveals the amount of each transfer. Here's how we protect your privacy during migration."
+          }
+        }
+      }
+    },
+    "migrationHowItWorks.largeBalanceDesc" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "If your wallet holds large balance or many small notes, migration may run across multiple scheduled rounds."
+          }
+        }
+      }
+    },
+    "migrationHowItWorks.largeBalanceTitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Large balance"
           }
         }
       }
@@ -10546,6 +10590,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Your balance is divided into several smaller-sized amounts."
+          }
+        }
+      }
+    },
+    "migrationHowItWorks.splitScheduleDesc" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your balance is divided into smaller amounts and spaced out over time, so they're harder to link together."
+          }
+        }
+      }
+    },
+    "migrationHowItWorks.splitScheduleTitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Split and schedule"
           }
         }
       }
@@ -11956,7 +12022,18 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "If Tor is available in your region, we recommend enabling it for enhanced privacy during the migration. This step is completely optional. You can also use a trusted VPN if Tor is unavailable in your region."
+            "value" : "If Tor is available in your region, we strongly recommend enabling it to prevent linking your balance to your IP address. You can also use a trusted VPN if Tor is unavailable in your region."
+          }
+        }
+      }
+    },
+    "migrationTorSheet.bodyImmediate" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "If Tor is available in your region, we strongly recommend enabling it to prevent linking your full balance to your IP address. You can also use a trusted VPN if Tor is unavailable in your region."
           }
         }
       }
