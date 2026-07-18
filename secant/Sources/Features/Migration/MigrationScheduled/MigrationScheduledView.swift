@@ -62,25 +62,29 @@ struct MigrationScheduledView: View {
             MigrationDetailRow(
                 title: String(localizable: .migrationScheduledRowTotal),
                 value: "\(store.totalAmount.decimalString()) ZEC",
-                rowAppereance: .top
+                rowAppereance: .top,
+                isContinuous: true
             )
 
             MigrationDetailRow(
                 title: String(localizable: .migrationScheduledRowPool),
                 value: String(localizable: .migrationScheduledRowPoolValue),
-                rowAppereance: .middle
+                rowAppereance: .middle,
+                isContinuous: true
             )
 
             MigrationDetailRow(
                 title: String(localizable: .migrationScheduledRowTransfers),
                 value: String(localizable: .migrationScheduledRowTransfersValue(store.sentCount, store.totalCount)),
-                rowAppereance: .middle
+                rowAppereance: .middle,
+                isContinuous: true
             )
 
             MigrationDetailRow(
                 title: String(localizable: .migrationScheduledRowDuration),
                 value: String(localizable: .migrationPlanEtaHours(store.durationHours)),
-                rowAppereance: .bottom
+                rowAppereance: .bottom,
+                isContinuous: true
             )
         }
     }

@@ -9,6 +9,10 @@
 //  in `MigrationNoteSplitView`. Used by MigrationReviewTransfer and MigrationScheduled.
 //  MigrationNoteSplitView keeps its own private copy as-is to avoid churn on its in-review PR.
 //
+//  `isContinuous` (MOB-1494 W6) suppresses the 1 pt inter-row gap so consecutive rows of the same
+//  bgSecondary fill merge into one seamless card instead of a banded stack — opt-in and defaults to
+//  `false`, so existing banded call sites are unaffected.
+//
 
 import SwiftUI
 
@@ -38,6 +42,7 @@ struct MigrationDetailRow: View {
     let title: String
     let value: String
     var rowAppereance: RowAppereance = .full
+    var isContinuous: Bool = false
 
     var body: some View {
         HStack(spacing: 0) {
@@ -58,7 +63,7 @@ struct MigrationDetailRow: View {
             CustomRoundedRectangle(corners: rowAppereance.corners, radius: 12)
                 .fill(Design.Surfaces.bgSecondary.color(colorScheme))
         }
-        .padding(.bottom, rowAppereance == .full || rowAppereance == .bottom ? 0 : 1)
+        .padding(.bottom, isContinuous || rowAppereance == .full || rowAppereance == .bottom ? 0 : 1)
     }
 }
 
@@ -75,4 +80,13 @@ struct MigrationDetailRow: View {
 #Preview("Single row") {
     MigrationDetailRow(title: "Pool", value: "Orchard → Ironwood")
         .padding()
+}
+
+#Preview("Continuous card") {
+    VStack(spacing: 0) {
+        MigrationDetailRow(title: "Amount", value: "12.458 ZEC", rowAppereance: .top, isContinuous: true)
+        MigrationDetailRow(title: "Pool", value: "Orchard → Ironwood", rowAppereance: .middle, isContinuous: true)
+        MigrationDetailRow(title: "Fee", value: "0.001 ZEC", rowAppereance: .bottom, isContinuous: true)
+    }
+    .padding()
 }
