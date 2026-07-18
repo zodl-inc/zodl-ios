@@ -58,32 +58,26 @@ struct MigrationHowItWorksView: View {
         VStack(alignment: .leading, spacing: 16) {
             MigrationBulletRow(
                 icon: Asset.Assets.Icons.coinsSwap.image,
-                title: String(localizable: .migrationHowItWorksSplitTitle),
-                caption: String(localizable: .migrationHowItWorksSplitDesc)
-            )
-
-            MigrationBulletRow(
-                icon: Asset.Assets.Icons.calendar.image,
-                title: String(localizable: .migrationHowItWorksScheduleTitle),
-                caption: String(localizable: .migrationHowItWorksScheduleDesc)
+                title: String(localizable: .migrationHowItWorksSplitScheduleTitle),
+                caption: String(localizable: .migrationHowItWorksSplitScheduleDesc)
             )
 
             MigrationBulletRow(
                 icon: Asset.Assets.Icons.checkSquareBroken.image,
-                title: String(localizable: .migrationHowItWorksPresignTitle),
-                caption: String(localizable: .migrationHowItWorksPresignDesc)
-            )
-
-            MigrationBulletRow(
-                icon: Asset.Assets.Icons.faceContent.image,
-                title: String(localizable: .migrationHowItWorksHandlesTitle),
-                caption: String(localizable: .migrationHowItWorksHandlesDesc)
+                title: String(localizable: .migrationHowItWorksApproveOnceTitle),
+                caption: String(localizable: .migrationHowItWorksApproveOnceDesc)
             )
 
             MigrationBulletRow(
                 icon: Asset.Assets.Icons.bellRinging.image,
                 title: String(localizable: .migrationHowItWorksFailsTitle),
                 caption: String(localizable: .migrationHowItWorksFailsDesc)
+            )
+
+            MigrationBulletRow(
+                icon: Asset.Assets.Icons.layersThree.image,
+                title: String(localizable: .migrationHowItWorksLargeBalanceTitle),
+                caption: String(localizable: .migrationHowItWorksLargeBalanceDesc)
             )
         }
     }
