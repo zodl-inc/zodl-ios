@@ -10,6 +10,12 @@
 //  which persists `isTorOn` into a `NetworkPrivacyOptions` exactly as `MigrationNetworkPrivacyStore`
 //  did, then resumes whichever destination it stashed before presenting.
 //
+//  MOB-1487 (round 3) briefly made the sheet Entry-immediate-only (scheduled path forced Tor on);
+//  MOB-1494 (round 4) restores the scheduled host per the revised canvas — the toggle now defaults
+//  ON (drawn ON in every frame, "strongly recommend" copy), and the body copy splits by path:
+//  the immediate sheet says "your full balance", the scheduled sheet "your balance"
+//  (`usesFullBalanceCopy`).
+//
 
 import ComposableArchitecture
 
@@ -17,11 +23,16 @@ import ComposableArchitecture
 struct MigrationTorSheet {
     @ObservableState
     struct State: Equatable {
-        /// No pre-selection bias, per product rule (mirrors the deleted Network Privacy screen).
-        var isTorOn = false
+        /// MOB-1494 (round 4): defaults ON — the canvas draws the toggle ON in every frame and the
+        /// copy "strongly recommend"s it, superseding the earlier no-pre-selection rule.
+        var isTorOn = true
+        /// MOB-1494 (round 4): the immediate path's body reads "your full balance", the scheduled
+        /// path's "your balance" — the view picks the string off this flag.
+        var usesFullBalanceCopy = false
 
-        init(isTorOn: Bool = false) {
+        init(isTorOn: Bool = true, usesFullBalanceCopy: Bool = false) {
             self.isTorOn = isTorOn
+            self.usesFullBalanceCopy = usesFullBalanceCopy
         }
     }
 

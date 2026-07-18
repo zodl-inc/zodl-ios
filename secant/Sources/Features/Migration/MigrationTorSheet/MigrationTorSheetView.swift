@@ -30,7 +30,7 @@ struct MigrationTorSheetView: View {
                     .zFont(.semiBold, size: 24, style: Design.Text.primary)
                     .padding(.bottom, 12)
 
-                Text(localizable: .migrationTorSheetBody)
+                Text(localizable: store.usesFullBalanceCopy ? .migrationTorSheetBodyImmediate : .migrationTorSheetBody)
                     .zFont(size: 14, style: Design.Text.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
                     .multilineTextAlignment(.leading)

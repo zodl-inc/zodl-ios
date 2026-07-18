@@ -7,9 +7,9 @@
 //  `viewTransactionTapped` delegates are emitted but consumed by nobody yet — chaining is the
 //  coordinator's job (phase 3).
 //
-//  Also reused for the "Migrate anyway" dust lane (MOB-1487): when `store.usesMigratedCopy` is
-//  true, the sending/sent subtitles swap to the migrated-copy strings; titles and buttons are
-//  identical in both variants.
+//  Also reused for the "Migrate anyway" dust lane (MOB-1487). MOB-1494 (round 4): every lane
+//  shows the same "migrated" subtitles (the canvas dropped the "sent" wording), so the view has
+//  no per-lane copy switching any more.
 //
 
 import ComposableArchitecture
@@ -77,7 +77,7 @@ struct MigrationSendingView: View {
                 .zFont(.semiBold, size: 28, style: Design.Text.primary)
                 .padding(.top, 16)
 
-            Text(localizable: store.usesMigratedCopy ? .migrationSendingSubtitleMigrated : .migrationSendingSubtitle)
+            Text(localizable: .migrationSendingSubtitleMigrated)
                 .zFont(size: 14, style: Design.Text.primary)
                 .multilineTextAlignment(.center)
         }
@@ -97,7 +97,7 @@ struct MigrationSendingView: View {
                 .zFont(.semiBold, size: 28, style: Design.Text.primary)
                 .padding(.top, 16)
 
-            Text(localizable: store.usesMigratedCopy ? .migrationSendingSentSubtitleMigrated : .migrationSendingSentSubtitle)
+            Text(localizable: .migrationSendingSentSubtitleMigrated)
                 .zFont(size: 14, style: Design.Text.primary)
                 .multilineTextAlignment(.center)
                 .lineSpacing(1.5)
