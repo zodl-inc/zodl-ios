@@ -130,6 +130,7 @@ struct MigrationBannerContentView: View {
             ) {
                 onButtonTap()
             }
+            .environment(\.colorScheme, .light)
         }
     }
 
@@ -143,11 +144,8 @@ struct MigrationBannerContentView: View {
         case .transferWaiting, .updatePlan, .transfersExpired:
             Asset.Assets.Icons.alertCircleOutline.image
                 .zImage(size: 20, color: titleStyle)
-        case .transferReady:
+        case .transferReady, .complete:
             Asset.Assets.infoCircle.image
-                .zImage(size: 20, color: titleStyle)
-        case .complete:
-            Asset.Assets.Icons.checkVerified.image
                 .zImage(size: 20, color: titleStyle)
         }
     }
