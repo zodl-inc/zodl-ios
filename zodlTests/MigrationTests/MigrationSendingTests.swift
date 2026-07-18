@@ -8,10 +8,10 @@
 //  dismissal (cancel/retry), and (MOB-1466) `onAppear` executing `totalCount` transfers strictly in
 //  sequence via `executeNextPendingMigrationTransfer`, recording a broadcast +
 //  scheduling the next background window after each success, presenting the failure sheet on
-//  failure/`nil`, and retry re-running only the failed step. Also covers (MOB-1487)
-//  `usesMigratedCopy` defaulting to false and being settable via init — the view's copy-switching
-//  itself is layout, not reducer, behavior and isn't exercised here. No shared/global state ->
-//  no `.serialized`.
+//  failure/`nil`, and retry re-running only the failed step. Also covers (MOB-1487/MOB-1494)
+//  `isDustLane` defaulting to false and being settable via init — since MOB-1494 the flag only
+//  selects the dust-sweep execution (the on-screen copy is identical in every lane). No
+//  shared/global state -> no `.serialized`.
 //
 
 import Testing
@@ -29,18 +29,18 @@ import ComposableArchitecture
         #expect(state.txId == "")
         #expect(state.totalCount == 1)
         #expect(state.sentCount == 0)
-        #expect(state.usesMigratedCopy == false)
+        #expect(state.isDustLane == false)
     }
 
-    @MainActor @Test func usesMigratedCopyDefaultsFalseButCanBeSetTrueViaInit() async {
+    @MainActor @Test func isDustLaneDefaultsFalseButCanBeSetTrueViaInit() async {
         let defaultState = MigrationSending.State()
-        let migratedState = MigrationSending.State(usesMigratedCopy: true)
+        let dustLaneState = MigrationSending.State(isDustLane: true)
 
-        #expect(defaultState.usesMigratedCopy == false)
-        #expect(migratedState.usesMigratedCopy == true)
+        #expect(defaultState.isDustLane == false)
+        #expect(dustLaneState.isDustLane == true)
         // Unrelated defaults are untouched by the new trailing init parameter.
-        #expect(migratedState.phase == MigrationSending.State.Phase.sending)
-        #expect(migratedState.totalCount == 1)
+        #expect(dustLaneState.phase == MigrationSending.State.Phase.sending)
+        #expect(dustLaneState.totalCount == 1)
     }
 
     @MainActor @Test func closeTappedEmitsDelegateClosed() async {
@@ -183,7 +183,7 @@ import ComposableArchitecture
         let executeNextCalls = LockIsolated<Int>(0)
         let recordBroadcastCalls = LockIsolated<Int>(0)
         let scheduleNextWindowCalls = LockIsolated<Int>(0)
-        let state = MigrationSending.State(totalCount: 1, usesMigratedCopy: true)
+        let state = MigrationSending.State(totalCount: 1, isDustLane: true)
         let store = TestStore(initialState: state) {
             MigrationSending()
         } withDependencies: {
@@ -218,7 +218,7 @@ import ComposableArchitecture
     @MainActor @Test func onAppearWithoutDustLaneExecutesScheduledTransferNotMigrateMigrationDust() async {
         let migrateDustCalls = LockIsolated<Int>(0)
         let executeNextCalls = LockIsolated<Int>(0)
-        let state = MigrationSending.State(totalCount: 1, usesMigratedCopy: false)
+        let state = MigrationSending.State(totalCount: 1, isDustLane: false)
         let store = TestStore(initialState: state) {
             MigrationSending()
         } withDependencies: {
