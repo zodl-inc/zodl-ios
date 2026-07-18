@@ -15,6 +15,12 @@
 //  new mock); the timeline restyle itself (badge/connector/typography) lives in
 //  `MigrationTransferTimeline`/`MigrationStepBadge`.
 //
+//  MOB-1494 (W6): `.sent` row captions gained minutes-level recency, mirroring
+//  `MigrationStatusView`'s pattern (reusing its `migrationStatus.*` caption keys) — `row.sentMinutesAgo`
+//  when set ("Sent N min ago"), else "Sent recently" for a same-hour sent row, else today's
+//  hours-based caption. Variant-agnostic: any `.sent` row gets it, though only the `.recreated`
+//  variant currently has any.
+//
 
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
@@ -95,7 +101,12 @@ struct MigrationTransferPlanView: View {
     private func caption(for row: MigrationTransferRow) -> String {
         switch row.status {
         case .sent:
-            return String(localizable: .migrationPlanSentAgo(row.hoursFromNow))
+            if let sentMinutesAgo = row.sentMinutesAgo {
+                return String(localizable: .migrationStatusSentMinutesAgo(sentMinutesAgo))
+            }
+            return row.hoursFromNow == 0
+                ? String(localizable: .migrationStatusSentRecently)
+                : String(localizable: .migrationPlanSentAgo(row.hoursFromNow))
         case .active:
             return store.variant == .recreated
                 ? String(localizable: .migrationPlanReadyNow)
