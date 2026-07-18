@@ -266,6 +266,7 @@ public enum Asset {
       public static let imageLibrary = ImageAsset(name: "imageLibrary")
       public static let integrations = ImageAsset(name: "integrations")
       public static let key = ImageAsset(name: "key")
+      public static let layersThree = ImageAsset(name: "layersThree")
       public static let loading = ImageAsset(name: "loading")
       public static let lockLocked = ImageAsset(name: "lockLocked")
       public static let lockUnlocked = ImageAsset(name: "lockUnlocked")

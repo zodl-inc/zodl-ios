@@ -10484,28 +10484,6 @@
         }
       }
     },
-    "migrationHowItWorks.handlesDesc" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Each transfer goes out in its scheduled window while the app runs in the background."
-          }
-        }
-      }
-    },
-    "migrationHowItWorks.handlesTitle" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ZODL handles the rest"
-          }
-        }
-      }
-    },
     "migrationHowItWorks.intro" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -10539,61 +10517,6 @@
         }
       }
     },
-    "migrationHowItWorks.presignDesc" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Approve now, with no further prompts."
-          }
-        }
-      }
-    },
-    "migrationHowItWorks.presignTitle" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Pre-sign once"
-          }
-        }
-      }
-    },
-    "migrationHowItWorks.scheduleDesc" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Transfers are spaced out to make them harder to link together."
-          }
-        }
-      }
-    },
-    "migrationHowItWorks.scheduleTitle" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Schedule"
-          }
-        }
-      }
-    },
-    "migrationHowItWorks.splitDesc" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Your balance is divided into several smaller-sized amounts."
-          }
-        }
-      }
-    },
     "migrationHowItWorks.splitScheduleDesc" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -10612,17 +10535,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Split and schedule"
-          }
-        }
-      }
-    },
-    "migrationHowItWorks.splitTitle" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Split"
           }
         }
       }
@@ -11723,23 +11635,6 @@
         }
       }
     },
-    "migrationSending.sentSubtitle" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Your ZEC was successfully sent to Ironwood."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Tu ZEC se envió correctamente a Ironwood."
-          }
-        }
-      }
-    },
     "migrationSending.sentSubtitleMigrated" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -11764,23 +11659,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "¡Enviado!"
-          }
-        }
-      }
-    },
-    "migrationSending.subtitle" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Your ZEC is being sent to Ironwood…"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Tu ZEC se está enviando a Ironwood…"
           }
         }
       }
