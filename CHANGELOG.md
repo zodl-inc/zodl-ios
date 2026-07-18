@@ -29,11 +29,15 @@ directly impact users rather than highlighting other crucial architectural updat
 - [MOB-1478] The Ironwood migration flow now matches the revised designs: choosing Migrate with Privacy opens a "How This Works" explainer, Tor protection is offered in an optional sheet only when Tor is off, note splitting happens automatically once you confirm a plan or transfer (no separate splitting step), progress reports minute-level and in-flight transfer status plus a confirmation after rescheduling, permission screens highlight the trade-off of skipping, and migration notifications lead with what happened. Dormant until the migration SDK ships.
 - [MOB-1487] The Ironwood migration screens follow the final designs: refreshed on-chain-visibility wording on the entry screen, a reworded dust note, a lighter transfer-timeline style with smaller badges and per-row fiat, a simpler "Skip" on the permission screens, and the transfer-plan screen no longer shows the randomized-amounts footer.
 - [MOB-1487] Migrate with Privacy now routes all migration transactions over Tor automatically — the explainer says so up front and the Tor opt-in sheet only appears for Migrate Immediately. Migration screens also received dark-mode color corrections (Tor badge, entry card accents, permission-screen Skip, timeline connectors).
+- [MOB-1494] The migration "How This Works" explainer is restructured into four steps — Split and schedule, Approve once, If something fails, and a new Large balance step explaining that big wallets may migrate across multiple scheduled rounds.
+- [MOB-1494] Migrate with Privacy offers the Tor choice again: the Enable Tor Protection sheet (toggle on by default, with stronger wording about linking your balance to your IP address) appears before the permission steps whenever Tor isn't already set up, on both migration paths.
+- [MOB-1494] Migration polish per the revised designs: sending screens consistently say your ZEC is being "migrated" to Ironwood, the Migration Scheduled summary is one continuous card, the progress banner separates its counters with "·", the completed-migration banner shows an info icon, the lock explainer's wording is refreshed, and the transfer plan shows minute-level "Sent" captions.
 
 ### Fixed
 - [MOB-1466] The back button on the "Move to Ironwood" entry screen now leaves the migration flow — it previously did nothing.
 - [MOB-1480] The simulated Confirm Transfer Plan now shows the full 3–5 transfer schedule (previewing the note split that runs on confirm) instead of a single transfer, with the first transfer due in about 10 minutes and the rest 6 hours apart.
 - [MOB-1480] The migration simulator now starts turned off on a fresh install — long-press the balance on the home screen and flip "Simulation active" to enable it. Resetting the simulation keeps the toggle as you set it.
+- [MOB-1494] Migration dark mode now matches the designs in the error-and-recovery screens: the completed-migration badge inverts correctly, the recovery step connector uses the intended color, and the home banner's More/Review button stays legible.
 
 ## 3.7.2 build 1
 
