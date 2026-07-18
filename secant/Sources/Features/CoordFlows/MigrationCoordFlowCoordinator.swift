@@ -40,15 +40,19 @@
 //  real round-trip uses. `resumeAfterKeystoneSigning` pops 1 or 2 path elements depending on whether
 //  `scan` is actually on top, so that one shared resume path stays correct for both callers.
 //
-//  MOB-1487 (round 3): the scheduled/private path routes ALL migration transactions over Tor
-//  unconditionally, per the Core/Wallet decision (2026-07-16) — How This Works no longer reads
-//  `walletStorage.exportTorSetupFlag()` or presents the Tor sheet; it always sets
-//  `networkPrivacyOptions.useTor = true`, persists it via `migrationManager.setNetworkPrivacyOptions`
-//  (background sends read the persisted copy, not the in-memory `state`), then proceeds straight to
-//  the permission chain. At real-SDK time, Tor-unavailable is a fail + retry — there is no direct-
-//  connection fallback. The Tor sheet becomes immediate-mode-only: its flag-on shortcut (Entry) now
-//  also persists (previously only the sheet's own confirm did), and `PendingTorDestination` dropped
-//  its `.permissionChain` case since the sheet never resumes the permission chain any more.
+//  MOB-1487 (round 3): the scheduled/private path routed ALL migration transactions over Tor
+//  unconditionally, per the Core/Wallet decision (2026-07-16) — no sheet, no opt-out on that path.
+//  Its lasting piece is the persist-fix: every lane persists `useTor` via
+//  `migrationManager.setNetworkPrivacyOptions` (background sends read the persisted copy, not the
+//  in-memory `state`).
+//
+//  MOB-1494 (round 4): the revised canvas re-adds the Tor toggle sheet on the scheduled path
+//  (decision reversal, Michal 2026-07-18) — How This Works gates on the same
+//  `walletStorage.exportTorSetupFlag()` check as Entry (immediate) and stashes
+//  `.permissionChain`; the flag-on shortcut persists `useTor = true` exactly like the immediate
+//  lane's. The sheet's toggle defaults ON and its body copy splits by path ("your full balance"
+//  on immediate, "your balance" on scheduled). At real-SDK time, Tor-unavailable remains a fail +
+//  retry — no direct-connection fallback.
 //
 
 import Foundation
@@ -110,16 +114,19 @@ extension MigrationCoordFlow {
                 // MARK: - HowItWorks (MOB-1478 W3, MOB-1487 round 3)
 
             case .path(.element(id: _, action: .howItWorks(.delegate(.continueTapped)))):
-                // MOB-1487 (round 3): the privacy path routes ALL migration transactions over Tor
-                // per the Core/Wallet decision (2026-07-16) — no Tor-sheet gate, no opt-out. Persist
-                // immediately (background sends read the persisted copy, not this in-memory state)
-                // and proceed straight to the permission chain. At real-SDK time, Tor-unavailable is
-                // a fail + retry — there is no direct-connection fallback.
-                state.networkPrivacyOptions.useTor = true
-                migrationManager.setNetworkPrivacyOptions(state.networkPrivacyOptions)
-                return .run { send in
-                    await send(.pushNextPermissionStep(await nextPermissionStepResult()))
+                // MOB-1494 (round 4): same Tor gate as the immediate lane — the app-wide Tor setup
+                // flag skips the sheet with `useTor` implicitly on (persisted, so background sends
+                // read the same value — MOB-1487's persist-fix); otherwise the toggle sheet is
+                // shown and the permission chain resumes from its confirm/dismiss.
+                if walletStorage.exportTorSetupFlag() == true {
+                    state.networkPrivacyOptions.useTor = true
+                    migrationManager.setNetworkPrivacyOptions(state.networkPrivacyOptions)
+                    return .run { send in
+                        await send(.pushNextPermissionStep(await nextPermissionStepResult()))
+                    }
                 }
+                presentTorSheet(destination: .permissionChain, state: &state)
+                return .none
 
                 // MARK: - Tor bottom sheet (MOB-1478 W2)
 
@@ -365,11 +372,12 @@ extension MigrationCoordFlow {
                 // MARK: - Flow-root closes / terminal delegates -> .flowFinished
 
                 // MOB-1487 dust lane: "Migrate anyway" sweeps the remainder through the Sending
-                // screen (migrated-copy variant) pushed over the complete screen.
+                // screen pushed over the complete screen. MOB-1494: the copy is unified
+                // ("migrated" everywhere) — `isDustLane` only selects the dust-sweep execution.
             case .path(.element(id: _, action: .complete(.delegate(.migrateAnyway)))):
                 var sendingState = MigrationSending.State(totalCount: 1)
                 sendingState.networkPrivacyOptions = state.networkPrivacyOptions
-                sendingState.usesMigratedCopy = true
+                sendingState.isDustLane = true
                 state.path.append(.sending(sendingState))
                 return .none
 
@@ -451,13 +459,14 @@ extension MigrationCoordFlow {
 
     // MARK: - Tor bottom sheet (MOB-1478 W2): present + confirm/dismiss
 
-    /// Presents the Tor sheet fresh (reset toggle to its no-bias default) and stashes `destination`
-    /// to resume once the user confirms or swipes the sheet away.
+    /// Presents the Tor sheet fresh (toggle reset to its default-ON state — MOB-1494) and stashes
+    /// `destination` to resume once the user confirms or swipes the sheet away. The immediate
+    /// destination gets the "your full balance" body variant; the scheduled one "your balance".
     private func presentTorSheet(
         destination: MigrationCoordFlow.PendingTorDestination,
         state: inout MigrationCoordFlow.State
     ) {
-        state.torSheetState = MigrationTorSheet.State()
+        state.torSheetState = MigrationTorSheet.State(usesFullBalanceCopy: destination == .reviewTransfer)
         state.pendingTorDestination = destination
         state.isTorSheetPresented = true
     }
@@ -479,6 +488,11 @@ extension MigrationCoordFlow {
         case .reviewTransfer:
             state.path.append(.reviewTransfer(MigrationReviewTransfer.State(mode: .immediate)))
             return .none
+
+        case .permissionChain:
+            return .run { send in
+                await send(.pushNextPermissionStep(await nextPermissionStepResult()))
+            }
         }
     }
 

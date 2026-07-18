@@ -23,10 +23,15 @@
 //  `MigrationNoteSplit` is re-entry-only now, so its Keystone signing folds into `TransferPlan`'s
 //  batch and `KeystoneSigningContext` no longer has a `.noteSplit` case.
 //
-//  MOB-1487 (round 3): the scheduled/private path now routes ALL migration transactions over Tor
-//  unconditionally — How This Works no longer gates on the Tor sheet, so the sheet is presented
-//  from Entry (immediate) only and `PendingTorDestination` dropped its `.permissionChain` case. See
-//  `MigrationCoordFlowCoordinator.swift`'s scheduled-lane row for the persisted-`useTor` rationale.
+//  MOB-1487 (round 3): the scheduled/private path routed ALL migration transactions over Tor
+//  unconditionally — How This Works stopped gating on the Tor sheet and `PendingTorDestination`
+//  dropped its `.permissionChain` case.
+//
+//  MOB-1494 (round 4): the revised canvas re-adds the Tor toggle sheet on the scheduled path
+//  (decision reversal, Michal 2026-07-18) — How This Works gates on the same
+//  `walletStorage.exportTorSetupFlag()` check as Entry (immediate), `PendingTorDestination`
+//  regains `.permissionChain`, and the flag-on shortcut keeps MOB-1487's persist-fix (persisted
+//  options feed background sends) without the forcing.
 //
 
 import SwiftUI
@@ -48,11 +53,15 @@ struct MigrationCoordFlow {
 
     /// MOB-1478 (W2): which destination the coordinator stashed while the Tor bottom sheet is
     /// presented — resumed once the user confirms ("Got it") or swipes the sheet away (identical
-    /// outcome, using whatever toggle state is showing at that moment). MOB-1487 (round 3): the
-    /// sheet is Entry-immediate-only now, so `.reviewTransfer` is the sole destination.
+    /// outcome, using whatever toggle state is showing at that moment). MOB-1494 (round 4): the
+    /// scheduled path hosts the sheet again, so `.permissionChain` is back alongside
+    /// `.reviewTransfer`.
     enum PendingTorDestination: Equatable {
         /// Immediate mode: push Review Transfer directly.
         case reviewTransfer
+        /// Scheduled mode (from How This Works): run the permission chain
+        /// (`nextPermissionStepResult()`).
+        case permissionChain
     }
 
     @Reducer(state: .equatable)
