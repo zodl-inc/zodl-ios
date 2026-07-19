@@ -60,14 +60,28 @@ struct MigrationManagerClient: Sendable {
     var setMigrationMode: @Sendable (MigrationMode) -> Void
     var isManualDelivery: @Sendable () -> Bool = { false }
     var setManualDelivery: @Sendable (Bool) -> Void
-    // MOB-1496 Interim: W4 replaces this with the migration network snapshot (separate broadcast
-    // provider). Endpoint is materialized at read time as the app's current sync endpoint. Default
-    // is the closed/no-Tor, unset-endpoint value — the macro requires a concrete default for a
-    // non-throwing, non-`Void`/non-`Optional`-returning closure; every real call site resolves a
-    // live endpoint. Tests never observe this default (see the `recordCommittedSchedule` note).
-    var networkPrivacyOptions: @Sendable () -> MigrationNetworkPrivacyOptions = {
+    // MOB-1496 (W4): ensure-or-read the run's atomic network snapshot (Tor + sync provider/endpoint +
+    // broadcast provider/endpoint — see `MigrationNetworkSnapshot`) for `accountUUID` (`nil` resolves
+    // the selected account, same convention as `migrationSummary`/`migrationTransfers` above), mapped
+    // onto the SDK's `MigrationNetworkPrivacyOptions`. Idempotent for the life of a run: the first
+    // call creates and persists the snapshot; every later call (from ANY lane, any elapsed time)
+    // returns the SAME persisted values, immune to a mid-run auto server switch. NEVER throws — every
+    // internal failure degrades to SOME snapshot (see `MigrationManagerImpl.ensureNetworkSnapshot`'s
+    // doc). Default is the closed/no-Tor, unset-endpoint value — the macro requires a concrete
+    // default for a non-throwing, non-`Void`/non-`Optional`-returning closure; every real call site
+    // resolves a live snapshot. Tests never observe this default (see the `recordCommittedSchedule`
+    // note).
+    var migrationNetworkOptions: @Sendable (_ accountUUID: AccountUUID?) async -> MigrationNetworkPrivacyOptions = { _ in
         MigrationNetworkPrivacyOptions(useTor: false, submissionEndpoint: LightWalletEndpoint(address: "", port: 0))
     }
+    // MOB-1496 (W4): every persisted network snapshot across `walletAccounts` (+ the selected
+    // account, defensively, deduped) — i.e. every account with a currently-active migration run.
+    // Drives `AutoServerSelectionLiveKey`'s pinning (auto server selection stays within an active
+    // run's sync-provider family) and `ServerSetupStore`'s manual-switch privacy warning.
+    var activeNetworkSnapshots: @Sendable () -> [MigrationNetworkSnapshot] = { [] }
+    // Persists the pre-run Tor choice the migration entry/Tor sheet writes. Consumed by
+    // `ensureNetworkSnapshot` when a run's snapshot is first taken — a later call does NOT alter an
+    // already-active run's snapshot (see `MigrationNetworkSnapshot.useTor`'s doc).
     var setNetworkPrivacyOptions: @Sendable (_ useTor: Bool) -> Void
     var isCompleteAcknowledged: @Sendable () -> Bool = { false }
     var acknowledgeComplete: @Sendable () -> Void

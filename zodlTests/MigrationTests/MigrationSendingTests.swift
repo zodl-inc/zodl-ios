@@ -217,19 +217,28 @@ import ComposableArchitecture
         #expect(scheduleNextWindowCalls.value == 3)
     }
 
-    @MainActor @Test func onAppearPassesInjectedNetworkPrivacyOptionsToExecute() async {
+    /// MOB-1496 (W4): the scheduled-lane options come from `migrationManager.migrationNetworkOptions
+    /// (accountUUID)`, read AT EXECUTE TIME inside the effect — never a value threaded through
+    /// state (which would go stale across a re-entry or a long BG-window gap). A mocked sentinel
+    /// must reach `executeNextPendingMigrationTransfer` unchanged.
+    @MainActor @Test func onAppearReadsOptionsFromMigrationNetworkOptionsAtExecuteTime() async {
         let capturedOptions = LockIsolated<MigrationNetworkPrivacyOptions?>(nil)
-        let options = MigrationNetworkPrivacyOptions(
+        let capturedAccountUUIDs = LockIsolated<[AccountUUID?]>([])
+        let sentinel = MigrationNetworkPrivacyOptions(
             useTor: true,
             submissionEndpoint: LightWalletEndpoint(address: "example.com", port: 9067)
         )
-        let store = TestStore(initialState: MigrationSending.State(totalCount: 1, networkPrivacyOptions: options)) {
+        let store = TestStore(initialState: MigrationSending.State(totalCount: 1)) {
             MigrationSending()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
             $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, passedOptions in
                 capturedOptions.setValue(passedOptions)
                 return MigrationTransferResult.success(txId: "tx-0")
+            }
+            $0.migrationManager.migrationNetworkOptions = { accountUUID in
+                capturedAccountUUIDs.withValue { $0.append(accountUUID) }
+                return sentinel
             }
             $0.migrationManager.recordTransferBroadcast = { _, _ in }
             $0.migrationBGScheduler.scheduleNextWindow = { }
@@ -244,7 +253,43 @@ import ComposableArchitecture
             $0.phase = .success
         }
 
-        #expect(capturedOptions.value == options)
+        #expect(capturedOptions.value == sentinel)
+        #expect(capturedAccountUUIDs.value == [walletAccount(keystone: false, idByte: 0).id])
+    }
+
+    /// MOB-1496 (W4): the dust lane gets the SAME execute-time options treatment as the scheduled
+    /// lane — a mocked sentinel must reach `migrateMigrationDust` unchanged.
+    @MainActor @Test func onAppearWithDustLaneReadsOptionsFromMigrationNetworkOptionsAtExecuteTime() async {
+        let capturedOptions = LockIsolated<MigrationNetworkPrivacyOptions?>(nil)
+        let sentinel = MigrationNetworkPrivacyOptions(
+            useTor: true,
+            submissionEndpoint: LightWalletEndpoint(address: "dust-sentinel.example.com", port: 9067)
+        )
+        let state = MigrationSending.State(totalCount: 1, isDustLane: true)
+        let store = TestStore(initialState: state) {
+            MigrationSending()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.migrateMigrationDust = { _, _, passedOptions in
+                capturedOptions.setValue(passedOptions)
+                return MigrationTransferResult.success(txId: "tx-dust")
+            }
+            $0.migrationManager.migrationNetworkOptions = { _ in sentinel }
+            $0.migrationManager.recordTransferBroadcast = { _, _ in }
+            $0.migrationBGScheduler.scheduleNextWindow = { }
+            withDependenciesUSKDerivable(&$0)
+        }
+
+        await store.send(.onAppear)
+        await store.receive(\.transferResult) {
+            $0.sentCount = 1
+            $0.txId = "tx-dust"
+        }
+        await store.receive(\.allTransfersSent) {
+            $0.phase = .success
+        }
+
+        #expect(capturedOptions.value == sentinel)
     }
 
     // MARK: - Dust lane (MOB-1487): "Migrate anyway" sweeps the remainder, not the scheduled path
@@ -367,6 +412,9 @@ import ComposableArchitecture
                 executedCount.withValue { $0 += 1 }
                 return MigrationTransferResult.networkError(retryable: true)
             }
+            $0.migrationManager.migrationNetworkOptions = { _ in
+                MigrationNetworkPrivacyOptions(useTor: false, submissionEndpoint: LightWalletEndpoint(address: "", port: 0))
+            }
         }
 
         await store.send(.onAppear)
@@ -384,6 +432,9 @@ import ComposableArchitecture
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
             $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in nil }
+            $0.migrationManager.migrationNetworkOptions = { _ in
+                MigrationNetworkPrivacyOptions(useTor: false, submissionEndpoint: LightWalletEndpoint(address: "", port: 0))
+            }
         }
 
         await store.send(.onAppear)

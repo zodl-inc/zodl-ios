@@ -1,4 +1,5 @@
 import Testing
+import Foundation
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
 @testable import zodl_internal
@@ -32,6 +33,9 @@ import ComposableArchitecture
             $0.userStoredPreferences.setAutomaticServerSelection = { prefs.automatic = $0 }
             $0.userStoredPreferences.setServer = { prefs.server = $0 }
             $0.transactionGuard = .testValue
+            // MOB-1496 (W4): no active migration snapshots -> the manual-switch privacy warning
+            // never applies.
+            $0.migrationManager.activeNetworkSnapshots = { [] }
         }
         store.exhaustivity = .off
 
@@ -215,5 +219,179 @@ import ComposableArchitecture
         #expect(!benchmarked.value, "must not re-benchmark when a fresh result already exists")
         #expect(store.state.connectionMode == .automatic)
         #expect(store.state.automaticDisplayServer == "eu.zec.rocks:443")
+    }
+
+    // MARK: - MOB-1496 (W4): manual-switch privacy warning
+
+    private func snapshot(syncHost: String, broadcastHost: String) -> MigrationNetworkSnapshot {
+        MigrationNetworkSnapshot(
+            useTor: false,
+            syncEndpoint: MigrationNetworkSnapshot.Endpoint(host: syncHost, port: 443, secure: true),
+            syncProvider: ServerProvider.classify(host: syncHost),
+            broadcastEndpoint: MigrationNetworkSnapshot.Endpoint(host: broadcastHost, port: 443, secure: true),
+            broadcastProvider: ServerProvider.classify(host: broadcastHost),
+            takenAt: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+    }
+
+    // MARK: shouldWarnBeforeManualSwitch — pure predicate
+
+    @Test func shouldWarnTriggersOnBroadcastProviderMatch() {
+        let active = snapshot(syncHost: "na.zec.rocks", broadcastHost: "us.zec.stardust.rest")
+        // Different literal host, SAME family (stardust) as the snapshot's broadcast provider.
+        let chosen = LightWalletEndpoint(address: "eu.zec.stardust.rest", port: 443, secure: true, streamingCallTimeoutInMillis: 0)
+
+        #expect(ServerSetup.shouldWarnBeforeManualSwitch(endpoint: chosen, activeSnapshots: [active]) == true)
+    }
+
+    @Test func shouldWarnTriggersOnBroadcastHostMatchForACustomBroadcastServer() {
+        let active = snapshot(syncHost: "na.zec.rocks", broadcastHost: "mynode.example.com")
+        let chosen = LightWalletEndpoint(address: "mynode.example.com", port: 443, secure: true, streamingCallTimeoutInMillis: 0)
+
+        #expect(ServerSetup.shouldWarnBeforeManualSwitch(endpoint: chosen, activeSnapshots: [active]) == true)
+    }
+
+    @Test func shouldWarnDoesNotTriggerForTheSanctionedSameServerSnapshot() {
+        // sync == broadcast (custom/testnet single-server run) — choosing that SAME server again is
+        // the sanctioned mode, not a new link.
+        let active = snapshot(syncHost: "testnet.zec.rocks", broadcastHost: "testnet.zec.rocks")
+        let chosen = LightWalletEndpoint(address: "testnet.zec.rocks", port: 443, secure: true, streamingCallTimeoutInMillis: 0)
+
+        #expect(ServerSetup.shouldWarnBeforeManualSwitch(endpoint: chosen, activeSnapshots: [active]) == false)
+    }
+
+    @Test func shouldWarnDoesNotTriggerWhenNeitherProviderNorHostMatch() {
+        let active = snapshot(syncHost: "na.zec.rocks", broadcastHost: "us.zec.stardust.rest")
+        let chosen = LightWalletEndpoint(address: "sa.zec.rocks", port: 443, secure: true, streamingCallTimeoutInMillis: 0)
+
+        #expect(ServerSetup.shouldWarnBeforeManualSwitch(endpoint: chosen, activeSnapshots: [active]) == false)
+    }
+
+    @Test func shouldWarnDoesNotTriggerWithNoActiveSnapshots() {
+        let chosen = LightWalletEndpoint(address: "us.zec.stardust.rest", port: 443, secure: true, streamingCallTimeoutInMillis: 0)
+        #expect(ServerSetup.shouldWarnBeforeManualSwitch(endpoint: chosen, activeSnapshots: []) == false)
+    }
+
+    // MARK: - MOB-1496 (W4): manual-switch privacy warning — TestStore integration
+
+    @Test func manualSaveOnBroadcastProviderPresentsWarningInsteadOfApplying() async {
+        let switchCalls = LockIsolated<Int>(0)
+        let active = snapshot(syncHost: "na.zec.rocks", broadcastHost: "us.zec.stardust.rest")
+
+        var initial = ServerSetup.State()
+        initial.connectionMode = .manual
+        initial.initialConnectionMode = .automatic
+        initial.selectedServer = "eu.zec.stardust.rest:443"
+        initial.network = .mainnet
+
+        let store = TestStore(initialState: initial) {
+            ServerSetup()
+        } withDependencies: {
+            $0.zcashSDKEnvironment = .testnet
+            $0.zcashSDKEnvironment.endpoint = {
+                LightWalletEndpoint(address: "na.zec.rocks", port: 443, secure: true, streamingCallTimeoutInMillis: 0)
+            }
+            $0.sdkSynchronizer.switchToEndpoint = { _ in switchCalls.withValue { $0 += 1 } }
+            $0.transactionGuard = .testValue
+            $0.migrationManager.activeNetworkSnapshots = { [active] }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.setServerTapped)
+
+        #expect(switchCalls.value == 0, "must not apply until confirmed")
+        #expect(store.state.isUpdatingServer == false, "Save/Back must stay enabled while the warning is up")
+        #expect(store.state.alert != nil)
+        #expect(store.state.pendingManualSwitch?.endpoint.host == "eu.zec.stardust.rest")
+        #expect(store.state.pendingManualSwitch?.isCustom == false)
+    }
+
+    @Test func manualSwitchPrivacyWarningConfirmedProceedsWithTheNormalApply() async {
+        let switched = LockIsolated<LightWalletEndpoint?>(nil)
+        var initial = ServerSetup.State()
+        initial.pendingManualSwitch = ServerSetup.State.PendingManualSwitch(
+            endpoint: LightWalletEndpoint(address: "eu.zec.stardust.rest", port: 443, secure: true, streamingCallTimeoutInMillis: 0),
+            isCustom: false
+        )
+        initial.alert = AlertState.migrationPrivacyWarning()
+
+        let store = TestStore(initialState: initial) {
+            ServerSetup()
+        } withDependencies: {
+            $0.mainQueue = .immediate
+            $0.zcashSDKEnvironment = .testnet
+            $0.zcashSDKEnvironment.endpoint = {
+                LightWalletEndpoint(address: "na.zec.rocks", port: 443, secure: true, streamingCallTimeoutInMillis: 0)
+            }
+            $0.sdkSynchronizer.switchToEndpoint = { switched.setValue($0) }
+            $0.userStoredPreferences.setAutomaticServerSelection = { _ in }
+            $0.userStoredPreferences.setServer = { _ in }
+            $0.transactionGuard = .testValue
+        }
+        store.exhaustivity = .off
+
+        await store.send(.manualSwitchPrivacyWarningConfirmed)
+        await store.receive(\.switchSucceeded)
+
+        #expect(switched.value?.host == "eu.zec.stardust.rest")
+        #expect(store.state.alert == nil)
+        #expect(store.state.pendingManualSwitch == nil)
+    }
+
+    @Test func chooseAnotherDismissesWithoutApplying() async {
+        let switchCalls = LockIsolated<Int>(0)
+        var initial = ServerSetup.State()
+        initial.pendingManualSwitch = ServerSetup.State.PendingManualSwitch(
+            endpoint: LightWalletEndpoint(address: "eu.zec.stardust.rest", port: 443, secure: true, streamingCallTimeoutInMillis: 0),
+            isCustom: false
+        )
+        initial.alert = AlertState.migrationPrivacyWarning()
+
+        let store = TestStore(initialState: initial) {
+            ServerSetup()
+        } withDependencies: {
+            $0.sdkSynchronizer.switchToEndpoint = { _ in switchCalls.withValue { $0 += 1 } }
+        }
+
+        await store.send(.alert(.dismiss)) {
+            $0.alert = nil
+        }
+
+        #expect(switchCalls.value == 0)
+    }
+
+    @Test func manualSaveOnTheSanctionedSameServerSnapshotDoesNotWarn() async {
+        let switched = LockIsolated<LightWalletEndpoint?>(nil)
+        let active = snapshot(syncHost: "na.zec.rocks", broadcastHost: "na.zec.rocks")
+
+        var initial = ServerSetup.State()
+        initial.connectionMode = .manual
+        initial.initialConnectionMode = .automatic
+        initial.selectedServer = "na.zec.rocks:443"
+        initial.network = .mainnet
+
+        let store = TestStore(initialState: initial) {
+            ServerSetup()
+        } withDependencies: {
+            $0.mainQueue = .immediate
+            $0.zcashSDKEnvironment = .testnet
+            $0.zcashSDKEnvironment.endpoint = {
+                // The CURRENT active endpoint has already drifted from the snapshot's own sync
+                // endpoint — the user is manually choosing to go back to it.
+                LightWalletEndpoint(address: "eu.zec.rocks", port: 443, secure: true, streamingCallTimeoutInMillis: 0)
+            }
+            $0.sdkSynchronizer.switchToEndpoint = { switched.setValue($0) }
+            $0.userStoredPreferences.setAutomaticServerSelection = { _ in }
+            $0.userStoredPreferences.setServer = { _ in }
+            $0.transactionGuard = .testValue
+            $0.migrationManager.activeNetworkSnapshots = { [active] }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.setServerTapped)
+        await store.receive(\.switchSucceeded)
+
+        #expect(switched.value?.host == "na.zec.rocks", "choosing the snapshot's OWN sync server again must not warn")
+        #expect(store.state.alert == nil)
     }
 }

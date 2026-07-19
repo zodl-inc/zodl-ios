@@ -15408,6 +15408,74 @@
         }
       }
     },
+    "serverSetup.alert.migrationPrivacy.chooseAnother" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Choose another"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Elegir otro"
+          }
+        }
+      }
+    },
+    "serverSetup.alert.migrationPrivacy.message" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This server currently receives your Ironwood migration transfers. Using it for syncing as well would let one operator link your sync activity to those transfers."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Este servidor recibe actualmente tus transferencias de migración a Ironwood. Usarlo también para la sincronización permitiría que un mismo operador vincule tu actividad de sincronización con esas transferencias."
+          }
+        }
+      }
+    },
+    "serverSetup.alert.migrationPrivacy.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Migration privacy notice"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aviso de privacidad de la migración"
+          }
+        }
+      }
+    },
+    "serverSetup.alert.migrationPrivacy.useAnyway" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Use it anyway"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Usarlo de todos modos"
+          }
+        }
+      }
+    },
     "serverSetup.allServers" : {
       "extractionState" : "manual",
       "localizations" : {

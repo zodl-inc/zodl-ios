@@ -98,7 +98,6 @@ extension MigrationCoordFlow {
                     // effect is needed.
                     if walletStorage.exportTorSetupFlag() == true {
                         migrationManager.setNetworkPrivacyOptions(true)
-                        state.networkPrivacyOptions = migrationManager.networkPrivacyOptions()
                         state.path.append(.reviewTransfer(MigrationReviewTransfer.State(mode: .immediate)))
                     } else {
                         presentTorSheet(destination: .reviewTransfer, state: &state)
@@ -119,7 +118,6 @@ extension MigrationCoordFlow {
                 // shown and the permission chain resumes from its confirm/dismiss.
                 if walletStorage.exportTorSetupFlag() == true {
                     migrationManager.setNetworkPrivacyOptions(true)
-                    state.networkPrivacyOptions = migrationManager.networkPrivacyOptions()
                     return .run { send in
                         await send(.pushNextPermissionStep(await nextPermissionStepResult()))
                     }
@@ -191,8 +189,7 @@ extension MigrationCoordFlow {
                 // MARK: - ReviewTransfer
 
             case .path(.element(id: _, action: .reviewTransfer(.delegate(.confirmed)))):
-                var sendingState = MigrationSending.State(totalCount: 1)
-                sendingState.networkPrivacyOptions = state.networkPrivacyOptions
+                let sendingState = MigrationSending.State(totalCount: 1)
                 state.path.append(.sending(sendingState))
                 return .none
 
@@ -368,12 +365,10 @@ extension MigrationCoordFlow {
                 // MARK: - Status
 
             case .path(.element(id: _, action: .status(.delegate(.sendNow)))):
-                let networkPrivacyOptions = state.networkPrivacyOptions
                 return .run { [migrationManager, accountUUID = state.selectedWalletAccount?.id] send in
                     let rows = await migrationManager.migrationTransfers(accountUUID)
                     let overdueCount = rows.filter { $0.status == MigrationTransferRow.Status.overdue }.count
-                    var sendingState = MigrationSending.State(totalCount: max(overdueCount, 1))
-                    sendingState.networkPrivacyOptions = networkPrivacyOptions
+                    let sendingState = MigrationSending.State(totalCount: max(overdueCount, 1))
                     await send(.pushHydratedPathState(.sending(sendingState)))
                 }
 
@@ -432,7 +427,6 @@ extension MigrationCoordFlow {
                 // ("migrated" everywhere) — `isDustLane` only selects the dust-sweep execution.
             case .path(.element(id: _, action: .complete(.delegate(.migrateAnyway)))):
                 var sendingState = MigrationSending.State(totalCount: 1)
-                sendingState.networkPrivacyOptions = state.networkPrivacyOptions
                 sendingState.isDustLane = true
                 state.path.append(.sending(sendingState))
                 return .none
@@ -467,8 +461,7 @@ extension MigrationCoordFlow {
         case .scheduled, .recreated:
             state.path.append(.scheduled(MigrationScheduled.State()))
         case .manual:
-            var sendingState = MigrationSending.State(totalCount: 1)
-            sendingState.networkPrivacyOptions = state.networkPrivacyOptions
+            let sendingState = MigrationSending.State(totalCount: 1)
             state.path.append(.sending(sendingState))
         }
         return .run { [migrationBGScheduler] _ in await migrationBGScheduler.scheduleFirstWindow() }
@@ -506,8 +499,7 @@ extension MigrationCoordFlow {
             return transferPlanPostConfirmChain(variant: planState.variant, state: &state)
 
         case .immediateReview:
-            var sendingState = MigrationSending.State(totalCount: 1)
-            sendingState.networkPrivacyOptions = state.networkPrivacyOptions
+            let sendingState = MigrationSending.State(totalCount: 1)
             state.path.append(.sending(sendingState))
             return .none
         }
@@ -563,7 +555,6 @@ extension MigrationCoordFlow {
         state.isTorSheetPresented = false
 
         migrationManager.setNetworkPrivacyOptions(state.torSheetState.isTorOn)
-        state.networkPrivacyOptions = migrationManager.networkPrivacyOptions()
 
         switch destination {
         case .reviewTransfer:

@@ -38,6 +38,14 @@ struct ServerSetup {
 
     @ObservableState
     struct State: Equatable {
+        /// MOB-1496 (W4): a manual Save that would land on an active migration run's broadcast
+        /// provider is stashed here while the privacy-warning alert is presented, so "Use it anyway"
+        /// can resume exactly where `.setServerTapped` left off.
+        struct PendingManualSwitch: Equatable {
+            let endpoint: LightWalletEndpoint
+            let isCustom: Bool
+        }
+
         @Presents var alert: AlertState<Action>?
         var connectionMode: UserPreferencesStorage.ConnectionMode
         var customServer: String
@@ -48,6 +56,9 @@ struct ServerSetup {
         var initialCustomServer: String = ""
         var initialSelectedServer: String?
         var network: NetworkType = .mainnet
+        /// Set right before presenting the migration privacy warning; read back by
+        /// `.manualSwitchPrivacyWarningConfirmed`. `nil` otherwise.
+        var pendingManualSwitch: PendingManualSwitch?
         var selectedServer: String?
         var servers: [ZcashSDKEnvironment.Server]
         var topKServers: [ZcashSDKEnvironment.Server]
@@ -102,6 +113,10 @@ struct ServerSetup {
         case connectionModeChanged(UserPreferencesStorage.ConnectionMode)
         case evaluatedServers([LightWalletEndpoint])
         case evaluateServers
+        /// MOB-1496 (W4): the migration privacy warning's "Use it anyway" — proceeds with the
+        /// `pendingManualSwitch` stashed by `.setServerTapped`. "Choose another" is a plain
+        /// `.alert(.dismiss)` (no state to unwind — the picker is untouched).
+        case manualSwitchPrivacyWarningConfirmed
         case onAppear
         case onDisappear
         case refreshServersTapped
@@ -114,6 +129,7 @@ struct ServerSetup {
     init() {}
 
     @Dependency(\.mainQueue) var mainQueue
+    @Dependency(\.migrationManager) var migrationManager
     @Dependency(\.sdkSynchronizer) var sdkSynchronizer
     @Dependency(\.zcashSDKEnvironment) var zcashSDKEnvironment
     @Dependency(\.userStoredPreferences) var userStoredPreferences
@@ -296,17 +312,26 @@ struct ServerSetup {
                         return .none
                     }
 
-                    return .run { send in
-                        do {
-                            try await applyServerSwitch(endpoint, automatic: false, isCustom: isCustom, send: send)
-                        } catch is CancellationError {
-                            return
-                        } catch {
-                            await send(.switchFailed(error.toZcashError()))
-                        }
+                    // MOB-1496 (W4): a manual choice that would land on an active migration run's
+                    // broadcast provider gets a confirmation instead of applying immediately — revert
+                    // the optimistic `isUpdatingServer` flip above (Save/Back stay enabled while the
+                    // alert is up) and stash the switch for "Use it anyway" to resume.
+                    if Self.shouldWarnBeforeManualSwitch(endpoint: endpoint, activeSnapshots: migrationManager.activeNetworkSnapshots()) {
+                        state.isUpdatingServer = false
+                        state.pendingManualSwitch = State.PendingManualSwitch(endpoint: endpoint, isCustom: isCustom)
+                        state.alert = AlertState.migrationPrivacyWarning()
+                        return .none
                     }
-                    .cancellable(id: CancelID.setServer, cancelInFlight: true)
+
+                    return performManualSwitch(endpoint: endpoint, isCustom: isCustom)
                 }
+
+            case .manualSwitchPrivacyWarningConfirmed:
+                state.alert = nil
+                guard let pending = state.pendingManualSwitch else { return .none }
+                state.pendingManualSwitch = nil
+                state.isUpdatingServer = true
+                return performManualSwitch(endpoint: pending.endpoint, isCustom: pending.isCustom)
 
             case .switchFailed(let error):
                 state.isUpdatingServer = false
@@ -358,6 +383,43 @@ struct ServerSetup {
         try await mainQueue.sleep(for: .seconds(Benchmark.saveCompletionDelay))
         await send(.switchSucceeded(endpoint.server()))
     }
+
+    /// The manual Save's actual switch effect — shared by the direct (no warning needed) path and
+    /// `.manualSwitchPrivacyWarningConfirmed`'s resume.
+    private func performManualSwitch(endpoint: LightWalletEndpoint, isCustom: Bool) -> Effect<Action> {
+        .run { send in
+            do {
+                try await applyServerSwitch(endpoint, automatic: false, isCustom: isCustom, send: send)
+            } catch is CancellationError {
+                return
+            } catch {
+                await send(.switchFailed(error.toZcashError()))
+            }
+        }
+        .cancellable(id: CancelID.setServer, cancelInFlight: true)
+    }
+
+    /// MOB-1496 (W4): whether choosing `endpoint` manually should warn about migration privacy —
+    /// see `AlertState.migrationPrivacyWarning()`. Triggers when `endpoint`'s classified provider
+    /// matches some active snapshot's BROADCAST provider, OR its host matches that snapshot's
+    /// broadcast endpoint's host directly (catches a custom host `classify` alone can't line up by
+    /// provider identity, since every custom host is its own family of one) — UNLESS `endpoint` IS
+    /// that snapshot's own sync endpoint already (the sanctioned same-server mode: re-choosing the
+    /// server already synced with is not a NEW link, so it never warns). Host comparisons are
+    /// case-insensitive, matching `ServerProvider.classify`'s own normalization.
+    static func shouldWarnBeforeManualSwitch(endpoint: LightWalletEndpoint, activeSnapshots: [MigrationNetworkSnapshot]) -> Bool {
+        let chosenProvider = ServerProvider.classify(host: endpoint.host)
+        let chosenHost = endpoint.host.lowercased()
+
+        return activeSnapshots.contains { snapshot in
+            let matchesBroadcastProvider = chosenProvider == snapshot.broadcastProvider
+            let matchesBroadcastHost = chosenHost == snapshot.broadcastEndpoint.host.lowercased()
+            guard matchesBroadcastProvider || matchesBroadcastHost else { return false }
+
+            let isAlreadySyncEndpoint = chosenHost == snapshot.syncEndpoint.host.lowercased()
+            return !isAlreadySyncEndpoint
+        }
+    }
 }
 
 private extension ServerSetup.State {
@@ -398,6 +460,23 @@ extension AlertState where Action == ServerSetup.Action {
             }
         } message: {
             TextState(String(localizable: .serverSetupAlertFailedMessage(error.detailedMessage)))
+        }
+    }
+
+    /// MOB-1496 (W4): presented by a manual Save that would land on an active migration run's
+    /// broadcast provider — see `ServerSetup.shouldWarnBeforeManualSwitch`.
+    static func migrationPrivacyWarning() -> AlertState {
+        AlertState {
+            TextState(String(localizable: .serverSetupAlertMigrationPrivacyTitle))
+        } actions: {
+            ButtonState(role: .destructive, action: .manualSwitchPrivacyWarningConfirmed) {
+                TextState(String(localizable: .serverSetupAlertMigrationPrivacyUseAnyway))
+            }
+            ButtonState(role: .cancel, action: .alert(.dismiss)) {
+                TextState(String(localizable: .serverSetupAlertMigrationPrivacyChooseAnother))
+            }
+        } message: {
+            TextState(String(localizable: .serverSetupAlertMigrationPrivacyMessage))
         }
     }
 }

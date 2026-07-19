@@ -1158,7 +1158,11 @@ extension Root {
                 return
             }
 
-            let options = migrationManager.networkPrivacyOptions()
+            // MOB-1496 (W4): ensure-or-read the run's atomic snapshot — a missing snapshot this deep
+            // into a BG session (e.g. an exotic scheduled path whose first-ever read lands here)
+            // self-heals by creating one on the spot; acceptable, and `createNetworkSnapshot` logs
+            // its own fallback path when the benchmark comes back empty.
+            let options = await migrationManager.migrationNetworkOptions(accountUUID)
             do {
                 let result = try await sdkSynchronizer.executeNextPendingMigrationTransfer(accountUUID, options)
 
