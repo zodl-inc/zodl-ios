@@ -80,6 +80,33 @@ import ComposableArchitecture
         )
     )
 
+    /// MOB-1496 (W6): `migrationManager.migrationNetworkOptions(_:)` has no macro default (unlike the
+    /// SDK synchronizer's `.noOp`) — any test that reaches the note-split-broadcast or dust-execute
+    /// branch must mock it explicitly or trip `unimplemented`. Same fixture shape as
+    /// `MigrationTransferPlanTests`/`SimulatedSDKSynchronizerTests`.
+    private static let defaultNetworkPrivacyOptions = MigrationNetworkPrivacyOptions(
+        useTor: false,
+        submissionEndpoint: LightWalletEndpoint(address: "", port: 0)
+    )
+
+    /// MOB-1496 (W6): the dust-lane vendor fork (`.complete(.delegate(.migrateAnyway))`) is decided
+    /// IN the coordinator, so — unlike the rest of this file's tests (per the doc above) — the dust
+    /// lane's Keystone-vendor tests need their own account fixture. Same shape as
+    /// `MigrationTransferPlanTests`/`MigrationSendingTests`' `walletAccount(keystone:idByte:)`.
+    private func walletAccount(keystone: Bool, idByte: UInt8) -> WalletAccount {
+        WalletAccount(
+            Account(
+                id: AccountUUID(id: [UInt8](repeating: idByte, count: 16)),
+                name: keystone ? "Keystone" : "Zodl",
+                keySource: keystone ? String(localizable: .accountsKeystone).lowercased() : nil,
+                seedFingerprint: nil,
+                hdAccountIndex: Zip32AccountIndex(0),
+                ufvk: nil,
+                uivk: nil
+            )
+        )
+    }
+
     // MARK: - Re-entry: .onAppear with empty path
 
     @MainActor @Test func onAppearWithEntryRouteAppendsNothing() async {
@@ -737,21 +764,24 @@ import ComposableArchitecture
         #expect(reconcileCalls.value == 0)
     }
 
-    // MOB-1478 (W4): TransferPlan's Keystone fork prepends the note-split PCZT when needed — the
-    // coordinator treats the resulting (longer) batch opaquely and stores the WHOLE array atomically,
-    // no per-element handling required. MOB-1496: known gap — the note-split entry (sentinel id
-    // "note-split") rides through `storeSignedMigrationSchedulePCZTs` here rather than the dedicated
-    // `storeSignedNoteSplitPCZT` path; see `MigrationTransferPlanStore.requestKeystoneSignature`'s doc.
-    @MainActor @Test func foundPCZTBatchForPlanCommitContextWithNoteSplitPrefixStoresWholeBatchAtomically() async {
-        let callOrder = LockIsolated<[String]>([])
+    // MARK: - MOB-1496 (W6 §1): Keystone signing — foundPCZTBatch splits the note-split sentinel out
+    //
+    // The latent real-SDK break these fix: `storeSignedMigrationSchedulePCZTs` is all-or-nothing and
+    // keyed by engine-issued transfer ids — a `"note-split"` sentinel is not an engine id, so the
+    // real engine would reject the WHOLE store if it rode along (the pre-W6 behavior these tests
+    // replace). The sentinel now gets split out and routed to the dedicated note-split broadcast lane
+    // instead — see `MigrationCoordFlowCoordinator.resumeAfterKeystoneSigning`'s doc.
+
+    @MainActor @Test func foundPCZTBatchWithNoteSplitSentinelStoresOnlyEngineIdPairs() async {
+        let storeCalls = LockIsolated<[[MigrationSignedTransferPczt]]>([])
         let unsigned: [MigrationUnsignedTransferPczt] = [
             MigrationUnsignedTransferPczt(id: "note-split", pczt: Data([0x01])),
             MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xAA])),
             MigrationUnsignedTransferPczt(id: "t1", pczt: Data([0xBB]))
         ]
         let signed: [Data] = [Data([0x01, 0x99]), Data([0xAA, 0x99]), Data([0xBB, 0x99])]
+        // The sentinel entry must NOT appear here — only the schedule's own engine-id pairs.
         let expectedStored: [MigrationSignedTransferPczt] = [
-            MigrationSignedTransferPczt(id: "note-split", pczt: Data([0x01, 0x99])),
             MigrationSignedTransferPczt(id: "t0", pczt: Data([0xAA, 0x99])),
             MigrationSignedTransferPczt(id: "t1", pczt: Data([0xBB, 0x99]))
         ]
@@ -765,11 +795,289 @@ import ComposableArchitecture
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
             $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, stored in
-                #expect(stored == expectedStored)
-                callOrder.withValue { $0.append("store") }
+                storeCalls.withValue { $0.append(stored) }
             }
-            $0.migrationBGScheduler.scheduleFirstWindow = { callOrder.withValue { $0.append("scheduleFirstWindow") } }
-            // MOB-1496 (W2): see `foundPCZTBatchForPlanCommitContextStoresPopsAndPushesScheduledForScheduledVariant`'s comment.
+            $0.sdkSynchronizer.submitSignedNoteSplit = { _, _, _ in MigrationTransferResult.success(txId: "split-tx") }
+            $0.migrationBGScheduler.scheduleFirstWindow = { }
+            $0.migrationManager.reconcile = { }
+            $0.migrationManager.migrationNetworkOptions = { _ in Self.defaultNetworkPrivacyOptions }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 2, action: .scan(.foundPCZTBatch(signed)))))
+        await store.receive(\.keystoneSigningSubmitted)
+        await store.receive(\.path) // dispatched .noteSplit(.retryTapped)
+        await store.receive(\.path) // .noteSplit(.splitResult(.success))
+
+        #expect(storeCalls.value == [expectedStored])
+    }
+
+    /// "via the note-split lane": the coordinator routes the signed split PCZT into a freshly pushed
+    /// `MigrationNoteSplit` screen the SAME way its existing Keystone resubmit lane
+    /// (`resubmitSignedNoteSplit`) receives one, so `submitSignedNoteSplit` — not a bespoke broadcast
+    /// — is what actually sends it.
+    @MainActor @Test func foundPCZTBatchWithNoteSplitSentinelRoutesSignedSplitPcztToNoteSplitScreenAndBroadcastsIt() async {
+        let submitSignedCalls = LockIsolated<[Data]>([])
+        let unsigned: [MigrationUnsignedTransferPczt] = [
+            MigrationUnsignedTransferPczt(id: "note-split", pczt: Data([0x01])),
+            MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xAA]))
+        ]
+        let signed: [Data] = [Data([0x01, 0x99]), Data([0xAA, 0x99])]
+        var state = MigrationCoordFlow.State()
+        state.pendingKeystoneSigning = .planCommit
+        state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .scheduled)))
+        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: unsigned)))
+        state.path.append(.scan(Scan.State.initial))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, _ in }
+            $0.sdkSynchronizer.submitSignedNoteSplit = { _, pczt, _ in
+                submitSignedCalls.withValue { $0.append(pczt) }
+                return MigrationTransferResult.success(txId: "split-tx")
+            }
+            $0.migrationManager.reconcile = { }
+            $0.migrationManager.migrationNetworkOptions = { _ in Self.defaultNetworkPrivacyOptions }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 2, action: .scan(.foundPCZTBatch(signed)))))
+        await store.receive(\.keystoneSigningSubmitted)
+        await store.receive(\.path)
+        await store.receive(\.path)
+
+        #expect(submitSignedCalls.value == [Data([0x01, 0x99])])
+        guard case let .noteSplit(noteSplitState) = try? #require(store.state.path.last) else {
+            Issue.record("Expected .noteSplit pushed on top of the retained .transferPlan element")
+            return
+        }
+        #expect(noteSplitState.isFlowRoot == false)
+        guard case .transferPlan = try? #require(store.state.path[id: 0]) else {
+            Issue.record("Expected .transferPlan retained at the bottom (never re-signs again)")
+            return
+        }
+    }
+
+    /// Order rationale (MOB-1496 W6 §1): the schedule is stored BEFORE the split broadcasts, so a
+    /// split-broadcast failure still leaves a fully-committed plan behind.
+    @MainActor @Test func foundPCZTBatchWithNoteSplitSentinelStoresScheduleBeforeBroadcastingSplit() async {
+        let callOrder = LockIsolated<[String]>([])
+        let unsigned: [MigrationUnsignedTransferPczt] = [
+            MigrationUnsignedTransferPczt(id: "note-split", pczt: Data([0x01])),
+            MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xAA]))
+        ]
+        let signed: [Data] = [Data([0x01, 0x99]), Data([0xAA, 0x99])]
+        var state = MigrationCoordFlow.State()
+        state.pendingKeystoneSigning = .planCommit
+        state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .scheduled)))
+        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: unsigned)))
+        state.path.append(.scan(Scan.State.initial))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, _ in callOrder.withValue { $0.append("store") } }
+            $0.sdkSynchronizer.submitSignedNoteSplit = { _, _, _ in
+                callOrder.withValue { $0.append("submitSignedNoteSplit") }
+                return MigrationTransferResult.success(txId: "split-tx")
+            }
+            $0.migrationManager.reconcile = { }
+            $0.migrationManager.migrationNetworkOptions = { _ in Self.defaultNetworkPrivacyOptions }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 2, action: .scan(.foundPCZTBatch(signed)))))
+        await store.receive(\.keystoneSigningSubmitted)
+        await store.receive(\.path)
+        await store.receive(\.path)
+
+        #expect(callOrder.value == ["store", "submitSignedNoteSplit"])
+    }
+
+    /// A split-broadcast failure must not undo the already-committed schedule — the note-split
+    /// screen's OWN existing failure sheet (`isFailurePresented`) is what surfaces the retry
+    /// affordance, with the SAME signed PCZT still stashed so a real retry tap re-broadcasts it.
+    @MainActor @Test func foundPCZTBatchWithNoteSplitSentinelSplitBroadcastFailureLeavesStoredScheduleIntactAndPresentsRetry() async {
+        let recordCommittedScheduleCalls = LockIsolated<Int>(0)
+        let unsigned: [MigrationUnsignedTransferPczt] = [
+            MigrationUnsignedTransferPczt(id: "note-split", pczt: Data([0x01])),
+            MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xAA]))
+        ]
+        let signed: [Data] = [Data([0x01, 0x99]), Data([0xAA, 0x99])]
+        let schedule = MigrationSchedule(
+            transfers: [MigrationTransferProposal(id: "t0", amount: Zatoshi(500_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)],
+            estimatedDurationHours: 24
+        )
+        var planState = MigrationTransferPlan.State(variant: .scheduled)
+        planState.schedule = schedule
+        var state = MigrationCoordFlow.State()
+        state.pendingKeystoneSigning = .planCommit
+        state.path.append(.transferPlan(planState))
+        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: unsigned)))
+        state.path.append(.scan(Scan.State.initial))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, _ in }
+            $0.sdkSynchronizer.submitSignedNoteSplit = { _, _, _ in MigrationTransferResult.networkError(retryable: true) }
+            $0.migrationManager.recordCommittedSchedule = { _, _ in recordCommittedScheduleCalls.withValue { $0 += 1 } }
+            $0.migrationManager.reconcile = { }
+            $0.migrationManager.migrationNetworkOptions = { _ in Self.defaultNetworkPrivacyOptions }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 2, action: .scan(.foundPCZTBatch(signed)))))
+        await store.receive(\.keystoneSigningSubmitted)
+        await store.receive(\.path)
+        await store.receive(\.path)
+
+        #expect(recordCommittedScheduleCalls.value == 1)
+        guard case let .noteSplit(noteSplitState) = try? #require(store.state.path.last) else {
+            Issue.record("Expected .noteSplit still on top showing its own failure sheet")
+            return
+        }
+        #expect(noteSplitState.isFailurePresented == true)
+        #expect(noteSplitState.signedNoteSplitPczt == Data([0x01, 0x99]))
+    }
+
+    /// The "happy path" consumption of `pendingKeystoneSplitResume`: once the note-split screen's
+    /// broadcast is confirmed and the user taps Continue (`.delegate(.continued)`), the coordinator
+    /// must resume to the SAME post-commit screen a no-split batch would have reached immediately,
+    /// clear the resume context (a leaked context would silently mis-route a LATER, unrelated
+    /// `.noteSplit(.delegate(.continued))`), and pop the note-split detour itself (so back-navigation
+    /// from `.scheduled` lands on `.transferPlan`, not a stale "Split Confirmed!" screen).
+    @MainActor @Test func noteSplitContinuedAfterKeystoneSplitRoutingResumesToScheduledAndClearsPendingResume() async {
+        let unsigned: [MigrationUnsignedTransferPczt] = [
+            MigrationUnsignedTransferPczt(id: "note-split", pczt: Data([0x01])),
+            MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xAA]))
+        ]
+        let signed: [Data] = [Data([0x01, 0x99]), Data([0xAA, 0x99])]
+        var state = MigrationCoordFlow.State()
+        state.pendingKeystoneSigning = .planCommit
+        state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .scheduled)))
+        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: unsigned)))
+        state.path.append(.scan(Scan.State.initial))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, _ in }
+            $0.sdkSynchronizer.submitSignedNoteSplit = { _, _, _ in MigrationTransferResult.success(txId: "split-tx") }
+            $0.migrationBGScheduler.scheduleFirstWindow = { }
+            $0.migrationManager.reconcile = { }
+            $0.migrationManager.migrationNetworkOptions = { _ in Self.defaultNetworkPrivacyOptions }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 2, action: .scan(.foundPCZTBatch(signed)))))
+        await store.receive(\.keystoneSigningSubmitted)
+        await store.receive(\.path)
+        await store.receive(\.path)
+
+        guard case .noteSplit = try? #require(store.state.path.last) else {
+            Issue.record("Expected .noteSplit pushed and showing before Continue")
+            return
+        }
+        #expect(store.state.pendingKeystoneSplitResume == MigrationCoordFlow.KeystoneSigningContext.planCommit)
+        guard let noteSplitId = store.state.path.ids.last else {
+            Issue.record("Expected a noteSplit element id")
+            return
+        }
+
+        // The split confirmed (in real use: the SDK state stream reports `.readyToPropose`, flipping
+        // `phase` to `.confirmed`) and the user tapped Continue. The actual pop+resume is deferred to
+        // `keystoneSplitResumeContinued` (mirrors `keystoneSignRejected`'s deferred pop — popping the
+        // `noteSplit` element inline while `.forEach` is still delivering ITS OWN action to that same
+        // element is a TCA "missing element" runtime error), so a second receive is expected here.
+        await store.send(.path(.element(id: noteSplitId, action: .noteSplit(.delegate(.continued)))))
+        await store.receive(\.keystoneSplitResumeContinued)
+
+        #expect(store.state.pendingKeystoneSplitResume == nil)
+        guard case .scheduled = try? #require(store.state.path.last) else {
+            Issue.record("Expected .scheduled pushed — the SAME post-commit screen a no-split batch reaches immediately")
+            return
+        }
+        guard case .transferPlan = try? #require(store.state.path[id: 0]) else {
+            Issue.record("Expected the .transferPlan retained beneath (never re-signs again)")
+            return
+        }
+        #expect(store.state.path.contains { $0.is(\.noteSplit) } == false)
+    }
+
+    /// §1's split-routing fix applies uniformly to `.immediateReview`, not just `.planCommit` — a
+    /// needed split in the immediate-mode batch is stripped and routed the same way, and its
+    /// Continue resumes to `.sending` (not `.scheduled`), still clearing the resume context.
+    @MainActor @Test func noteSplitContinuedAfterImmediateReviewKeystoneSplitRoutingResumesToSendingAndClearsPendingResume() async {
+        let unsigned: [MigrationUnsignedTransferPczt] = [
+            MigrationUnsignedTransferPczt(id: "note-split", pczt: Data([0x02])),
+            MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xCC]))
+        ]
+        let signed: [Data] = [Data([0x02, 0x99]), Data([0xCC, 0x99])]
+        var state = MigrationCoordFlow.State()
+        state.pendingKeystoneSigning = .immediateReview
+        state.path.append(.reviewTransfer(MigrationReviewTransfer.State(mode: .immediate)))
+        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: unsigned)))
+        state.path.append(.scan(Scan.State.initial))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, _ in }
+            $0.sdkSynchronizer.submitSignedNoteSplit = { _, _, _ in MigrationTransferResult.success(txId: "split-tx") }
+            $0.migrationManager.reconcile = { }
+            $0.migrationManager.migrationNetworkOptions = { _ in Self.defaultNetworkPrivacyOptions }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 2, action: .scan(.foundPCZTBatch(signed)))))
+        await store.receive(\.keystoneSigningSubmitted)
+        await store.receive(\.path)
+        await store.receive(\.path)
+
+        #expect(store.state.pendingKeystoneSplitResume == MigrationCoordFlow.KeystoneSigningContext.immediateReview)
+        guard let noteSplitId = store.state.path.ids.last else {
+            Issue.record("Expected a noteSplit element id")
+            return
+        }
+
+        await store.send(.path(.element(id: noteSplitId, action: .noteSplit(.delegate(.continued)))))
+        await store.receive(\.keystoneSplitResumeContinued)
+
+        #expect(store.state.pendingKeystoneSplitResume == nil)
+        guard case let .sending(sendingState) = try? #require(store.state.path.last) else {
+            Issue.record("Expected .sending pushed")
+            return
+        }
+        #expect(sendingState.totalCount == 1)
+        guard case .reviewTransfer = try? #require(store.state.path[id: 0]) else {
+            Issue.record("Expected .reviewTransfer retained at the bottom")
+            return
+        }
+    }
+
+    /// No-split batches are unaffected: `splitKeystoneBatch` finds no sentinel, so every entry lands
+    /// in `scheduleEntries` and the resume proceeds straight to `.scheduled`, exactly as before —
+    /// twin of `foundPCZTBatchForPlanCommitContextStoresPopsAndPushesScheduledForScheduledVariant`
+    /// above, just asserting the split-free path explicitly stays split-free (no `.noteSplit` push).
+    @MainActor @Test func foundPCZTBatchWithoutNoteSplitSentinelNeverPushesNoteSplitScreen() async {
+        let unsigned: [MigrationUnsignedTransferPczt] = [
+            MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xAA])),
+            MigrationUnsignedTransferPczt(id: "t1", pczt: Data([0xBB]))
+        ]
+        let signed: [Data] = [Data([0xAA, 0x01]), Data([0xBB, 0x01])]
+        var state = MigrationCoordFlow.State()
+        state.pendingKeystoneSigning = .planCommit
+        state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .scheduled)))
+        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: unsigned)))
+        state.path.append(.scan(Scan.State.initial))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, _ in }
+            $0.migrationBGScheduler.scheduleFirstWindow = { }
             $0.migrationManager.reconcile = { }
         }
         store.exhaustivity = .off
@@ -777,10 +1085,79 @@ import ComposableArchitecture
         await store.send(.path(.element(id: 2, action: .scan(.foundPCZTBatch(signed)))))
         await store.receive(\.keystoneSigningSubmitted)
 
-        #expect(callOrder.value == ["store", "scheduleFirstWindow"])
-        #expect(store.state.pendingKeystoneSigning == nil)
+        #expect(store.state.pendingKeystoneSplitResume == nil)
         guard case .scheduled = try? #require(store.state.path.last) else {
-            Issue.record("Expected .scheduled pushed")
+            Issue.record("Expected .scheduled pushed directly, no .noteSplit detour")
+            return
+        }
+    }
+
+    // MARK: - MOB-1496 (W6 §2): re-pair validation — coordinator abandon-on-mismatch (short/long batch)
+    //
+    // The empty-batch case is already covered by
+    // `foundPCZTBatchWithEmptyArrayForPlanCommitContextAbandonsSessionWithoutStoring` below; the pure
+    // `rePairedKeystoneBatch`/`splitKeystoneBatch` table tests are their own `@Suite` at the bottom of
+    // this file.
+
+    @MainActor @Test func foundPCZTBatchWithShortBatchAbandonsSessionWithoutStoring() async {
+        let storeCalls = LockIsolated<Int>(0)
+        var state = MigrationCoordFlow.State()
+        state.pendingKeystoneSigning = .planCommit
+        state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .scheduled)))
+        state.path.append(
+            .keystoneSign(
+                MigrationKeystoneSign.State(pczts: [
+                    MigrationUnsignedTransferPczt(id: "t0", pczt: Data()),
+                    MigrationUnsignedTransferPczt(id: "t1", pczt: Data())
+                ])
+            )
+        )
+        state.path.append(.scan(Scan.State.initial))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, _ in storeCalls.withValue { $0 += 1 } }
+        }
+        store.exhaustivity = .off
+
+        // Only ONE signed entry scanned back for a TWO-entry unsigned batch.
+        await store.send(.path(.element(id: 2, action: .scan(.foundPCZTBatch([Data([0x01])])))))
+        await store.receive(\.keystoneScanAbandoned)
+
+        #expect(storeCalls.value == 0)
+        #expect(store.state.pendingKeystoneSigning == nil)
+        #expect(store.state.path.count == 1)
+        guard case .transferPlan = try? #require(store.state.path.last) else {
+            Issue.record("Expected pop back to .transferPlan (scan + sign removed)")
+            return
+        }
+    }
+
+    @MainActor @Test func foundPCZTBatchWithLongBatchAbandonsSessionWithoutStoring() async {
+        let storeCalls = LockIsolated<Int>(0)
+        var state = MigrationCoordFlow.State()
+        state.pendingKeystoneSigning = .planCommit
+        state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .scheduled)))
+        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: [MigrationUnsignedTransferPczt(id: "t0", pczt: Data())])))
+        state.path.append(.scan(Scan.State.initial))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, _ in storeCalls.withValue { $0 += 1 } }
+        }
+        store.exhaustivity = .off
+
+        // TWO signed entries scanned back for a ONE-entry unsigned batch.
+        await store.send(.path(.element(id: 2, action: .scan(.foundPCZTBatch([Data([0x01]), Data([0x02])])))))
+        await store.receive(\.keystoneScanAbandoned)
+
+        #expect(storeCalls.value == 0)
+        #expect(store.state.pendingKeystoneSigning == nil)
+        #expect(store.state.path.count == 1)
+        guard case .transferPlan = try? #require(store.state.path.last) else {
+            Issue.record("Expected pop back to .transferPlan (scan + sign removed)")
             return
         }
     }
@@ -1764,5 +2141,405 @@ import ComposableArchitecture
             Issue.record("Expected .transferPlan retained at the bottom (only keystoneSign popped)")
             return
         }
+    }
+
+    // MARK: - MOB-1496 (W6 §3): Keystone dust lane ("Migrate anyway" over Migration Complete)
+
+    @MainActor @Test func completeMigrateAnywayWithKeystoneAccountProposesPCZTsAndPushesKeystoneSignContext() async {
+        let proposeTransfersCalls = LockIsolated<[Bool]>([])
+        let proposePCZTsCalls = LockIsolated<[MigrationSchedule]>([])
+        let schedule = MigrationSchedule(
+            transfers: [
+                MigrationTransferProposal(id: "dust0", amount: Zatoshi(12_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
+            ],
+            estimatedDurationHours: 0
+        )
+        let pczts: [MigrationUnsignedTransferPczt] = [MigrationUnsignedTransferPczt(id: "dust0", pczt: Data([0xDD]))]
+        var state = MigrationCoordFlow.State()
+        state.$selectedWalletAccount.withLock { $0 = walletAccount(keystone: true, idByte: 20) }
+        state.path.append(.complete(MigrationComplete.State(isFlowRoot: true)))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.proposeMigrationTransfers = { _, includeResidual in
+                proposeTransfersCalls.withValue { $0.append(includeResidual) }
+                return schedule
+            }
+            $0.sdkSynchronizer.proposeMigrationPCZTs = { _, proposed in
+                proposePCZTsCalls.withValue { $0.append(proposed) }
+                return pczts
+            }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 0, action: .complete(.delegate(.migrateAnyway)))))
+        await store.receive(\.keystoneDustPCZTsProposed)
+
+        // `includeResidual: true` — the dust lane proposes the residual-inclusive schedule.
+        #expect(proposeTransfersCalls.value == [true])
+        #expect(proposePCZTsCalls.value == [schedule])
+        #expect(store.state.pendingKeystoneSigning == MigrationCoordFlow.KeystoneSigningContext.dust(schedule))
+        guard case let .keystoneSign(signState) = try? #require(store.state.path.last) else {
+            Issue.record("Expected .keystoneSign pushed on top of .complete")
+            return
+        }
+        #expect(signState.pczts == pczts)
+    }
+
+    /// Empty-residual edge (§4): below-threshold falls back to the SAME existing failure UX the
+    /// (already-shipped) software dust lane's empty-schedule path uses — no new screen/copy, and the
+    /// coordinator never even reaches the PCZT-proposal step.
+    @MainActor @Test func completeMigrateAnywayWithKeystoneAccountAndEmptyResidualFallsBackToBelowThresholdSending() async {
+        let proposePCZTsCalls = LockIsolated<Int>(0)
+        var state = MigrationCoordFlow.State()
+        state.$selectedWalletAccount.withLock { $0 = walletAccount(keystone: true, idByte: 22) }
+        state.path.append(.complete(MigrationComplete.State(isFlowRoot: true)))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.proposeMigrationTransfers = { _, _ in MigrationSchedule(transfers: [], estimatedDurationHours: 0) }
+            $0.sdkSynchronizer.proposeMigrationPCZTs = { _, _ in
+                proposePCZTsCalls.withValue { $0 += 1 }
+                return []
+            }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 0, action: .complete(.delegate(.migrateAnyway)))))
+        await store.receive(\.pushHydratedPathState)
+
+        #expect(proposePCZTsCalls.value == 0)
+        #expect(store.state.pendingKeystoneSigning == nil)
+        guard case let .sending(sendingState) = try? #require(store.state.path.last) else {
+            Issue.record("Expected the existing below-threshold Sending fallback pushed")
+            return
+        }
+        #expect(sendingState.isDustLane == true)
+    }
+
+    /// Software dust is byte-for-byte unchanged — twin of the pre-existing
+    /// `completeMigrateAnywayPushesSendingConfiguredForDustLane` above, restated here explicitly
+    /// alongside the new Keystone fork so the vendor split is visible in one place.
+    @MainActor @Test func completeMigrateAnywayWithSoftwareAccountPushesSendingConfiguredForDustLaneUnchanged() async {
+        var state = MigrationCoordFlow.State()
+        state.$selectedWalletAccount.withLock { $0 = walletAccount(keystone: false, idByte: 24) }
+        state.path.append(.complete(MigrationComplete.State(isFlowRoot: true)))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 0, action: .complete(.delegate(.migrateAnyway)))))
+
+        guard case let .sending(sendingState) = try? #require(store.state.path.last) else {
+            Issue.record("Expected .sending pushed on top of .complete")
+            return
+        }
+        #expect(sendingState.totalCount == 1)
+        #expect(sendingState.isDustLane == true)
+        #expect(store.state.pendingKeystoneSigning == nil)
+    }
+
+    /// Full lane, sign-context-to-store half: once the batch-of-1 is scanned+stored, the coordinator
+    /// hands off to the dust Sending lane's EXISTING `executeNextPendingMigrationTransfer` path
+    /// (`isDustLane: false`) — never `migrateMigrationDust` (a USK composite that would re-propose
+    /// from scratch). The execute-with-snapshot-options / never-touches-USK half of this lane is
+    /// covered by `MigrationSendingTests`' `onAppearWithoutDustLaneAndKeystoneAccountExecutes...`.
+    @MainActor @Test func keystoneDustFoundPCZTBatchStoresAndPushesSendingConfiguredForExecuteNotDustComposite() async {
+        let storeCalls = LockIsolated<[[MigrationSignedTransferPczt]]>([])
+        let recordCommittedScheduleCalls = LockIsolated<[MigrationSchedule]>([])
+        let schedule = MigrationSchedule(
+            transfers: [
+                MigrationTransferProposal(id: "dust0", amount: Zatoshi(12_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
+            ],
+            estimatedDurationHours: 0
+        )
+        let unsigned: [MigrationUnsignedTransferPczt] = [MigrationUnsignedTransferPczt(id: "dust0", pczt: Data([0xDD]))]
+        let signed: [Data] = [Data([0xDD, 0x01])]
+        let expectedStored: [MigrationSignedTransferPczt] = [MigrationSignedTransferPczt(id: "dust0", pczt: Data([0xDD, 0x01]))]
+
+        var state = MigrationCoordFlow.State()
+        state.$selectedWalletAccount.withLock { $0 = walletAccount(keystone: true, idByte: 23) }
+        state.pendingKeystoneSigning = MigrationCoordFlow.KeystoneSigningContext.dust(schedule)
+        state.path.append(.complete(MigrationComplete.State(isFlowRoot: true)))
+        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: unsigned)))
+        state.path.append(.scan(Scan.State.initial))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, stored in storeCalls.withValue { $0.append(stored) } }
+            $0.migrationManager.recordCommittedSchedule = { _, schedule in recordCommittedScheduleCalls.withValue { $0.append(schedule) } }
+            $0.migrationManager.reconcile = { }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 2, action: .scan(.foundPCZTBatch(signed)))))
+        await store.receive(\.keystoneSigningSubmitted)
+
+        #expect(storeCalls.value == [expectedStored])
+        #expect(recordCommittedScheduleCalls.value == [schedule])
+        #expect(store.state.pendingKeystoneSigning == nil)
+        guard case let .sending(sendingState) = try? #require(store.state.path.last) else {
+            Issue.record("Expected .sending pushed on top of the retained .complete element")
+            return
+        }
+        #expect(sendingState.isDustLane == false)
+        #expect(sendingState.totalCount == 1)
+        guard case .complete = try? #require(store.state.path[id: 0]) else {
+            Issue.record("Expected .complete retained at the bottom")
+            return
+        }
+    }
+
+    // MARK: - MOB-1496 (W6 §6): Keystone recovery — recreate routes through the PCZT batch session
+
+    /// Recovery -> `.recreate` -> `restartCurrentMigrationStep` -> re-created plan -> confirm: for a
+    /// Keystone account this must route through the SAME PCZT batch session the fresh-entry plan
+    /// uses (`MigrationTransferPlanStore.confirmTapped` already forks on vendor before signing —
+    /// this proves the COORDINATOR side of that round trip, from the recreated plan's
+    /// `keystoneSignRequested` delegate through to a committed, scheduled store).
+    @MainActor @Test func recoveryRecreateForKeystoneAccountRoutesThroughKeystoneBatchSessionToStoreAndSchedule() async {
+        let restartCalls = LockIsolated<Int>(0)
+        let storeCalls = LockIsolated<[[MigrationSignedTransferPczt]]>([])
+        let recordCommittedScheduleCalls = LockIsolated<[MigrationSchedule]>([])
+        let restartedSchedule = MigrationSchedule(
+            transfers: [
+                MigrationTransferProposal(id: "r0", amount: Zatoshi(2_000_000), anchorHeight: 300, nextExecutableAfterHeight: 300, expiryHeight: 400)
+            ],
+            estimatedDurationHours: 12
+        )
+        let unsigned: [MigrationUnsignedTransferPczt] = [MigrationUnsignedTransferPczt(id: "r0", pczt: Data([0x11]))]
+        let signed: [Data] = [Data([0x11, 0x99])]
+        let expectedStored: [MigrationSignedTransferPczt] = [MigrationSignedTransferPczt(id: "r0", pczt: Data([0x11, 0x99]))]
+
+        var state = MigrationCoordFlow.State()
+        state.$selectedWalletAccount.withLock { $0 = walletAccount(keystone: true, idByte: 30) }
+        state.path.append(.recovery(MigrationRecovery.State(reason: .expired, isFlowRoot: true)))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.restartCurrentMigrationStep = { _, _ in
+                restartCalls.withValue { $0 += 1 }
+                return restartedSchedule
+            }
+            $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, stored in storeCalls.withValue { $0.append(stored) } }
+            $0.migrationBGScheduler.scheduleFirstWindow = { }
+            $0.migrationManager.reconcile = { }
+            $0.migrationManager.recordCommittedSchedule = { _, schedule in recordCommittedScheduleCalls.withValue { $0.append(schedule) } }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 0, action: .recovery(.delegate(.recreate)))))
+        await store.receive(\.pushHydratedPathState)
+
+        #expect(restartCalls.value == 1)
+        guard case let .transferPlan(planState) = try? #require(store.state.path.last) else {
+            Issue.record("Expected .transferPlan (recreated, injected schedule) pushed")
+            return
+        }
+        #expect(planState.variant == MigrationTransferPlan.State.Variant.recreated)
+        #expect(planState.injectedSchedule == restartedSchedule)
+
+        guard let planId = store.state.path.ids.last else {
+            Issue.record("Expected a TransferPlan element id")
+            return
+        }
+        // The real view's `onAppear` populates `.schedule` from `.injectedSchedule` (this test drives
+        // the coordinator directly, without a live view) — needed below so `pendingKeystoneSchedule`
+        // has something to hand `recordCommittedSchedule` at store time, same as a real run.
+        await store.send(.path(.element(id: planId, action: .transferPlan(.onAppear))))
+
+        // The recreated plan's OWN store (`MigrationTransferPlanStore`) is what forks on vendor and
+        // delegates `.keystoneSignRequested` — simulate that delegate landing, since this test's
+        // scope is the COORDINATOR's routing from there onward (covered end-to-end for the fresh-plan
+        // case already; `MigrationTransferPlanTests` covers the store-side fork itself, including the
+        // `.recreated` variant specifically).
+        guard store.state.path.ids.last == planId else {
+            Issue.record("Expected the TransferPlan element to still be on top")
+            return
+        }
+        await store.send(.path(.element(id: planId, action: .transferPlan(.delegate(.keystoneSignRequested(unsigned))))))
+
+        #expect(store.state.pendingKeystoneSigning == MigrationCoordFlow.KeystoneSigningContext.planCommit)
+        guard case let .keystoneSign(signState) = try? #require(store.state.path.last) else {
+            Issue.record("Expected .keystoneSign pushed")
+            return
+        }
+        #expect(signState.pczts == unsigned)
+
+        guard let signId = store.state.path.ids.last else {
+            Issue.record("Expected a KeystoneSign element id")
+            return
+        }
+        await store.send(.path(.element(id: signId, action: .keystoneSign(.delegate(.getSignature)))))
+
+        guard let scanId = store.state.path.ids.last else {
+            Issue.record("Expected a Scan element id")
+            return
+        }
+        await store.send(.path(.element(id: scanId, action: .scan(.foundPCZTBatch(signed)))))
+        await store.receive(\.keystoneSigningSubmitted)
+
+        #expect(storeCalls.value == [expectedStored])
+        #expect(recordCommittedScheduleCalls.value == [restartedSchedule])
+        guard case .scheduled = try? #require(store.state.path.last) else {
+            Issue.record("Expected .scheduled — the recreated plan's Keystone commit routes to the SAME post-commit chain as a fresh plan")
+            return
+        }
+        guard case .transferPlan = try? #require(store.state.path[id: planId]) else {
+            Issue.record("Expected the recreated .transferPlan retained beneath (never re-signs again)")
+            return
+        }
+    }
+
+    /// Confirms §1's fix generalizes to recreated plans too: "a restart never includes a note split"
+    /// is NOT actually assumed anywhere — if the engine demands a split again after a restart, the
+    /// sentinel still gets split out before the recreated schedule is stored, via the exact same
+    /// mechanism a fresh plan uses (no vendor/flow-specific special-casing).
+    @MainActor @Test func recoveryRecreateForKeystoneAccountWithNoteSplitSentinelStripsSentinelBeforeStoring() async {
+        let storeCalls = LockIsolated<[[MigrationSignedTransferPczt]]>([])
+        let submitSignedCalls = LockIsolated<[Data]>([])
+        let restartedSchedule = MigrationSchedule(
+            transfers: [
+                MigrationTransferProposal(id: "r0", amount: Zatoshi(2_000_000), anchorHeight: 300, nextExecutableAfterHeight: 300, expiryHeight: 400)
+            ],
+            estimatedDurationHours: 12
+        )
+        let unsigned: [MigrationUnsignedTransferPczt] = [
+            MigrationUnsignedTransferPczt(id: "note-split", pczt: Data([0x22])),
+            MigrationUnsignedTransferPczt(id: "r0", pczt: Data([0x11]))
+        ]
+        let signed: [Data] = [Data([0x22, 0x99]), Data([0x11, 0x99])]
+
+        var planState = MigrationTransferPlan.State(variant: .recreated)
+        planState.injectedSchedule = restartedSchedule
+        planState.schedule = restartedSchedule
+        var state = MigrationCoordFlow.State()
+        state.$selectedWalletAccount.withLock { $0 = walletAccount(keystone: true, idByte: 31) }
+        state.pendingKeystoneSigning = .planCommit
+        state.path.append(.transferPlan(planState))
+        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: unsigned)))
+        state.path.append(.scan(Scan.State.initial))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, stored in storeCalls.withValue { $0.append(stored) } }
+            $0.sdkSynchronizer.submitSignedNoteSplit = { _, pczt, _ in
+                submitSignedCalls.withValue { $0.append(pczt) }
+                return MigrationTransferResult.success(txId: "split-tx")
+            }
+            $0.migrationManager.reconcile = { }
+            $0.migrationManager.recordCommittedSchedule = { _, _ in }
+            $0.migrationManager.migrationNetworkOptions = { _ in Self.defaultNetworkPrivacyOptions }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 2, action: .scan(.foundPCZTBatch(signed)))))
+        await store.receive(\.keystoneSigningSubmitted)
+        await store.receive(\.path)
+        await store.receive(\.path)
+
+        #expect(storeCalls.value == [[MigrationSignedTransferPczt(id: "r0", pczt: Data([0x11, 0x99]))]])
+        #expect(submitSignedCalls.value == [Data([0x22, 0x99])])
+    }
+}
+
+// MARK: - MOB-1496 (W6 §2): re-pair validation + sentinel split — pure function table
+
+/// `MigrationCoordFlow.rePairedKeystoneBatch`/`splitKeystoneBatch` are small, dependency-free pure
+/// functions (see their docs in `MigrationCoordFlowCoordinator.swift`) — tested directly here rather
+/// than only indirectly through the coordinator reducer, per the brief's "small pure function
+/// (testable table)" ask. No shared/global state, so unserialized.
+@Suite struct MigrationCoordFlowPureFunctionTests {
+    // MARK: - rePairedKeystoneBatch: exact match / short / long / empty
+
+    @Test func rePairedKeystoneBatchExactMatchZipsSignedBytesWithOriginalIdsByPosition() {
+        let unsigned: [MigrationUnsignedTransferPczt] = [
+            MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xAA])),
+            MigrationUnsignedTransferPczt(id: "t1", pczt: Data([0xBB])),
+            MigrationUnsignedTransferPczt(id: "t2", pczt: Data([0xCC]))
+        ]
+        let signed: [Data] = [Data([0x01]), Data([0x02]), Data([0x03])]
+
+        let result = MigrationCoordFlow.rePairedKeystoneBatch(signed: signed, unsigned: unsigned)
+
+        #expect(result == [
+            MigrationSignedTransferPczt(id: "t0", pczt: Data([0x01])),
+            MigrationSignedTransferPczt(id: "t1", pczt: Data([0x02])),
+            MigrationSignedTransferPczt(id: "t2", pczt: Data([0x03]))
+        ])
+    }
+
+    @Test func rePairedKeystoneBatchShortBatchReturnsNil() {
+        let unsigned: [MigrationUnsignedTransferPczt] = [
+            MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xAA])),
+            MigrationUnsignedTransferPczt(id: "t1", pczt: Data([0xBB])),
+            MigrationUnsignedTransferPczt(id: "t2", pczt: Data([0xCC]))
+        ]
+        let signed: [Data] = [Data([0x01]), Data([0x02])]
+
+        #expect(MigrationCoordFlow.rePairedKeystoneBatch(signed: signed, unsigned: unsigned) == nil)
+    }
+
+    @Test func rePairedKeystoneBatchLongBatchReturnsNil() {
+        let unsigned: [MigrationUnsignedTransferPczt] = [MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xAA]))]
+        let signed: [Data] = [Data([0x01]), Data([0x02])]
+
+        #expect(MigrationCoordFlow.rePairedKeystoneBatch(signed: signed, unsigned: unsigned) == nil)
+    }
+
+    @Test func rePairedKeystoneBatchEmptyParseReturnsNil() {
+        let unsigned: [MigrationUnsignedTransferPczt] = [
+            MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xAA])),
+            MigrationUnsignedTransferPczt(id: "t1", pczt: Data([0xBB]))
+        ]
+
+        #expect(MigrationCoordFlow.rePairedKeystoneBatch(signed: [], unsigned: unsigned) == nil)
+    }
+
+    @Test func rePairedKeystoneBatchEmptyBothReturnsNil() {
+        #expect(MigrationCoordFlow.rePairedKeystoneBatch(signed: [], unsigned: []) == nil)
+    }
+
+    // MARK: - splitKeystoneBatch: sentinel present / absent
+
+    @Test func splitKeystoneBatchSeparatesSentinelFromScheduleEntriesPreservingOrder() {
+        let paired: [MigrationSignedTransferPczt] = [
+            MigrationSignedTransferPczt(id: "note-split", pczt: Data([0x01])),
+            MigrationSignedTransferPczt(id: "t0", pczt: Data([0xAA])),
+            MigrationSignedTransferPczt(id: "t1", pczt: Data([0xBB]))
+        ]
+
+        let (splitEntry, scheduleEntries) = MigrationCoordFlow.splitKeystoneBatch(paired)
+
+        #expect(splitEntry == MigrationSignedTransferPczt(id: "note-split", pczt: Data([0x01])))
+        #expect(scheduleEntries == [
+            MigrationSignedTransferPczt(id: "t0", pczt: Data([0xAA])),
+            MigrationSignedTransferPczt(id: "t1", pczt: Data([0xBB]))
+        ])
+    }
+
+    @Test func splitKeystoneBatchWithNoSentinelReturnsNilSplitEntryAndAllScheduleEntries() {
+        let paired: [MigrationSignedTransferPczt] = [
+            MigrationSignedTransferPczt(id: "t0", pczt: Data([0xAA])),
+            MigrationSignedTransferPczt(id: "t1", pczt: Data([0xBB]))
+        ]
+
+        let (splitEntry, scheduleEntries) = MigrationCoordFlow.splitKeystoneBatch(paired)
+
+        #expect(splitEntry == nil)
+        #expect(scheduleEntries == paired)
+    }
+
+    @Test func splitKeystoneBatchWithEmptyBatchReturnsNilSplitEntryAndEmptyScheduleEntries() {
+        let (splitEntry, scheduleEntries) = MigrationCoordFlow.splitKeystoneBatch([])
+
+        #expect(splitEntry == nil)
+        #expect(scheduleEntries.isEmpty)
     }
 }

@@ -232,12 +232,14 @@ struct MigrationTransferPlan {
     /// schedule's transfer PCZTs (`proposeMigrationPCZTs -> [MigrationUnsignedTransferPczt]`)
     /// differently — unlike the pre-real-SDK stub, where both were the same opaque `Pczt` blob and
     /// could be concatenated directly. The note-split PCZT is wrapped under a `"note-split"`
-    /// sentinel id so it can still ride in the same typed batch/QR ceremony; on the signed side,
-    /// the WHOLE batch (including that entry) is stored via one `storeSignedMigrationTransactions`
-    /// call (`MigrationCoordFlowCoordinator`'s `.scan(.foundPCZTBatch)`/`.simulateSignature`
-    /// handlers) — the engine does not yet special-case the sentinel entry back onto the dedicated
-    /// `storeSignedNoteSplitPCZT` path. Known gap, called out in the task report; the software path
-    /// above (which DOES route the split through `submitNoteSplit` correctly) is unaffected.
+    /// sentinel id so it can still ride in the same typed batch/QR ceremony. MOB-1496 (W6): on the
+    /// signed side, `MigrationCoordFlowCoordinator`'s `.scan(.foundPCZTBatch)`/`.simulateSignature`
+    /// handlers split the sentinel entry back out before storing — only the schedule's own
+    /// engine-id-paired entries reach `storeSignedMigrationTransactions`, and the sentinel routes
+    /// through the dedicated `submitSignedNoteSplit` broadcast instead (via the existing
+    /// `MigrationNoteSplit` resubmit lane) — see that coordinator's doc for the full mechanism. The
+    /// software path above (which routes the split through `submitNoteSplit` directly) is unaffected
+    /// either way.
     private func requestKeystoneSignature(for schedule: MigrationSchedule, account: WalletAccount) -> Effect<Action> {
         .run { send in
             let needsNoteSplit = (try? await sdkSynchronizer.isNoteSplitNeeded(account.id)) ?? false

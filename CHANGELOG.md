@@ -22,6 +22,7 @@ directly impact users rather than highlighting other crucial architectural updat
 - [MOB-1487] When a small Orchard remainder is left after migrating, Migration Complete now explains the privacy risk and offers a choice: lock the remainder so it stays unspendable, or migrate it anyway with one final transfer. A help button explains what locking does (local to this wallet; restoring removes it; unlocking comes in a future release). Dormant until the migration SDK ships.
 - [MOB-1487] The send form warns when a send would spend Orchard funds after Ironwood activates, recommending migration first to avoid revealing the amount on-chain, with the Review button picking up a warning style. Dormant until the migration SDK ships.
 - [MOB-1496] Server Setup now warns before manually switching to a server that's currently receiving your Ironwood migration transfers, since syncing and migrating through the same operator could let it link the two together.
+- [MOB-1496] Keystone hardware-wallet accounts can now migrate a leftover Orchard remainder ("Migrate anyway") the same way ZODL accounts can, signing the sweep by QR like the rest of the migration. Dormant until the migration SDK ships.
 
 ### Fixed
 - [PRO-325] Swaps out of ZEC and CrossPays that fail on the swap provider's side now show "Swap Failed" / "Payment Failed" (with the contact-support option) instead of appearing to stay in progress forever. Long-running swaps in this direction also correctly show their processing state.
@@ -52,6 +53,7 @@ directly impact users rather than highlighting other crucial architectural updat
 - [MOB-1480] The migration simulator now starts turned off on a fresh install — long-press the balance on the home screen and flip "Simulation active" to enable it. Resetting the simulation keeps the toggle as you set it.
 - [MOB-1494] Migration dark mode now matches the designs in the error-and-recovery screens: the completed-migration badge inverts correctly, the recovery step connector uses the intended color, and the home banner's More/Review button stays legible.
 - [MOB-1496] The migration privacy pause is now applied consistently on every send: confirming a scheduled or immediate transfer plan pauses syncing the same way "Send now" already did, and syncing reliably resumes once the pause ends even when no other action happened to trigger it. The migration progress/resume screen's "about N mins" note no longer briefly shows "0" when reopening it. Dormant until the migration SDK ships.
+- [MOB-1496] Fixed a Keystone hardware-wallet migration batch signed by QR sometimes being rejected outright when it included a note split, and hardened the scanned signature batch against a corrupted or incomplete scan (now safely abandoned instead of partially stored). Dormant until the migration SDK ships.
 
 ## 3.7.2 build 1
 
