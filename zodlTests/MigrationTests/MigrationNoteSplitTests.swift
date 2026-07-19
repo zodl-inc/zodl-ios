@@ -258,6 +258,38 @@ import ComposableArchitecture
         await store.finish()
     }
 
+    /// MOB-1496 (C-1b fix, fix-wave 2): a Keystone mid-commit push (`signedNoteSplitPczt != nil`)
+    /// must NEVER confirm itself off the generic engine-state observation — only the coordinator's
+    /// own deferred-store success may (`storeDeferredKeystoneSchedule` dispatching `.splitConfirmed`
+    /// once `storeSignedMigrationTransactions` actually succeeds). Proven with the exact race window
+    /// this closes: `getMigrationState` ALREADY reporting `.readyToPropose` at mount time (as it
+    /// would if a prior deferred-store attempt failed and the split independently mined before a
+    /// retry) must still not jump to `.confirmed` — the one-shot check and the stream subscription
+    /// are both skipped entirely.
+    @MainActor @Test func onAppearWithSignedNoteSplitPcztSkipsLegacyObservationEvenWhenAlreadyReadyToPropose() async {
+        let getMigrationStateCalls = LockIsolated<Int>(0)
+        let store = TestStore(
+            initialState: MigrationNoteSplit.State(
+                phase: .splitting,
+                signedNoteSplitPczt: Data([0xCC, 0xDD]),
+                splitStored: true
+            )
+        ) {
+            MigrationNoteSplit()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.getMigrationState = { _ in
+                getMigrationStateCalls.withValue { $0 += 1 }
+                return .readyToPropose
+            }
+        }
+
+        await store.send(.onAppear)
+
+        #expect(getMigrationStateCalls.value == 0)
+        #expect(store.state.phase == MigrationNoteSplit.State.Phase.splitting)
+    }
+
     // MARK: - splitResult: success/failure -> failure sheet
 
     @MainActor @Test func splitResultSuccessStoresTxIdAndStaysInSplittingPhase() async {
@@ -431,6 +463,13 @@ import ComposableArchitecture
         await store.receive(\.splitResult) {
             $0.txId = "resubmitted-tx-id"
         }
+        // MOB-1496 (C-1b fix, fix-wave 2): a landed broadcast asks the coordinator (which owns the
+        // signed schedule entries) to run its deferred store — see `MigrationCoordFlowCoordinator
+        // .storeDeferredKeystoneSchedule`'s doc.
+        await store.receive(\.splitBroadcastSucceeded) {
+            $0.awaitingScheduleStore = true
+        }
+        await store.receive(.delegate(.storeScheduleRequested))
 
         #expect(broadcastCalls.value == 1)
         #expect(storeSignedCalls.value == 0)
@@ -475,6 +514,10 @@ import ComposableArchitecture
         await store.receive(\.splitResult) {
             $0.txId = "resubmitted-tx-id"
         }
+        await store.receive(\.splitBroadcastSucceeded) {
+            $0.awaitingScheduleStore = true
+        }
+        await store.receive(.delegate(.storeScheduleRequested))
 
         #expect(callOrder.value == ["store", "broadcast"])
         #expect(storedPczts.value == [signedPczt])
@@ -536,6 +579,10 @@ import ComposableArchitecture
         await store.receive(\.splitResult) {
             $0.txId = "resubmitted-tx-id"
         }
+        await store.receive(\.splitBroadcastSucceeded) {
+            $0.awaitingScheduleStore = true
+        }
+        await store.receive(.delegate(.storeScheduleRequested))
 
         #expect(storeCalls.value == 1)
         #expect(broadcastCalls.value == 2)
@@ -578,11 +625,15 @@ import ComposableArchitecture
     }
 
     @MainActor @Test func splitConfirmedClearsSignedNoteSplitPczt() async {
+        // MOB-1496 (C-1b fix, fix-wave 2): seeded `awaitingScheduleStore: true` too — `.splitConfirmed`
+        // is the coordinator's success report for its deferred schedule store, so it must clear this
+        // alongside `signedNoteSplitPczt`/`splitStored`.
         let store = TestStore(
             initialState: MigrationNoteSplit.State(
                 phase: .splitting,
                 signedNoteSplitPczt: Data([0xEE]),
-                splitStored: true
+                splitStored: true,
+                awaitingScheduleStore: true
             )
         ) {
             MigrationNoteSplit()
@@ -592,6 +643,7 @@ import ComposableArchitecture
             $0.phase = .confirmed
             $0.signedNoteSplitPczt = nil
             $0.splitStored = false
+            $0.awaitingScheduleStore = false
         }
     }
 
@@ -731,7 +783,114 @@ import ComposableArchitecture
         await store.receive(\.splitResult) {
             $0.txId = "resubmitted-tx-id"
         }
+        await store.receive(\.splitBroadcastSucceeded) {
+            $0.awaitingScheduleStore = true
+        }
+        await store.receive(.delegate(.storeScheduleRequested))
 
         #expect(callOrder.value == ["stop", "execute"])
+    }
+
+    // MARK: - MOB-1496 (C-1b fix, fix-wave 2): deferred schedule store handshake with the coordinator
+
+    /// The Keystone fork's `migrationRecordFailedAfterBroadcast` catch (the broadcast DID land; only
+    /// recording failed) is ALSO a landed broadcast — it must still ask the coordinator to run its
+    /// deferred store, exactly like an ordinary success. Mirrors
+    /// `retryTappedWhenRecordFailsAfterBroadcastStillReportsSuccessAndReconciles` above, which covers
+    /// the unaffected SOFTWARE fork (`submitNoteSplit`, still reconciles directly — no coordinator
+    /// involved there).
+    @MainActor @Test func retryTappedWithSignedPcztWhenRecordFailsAfterBroadcastStillAsksCoordinatorToStore() async {
+        let signedPczt = Data([0xCC, 0xDD])
+        let state = MigrationNoteSplit.State(
+            phase: .splitting,
+            isFailurePresented: true,
+            signedNoteSplitPczt: signedPczt,
+            splitStored: true
+        )
+        let store = TestStore(initialState: state) {
+            MigrationNoteSplit()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.broadcastStoredNoteSplit = { _, _ in
+                throw ZcashError.migrationRecordFailedAfterBroadcast(NSError(domain: "test", code: 1))
+            }
+            $0.migrationManager.migrationNetworkOptions = { _ in Self.defaultNetworkPrivacyOptions }
+        }
+
+        await store.send(.retryTapped) {
+            $0.isFailurePresented = false
+        }
+        // txId was already "" (the untouched default matches the success-like placeholder value) —
+        // no further diff to describe for this receive.
+        await store.receive(\.splitResult)
+        await store.receive(\.splitBroadcastSucceeded) {
+            $0.awaitingScheduleStore = true
+        }
+        await store.receive(.delegate(.storeScheduleRequested))
+
+        #expect(store.state.isFailurePresented == false)
+    }
+
+    /// While `awaitingScheduleStore` is `true` (a previous deferred-store attempt failed), a further
+    /// `retryTapped` must ask the coordinator AGAIN — never re-broadcast the already-safe split
+    /// (`broadcastStoredNoteSplit`) and never re-store it (`storeSignedNoteSplit`) or re-submit the
+    /// software proposal (`submitNoteSplit`). Counter-asserts all three SDK members stay uncalled.
+    @MainActor @Test func retryTappedWhileAwaitingScheduleStoreAsksCoordinatorAgainWithoutBroadcastingOrStoring() async {
+        let storeSignedCalls = LockIsolated<Int>(0)
+        let broadcastCalls = LockIsolated<Int>(0)
+        let submitProposalCalls = LockIsolated<Int>(0)
+        var state = MigrationNoteSplit.State(
+            phase: .splitting,
+            isFailurePresented: true,
+            signedNoteSplitPczt: Data([0xCC, 0xDD]),
+            splitStored: true,
+            awaitingScheduleStore: true
+        )
+        state.proposal = NoteSplitProposal(outputNotes: [Zatoshi(500_000_000)], fee: Zatoshi(100_000))
+        let store = TestStore(initialState: state) {
+            MigrationNoteSplit()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.storeSignedNoteSplit = { _, _ in storeSignedCalls.withValue { $0 += 1 } }
+            $0.sdkSynchronizer.broadcastStoredNoteSplit = { _, _ in
+                broadcastCalls.withValue { $0 += 1 }
+                return MigrationTransferResult.success(txId: "should-not-be-called")
+            }
+            $0.sdkSynchronizer.submitNoteSplit = { _, _, _, _ in
+                submitProposalCalls.withValue { $0 += 1 }
+                return MigrationTransferResult.success(txId: "should-not-be-called")
+            }
+        }
+
+        await store.send(.retryTapped) {
+            $0.isFailurePresented = false
+        }
+        await store.receive(.delegate(.storeScheduleRequested))
+
+        #expect(storeSignedCalls.value == 0)
+        #expect(broadcastCalls.value == 0)
+        #expect(submitProposalCalls.value == 0)
+    }
+
+    /// The coordinator's deferred store failing re-presents the EXISTING failure sheet;
+    /// `awaitingScheduleStore` stays `true` so the very next retry asks the coordinator again (see the
+    /// test above) rather than falling back to a re-broadcast or re-store.
+    @MainActor @Test func scheduleStoreFailedPresentsFailureSheetAndKeepsAwaitingScheduleStore() async {
+        let store = TestStore(
+            initialState: MigrationNoteSplit.State(
+                phase: .splitting,
+                signedNoteSplitPczt: Data([0xCC, 0xDD]),
+                splitStored: true,
+                awaitingScheduleStore: true
+            )
+        ) {
+            MigrationNoteSplit()
+        }
+
+        await store.send(.scheduleStoreFailed) {
+            $0.isFailurePresented = true
+        }
+
+        #expect(store.state.awaitingScheduleStore == true)
     }
 }

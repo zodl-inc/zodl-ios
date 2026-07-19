@@ -807,7 +807,13 @@ import ComposableArchitecture
         await store.send(.path(.element(id: 2, action: .scan(.foundPCZTBatch(signed)))))
         await store.receive(\.keystoneSigningSubmitted)
         await store.receive(\.path) // dispatched .noteSplit(.retryTapped)
-        await store.receive(\.path) // .noteSplit(.splitResult(.success))
+        await store.receive(\.path) // .noteSplit(.splitResult(.success)) — the broadcast landed
+        // MOB-1496 (C-1b fix, fix-wave 2): `storeSignedMigrationTransactions` is no longer called
+        // inline in the batch-commit effect — it is DEFERRED until here, driven by the broadcast
+        // succeeding above.
+        await store.receive(\.path) // .noteSplit(.splitBroadcastSucceeded)
+        await store.receive(\.path) // .noteSplit(.delegate(.storeScheduleRequested))
+        await store.receive(\.path) // .noteSplit(.splitConfirmed) — the deferred store succeeded
 
         #expect(storeCalls.value == [expectedStored])
     }
@@ -851,8 +857,11 @@ import ComposableArchitecture
 
         await store.send(.path(.element(id: 2, action: .scan(.foundPCZTBatch(signed)))))
         await store.receive(\.keystoneSigningSubmitted)
-        await store.receive(\.path)
-        await store.receive(\.path)
+        await store.receive(\.path) // dispatched .noteSplit(.retryTapped)
+        await store.receive(\.path) // .noteSplit(.splitResult(.success))
+        await store.receive(\.path) // .noteSplit(.splitBroadcastSucceeded)
+        await store.receive(\.path) // .noteSplit(.delegate(.storeScheduleRequested))
+        await store.receive(\.path) // .noteSplit(.splitConfirmed) — the deferred store succeeded
 
         #expect(storeSignedCalls.value == [Data([0x01, 0x99])])
         #expect(broadcastCalls.value == 1)
@@ -867,14 +876,20 @@ import ComposableArchitecture
         }
     }
 
-    /// THE C-1 PIN (final review R6): the split MUST store before the schedule — `storeSignedNoteSplit`
-    /// is the RUN-CREATING call (`store_signed_note_split_pczt` unconditionally starts a new engine
-    /// run); `storeSignedMigrationTransactions` uses-or-creates the active run. Storing the schedule
-    /// first (the pre-fix W6 order) would let the split's later store create a SECOND, newer run that
-    /// permanently shadows the schedule's (`active_run` = newest non-terminal) — the committed
-    /// schedule would never execute. This test is RED against the pre-fix ordering (recorded in the
-    /// fix report) and GREEN against the fix: split store, then schedule store, then the persisted
-    /// schedule is recorded — strictly in that order.
+    /// THE C-1/C-1b PIN (final review R6, fix-wave 2): the split must store before it broadcasts, and
+    /// the schedule must store only AFTER that broadcast succeeds. Two engine hazards, closed by one
+    /// order: (C-1) `storeSignedNoteSplit`/`store_signed_note_split_pczt` unconditionally starts a
+    /// NEW engine run, while `storeSignedMigrationTransactions` uses-or-creates the active one —
+    /// storing the schedule first would let the split's later store shadow it with a second, newer
+    /// run (`active_run` = newest non-terminal). (C-1b, fix-wave 2) even with the split stored first,
+    /// storing the schedule BEFORE the split broadcasts is still unsafe: the split's broadcast-success
+    /// record (`record_transfer_result`, `context.rs:1299-1303`) UNCONDITIONALLY overwrites the run's
+    /// phase, clobbering the schedule store's `BroadcastScheduled` the instant the broadcast lands —
+    /// the run then parks at `.readyToPropose` forever once the split mines (`context.rs:361-378`),
+    /// stranding the schedule. This test is RED against wave 1's C-1-only fix (recorded in the fix-wave
+    /// 2 report: broadcast landed LAST, after the schedule was already stored) and GREEN against the
+    /// full fix: split store, split BROADCAST, schedule store, then the persisted schedule is recorded
+    /// — strictly in that order.
     @MainActor @Test func foundPCZTBatchWithNoteSplitSentinelStoresSplitBeforeScheduleBeforeRecordingCommittedSchedule() async {
         let callOrder = LockIsolated<[String]>([])
         let unsigned: [MigrationUnsignedTransferPczt] = [
@@ -901,7 +916,10 @@ import ComposableArchitecture
             $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, _ in
                 callOrder.withValue { $0.append("storeSignedMigrationTransactions") }
             }
-            $0.sdkSynchronizer.broadcastStoredNoteSplit = { _, _ in MigrationTransferResult.success(txId: "split-tx") }
+            $0.sdkSynchronizer.broadcastStoredNoteSplit = { _, _ in
+                callOrder.withValue { $0.append("broadcastStoredNoteSplit") }
+                return MigrationTransferResult.success(txId: "split-tx")
+            }
             $0.migrationManager.recordCommittedSchedule = { _, _ in callOrder.withValue { $0.append("recordCommittedSchedule") } }
             $0.migrationManager.reconcile = { }
             $0.migrationManager.migrationNetworkOptions = { _ in Self.defaultNetworkPrivacyOptions }
@@ -910,16 +928,40 @@ import ComposableArchitecture
 
         await store.send(.path(.element(id: 2, action: .scan(.foundPCZTBatch(signed)))))
         await store.receive(\.keystoneSigningSubmitted)
-        await store.receive(\.path)
-        await store.receive(\.path)
+        await store.receive(\.path) // dispatched .noteSplit(.retryTapped)
+        await store.receive(\.path) // .noteSplit(.splitResult(.success)) — the broadcast landed
+        await store.receive(\.path) // .noteSplit(.splitBroadcastSucceeded) — sets awaitingScheduleStore
+        await store.receive(\.path) // .noteSplit(.delegate(.storeScheduleRequested)) — asks the coordinator to store
+        await store.receive(\.path) // .noteSplit(.splitConfirmed) — the deferred store succeeded
 
-        #expect(callOrder.value == ["storeSignedNoteSplit", "storeSignedMigrationTransactions", "recordCommittedSchedule"])
+        // MOB-1496 (C-1b fix, final review R6 fix-wave 2): the schedule store must not precede the
+        // split's BROADCAST (not just its local store) — the engine's prep-success record
+        // unconditionally overwrites the run's phase (`context.rs:1299-1303`), so a schedule store
+        // performed before the split broadcasts gets clobbered the instant it lands, stranding the
+        // run at `.readyToPropose` once the split mines (`context.rs:361-378`). RED against wave 1's
+        // code (store, store, record — broadcast last): recorded in the fix report.
+        #expect(
+            callOrder.value ==
+                ["storeSignedNoteSplit", "broadcastStoredNoteSplit", "storeSignedMigrationTransactions", "recordCommittedSchedule"]
+        )
+        // The deferred store's success flips the note-split screen to `.confirmed` and releases the
+        // stash — nothing left pending.
+        #expect(store.state.pendingKeystoneScheduleStore == nil)
+        guard case let .noteSplit(noteSplitState) = try? #require(store.state.path.last) else {
+            Issue.record("Expected .noteSplit still on top, now confirmed")
+            return
+        }
+        #expect(noteSplitState.phase == MigrationNoteSplit.State.Phase.confirmed)
     }
 
-    /// A split-broadcast failure must not undo the already-committed schedule — the note-split
-    /// screen's OWN existing failure sheet (`isFailurePresented`) is what surfaces the retry
-    /// affordance, with the SAME signed PCZT still stashed so a real retry tap re-broadcasts it.
-    @MainActor @Test func foundPCZTBatchWithNoteSplitSentinelSplitBroadcastFailureLeavesStoredScheduleIntactAndPresentsRetry() async {
+    /// A split-broadcast failure (MOB-1496 C-1b fix, fix-wave 2: the schedule is no longer stored
+    /// before the split broadcasts, so there is nothing "already committed" here any more — the
+    /// entries stay stashed, unstored, in `pendingKeystoneScheduleStore`, exactly where a later
+    /// successful broadcast attempt will find them) — the note-split screen's OWN existing failure
+    /// sheet (`isFailurePresented`) is what surfaces the retry affordance, with the SAME signed PCZT
+    /// still stashed so a real retry tap RE-BROADCASTS it (not a schedule-store retry — the split
+    /// itself hasn't landed yet, so `awaitingScheduleStore` never became `true`).
+    @MainActor @Test func foundPCZTBatchWithNoteSplitSentinelSplitBroadcastFailureLeavesScheduleUnstoredAndPresentsRetry() async {
         let recordCommittedScheduleCalls = LockIsolated<Int>(0)
         let unsigned: [MigrationUnsignedTransferPczt] = [
             MigrationUnsignedTransferPczt(id: "note-split", pczt: Data([0x01])),
@@ -951,16 +993,20 @@ import ComposableArchitecture
 
         await store.send(.path(.element(id: 2, action: .scan(.foundPCZTBatch(signed)))))
         await store.receive(\.keystoneSigningSubmitted)
-        await store.receive(\.path)
-        await store.receive(\.path)
+        await store.receive(\.path) // dispatched .noteSplit(.retryTapped)
+        await store.receive(\.path) // .noteSplit(.splitResult(.networkError)) — broadcast failed
 
-        #expect(recordCommittedScheduleCalls.value == 1)
+        // MOB-1496 (C-1b fix, fix-wave 2): the deferred store is never even attempted — the broadcast
+        // that would trigger it (`.splitBroadcastSucceeded`) never fired.
+        #expect(recordCommittedScheduleCalls.value == 0)
+        #expect(store.state.pendingKeystoneScheduleStore != nil)
         guard case let .noteSplit(noteSplitState) = try? #require(store.state.path.last) else {
             Issue.record("Expected .noteSplit still on top showing its own failure sheet")
             return
         }
         #expect(noteSplitState.isFailurePresented == true)
         #expect(noteSplitState.signedNoteSplitPczt == Data([0x01, 0x99]))
+        #expect(noteSplitState.awaitingScheduleStore == false)
     }
 
     // MARK: - MOB-1496 (C-1 fix, final review R6): split-store failure abandons the session
@@ -1084,21 +1130,28 @@ import ComposableArchitecture
 
         await store.send(.path(.element(id: 2, action: .scan(.foundPCZTBatch(signed)))))
         await store.receive(\.keystoneSigningSubmitted)
-        await store.receive(\.path)
-        await store.receive(\.path)
+        await store.receive(\.path) // dispatched .noteSplit(.retryTapped)
+        await store.receive(\.path) // .noteSplit(.splitResult(.success))
+        // MOB-1496 (C-1b fix, fix-wave 2): the deferred schedule store — driven by the broadcast
+        // succeeding above — runs and succeeds before the "Split Confirmed!" phase (and Continue) is
+        // ever reachable.
+        await store.receive(\.path) // .noteSplit(.splitBroadcastSucceeded)
+        await store.receive(\.path) // .noteSplit(.delegate(.storeScheduleRequested))
+        await store.receive(\.path) // .noteSplit(.splitConfirmed) — the deferred store succeeded
 
-        guard case .noteSplit = try? #require(store.state.path.last) else {
+        guard case let .noteSplit(noteSplitState) = try? #require(store.state.path.last) else {
             Issue.record("Expected .noteSplit pushed and showing before Continue")
             return
         }
+        #expect(noteSplitState.phase == MigrationNoteSplit.State.Phase.confirmed)
         #expect(store.state.pendingKeystoneSplitResume == MigrationCoordFlow.KeystoneSigningContext.planCommit)
+        #expect(store.state.pendingKeystoneScheduleStore == nil)
         guard let noteSplitId = store.state.path.ids.last else {
             Issue.record("Expected a noteSplit element id")
             return
         }
 
-        // The split confirmed (in real use: the SDK state stream reports `.readyToPropose`, flipping
-        // `phase` to `.confirmed`) and the user tapped Continue. The actual pop+resume is deferred to
+        // The split confirmed and the user tapped Continue. The actual pop+resume is deferred to
         // `keystoneSplitResumeContinued` (mirrors `keystoneSignRejected`'s deferred pop — popping the
         // `noteSplit` element inline while `.forEach` is still delivering ITS OWN action to that same
         // element is a TCA "missing element" runtime error), so a second receive is expected here.
@@ -1144,10 +1197,14 @@ import ComposableArchitecture
 
         await store.send(.path(.element(id: 2, action: .scan(.foundPCZTBatch(signed)))))
         await store.receive(\.keystoneSigningSubmitted)
-        await store.receive(\.path)
-        await store.receive(\.path)
+        await store.receive(\.path) // dispatched .noteSplit(.retryTapped)
+        await store.receive(\.path) // .noteSplit(.splitResult(.success))
+        await store.receive(\.path) // .noteSplit(.splitBroadcastSucceeded)
+        await store.receive(\.path) // .noteSplit(.delegate(.storeScheduleRequested))
+        await store.receive(\.path) // .noteSplit(.splitConfirmed) — the deferred store succeeded
 
         #expect(store.state.pendingKeystoneSplitResume == MigrationCoordFlow.KeystoneSigningContext.immediateReview)
+        #expect(store.state.pendingKeystoneScheduleStore == nil)
         guard let noteSplitId = store.state.path.ids.last else {
             Issue.record("Expected a noteSplit element id")
             return
@@ -2552,8 +2609,11 @@ import ComposableArchitecture
 
         await store.send(.path(.element(id: 2, action: .scan(.foundPCZTBatch(signed)))))
         await store.receive(\.keystoneSigningSubmitted)
-        await store.receive(\.path)
-        await store.receive(\.path)
+        await store.receive(\.path) // dispatched .noteSplit(.retryTapped)
+        await store.receive(\.path) // .noteSplit(.splitResult(.success))
+        await store.receive(\.path) // .noteSplit(.splitBroadcastSucceeded)
+        await store.receive(\.path) // .noteSplit(.delegate(.storeScheduleRequested))
+        await store.receive(\.path) // .noteSplit(.splitConfirmed) — the deferred store succeeded
 
         #expect(storeCalls.value == [[MigrationSignedTransferPczt(id: "r0", pczt: Data([0x11, 0x99]))]])
         #expect(storeSignedNoteSplitCalls.value == [Data([0x22, 0x99])])

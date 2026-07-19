@@ -51,6 +51,7 @@ directly impact users rather than highlighting other crucial architectural updat
 - [MOB-1480] The migration simulator now starts turned off on a fresh install — long-press the balance on the home screen and flip "Simulation active" to enable it. Resetting the simulation keeps the toggle as you set it.
 - [MOB-1494] Migration dark mode now matches the designs in the error-and-recovery screens: the completed-migration badge inverts correctly, the recovery step connector uses the intended color, and the home banner's More/Review button stays legible.
 - [MOB-1496] Fixed a bug affecting Keystone hardware-wallet accounts: confirming a scheduled migration plan that also needed a note split could leave the rest of the plan stuck and unable to send, requiring the whole migration to be set up again from scratch. Gated behind Ironwood network activation and not yet in a released build.
+- [MOB-1496] Fixed a further case of the same Keystone note-split issue: even after the previous fix, the plan could still silently stall — showing "Migration required" again over a schedule that was already signed and committed — once the note-split transaction confirmed. Confirming now waits for the split to broadcast before finishing the plan, so it stays committed and sends on schedule. Gated behind Ironwood network activation and not yet in a released build.
 
 ## 3.7.2 build 1
 
