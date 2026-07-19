@@ -189,7 +189,21 @@ struct SDKSynchronizerClient: Sendable {
     ) async throws -> MigrationTransferResult?
     // Keystone (PCZT)
     var proposeNoteSplitPCZT: @Sendable (AccountUUID) async throws -> Data
-    var submitSignedNoteSplit: @Sendable (AccountUUID, Data, MigrationNetworkPrivacyOptions) async throws -> MigrationTransferResult
+    /// Stores a Keystone-signed note-split PCZT — thin wrap of `storeSignedNoteSplitPCZT(accountUUID:_:)`,
+    /// discarding the returned `PreparedMigrationTransfer`. MOB-1496 (C-1 fix): this is the
+    /// RUN-CREATING store — the engine's `store_signed_note_split_pczt` unconditionally starts a new
+    /// run — so it MUST be called before `storeSignedMigrationTransactions` for the same commit: that
+    /// member uses-or-creates the active run, and the engine always treats the newest non-terminal run
+    /// as active, so storing the split AFTER the schedule would create a second run that shadows the
+    /// first forever, permanently stranding whatever the schedule store just committed. NOT
+    /// guard-wrapped: local store, no broadcast — same reasoning as `storeSignedMigrationTransactions`.
+    var storeSignedNoteSplit: @Sendable (AccountUUID, Data) async throws -> Void
+    /// Broadcasts the Keystone note-split already stored via `storeSignedNoteSplit`, through
+    /// `executeNextPendingMigrationTransfer`. Idempotent by construction — a retry simply re-asks the
+    /// engine what's next-due, never re-stores — unlike the deleted `submitSignedNoteSplit` composite
+    /// this pair replaces, whose retry re-ran the (by-then-already-consumed) store and threw. Guard-
+    /// wrapped: broadcast-bearing.
+    var broadcastStoredNoteSplit: @Sendable (AccountUUID, MigrationNetworkPrivacyOptions) async throws -> MigrationTransferResult
     var proposeMigrationPCZTs: @Sendable (AccountUUID, MigrationSchedule) async throws -> [MigrationUnsignedTransferPczt]
     var storeSignedMigrationTransactions: @Sendable (AccountUUID, [MigrationSignedTransferPczt]) async throws -> Void
     // Batch UR encoding of N migration PCZTs into ONE animated-QR session — [ext]: JOINT SDK +

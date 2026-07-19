@@ -91,12 +91,27 @@ extension SDKSynchronizerClient {
             }
         }
 
-        let originalSubmitSignedNoteSplit = self.submitSignedNoteSplit
-        self.submitSignedNoteSplit = { accountUUID, pczt, options in
+        // MOB-1496 (C-1 fix): the old `submitSignedNoteSplit` composite split into a store member and
+        // a broadcast member — the simulator's single-snapshot engine has no run to shadow (that
+        // hazard is real-engine-only), so there is no separate "store" phase to simulate here.
+        // `engine.submitSignedSplit` is unchanged (still exercised directly by
+        // `MigrationSimulatorEngineTests`) and does the full store+submit in one shot; its own `pczt`
+        // parameter has always been ignored (it re-derives the deterministic split from
+        // `prepareSplit()`), so moving the ENTIRE call into `broadcastStoredNoteSplit` below —
+        // passing `Data()` — reproduces byte-identical panel/engine behavior to the old composite.
+        let originalStoreSignedNoteSplit = self.storeSignedNoteSplit
+        self.storeSignedNoteSplit = { accountUUID, pczt in
+            if !engine.isActive {
+                try await originalStoreSignedNoteSplit(accountUUID, pczt)
+            }
+        }
+
+        let originalBroadcastStoredNoteSplit = self.broadcastStoredNoteSplit
+        self.broadcastStoredNoteSplit = { accountUUID, options in
             if engine.isActive {
-                return await engine.submitSignedSplit(pczt)
+                return await engine.submitSignedSplit(Data())
             } else {
-                return try await originalSubmitSignedNoteSplit(accountUUID, pczt, options)
+                return try await originalBroadcastStoredNoteSplit(accountUUID, options)
             }
         }
     }

@@ -3,8 +3,8 @@
 //  zodl
 //
 //  Ironwood migration content for the SmartBanner's `priorityMigration` case (MOB-1464), triggered
-//  live via the `.evaluatePriorityMigration` walk step and the `migrationStateStream()` subscription
-//  (MOB-1466 — see SmartBannerStore.swift). `MigrationBannerVariant` is a pure, testable mapping
+//  live via the `.evaluatePriorityMigration` walk step and the `migrationManager.stateEvents(_:)`
+//  subscription (MOB-1466 — see SmartBannerStore.swift). `MigrationBannerVariant` is a pure, testable mapping
 //  (see MigrationBannerVariantTests); `migrationContent()` mirrors `shieldingContent()`'s structure.
 //
 

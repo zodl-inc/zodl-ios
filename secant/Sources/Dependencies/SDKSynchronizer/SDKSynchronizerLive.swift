@@ -307,13 +307,17 @@ extension SDKSynchronizerClient: DependencyKey {
                     try await synchronizer.getTreeState(height: height)
                 }
             },
-            // Migration (Orchard → Ironwood) — real SDK wiring (MOB-1496). The three broadcast-path
+            // Migration (Orchard → Ironwood) — real SDK wiring (MOB-1496). The four broadcast-path
             // members (`submitNoteSplit`, `executeNextPendingMigrationTransfer`,
-            // `migrateMigrationDust`, `submitSignedNoteSplit`) acquire the transaction guard —
+            // `migrateMigrationDust`, `broadcastStoredNoteSplit`) acquire the transaction guard —
             // same `withSubmission` pattern as `createAndSubmitProposedTransactions` — so a
             // `switchTo(endpoint:)` can never overlap a migration broadcast. Every other member
-            // here is read-only/non-broadcast and stays unguarded; `storeSignedMigrationTransactions`
-            // (Keystone/PCZT path) is local storage, not a broadcast, so it stays unguarded too.
+            // here is read-only/non-broadcast and stays unguarded; `storeSignedMigrationTransactions`/
+            // `storeSignedNoteSplit` (Keystone/PCZT path) are local storage, not a broadcast, so they
+            // stay unguarded too — `storeSignedNoteSplit` in particular MUST run before
+            // `storeSignedMigrationTransactions` for the same Keystone commit, since it is what
+            // creates the engine run the schedule store then joins (MOB-1496 C-1 fix — see
+            // `SDKSynchronizerInterface`'s doc on both members for the engine citation).
             getMigrationState: { accountUUID in
                 try await synchronizer.migrationState(accountUUID: accountUUID)
             },
@@ -412,13 +416,18 @@ extension SDKSynchronizerClient: DependencyKey {
             proposeNoteSplitPCZT: { accountUUID in
                 try await synchronizer.createUnsignedNoteSplitPCZT(accountUUID: accountUUID)
             },
-            submitSignedNoteSplit: { accountUUID, pczt, options in
+            storeSignedNoteSplit: { accountUUID, pczt in
+                // Run-creating store (MOB-1496 C-1 fix) — see `SDKSynchronizerInterface`'s doc for
+                // why this must precede `storeSignedMigrationTransactions` for the same commit.
+                _ = try await synchronizer.storeSignedNoteSplitPCZT(accountUUID: accountUUID, pczt)
+            },
+            broadcastStoredNoteSplit: { accountUUID, options in
                 @Dependency(\.transactionGuard) var transactionGuard
                 return try await transactionGuard.withSubmission {
-                    // The engine serves the just-stored split as the next-due transfer, so `nil`
+                    // The engine serves the already-stored split as the next-due transfer, so `nil`
                     // here means it wasn't due yet (not a failure) — treat as retryable so the UI
-                    // offers a retry rather than reporting a false failure.
-                    _ = try await synchronizer.storeSignedNoteSplitPCZT(accountUUID: accountUUID, pczt)
+                    // offers a retry rather than reporting a false failure. Idempotent by
+                    // construction: a retry just asks "what's next-due" again, never re-stores.
                     let result = try await synchronizer.executeNextPendingMigrationTransfer(accountUUID: accountUUID, options: options)
                     return result ?? MigrationTransferResult.networkError(retryable: true)
                 }

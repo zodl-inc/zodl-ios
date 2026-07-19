@@ -5,7 +5,8 @@
 //  "Migration Progress" / "Resume Migration" / "Re-scheduling…" screen (MOB-1464, Figma S10 ·
 //  progress 2709:3350 / resume 2696:7133 / re-scheduling 2840:3656). `onAppear` loads rows/summary
 //  via `migrationTransfers()`/`migrationSummary()`, derives `isSendNowDisabled` from
-//  `manager.sendGate()`, and subscribes `migrationStateStream()` to refresh rows live (MOB-1466).
+//  `manager.sendGate()`, and subscribes `migrationManager.stateEvents(_:)` to refresh rows live
+//  (MOB-1466).
 //  When this screen is a flow re-entry root (`isFlowRoot`), its back control closes the flow
 //  (`.done`) instead of popping — every other delegate is consumed by
 //  `MigrationCoordFlowCoordinator` (MOB-1466).
@@ -88,7 +89,7 @@ struct MigrationStatus {
         /// Progress CTA and the X close.
         case gotItTapped
         case delegate(Delegate)
-        /// `migrationStateStream()` ticked — reloads rows/summary/gate.
+        /// `migrationManager.stateEvents(_:)` ticked — reloads rows/summary/gate.
         case migrationStateChanged
         case onAppear
         /// Public: the coordinator's reschedule effect (SDK reschedule + first-window scheduling)

@@ -8,23 +8,28 @@
 //  `prepareNoteSplit`/`submitNoteSplit`, or the Keystone batch), so this screen is never pushed by
 //  forward routing any more — it only ever appears via `reentryRoute() == .noteSplitProgress` (the
 //  home banner's `.splitting` tap), always as the coordinator's flow root. `onAppear` subscribes to
-//  `migrationStateStream()` to advance `.splitting` -> `.confirmed` once the SDK reports
+//  `migrationManager.stateEvents(_:)` to advance `.splitting` -> `.confirmed` once the SDK reports
 //  `.readyToPropose` (or jumps straight there if that already happened before this screen mounted);
 //  `confirmed`'s `continueTapped` closes the flow (the schedule/transfer was already committed before
 //  the split even started — the home banner carries the progression from here). `retryTapped`/
 //  `splitResult`/the failure sheet are kept for when a split needs re-attempting from this screen,
-//  but nothing drives them live today: the actual submission (and its own failure handling)
-//  happens once, earlier, under the TransferPlan/ReviewTransfer commit CTA — this re-entry
-//  screen's `onAppear` only observes `migrationStateStream()`/does a one-shot state read, so
-//  `isFailurePresented` never becomes `true` from a cold mount. Kept ready for a future
+//  but nothing drives them live today for the SOFTWARE path: that submission (and its own failure
+//  handling) happens once, earlier, under the TransferPlan/ReviewTransfer commit CTA — this re-entry
+//  screen's `onAppear` only observes `migrationManager.stateEvents(_:)`/does a one-shot state read, so
+//  `isFailurePresented` never becomes `true` from a cold mount for that path. Kept ready for a future
 //  re-entry-time retry surface.
 //
 //  MOB-1468 (Keystone): once split signing folded into `MigrationTransferPlan`'s batch (MOB-1478 W4),
-//  this screen no longer requests Keystone signing itself, and no coordinator path sets
-//  `signedNoteSplitPczt` any more either (that lived solely in the now-deleted `.noteSplit` Keystone
-//  signing context). `retryTapped`'s fork on it is kept dormant rather than deleted — same reasoning
-//  as the failure sheet above — so a future re-entry-time Keystone resume has somewhere to plug in;
-//  `nil` (the only value reachable today) keeps the existing software retry.
+//  this screen no longer requests Keystone signing itself. MOB-1496 (W6) reintroduced a coordinator
+//  path that DOES set `signedNoteSplitPczt` — `MigrationCoordFlowCoordinator.resumeAfterKeystoneSigning`
+//  pushes this screen mid-Keystone-commit to broadcast a just-signed split, dispatching `.retryTapped`
+//  itself as the first attempt. MOB-1496 (C-1 fix, final review R6): that push now also sets
+//  `splitStored: true` (the coordinator's own store effect already called `storeSignedNoteSplit`
+//  before pushing this screen — see that effect's doc for why the store must run there, not here), so
+//  `retryTapped`'s Keystone fork only ever (re)broadcasts for this, the only live caller today. The
+//  fork's store-then-broadcast fallback (`splitStored == false`) is kept dormant rather than deleted —
+//  same reasoning as the failure sheet above — so a future caller that hands over an un-stored PCZT
+//  has somewhere to plug in.
 //
 
 import Foundation
@@ -57,9 +62,20 @@ struct MigrationNoteSplit {
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
         @Shared(.inMemory(.toast)) var toast: Toast.Edge? = nil
         /// MOB-1468 (Keystone): set by the coordinator once a QR round-trip signs the note-split
-        /// PCZT. Non-`nil` forks `retryTapped` to re-broadcast this SAME signed PCZT via
-        /// `submitSignedNoteSplit` instead of re-preparing. Cleared once `.splitConfirmed` lands.
+        /// PCZT. Non-`nil` forks `retryTapped` onto the Keystone lane (`storeSignedNoteSplit`/
+        /// `broadcastStoredNoteSplit`) instead of the software `submitNoteSplit` re-preparation.
+        /// Cleared once `.splitConfirmed` lands.
         var signedNoteSplitPczt: Data?
+        /// MOB-1496 (C-1 fix, final review R6): true once `signedNoteSplitPczt` is durably stored in
+        /// the migration engine — `retryTapped`'s Keystone fork then only (re)broadcasts
+        /// (`broadcastStoredNoteSplit`), never re-stores. The coordinator's batch-commit push
+        /// (the only live caller today) always sets this `true` — its own store effect already
+        /// called `storeSignedNoteSplit` before pushing this screen. `false` (the default) makes the
+        /// fork self-sufficient for a hypothetical future caller that hands over an un-stored PCZT:
+        /// its first `retryTapped` stores once, flips this via `.noteSplitStored`, then broadcasts;
+        /// every later retry (after e.g. a broadcast-only failure) skips straight to broadcasting.
+        /// Cleared once `.splitConfirmed` lands, alongside `signedNoteSplitPczt`.
+        var splitStored = false
 
         init(
             phase: Phase = .splitting,
@@ -68,7 +84,8 @@ struct MigrationNoteSplit {
             txId: String = "",
             isFailurePresented: Bool = false,
             isFlowRoot: Bool = false,
-            signedNoteSplitPczt: Data? = nil
+            signedNoteSplitPczt: Data? = nil,
+            splitStored: Bool = false
         ) {
             self.phase = phase
             self.amount = amount
@@ -77,6 +94,7 @@ struct MigrationNoteSplit {
             self.isFailurePresented = isFailurePresented
             self.isFlowRoot = isFlowRoot
             self.signedNoteSplitPczt = signedNoteSplitPczt
+            self.splitStored = splitStored
         }
     }
 
@@ -92,8 +110,13 @@ struct MigrationNoteSplit {
         case copyTxIdTapped
         case delegate(Delegate)
         case onAppear
-        /// Failure sheet: dismiss, then re-submit the stored proposal.
+        /// Failure sheet: dismiss, then re-submit the stored proposal (or, on the Keystone fork,
+        /// (re)store/broadcast the signed PCZT — see `signedNoteSplitPczt`/`splitStored`).
         case retryTapped
+        /// MOB-1496 (C-1 fix, final review R6): the Keystone fork's `storeSignedNoteSplit` call
+        /// succeeded — flips `state.splitStored` so a LATER retry (e.g. after a broadcast-only
+        /// failure) skips straight to `broadcastStoredNoteSplit` instead of re-storing.
+        case noteSplitStored
         /// `migrationManager.stateEvents()` reported `.readyToPropose` while splitting.
         case splitConfirmed
         case splitResult(MigrationTransferResult)
@@ -158,13 +181,22 @@ struct MigrationNoteSplit {
             case .retryTapped:
                 state.isFailurePresented = false
                 if let signedNoteSplitPczt = state.signedNoteSplitPczt {
-                    return resubmitSignedNoteSplit(signedNoteSplitPczt, account: state.selectedWalletAccount)
+                    return resubmitSignedNoteSplit(
+                        signedNoteSplitPczt,
+                        stored: state.splitStored,
+                        account: state.selectedWalletAccount
+                    )
                 }
                 return submitNoteSplit(state.proposal, account: state.selectedWalletAccount)
+
+            case .noteSplitStored:
+                state.splitStored = true
+                return .none
 
             case .splitConfirmed:
                 state.phase = .confirmed
                 state.signedNoteSplitPczt = nil
+                state.splitStored = false
                 return .none
 
             case .splitResult(let result):
@@ -221,9 +253,20 @@ struct MigrationNoteSplit {
         }
     }
 
-    /// MOB-1468 (Keystone) `retryTapped` fork: re-broadcasts the SAME already-signed PCZT — never a
-    /// new signing round.
-    private func resubmitSignedNoteSplit(_ pczt: Data, account: WalletAccount?) -> Effect<Action> {
+    /// MOB-1468 (Keystone) `retryTapped` fork: re-broadcasts a Keystone-signed split PCZT instead of
+    /// re-preparing/resubmitting the software proposal. MOB-1496 (C-1 fix, final review R6):
+    /// store-aware — `stored` is `state.splitStored` at the point `retryTapped` fired. The
+    /// coordinator's batch-commit push (the only live caller today) always arrives with
+    /// `stored == true` (its own store effect already called `storeSignedNoteSplit`, which MUST run
+    /// before the schedule store — see that effect's doc for why), so every attempt here is
+    /// `broadcastStoredNoteSplit` only, which is idempotent by construction (a retry just re-asks the
+    /// engine what's next-due, never re-stores) — unlike the old `submitSignedNoteSplit` composite
+    /// this replaces, whose retry re-ran the by-then-already-consumed store and threw forever. Kept
+    /// general — store once via `storeSignedNoteSplit` THEN broadcast when `stored` is `false`,
+    /// flipping `state.splitStored` via `.noteSplitStored` so a LATER retry (e.g. after a
+    /// broadcast-only failure) never re-stores — so this lane is self-sufficient for a hypothetical
+    /// future caller that hands over an un-stored PCZT.
+    private func resubmitSignedNoteSplit(_ pczt: Data, stored: Bool, account: WalletAccount?) -> Effect<Action> {
         guard let account else {
             return .run { send in await send(.splitResult(MigrationTransferResult.networkError(retryable: true))) }
         }
@@ -231,8 +274,12 @@ struct MigrationNoteSplit {
         return .run { send in
             let options = await migrationManager.migrationNetworkOptions(account.id)
             do {
+                if !stored {
+                    try await sdkSynchronizer.storeSignedNoteSplit(account.id, pczt)
+                    await send(.noteSplitStored)
+                }
                 await sdkSynchronizer.stopSyncBeforeMigrationBroadcast()
-                let result = try await sdkSynchronizer.submitSignedNoteSplit(account.id, pczt, options)
+                let result = try await sdkSynchronizer.broadcastStoredNoteSplit(account.id, options)
                 await send(.splitResult(result))
                 if case MigrationTransferResult.success = result {
                     await migrationManager.reconcile()
