@@ -11883,13 +11883,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Sending now will delay your wallet's sync about 10 mins. To protect your privacy, we need to decouple syncing and transaction broadcasting."
+            "value" : "Sending now will delay your wallet's sync about %1$lld mins. To protect your privacy, we need to decouple syncing and transaction broadcasting."
           }
         },
         "es" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Enviar ahora retrasará la sincronización de tu billetera unos 10 minutos. Para proteger tu privacidad, necesitamos desacoplar la sincronización de la transmisión de transacciones."
+            "state" : "needs_review",
+            "value" : "Enviar ahora retrasará la sincronización de tu billetera unos %1$lld minutos. Para proteger tu privacidad, necesitamos desacoplar la sincronización de la transmisión de transacciones."
           }
         }
       }

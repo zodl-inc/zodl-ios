@@ -460,4 +460,98 @@ import ComposableArchitecture
         #expect(store.state.isFailurePresented == false)
         #expect(reconcileCalls.value == 1)
     }
+
+    // MARK: - MOB-1496 (W3): stop an in-flight sync before a foreground migration broadcast
+
+    /// `sdkSynchronizer.isSyncing() == true` -> `stop()` fires BEFORE the broadcast call, in that
+    /// order (asserted via a shared call-order log). Software submit lane (`submitNoteSplit`).
+    @MainActor @Test func retryTappedWhileSyncingStopsSyncBeforeSubmittingNoteSplit() async {
+        let callOrder = LockIsolated<[String]>([])
+        let proposal = NoteSplitProposal(outputNotes: [Zatoshi(500_000_000)], fee: Zatoshi(100_000))
+        var state = MigrationNoteSplit.State(phase: .splitting, isFailurePresented: true)
+        state.proposal = proposal
+        let store = TestStore(initialState: state) {
+            MigrationNoteSplit()
+        } withDependencies: {
+            $0.sdkSynchronizer = SDKSynchronizerClient.mocked(
+                stop: { callOrder.withValue { $0.append("stop") } },
+                isSyncing: { true }
+            )
+            $0.sdkSynchronizer.submitNoteSplit = { _, _, _, _ in
+                callOrder.withValue { $0.append("execute") }
+                return MigrationTransferResult.success(txId: "retried-tx-id")
+            }
+            $0.migrationManager.networkPrivacyOptions = { Self.defaultNetworkPrivacyOptions }
+            withDependenciesUSKDerivable(&$0)
+        }
+
+        await store.send(.retryTapped) {
+            $0.isFailurePresented = false
+        }
+        await store.receive(\.splitResult) {
+            $0.txId = "retried-tx-id"
+        }
+
+        #expect(callOrder.value == ["stop", "execute"])
+    }
+
+    /// Idempotent: `sdkSynchronizer.isSyncing() == false` -> `stop()` is never called. Software
+    /// submit lane.
+    @MainActor @Test func retryTappedWhileIdleDoesNotCallStopBeforeSubmittingNoteSplit() async {
+        let stopCalls = LockIsolated<Int>(0)
+        let proposal = NoteSplitProposal(outputNotes: [Zatoshi(500_000_000)], fee: Zatoshi(100_000))
+        var state = MigrationNoteSplit.State(phase: .splitting, isFailurePresented: true)
+        state.proposal = proposal
+        let store = TestStore(initialState: state) {
+            MigrationNoteSplit()
+        } withDependencies: {
+            $0.sdkSynchronizer = SDKSynchronizerClient.mocked(
+                stop: { stopCalls.withValue { $0 += 1 } },
+                isSyncing: { false }
+            )
+            $0.sdkSynchronizer.submitNoteSplit = { _, _, _, _ in MigrationTransferResult.success(txId: "retried-tx-id") }
+            $0.migrationManager.networkPrivacyOptions = { Self.defaultNetworkPrivacyOptions }
+            withDependenciesUSKDerivable(&$0)
+        }
+
+        await store.send(.retryTapped) {
+            $0.isFailurePresented = false
+        }
+        await store.receive(\.splitResult) {
+            $0.txId = "retried-tx-id"
+        }
+
+        #expect(stopCalls.value == 0)
+    }
+
+    /// The Keystone resubmit lane (an already-signed PCZT) gets the same stop-before-broadcast
+    /// treatment as the software submit lane above.
+    @MainActor @Test func retryTappedWithSignedPcztWhileSyncingStopsSyncBeforeResubmitting() async {
+        let callOrder = LockIsolated<[String]>([])
+        let signedPczt = Data([0xCC, 0xDD])
+        var state = MigrationNoteSplit.State(phase: .splitting, isFailurePresented: true, signedNoteSplitPczt: signedPczt)
+        state.proposal = NoteSplitProposal(outputNotes: [Zatoshi(500_000_000)], fee: Zatoshi(100_000))
+        let store = TestStore(initialState: state) {
+            MigrationNoteSplit()
+        } withDependencies: {
+            $0.sdkSynchronizer = SDKSynchronizerClient.mocked(
+                stop: { callOrder.withValue { $0.append("stop") } },
+                isSyncing: { true }
+            )
+            $0.sdkSynchronizer.submitSignedNoteSplit = { _, _, _ in
+                callOrder.withValue { $0.append("execute") }
+                return MigrationTransferResult.success(txId: "resubmitted-tx-id")
+            }
+            $0.migrationManager.networkPrivacyOptions = { Self.defaultNetworkPrivacyOptions }
+        }
+
+        await store.send(.retryTapped) {
+            $0.isFailurePresented = false
+        }
+        await store.receive(\.splitResult) {
+            $0.txId = "resubmitted-tx-id"
+        }
+
+        #expect(callOrder.value == ["stop", "execute"])
+    }
 }

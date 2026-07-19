@@ -394,8 +394,7 @@ struct MigrationManagerResetPersistedFlagsTests {
         storage.setTorEnabledForMigration(true)
         storage.acknowledgeComplete()
         storage.setDustLocked(true)
-        storage.recordMigrationBroadcast(at: Date())
-        storage.recordSyncCompletion(at: Date())
+        storage.recordSyncCompleted(at: Date())
 
         storage.resetPersistedFlags()
 
@@ -404,11 +403,12 @@ struct MigrationManagerResetPersistedFlagsTests {
         #expect(storage.isTorEnabledForMigration() == false)
         #expect(storage.isCompleteAcknowledged() == false)
         #expect(storage.isDustLocked() == false)
-        #expect(storage.isSyncDeferredAfterBroadcast(now: Date()) == false)
 
-        // Deliberately untouched: the 10-minute sync<->send gate window is a short-lived timing
-        // value, not a durable app flag (see `resetPersistedFlags`'s doc comment).
-        guard case MigrationSendGate.waitUntil = storage.sendGate(now: Date()) else {
+        // Deliberately untouched: the send gate's timing window is a short-lived value, not a
+        // durable app flag (see `resetPersistedFlags`'s doc comment) — MOB-1496 (W3): a non-zero
+        // `buffer` proves the persisted `migrationLastSyncCompletedAt` itself survived, independent
+        // of whatever buffer value happens to be in force at read time.
+        guard case MigrationSendGate.waitUntil = storage.sendGate(now: Date(), buffer: 600) else {
             Issue.record("Expected the sync<->send gate window to survive resetPersistedFlags")
             return
         }

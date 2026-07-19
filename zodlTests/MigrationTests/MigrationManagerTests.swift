@@ -817,171 +817,191 @@ struct MigrationManagerTests {
         }
     }
 
-    // MARK: - Gate: MigrationGateStorage
+    // MARK: - Gate: MigrationGateStorage (MOB-1496 W3 — sync->send half only; the SDK now owns
+    // broadcast->sync via `isMigrationSyncBlocked`/`migrationSyncBlockedStream`, covered by the
+    // SDK's own test suite, not here)
 
-    @Test func gateAllowedByDefault() throws {
+    @Test func sendGateAllowedWhenNoSyncEverRecorded() throws {
         let userDefaults = try #require(
-            UserDefaults(suiteName: "testMigrationGateAllowedByDefault"),
+            UserDefaults(suiteName: "testSendGateAllowedWhenNoSyncEverRecorded"),
             "MigrationGateStorage: UserDefaults failed to initialize"
         )
-        defer { userDefaults.removePersistentDomain(forName: "testMigrationGateAllowedByDefault") }
+        defer { userDefaults.removePersistentDomain(forName: "testSendGateAllowedWhenNoSyncEverRecorded") }
 
         let storage = MigrationGateStorage(userDefaults: userDefaults)
         let now = Date(timeIntervalSince1970: 1_000_000)
 
-        #expect(storage.sendGate(now: now) == MigrationSendGate.allowed)
+        // Fresh install / never synced -> not blocked by the (b) timing half.
+        #expect(storage.sendGate(now: now, buffer: 600) == MigrationSendGate.allowed)
     }
 
-    @Test func gateSyncRequiredWhilePending() throws {
+    @Test func sendGateWaitUntilWithinBufferAfterRecordSyncCompleted() throws {
         let userDefaults = try #require(
-            UserDefaults(suiteName: "testMigrationGateSyncRequiredWhilePending"),
+            UserDefaults(suiteName: "testSendGateWaitUntilWithinBufferAfterRecordSyncCompleted"),
             "MigrationGateStorage: UserDefaults failed to initialize"
         )
-        defer { userDefaults.removePersistentDomain(forName: "testMigrationGateSyncRequiredWhilePending") }
-
-        let storage = MigrationGateStorage(userDefaults: userDefaults)
-        let now = Date(timeIntervalSince1970: 1_000_000)
-
-        storage.markSyncRequired()
-
-        #expect(storage.sendGate(now: now) == MigrationSendGate.syncRequired)
-    }
-
-    @Test func gateWaitUntilTenMinutesAfterSyncCompletion() throws {
-        let userDefaults = try #require(
-            UserDefaults(suiteName: "testMigrationGateWaitUntilTenMinutesAfterSyncCompletion"),
-            "MigrationGateStorage: UserDefaults failed to initialize"
-        )
-        defer { userDefaults.removePersistentDomain(forName: "testMigrationGateWaitUntilTenMinutesAfterSyncCompletion") }
+        defer { userDefaults.removePersistentDomain(forName: "testSendGateWaitUntilWithinBufferAfterRecordSyncCompleted") }
 
         let storage = MigrationGateStorage(userDefaults: userDefaults)
         let syncCompletedAt = Date(timeIntervalSince1970: 1_000_000)
+        let buffer: TimeInterval = 600
 
-        storage.markSyncRequired()
-        storage.recordSyncCompletion(at: syncCompletedAt)
+        storage.recordSyncCompleted(at: syncCompletedAt)
 
         let justAfterCompletion = syncCompletedAt.addingTimeInterval(1)
-        guard case let MigrationSendGate.waitUntil(gateUntil) = storage.sendGate(now: justAfterCompletion) else {
+        guard case let MigrationSendGate.waitUntil(gateUntil) = storage.sendGate(now: justAfterCompletion, buffer: buffer) else {
             Issue.record("Expected .waitUntil right after sync completion")
             return
         }
 
-        #expect(gateUntil == syncCompletedAt.addingTimeInterval(10 * 60))
+        #expect(gateUntil == syncCompletedAt.addingTimeInterval(buffer))
     }
 
-    @Test func gateTransitionsToAllowedAfterTenMinutesElapse() throws {
+    @Test func sendGateAllowedExactlyAtAndAfterBufferElapses() throws {
         let userDefaults = try #require(
-            UserDefaults(suiteName: "testMigrationGateTransitionsToAllowedAfterTenMinutesElapse"),
+            UserDefaults(suiteName: "testSendGateAllowedExactlyAtAndAfterBufferElapses"),
             "MigrationGateStorage: UserDefaults failed to initialize"
         )
-        defer {
-            userDefaults.removePersistentDomain(forName: "testMigrationGateTransitionsToAllowedAfterTenMinutesElapse")
-        }
+        defer { userDefaults.removePersistentDomain(forName: "testSendGateAllowedExactlyAtAndAfterBufferElapses") }
 
         let storage = MigrationGateStorage(userDefaults: userDefaults)
         let syncCompletedAt = Date(timeIntervalSince1970: 1_000_000)
+        let buffer: TimeInterval = 600
 
-        storage.markSyncRequired()
-        storage.recordSyncCompletion(at: syncCompletedAt)
+        storage.recordSyncCompleted(at: syncCompletedAt)
 
-        let exactlyAtGate = syncCompletedAt.addingTimeInterval(10 * 60)
-        #expect(storage.sendGate(now: exactlyAtGate) == MigrationSendGate.allowed)
+        let exactlyAtGate = syncCompletedAt.addingTimeInterval(buffer)
+        #expect(storage.sendGate(now: exactlyAtGate, buffer: buffer) == MigrationSendGate.allowed)
 
-        let wellAfterGate = syncCompletedAt.addingTimeInterval(20 * 60)
-        #expect(storage.sendGate(now: wellAfterGate) == MigrationSendGate.allowed)
+        let wellAfterGate = syncCompletedAt.addingTimeInterval(buffer * 2)
+        #expect(storage.sendGate(now: wellAfterGate, buffer: buffer) == MigrationSendGate.allowed)
     }
 
-    @Test func gateFullSyncRequiredToWaitUntilToAllowedTransition() throws {
+    /// Proves the window is measured from the SUPPLIED buffer, not a hardcoded constant — the
+    /// SAME sync-completion timestamp yields a different `gateUntil` (and a different
+    /// allowed/blocked answer at the same `now`) for two different buffer values.
+    @Test func sendGateWindowScalesWithTheSuppliedBufferNotAFixedConstant() throws {
         let userDefaults = try #require(
-            UserDefaults(suiteName: "testMigrationGateFullTransition"),
+            UserDefaults(suiteName: "testSendGateWindowScalesWithTheSuppliedBuffer"),
             "MigrationGateStorage: UserDefaults failed to initialize"
         )
-        defer { userDefaults.removePersistentDomain(forName: "testMigrationGateFullTransition") }
+        defer { userDefaults.removePersistentDomain(forName: "testSendGateWindowScalesWithTheSuppliedBuffer") }
 
         let storage = MigrationGateStorage(userDefaults: userDefaults)
-        let t0 = Date(timeIntervalSince1970: 2_000_000)
+        let syncCompletedAt = Date(timeIntervalSince1970: 1_000_000)
+        storage.recordSyncCompleted(at: syncCompletedAt)
 
-        // Before any sync requirement is observed: allowed.
-        #expect(storage.sendGate(now: t0) == MigrationSendGate.allowed)
-
-        // Sync becomes required: CTA disabled outright.
-        storage.markSyncRequired()
-        #expect(storage.sendGate(now: t0) == MigrationSendGate.syncRequired)
-
-        // Sync completes: 10-minute countdown starts.
-        storage.recordSyncCompletion(at: t0)
-        guard case .waitUntil = storage.sendGate(now: t0.addingTimeInterval(60)) else {
-            Issue.record("Expected .waitUntil 1 minute after sync completion")
+        let shortBufferNow = syncCompletedAt.addingTimeInterval(400)
+        // 300s buffer: 400s after completion is already past the window -> allowed.
+        #expect(storage.sendGate(now: shortBufferNow, buffer: 300) == MigrationSendGate.allowed)
+        // 1200s buffer, same `now`: still well inside the window -> blocked.
+        guard case let MigrationSendGate.waitUntil(gateUntil) = storage.sendGate(now: shortBufferNow, buffer: 1_200) else {
+            Issue.record("Expected .waitUntil with the longer 1200s buffer")
             return
         }
-
-        // 10 minutes elapse: allowed again.
-        #expect(storage.sendGate(now: t0.addingTimeInterval(10 * 60 + 1)) == MigrationSendGate.allowed)
+        #expect(gateUntil == syncCompletedAt.addingTimeInterval(1_200))
     }
 
-    @Test func gateStatePersistsAcrossStorageInstancesUsingTheSameSuite() throws {
+    @Test func recordSyncCompletedPersistsAcrossStorageInstancesUsingTheSameSuite() throws {
         let userDefaults = try #require(
-            UserDefaults(suiteName: "testMigrationGatePersistsAcrossInstances"),
+            UserDefaults(suiteName: "testRecordSyncCompletedPersistsAcrossInstances"),
             "MigrationGateStorage: UserDefaults failed to initialize"
         )
-        defer { userDefaults.removePersistentDomain(forName: "testMigrationGatePersistsAcrossInstances") }
+        defer { userDefaults.removePersistentDomain(forName: "testRecordSyncCompletedPersistsAcrossInstances") }
 
         let syncCompletedAt = Date(timeIntervalSince1970: 3_000_000)
+        let buffer: TimeInterval = 600
 
         let firstStorage = MigrationGateStorage(userDefaults: userDefaults)
-        firstStorage.markSyncRequired()
-        firstStorage.recordSyncCompletion(at: syncCompletedAt)
+        firstStorage.recordSyncCompleted(at: syncCompletedAt)
 
         // A fresh instance over the same UserDefaults suite (simulating relaunch) must observe
         // the persisted gate, not reset to `.allowed` — the whole point of persisting
-        // `migrationSyncGateUntil` is that a relaunch cannot dodge the send-side gate.
+        // `migrationLastSyncCompletedAt` is that a relaunch cannot dodge the send-side gate.
         let secondStorage = MigrationGateStorage(userDefaults: userDefaults)
         guard case let MigrationSendGate.waitUntil(gateUntil) = secondStorage.sendGate(
-            now: syncCompletedAt.addingTimeInterval(1)
+            now: syncCompletedAt.addingTimeInterval(1),
+            buffer: buffer
         ) else {
             Issue.record("Expected persisted .waitUntil to survive a fresh MigrationGateStorage instance")
             return
         }
 
-        #expect(gateUntil == syncCompletedAt.addingTimeInterval(10 * 60))
+        #expect(gateUntil == syncCompletedAt.addingTimeInterval(buffer))
     }
 
-    @Test func recordMigrationBroadcastPersistsTimestamp() throws {
+    // MARK: - Gate: MigrationManagerImpl.sendGate() — combines (a) live "is syncing" with (b) the
+    // storage's timing window, and is where `migrationPrivacySyncBufferDuration()` is actually read.
+
+    @Test func sendGateBlockedWhileActivelySyncingRegardlessOfLastCompletion() async throws {
         let userDefaults = try #require(
-            UserDefaults(suiteName: "testRecordMigrationBroadcastPersistsTimestamp"),
+            UserDefaults(suiteName: "testSendGateBlockedWhileActivelySyncing"),
             "MigrationGateStorage: UserDefaults failed to initialize"
         )
-        defer { userDefaults.removePersistentDomain(forName: "testRecordMigrationBroadcastPersistsTimestamp") }
+        defer { userDefaults.removePersistentDomain(forName: "testSendGateBlockedWhileActivelySyncing") }
 
         let storage = MigrationGateStorage(userDefaults: userDefaults)
-        let broadcastAt = Date(timeIntervalSince1970: 4_000_000)
+        // A long-expired completion — proves (a) "actively syncing" wins outright, independent of
+        // how stale (b)'s own window is.
+        storage.recordSyncCompleted(at: Date(timeIntervalSince1970: 0))
 
-        storage.recordMigrationBroadcast(at: broadcastAt)
+        let gate = await withDependencies {
+            $0.sdkSynchronizer = SDKSynchronizerClient.mocked(isSyncing: { true })
+        } operation: {
+            let impl = MigrationManagerImpl(gateStorage: storage)
+            return await impl.sendGate()
+        }
 
-        let stored = userDefaults.object(forKey: .migrationLastBroadcastAt) as? Double
-        #expect(stored == broadcastAt.timeIntervalSince1970)
+        #expect(gate == MigrationSendGate.syncRequired)
     }
 
-    @Test func syncDeferredForTenMinutesAfterBroadcast() throws {
+    @Test func sendGateAllowedWhenNotSyncingAndNeverSynced() async throws {
         let userDefaults = try #require(
-            UserDefaults(suiteName: "testSyncDeferredForTenMinutesAfterBroadcast"),
+            UserDefaults(suiteName: "testSendGateAllowedWhenNotSyncingAndNeverSynced"),
             "MigrationGateStorage: UserDefaults failed to initialize"
         )
-        defer { userDefaults.removePersistentDomain(forName: "testSyncDeferredForTenMinutesAfterBroadcast") }
+        defer { userDefaults.removePersistentDomain(forName: "testSendGateAllowedWhenNotSyncingAndNeverSynced") }
 
         let storage = MigrationGateStorage(userDefaults: userDefaults)
-        let broadcastAt = Date(timeIntervalSince1970: 4_000_000)
 
-        // No broadcast recorded yet -> never deferred.
-        #expect(storage.isSyncDeferredAfterBroadcast(now: broadcastAt) == false)
+        let gate = await withDependencies {
+            $0.sdkSynchronizer = SDKSynchronizerClient.mocked(isSyncing: { false })
+        } operation: {
+            let impl = MigrationManagerImpl(gateStorage: storage)
+            return await impl.sendGate()
+        }
 
-        storage.recordMigrationBroadcast(at: broadcastAt)
+        #expect(gate == MigrationSendGate.allowed)
+    }
 
-        // Deferred strictly within the 10-minute window after the broadcast, allowed at/after it
-        // (the sync side of the feature spec section 8.2 separation, consumed by MOB-1467).
-        #expect(storage.isSyncDeferredAfterBroadcast(now: broadcastAt.addingTimeInterval(1)) == true)
-        #expect(storage.isSyncDeferredAfterBroadcast(now: broadcastAt.addingTimeInterval(10 * 60 - 1)) == true)
-        #expect(storage.isSyncDeferredAfterBroadcast(now: broadcastAt.addingTimeInterval(10 * 60)) == false)
+    /// §7's "buffer read from mocked `migrationPrivacySyncBufferDuration`" case: a non-default
+    /// buffer value flows all the way from the SDK dependency through to the computed `gateUntil`.
+    @Test func sendGateReadsBufferDurationFromTheSDKDependency() async throws {
+        let userDefaults = try #require(
+            UserDefaults(suiteName: "testSendGateReadsBufferDurationFromTheSDKDependency"),
+            "MigrationGateStorage: UserDefaults failed to initialize"
+        )
+        defer { userDefaults.removePersistentDomain(forName: "testSendGateReadsBufferDurationFromTheSDKDependency") }
+
+        let storage = MigrationGateStorage(userDefaults: userDefaults)
+        let syncCompletedAt = Date()
+        storage.recordSyncCompleted(at: syncCompletedAt)
+
+        let gate = await withDependencies {
+            $0.sdkSynchronizer = SDKSynchronizerClient.mocked(isSyncing: { false })
+            $0.sdkSynchronizer.migrationPrivacySyncBufferDuration = { 1_800 }
+        } operation: {
+            let impl = MigrationManagerImpl(gateStorage: storage)
+            return await impl.sendGate()
+        }
+
+        guard case let MigrationSendGate.waitUntil(gateUntil) = gate else {
+            Issue.record("Expected .waitUntil computed from the mocked 1800s buffer")
+            return
+        }
+        // Tolerate the microseconds between `recordSyncCompleted` above and `sendGate`'s own
+        // internal `Date()` read.
+        #expect(abs(gateUntil.timeIntervalSince(syncCompletedAt) - 1_800) < 2)
     }
 
     // MARK: - Persistence: mode / manual delivery / network privacy / acknowledge
@@ -1079,7 +1099,7 @@ struct MigrationManagerTests {
         storage.setTorEnabledForMigration(true)
         storage.acknowledgeComplete()
         storage.setDustLocked(true)
-        storage.recordMigrationBroadcast(at: Date(timeIntervalSince1970: 5_000_000))
+        storage.recordSyncCompleted(at: Date(timeIntervalSince1970: 5_000_000))
 
         storage.resetPersistedFlags()
 

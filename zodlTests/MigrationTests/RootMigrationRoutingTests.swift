@@ -304,8 +304,8 @@ private func baseNoOpDependencies(_ values: inout DependencyValues) {
     values.migrationManager.setManualDelivery = { _ in }
     values.migrationManager.setNetworkPrivacyOptions = { _ in }
     values.migrationManager.acknowledgeComplete = { }
-    values.migrationManager.recordMigrationBroadcast = { }
     values.migrationManager.reconcile = { }
+    values.migrationManager.recordSyncCompleted = { }
     values.readTransactionsStorage.resetZashi = { }
     values.sdkSynchronizer = .noOp
     values.userMetadataProvider.load = { _ in }

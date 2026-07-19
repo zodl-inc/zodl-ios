@@ -75,6 +75,10 @@ extension Root {
         /// (`migrationBackgroundSessionEffect`'s `.run`) sends this back into the reducer instead of
         /// setting it inline the way the pre-real-SDK synchronous version did.
         case migrationBackgroundSyncOnly(MigrationBGSessionHandle)
+        /// MOB-1496 (W3): `.retryStart`'s `.run` effect can't mutate `state` directly — sent back
+        /// into the reducer (proactively, before ever calling `start`, or reactively after `start`
+        /// throws `ZcashError.migrationSyncBlocked`) to set `state.syncDeferredByMigrationGate`.
+        case migrationSyncDeferredByGate
         case resetZashi
         case resetZashiRequest(Bool)
         case resetZashiRequestCanceled
@@ -220,10 +224,16 @@ extension Root {
                 // every tick while already synced (would storm `reconcile()` on every subsequent
                 // tick at the tip). Piggybacks on this existing `stateStream()` subscription
                 // (`.registerForSynchronizersUpdate` below) rather than opening a second one.
+                // MOB-1496 (W3): `recordSyncCompleted()` re-keys the app's send gate off this SAME
+                // edge — once per completed sync, not per tick, exactly like `reconcile()` beside
+                // it (see `MigrationManagerClient.recordSyncCompleted`'s doc).
                 let didJustReachUpToDate = snapshot.syncStatus == .upToDate && !state.wasSyncUpToDateForMigration
                 state.wasSyncUpToDateForMigration = snapshot.syncStatus == .upToDate
                 let migrationReconcileEffect: Effect<Action> = didJustReachUpToDate
-                    ? .run { [migrationManager] _ in await migrationManager.reconcile() }
+                    ? .run { [migrationManager] _ in
+                        migrationManager.recordSyncCompleted()
+                        await migrationManager.reconcile()
+                      }
                     : .none
 
                 guard let account = state.selectedWalletAccount else {
@@ -288,10 +298,22 @@ extension Root {
 
             // MOB-1496 (W2): gate-flip migration-reconcile trigger — see
             // `.registerForSynchronizersUpdate`'s `migrationSyncGateEffect` for how this is fed.
+            // MOB-1496 (W3): also the resume point for `.retryStart`'s deferral — a flip to
+            // NOT-blocked while a start was deferred clears the flag and replays `.retryStart` so
+            // the normal chain resumes identically to an ungated launch. The flag clears BEFORE
+            // the replay, so a still-blocked re-entry (the proactive check in `.retryStart` reads
+            // the gate fresh) just re-defers rather than looping.
             case .migrationSyncGateChanged(let isBlocked):
                 guard state.lastMigrationSyncGateBlocked != isBlocked else { return .none }
                 state.lastMigrationSyncGateBlocked = isBlocked
-                return .run { [migrationManager] _ in await migrationManager.reconcile() }
+                let reconcileEffect: Effect<Action> = .run { [migrationManager] _ in await migrationManager.reconcile() }
+
+                guard !isBlocked, state.syncDeferredByMigrationGate else {
+                    return reconcileEffect
+                }
+
+                state.syncDeferredByMigrationGate = false
+                return .merge(reconcileEffect, .send(.initialization(.retryStart)))
 
             case .initialization(.checkRestoreWalletFlag(let syncStatus)):
                 if state.isRestoringWallet && syncStatus == .upToDate {
@@ -318,6 +340,16 @@ extension Root {
                     return .none
                 }
                 return .run { [state] send in
+                    // MOB-1496 (W3): proactive half of the SDK's post-broadcast privacy gate —
+                    // checked before ever calling `start`, so a still-blocked window never even
+                    // attempts it: no error, no alert, nothing downstream of a successful start
+                    // runs. `.migrationSyncGateChanged(false)` (below) replays `.retryStart` once
+                    // the gate clears, so the normal chain (start -> registerForSynchronizersUpdate
+                    // -> refreshAutomaticServer) resumes identically to an ungated launch.
+                    if await sdkSynchronizer.isMigrationSyncBlocked() {
+                        await send(.initialization(.migrationSyncDeferredByGate))
+                        return
+                    }
                     do {
                         try await sdkSynchronizer.start(true)
                         if state.bgTask != nil {
@@ -325,6 +357,11 @@ extension Root {
                         }
                         await send(.initialization(.registerForSynchronizersUpdate))
                         await send(.refreshAutomaticServer)
+                    } catch ZcashError.migrationSyncBlocked {
+                        // MOB-1496 (W3): reactive half — `start` itself raced the gate (blocked in
+                        // the window between the proactive check above and the SDK's own attempt).
+                        // Same silent deferral; every other error keeps its existing handling below.
+                        await send(.initialization(.migrationSyncDeferredByGate))
                     } catch {
                         if state.bgTask != nil {
                             LoggerProxy.event("BGTask synchronizer.start() failed \(error.toZcashError())")
@@ -332,7 +369,11 @@ extension Root {
                         await send(.initialization(.synchronizerStartFailed(error.toZcashError())))
                     }
                 }
-                
+
+            case .initialization(.migrationSyncDeferredByGate):
+                state.syncDeferredByMigrationGate = true
+                return .none
+
             case .initialization(.registerForSynchronizersUpdate):
                 let stateStreamEffect = Effect.publisher {
                     sdkSynchronizer.stateStream()
@@ -983,11 +1024,16 @@ extension Root {
     ///    landed) is left to lapse here rather than kept alive; the next arm happens once
     ///    `isIronwoodActivated()` flips true (self-healing).
     /// 2. Plan broken (invalid transfer, or expired-attention state) — notify, do NOT re-arm.
-    /// 3. Sync required before the next transfer — either skip (deferred-after-broadcast) or run a
-    ///    sync-only session that never broadcasts, reusing the existing `power_wifi_sync` sync-kick
+    /// 3. Sync required before the next transfer — either skip (the SDK's own
+    ///    `isMigrationSyncBlocked()` wallet-scope privacy gate, MOB-1496 W3) or run a sync-only
+    ///    session that never broadcasts, reusing the existing `power_wifi_sync` sync-kick
     ///    machinery verbatim (`state.bgTask` + `.retryStart`; `synchronizerStateChanged` completes
     ///    the task on `.upToDate`/`.stopped`/`.error`).
-    /// 4. Otherwise, send: `executeNextPendingMigrationTransfer` and notify/re-arm per outcome.
+    /// 4. Otherwise, send: `executeNextPendingMigrationTransfer` and notify/re-arm per outcome. A
+    ///    thrown `ZcashError.migrationRecordFailedAfterBroadcast` (MOB-1496 W3) is routed through
+    ///    the SAME landed-broadcast handling as a `.success` result — the broadcast DID land, only
+    ///    the engine's own recording of it failed, so the session must not re-send or treat it as a
+    ///    `networkError`.
     /// Every branch except the sync-only session completes `handle` itself (that session's
     /// completion is the existing `synchronizerStateChanged` machinery, exactly like the
     /// `power_wifi_sync` task it mirrors).
@@ -1013,6 +1059,27 @@ extension Root {
         }
 
         return .run { [migrationManager, sdkSynchronizer, migrationBGScheduler, userNotifications, accountUUID] send in
+            // [MOB-1496] Shared by the `.success` outcome below and the
+            // `ZcashError.migrationRecordFailedAfterBroadcast` catch clause — the broadcast landed
+            // either way (only the engine's own recording of it failed in the latter case), so both
+            // paths persist the sent record, reconcile, and notify/re-arm (or cancel-on-complete)
+            // identically. Mirrors the same rationale `MigrationSendingStore`/
+            // `MigrationNoteSplitStore` already apply for their own foreground broadcasts.
+            func handleLandedBroadcast(_ result: MigrationTransferResult) async {
+                await migrationManager.recordTransferBroadcast(accountUUID, result)
+                await migrationManager.reconcile()
+
+                let migrationState = try? await sdkSynchronizer.getMigrationState(accountUUID)
+                if migrationState == MigrationState.complete {
+                    await userNotifications.scheduleMigrationNotification(MigrationNotification.migrationComplete, nil)
+                    await migrationBGScheduler.cancelAll()
+                } else {
+                    let notification = await Self.transferCompleteNotification(accountUUID: accountUUID, sdkSynchronizer: sdkSynchronizer)
+                    await userNotifications.scheduleMigrationNotification(notification, nil)
+                    await migrationBGScheduler.scheduleNextWindow()
+                }
+            }
+
             let isPlanBroken: Bool
             do {
                 let migrationState = try await sdkSynchronizer.getMigrationState(accountUUID)
@@ -1041,7 +1108,10 @@ extension Root {
             }
 
             if isSyncRequired {
-                if migrationManager.isSyncDeferredAfterBroadcast() {
+                // MOB-1496 (W3): the SDK now owns the broadcast->sync direction outright — skip the
+                // sync session while it reports the wallet-scope privacy gate blocked (same outward
+                // behavior the retired app-side `isSyncDeferredAfterBroadcast` flag produced).
+                if await sdkSynchronizer.isMigrationSyncBlocked() {
                     await migrationBGScheduler.scheduleNextWindow()
                     handle.complete(true)
                     return
@@ -1057,23 +1127,11 @@ extension Root {
 
                 switch result {
                 case .success:
-                    migrationManager.recordMigrationBroadcast()
                     // [MOB-1496] W2: persist the sent record + reconcile (this op's success is one
                     // of `reconcile()`'s triggers) — single-account semantics here, matching the
                     // rest of this decision tree (W5 fans the whole tree out per-account).
                     if let result {
-                        await migrationManager.recordTransferBroadcast(accountUUID, result)
-                    }
-                    await migrationManager.reconcile()
-
-                    let migrationState = try? await sdkSynchronizer.getMigrationState(accountUUID)
-                    if migrationState == MigrationState.complete {
-                        await userNotifications.scheduleMigrationNotification(MigrationNotification.migrationComplete, nil)
-                        await migrationBGScheduler.cancelAll()
-                    } else {
-                        let notification = await Self.transferCompleteNotification(accountUUID: accountUUID, sdkSynchronizer: sdkSynchronizer)
-                        await userNotifications.scheduleMigrationNotification(notification, nil)
-                        await migrationBGScheduler.scheduleNextWindow()
+                        await handleLandedBroadcast(result)
                     }
 
                 case .networkError, .invalidNote, .expired:
@@ -1085,12 +1143,19 @@ extension Root {
                 case nil:
                     await migrationBGScheduler.scheduleNextWindow()
                 }
+            } catch ZcashError.migrationRecordFailedAfterBroadcast(_) {
+                // [MOB-1496] The broadcast DID land; only the engine's own recording of it failed —
+                // route through the SAME handling as a `.success` result, with an unknown txId
+                // (`MigrationScheduleStorage` maps an empty string to `nil`). The BG session must
+                // not re-send (this isn't a networkError) and must not skip the notification/re-arm
+                // a landed transfer deserves. Mirrors `MigrationSendingStore`/`MigrationNoteSplitStore`'s
+                // identical foreground rationale for this same error.
+                await handleLandedBroadcast(MigrationTransferResult.success(txId: ""))
             } catch {
-                // [MOB-1496] A throwing broadcast attempt (including
-                // `ZcashError.migrationRecordFailedAfterBroadcast`, where the broadcast actually DID
-                // land) is not itself a definite outcome to notify about — treat it like the `nil`
-                // "nothing executed" case: re-arm the next window and let that session's own
-                // outcome (or the engine's self-heal) settle it, without a possibly-wrong notification.
+                // A throwing broadcast attempt for any OTHER reason is not itself a definite
+                // outcome to notify about — treat it like the `nil` "nothing executed" case: re-arm
+                // the next window and let that session's own outcome (or the engine's self-heal)
+                // settle it, without a possibly-wrong notification.
                 LoggerProxy.error("BGTask migration session: executeNextPendingMigrationTransfer failed \(error)")
                 await migrationBGScheduler.scheduleNextWindow()
             }
