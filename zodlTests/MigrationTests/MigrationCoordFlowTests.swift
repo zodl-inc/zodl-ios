@@ -797,7 +797,7 @@ import ComposableArchitecture
             $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, stored in
                 storeCalls.withValue { $0.append(stored) }
             }
-            $0.sdkSynchronizer.submitSignedNoteSplit = { _, _, _ in MigrationTransferResult.success(txId: "split-tx") }
+            $0.sdkSynchronizer.broadcastStoredNoteSplit = { _, _ in MigrationTransferResult.success(txId: "split-tx") }
             $0.migrationBGScheduler.scheduleFirstWindow = { }
             $0.migrationManager.reconcile = { }
             $0.migrationManager.migrationNetworkOptions = { _ in Self.defaultNetworkPrivacyOptions }
@@ -814,10 +814,14 @@ import ComposableArchitecture
 
     /// "via the note-split lane": the coordinator routes the signed split PCZT into a freshly pushed
     /// `MigrationNoteSplit` screen the SAME way its existing Keystone resubmit lane
-    /// (`resubmitSignedNoteSplit`) receives one, so `submitSignedNoteSplit` — not a bespoke broadcast
-    /// — is what actually sends it.
+    /// (`resubmitSignedNoteSplit`) receives one. MOB-1496 (C-1 fix, final review R6): the coordinator
+    /// itself calls `storeSignedNoteSplit` with the signed bytes (BEFORE the schedule store — see the
+    /// order-pin test below); the pushed screen's `splitStored: true` then means its automatically
+    /// dispatched `.retryTapped` only ever broadcasts (`broadcastStoredNoteSplit`, which no longer
+    /// takes the pczt bytes at all — the store already consumed them).
     @MainActor @Test func foundPCZTBatchWithNoteSplitSentinelRoutesSignedSplitPcztToNoteSplitScreenAndBroadcastsIt() async {
-        let submitSignedCalls = LockIsolated<[Data]>([])
+        let storeSignedCalls = LockIsolated<[Data]>([])
+        let broadcastCalls = LockIsolated<Int>(0)
         let unsigned: [MigrationUnsignedTransferPczt] = [
             MigrationUnsignedTransferPczt(id: "note-split", pczt: Data([0x01])),
             MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xAA]))
@@ -832,9 +836,12 @@ import ComposableArchitecture
             MigrationCoordFlow()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.storeSignedNoteSplit = { _, pczt in
+                storeSignedCalls.withValue { $0.append(pczt) }
+            }
             $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, _ in }
-            $0.sdkSynchronizer.submitSignedNoteSplit = { _, pczt, _ in
-                submitSignedCalls.withValue { $0.append(pczt) }
+            $0.sdkSynchronizer.broadcastStoredNoteSplit = { _, _ in
+                broadcastCalls.withValue { $0 += 1 }
                 return MigrationTransferResult.success(txId: "split-tx")
             }
             $0.migrationManager.reconcile = { }
@@ -847,7 +854,8 @@ import ComposableArchitecture
         await store.receive(\.path)
         await store.receive(\.path)
 
-        #expect(submitSignedCalls.value == [Data([0x01, 0x99])])
+        #expect(storeSignedCalls.value == [Data([0x01, 0x99])])
+        #expect(broadcastCalls.value == 1)
         guard case let .noteSplit(noteSplitState) = try? #require(store.state.path.last) else {
             Issue.record("Expected .noteSplit pushed on top of the retained .transferPlan element")
             return
@@ -859,29 +867,42 @@ import ComposableArchitecture
         }
     }
 
-    /// Order rationale (MOB-1496 W6 §1): the schedule is stored BEFORE the split broadcasts, so a
-    /// split-broadcast failure still leaves a fully-committed plan behind.
-    @MainActor @Test func foundPCZTBatchWithNoteSplitSentinelStoresScheduleBeforeBroadcastingSplit() async {
+    /// THE C-1 PIN (final review R6): the split MUST store before the schedule — `storeSignedNoteSplit`
+    /// is the RUN-CREATING call (`store_signed_note_split_pczt` unconditionally starts a new engine
+    /// run); `storeSignedMigrationTransactions` uses-or-creates the active run. Storing the schedule
+    /// first (the pre-fix W6 order) would let the split's later store create a SECOND, newer run that
+    /// permanently shadows the schedule's (`active_run` = newest non-terminal) — the committed
+    /// schedule would never execute. This test is RED against the pre-fix ordering (recorded in the
+    /// fix report) and GREEN against the fix: split store, then schedule store, then the persisted
+    /// schedule is recorded — strictly in that order.
+    @MainActor @Test func foundPCZTBatchWithNoteSplitSentinelStoresSplitBeforeScheduleBeforeRecordingCommittedSchedule() async {
         let callOrder = LockIsolated<[String]>([])
         let unsigned: [MigrationUnsignedTransferPczt] = [
             MigrationUnsignedTransferPczt(id: "note-split", pczt: Data([0x01])),
             MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xAA]))
         ]
         let signed: [Data] = [Data([0x01, 0x99]), Data([0xAA, 0x99])]
+        let schedule = MigrationSchedule(
+            transfers: [MigrationTransferProposal(id: "t0", amount: Zatoshi(500_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)],
+            estimatedDurationHours: 24
+        )
+        var planState = MigrationTransferPlan.State(variant: .scheduled)
+        planState.schedule = schedule
         var state = MigrationCoordFlow.State()
         state.pendingKeystoneSigning = .planCommit
-        state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .scheduled)))
+        state.path.append(.transferPlan(planState))
         state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: unsigned)))
         state.path.append(.scan(Scan.State.initial))
         let store = TestStore(initialState: state) {
             MigrationCoordFlow()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, _ in callOrder.withValue { $0.append("store") } }
-            $0.sdkSynchronizer.submitSignedNoteSplit = { _, _, _ in
-                callOrder.withValue { $0.append("submitSignedNoteSplit") }
-                return MigrationTransferResult.success(txId: "split-tx")
+            $0.sdkSynchronizer.storeSignedNoteSplit = { _, _ in callOrder.withValue { $0.append("storeSignedNoteSplit") } }
+            $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, _ in
+                callOrder.withValue { $0.append("storeSignedMigrationTransactions") }
             }
+            $0.sdkSynchronizer.broadcastStoredNoteSplit = { _, _ in MigrationTransferResult.success(txId: "split-tx") }
+            $0.migrationManager.recordCommittedSchedule = { _, _ in callOrder.withValue { $0.append("recordCommittedSchedule") } }
             $0.migrationManager.reconcile = { }
             $0.migrationManager.migrationNetworkOptions = { _ in Self.defaultNetworkPrivacyOptions }
         }
@@ -892,7 +913,7 @@ import ComposableArchitecture
         await store.receive(\.path)
         await store.receive(\.path)
 
-        #expect(callOrder.value == ["store", "submitSignedNoteSplit"])
+        #expect(callOrder.value == ["storeSignedNoteSplit", "storeSignedMigrationTransactions", "recordCommittedSchedule"])
     }
 
     /// A split-broadcast failure must not undo the already-committed schedule — the note-split
@@ -921,7 +942,7 @@ import ComposableArchitecture
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
             $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, _ in }
-            $0.sdkSynchronizer.submitSignedNoteSplit = { _, _, _ in MigrationTransferResult.networkError(retryable: true) }
+            $0.sdkSynchronizer.broadcastStoredNoteSplit = { _, _ in MigrationTransferResult.networkError(retryable: true) }
             $0.migrationManager.recordCommittedSchedule = { _, _ in recordCommittedScheduleCalls.withValue { $0 += 1 } }
             $0.migrationManager.reconcile = { }
             $0.migrationManager.migrationNetworkOptions = { _ in Self.defaultNetworkPrivacyOptions }
@@ -940,6 +961,96 @@ import ComposableArchitecture
         }
         #expect(noteSplitState.isFailurePresented == true)
         #expect(noteSplitState.signedNoteSplitPczt == Data([0x01, 0x99]))
+    }
+
+    // MARK: - MOB-1496 (C-1 fix, final review R6): split-store failure abandons the session
+
+    /// `storeSignedNoteSplit` throwing means NOTHING was stored — the schedule store must never even
+    /// be attempted (it would land in a run the split never created), nothing gets recorded, and the
+    /// session abandons exactly like a re-pair failure: nothing to resume, same `keystoneScanAbandoned`
+    /// semantics (pop back to `.transferPlan`, context cleared).
+    @MainActor @Test func foundPCZTBatchWithSplitStoreFailureAbandonsSessionWithoutStoringScheduleOrRecording() async {
+        struct SplitStoreFailure: Error { }
+        let scheduleStoreCalls = LockIsolated<Int>(0)
+        let recordCommittedScheduleCalls = LockIsolated<Int>(0)
+        let unsigned: [MigrationUnsignedTransferPczt] = [
+            MigrationUnsignedTransferPczt(id: "note-split", pczt: Data([0x01])),
+            MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xAA]))
+        ]
+        let signed: [Data] = [Data([0x01, 0x99]), Data([0xAA, 0x99])]
+        var planState = MigrationTransferPlan.State(variant: .scheduled)
+        planState.schedule = MigrationSchedule(
+            transfers: [MigrationTransferProposal(id: "t0", amount: Zatoshi(500_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)],
+            estimatedDurationHours: 24
+        )
+        var state = MigrationCoordFlow.State()
+        state.pendingKeystoneSigning = .planCommit
+        state.path.append(.transferPlan(planState))
+        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: unsigned)))
+        state.path.append(.scan(Scan.State.initial))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.storeSignedNoteSplit = { _, _ in throw SplitStoreFailure() }
+            $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, _ in scheduleStoreCalls.withValue { $0 += 1 } }
+            $0.migrationManager.recordCommittedSchedule = { _, _ in recordCommittedScheduleCalls.withValue { $0 += 1 } }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 2, action: .scan(.foundPCZTBatch(signed)))))
+        await store.receive(\.keystoneScanAbandoned)
+
+        #expect(scheduleStoreCalls.value == 0)
+        #expect(recordCommittedScheduleCalls.value == 0)
+        #expect(store.state.pendingKeystoneSigning == nil)
+        #expect(store.state.path.count == 1)
+        guard case .transferPlan = try? #require(store.state.path.last) else {
+            Issue.record("Expected pop back to .transferPlan (scan + sign removed)")
+            return
+        }
+    }
+
+    /// Same split-store-failure abandon, but from the simulator-only bypass — which never pushes
+    /// `.scan`, so only 1 element (`keystoneSign`) needs popping, not 2. Proves
+    /// `keystoneScanAbandoned`'s generalized pop count is correct for this caller too.
+    @MainActor @Test func keystoneSignSimulateSignatureWithSplitStoreFailureAbandonsSessionWithoutScanPopped() async {
+        struct SplitStoreFailure: Error { }
+        let scheduleStoreCalls = LockIsolated<Int>(0)
+        var state = MigrationCoordFlow.State()
+        state.pendingKeystoneSigning = .planCommit
+        state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .scheduled)))
+        state.path.append(
+            .keystoneSign(
+                MigrationKeystoneSign.State(pczts: [
+                    MigrationUnsignedTransferPczt(id: "note-split", pczt: Data([0x01])),
+                    MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xAA]))
+                ])
+            )
+        )
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.storeSignedNoteSplit = { _, _ in throw SplitStoreFailure() }
+            $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, _ in scheduleStoreCalls.withValue { $0 += 1 } }
+            // Never actually called on this (abandon) path, but the `.run` effect's capture list
+            // still resolves `migrationManager` when constructed — swift-dependencies requires SOME
+            // override to be registered before a test context may touch it at all.
+            $0.migrationManager.reconcile = { }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 1, action: .keystoneSign(.delegate(.simulateSignature)))))
+        await store.receive(\.keystoneScanAbandoned)
+
+        #expect(scheduleStoreCalls.value == 0)
+        #expect(store.state.pendingKeystoneSigning == nil)
+        #expect(store.state.path.count == 1)
+        guard case .transferPlan = try? #require(store.state.path.last) else {
+            Issue.record("Expected pop back to .transferPlan (keystoneSign removed, no .scan was ever pushed)")
+            return
+        }
     }
 
     /// The "happy path" consumption of `pendingKeystoneSplitResume`: once the note-split screen's
@@ -964,7 +1075,7 @@ import ComposableArchitecture
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
             $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, _ in }
-            $0.sdkSynchronizer.submitSignedNoteSplit = { _, _, _ in MigrationTransferResult.success(txId: "split-tx") }
+            $0.sdkSynchronizer.broadcastStoredNoteSplit = { _, _ in MigrationTransferResult.success(txId: "split-tx") }
             $0.migrationBGScheduler.scheduleFirstWindow = { }
             $0.migrationManager.reconcile = { }
             $0.migrationManager.migrationNetworkOptions = { _ in Self.defaultNetworkPrivacyOptions }
@@ -1025,7 +1136,7 @@ import ComposableArchitecture
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
             $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, _ in }
-            $0.sdkSynchronizer.submitSignedNoteSplit = { _, _, _ in MigrationTransferResult.success(txId: "split-tx") }
+            $0.sdkSynchronizer.broadcastStoredNoteSplit = { _, _ in MigrationTransferResult.success(txId: "split-tx") }
             $0.migrationManager.reconcile = { }
             $0.migrationManager.migrationNetworkOptions = { _ in Self.defaultNetworkPrivacyOptions }
         }
@@ -2402,7 +2513,7 @@ import ComposableArchitecture
     /// mechanism a fresh plan uses (no vendor/flow-specific special-casing).
     @MainActor @Test func recoveryRecreateForKeystoneAccountWithNoteSplitSentinelStripsSentinelBeforeStoring() async {
         let storeCalls = LockIsolated<[[MigrationSignedTransferPczt]]>([])
-        let submitSignedCalls = LockIsolated<[Data]>([])
+        let storeSignedNoteSplitCalls = LockIsolated<[Data]>([])
         let restartedSchedule = MigrationSchedule(
             transfers: [
                 MigrationTransferProposal(id: "r0", amount: Zatoshi(2_000_000), anchorHeight: 300, nextExecutableAfterHeight: 300, expiryHeight: 400)
@@ -2429,10 +2540,10 @@ import ComposableArchitecture
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
             $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, stored in storeCalls.withValue { $0.append(stored) } }
-            $0.sdkSynchronizer.submitSignedNoteSplit = { _, pczt, _ in
-                submitSignedCalls.withValue { $0.append(pczt) }
-                return MigrationTransferResult.success(txId: "split-tx")
+            $0.sdkSynchronizer.storeSignedNoteSplit = { _, pczt in
+                storeSignedNoteSplitCalls.withValue { $0.append(pczt) }
             }
+            $0.sdkSynchronizer.broadcastStoredNoteSplit = { _, _ in MigrationTransferResult.success(txId: "split-tx") }
             $0.migrationManager.reconcile = { }
             $0.migrationManager.recordCommittedSchedule = { _, _ in }
             $0.migrationManager.migrationNetworkOptions = { _ in Self.defaultNetworkPrivacyOptions }
@@ -2445,7 +2556,7 @@ import ComposableArchitecture
         await store.receive(\.path)
 
         #expect(storeCalls.value == [[MigrationSignedTransferPczt(id: "r0", pczt: Data([0x11, 0x99]))]])
-        #expect(submitSignedCalls.value == [Data([0x22, 0x99])])
+        #expect(storeSignedNoteSplitCalls.value == [Data([0x22, 0x99])])
     }
 }
 

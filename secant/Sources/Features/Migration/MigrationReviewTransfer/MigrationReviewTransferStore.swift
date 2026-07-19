@@ -218,7 +218,9 @@ struct MigrationReviewTransfer {
     /// the note-split PCZT rides under a `"note-split"` sentinel id (typed-payload mismatch between
     /// `proposeNoteSplitPCZT -> Data` and `proposeMigrationPCZTs -> [MigrationUnsignedTransferPczt]`)
     /// and (W6) how the coordinator splits that entry back out before storing, routing it through the
-    /// dedicated `submitSignedNoteSplit` broadcast instead.
+    /// dedicated `storeSignedNoteSplit`/`broadcastStoredNoteSplit` pair instead — stored BEFORE the
+    /// schedule (C-1 fix, final review R6), since the split's store is what creates the engine run
+    /// the schedule store then joins.
     private func requestKeystoneSignature(for schedule: MigrationSchedule, account: WalletAccount) -> Effect<Action> {
         .run { send in
             let needsNoteSplit = (try? await sdkSynchronizer.isNoteSplitNeeded(account.id)) ?? false

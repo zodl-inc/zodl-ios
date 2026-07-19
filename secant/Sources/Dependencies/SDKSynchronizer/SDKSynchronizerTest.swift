@@ -115,7 +115,8 @@ extension SDKSynchronizerClient: TestDependencyKey {
         sendRequiresOrchardFunds: unimplemented("\(Self.self).sendRequiresOrchardFunds", placeholder: false),
         migrateMigrationDust: unimplemented("\(Self.self).migrateMigrationDust", placeholder: nil),
         proposeNoteSplitPCZT: unimplemented("\(Self.self).proposeNoteSplitPCZT", placeholder: Data()),
-        submitSignedNoteSplit: unimplemented("\(Self.self).submitSignedNoteSplit", placeholder: .success(txId: "")),
+        storeSignedNoteSplit: unimplemented("\(Self.self).storeSignedNoteSplit"),
+        broadcastStoredNoteSplit: unimplemented("\(Self.self).broadcastStoredNoteSplit", placeholder: .success(txId: "")),
         proposeMigrationPCZTs: unimplemented("\(Self.self).proposeMigrationPCZTs", placeholder: []),
         storeSignedMigrationTransactions: unimplemented("\(Self.self).storeSignedMigrationTransactions"),
         urEncoderForMigrationPCZTBatch: unimplemented("\(Self.self).urEncoderForMigrationPCZTBatch", placeholder: nil),
@@ -199,7 +200,8 @@ extension SDKSynchronizerClient {
         sendRequiresOrchardFunds: { _, _ in false },
         migrateMigrationDust: { _, _, _ in nil },
         proposeNoteSplitPCZT: { _ in Data() },
-        submitSignedNoteSplit: { _, _, _ in MigrationTransferResult.success(txId: "") },
+        storeSignedNoteSplit: { _, _ in },
+        broadcastStoredNoteSplit: { _, _ in MigrationTransferResult.success(txId: "") },
         proposeMigrationPCZTs: { _, _ in [] },
         storeSignedMigrationTransactions: { _, _ in },
         urEncoderForMigrationPCZTBatch: { _ in nil },
@@ -332,9 +334,6 @@ extension SDKSynchronizerClient {
         fetchUTXOsByAddress: @escaping @Sendable (String, AccountUUID) async throws -> TransparentAddressCheckResult = { _, _ in .notFound },
         enhanceTransactionBy: @escaping @Sendable (String) async throws -> Void = { _ in },
         getTreeState: @escaping @Sendable (UInt64) async throws -> Data = { _ in Data() },
-        submitSignedNoteSplit: @escaping @Sendable (
-            AccountUUID, Data, MigrationNetworkPrivacyOptions
-        ) async throws -> MigrationTransferResult = { _, _, _ in MigrationTransferResult.success(txId: "") },
         urEncoderForMigrationPCZTBatch: @escaping @Sendable ([MigrationUnsignedTransferPczt]) -> UREncoder? = { _ in nil },
         parseMigrationPCZTBatch: @escaping @Sendable (Data) -> [Data]? = { _ in nil }
     ) -> SDKSynchronizerClient {
@@ -413,7 +412,8 @@ extension SDKSynchronizerClient {
             sendRequiresOrchardFunds: { _, _ in false },
             migrateMigrationDust: { _, _, _ in nil },
             proposeNoteSplitPCZT: { _ in Data() },
-            submitSignedNoteSplit: submitSignedNoteSplit,
+            storeSignedNoteSplit: { _, _ in },
+            broadcastStoredNoteSplit: { _, _ in MigrationTransferResult.success(txId: "") },
             proposeMigrationPCZTs: { _, _ in [] },
             storeSignedMigrationTransactions: { _, _ in },
             urEncoderForMigrationPCZTBatch: urEncoderForMigrationPCZTBatch,

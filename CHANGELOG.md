@@ -53,6 +53,7 @@ directly impact users rather than highlighting other crucial architectural updat
 - [MOB-1480] The simulated Confirm Transfer Plan now shows the full 3–5 transfer schedule (previewing the note split that runs on confirm) instead of a single transfer, with the first transfer due in about 10 minutes and the rest 6 hours apart.
 - [MOB-1480] The migration simulator now starts turned off on a fresh install — long-press the balance on the home screen and flip "Simulation active" to enable it. Resetting the simulation keeps the toggle as you set it.
 - [MOB-1494] Migration dark mode now matches the designs in the error-and-recovery screens: the completed-migration badge inverts correctly, the recovery step connector uses the intended color, and the home banner's More/Review button stays legible.
+- [MOB-1496] Fixed a bug affecting Keystone hardware-wallet accounts: confirming a scheduled migration plan that also needed a note split could leave the rest of the plan stuck and unable to send, requiring the whole migration to be set up again from scratch. Gated behind Ironwood network activation and not yet in a released build.
 
 ## 3.7.2 build 1
 
