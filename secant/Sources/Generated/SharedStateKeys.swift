@@ -35,4 +35,5 @@ public extension String {
     static let migrationDustLocked = "sharedStateKey_migrationDustLocked"
     static let migrationLastBroadcastAt = "sharedStateKey_migrationLastBroadcastAt"
     static let migrationSyncGateUntil = "sharedStateKey_migrationSyncGateUntil"
+    static let migrationCommittedSchedule = "sharedStateKey_migrationCommittedSchedule"
 }

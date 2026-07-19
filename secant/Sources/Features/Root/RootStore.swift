@@ -50,6 +50,10 @@ struct Root {
         var CancelFlexaId = UUID()
         var shieldingProcessorCancelId = UUID()
         var automaticServerRefreshCancelId = UUID()
+        /// MOB-1496 (W2): the migration gate-flip reconcile trigger's own subscription
+        /// (`sdkSynchronizer.migrationSyncBlockedStream()`), started/stopped alongside
+        /// `CancelStateId`'s `stateStream()` subscription in `.registerForSynchronizersUpdate`.
+        var migrationSyncGateCancelId = UUID()
 
         @Shared(.inMemory(.addressBookContacts)) var addressBookContacts: AddressBookContacts = .empty
         @Presents var alert: AlertState<Action>?
@@ -96,6 +100,14 @@ struct Root {
         var walletConfig: WalletConfig
         @Shared(.inMemory(.walletStatus)) var walletStatus: WalletStatus = .none
         var wasRestoringWhenDisconnected = false
+        /// MOB-1496 (W2): tracks whether the last-observed `synchronizerStateChanged` tick was
+        /// `.upToDate`, so the sync-completion migration-reconcile trigger can detect the EDGE (a
+        /// fresh transition into up-to-date) instead of firing on every tick while already synced.
+        var wasSyncUpToDateForMigration = false
+        /// MOB-1496 (W2): last-pushed `sdkSynchronizer.isMigrationSyncBlocked()` value, compared
+        /// against each `migrationSyncGateChanged` tick so the gate-flip migration-reconcile
+        /// trigger only fires on an actual change.
+        var lastMigrationSyncGateBlocked = false
         var welcomeState: Welcome.State
         @Shared(.inMemory(.zashiWalletAccount)) var zashiWalletAccount: WalletAccount? = nil
 
@@ -204,6 +216,10 @@ struct Root {
         case flexaTransactionFailed(String)
         case home(Home.Action)
         case initialization(InitializationAction)
+        /// MOB-1496 (W2): `sdkSynchronizer.migrationSyncBlockedStream()` ticked (paired with an
+        /// initial `isMigrationSyncBlocked()` read — see `.registerForSynchronizersUpdate`) — a
+        /// genuine change from `state.lastMigrationSyncGateBlocked` reconciles migration state.
+        case migrationSyncGateChanged(Bool)
         case notEnoughFreeSpace(NotEnoughFreeSpace.Action)
         case resetZashiFinishProcessing
         case resetZashiKeychainFailed(OSStatus)

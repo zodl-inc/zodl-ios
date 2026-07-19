@@ -36,6 +36,13 @@ struct MigrationManagerClient: Sendable {
     // internally, same convention as `bannerVariant` above.
     var migrationSummary: @Sendable (_ accountUUID: AccountUUID?) async -> MigrationSummary = { _ in MigrationSummary.zero }
     var migrationTransfers: @Sendable (_ accountUUID: AccountUUID?) async -> [MigrationTransferRow] = { _ in [] }
+    // Persisted committed schedule (MOB-1496 W2): the SDK retains no proposal list once a schedule
+    // is committed — these persist the app's own record of it, which `migrationSummary`/
+    // `migrationTransfers` above derive from. `nil` accountUUID resolves the selected account
+    // internally, same convention as the other members here. Defaulted to a no-op (like
+    // `reconcile` below) so a test exercising an op's success path doesn't have to mock these too.
+    var recordCommittedSchedule: @Sendable (_ accountUUID: AccountUUID?, _ schedule: MigrationSchedule) async -> Void = { _, _ in }
+    var recordTransferBroadcast: @Sendable (_ accountUUID: AccountUUID?, _ result: MigrationTransferResult) async -> Void = { _, _ in }
     // Dust resolution (MOB-1487/MOB-1496: relocated — app persistence, not SDK calls).
     var lockMigrationDust: @Sendable () async throws -> Void
     var isMigrationDustLocked: @Sendable () -> Bool = { false }

@@ -36,6 +36,12 @@ extension MigrationManagerClient: DependencyKey {
             orchardBalanceToMigrate: { accountUUID in await impl.orchardBalanceToMigrate(accountUUID: accountUUID) },
             migrationSummary: { accountUUID in await impl.migrationSummary(accountUUID: accountUUID) },
             migrationTransfers: { accountUUID in await impl.migrationTransfers(accountUUID: accountUUID) },
+            recordCommittedSchedule: { accountUUID, schedule in
+                await impl.recordCommittedSchedule(accountUUID: accountUUID, schedule: schedule)
+            },
+            recordTransferBroadcast: { accountUUID, result in
+                await impl.recordTransferBroadcast(accountUUID: accountUUID, result: result)
+            },
             lockMigrationDust: { try await impl.lockMigrationDust() },
             isMigrationDustLocked: { impl.isMigrationDustLocked() },
             stateEvents: { accountUUID in impl.stateEvents(accountUUID: accountUUID) },
@@ -46,7 +52,7 @@ extension MigrationManagerClient: DependencyKey {
             networkPrivacyOptions: { impl.networkPrivacyOptions() },
             setNetworkPrivacyOptions: { impl.setNetworkPrivacyOptions(useTor: $0) },
             isCompleteAcknowledged: { impl.gateStorage.isCompleteAcknowledged() },
-            acknowledgeComplete: { impl.gateStorage.acknowledgeComplete() },
+            acknowledgeComplete: { impl.acknowledgeComplete() },
             sendGate: { await impl.sendGate() },
             recordMigrationBroadcast: { impl.recordMigrationBroadcast() },
             isSyncDeferredAfterBroadcast: { impl.isSyncDeferredAfterBroadcast() },
@@ -69,11 +75,14 @@ final class MigrationManagerImpl: @unchecked Sendable {
     @Shared(.inMemory(.walletAccounts)) var walletAccounts: [WalletAccount] = []
 
     let gateStorage: MigrationGateStorage
+    /// MOB-1496 (W2): per-account persisted committed schedule — see `MigrationScheduleStorage`.
+    let scheduleStorage: MigrationScheduleStorage
 
     /// Internal (not private) with injectable storage so unit tests can exercise the real
     /// `reconcile()` against a scoped `UserDefaults` suite.
-    init(gateStorage: MigrationGateStorage = MigrationGateStorage()) {
+    init(gateStorage: MigrationGateStorage = MigrationGateStorage(), scheduleStorage: MigrationScheduleStorage = MigrationScheduleStorage()) {
         self.gateStorage = gateStorage
+        self.scheduleStorage = scheduleStorage
     }
 
     private let subscriptionState = OSAllocatedUnfairLock<AnyCancellable?>(initialState: nil)
@@ -82,6 +91,14 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// completed migration op) is the only writer; it emits only when a re-read's value differs
     /// from the subject's current value.
     private let stateSubjects = OSAllocatedUnfairLock<[AccountUUID: CurrentValueSubject<MigrationState, Never>]>(initialState: [:])
+    /// MOB-1496 (W2 emit-fix): last-pushed `orchardBalanceToMigrate(accountUUID) > 0` per account,
+    /// held beside `stateSubjects` (whose `CurrentValueSubject.value` already tracks the last-
+    /// pushed `MigrationState` — the subject itself still only ever carries `MigrationState`).
+    /// `reconcile()` pushes into a subject whenever EITHER component changed since the last push.
+    /// An account with no entry yet defaults to `false`, pairing with the subject's own
+    /// `.notStarted` seed: a first real reconcile reading `.notStarted`/no-balance pushes nothing
+    /// (value unchanged).
+    private let lastPushedHasBalance = OSAllocatedUnfairLock<[AccountUUID: Bool]>(initialState: [:])
 
     /// Subscribes to `sdkSynchronizer.stateStream()` on first use so gate transitions (pending ->
     /// resolved) are observed as soon as anything asks this client for a derivation or the gate,
@@ -157,62 +174,117 @@ final class MigrationManagerImpl: @unchecked Sendable {
         return balance.orchardBalance.total()
     }
 
-    /// [MOB-1496] W2 replaces this with a persisted-schedule derivation. For W1, everything
-    /// derivable comes from `getMigrationProgress` alone: counts and the remaining Orchard value
-    /// (mapped onto `dust`). `transferred`/`estimatedDurationHours` need per-transfer amounts and
-    /// the schedule's own duration estimate, neither recoverable from progress alone, so they stay
-    /// `0` until W2. On a missing account or any SDK-read error, `.zero`.
+    /// MOB-1496 W2: derives from the persisted committed schedule (`MigrationScheduleStorage`) +
+    /// live reads, via `MigrationDerivations.summary`. No payload persisted (fresh install mid-run,
+    /// or pre-commit — the SDK retains no proposal list to derive from either) falls back to the W1
+    /// progress-only approximation, kept verbatim below rather than deleted.
     ///
-    /// Simulator reach-around: the W1 derivation above is far cruder than the simulator engine's
-    /// own purpose-built `summary()` (real sent/pending amounts, durations, etc. — the whole point
-    /// of the simulator's demo data) — reading through the SDK members alone would otherwise
-    /// silently downgrade every simulated QA session to the crude approximation. Gated exactly like
-    /// `orchardBalanceToMigrate`'s existing reach-around.
+    /// Simulator reach-around: the simulator engine's own purpose-built `summary()` (real
+    /// sent/pending amounts, durations, etc. — the whole point of the simulator's demo data) is far
+    /// richer than anything derivable through the real SDK members while the simulator is standing
+    /// in for it — reading through them anyway would silently downgrade every simulated QA session.
+    /// Gated exactly like `orchardBalanceToMigrate`'s existing reach-around.
     func migrationSummary(accountUUID: AccountUUID?) async -> MigrationSummary {
         if MigrationSimulatorFlag.isEnabled && MigrationSimulatorClient.sharedEngine.isActive {
             return MigrationSimulatorClient.sharedEngine.summary()
         }
 
         guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return MigrationSummary.zero }
-        guard let progress = await migrationProgress(accountUUID: resolvedAccountUUID) else { return MigrationSummary.zero }
 
-        return MigrationSummary(
-            transferred: Zatoshi.zero,
-            dust: progress.remainingOrchard,
-            transfersSent: progress.completedTransfers,
-            transfersTotal: progress.totalTransfers,
-            estimatedDurationHours: 0
+        guard let committedSchedule = scheduleStorage.committedSchedule(for: resolvedAccountUUID) else {
+            // [MOB-1496] W1 fallback: no persisted payload yet — everything derivable comes from
+            // `getMigrationProgress` alone (counts and the remaining Orchard value, mapped onto
+            // `dust`). `transferred`/`estimatedDurationHours` need per-transfer amounts and the
+            // schedule's own duration estimate, neither recoverable from progress alone, so they
+            // stay `0`. On a missing account or any SDK-read error, `.zero`.
+            guard let progress = await migrationProgress(accountUUID: resolvedAccountUUID) else { return MigrationSummary.zero }
+
+            return MigrationSummary(
+                transferred: Zatoshi.zero,
+                dust: progress.remainingOrchard,
+                transfersSent: progress.completedTransfers,
+                transfersTotal: progress.totalTransfers,
+                estimatedDurationHours: 0
+            )
+        }
+
+        let state = await migrationState(accountUUID: resolvedAccountUUID) ?? MigrationState.notStarted
+        // Flattens `Zatoshi??` (threw, or genuinely no residual) down to `nil` either way — both
+        // read as "not available" per the derivation's own fallback precedence.
+        let residual = (try? await sdkSynchronizer.residualAfterMigration(resolvedAccountUUID)) ?? nil
+        let progress = await migrationProgress(accountUUID: resolvedAccountUUID)
+
+        return MigrationDerivations.summary(
+            committedSchedule: committedSchedule,
+            state: state,
+            residual: residual,
+            progress: progress
         )
     }
 
-    /// [MOB-1496] W2 replaces this with a persisted-schedule derivation. For W1, rows are
-    /// synthesized purely from `getMigrationProgress`'s counts: index < completedTransfers reads
-    /// `.sent`, everything else `.pending` (no `.active`/`.overdue`/`.invalid`/`.expired` — those
-    /// need per-transfer identity a persisted schedule would carry); `hoursFromNow` is a rough
-    /// `(index - completed) × 6h` cadence estimate (matching the real transfer spacing), clamped
-    /// ≥ 0. `amount`/`id` are placeholders (`.zero` / the row's own index) pending W2. On a missing
-    /// account or any SDK-read error, `[]`.
+    /// MOB-1496 W2: derives from the persisted committed schedule + live reads (`getMigrationState`,
+    /// `hasOverdueMigrationTransfers`), via `MigrationDerivations.transferRows`. No payload
+    /// persisted falls back to the W1 progress-only approximation, kept verbatim below.
     ///
     /// Simulator reach-around — see `migrationSummary`'s doc: the engine's own `transferRows()`
     /// carries real per-row status (sent/active/overdue/invalid/expired, broadcasting, precise
-    /// recency) the W1 derivation can't reproduce from counts alone.
+    /// recency) the persisted-schedule derivation intentionally doesn't reproduce (no broadcasting
+    /// flag, no sub-hour simulated cadence).
     func migrationTransfers(accountUUID: AccountUUID?) async -> [MigrationTransferRow] {
         if MigrationSimulatorFlag.isEnabled && MigrationSimulatorClient.sharedEngine.isActive {
             return MigrationSimulatorClient.sharedEngine.transferRows()
         }
 
         guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return [] }
-        guard let progress = await migrationProgress(accountUUID: resolvedAccountUUID) else { return [] }
 
-        return (0..<progress.totalTransfers).map { index in
-            MigrationTransferRow(
-                id: "\(index)",
-                index: index,
-                amount: Zatoshi.zero,
-                status: index < progress.completedTransfers ? MigrationTransferRow.Status.sent : MigrationTransferRow.Status.pending,
-                hoursFromNow: max(0, (index - progress.completedTransfers) * 6)
-            )
+        guard let committedSchedule = scheduleStorage.committedSchedule(for: resolvedAccountUUID) else {
+            // [MOB-1496] W1 fallback: no persisted payload yet — rows are synthesized purely from
+            // `getMigrationProgress`'s counts: index < completedTransfers reads `.sent`, everything
+            // else `.pending` (no `.active`/`.overdue`/`.invalid`/`.expired` — those need per-
+            // transfer identity a persisted schedule would carry); `hoursFromNow` is a rough
+            // `(index - completed) × 6h` cadence estimate, clamped ≥ 0. `amount`/`id` are
+            // placeholders. On a missing account or any SDK-read error, `[]`.
+            guard let progress = await migrationProgress(accountUUID: resolvedAccountUUID) else { return [] }
+
+            return (0..<progress.totalTransfers).map { index in
+                MigrationTransferRow(
+                    id: "\(index)",
+                    index: index,
+                    amount: Zatoshi.zero,
+                    status: index < progress.completedTransfers ? MigrationTransferRow.Status.sent : MigrationTransferRow.Status.pending,
+                    hoursFromNow: max(0, (index - progress.completedTransfers) * 6)
+                )
+            }
         }
+
+        let state = await migrationState(accountUUID: resolvedAccountUUID) ?? MigrationState.notStarted
+        let hasOverdue = await hasOverdueMigrationTransfers(accountUUID: resolvedAccountUUID)
+
+        return MigrationDerivations.transferRows(
+            committedSchedule: committedSchedule,
+            state: state,
+            hasOverdueMigrationTransfers: hasOverdue,
+            now: Date()
+        )
+    }
+
+    /// MOB-1496 (W2): persists the just-committed schedule for `accountUUID` (`nil` resolves the
+    /// selected account, same convention as `migrationSummary`/`migrationTransfers` above) — the
+    /// SDK retains no proposal list post-commit, so this is the app's only record of it. Replaces
+    /// any existing payload's `schedule`/`committedAt` while preserving its `sentRecords` (a
+    /// restart/re-created plan continues the same logical run).
+    func recordCommittedSchedule(accountUUID: AccountUUID?, schedule: MigrationSchedule) async {
+        guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return }
+        scheduleStorage.recordCommittedSchedule(schedule, for: resolvedAccountUUID, now: Date())
+    }
+
+    /// MOB-1496 (W2): records a successful transfer broadcast against the persisted schedule
+    /// (appends a `SentRecord` for the first not-yet-sent transfer, in schedule order); non-success
+    /// results and a missing payload (nothing to append against) are both no-ops — see
+    /// `MigrationScheduleStorage.recordTransferBroadcast`.
+    func recordTransferBroadcast(accountUUID: AccountUUID?, result: MigrationTransferResult) async {
+        guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return }
+        scheduleStorage.recordTransferBroadcast(result, for: resolvedAccountUUID, now: Date())
     }
 
     /// MOB-1487/MOB-1496: no SDK primitive — "Lock balance" is app-only bookkeeping (marks the
@@ -276,7 +348,8 @@ final class MigrationManagerImpl: @unchecked Sendable {
 
     /// Re-reads `getMigrationState` for the selected account (single-account semantics — MOB-1496
     /// W1; a later task fans this out per-account) and, when it differs from the account, the
-    /// Keystone-vendor account too, pushing each into its `stateEvents` subject only on change.
+    /// Keystone-vendor account too, pushing each into its `stateEvents` subject on either a state
+    /// or balance-to-migrate change (MOB-1496 W2 emit-fix — see `pushStateIfChanged`'s doc).
     /// Also runs the stale-acknowledge reset (selected account only, since the acknowledged flag
     /// is not yet per-account): the acknowledged flag must never suppress a *new* migration's
     /// completion banner (reinstall, Path F) — only meaningful while state is `.complete`. Called
@@ -298,17 +371,47 @@ final class MigrationManagerImpl: @unchecked Sendable {
         for accountUUID in accountsToRefresh {
             guard let state = await migrationState(accountUUID: accountUUID) else { continue }
 
-            pushStateIfChanged(state, for: accountUUID)
+            let hasBalanceToMigrate = await orchardBalanceToMigrate(accountUUID: accountUUID) > Zatoshi.zero
+            pushStateIfChanged(state, hasBalanceToMigrate: hasBalanceToMigrate, for: accountUUID)
 
             if accountUUID == selectedAccountUUID && state != MigrationState.complete {
                 gateStorage.clearAcknowledgedComplete()
             }
+
+            // MOB-1496 (W2): a run abandoned/reset out from under a stale persisted schedule — the
+            // engine is authoritative, so `.notStarted` observed against an account that still has
+            // a stored payload means that payload no longer corresponds to anything the engine
+            // knows about (e.g. a debug reset, or a fresh install reusing a restored seed).
+            if state == MigrationState.notStarted && scheduleStorage.hasStoredPayload(for: accountUUID) {
+                scheduleStorage.clear(for: accountUUID)
+            }
+        }
+    }
+
+    /// MOB-1496 (W2): bundles the existing wallet-wide acknowledge-complete flag with clearing the
+    /// SELECTED account's persisted schedule — the run the Complete screen was showing has ended,
+    /// so its committed schedule/sent records must not leak into a future run's rows (a fresh
+    /// migration, e.g. after reinstall, must start from an empty logical run). The acknowledged
+    /// flag itself stays wallet-wide (see `reconcile()`'s doc); only the schedule clear is
+    /// account-scoped here.
+    func acknowledgeComplete() {
+        gateStorage.acknowledgeComplete()
+        if let accountUUID = selectedWalletAccount?.id {
+            scheduleStorage.clear(for: accountUUID)
         }
     }
 
     /// MOB-1480: the migration SDK simulator's debug panel "Reset app migration flags" control.
+    /// MOB-1496 (W2): also clears every known account's persisted schedule — a debug reset must
+    /// leave no stale committed-schedule payload behind either.
     func resetPersistedFlags() {
         gateStorage.resetPersistedFlags()
+        for account in walletAccounts {
+            scheduleStorage.clear(for: account.id)
+        }
+        if let accountUUID = selectedWalletAccount?.id {
+            scheduleStorage.clear(for: accountUUID)
+        }
     }
 
     /// `.requiresAttention(.syncRequiredBeforeNext)` carries no progress payload of its own, but
@@ -397,11 +500,20 @@ final class MigrationManagerImpl: @unchecked Sendable {
         }
     }
 
-    private func pushStateIfChanged(_ state: MigrationState, for accountUUID: AccountUUID) {
+    /// MOB-1496 (W2 emit-fix): pushes `state` into the account's subject when EITHER `state` itself
+    /// or `hasBalanceToMigrate` changed since the last push — the subject's own `.value` tracks the
+    /// last-pushed state; `lastPushedHasBalance` tracks the balance half beside it. A `.send(state)`
+    /// still only ever carries `MigrationState` (the subject's declared type never changes), but
+    /// firing it on a balance-only flip re-delivers the (unchanged) state value, which is enough to
+    /// prompt a subscriber to re-derive its rows/summary/banner off the fresh balance read.
+    private func pushStateIfChanged(_ state: MigrationState, hasBalanceToMigrate: Bool, for accountUUID: AccountUUID) {
         let subject = subject(for: accountUUID)
-        if subject.value != state {
-            subject.send(state)
-        }
+        let previousHasBalance = lastPushedHasBalance.withLock { $0[accountUUID] ?? false }
+
+        guard subject.value != state || previousHasBalance != hasBalanceToMigrate else { return }
+
+        lastPushedHasBalance.withLock { $0[accountUUID] = hasBalanceToMigrate }
+        subject.send(state)
     }
 }
 
@@ -532,6 +644,151 @@ enum MigrationDerivations {
     private static func isTransferExpired(_ state: MigrationState) -> Bool {
         guard case let MigrationState.requiresAttention(reason) = state else { return false }
         return reason == MigrationAttentionReason.transferExpired
+    }
+
+    // MARK: - MOB-1496 (W2): persisted-schedule row/summary derivation
+
+    /// One row per `committedSchedule.schedule.transfers` element, PLUS one leading row per
+    /// `sentRecords` entry whose `transferId` is NOT in the current schedule (a prior-run sent
+    /// transfer from before a restart) — so a re-created plan's full logical run renders, prior
+    /// sent rows first, then the current schedule in order. `index` is 0-based and contiguous
+    /// across the WHOLE combined list (display code adds 1, matching every other row-index
+    /// consumer in this file).
+    ///
+    /// Per-row status precedence:
+    /// 1. has a sent record (leading rows always do; a schedule row does when its own `id` matches
+    ///    one) -> `.sent`.
+    /// 2. `.requiresAttention(.invalidTransfer(transferId:))` matching this row's id -> `.invalid`
+    ///    (checked for every non-sent row, not just the first — an invalid note can be any pending
+    ///    transfer, not necessarily the earliest).
+    /// 3. the first non-sent row, when state is `.requiresAttention(.transferExpired)` -> `.expired`
+    ///    (the reason carries no transfer id of its own, so the earliest pending row stands in for
+    ///    "the" expired one).
+    /// 4. the first non-sent row, when `hasOverdueMigrationTransfers` -> `.overdue`.
+    /// 5. the first non-sent row otherwise -> `.active`.
+    /// 6. every other non-sent row -> `.pending`.
+    ///
+    /// `hoursFromNow`: sent rows carry "hours ago" (floor) + `sentMinutesAgo` (sub-hour precision,
+    /// matching `MigrationSimulatorEngineDerivations.captionFields`'s `.sent` case); non-sent rows
+    /// keep W1's index-cadence estimate, now computed over the row's 0-based position AMONG
+    /// non-sent rows (`rowIndexAmongNonSent × 6`, so the first non-sent row is always `0`).
+    /// Amounts come from the persisted proposal (schedule rows) or the sent record itself (leading
+    /// rows) — never from live progress.
+    static func transferRows(
+        committedSchedule: MigrationCommittedSchedule,
+        state: MigrationState,
+        hasOverdueMigrationTransfers: Bool,
+        now: Date
+    ) -> [MigrationTransferRow] {
+        struct RowSeed {
+            let transferId: String
+            let amount: Zatoshi
+            let sentRecord: MigrationCommittedSchedule.SentRecord?
+        }
+
+        let scheduleTransferIds = Set(committedSchedule.schedule.transfers.map { $0.id })
+        let sentRecordsByTransferId = Dictionary(
+            committedSchedule.sentRecords.map { ($0.transferId, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+
+        let leadingRows: [RowSeed] = committedSchedule.sentRecords
+            .filter { !scheduleTransferIds.contains($0.transferId) }
+            .map { RowSeed(transferId: $0.transferId, amount: $0.amount, sentRecord: $0) }
+        let scheduleRows: [RowSeed] = committedSchedule.schedule.transfers.map { transfer in
+            RowSeed(transferId: transfer.id, amount: transfer.amount, sentRecord: sentRecordsByTransferId[transfer.id])
+        }
+
+        let seeds = leadingRows + scheduleRows
+        let firstNonSentIndex = seeds.firstIndex { $0.sentRecord == nil }
+
+        var nonSentPosition = 0
+        return seeds.enumerated().map { index, seed in
+            if let sentRecord = seed.sentRecord {
+                let elapsedMinutes = max(0, Int(now.timeIntervalSince(sentRecord.sentAt) / 60))
+                return MigrationTransferRow(
+                    id: seed.transferId,
+                    index: index,
+                    amount: seed.amount,
+                    status: MigrationTransferRow.Status.sent,
+                    hoursFromNow: elapsedMinutes / 60,
+                    sentMinutesAgo: elapsedMinutes < 60 ? elapsedMinutes : nil
+                )
+            }
+
+            let status = nonSentRowStatus(
+                transferId: seed.transferId,
+                isFirstNonSent: index == firstNonSentIndex,
+                state: state,
+                hasOverdueMigrationTransfers: hasOverdueMigrationTransfers
+            )
+            let hoursFromNow = max(0, nonSentPosition * 6)
+            nonSentPosition += 1
+
+            return MigrationTransferRow(
+                id: seed.transferId,
+                index: index,
+                amount: seed.amount,
+                status: status,
+                hoursFromNow: hoursFromNow
+            )
+        }
+    }
+
+    private static func nonSentRowStatus(
+        transferId: String,
+        isFirstNonSent: Bool,
+        state: MigrationState,
+        hasOverdueMigrationTransfers: Bool
+    ) -> MigrationTransferRow.Status {
+        if case let MigrationState.requiresAttention(reason) = state,
+           case let MigrationAttentionReason.invalidTransfer(invalidTransferId) = reason,
+           invalidTransferId == transferId {
+            return MigrationTransferRow.Status.invalid
+        }
+
+        guard isFirstNonSent else { return MigrationTransferRow.Status.pending }
+
+        if case MigrationState.requiresAttention(MigrationAttentionReason.transferExpired) = state {
+            return MigrationTransferRow.Status.expired
+        }
+
+        return hasOverdueMigrationTransfers ? MigrationTransferRow.Status.overdue : MigrationTransferRow.Status.active
+    }
+
+    /// `transferred`/`transfersSent` come straight from `sentRecords`; `transfersTotal` adds the
+    /// current schedule's still-unsent transfers (excludes any already covered by a sent record, so
+    /// a re-committed schedule doesn't double-count); `estimatedDurationHours` is the persisted
+    /// schedule's own estimate. `dust`: `residual` (already flattened `threw-or-nil -> nil` by the
+    /// caller) when available; while `state == .complete` and residual isn't, `progress
+    /// .remainingOrchard` (whatever's left over at completion is the best available proxy); `.zero`
+    /// otherwise.
+    static func summary(
+        committedSchedule: MigrationCommittedSchedule,
+        state: MigrationState,
+        residual: Zatoshi?,
+        progress: MigrationProgress?
+    ) -> MigrationSummary {
+        let transferred = committedSchedule.sentRecords.reduce(Zatoshi.zero) { $0 + $1.amount }
+        let sentTransferIds = Set(committedSchedule.sentRecords.map { $0.transferId })
+        let unsentScheduleCount = committedSchedule.schedule.transfers.filter { !sentTransferIds.contains($0.id) }.count
+
+        let dust: Zatoshi
+        if let residual {
+            dust = residual
+        } else if state == MigrationState.complete {
+            dust = progress?.remainingOrchard ?? Zatoshi.zero
+        } else {
+            dust = Zatoshi.zero
+        }
+
+        return MigrationSummary(
+            transferred: transferred,
+            dust: dust,
+            transfersSent: committedSchedule.sentRecords.count,
+            transfersTotal: committedSchedule.sentRecords.count + unsentScheduleCount,
+            estimatedDurationHours: committedSchedule.schedule.estimatedDurationHours
+        )
     }
 }
 
@@ -712,5 +969,97 @@ final class MigrationGateStorage: @unchecked Sendable {
         userDefaults.removeObject(forKey: .migrationCompleteAcknowledged)
         userDefaults.removeObject(forKey: .migrationDustLocked)
         userDefaults.removeObject(forKey: .migrationLastBroadcastAt)
+    }
+}
+
+// MARK: - Persistence: committed migration schedule (MOB-1496 W2)
+
+/// Per-account `UserDefaults`-backed persistence for the confirmed migration schedule: the SDK
+/// retains no proposal list once a schedule is committed, so the app persists it here —
+/// `MigrationDerivations.transferRows`/`summary` derive rows/totals from this payload plus live SDK
+/// reads. Same house pattern as `MigrationGateStorage`: `final class`, `@unchecked Sendable` guarded
+/// by an `OSAllocatedUnfairLock` around each read-modify-write, injectable `UserDefaults` (default
+/// `.standard`) so tests can use an isolated named suite. Every method that depends on "now" takes
+/// it as a parameter, never reading `Date()` internally, matching `MigrationGateStorage`'s own
+/// testability discipline.
+final class MigrationScheduleStorage: @unchecked Sendable {
+    private let userDefaults: UserDefaults
+    private let lock = OSAllocatedUnfairLock(initialState: false)
+
+    init(userDefaults: UserDefaults = .standard) {
+        self.userDefaults = userDefaults
+    }
+
+    /// The persisted payload for `accountUUID`, or `nil` when none exists (fresh install mid-run,
+    /// or pre-commit) — callers fall back to a progress-only derivation in that case.
+    func committedSchedule(for accountUUID: AccountUUID) -> MigrationCommittedSchedule? {
+        lock.withLock { _ in readPayload(for: accountUUID) }
+    }
+
+    func hasStoredPayload(for accountUUID: AccountUUID) -> Bool {
+        committedSchedule(for: accountUUID) != nil
+    }
+
+    /// REPLACES `schedule`/`committedAt`; PRESERVES `sentRecords` from any existing payload (a
+    /// restart/re-created plan continues the same logical run — the re-created-plan UI shows prior
+    /// sent rows with checks); starts fresh with empty `sentRecords` when no payload exists yet.
+    func recordCommittedSchedule(_ schedule: MigrationSchedule, for accountUUID: AccountUUID, now: Date) {
+        lock.withLock { _ in
+            let sentRecords = readPayload(for: accountUUID)?.sentRecords ?? []
+            let payload = MigrationCommittedSchedule(schedule: schedule, sentRecords: sentRecords, committedAt: now)
+            writePayload(payload, for: accountUUID)
+        }
+    }
+
+    /// Appends a `SentRecord` for the FIRST transfer in the persisted schedule that has no sent
+    /// record yet (matched by order), on `.success(txId:)` only — every other result, and a missing
+    /// payload (nothing to append against), is a no-op. An empty `txId` (the record-failed-after-
+    /// broadcast placeholder — the broadcast landed, only the engine's own recording of it failed)
+    /// persists as `nil` rather than an empty string.
+    func recordTransferBroadcast(_ result: MigrationTransferResult, for accountUUID: AccountUUID, now: Date) {
+        lock.withLock { _ in
+            guard case let MigrationTransferResult.success(txId) = result else { return }
+            guard var payload = readPayload(for: accountUUID) else { return }
+
+            let sentTransferIds = Set(payload.sentRecords.map { $0.transferId })
+            guard let transfer = payload.schedule.transfers.first(where: { !sentTransferIds.contains($0.id) }) else { return }
+
+            let sentRecord = MigrationCommittedSchedule.SentRecord(
+                transferId: transfer.id,
+                amount: transfer.amount,
+                txId: txId.isEmpty ? nil : txId,
+                sentAt: now
+            )
+            payload.sentRecords.append(sentRecord)
+            writePayload(payload, for: accountUUID)
+        }
+    }
+
+    /// Clears the run: consumed by `acknowledgeComplete()`/`resetPersistedFlags()`'s run-end/reset
+    /// paths, and by `reconcile()` observing a stale `.notStarted` payload.
+    func clear(for accountUUID: AccountUUID) {
+        lock.withLock { _ in
+            userDefaults.removeObject(forKey: key(for: accountUUID))
+        }
+    }
+
+    private func readPayload(for accountUUID: AccountUUID) -> MigrationCommittedSchedule? {
+        guard let data = userDefaults.data(forKey: key(for: accountUUID)),
+              let payload = try? JSONDecoder().decode(MigrationCommittedSchedule.self, from: data) else {
+            return nil
+        }
+        return payload
+    }
+
+    private func writePayload(_ payload: MigrationCommittedSchedule, for accountUUID: AccountUUID) {
+        guard let data = try? JSONEncoder().encode(payload) else { return }
+        userDefaults.set(data, forKey: key(for: accountUUID))
+    }
+
+    /// Per-account key suffix: lowercase hex of the raw 16-byte UUID, reusing `Pczt`'s existing
+    /// `Data.hexEncodedString()` (`SendConfirmationStore.swift`) rather than inventing a new
+    /// encoding — nothing in this file suffixes a persistence key per-account yet.
+    private func key(for accountUUID: AccountUUID) -> String {
+        "\(String.migrationCommittedSchedule)_\(Data(accountUUID.id).hexEncodedString())"
     }
 }
