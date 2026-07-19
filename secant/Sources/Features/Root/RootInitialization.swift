@@ -182,15 +182,39 @@ private enum MigrationSessionPlanner {
             return Plan(notifyPlanNeedsUpdate: true, action: Plan.Action.none)
         }
 
-        let everyAccountIsCompleteOrNotStarted = !classifications.isEmpty && classifications.allSatisfy { _, classification in
-            guard case let .nothingToDo(state) = classification else { return false }
-            return state == MigrationState.complete || state == MigrationState.notStarted
-        }
+        let everyAccountIsCompleteOrNotStarted = !classifications.isEmpty && allAccountsAreDone(classifications)
 
         return Plan(
             notifyPlanNeedsUpdate: false,
             action: everyAccountIsCompleteOrNotStarted ? Plan.Action.cancelAll : Plan.Action.rearm
         )
+    }
+
+    /// A single account's classification counts as "done" (no active run) for the cancel-all gate
+    /// below — `.complete`/`.notStarted` only. `.readyToPropose` (a real balance, no committed plan
+    /// yet) and `.unreadable` (an unknown true state) both deliberately do NOT count as done, so
+    /// either one blocks a premature cancelAll and keeps the wakeup chain alive instead.
+    ///
+    /// MOB-1496 (fix-wave, review IMPORTANT-1): also reused by `handleLandedBroadcast`'s own
+    /// post-broadcast complete-check, via `allAccountsAreDone` below, so the two "is everyone
+    /// really done" sites can't drift apart.
+    static func isDoneClassification(_ classification: MigrationAccountClassification) -> Bool {
+        guard case let .nothingToDo(state) = classification else { return false }
+        return state == MigrationState.complete || state == MigrationState.notStarted
+    }
+
+    /// True only when EVERY entry in `classifications` is done (`isDoneClassification`) —
+    /// vacuously true for an EMPTY list, matching `Array.allSatisfy`'s own empty-collection
+    /// semantics (a broadcast winner with no OTHER classified accounts this session IS "every other
+    /// account done"). `plan(_:)` above additionally guards the TOTAL account set against being
+    /// empty itself (defensive — never actually empty by the time a session reaches this code);
+    /// `handleLandedBroadcast`'s own "every OTHER account" check deliberately does NOT apply that
+    /// same guard, so a single-account session's landed broadcast still cancels exactly as it
+    /// always has.
+    static func allAccountsAreDone(
+        _ classifications: [(accountUUID: AccountUUID, classification: MigrationAccountClassification)]
+    ) -> Bool {
+        classifications.allSatisfy { isDoneClassification($0.classification) }
     }
 
     /// A broadcast candidate mid-comparison in `pickBroadcastWinner` — a small named type instead
@@ -233,6 +257,19 @@ private enum MigrationSessionPlanner {
 
         return winner?.accountUUID
     }
+}
+
+/// MOB-1496 (fix-wave, review MINOR-4): bundles the 4 dependency clients
+/// `migrationBackgroundSessionEffect`'s `.run` closure captures, so the per-plan-action handlers
+/// extracted out of that closure (`runMigrationSession` and friends, below in `extension Root`)
+/// take one parameter instead of four apiece. Plain explicit-value capture (matching this file's
+/// existing "capture specific dependency values, never `self`" idiom) — every field is itself
+/// `Sendable`, so this struct is too.
+private struct MigrationSessionDependencies: Sendable {
+    let migrationManager: MigrationManagerClient
+    let sdkSynchronizer: SDKSynchronizerClient
+    let migrationBGScheduler: MigrationBGSchedulerClient
+    let userNotifications: UserNotificationsClient
 }
 
 /// In this file is a collection of helpers that control all state and action related operations
@@ -1212,7 +1249,12 @@ extension Root {
     ///      the engine's own recording of it failed, so the session must not re-send or treat it as
     ///      a `networkError`. Height-due semantics: the classification's `nextExecutableAfterHeight`
     ///      is for ORDERING/re-arm math only — `executeNextPendingMigrationTransfer`'s own
-    ///      nil-return (nothing actually due yet) is the sole due-ness authority.
+    ///      nil-return (nothing actually due yet) is the sole due-ness authority. A landed broadcast
+    ///      that completes the WINNER only `cancelAll`s/announces `.migrationComplete` when EVERY
+    ///      OTHER classified account is ALSO done (`MigrationSessionPlanner.allAccountsAreDone`, the
+    ///      SAME predicate the "nothing anywhere" cancelAll gate below uses, so the two can't drift)
+    ///      — otherwise it's an ordinary `.transferComplete` + re-arm, so another account's still-
+    ///      active run is never orphaned (fix-wave finding 1).
     ///    - Else (nothing anywhere): a plan-broken-only session does NOT re-arm (the user's own
     ///      Recovery-flow re-arms once the plan is fixed); otherwise `cancelAll` when EVERY
     ///      classified account is `.complete`/`.notStarted` (no active run left anywhere —
@@ -1227,7 +1269,6 @@ extension Root {
     /// (effects can't mutate `state` directly). Every SDK read is wrapped so a thrown error
     /// degrades to "treat as false/skip" and completes the session rather than crashing a
     /// background launch.
-    // swiftlint:disable:next cyclomatic_complexity
     private func migrationBackgroundSessionEffect(
         state: inout Root.State,
         handle: MigrationBGSessionHandle
@@ -1246,110 +1287,180 @@ extension Root {
         }
 
         return .run { [migrationManager, sdkSynchronizer, migrationBGScheduler, userNotifications, accountUUIDs] send in
-            // [MOB-1496] Shared by the `.success` outcome below and the
-            // `ZcashError.migrationRecordFailedAfterBroadcast` catch clause — the broadcast landed
-            // either way (only the engine's own recording of it failed in the latter case), so both
-            // paths persist the sent record, reconcile, and notify/re-arm (or cancel-on-complete)
-            // identically. Mirrors the same rationale `MigrationSendingStore`/
-            // `MigrationNoteSplitStore` already apply for their own foreground broadcasts.
-            // MOB-1496 (W5): now parameterized by `accountUUID` — the session's single winning
-            // account, not necessarily the selected one.
-            func handleLandedBroadcast(_ accountUUID: AccountUUID, _ result: MigrationTransferResult) async {
-                await migrationManager.recordTransferBroadcast(accountUUID, result)
-                await migrationManager.reconcile()
+            await Self.runMigrationSession(
+                accountUUIDs: accountUUIDs,
+                handle: handle,
+                send: send,
+                dependencies: MigrationSessionDependencies(
+                    migrationManager: migrationManager,
+                    sdkSynchronizer: sdkSynchronizer,
+                    migrationBGScheduler: migrationBGScheduler,
+                    userNotifications: userNotifications
+                )
+            )
+        }
+    }
 
-                let migrationState = try? await sdkSynchronizer.getMigrationState(accountUUID)
-                if migrationState == MigrationState.complete {
-                    await userNotifications.scheduleMigrationNotification(MigrationNotification.migrationComplete, nil)
-                    await migrationBGScheduler.cancelAll()
-                } else {
-                    let notification = await Self.transferCompleteNotification(accountUUID: accountUUID, sdkSynchronizer: sdkSynchronizer)
-                    await userNotifications.scheduleMigrationNotification(notification, nil)
-                    await migrationBGScheduler.scheduleNextWindow()
-                }
-            }
+    /// MOB-1496 (fix-wave, review MINOR-4): classifies every account, resolves the session's single
+    /// action via `MigrationSessionPlanner`, and carries it out. Extracted out of
+    /// `migrationBackgroundSessionEffect`'s `.run` closure — split into this and the three handlers
+    /// below (one per plan action) purely to keep each function's cyclomatic complexity low WITHOUT
+    /// a `swiftlint:disable` (not on `SWIFTLINT.md`'s approved-exceptions list); behavior is
+    /// byte-for-byte the same as the single giant closure this replaced.
+    private static func runMigrationSession(
+        accountUUIDs: [AccountUUID],
+        handle: MigrationBGSessionHandle,
+        send: Send<Root.Action>,
+        dependencies: MigrationSessionDependencies
+    ) async {
+        var classifications: [(accountUUID: AccountUUID, classification: MigrationAccountClassification)] = []
+        for accountUUID in accountUUIDs {
+            let classification = await classifyMigrationAccount(accountUUID, sdkSynchronizer: dependencies.sdkSynchronizer)
+            classifications.append((accountUUID, classification))
+        }
 
-            var classifications: [(accountUUID: AccountUUID, classification: MigrationAccountClassification)] = []
-            for accountUUID in accountUUIDs {
-                let classification = await classifyMigrationAccount(accountUUID, sdkSynchronizer: sdkSynchronizer)
-                classifications.append((accountUUID, classification))
-            }
+        let plan = MigrationSessionPlanner.plan(classifications)
 
-            let plan = MigrationSessionPlanner.plan(classifications)
+        if plan.notifyPlanNeedsUpdate {
+            await dependencies.userNotifications.scheduleMigrationNotification(MigrationNotification.planNeedsUpdate, nil)
+        }
 
-            if plan.notifyPlanNeedsUpdate {
-                await userNotifications.scheduleMigrationNotification(MigrationNotification.planNeedsUpdate, nil)
-            }
+        switch plan.action {
+        case .syncOnly:
+            await completeSyncOnlySession(handle: handle, send: send, dependencies: dependencies)
+            return
 
-            switch plan.action {
-            case .syncOnly:
-                // MOB-1496 (W3): the SDK now owns the broadcast->sync direction outright — skip the
-                // sync session while it reports the wallet-scope privacy gate blocked (same outward
-                // behavior the retired app-side `isSyncDeferredAfterBroadcast` flag produced).
-                if await sdkSynchronizer.isMigrationSyncBlocked() {
-                    await migrationBGScheduler.scheduleNextWindow()
-                    handle.complete(true)
-                    return
-                }
+        case .broadcast(let winnerAccountUUID):
+            await executeBroadcastAction(winnerAccountUUID, classifications: classifications, dependencies: dependencies)
 
-                await send(.initialization(.migrationBackgroundSyncOnly(handle)))
-                return
+        case .cancelAll:
+            await dependencies.migrationBGScheduler.cancelAll()
 
-            case .broadcast(let winnerAccountUUID):
-                // MOB-1496 (W4): ensure-or-read the winning account's atomic snapshot — a missing
-                // snapshot this deep into a BG session (e.g. an exotic scheduled path whose
-                // first-ever read lands here) self-heals by creating one on the spot; acceptable,
-                // and `createNetworkSnapshot` logs its own fallback path when the benchmark comes
-                // back empty.
-                let options = await migrationManager.migrationNetworkOptions(winnerAccountUUID)
-                do {
-                    let result = try await sdkSynchronizer.executeNextPendingMigrationTransfer(winnerAccountUUID, options)
+        case .rearm:
+            await dependencies.migrationBGScheduler.scheduleNextWindow()
 
-                    switch result {
-                    case .success:
-                        // [MOB-1496] W2: persist the sent record + reconcile (this op's success is
-                        // one of `reconcile()`'s triggers).
-                        if let result {
-                            await handleLandedBroadcast(winnerAccountUUID, result)
-                        }
+        case .none:
+            break
+        }
 
-                    case .networkError, .invalidNote, .expired:
-                        let progress = (try? await sdkSynchronizer.getMigrationProgress(winnerAccountUUID)) ?? nil
-                        let nextNumber = (progress?.completedTransfers ?? 0) + 1
-                        await userNotifications.scheduleMigrationNotification(MigrationNotification.transferWaiting(number: nextNumber), nil)
-                        await migrationBGScheduler.scheduleNextWindow()
+        handle.complete(true)
+    }
 
-                    case nil:
-                        await migrationBGScheduler.scheduleNextWindow()
-                    }
-                } catch ZcashError.migrationRecordFailedAfterBroadcast(_) {
-                    // [MOB-1496] The broadcast DID land; only the engine's own recording of it
-                    // failed — route through the SAME handling as a `.success` result, with an
-                    // unknown txId (`MigrationScheduleStorage` maps an empty string to `nil`). The
-                    // BG session must not re-send (this isn't a networkError) and must not skip the
-                    // notification/re-arm a landed transfer deserves. Mirrors `MigrationSendingStore`/
-                    // `MigrationNoteSplitStore`'s identical foreground rationale for this same error.
-                    await handleLandedBroadcast(winnerAccountUUID, MigrationTransferResult.success(txId: ""))
-                } catch {
-                    // A throwing broadcast attempt for any OTHER reason is not itself a definite
-                    // outcome to notify about — treat it like the `nil` "nothing executed" case:
-                    // re-arm the next window and let that session's own outcome (or the engine's
-                    // self-heal) settle it, without a possibly-wrong notification.
-                    LoggerProxy.error("BGTask migration session: executeNextPendingMigrationTransfer failed \(error)")
-                    await migrationBGScheduler.scheduleNextWindow()
-                }
-
-            case .cancelAll:
-                await migrationBGScheduler.cancelAll()
-
-            case .rearm:
-                await migrationBGScheduler.scheduleNextWindow()
-
-            case .none:
-                break
-            }
-
+    /// The `.syncOnly` plan action: skip the sync session outright while the SDK's wallet-scope
+    /// privacy gate reports blocked (MOB-1496 W3 — same outward behavior the retired app-side
+    /// `isSyncDeferredAfterBroadcast` flag produced), else kick the same sync path
+    /// `power_wifi_sync` uses by handing `handle` back into the reducer as
+    /// `.migrationBackgroundSyncOnly` (which stashes `state.bgTask` — effects can't mutate `state`
+    /// directly). Either way the session ends here — the caller does NOT run `handle.complete(true)`
+    /// again afterward.
+    private static func completeSyncOnlySession(
+        handle: MigrationBGSessionHandle,
+        send: Send<Root.Action>,
+        dependencies: MigrationSessionDependencies
+    ) async {
+        if await dependencies.sdkSynchronizer.isMigrationSyncBlocked() {
+            await dependencies.migrationBGScheduler.scheduleNextWindow()
             handle.complete(true)
+            return
+        }
+
+        await send(.initialization(.migrationBackgroundSyncOnly(handle)))
+    }
+
+    /// The `.broadcast(winner:)` plan action: read the winning account's atomic network-snapshot
+    /// options AT EXECUTE TIME (MOB-1496 W4 — never a stale/local value; a missing snapshot this
+    /// deep into a BG session self-heals by creating one on the spot, and `createNetworkSnapshot`
+    /// logs its own fallback path when the benchmark comes back empty) and attempt the single
+    /// broadcast this session is allowed. `executeNextPendingMigrationTransfer`'s own nil-return
+    /// remains the sole due-ness authority (the classification height was for ordering/re-arm math
+    /// only) — nil, or any other throw, re-arms without a possibly-wrong notification and does NOT
+    /// try another candidate (one broadcast per session, full stop).
+    private static func executeBroadcastAction(
+        _ winnerAccountUUID: AccountUUID,
+        classifications: [(accountUUID: AccountUUID, classification: MigrationAccountClassification)],
+        dependencies: MigrationSessionDependencies
+    ) async {
+        let options = await dependencies.migrationManager.migrationNetworkOptions(winnerAccountUUID)
+        do {
+            let result = try await dependencies.sdkSynchronizer.executeNextPendingMigrationTransfer(winnerAccountUUID, options)
+
+            switch result {
+            case .success:
+                // [MOB-1496] W2: persist the sent record + reconcile (this op's success is one of
+                // `reconcile()`'s triggers).
+                if let result {
+                    await handleLandedBroadcast(winnerAccountUUID, result, classifications: classifications, dependencies: dependencies)
+                }
+
+            case .networkError, .invalidNote, .expired:
+                let progress = (try? await dependencies.sdkSynchronizer.getMigrationProgress(winnerAccountUUID)) ?? nil
+                let nextNumber = (progress?.completedTransfers ?? 0) + 1
+                await dependencies.userNotifications.scheduleMigrationNotification(MigrationNotification.transferWaiting(number: nextNumber), nil)
+                await dependencies.migrationBGScheduler.scheduleNextWindow()
+
+            case nil:
+                await dependencies.migrationBGScheduler.scheduleNextWindow()
+            }
+        } catch ZcashError.migrationRecordFailedAfterBroadcast(_) {
+            // [MOB-1496] The broadcast DID land; only the engine's own recording of it failed —
+            // route through the SAME handling as a `.success` result, with an unknown txId
+            // (`MigrationScheduleStorage` maps an empty string to `nil`). The BG session must not
+            // re-send (this isn't a networkError) and must not skip the notification/re-arm a
+            // landed transfer deserves. Mirrors `MigrationSendingStore`/`MigrationNoteSplitStore`'s
+            // identical foreground rationale for this same error.
+            await handleLandedBroadcast(
+                winnerAccountUUID,
+                MigrationTransferResult.success(txId: ""),
+                classifications: classifications,
+                dependencies: dependencies
+            )
+        } catch {
+            // A throwing broadcast attempt for any OTHER reason is not itself a definite outcome to
+            // notify about — treat it like the `nil` "nothing executed" case: re-arm the next
+            // window and let that session's own outcome (or the engine's self-heal) settle it,
+            // without a possibly-wrong notification.
+            LoggerProxy.error("BGTask migration session: executeNextPendingMigrationTransfer failed \(error)")
+            await dependencies.migrationBGScheduler.scheduleNextWindow()
+        }
+    }
+
+    /// [MOB-1496] Shared by the `.success` outcome and the
+    /// `ZcashError.migrationRecordFailedAfterBroadcast` catch clause above — the broadcast landed
+    /// either way (only the engine's own recording of it failed in the latter case), so both paths
+    /// persist the sent record, reconcile, and notify/re-arm (or cancel-on-complete) identically.
+    /// Mirrors the same rationale `MigrationSendingStore`/`MigrationNoteSplitStore` already apply
+    /// for their own foreground broadcasts. Parameterized by `accountUUID` — the session's single
+    /// winning account, not necessarily the selected one (MOB-1496 W5).
+    ///
+    /// Fix-wave finding 1 (review IMPORTANT-1): the winner completing must NOT `cancelAll`/announce
+    /// `.migrationComplete` while another classified account still has an active run — only when
+    /// EVERY OTHER account this session already classified is ALSO done
+    /// (`MigrationSessionPlanner.allAccountsAreDone`, the SAME predicate `plan(_:)` uses for its own
+    /// `.cancelAll` gate, reused here so the two sites cannot drift) does this cancel/notify-
+    /// complete. An empty "other accounts" list (the single-account case) is vacuously done,
+    /// preserving the original single-account complete->cancelAll behavior exactly. `.unreadable`
+    /// never counts as done (see `isDoneClassification`), so one unreadable account blocks a
+    /// premature cancelAll too.
+    private static func handleLandedBroadcast(
+        _ accountUUID: AccountUUID,
+        _ result: MigrationTransferResult,
+        classifications: [(accountUUID: AccountUUID, classification: MigrationAccountClassification)],
+        dependencies: MigrationSessionDependencies
+    ) async {
+        await dependencies.migrationManager.recordTransferBroadcast(accountUUID, result)
+        await dependencies.migrationManager.reconcile()
+
+        let migrationState = try? await dependencies.sdkSynchronizer.getMigrationState(accountUUID)
+        let otherAccounts = classifications.filter { $0.accountUUID != accountUUID }
+        let everyOtherAccountDone = MigrationSessionPlanner.allAccountsAreDone(otherAccounts)
+
+        if migrationState == MigrationState.complete && everyOtherAccountDone {
+            await dependencies.userNotifications.scheduleMigrationNotification(MigrationNotification.migrationComplete, nil)
+            await dependencies.migrationBGScheduler.cancelAll()
+        } else {
+            let notification = await Self.transferCompleteNotification(accountUUID: accountUUID, sdkSynchronizer: dependencies.sdkSynchronizer)
+            await dependencies.userNotifications.scheduleMigrationNotification(notification, nil)
+            await dependencies.migrationBGScheduler.scheduleNextWindow()
         }
     }
 
