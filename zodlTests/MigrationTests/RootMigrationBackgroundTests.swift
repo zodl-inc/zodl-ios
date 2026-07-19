@@ -908,6 +908,126 @@ import ComposableArchitecture
             #expect(store.state.alert == nil)
         }
     }
+
+    // MARK: - MOB-1496 (W3 review fix B): resume-after-broadcast-stop via the shared flag
+
+    /// Review scenario: a foreground broadcast stopped sync (`SDKSynchronizerClient
+    /// .stopSyncBeforeMigrationBroadcast()` flips the shared `migrationStoppedSyncForBroadcast`
+    /// flag), but no start was ever proactively/reactively deferred — `syncDeferredByMigrationGate`
+    /// stays `false` because nobody happened to call `.retryStart` while the gate was blocked (e.g.
+    /// the user was parked on the note-split progress screen). A genuine gate true->false
+    /// transition must still resume sync exactly once and clear the shared flag, even though W3's
+    /// OWN deferral flag was never set.
+    @Test func migrationSyncGateChangedResumesWhenBroadcastStopFlagSetEvenWithoutADeferredStart() async {
+        let startCalls = LockIsolated<[Bool]>([])
+
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            @Shared(.inMemory(.migrationStoppedSyncForBroadcast)) var migrationStoppedSyncForBroadcast: Bool = false
+            $migrationStoppedSyncForBroadcast.withLock { $0 = true }
+
+            var initialState = Self.selectedAccountState()
+            initialState.lastMigrationSyncGateBlocked = true
+
+            let store = Store(initialState: initialState) {
+                Root()
+            } withDependencies: {
+                baseNoOpDependencies(&$0)
+                $0.diskSpaceChecker.hasEnoughFreeSpaceForSync = { true }
+                $0.sdkSynchronizer = SDKSynchronizerClient.mocked(
+                    latestState: { Self.preparedState },
+                    start: { _ in startCalls.withValue { $0.append(true) } }
+                )
+                $0.sdkSynchronizer.isMigrationSyncBlocked = { false }
+            }
+
+            store.send(.migrationSyncGateChanged(false))
+            await waitForRootStore { startCalls.withValue { !$0.isEmpty } }
+
+            #expect(startCalls.withValue { $0 } == [true])
+            #expect(store.state.syncDeferredByMigrationGate == false)
+            #expect(migrationStoppedSyncForBroadcast == false)
+        }
+    }
+
+    /// Existing behavior preserved: a genuine gate transition with NEITHER the W3 deferred-start
+    /// flag NOR the new broadcast-stop flag set only reconciles — `.retryStart` must never fire.
+    @Test func migrationSyncGateChangedGenuineTransitionWithNeitherFlagNeverCallsRetryStart() async {
+        let startCalls = LockIsolated<[Bool]>([])
+        let reconcileCalls = LockIsolated<Int>(0)
+
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            var initialState = Self.selectedAccountState()
+            initialState.lastMigrationSyncGateBlocked = true
+
+            let store = Store(initialState: initialState) {
+                Root()
+            } withDependencies: {
+                baseNoOpDependencies(&$0)
+                $0.diskSpaceChecker.hasEnoughFreeSpaceForSync = { true }
+                $0.sdkSynchronizer = SDKSynchronizerClient.mocked(
+                    latestState: { Self.preparedState },
+                    start: { _ in startCalls.withValue { $0.append(true) } }
+                )
+                $0.sdkSynchronizer.isMigrationSyncBlocked = { false }
+                $0.migrationManager.reconcile = { reconcileCalls.withValue { $0 += 1 } }
+            }
+
+            store.send(.migrationSyncGateChanged(false))
+            await waitForRootStore { reconcileCalls.withValue { $0 } == 1 }
+            // Let any further (erroneous, if `.retryStart` fired anyway) effects settle.
+            try? await Task.sleep(nanoseconds: 300_000_000)
+
+            #expect(startCalls.withValue { $0 }.isEmpty)
+            #expect(reconcileCalls.withValue { $0 } == 1)
+            #expect(store.state.syncDeferredByMigrationGate == false)
+        }
+    }
+
+    /// The pre-flight-failure edge (brief item B): a broadcast stops sync but never reaches the
+    /// SDK's actual broadcast attempt (e.g. a Tor bootstrap failure), so the gate never flips
+    /// blocked — no genuine `true->false` transition will EVER arrive for it. Covered by checking
+    /// the shared flag independent of the dedupe guard: the NEXT `.migrationSyncGateChanged(false)`
+    /// to reach Root at all (e.g. a later successful start's own seed read — already `false`, so
+    /// ordinarily swallowed by the dedupe as "no change") still resumes and clears the flag, without
+    /// also re-running `reconcile()` (this is not a genuine change).
+    @Test func migrationSyncGateChangedNonGenuineArrivalWithBroadcastStopFlagSetStillResumes() async {
+        let startCalls = LockIsolated<[Bool]>([])
+        let reconcileCalls = LockIsolated<Int>(0)
+
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            @Shared(.inMemory(.migrationStoppedSyncForBroadcast)) var migrationStoppedSyncForBroadcast: Bool = false
+            $migrationStoppedSyncForBroadcast.withLock { $0 = true }
+
+            // `lastMigrationSyncGateBlocked` defaults to `false` (Root.State.initial) — the gate
+            // was never observed blocked, matching the pre-flight-failure scenario exactly.
+            let store = Store(initialState: Self.selectedAccountState()) {
+                Root()
+            } withDependencies: {
+                baseNoOpDependencies(&$0)
+                $0.diskSpaceChecker.hasEnoughFreeSpaceForSync = { true }
+                $0.sdkSynchronizer = SDKSynchronizerClient.mocked(
+                    latestState: { Self.preparedState },
+                    start: { _ in startCalls.withValue { $0.append(true) } }
+                )
+                $0.sdkSynchronizer.isMigrationSyncBlocked = { false }
+                $0.migrationManager.reconcile = { reconcileCalls.withValue { $0 += 1 } }
+            }
+
+            store.send(.migrationSyncGateChanged(false))
+            await waitForRootStore { startCalls.withValue { !$0.isEmpty } }
+
+            #expect(startCalls.withValue { $0 } == [true])
+            #expect(migrationStoppedSyncForBroadcast == false)
+            #expect(reconcileCalls.withValue { $0 } == 0)
+            #expect(store.state.lastMigrationSyncGateBlocked == false)
+        }
+    }
 }
 
 // MARK: - Shared dependency baseline (mirrors RootMigrationRoutingTests.swift)

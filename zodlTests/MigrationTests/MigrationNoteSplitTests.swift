@@ -465,7 +465,12 @@ import ComposableArchitecture
 
     /// `sdkSynchronizer.isSyncing() == true` -> `stop()` fires BEFORE the broadcast call, in that
     /// order (asserted via a shared call-order log). Software submit lane (`submitNoteSplit`).
+    /// MOB-1496 (W3 review fix B): the shared `stopSyncBeforeMigrationBroadcast()` helper also
+    /// flips `migrationStoppedSyncForBroadcast` whenever it actually stops.
     @MainActor @Test func retryTappedWhileSyncingStopsSyncBeforeSubmittingNoteSplit() async {
+        @Shared(.inMemory(.migrationStoppedSyncForBroadcast)) var migrationStoppedSyncForBroadcast: Bool = false
+        $migrationStoppedSyncForBroadcast.withLock { $0 = false }
+
         let callOrder = LockIsolated<[String]>([])
         let proposal = NoteSplitProposal(outputNotes: [Zatoshi(500_000_000)], fee: Zatoshi(100_000))
         var state = MigrationNoteSplit.State(phase: .splitting, isFailurePresented: true)
@@ -493,11 +498,15 @@ import ComposableArchitecture
         }
 
         #expect(callOrder.value == ["stop", "execute"])
+        #expect(migrationStoppedSyncForBroadcast == true)
     }
 
-    /// Idempotent: `sdkSynchronizer.isSyncing() == false` -> `stop()` is never called. Software
-    /// submit lane.
+    /// Idempotent: `sdkSynchronizer.isSyncing() == false` -> `stop()` is never called, and the
+    /// shared broadcast-stop flag is never set either. Software submit lane.
     @MainActor @Test func retryTappedWhileIdleDoesNotCallStopBeforeSubmittingNoteSplit() async {
+        @Shared(.inMemory(.migrationStoppedSyncForBroadcast)) var migrationStoppedSyncForBroadcast: Bool = false
+        $migrationStoppedSyncForBroadcast.withLock { $0 = false }
+
         let stopCalls = LockIsolated<Int>(0)
         let proposal = NoteSplitProposal(outputNotes: [Zatoshi(500_000_000)], fee: Zatoshi(100_000))
         var state = MigrationNoteSplit.State(phase: .splitting, isFailurePresented: true)
@@ -522,6 +531,7 @@ import ComposableArchitecture
         }
 
         #expect(stopCalls.value == 0)
+        #expect(migrationStoppedSyncForBroadcast == false)
     }
 
     /// The Keystone resubmit lane (an already-signed PCZT) gets the same stop-before-broadcast

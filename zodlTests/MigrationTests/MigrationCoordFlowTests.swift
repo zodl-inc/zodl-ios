@@ -112,6 +112,9 @@ import ComposableArchitecture
             $0.migrationManager.reentryRoute = { .statusProgress }
             $0.migrationManager.sendGate = { .allowed }
             $0.sdkSynchronizer = .noOp
+            // MOB-1496 (W3 review fix C): a non-10-minute value (900s = 15 min) so a field left at
+            // its zero default (the "about 0 mins" footer-flash regression) would visibly fail.
+            $0.sdkSynchronizer.migrationPrivacySyncBufferDuration = { 900 }
             $0.migrationManager.migrationTransfers = { _ in rows }
             $0.migrationManager.migrationSummary = { _ in summary }
         }
@@ -129,6 +132,7 @@ import ComposableArchitecture
         #expect(statusState.isFlowRoot == true)
         #expect(statusState.rows == IdentifiedArrayOf(uniqueElements: rows))
         #expect(statusState.totalDurationHours == 24)
+        #expect(statusState.syncPrivacyBufferMinutes == 15)
     }
 
     @MainActor @Test func onAppearWithRecoveryNotExpiredRouteAppendsFlowRootRecoveryScreen() async {
@@ -198,6 +202,10 @@ import ComposableArchitecture
             $0.migrationManager.reentryRoute = { .statusResume }
             $0.migrationManager.sendGate = { .syncRequired }
             $0.sdkSynchronizer = .noOp
+            // MOB-1496 (W3 review fix C): a non-10-minute value (900s = 15 min) so a field left at
+            // its zero default (the "about 0 mins" footer-flash regression, Minor-1) would visibly
+            // fail — `.resume` is the only presentation that renders the footer.
+            $0.sdkSynchronizer.migrationPrivacySyncBufferDuration = { 900 }
             $0.migrationManager.migrationTransfers = { _ in rows }
             $0.migrationManager.migrationSummary = { _ in summary }
         }
@@ -215,6 +223,7 @@ import ComposableArchitecture
         #expect(statusState.stalledNumber == 2)
         #expect(statusState.stalledHoursAgo == 5)
         #expect(statusState.isSendNowDisabled == true)
+        #expect(statusState.syncPrivacyBufferMinutes == 15)
     }
 
     @MainActor @Test func onAppearWithCompleteRouteAppendsFlowRootCompleteScreen() async {
