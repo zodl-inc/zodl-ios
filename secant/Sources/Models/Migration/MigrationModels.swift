@@ -9,6 +9,7 @@
 //  only keeps the types that have no SDK counterpart.
 //
 
+import Foundation
 @preconcurrency import ZcashLightClientKit
 
 /// Aggregate summary of the migration for progress UI. Not part of the SDK surface. [ext]
@@ -91,4 +92,27 @@ struct MigrationTransferRow: Equatable, Sendable, Codable, Identifiable {
 enum MigrationMode: String, Equatable, Sendable, Codable {
     case immediate
     case privateScheduled
+}
+
+/// App-persisted record of the committed migration schedule (MOB-1496 W2): the SDK retains no
+/// proposal list once a schedule is committed, so this is the app's only record of it — the
+/// payload `migrationSummary`/`migrationTransfers` derive rows/totals from. Not part of the SDK
+/// surface, though it embeds `MigrationSchedule` (already `Codable`) as-is. [ext]
+struct MigrationCommittedSchedule: Equatable, Sendable, Codable {
+    /// One broadcast transfer, recorded the moment its broadcast succeeds — append-only across
+    /// restarts within one logical run (a re-created plan after a restart continues the same run,
+    /// preserving prior sent rows with their checks).
+    struct SentRecord: Equatable, Sendable, Codable {
+        let transferId: String
+        let amount: Zatoshi
+        /// `nil` when the broadcast landed but the txId is unknown (e.g. the engine's recording
+        /// itself failed after a successful broadcast) — never an empty string.
+        let txId: String?
+        let sentAt: Date
+    }
+
+    /// The confirmed schedule (SDK type, already `Codable`).
+    var schedule: MigrationSchedule
+    var sentRecords: [SentRecord]
+    var committedAt: Date
 }

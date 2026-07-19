@@ -215,10 +215,20 @@ extension Root {
             case .synchronizerStateChanged(let latestState):
                 let snapshot = SyncStatusSnapshot.snapshotFor(state: latestState.data.syncStatus)
 
+                // MOB-1496 (W2): reconcile migration state on the EDGE into `.upToDate` — not on
+                // every tick while already synced (would storm `reconcile()` on every subsequent
+                // tick at the tip). Piggybacks on this existing `stateStream()` subscription
+                // (`.registerForSynchronizersUpdate` below) rather than opening a second one.
+                let didJustReachUpToDate = snapshot.syncStatus == .upToDate && !state.wasSyncUpToDateForMigration
+                state.wasSyncUpToDateForMigration = snapshot.syncStatus == .upToDate
+                let migrationReconcileEffect: Effect<Action> = didJustReachUpToDate
+                    ? .run { [migrationManager] _ in await migrationManager.reconcile() }
+                    : .none
+
                 guard let account = state.selectedWalletAccount else {
-                    return .none
+                    return migrationReconcileEffect
                 }
-                
+
                 // update flexa balance
                 if let accountBalance = latestState.data.accountsBalances[account.id] {
                     let shieldedBalance = accountBalance.shieldedSpendableValue
@@ -240,12 +250,12 @@ extension Root {
 
                 // handle BCGTask
                 guard state.bgTask != nil else {
-                    return .send(.initialization(.checkRestoreWalletFlag(snapshot.syncStatus)))
+                    return .merge(migrationReconcileEffect, .send(.initialization(.checkRestoreWalletFlag(snapshot.syncStatus))))
                 }
-                
+
                 var finishBGTask = false
                 var successOfBGTask = false
-                
+
                 switch snapshot.syncStatus {
                 case .upToDate:
                     successOfBGTask = true
@@ -261,19 +271,27 @@ extension Root {
                     finishBGTask = true
                 default: break
                 }
-                
+
                 if finishBGTask  {
                     LoggerProxy.event("BGTask setTaskCompleted(success: \(successOfBGTask)) from TCA")
                     state.bgTask?.setTaskCompleted(success: successOfBGTask)
                     state.bgTask = nil
                     return .merge(
+                        migrationReconcileEffect,
                         .cancel(id: state.CancelStateId),
                         .cancel(id: state.CancelTransactionsStateId)
                     )
                 }
 
-                return .send(.initialization(.checkRestoreWalletFlag(snapshot.syncStatus)))
-                
+                return .merge(migrationReconcileEffect, .send(.initialization(.checkRestoreWalletFlag(snapshot.syncStatus))))
+
+            // MOB-1496 (W2): gate-flip migration-reconcile trigger — see
+            // `.registerForSynchronizersUpdate`'s `migrationSyncGateEffect` for how this is fed.
+            case .migrationSyncGateChanged(let isBlocked):
+                guard state.lastMigrationSyncGateBlocked != isBlocked else { return .none }
+                state.lastMigrationSyncGateBlocked = isBlocked
+                return .run { [migrationManager] _ in await migrationManager.reconcile() }
+
             case .initialization(.checkRestoreWalletFlag(let syncStatus)):
                 if state.isRestoringWallet && syncStatus == .upToDate {
                     state.isRestoringWallet = false
@@ -322,11 +340,31 @@ extension Root {
                         .map(Root.Action.synchronizerStateChanged)
                 }
                 .cancellable(id: state.CancelStateId, cancelInFlight: true)
+
+                // MOB-1496 (W2): gate-flip migration-reconcile trigger. An initial
+                // `isMigrationSyncBlocked()` read (its stream seeds a conservative `false`
+                // synchronously, corrected asynchronously — see `migrationSyncBlockedStream`'s
+                // doc) is `.concatenate`d ahead of the live stream itself (its own first/seed
+                // emission dropped, since the initial read already has the real value), under one
+                // cancel id so both start/stop together with this subscription's own lifetime.
+                let migrationSyncGateEffect = Effect.concatenate(
+                    .run { [sdkSynchronizer] send in
+                        await send(.migrationSyncGateChanged(await sdkSynchronizer.isMigrationSyncBlocked()))
+                    },
+                    Effect.publisher {
+                        sdkSynchronizer.migrationSyncBlockedStream()
+                            .dropFirst()
+                            .map(Root.Action.migrationSyncGateChanged)
+                    }
+                )
+                .cancellable(id: state.migrationSyncGateCancelId, cancelInFlight: true)
+
                 if state.bgTask != nil {
-                    return stateStreamEffect
+                    return .merge(stateStreamEffect, migrationSyncGateEffect)
                 } else {
                     return .merge(
                         stateStreamEffect,
+                        migrationSyncGateEffect,
                         .send(.home(.smartBanner(.evaluatePriority1)))
                     )
                 }
@@ -994,6 +1032,13 @@ extension Root {
                 switch result {
                 case .success:
                     migrationManager.recordMigrationBroadcast()
+                    // [MOB-1496] W2: persist the sent record + reconcile (this op's success is one
+                    // of `reconcile()`'s triggers) — single-account semantics here, matching the
+                    // rest of this decision tree (W5 fans the whole tree out per-account).
+                    if let result {
+                        await migrationManager.recordTransferBroadcast(accountUUID, result)
+                    }
+                    await migrationManager.reconcile()
 
                     let migrationState = try? await sdkSynchronizer.getMigrationState(accountUUID)
                     if migrationState == MigrationState.complete {

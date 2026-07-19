@@ -166,6 +166,12 @@ struct MigrationReviewTransfer {
                             }
                         }
                         try await sdkSynchronizer.signAndStoreMigrationSchedule(account.id, schedule, usk)
+                        // [MOB-1496] W2: persist the just-committed schedule (the SDK keeps no
+                        // proposal list post-commit) and reconcile so `stateEvents` picks up the
+                        // fresh state promptly (a store completing a migration op is one of
+                        // `reconcile()`'s two triggers).
+                        await migrationManager.recordCommittedSchedule(account.id, schedule)
+                        await migrationManager.reconcile()
                         await send(.scheduleSigned)
                     } catch {
                         await send(.noteSplitFailed)

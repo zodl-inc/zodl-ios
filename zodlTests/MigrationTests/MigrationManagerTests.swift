@@ -1222,18 +1222,21 @@ struct MigrationManagerTests {
 
     /// `stateEvents(accountUUID:)` is backed by a `CurrentValueSubject` seeded `.notStarted`
     /// (`MigrationManagerImpl.subject(for:)`), and `reconcile()` only `.send()`s into it when a
-    /// fresh `getMigrationState` read differs from the subject's current value
-    /// (`pushStateIfChanged`). A brand-new `CurrentValueSubject` subscriber immediately replays its
-    /// current value, so the first collected element is always the `.notStarted` seed — genuine
-    /// changes across three `reconcile()` calls (notStarted -> inProgress -> inProgress (identical)
-    /// -> complete) must then show up as exactly two MORE emissions, not three.
-    @Test func stateEventsEmitsOnReconcileObservedChangeAndNotOnIdenticalReRead() async throws {
+    /// fresh read differs from the subject's last-pushed value — MOB-1496 (W2 emit-fix): that
+    /// comparison now covers BOTH `getMigrationState` (the subject's own `.value`) AND
+    /// `orchardBalanceToMigrate(accountUUID) > 0` (tracked beside it — see `pushStateIfChanged`'s
+    /// doc). A brand-new `CurrentValueSubject` subscriber immediately replays its current value, so
+    /// the first collected element is always the `.notStarted` seed. Five `reconcile()` calls drive
+    /// every combination: state-only change emits, an identical re-read emits nothing, a second
+    /// state change emits, a BALANCE-ONLY flip (state repeats) still emits, and a final call where
+    /// neither changed emits nothing.
+    @Test func stateEventsEmitsOnStateOrBalanceChangeAndNotOnIdenticalReRead() async throws {
         let userDefaults = try #require(
-            UserDefaults(suiteName: "testStateEventsEmitsOnReconcileObservedChangeAndNotOnIdenticalReRead"),
+            UserDefaults(suiteName: "testStateEventsEmitsOnStateOrBalanceChangeAndNotOnIdenticalReRead"),
             "MigrationGateStorage: UserDefaults failed to initialize"
         )
         defer {
-            userDefaults.removePersistentDomain(forName: "testStateEventsEmitsOnReconcileObservedChangeAndNotOnIdenticalReRead")
+            userDefaults.removePersistentDomain(forName: "testStateEventsEmitsOnStateOrBalanceChangeAndNotOnIdenticalReRead")
         }
 
         let storage = MigrationGateStorage(userDefaults: userDefaults)
@@ -1258,6 +1261,7 @@ struct MigrationManagerTests {
             completedTransfers: 1, totalTransfers: 5, remainingOrchard: Zatoshi(1), nextTransferReadyAtHeight: nil
         )
         let currentState = LockIsolated<MigrationState>(MigrationState.inProgress(progress))
+        let currentOrchardBalance = LockIsolated<Zatoshi>(Zatoshi.zero)
 
         await withDependencies {
             $0.sdkSynchronizer = SDKSynchronizerClient.mocked(
@@ -1265,6 +1269,19 @@ struct MigrationManagerTests {
                     var state = SynchronizerState.zero
                     state.latestBlockHeight = 5_000_000
                     return state
+                },
+                getAccountsBalances: {
+                    [
+                        account.id: AccountBalance(
+                            saplingBalance: PoolBalance(spendableValue: .zero, changePendingConfirmation: .zero, valuePendingSpendability: .zero),
+                            orchardBalance: PoolBalance(
+                                spendableValue: currentOrchardBalance.value,
+                                changePendingConfirmation: .zero,
+                                valuePendingSpendability: .zero
+                            ),
+                            unshielded: .zero
+                        )
+                    ]
                 }
             )
             $0.sdkSynchronizer.getMigrationState = { _ in currentState.value }
@@ -1277,20 +1294,233 @@ struct MigrationManagerTests {
 
             // 1st reconcile: notStarted (seed) -> inProgress is a genuine change -> emits.
             await impl.reconcile()
-            // 2nd reconcile: same inProgress value re-read -> no emission.
+            // 2nd reconcile: same inProgress value re-read, balance still zero -> no emission.
             await impl.reconcile()
             // 3rd reconcile: flips to complete -> a second genuine change -> emits.
             currentState.setValue(MigrationState.complete)
+            await impl.reconcile()
+            // 4th reconcile: state repeats (.complete), but the balance-to-migrate flag flips
+            // false -> true -> emits again (MOB-1496 W2 emit-fix), re-delivering the same state.
+            currentOrchardBalance.setValue(Zatoshi(1))
+            await impl.reconcile()
+            // 5th reconcile: neither state nor balance changed -> no further emission.
             await impl.reconcile()
 
             #expect(collected.value == [
                 MigrationState.notStarted,
                 MigrationState.inProgress(progress),
+                MigrationState.complete,
                 MigrationState.complete
             ])
 
             cancellable.cancel()
         }
+    }
+
+    // MARK: - MOB-1496 (W2): persisted-schedule clearing on run-end / reset / stale reconcile
+
+    /// `reconcile()` clears a persisted committed schedule the moment it observes `.notStarted`
+    /// for an account that still has one — the engine is authoritative, so a stale payload (e.g.
+    /// from an abandoned or reset run) must not keep rendering rows for a run the engine no longer
+    /// knows about.
+    @Test func reconcileClearsStalePersistedScheduleWhenStateIsNotStarted() async throws {
+        let gateSuiteName = "testReconcileClearsStalePersistedScheduleWhenStateIsNotStartedGate"
+        let scheduleSuiteName = "testReconcileClearsStalePersistedScheduleWhenStateIsNotStartedSchedule"
+        let gateUserDefaults = try #require(UserDefaults(suiteName: gateSuiteName))
+        let scheduleUserDefaults = try #require(UserDefaults(suiteName: scheduleSuiteName))
+        defer {
+            gateUserDefaults.removePersistentDomain(forName: gateSuiteName)
+            scheduleUserDefaults.removePersistentDomain(forName: scheduleSuiteName)
+        }
+
+        let gateStorage = MigrationGateStorage(userDefaults: gateUserDefaults)
+        let scheduleStorage = MigrationScheduleStorage(userDefaults: scheduleUserDefaults)
+
+        @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
+        @Shared(.inMemory(.walletAccounts)) var walletAccounts: [WalletAccount] = []
+        let account = WalletAccount(
+            Account(
+                id: AccountUUID(id: [UInt8](repeating: 20, count: 16)),
+                name: "Zodl",
+                keySource: nil,
+                seedFingerprint: nil,
+                hdAccountIndex: Zip32AccountIndex(0),
+                ufvk: nil,
+                uivk: nil
+            )
+        )
+        $selectedWalletAccount.withLock { $0 = account }
+        $walletAccounts.withLock { $0 = [account] }
+
+        let schedule = MigrationSchedule(
+            transfers: [MigrationTransferProposal(id: "t0", amount: Zatoshi(100), anchorHeight: 10, nextExecutableAfterHeight: 10, expiryHeight: 20)],
+            estimatedDurationHours: 6
+        )
+        scheduleStorage.recordCommittedSchedule(schedule, for: account.id, now: Date())
+        #expect(scheduleStorage.hasStoredPayload(for: account.id) == true)
+
+        await withDependencies {
+            $0.sdkSynchronizer = SDKSynchronizerClient.mocked(
+                latestState: {
+                    var state = SynchronizerState.zero
+                    state.latestBlockHeight = 5_000_000
+                    return state
+                }
+            )
+            $0.sdkSynchronizer.getMigrationState = { _ in MigrationState.notStarted }
+        } operation: {
+            let impl = MigrationManagerImpl(gateStorage: gateStorage, scheduleStorage: scheduleStorage)
+            await impl.reconcile()
+        }
+
+        #expect(scheduleStorage.hasStoredPayload(for: account.id) == false)
+    }
+
+    /// A genuinely `.notStarted` account with NO stored payload is untouched (nothing to clear) —
+    /// exercised so the stale-clear branch reads as a targeted fix, not a blanket per-reconcile
+    /// write.
+    @Test func reconcileWithNotStartedStateAndNoStoredPayloadDoesNothing() async throws {
+        let gateSuiteName = "testReconcileWithNotStartedStateAndNoStoredPayloadDoesNothingGate"
+        let scheduleSuiteName = "testReconcileWithNotStartedStateAndNoStoredPayloadDoesNothingSchedule"
+        let gateUserDefaults = try #require(UserDefaults(suiteName: gateSuiteName))
+        let scheduleUserDefaults = try #require(UserDefaults(suiteName: scheduleSuiteName))
+        defer {
+            gateUserDefaults.removePersistentDomain(forName: gateSuiteName)
+            scheduleUserDefaults.removePersistentDomain(forName: scheduleSuiteName)
+        }
+
+        let gateStorage = MigrationGateStorage(userDefaults: gateUserDefaults)
+        let scheduleStorage = MigrationScheduleStorage(userDefaults: scheduleUserDefaults)
+
+        @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
+        @Shared(.inMemory(.walletAccounts)) var walletAccounts: [WalletAccount] = []
+        let account = WalletAccount(
+            Account(
+                id: AccountUUID(id: [UInt8](repeating: 21, count: 16)),
+                name: "Zodl",
+                keySource: nil,
+                seedFingerprint: nil,
+                hdAccountIndex: Zip32AccountIndex(0),
+                ufvk: nil,
+                uivk: nil
+            )
+        )
+        $selectedWalletAccount.withLock { $0 = account }
+        $walletAccounts.withLock { $0 = [account] }
+
+        await withDependencies {
+            $0.sdkSynchronizer = SDKSynchronizerClient.mocked(
+                latestState: {
+                    var state = SynchronizerState.zero
+                    state.latestBlockHeight = 5_000_000
+                    return state
+                }
+            )
+            $0.sdkSynchronizer.getMigrationState = { _ in MigrationState.notStarted }
+        } operation: {
+            let impl = MigrationManagerImpl(gateStorage: gateStorage, scheduleStorage: scheduleStorage)
+            await impl.reconcile()
+        }
+
+        #expect(scheduleStorage.hasStoredPayload(for: account.id) == false)
+    }
+
+    /// `acknowledgeComplete()` bundles the existing wallet-wide flag with clearing the SELECTED
+    /// account's persisted schedule — the run Migration Complete was showing has ended.
+    @Test func acknowledgeCompleteClearsTheSelectedAccountsPersistedSchedule() throws {
+        let gateSuiteName = "testAcknowledgeCompleteClearsTheSelectedAccountsPersistedScheduleGate"
+        let scheduleSuiteName = "testAcknowledgeCompleteClearsTheSelectedAccountsPersistedScheduleSchedule"
+        let gateUserDefaults = try #require(UserDefaults(suiteName: gateSuiteName))
+        let scheduleUserDefaults = try #require(UserDefaults(suiteName: scheduleSuiteName))
+        defer {
+            gateUserDefaults.removePersistentDomain(forName: gateSuiteName)
+            scheduleUserDefaults.removePersistentDomain(forName: scheduleSuiteName)
+        }
+
+        let gateStorage = MigrationGateStorage(userDefaults: gateUserDefaults)
+        let scheduleStorage = MigrationScheduleStorage(userDefaults: scheduleUserDefaults)
+
+        @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
+        let account = WalletAccount(
+            Account(
+                id: AccountUUID(id: [UInt8](repeating: 22, count: 16)),
+                name: "Zodl",
+                keySource: nil,
+                seedFingerprint: nil,
+                hdAccountIndex: Zip32AccountIndex(0),
+                ufvk: nil,
+                uivk: nil
+            )
+        )
+        $selectedWalletAccount.withLock { $0 = account }
+
+        let schedule = MigrationSchedule(
+            transfers: [MigrationTransferProposal(id: "t0", amount: Zatoshi(100), anchorHeight: 10, nextExecutableAfterHeight: 10, expiryHeight: 20)],
+            estimatedDurationHours: 6
+        )
+        scheduleStorage.recordCommittedSchedule(schedule, for: account.id, now: Date())
+
+        let impl = MigrationManagerImpl(gateStorage: gateStorage, scheduleStorage: scheduleStorage)
+        impl.acknowledgeComplete()
+
+        #expect(gateStorage.isCompleteAcknowledged() == true)
+        #expect(scheduleStorage.hasStoredPayload(for: account.id) == false)
+    }
+
+    /// `resetPersistedFlags()` (the migration SDK simulator's debug "Reset app migration flags"
+    /// control) clears every KNOWN account's persisted schedule, not just the selected one.
+    @Test func resetPersistedFlagsClearsEveryKnownAccountsPersistedSchedule() throws {
+        let gateSuiteName = "testResetPersistedFlagsClearsEveryKnownAccountsPersistedScheduleGate"
+        let scheduleSuiteName = "testResetPersistedFlagsClearsEveryKnownAccountsPersistedScheduleSchedule"
+        let gateUserDefaults = try #require(UserDefaults(suiteName: gateSuiteName))
+        let scheduleUserDefaults = try #require(UserDefaults(suiteName: scheduleSuiteName))
+        defer {
+            gateUserDefaults.removePersistentDomain(forName: gateSuiteName)
+            scheduleUserDefaults.removePersistentDomain(forName: scheduleSuiteName)
+        }
+
+        let gateStorage = MigrationGateStorage(userDefaults: gateUserDefaults)
+        let scheduleStorage = MigrationScheduleStorage(userDefaults: scheduleUserDefaults)
+
+        @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
+        @Shared(.inMemory(.walletAccounts)) var walletAccounts: [WalletAccount] = []
+        let selected = WalletAccount(
+            Account(
+                id: AccountUUID(id: [UInt8](repeating: 23, count: 16)),
+                name: "Zodl",
+                keySource: nil,
+                seedFingerprint: nil,
+                hdAccountIndex: Zip32AccountIndex(0),
+                ufvk: nil,
+                uivk: nil
+            )
+        )
+        let keystone = WalletAccount(
+            Account(
+                id: AccountUUID(id: [UInt8](repeating: 24, count: 16)),
+                name: "Keystone",
+                keySource: String(localizable: .accountsKeystone).lowercased(),
+                seedFingerprint: nil,
+                hdAccountIndex: Zip32AccountIndex(0),
+                ufvk: nil,
+                uivk: nil
+            )
+        )
+        $selectedWalletAccount.withLock { $0 = selected }
+        $walletAccounts.withLock { $0 = [selected, keystone] }
+
+        let schedule = MigrationSchedule(
+            transfers: [MigrationTransferProposal(id: "t0", amount: Zatoshi(100), anchorHeight: 10, nextExecutableAfterHeight: 10, expiryHeight: 20)],
+            estimatedDurationHours: 6
+        )
+        scheduleStorage.recordCommittedSchedule(schedule, for: selected.id, now: Date())
+        scheduleStorage.recordCommittedSchedule(schedule, for: keystone.id, now: Date())
+
+        let impl = MigrationManagerImpl(gateStorage: gateStorage, scheduleStorage: scheduleStorage)
+        impl.resetPersistedFlags()
+
+        #expect(scheduleStorage.hasStoredPayload(for: selected.id) == false)
+        #expect(scheduleStorage.hasStoredPayload(for: keystone.id) == false)
     }
 
     // MARK: - isIronwoodActivated(): MOB-1483 activation gate

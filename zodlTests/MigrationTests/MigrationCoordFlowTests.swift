@@ -632,6 +632,11 @@ import ComposableArchitecture
                 callOrder.withValue { $0.append("store") }
             }
             $0.migrationBGScheduler.scheduleFirstWindow = { callOrder.withValue { $0.append("scheduleFirstWindow") } }
+            // MOB-1496 (W2): a successful store now also reconciles — explicit no-op override
+            // since swift-dependencies requires `migrationManager` to be customized at least once
+            // before any of its members can run in a test context (this fixture's `.transferPlan`
+            // carries no `.schedule`, so `recordCommittedSchedule` itself is never reached).
+            $0.migrationManager.reconcile = { }
         }
         store.exhaustivity = .off
 
@@ -649,6 +654,85 @@ import ComposableArchitecture
             Issue.record("Expected .transferPlan retained at the bottom (never re-signs again)")
             return
         }
+    }
+
+    // MOB-1496 (W2): the Keystone store-success write point — `recordCommittedSchedule` reads the
+    // schedule off the `.transferPlan` element still beneath `keystoneSign`+`scan` at store time
+    // (before `resumeAfterKeystoneSigning` pops back up to it), and `reconcile()` runs alongside.
+    @MainActor @Test func foundPCZTBatchForPlanCommitContextRecordsCommittedScheduleAndReconciles() async {
+        let recordCommittedScheduleCalls = LockIsolated<[(AccountUUID?, MigrationSchedule)]>([])
+        let reconcileCalls = LockIsolated<Int>(0)
+        let unsigned: [MigrationUnsignedTransferPczt] = [MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xAA]))]
+        let signed: [Data] = [Data([0xAA, 0x01])]
+        let schedule = MigrationSchedule(
+            transfers: [MigrationTransferProposal(id: "t0", amount: Zatoshi(500_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)],
+            estimatedDurationHours: 24
+        )
+        var planState = MigrationTransferPlan.State(variant: .scheduled)
+        planState.schedule = schedule
+        var state = MigrationCoordFlow.State()
+        state.pendingKeystoneSigning = .planCommit
+        state.path.append(.transferPlan(planState))
+        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: unsigned)))
+        state.path.append(.scan(Scan.State.initial))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, _ in }
+            $0.migrationBGScheduler.scheduleFirstWindow = { }
+            $0.migrationManager.recordCommittedSchedule = { accountUUID, schedule in
+                recordCommittedScheduleCalls.withValue { $0.append((accountUUID, schedule)) }
+            }
+            $0.migrationManager.reconcile = { reconcileCalls.withValue { $0 += 1 } }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 2, action: .scan(.foundPCZTBatch(signed)))))
+        await store.receive(\.keystoneSigningSubmitted)
+
+        #expect(recordCommittedScheduleCalls.value.count == 1)
+        #expect(recordCommittedScheduleCalls.value.first?.0 == Self.defaultAccount.id)
+        #expect(recordCommittedScheduleCalls.value.first?.1 == schedule)
+        #expect(reconcileCalls.value == 1)
+    }
+
+    /// A store failure (`storeSignedMigrationTransactions` throws) must not persist the schedule —
+    /// the coordinator's existing `try?` swallows the error either way (no-partial-storage
+    /// invariant lives one layer up, at `.foundPCZTBatch`'s empty/count-mismatch guard), but a
+    /// failed store is not a "just-committed" schedule.
+    @MainActor @Test func foundPCZTBatchForPlanCommitContextDoesNotRecordCommittedScheduleWhenStoreFails() async {
+        struct StoreFailure: Error { }
+        let recordCommittedScheduleCalls = LockIsolated<Int>(0)
+        let reconcileCalls = LockIsolated<Int>(0)
+        let unsigned: [MigrationUnsignedTransferPczt] = [MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xAA]))]
+        let signed: [Data] = [Data([0xAA, 0x01])]
+        var planState = MigrationTransferPlan.State(variant: .scheduled)
+        planState.schedule = MigrationSchedule(
+            transfers: [MigrationTransferProposal(id: "t0", amount: Zatoshi(1), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)],
+            estimatedDurationHours: 1
+        )
+        var state = MigrationCoordFlow.State()
+        state.pendingKeystoneSigning = .planCommit
+        state.path.append(.transferPlan(planState))
+        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: unsigned)))
+        state.path.append(.scan(Scan.State.initial))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, _ in throw StoreFailure() }
+            $0.migrationBGScheduler.scheduleFirstWindow = { }
+            $0.migrationManager.recordCommittedSchedule = { _, _ in recordCommittedScheduleCalls.withValue { $0 += 1 } }
+            $0.migrationManager.reconcile = { reconcileCalls.withValue { $0 += 1 } }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 2, action: .scan(.foundPCZTBatch(signed)))))
+        await store.receive(\.keystoneSigningSubmitted)
+
+        #expect(recordCommittedScheduleCalls.value == 0)
+        #expect(reconcileCalls.value == 0)
     }
 
     // MOB-1478 (W4): TransferPlan's Keystone fork prepends the note-split PCZT when needed — the
@@ -683,6 +767,8 @@ import ComposableArchitecture
                 callOrder.withValue { $0.append("store") }
             }
             $0.migrationBGScheduler.scheduleFirstWindow = { callOrder.withValue { $0.append("scheduleFirstWindow") } }
+            // MOB-1496 (W2): see `foundPCZTBatchForPlanCommitContextStoresPopsAndPushesScheduledForScheduledVariant`'s comment.
+            $0.migrationManager.reconcile = { }
         }
         store.exhaustivity = .off
 
@@ -712,6 +798,8 @@ import ComposableArchitecture
             $0.sdkSynchronizer = .noOp
             $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, _ in }
             $0.migrationBGScheduler.scheduleFirstWindow = { }
+            // MOB-1496 (W2): see `foundPCZTBatchForPlanCommitContextStoresPopsAndPushesScheduledForScheduledVariant`'s comment.
+            $0.migrationManager.reconcile = { }
         }
         store.exhaustivity = .off
 
@@ -744,6 +832,8 @@ import ComposableArchitecture
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
             $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, stored in storeCalls.withValue { $0.append(stored) } }
+            // MOB-1496 (W2): see `foundPCZTBatchForPlanCommitContextStoresPopsAndPushesScheduledForScheduledVariant`'s comment.
+            $0.migrationManager.reconcile = { }
         }
         store.exhaustivity = .off
 
@@ -1339,6 +1429,10 @@ import ComposableArchitecture
                 restartCalls.withValue { $0 += 1 }
                 return schedule
             }
+            // MOB-1496 (W2): a successful restart now also reconciles — explicit no-op override
+            // since swift-dependencies requires `migrationManager` to be customized at least once
+            // before any of its members can run in a test context.
+            $0.migrationManager.reconcile = { }
         }
         store.exhaustivity = .off
 
@@ -1353,6 +1447,53 @@ import ComposableArchitecture
         #expect(planState.variant == MigrationTransferPlan.State.Variant.recreated)
         #expect(planState.injectedSchedule == schedule)
         #expect(planState.requiresSigning == true)
+    }
+
+    /// MOB-1496 (W2): `restartCurrentMigrationStep` succeeding is one of `reconcile()`'s triggers —
+    /// the fresh restart's state transition (e.g. off `.requiresAttention`) should be observed
+    /// promptly, ahead of the later schedule-commit reconcile that fires once this re-created plan
+    /// is actually signed+stored.
+    @MainActor @Test func recoveryRecreateReconcilesWhenRestartSucceeds() async {
+        let reconcileCalls = LockIsolated<Int>(0)
+        var state = MigrationCoordFlow.State()
+        state.path.append(.recovery(MigrationRecovery.State(isFlowRoot: true)))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.restartCurrentMigrationStep = { _, _ in
+                MigrationSchedule(transfers: [], estimatedDurationHours: 0)
+            }
+            $0.migrationManager.reconcile = { reconcileCalls.withValue { $0 += 1 } }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 0, action: .recovery(.delegate(.recreate)))))
+        await store.receive(\.pushHydratedPathState)
+
+        #expect(reconcileCalls.value == 1)
+    }
+
+    /// A failed restart (`try?` swallows the error, falling back to an empty schedule) must not
+    /// reconcile — nothing actually changed on the engine side to observe.
+    @MainActor @Test func recoveryRecreateDoesNotReconcileWhenRestartFails() async {
+        struct RestartFailure: Error { }
+        let reconcileCalls = LockIsolated<Int>(0)
+        var state = MigrationCoordFlow.State()
+        state.path.append(.recovery(MigrationRecovery.State(isFlowRoot: true)))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.restartCurrentMigrationStep = { _, _ in throw RestartFailure() }
+            $0.migrationManager.reconcile = { reconcileCalls.withValue { $0 += 1 } }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 0, action: .recovery(.delegate(.recreate)))))
+        await store.receive(\.pushHydratedPathState)
+
+        #expect(reconcileCalls.value == 0)
     }
 
     @MainActor @Test func recreatedPlanConfirmDoesSign() async {
@@ -1378,6 +1519,11 @@ import ComposableArchitecture
             $0.mnemonic = .mock
             $0.walletStorage = .noOp
             $0.zcashSDKEnvironment = .testnet
+            // MOB-1496 (W2): the sign+store success path now also calls these two — explicit
+            // no-op overrides since swift-dependencies requires `migrationManager` to be
+            // customized at least once before any of its members can run in a test context.
+            $0.migrationManager.recordCommittedSchedule = { _, _ in }
+            $0.migrationManager.reconcile = { }
         }
 
         await store.send(.confirmTapped)
@@ -1520,6 +1666,8 @@ import ComposableArchitecture
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
             $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, stored in storeCalls.withValue { $0.append(stored) } }
+            // MOB-1496 (W2): see `foundPCZTBatchForPlanCommitContextStoresPopsAndPushesScheduledForScheduledVariant`'s comment.
+            $0.migrationManager.reconcile = { }
         }
         store.exhaustivity = .off
 
@@ -1547,6 +1695,44 @@ import ComposableArchitecture
         }
     }
 
+    // MOB-1496 (W2): same write point as the real round-trip above, but the simulator bypass never
+    // pushes `scan` — `pendingKeystoneSchedule` reads the `.reviewTransfer` element one level below
+    // `keystoneSign` instead of two.
+    @MainActor @Test func keystoneSignSimulateSignatureForImmediateReviewContextRecordsCommittedScheduleAndReconciles() async {
+        let recordCommittedScheduleCalls = LockIsolated<[(AccountUUID?, MigrationSchedule)]>([])
+        let reconcileCalls = LockIsolated<Int>(0)
+        let unsigned: [MigrationUnsignedTransferPczt] = [MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xEE]))]
+        let schedule = MigrationSchedule(
+            transfers: [MigrationTransferProposal(id: "t0", amount: Zatoshi(1_245_800_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)],
+            estimatedDurationHours: 0
+        )
+        var reviewState = MigrationReviewTransfer.State(mode: .immediate)
+        reviewState.schedule = schedule
+        var state = MigrationCoordFlow.State()
+        state.pendingKeystoneSigning = .immediateReview
+        state.path.append(.reviewTransfer(reviewState))
+        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: unsigned)))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, _ in }
+            $0.migrationManager.recordCommittedSchedule = { accountUUID, schedule in
+                recordCommittedScheduleCalls.withValue { $0.append((accountUUID, schedule)) }
+            }
+            $0.migrationManager.reconcile = { reconcileCalls.withValue { $0 += 1 } }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 1, action: .keystoneSign(.delegate(.simulateSignature)))))
+        await store.receive(\.keystoneSigningSubmitted)
+
+        #expect(recordCommittedScheduleCalls.value.count == 1)
+        #expect(recordCommittedScheduleCalls.value.first?.0 == Self.defaultAccount.id)
+        #expect(recordCommittedScheduleCalls.value.first?.1 == schedule)
+        #expect(reconcileCalls.value == 1)
+    }
+
     @MainActor @Test func keystoneSignSimulateSignatureWithEmptyBatchFallsBackToPlaceholderAndResumesPlanCommit() async {
         let storeCalls = LockIsolated<[[MigrationSignedTransferPczt]]>([])
         var state = MigrationCoordFlow.State()
@@ -1559,6 +1745,8 @@ import ComposableArchitecture
             $0.sdkSynchronizer = .noOp
             $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, stored in storeCalls.withValue { $0.append(stored) } }
             $0.migrationBGScheduler.scheduleFirstWindow = { }
+            // MOB-1496 (W2): see `foundPCZTBatchForPlanCommitContextStoresPopsAndPushesScheduledForScheduledVariant`'s comment.
+            $0.migrationManager.reconcile = { }
         }
         store.exhaustivity = .off
 

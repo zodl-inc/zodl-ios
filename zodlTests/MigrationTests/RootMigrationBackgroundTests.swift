@@ -324,6 +324,11 @@ import ComposableArchitecture
     /// `.transferComplete` (never `.migrationComplete`), re-arms, and completes the session.
     @Test func sendSuccessNotCompleteNotifiesTransferCompleteAndRearms() async {
         let recordBroadcastCalls = LockIsolated<Int>(0)
+        // MOB-1496 (W2): the write-point for the persisted-schedule storage — fires beside the
+        // existing `recordMigrationBroadcast`, and `reconcile()` runs too (single-account
+        // semantics here; W5 fans this whole tree out per-account).
+        let recordTransferBroadcastCalls = LockIsolated<[(AccountUUID?, MigrationTransferResult)]>([])
+        let reconcileCalls = LockIsolated<Int>(0)
         let notifications = LockIsolated<[MigrationNotification]>([])
         let scheduleNextWindowCalls = LockIsolated<Int>(0)
         let cancelAllCalls = LockIsolated<Int>(0)
@@ -347,6 +352,10 @@ import ComposableArchitecture
                 $0.sdkSynchronizer.getMigrationState = { _ in MigrationState.inProgress(progress) }
                 $0.sdkSynchronizer.getMigrationProgress = { _ in progress }
                 $0.migrationManager.recordMigrationBroadcast = { recordBroadcastCalls.withValue { $0 += 1 } }
+                $0.migrationManager.recordTransferBroadcast = { accountUUID, result in
+                    recordTransferBroadcastCalls.withValue { $0.append((accountUUID, result)) }
+                }
+                $0.migrationManager.reconcile = { reconcileCalls.withValue { $0 += 1 } }
                 $0.migrationBGScheduler.scheduleNextWindow = { scheduleNextWindowCalls.withValue { $0 += 1 } }
                 $0.migrationBGScheduler.cancelAll = { cancelAllCalls.withValue { $0 += 1 } }
                 $0.userNotifications.scheduleMigrationNotification = { notification, date in
@@ -360,6 +369,9 @@ import ComposableArchitecture
             await waitForRootStore { completeCalls.withValue { !$0.isEmpty } }
 
             #expect(recordBroadcastCalls.withValue { $0 } == 1)
+            #expect(recordTransferBroadcastCalls.withValue { $0 }.count == 1)
+            #expect(recordTransferBroadcastCalls.withValue { $0 }.first?.1 == MigrationTransferResult.success(txId: "tx-1"))
+            #expect(reconcileCalls.withValue { $0 } == 1)
             #expect(notifications.withValue { $0 }.count == 1)
             if case let MigrationNotification.transferComplete(number, total, _, remaining)? = notifications.withValue({ $0 }).first {
                 #expect(number == 2)
@@ -544,6 +556,111 @@ import ComposableArchitecture
 
             #expect(scheduleNextWindowCalls.withValue { $0 } == 1)
             #expect(store.state.bgTask == nil)
+        }
+    }
+
+    // MARK: - MOB-1496 (W2): Root-level migration-reconcile triggers
+
+    /// `.synchronizerStateChanged` reconciles migration state on the EDGE into `.upToDate` — a
+    /// still-syncing tick does nothing, reaching `.upToDate` reconciles once, and a SECOND tick
+    /// that's already `.upToDate` (no new edge) must not reconcile again.
+    @Test func synchronizerStateChangedReconcilesOnceOnEdgeIntoUpToDateNotOnEveryTick() async {
+        let reconcileCalls = LockIsolated<Int>(0)
+
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let store = Store(initialState: Self.selectedAccountState()) {
+                Root()
+            } withDependencies: {
+                baseNoOpDependencies(&$0)
+                $0.migrationManager.reconcile = { reconcileCalls.withValue { $0 += 1 } }
+            }
+
+            // Still syncing: no edge into `.upToDate` yet -> no reconcile.
+            var syncingState = SynchronizerState.zero
+            syncingState.syncStatus = SyncStatus.syncing(0.5, false)
+            store.send(.synchronizerStateChanged(syncingState.redacted))
+
+            // Reaches `.upToDate`: the EDGE -> reconciles once.
+            var upToDateState = SynchronizerState.zero
+            upToDateState.syncStatus = SyncStatus.upToDate
+            store.send(.synchronizerStateChanged(upToDateState.redacted))
+
+            await waitForRootStore { reconcileCalls.withValue { $0 } == 1 }
+
+            // A SECOND tick still `.upToDate` (no new edge, no reconcile storm) — settle briefly
+            // and confirm the count never moves past 1.
+            store.send(.synchronizerStateChanged(upToDateState.redacted))
+            try? await Task.sleep(nanoseconds: 200_000_000)
+
+            #expect(reconcileCalls.withValue { $0 } == 1)
+        }
+    }
+
+    /// Leaving `.upToDate` and coming back re-arms the edge — a second genuine transition
+    /// reconciles again.
+    @Test func synchronizerStateChangedReconcilesAgainAfterLeavingAndReturningToUpToDate() async {
+        let reconcileCalls = LockIsolated<Int>(0)
+
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let store = Store(initialState: Self.selectedAccountState()) {
+                Root()
+            } withDependencies: {
+                baseNoOpDependencies(&$0)
+                $0.migrationManager.reconcile = { reconcileCalls.withValue { $0 += 1 } }
+            }
+
+            var upToDateState = SynchronizerState.zero
+            upToDateState.syncStatus = SyncStatus.upToDate
+            store.send(.synchronizerStateChanged(upToDateState.redacted))
+            await waitForRootStore { reconcileCalls.withValue { $0 } == 1 }
+
+            var syncingState = SynchronizerState.zero
+            syncingState.syncStatus = SyncStatus.syncing(0.2, false)
+            store.send(.synchronizerStateChanged(syncingState.redacted))
+
+            store.send(.synchronizerStateChanged(upToDateState.redacted))
+            await waitForRootStore { reconcileCalls.withValue { $0 } == 2 }
+        }
+    }
+
+    /// `.migrationSyncGateChanged` reconciles only when `sdkSynchronizer.isMigrationSyncBlocked()`
+    /// actually changes from its last-observed value — the first observed value (`false`, matching
+    /// `Root.State.lastMigrationSyncGateBlocked`'s own default) doesn't reconcile, a genuine flip
+    /// does, repeating the same value doesn't, and flipping back reconciles again.
+    @Test func migrationSyncGateChangedReconcilesOnlyOnActualChange() async {
+        let reconcileCalls = LockIsolated<Int>(0)
+
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let store = Store(initialState: Self.selectedAccountState()) {
+                Root()
+            } withDependencies: {
+                baseNoOpDependencies(&$0)
+                $0.migrationManager.reconcile = { reconcileCalls.withValue { $0 += 1 } }
+            }
+
+            // Matches the state's own default -> no reconcile.
+            store.send(.migrationSyncGateChanged(false))
+            try? await Task.sleep(nanoseconds: 100_000_000)
+            #expect(reconcileCalls.withValue { $0 } == 0)
+
+            // A genuine flip to `true` -> reconciles.
+            store.send(.migrationSyncGateChanged(true))
+            await waitForRootStore { reconcileCalls.withValue { $0 } == 1 }
+
+            // Repeating the SAME value -> no additional reconcile.
+            store.send(.migrationSyncGateChanged(true))
+            try? await Task.sleep(nanoseconds: 200_000_000)
+            #expect(reconcileCalls.withValue { $0 } == 1)
+
+            // Flips back to `false` -> reconciles again.
+            store.send(.migrationSyncGateChanged(false))
+            await waitForRootStore { reconcileCalls.withValue { $0 } == 2 }
         }
     }
 }

@@ -146,12 +146,20 @@ import ComposableArchitecture
     @MainActor @Test func onAppearWithSingleTransferSucceedsAndReachesSentPhase() async {
         let recordBroadcastCalls = LockIsolated<Int>(0)
         let scheduleNextWindowCalls = LockIsolated<Int>(0)
+        // MOB-1496 (W2): the write-point for the persisted-schedule storage — fires on a
+        // successful broadcast, beside the existing `recordMigrationBroadcast`/`reconcile()` calls.
+        let recordTransferBroadcastCalls = LockIsolated<[(AccountUUID?, MigrationTransferResult)]>([])
+        let reconcileCalls = LockIsolated<Int>(0)
         let store = TestStore(initialState: MigrationSending.State(totalCount: 1)) {
             MigrationSending()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
             $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in MigrationTransferResult.success(txId: "tx-0") }
             $0.migrationManager.recordMigrationBroadcast = { recordBroadcastCalls.withValue { $0 += 1 } }
+            $0.migrationManager.recordTransferBroadcast = { accountUUID, result in
+                recordTransferBroadcastCalls.withValue { $0.append((accountUUID, result)) }
+            }
+            $0.migrationManager.reconcile = { reconcileCalls.withValue { $0 += 1 } }
             $0.migrationBGScheduler.scheduleNextWindow = { scheduleNextWindowCalls.withValue { $0 += 1 } }
         }
 
@@ -166,6 +174,9 @@ import ComposableArchitecture
 
         #expect(recordBroadcastCalls.value == 1)
         #expect(scheduleNextWindowCalls.value == 1)
+        #expect(recordTransferBroadcastCalls.value.count == 1)
+        #expect(recordTransferBroadcastCalls.value.first?.1 == MigrationTransferResult.success(txId: "tx-0"))
+        #expect(reconcileCalls.value == 1)
     }
 
     // MARK: - onAppear: sequential N transfers (send-now)
@@ -248,6 +259,9 @@ import ComposableArchitecture
         let executeNextCalls = LockIsolated<Int>(0)
         let recordBroadcastCalls = LockIsolated<Int>(0)
         let scheduleNextWindowCalls = LockIsolated<Int>(0)
+        // MOB-1496 (W2): the dust lane flows through the SAME shared `.transferResult` success
+        // handler as the scheduled lane, so it gets the same write-point.
+        let recordTransferBroadcastCalls = LockIsolated<[(AccountUUID?, MigrationTransferResult)]>([])
         let state = MigrationSending.State(totalCount: 1, isDustLane: true)
         let store = TestStore(initialState: state) {
             MigrationSending()
@@ -262,6 +276,9 @@ import ComposableArchitecture
                 return MigrationTransferResult.success(txId: "tx-wrong-lane")
             }
             $0.migrationManager.recordMigrationBroadcast = { recordBroadcastCalls.withValue { $0 += 1 } }
+            $0.migrationManager.recordTransferBroadcast = { accountUUID, result in
+                recordTransferBroadcastCalls.withValue { $0.append((accountUUID, result)) }
+            }
             $0.migrationBGScheduler.scheduleNextWindow = { scheduleNextWindowCalls.withValue { $0 += 1 } }
             withDependenciesUSKDerivable(&$0)
         }
@@ -279,6 +296,7 @@ import ComposableArchitecture
         #expect(executeNextCalls.value == 0)
         #expect(recordBroadcastCalls.value == 1)
         #expect(scheduleNextWindowCalls.value == 1)
+        #expect(recordTransferBroadcastCalls.value.first?.1 == MigrationTransferResult.success(txId: "tx-dust"))
     }
 
     @MainActor @Test func onAppearWithoutDustLaneExecutesScheduledTransferNotMigrateMigrationDust() async {
@@ -385,6 +403,10 @@ import ComposableArchitecture
     // MARK: - MOB-1496: broadcast-landed-but-record-failed is treated as success, not failure
 
     @MainActor @Test func onAppearWhenRecordFailsAfterBroadcastStillReachesSentPhase() async {
+        // MOB-1496 (W2): the broadcast DID land — `recordTransferBroadcast` still fires, with the
+        // placeholder empty txId the store falls back to (persisted as `nil`, not `""`, by
+        // `MigrationScheduleStorage` — covered directly in `MigrationScheduleStorageTests`).
+        let recordTransferBroadcastCalls = LockIsolated<[(AccountUUID?, MigrationTransferResult)]>([])
         let store = TestStore(initialState: MigrationSending.State(totalCount: 1)) {
             MigrationSending()
         } withDependencies: {
@@ -393,6 +415,9 @@ import ComposableArchitecture
                 throw ZcashError.migrationRecordFailedAfterBroadcast(TestFailure())
             }
             $0.migrationManager.recordMigrationBroadcast = { }
+            $0.migrationManager.recordTransferBroadcast = { accountUUID, result in
+                recordTransferBroadcastCalls.withValue { $0.append((accountUUID, result)) }
+            }
             $0.migrationBGScheduler.scheduleNextWindow = { }
         }
 
@@ -404,6 +429,9 @@ import ComposableArchitecture
         await store.receive(\.allTransfersSent) {
             $0.phase = .success
         }
+
+        #expect(recordTransferBroadcastCalls.value.count == 1)
+        #expect(recordTransferBroadcastCalls.value.first?.1 == MigrationTransferResult.success(txId: ""))
     }
 
     // MARK: - retryTapped: re-runs only the failed step
