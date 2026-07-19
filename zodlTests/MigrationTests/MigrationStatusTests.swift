@@ -133,6 +133,30 @@ import ComposableArchitecture
         await store.finish()
     }
 
+    /// MOB-1496 (W3): `syncPrivacyBufferMinutes` = `Int((migrationPrivacySyncBufferDuration() /
+    /// 60).rounded())` — threads the resume footer's formatted minutes off the SDK's real buffer
+    /// instead of a hardcoded "10". Uses a non-10-minute value (900s = 15 min) so a stale hardcoded
+    /// "10" would visibly fail this assertion.
+    @MainActor @Test func onAppearComputesSyncPrivacyBufferMinutesFromSDKDuration() async {
+        let stateStream = PassthroughSubject<MigrationState, Never>()
+        let store = TestStore(initialState: MigrationStatus.State()) {
+            MigrationStatus()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.migrationPrivacySyncBufferDuration = { 900 }
+            $0.migrationManager.stateEvents = { _ in stateStream.eraseToAnyPublisher() }
+            $0.migrationManager.sendGate = { .allowed }
+        }
+
+        await store.send(.onAppear)
+        await store.receive(\.statusLoaded) {
+            $0.syncPrivacyBufferMinutes = 15
+        }
+
+        stateStream.send(completion: .finished)
+        await store.finish()
+    }
+
     @MainActor @Test func onAppearPreservesSentMinutesAgoAndIsBroadcastingRowFields() async {
         let stateStream = PassthroughSubject<MigrationState, Never>()
         let rows: [MigrationTransferRow] = [

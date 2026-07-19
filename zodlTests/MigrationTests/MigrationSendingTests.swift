@@ -144,10 +144,9 @@ import ComposableArchitecture
     // MARK: - onAppear: single transfer (immediate/manual/plan-first)
 
     @MainActor @Test func onAppearWithSingleTransferSucceedsAndReachesSentPhase() async {
-        let recordBroadcastCalls = LockIsolated<Int>(0)
         let scheduleNextWindowCalls = LockIsolated<Int>(0)
         // MOB-1496 (W2): the write-point for the persisted-schedule storage — fires on a
-        // successful broadcast, beside the existing `recordMigrationBroadcast`/`reconcile()` calls.
+        // successful broadcast, beside the existing `reconcile()` call.
         let recordTransferBroadcastCalls = LockIsolated<[(AccountUUID?, MigrationTransferResult)]>([])
         let reconcileCalls = LockIsolated<Int>(0)
         let store = TestStore(initialState: MigrationSending.State(totalCount: 1)) {
@@ -155,7 +154,6 @@ import ComposableArchitecture
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
             $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in MigrationTransferResult.success(txId: "tx-0") }
-            $0.migrationManager.recordMigrationBroadcast = { recordBroadcastCalls.withValue { $0 += 1 } }
             $0.migrationManager.recordTransferBroadcast = { accountUUID, result in
                 recordTransferBroadcastCalls.withValue { $0.append((accountUUID, result)) }
             }
@@ -172,7 +170,6 @@ import ComposableArchitecture
             $0.phase = .success
         }
 
-        #expect(recordBroadcastCalls.value == 1)
         #expect(scheduleNextWindowCalls.value == 1)
         #expect(recordTransferBroadcastCalls.value.count == 1)
         #expect(recordTransferBroadcastCalls.value.first?.1 == MigrationTransferResult.success(txId: "tx-0"))
@@ -183,7 +180,6 @@ import ComposableArchitecture
 
     @MainActor @Test func onAppearWithMultipleTransfersExecutesStrictlyInSequence() async {
         let executedCount = LockIsolated<Int>(0)
-        let recordBroadcastCalls = LockIsolated<Int>(0)
         let scheduleNextWindowCalls = LockIsolated<Int>(0)
         let store = TestStore(initialState: MigrationSending.State(totalCount: 3)) {
             MigrationSending()
@@ -196,7 +192,7 @@ import ComposableArchitecture
                 }
                 return MigrationTransferResult.success(txId: "tx-\(callIndex)")
             }
-            $0.migrationManager.recordMigrationBroadcast = { recordBroadcastCalls.withValue { $0 += 1 } }
+            $0.migrationManager.recordTransferBroadcast = { _, _ in }
             $0.migrationBGScheduler.scheduleNextWindow = { scheduleNextWindowCalls.withValue { $0 += 1 } }
         }
 
@@ -218,7 +214,6 @@ import ComposableArchitecture
         }
 
         #expect(executedCount.value == 3)
-        #expect(recordBroadcastCalls.value == 3)
         #expect(scheduleNextWindowCalls.value == 3)
     }
 
@@ -236,7 +231,7 @@ import ComposableArchitecture
                 capturedOptions.setValue(passedOptions)
                 return MigrationTransferResult.success(txId: "tx-0")
             }
-            $0.migrationManager.recordMigrationBroadcast = { }
+            $0.migrationManager.recordTransferBroadcast = { _, _ in }
             $0.migrationBGScheduler.scheduleNextWindow = { }
         }
 
@@ -257,7 +252,6 @@ import ComposableArchitecture
     @MainActor @Test func onAppearWithDustLaneExecutesMigrateMigrationDustInsteadOfScheduledTransfer() async {
         let migrateDustCalls = LockIsolated<Int>(0)
         let executeNextCalls = LockIsolated<Int>(0)
-        let recordBroadcastCalls = LockIsolated<Int>(0)
         let scheduleNextWindowCalls = LockIsolated<Int>(0)
         // MOB-1496 (W2): the dust lane flows through the SAME shared `.transferResult` success
         // handler as the scheduled lane, so it gets the same write-point.
@@ -275,7 +269,6 @@ import ComposableArchitecture
                 executeNextCalls.withValue { $0 += 1 }
                 return MigrationTransferResult.success(txId: "tx-wrong-lane")
             }
-            $0.migrationManager.recordMigrationBroadcast = { recordBroadcastCalls.withValue { $0 += 1 } }
             $0.migrationManager.recordTransferBroadcast = { accountUUID, result in
                 recordTransferBroadcastCalls.withValue { $0.append((accountUUID, result)) }
             }
@@ -294,7 +287,6 @@ import ComposableArchitecture
 
         #expect(migrateDustCalls.value == 1)
         #expect(executeNextCalls.value == 0)
-        #expect(recordBroadcastCalls.value == 1)
         #expect(scheduleNextWindowCalls.value == 1)
         #expect(recordTransferBroadcastCalls.value.first?.1 == MigrationTransferResult.success(txId: "tx-dust"))
     }
@@ -315,7 +307,7 @@ import ComposableArchitecture
                 migrateDustCalls.withValue { $0 += 1 }
                 return MigrationTransferResult.success(txId: "tx-dust")
             }
-            $0.migrationManager.recordMigrationBroadcast = { }
+            $0.migrationManager.recordTransferBroadcast = { _, _ in }
             $0.migrationBGScheduler.scheduleNextWindow = { }
         }
 
@@ -414,7 +406,6 @@ import ComposableArchitecture
             $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in
                 throw ZcashError.migrationRecordFailedAfterBroadcast(TestFailure())
             }
-            $0.migrationManager.recordMigrationBroadcast = { }
             $0.migrationManager.recordTransferBroadcast = { accountUUID, result in
                 recordTransferBroadcastCalls.withValue { $0.append((accountUUID, result)) }
             }
@@ -447,7 +438,7 @@ import ComposableArchitecture
                 executedCount.withValue { $0 += 1 }
                 return MigrationTransferResult.success(txId: "retried-tx")
             }
-            $0.migrationManager.recordMigrationBroadcast = { }
+            $0.migrationManager.recordTransferBroadcast = { _, _ in }
             $0.migrationBGScheduler.scheduleNextWindow = { }
         }
 
@@ -463,5 +454,98 @@ import ComposableArchitecture
         }
 
         #expect(executedCount.value == 1)
+    }
+
+    // MARK: - MOB-1496 (W3): stop an in-flight sync before a foreground migration broadcast
+
+    /// `sdkSynchronizer.isSyncing() == true` -> `stop()` fires BEFORE the broadcast call, in that
+    /// order (asserted via a shared call-order log).
+    @MainActor @Test func onAppearWhileSyncingStopsSyncBeforeExecutingScheduledTransfer() async {
+        let callOrder = LockIsolated<[String]>([])
+        let store = TestStore(initialState: MigrationSending.State(totalCount: 1)) {
+            MigrationSending()
+        } withDependencies: {
+            $0.sdkSynchronizer = SDKSynchronizerClient.mocked(
+                stop: { callOrder.withValue { $0.append("stop") } },
+                isSyncing: { true }
+            )
+            $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in
+                callOrder.withValue { $0.append("execute") }
+                return MigrationTransferResult.success(txId: "tx-0")
+            }
+            $0.migrationManager.recordTransferBroadcast = { _, _ in }
+            $0.migrationBGScheduler.scheduleNextWindow = { }
+        }
+
+        await store.send(.onAppear)
+        await store.receive(\.transferResult) {
+            $0.sentCount = 1
+            $0.txId = "tx-0"
+        }
+        await store.receive(\.allTransfersSent) {
+            $0.phase = .success
+        }
+
+        #expect(callOrder.value == ["stop", "execute"])
+    }
+
+    /// Idempotent: `sdkSynchronizer.isSyncing() == false` -> `stop()` is never called.
+    @MainActor @Test func onAppearWhileIdleDoesNotCallStopBeforeExecutingScheduledTransfer() async {
+        let stopCalls = LockIsolated<Int>(0)
+        let store = TestStore(initialState: MigrationSending.State(totalCount: 1)) {
+            MigrationSending()
+        } withDependencies: {
+            $0.sdkSynchronizer = SDKSynchronizerClient.mocked(
+                stop: { stopCalls.withValue { $0 += 1 } },
+                isSyncing: { false }
+            )
+            $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in MigrationTransferResult.success(txId: "tx-0") }
+            $0.migrationManager.recordTransferBroadcast = { _, _ in }
+            $0.migrationBGScheduler.scheduleNextWindow = { }
+        }
+
+        await store.send(.onAppear)
+        await store.receive(\.transferResult) {
+            $0.sentCount = 1
+            $0.txId = "tx-0"
+        }
+        await store.receive(\.allTransfersSent) {
+            $0.phase = .success
+        }
+
+        #expect(stopCalls.value == 0)
+    }
+
+    /// The dust lane ("Migrate anyway") gets the same stop-before-broadcast treatment as the
+    /// scheduled lane — order asserted the same way.
+    @MainActor @Test func onAppearWithDustLaneWhileSyncingStopsSyncBeforeMigratingDust() async {
+        let callOrder = LockIsolated<[String]>([])
+        let state = MigrationSending.State(totalCount: 1, isDustLane: true)
+        let store = TestStore(initialState: state) {
+            MigrationSending()
+        } withDependencies: {
+            $0.sdkSynchronizer = SDKSynchronizerClient.mocked(
+                stop: { callOrder.withValue { $0.append("stop") } },
+                isSyncing: { true }
+            )
+            $0.sdkSynchronizer.migrateMigrationDust = { _, _, _ in
+                callOrder.withValue { $0.append("execute") }
+                return MigrationTransferResult.success(txId: "tx-dust")
+            }
+            $0.migrationManager.recordTransferBroadcast = { _, _ in }
+            $0.migrationBGScheduler.scheduleNextWindow = { }
+            withDependenciesUSKDerivable(&$0)
+        }
+
+        await store.send(.onAppear)
+        await store.receive(\.transferResult) {
+            $0.sentCount = 1
+            $0.txId = "tx-dust"
+        }
+        await store.receive(\.allTransfersSent) {
+            $0.phase = .success
+        }
+
+        #expect(callOrder.value == ["stop", "execute"])
     }
 }

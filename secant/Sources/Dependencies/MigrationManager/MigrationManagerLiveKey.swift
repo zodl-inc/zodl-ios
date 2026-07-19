@@ -16,6 +16,16 @@
 //  (summary/transfers/dust-lock are app-side derivations/persistence, not SDK calls; stateEvents is
 //  the per-account replacement for the old wallet-wide `migrationStateStream`).
 //
+//  MOB-1496 (W3): the privacy gate is now split across the SDK and this client. The SDK owns
+//  broadcast->sync (`SDKSynchronizerClient.isMigrationSyncBlocked`/`migrationSyncBlockedStream`,
+//  driven from `RootInitialization.swift`'s `.retryStart`/`.migrationSyncGateChanged`) — this
+//  client's stub-era duplicate of that direction (`recordMigrationBroadcast`/
+//  `isSyncDeferredAfterBroadcast`, keyed off `migrationLastBroadcastAt`) is retired. This client
+//  keeps owning the OTHER direction — sync->send — re-keyed off observed sync completions
+//  (`recordSyncCompleted`, `migrationLastSyncCompletedAt`) and the SDK's own
+//  `migrationPrivacySyncBufferDuration()`, since the SDK only rejects a broadcast *during* an
+//  active sync (advisory, point-in-time) rather than enforcing a post-sync cooldown itself.
+//
 
 import Foundation
 @preconcurrency import Combine
@@ -54,19 +64,17 @@ extension MigrationManagerClient: DependencyKey {
             isCompleteAcknowledged: { impl.gateStorage.isCompleteAcknowledged() },
             acknowledgeComplete: { impl.acknowledgeComplete() },
             sendGate: { await impl.sendGate() },
-            recordMigrationBroadcast: { impl.recordMigrationBroadcast() },
-            isSyncDeferredAfterBroadcast: { impl.isSyncDeferredAfterBroadcast() },
+            recordSyncCompleted: { impl.recordSyncCompleted() },
             reconcile: { await impl.reconcile() },
             resetPersistedFlags: { impl.resetPersistedFlags() }
         )
     }
 }
 
-/// Composes `sdkSynchronizer` + `MigrationGateStorage` and owns the lazy `stateStream()`
-/// subscription that drives the sync<->send gate, plus the per-account `stateEvents` subjects.
-/// `@unchecked Sendable`: the only mutable state is `gateStorage`'s own `OSAllocatedUnfairLock`-
-/// protected storage plus the Combine subscription/subjects below, all of which are safe to share
-/// across isolation domains.
+/// Composes `sdkSynchronizer` + `MigrationGateStorage` and owns the per-account `stateEvents`
+/// subjects. `@unchecked Sendable`: the only mutable state is `gateStorage`'s own
+/// `OSAllocatedUnfairLock`-protected storage plus the Combine subjects below, all of which are
+/// safe to share across isolation domains.
 final class MigrationManagerImpl: @unchecked Sendable {
     @Dependency(\.sdkSynchronizer) var sdkSynchronizer
     @Dependency(\.zcashSDKEnvironment) var zcashSDKEnvironment
@@ -85,7 +93,6 @@ final class MigrationManagerImpl: @unchecked Sendable {
         self.scheduleStorage = scheduleStorage
     }
 
-    private let subscriptionState = OSAllocatedUnfairLock<AnyCancellable?>(initialState: nil)
     /// MOB-1496: one `CurrentValueSubject` per account `stateEvents` has ever been asked about,
     /// seeded `.notStarted`. `reconcile()` (and, indirectly, every store that calls it after a
     /// completed migration op) is the only writer; it emits only when a re-read's value differs
@@ -100,24 +107,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// (value unchanged).
     private let lastPushedHasBalance = OSAllocatedUnfairLock<[AccountUUID: Bool]>(initialState: [:])
 
-    /// Subscribes to `sdkSynchronizer.stateStream()` on first use so gate transitions (pending ->
-    /// resolved) are observed as soon as anything asks this client for a derivation or the gate,
-    /// without requiring reducer glue to kick it off (the `shieldingProcessor` precedent).
-    private func ensureSubscribed() {
-        subscriptionState.withLock { cancellable in
-            guard cancellable == nil else { return }
-
-            let gateStorage = self.gateStorage
-            cancellable = self.sdkSynchronizer.stateStream()
-                .sink { state in
-                    gateStorage.observeSyncStatus(state.syncStatus.isSyncing == false, at: Date())
-                }
-        }
-    }
-
     func bannerVariant(accountUUID: AccountUUID?) async -> MigrationBannerVariant? {
-        ensureSubscribed()
-
         guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return nil }
         guard let state = await normalizedState(accountUUID: resolvedAccountUUID) else { return nil }
 
@@ -138,8 +128,6 @@ final class MigrationManagerImpl: @unchecked Sendable {
     }
 
     func reentryRoute() async -> MigrationReentryRoute {
-        ensureSubscribed()
-
         guard let accountUUID = selectedWalletAccount?.id else { return MigrationReentryRoute.entry }
 
         let state = await normalizedState(accountUUID: accountUUID) ?? MigrationState.notStarted
@@ -328,22 +316,24 @@ final class MigrationManagerImpl: @unchecked Sendable {
         gateStorage.setTorEnabledForMigration(useTor)
     }
 
+    /// MOB-1496 (W3): blocked when EITHER (a) the synchronizer is actively syncing right now, or
+    /// (b) a sync completed less than `migrationPrivacySyncBufferDuration()` ago. (a) is checked
+    /// first — an active sync is the more specific/urgent state of the two, and mirrors the old
+    /// stub's own precedence (sync-required-outright before the timing window).
     func sendGate() async -> MigrationSendGate {
-        ensureSubscribed()
-
-        if let accountUUID = selectedWalletAccount?.id, await isSyncRequiredBeforeNextMigrationTransfer(accountUUID: accountUUID) {
-            gateStorage.markSyncRequired()
+        if sdkSynchronizer.isSyncing() {
+            return MigrationSendGate.syncRequired
         }
 
-        return gateStorage.sendGate(now: Date())
+        let buffer = sdkSynchronizer.migrationPrivacySyncBufferDuration()
+        return gateStorage.sendGate(now: Date(), buffer: buffer)
     }
 
-    func recordMigrationBroadcast() {
-        gateStorage.recordMigrationBroadcast(at: Date())
-    }
-
-    func isSyncDeferredAfterBroadcast() -> Bool {
-        gateStorage.isSyncDeferredAfterBroadcast(now: Date())
+    /// MOB-1496 (W3): called from Root's sync-completion edge (`RootInitialization.swift`'s
+    /// `.synchronizerStateChanged`, the false->true transition into `.upToDate` — the same edge
+    /// `reconcile()` fires on) so this updates once per completed sync, never per tick.
+    func recordSyncCompleted() {
+        gateStorage.recordSyncCompleted(at: Date())
     }
 
     /// Re-reads `getMigrationState` for the selected account (single-account semantics — MOB-1496
@@ -481,10 +471,6 @@ final class MigrationManagerImpl: @unchecked Sendable {
 
     private func hasOverdueMigrationTransfers(accountUUID: AccountUUID) async -> Bool {
         (try? await sdkSynchronizer.hasOverdueMigrationTransfers(accountUUID)) ?? false
-    }
-
-    private func isSyncRequiredBeforeNextMigrationTransfer(accountUUID: AccountUUID) async -> Bool {
-        (try? await sdkSynchronizer.isSyncRequiredBeforeNextMigrationTransfer(accountUUID)) ?? false
     }
 
     // MARK: - MOB-1496: per-account stateEvents subjects
@@ -792,12 +778,16 @@ enum MigrationDerivations {
     }
 }
 
-// MARK: - Persistence + 10-minute sync<->send gate
+// MARK: - Persistence + sync<->send privacy gate
 
-/// `UserDefaults`-backed persistence for every app-owned migration flag, plus the 10-minute
-/// sync<->send gate math. Every method that depends on "now" takes it as a parameter — never
-/// reads `Date()` internally — so tests can drive the clock explicitly. Injectable
-/// `UserDefaults` (default `.standard`) lets tests use an isolated named suite.
+/// `UserDefaults`-backed persistence for every app-owned migration flag, plus the app-owned half
+/// of the sync<->send privacy gate math (MOB-1496 W3): a completed sync briefly disables migration
+/// sends, for `SDKSynchronizerClient.migrationPrivacySyncBufferDuration()`. The OTHER direction — a
+/// broadcast briefly disabling sync — is enforced by the SDK itself now
+/// (`isMigrationSyncBlocked`/`migrationSyncBlockedStream`), not this class. Every method that
+/// depends on "now" takes it as a parameter — never reads `Date()` internally — so tests can drive
+/// the clock explicitly. Injectable `UserDefaults` (default `.standard`) lets tests use an isolated
+/// named suite.
 final class MigrationGateStorage: @unchecked Sendable {
     /// MOB-1496: the SDK's `MigrationNetworkPrivacyOptions` isn't `Codable` (it carries a
     /// `LightWalletEndpoint`, materialized at read time from the app's current sync endpoint —
@@ -808,15 +798,7 @@ final class MigrationGateStorage: @unchecked Sendable {
         var useTor: Bool
     }
 
-    private enum Constants {
-        static let tenMinutes: TimeInterval = 10 * 60
-    }
-
     private let userDefaults: UserDefaults
-    /// Transient (not persisted): "a required-before-transfer sync is currently pending
-    /// resolution". Re-derived from a fresh SDK read on every `markSyncRequired()` call, so
-    /// losing it across relaunch is fine — the LiveKey re-observes the live SDK flag immediately.
-    private let isSyncCurrentlyRequired = OSAllocatedUnfairLock(initialState: false)
 
     init(userDefaults: UserDefaults = .standard) {
         self.userDefaults = userDefaults
@@ -824,77 +806,36 @@ final class MigrationGateStorage: @unchecked Sendable {
 
     // MARK: Gate
 
-    /// Called whenever the LiveKey observes `isSyncRequiredBeforeNextMigrationTransfer() == true`.
-    /// Marks the gate as required outright — `sendGate()` checks this before the persisted
-    /// `gateUntil` window.
-    func markSyncRequired() {
-        isSyncCurrentlyRequired.withLock { $0 = true }
+    /// Persists the sync-completion timestamp `sendGate(now:buffer:)`'s window is measured from.
+    /// Called once per completed sync (`MigrationManagerImpl.recordSyncCompleted()`, fed by Root's
+    /// sync-completion edge in `RootInitialization.swift`) — never per tick.
+    func recordSyncCompleted(at now: Date) {
+        userDefaults.set(now.timeIntervalSince1970, forKey: .migrationLastSyncCompletedAt)
     }
 
-    /// Called from the `stateStream()` subscription: `isSyncFinished` reflects whether the just
-    /// observed `SyncStatus` is no longer `.syncing` (i.e. reached up-to-date). Only takes effect
-    /// while a sync requirement is pending — an unrelated "already idle" tick is a no-op.
-    func observeSyncStatus(_ isSyncFinished: Bool, at now: Date) {
-        guard isSyncFinished else { return }
-
-        let wasPending = isSyncCurrentlyRequired.withLock { pending -> Bool in
-            let wasPending = pending
-            pending = false
-            return wasPending
+    /// The (b) half of `sendGate()` — see `MigrationManagerImpl.sendGate()` for the (a) "actively
+    /// syncing right now" half, which needs a live SDK read this storage has no access to.
+    /// Precedence: no sync ever recorded (fresh install, never synced) -> `.allowed`; `now <
+    /// lastSyncCompletedAt + buffer` -> `.waitUntil(gateUntil)`; else `.allowed`.
+    func sendGate(now: Date, buffer: TimeInterval) -> MigrationSendGate {
+        guard let lastSyncCompletedAt = storedLastSyncCompletedAt() else {
+            return MigrationSendGate.allowed
         }
 
-        guard wasPending else { return }
-
-        recordSyncCompletion(at: now)
-    }
-
-    /// Persists `gateUntil = syncCompletion + 10 min` and clears the pending flag. Exposed
-    /// separately from `observeSyncStatus` so tests can drive the gate without a fake stream tick.
-    func recordSyncCompletion(at syncCompletedAt: Date) {
-        isSyncCurrentlyRequired.withLock { $0 = false }
-        let gateUntil = syncCompletedAt.addingTimeInterval(Constants.tenMinutes)
-        userDefaults.set(gateUntil.timeIntervalSince1970, forKey: .migrationSyncGateUntil)
-    }
-
-    /// `sendGate()` precedence: sync currently required -> `.syncRequired`; `now < gateUntil` ->
-    /// `.waitUntil(gateUntil)`; else `.allowed`.
-    func sendGate(now: Date) -> MigrationSendGate {
-        if isSyncCurrentlyRequired.withLock({ $0 }) {
-            return MigrationSendGate.syncRequired
-        }
-
-        guard let gateUntil = storedGateUntil(), now < gateUntil else {
+        let gateUntil = lastSyncCompletedAt.addingTimeInterval(buffer)
+        guard now < gateUntil else {
             return MigrationSendGate.allowed
         }
 
         return MigrationSendGate.waitUntil(gateUntil)
     }
 
-    private func storedGateUntil() -> Date? {
-        guard let interval = userDefaults.object(forKey: .migrationSyncGateUntil) as? Double else {
+    private func storedLastSyncCompletedAt() -> Date? {
+        guard let interval = userDefaults.object(forKey: .migrationLastSyncCompletedAt) as? Double else {
             return nil
         }
 
         return Date(timeIntervalSince1970: interval)
-    }
-
-    // MARK: Broadcast timestamp (consumed by MOB-1467)
-
-    /// Persisted (not merely in-memory) so relaunching the app cannot dodge the post-broadcast
-    /// sync deferral MOB-1467's scheduler will apply.
-    func recordMigrationBroadcast(at now: Date) {
-        userDefaults.set(now.timeIntervalSince1970, forKey: .migrationLastBroadcastAt)
-    }
-
-    /// Sync side of the 10-minute sync<->send separation (feature spec section 8.2): background
-    /// syncs must not start sooner than 10 minutes after a foreground migration broadcast.
-    /// MOB-1467's scheduler is the consumer; nothing reads this in MOB-1466.
-    func isSyncDeferredAfterBroadcast(now: Date) -> Bool {
-        guard let interval = userDefaults.object(forKey: .migrationLastBroadcastAt) as? Double else {
-            return false
-        }
-
-        return now < Date(timeIntervalSince1970: interval).addingTimeInterval(Constants.tenMinutes)
     }
 
     // MARK: Mode / manual delivery / network privacy / acknowledge / dust-lock
@@ -958,17 +899,17 @@ final class MigrationGateStorage: @unchecked Sendable {
     }
 
     /// Clears every persisted migration flag this storage owns: mode, manual delivery, network
-    /// privacy, complete-acknowledged, dust-locked, last-broadcast. Backs the migration SDK
-    /// simulator's debug panel "Reset app migration flags" control (MOB-1480). Deliberately leaves
-    /// `migrationSyncGateUntil`/the transient sync-required flag alone: the 10-minute send gate is
-    /// a short-lived timing window, not a durable app flag, and expires on its own.
+    /// privacy, complete-acknowledged, dust-locked. Backs the migration SDK simulator's debug
+    /// panel "Reset app migration flags" control (MOB-1480). Deliberately leaves
+    /// `migrationLastSyncCompletedAt` alone: the send gate's timing window is a short-lived value,
+    /// not a durable app flag, and expires (the buffer elapses) on its own — same reasoning the
+    /// retired `migrationSyncGateUntil` followed pre-MOB-1496 (W3).
     func resetPersistedFlags() {
         userDefaults.removeObject(forKey: .migrationMode)
         userDefaults.removeObject(forKey: .migrationManualDelivery)
         userDefaults.removeObject(forKey: .migrationNetworkPrivacyOptions)
         userDefaults.removeObject(forKey: .migrationCompleteAcknowledged)
         userDefaults.removeObject(forKey: .migrationDustLocked)
-        userDefaults.removeObject(forKey: .migrationLastBroadcastAt)
     }
 }
 
