@@ -159,6 +159,11 @@ struct MigrationReviewTransfer {
                         if needsNoteSplit {
                             let proposal = try await sdkSynchronizer.prepareNoteSplit(account.id)
                             let options = migrationManager.networkPrivacyOptions()
+                            // [MOB-1496] W3 review fix A: this silent note-split broadcast was
+                            // missed by the original stop-before-broadcast sweep (which only
+                            // covered MigrationSendingStore/MigrationNoteSplitStore) — same shared
+                            // helper, same rationale (the SDK's during-sync throw is advisory).
+                            await sdkSynchronizer.stopSyncBeforeMigrationBroadcast()
                             let splitResult = try await sdkSynchronizer.submitNoteSplit(account.id, proposal, usk, options)
                             guard case MigrationTransferResult.success = splitResult else {
                                 await send(.noteSplitFailed)

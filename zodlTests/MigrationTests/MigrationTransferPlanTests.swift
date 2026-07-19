@@ -517,4 +517,87 @@ import ComposableArchitecture
 
         #expect(proposeOrder.value == ["split", "schedule"])
     }
+
+    // MARK: - MOB-1496 (W3 review fix A): stop an in-flight sync before the silent note-split broadcast
+
+    /// `sdkSynchronizer.isSyncing() == true` -> `stop()` fires BEFORE `submitNoteSplit`, in that
+    /// order (asserted via a shared call-order log) — this screen's silent note-split broadcast
+    /// (MOB-1478 W4) was missed by W3's original stop-before-broadcast sweep; mirrors
+    /// `MigrationSendingStore`/`MigrationNoteSplitStore`'s existing treatment.
+    @MainActor @Test func confirmTappedWithNoteSplitNeededWhileSyncingStopsSyncBeforeSubmittingNoteSplit() async {
+        let callOrder = LockIsolated<[String]>([])
+        let schedule = MigrationSchedule(
+            transfers: [
+                MigrationTransferProposal(id: "t0", amount: Zatoshi(500_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
+            ],
+            estimatedDurationHours: 24
+        )
+        var state = MigrationTransferPlan.State()
+        state.schedule = schedule
+        let store = TestStore(initialState: state) {
+            MigrationTransferPlan()
+        } withDependencies: {
+            $0.sdkSynchronizer = SDKSynchronizerClient.mocked(
+                stop: { callOrder.withValue { $0.append("stop") } },
+                isSyncing: { true }
+            )
+            $0.sdkSynchronizer.isNoteSplitNeeded = { _ in true }
+            $0.sdkSynchronizer.prepareNoteSplit = { _ in
+                callOrder.withValue { $0.append("prepare") }
+                return NoteSplitProposal(outputNotes: [Zatoshi(500_000_000)], fee: Zatoshi(100_000))
+            }
+            $0.sdkSynchronizer.submitNoteSplit = { _, _, _, _ in
+                callOrder.withValue { $0.append("submit") }
+                return MigrationTransferResult.success(txId: "split-tx-id")
+            }
+            $0.sdkSynchronizer.signAndStoreMigrationSchedule = { _, _, _ in
+                callOrder.withValue { $0.append("signAndStore") }
+            }
+            $0.migrationManager.networkPrivacyOptions = { Self.defaultNetworkPrivacyOptions }
+            withDependenciesUSKDerivable(&$0)
+        }
+
+        await store.send(.confirmTapped)
+        await store.receive(\.scheduleSigned)
+        await store.receive(.delegate(.confirmed))
+
+        // `prepare` runs first (a read-only propose, not a broadcast — needed before we even know
+        // there's something to broadcast); `stop` then fires immediately before `submit`, the
+        // actual broadcast call, matching `MigrationNoteSplitStore`'s own stop-before-broadcast
+        // placement.
+        #expect(callOrder.value == ["prepare", "stop", "submit", "signAndStore"])
+    }
+
+    /// Idempotent: `sdkSynchronizer.isSyncing() == false` -> `stop()` is never called.
+    @MainActor @Test func confirmTappedWithNoteSplitNeededWhileIdleDoesNotCallStopBeforeSubmittingNoteSplit() async {
+        let stopCalls = LockIsolated<Int>(0)
+        let schedule = MigrationSchedule(
+            transfers: [
+                MigrationTransferProposal(id: "t0", amount: Zatoshi(500_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
+            ],
+            estimatedDurationHours: 24
+        )
+        var state = MigrationTransferPlan.State()
+        state.schedule = schedule
+        let store = TestStore(initialState: state) {
+            MigrationTransferPlan()
+        } withDependencies: {
+            $0.sdkSynchronizer = SDKSynchronizerClient.mocked(
+                stop: { stopCalls.withValue { $0 += 1 } },
+                isSyncing: { false }
+            )
+            $0.sdkSynchronizer.isNoteSplitNeeded = { _ in true }
+            $0.sdkSynchronizer.prepareNoteSplit = { _ in NoteSplitProposal(outputNotes: [Zatoshi(500_000_000)], fee: Zatoshi(100_000)) }
+            $0.sdkSynchronizer.submitNoteSplit = { _, _, _, _ in MigrationTransferResult.success(txId: "split-tx-id") }
+            $0.sdkSynchronizer.signAndStoreMigrationSchedule = { _, _, _ in }
+            $0.migrationManager.networkPrivacyOptions = { Self.defaultNetworkPrivacyOptions }
+            withDependenciesUSKDerivable(&$0)
+        }
+
+        await store.send(.confirmTapped)
+        await store.receive(\.scheduleSigned)
+        await store.receive(.delegate(.confirmed))
+
+        #expect(stopCalls.value == 0)
+    }
 }

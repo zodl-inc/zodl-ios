@@ -199,3 +199,28 @@ struct SDKSynchronizerClient: Sendable {
     var parseMigrationPCZTBatch: @Sendable (Data) -> [Data]? = { _ in nil }
 }
 
+extension SDKSynchronizerClient {
+    /// MOB-1496 (W3 review fix A): the single stop-before-broadcast guard for EVERY foreground
+    /// migration broadcast lane (`MigrationSendingStore`, `MigrationNoteSplitStore`,
+    /// `MigrationTransferPlanStore`, `MigrationReviewTransferStore`) — hoisted out of four per-store
+    /// duplicates (the original W3 sweep only reached the first two; the silent note-split broadcast
+    /// under the TransferPlan/ReviewTransfer commit CTAs, MOB-1478 W4, was missed). Sync and
+    /// migration broadcasts must never share a session: the SDK's during-sync throw
+    /// (`ZcashError.migrationBroadcastDuringSync`) is only advisory/point-in-time, so callers stop
+    /// proactively instead of relying on it. Idempotent: a no-op when nothing is syncing.
+    ///
+    /// MOB-1496 (W3 review fix B): when this DOES stop an in-flight sync, it also flips the shared
+    /// `migrationStoppedSyncForBroadcast` flag (`@Shared(.inMemory(...))`, same idiom as
+    /// `selectedWalletAccount`) — never when idle. `RootInitialization.swift`'s
+    /// `.migrationSyncGateChanged` handler reads this to guarantee sync resumes once the SDK's
+    /// post-broadcast privacy gate clears, even when no start was concurrently deferred (the
+    /// original W3 mechanism only resumed a start that was itself caught mid-`.retryStart`). See
+    /// that handler's doc for the full mechanism, including the pre-flight-broadcast-failure edge
+    /// where the gate never blocks at all.
+    func stopSyncBeforeMigrationBroadcast() async {
+        guard isSyncing() else { return }
+        stop()
+        @Shared(.inMemory(.migrationStoppedSyncForBroadcast)) var migrationStoppedSyncForBroadcast: Bool = false
+        $migrationStoppedSyncForBroadcast.withLock { $0 = true }
+    }
+}

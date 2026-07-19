@@ -459,8 +459,13 @@ import ComposableArchitecture
     // MARK: - MOB-1496 (W3): stop an in-flight sync before a foreground migration broadcast
 
     /// `sdkSynchronizer.isSyncing() == true` -> `stop()` fires BEFORE the broadcast call, in that
-    /// order (asserted via a shared call-order log).
+    /// order (asserted via a shared call-order log). MOB-1496 (W3 review fix B): the shared
+    /// `stopSyncBeforeMigrationBroadcast()` helper also flips `migrationStoppedSyncForBroadcast`
+    /// whenever it actually stops — Root's resume-after-gate-clears mechanism keys off it.
     @MainActor @Test func onAppearWhileSyncingStopsSyncBeforeExecutingScheduledTransfer() async {
+        @Shared(.inMemory(.migrationStoppedSyncForBroadcast)) var migrationStoppedSyncForBroadcast: Bool = false
+        $migrationStoppedSyncForBroadcast.withLock { $0 = false }
+
         let callOrder = LockIsolated<[String]>([])
         let store = TestStore(initialState: MigrationSending.State(totalCount: 1)) {
             MigrationSending()
@@ -487,10 +492,15 @@ import ComposableArchitecture
         }
 
         #expect(callOrder.value == ["stop", "execute"])
+        #expect(migrationStoppedSyncForBroadcast == true)
     }
 
-    /// Idempotent: `sdkSynchronizer.isSyncing() == false` -> `stop()` is never called.
+    /// Idempotent: `sdkSynchronizer.isSyncing() == false` -> `stop()` is never called, and the
+    /// shared broadcast-stop flag is never set either.
     @MainActor @Test func onAppearWhileIdleDoesNotCallStopBeforeExecutingScheduledTransfer() async {
+        @Shared(.inMemory(.migrationStoppedSyncForBroadcast)) var migrationStoppedSyncForBroadcast: Bool = false
+        $migrationStoppedSyncForBroadcast.withLock { $0 = false }
+
         let stopCalls = LockIsolated<Int>(0)
         let store = TestStore(initialState: MigrationSending.State(totalCount: 1)) {
             MigrationSending()
@@ -514,6 +524,7 @@ import ComposableArchitecture
         }
 
         #expect(stopCalls.value == 0)
+        #expect(migrationStoppedSyncForBroadcast == false)
     }
 
     /// The dust lane ("Migrate anyway") gets the same stop-before-broadcast treatment as the

@@ -672,6 +672,13 @@ extension MigrationCoordFlow {
             isFlowRoot: isFlowRoot
         )
         state.isSendNowDisabled = await migrationManager.sendGate() != MigrationSendGate.allowed
+        // [MOB-1496] W3 review fix C: hydrated here the same way `isSendNowDisabled` is, right
+        // above — otherwise the footer briefly reads "about 0 mins" for a frame at re-entry, before
+        // `onAppear`'s own `.statusLoaded` lands (`.resume` is the only presentation that renders
+        // it). Same shared formula `MigrationStatusStore.loadStatus` uses, so the two can't drift.
+        state.syncPrivacyBufferMinutes = MigrationStatus.syncPrivacyBufferMinutes(
+            from: sdkSynchronizer.migrationPrivacySyncBufferDuration()
+        )
         return state
     }
 
@@ -685,6 +692,12 @@ extension MigrationCoordFlow {
             isFlowRoot: isFlowRoot
         )
         state.isSendNowDisabled = await migrationManager.sendGate() != MigrationSendGate.allowed
+        // [MOB-1496] W3 review fix C: see `statusResumeState`'s twin hydration above — this
+        // presentation doesn't render the footer today, but hydrating both builders identically
+        // (matching `isSendNowDisabled`'s own precedent) keeps them from drifting if that changes.
+        state.syncPrivacyBufferMinutes = MigrationStatus.syncPrivacyBufferMinutes(
+            from: sdkSynchronizer.migrationPrivacySyncBufferDuration()
+        )
         return state
     }
 
