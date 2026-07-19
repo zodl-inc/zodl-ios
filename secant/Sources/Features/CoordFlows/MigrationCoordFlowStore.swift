@@ -89,8 +89,11 @@ struct MigrationCoordFlow {
         /// the same run (e.g. immediate's Tor-skip) don't need to re-read the dependency.
         var mode: MigrationMode?
         /// Held here once confirmed on the Tor sheet (or defaulted when it's skipped) so Sending's
-        /// coordinator-configured state can inject it.
-        var networkPrivacyOptions = NetworkPrivacyOptions(useTor: false, submissionEndpoint: nil)
+        /// coordinator-configured state can inject it. MOB-1496 Interim: the placeholder endpoint
+        /// is overwritten by `migrationManager.networkPrivacyOptions()` (current sync endpoint)
+        /// before this is ever read for a real broadcast — see `confirmTorSheet`/the immediate and
+        /// scheduled Tor-skip branches.
+        var networkPrivacyOptions = MigrationNetworkPrivacyOptions(useTor: false, submissionEndpoint: LightWalletEndpoint(address: "", port: 0))
         /// MOB-1468 (Keystone): set when a `.keystoneSignRequested` delegate pushes `keystoneSign`,
         /// cleared once the QR round-trip resolves (either resumed via `foundPCZTBatch` or backed
         /// out via `.rejected`).
@@ -104,6 +107,9 @@ struct MigrationCoordFlow {
         var isTorSheetPresented = false
         /// Non-nil exactly while `isTorSheetPresented` is true — see `PendingTorDestination`.
         var pendingTorDestination: PendingTorDestination?
+        /// MOB-1496: the real per-account SDK surface needs a concrete `AccountUUID` for nearly
+        /// every migration call the coordinator makes.
+        @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
 
         init() { }
     }

@@ -359,14 +359,14 @@ import ComposableArchitecture
 
     @MainActor @Test(
         arguments: [
-            TransferResult.success(txId: ""),
-            TransferResult.networkError(retryable: true),
-            TransferResult.invalidNote,
-            TransferResult.expired
+            MigrationTransferResult.success(txId: ""),
+            MigrationTransferResult.networkError(retryable: true),
+            MigrationTransferResult.invalidNote,
+            MigrationTransferResult.expired
         ]
     )
-    func armResultTappedPassesResultThrough(_ result: TransferResult) async {
-        let capturedResult = LockIsolated<TransferResult?>(nil)
+    func armResultTappedPassesResultThrough(_ result: MigrationTransferResult) async {
+        let capturedResult = LockIsolated<MigrationTransferResult?>(nil)
         let readout = Self.makeReadout()
         let store = TestStore(initialState: MigrationSimulatorPanel.State()) {
             MigrationSimulatorPanel()

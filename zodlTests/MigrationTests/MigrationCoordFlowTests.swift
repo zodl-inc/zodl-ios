@@ -53,10 +53,33 @@
 import Testing
 import Foundation
 import ComposableArchitecture
-@preconcurrency import ZcashLightClientKit
+@testable @preconcurrency import ZcashLightClientKit
 @testable import zodl_internal
 
 @Suite(.serialized) struct MigrationCoordFlowTests {
+    /// MOB-1496: the real per-account SDK surface needs a concrete `AccountUUID` for nearly every
+    /// migration call the coordinator makes. Swift Testing instantiates a fresh `struct` per
+    /// `@Test`, so this `init()` acts as a per-test setup hook — every test below gets a selected
+    /// software account without needing to stash one itself (none of these tests are Keystone-
+    /// vendor-specific; that branching is covered in `MigrationTransferPlanTests`/
+    /// `MigrationReviewTransferTests` instead).
+    init() {
+        @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
+        $selectedWalletAccount.withLock { $0 = Self.defaultAccount }
+    }
+
+    private static let defaultAccount = WalletAccount(
+        Account(
+            id: AccountUUID(id: [UInt8](repeating: 1, count: 16)),
+            name: "Zodl",
+            keySource: nil,
+            seedFingerprint: nil,
+            hdAccountIndex: Zip32AccountIndex(0),
+            ufvk: nil,
+            uivk: nil
+        )
+    )
+
     // MARK: - Re-entry: .onAppear with empty path
 
     @MainActor @Test func onAppearWithEntryRouteAppendsNothing() async {
@@ -89,8 +112,8 @@ import ComposableArchitecture
             $0.migrationManager.reentryRoute = { .statusProgress }
             $0.migrationManager.sendGate = { .allowed }
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.migrationTransfers = { rows }
-            $0.sdkSynchronizer.migrationSummary = { summary }
+            $0.migrationManager.migrationTransfers = { _ in rows }
+            $0.migrationManager.migrationSummary = { _ in summary }
         }
         store.exhaustivity = .off
 
@@ -119,7 +142,7 @@ import ComposableArchitecture
         } withDependencies: {
             $0.migrationManager.reentryRoute = { .recovery(isExpired: false) }
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.migrationTransfers = { rows }
+            $0.migrationManager.migrationTransfers = { _ in rows }
         }
         store.exhaustivity = .off
 
@@ -142,7 +165,7 @@ import ComposableArchitecture
         } withDependencies: {
             $0.migrationManager.reentryRoute = { .recovery(isExpired: true) }
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.migrationTransfers = { [] }
+            $0.migrationManager.migrationTransfers = { _ in [] }
         }
         store.exhaustivity = .off
 
@@ -175,8 +198,8 @@ import ComposableArchitecture
             $0.migrationManager.reentryRoute = { .statusResume }
             $0.migrationManager.sendGate = { .syncRequired }
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.migrationTransfers = { rows }
-            $0.sdkSynchronizer.migrationSummary = { summary }
+            $0.migrationManager.migrationTransfers = { _ in rows }
+            $0.migrationManager.migrationSummary = { _ in summary }
         }
         store.exhaustivity = .off
 
@@ -207,7 +230,7 @@ import ComposableArchitecture
         } withDependencies: {
             $0.migrationManager.reentryRoute = { .complete }
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.migrationSummary = { summary }
+            $0.migrationManager.migrationSummary = { _ in summary }
         }
         store.exhaustivity = .off
 
@@ -243,8 +266,8 @@ import ComposableArchitecture
         } withDependencies: {
             $0.migrationManager.reentryRoute = { .complete }
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.migrationSummary = { summary }
-            $0.sdkSynchronizer.isMigrationDustLocked = { true }
+            $0.migrationManager.migrationSummary = { _ in summary }
+            $0.migrationManager.isMigrationDustLocked = { true }
         }
         store.exhaustivity = .off
 
@@ -287,7 +310,7 @@ import ComposableArchitecture
         } withDependencies: {
             $0.migrationManager.reentryRoute = { .reviewManual(step: 2, total: 5) }
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.migrationTransfers = { rows }
+            $0.migrationManager.migrationTransfers = { _ in rows }
         }
         store.exhaustivity = .off
 
@@ -308,15 +331,15 @@ import ComposableArchitecture
 
     @MainActor @Test func entryChoseImmediateWithTorFlagOnSkipsTorSheetAndPushesReview() async {
         let setMigrationModeCalls = LockIsolated<[MigrationMode]>([])
-        let selectMigrationModeCalls = LockIsolated<[MigrationMode]>([])
-        let setOptionsCalls = LockIsolated<[NetworkPrivacyOptions]>([])
+        let setOptionsCalls = LockIsolated<[Bool]>([])
+        let expectedOptions = MigrationNetworkPrivacyOptions(useTor: true, submissionEndpoint: LightWalletEndpoint(address: "", port: 0))
         let store = TestStore(initialState: MigrationCoordFlow.State()) {
             MigrationCoordFlow()
         } withDependencies: {
             $0.migrationManager.setMigrationMode = { mode in setMigrationModeCalls.withValue { $0.append(mode) } }
-            $0.migrationManager.setNetworkPrivacyOptions = { options in setOptionsCalls.withValue { $0.append(options) } }
+            $0.migrationManager.setNetworkPrivacyOptions = { useTor in setOptionsCalls.withValue { $0.append(useTor) } }
+            $0.migrationManager.networkPrivacyOptions = { expectedOptions }
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.selectMigrationMode = { mode in selectMigrationModeCalls.withValue { $0.append(mode) } }
             $0.walletStorage = .noOp
             $0.walletStorage.exportTorSetupFlag = { true }
         }
@@ -326,12 +349,14 @@ import ComposableArchitecture
 
         #expect(store.state.mode == MigrationMode.immediate)
         #expect(setMigrationModeCalls.value == [MigrationMode.immediate])
-        #expect(selectMigrationModeCalls.value == [MigrationMode.immediate])
+        // MOB-1496: `selectMigrationMode` had no real-SDK counterpart — `setMigrationMode` above is
+        // the only mode-setting call now (see `SDKSynchronizerClient+Simulated.swift`'s doc).
         #expect(store.state.networkPrivacyOptions.useTor == true)
         // MOB-1487 (round 3): the flag-on shortcut now also persists — previously only the sheet's
         // own confirm did (a pre-existing gap; a background send reads the persisted copy, not this
         // in-memory state).
-        #expect(setOptionsCalls.value == [NetworkPrivacyOptions(useTor: true, submissionEndpoint: nil)])
+        #expect(setOptionsCalls.value == [true])
+        #expect(store.state.networkPrivacyOptions == expectedOptions)
         #expect(store.state.isTorSheetPresented == false)
         guard case let .reviewTransfer(reviewState) = try? #require(store.state.path.last) else {
             Issue.record("Expected .reviewTransfer on the path (Tor sheet skipped)")
@@ -366,7 +391,8 @@ import ComposableArchitecture
     // MARK: - Tor bottom sheet (MOB-1478 W2): "Got it" and swipe-dismiss resume the stashed destination
 
     @MainActor @Test func torSheetGotItInImmediateModePersistsOptionsAndPushesReviewTransfer() async {
-        let setOptionsCalls = LockIsolated<[NetworkPrivacyOptions]>([])
+        let setOptionsCalls = LockIsolated<[Bool]>([])
+        let expectedOptions = MigrationNetworkPrivacyOptions(useTor: true, submissionEndpoint: LightWalletEndpoint(address: "", port: 0))
         var state = MigrationCoordFlow.State()
         state.mode = .immediate
         state.torSheetState = MigrationTorSheet.State(isTorOn: true)
@@ -375,14 +401,14 @@ import ComposableArchitecture
         let store = TestStore(initialState: state) {
             MigrationCoordFlow()
         } withDependencies: {
-            $0.migrationManager.setNetworkPrivacyOptions = { options in setOptionsCalls.withValue { $0.append(options) } }
+            $0.migrationManager.setNetworkPrivacyOptions = { useTor in setOptionsCalls.withValue { $0.append(useTor) } }
+            $0.migrationManager.networkPrivacyOptions = { expectedOptions }
         }
         store.exhaustivity = .off
 
         await store.send(.torSheet(.delegate(.gotIt)))
 
-        let expectedOptions = NetworkPrivacyOptions(useTor: true, submissionEndpoint: nil)
-        #expect(setOptionsCalls.value == [expectedOptions])
+        #expect(setOptionsCalls.value == [true])
         #expect(store.state.networkPrivacyOptions == expectedOptions)
         #expect(store.state.isTorSheetPresented == false)
         #expect(store.state.pendingTorDestination == nil)
@@ -396,6 +422,7 @@ import ComposableArchitecture
     @MainActor @Test func torSheetSwipeDismissInImmediateModePersistsOptionsAndPushesReviewTransfer() async {
         // Spec: sheet dismissal by swipe is identical to "Got it" — same persist-then-proceed logic,
         // using whatever toggle state is showing at that moment.
+        let expectedOptions = MigrationNetworkPrivacyOptions(useTor: false, submissionEndpoint: LightWalletEndpoint(address: "", port: 0))
         var state = MigrationCoordFlow.State()
         state.mode = .immediate
         state.torSheetState = MigrationTorSheet.State(isTorOn: false)
@@ -405,12 +432,13 @@ import ComposableArchitecture
             MigrationCoordFlow()
         } withDependencies: {
             $0.migrationManager.setNetworkPrivacyOptions = { _ in }
+            $0.migrationManager.networkPrivacyOptions = { expectedOptions }
         }
         store.exhaustivity = .off
 
         await store.send(.torSheetPresentationChanged(false))
 
-        #expect(store.state.networkPrivacyOptions == NetworkPrivacyOptions(useTor: false, submissionEndpoint: nil))
+        #expect(store.state.networkPrivacyOptions == expectedOptions)
         #expect(store.state.isTorSheetPresented == false)
         #expect(store.state.pendingTorDestination == nil)
         guard case .reviewTransfer = try? #require(store.state.path.last) else {
@@ -423,7 +451,8 @@ import ComposableArchitecture
         // MOB-1494 (round 4): the scheduled lane hosts the sheet again — its confirm persists
         // whatever the toggle shows (default ON) and resumes the permission chain (all permissions
         // satisfied here, so the plan screen pushes directly).
-        let setOptionsCalls = LockIsolated<[NetworkPrivacyOptions]>([])
+        let setOptionsCalls = LockIsolated<[Bool]>([])
+        let expectedOptions = MigrationNetworkPrivacyOptions(useTor: true, submissionEndpoint: LightWalletEndpoint(address: "", port: 0))
         var state = MigrationCoordFlow.State()
         state.mode = .privateScheduled
         state.path.append(.howItWorks(MigrationHowItWorks.State()))
@@ -433,7 +462,8 @@ import ComposableArchitecture
         let store = TestStore(initialState: state) {
             MigrationCoordFlow()
         } withDependencies: {
-            $0.migrationManager.setNetworkPrivacyOptions = { options in setOptionsCalls.withValue { $0.append(options) } }
+            $0.migrationManager.setNetworkPrivacyOptions = { useTor in setOptionsCalls.withValue { $0.append(useTor) } }
+            $0.migrationManager.networkPrivacyOptions = { expectedOptions }
             $0.migrationManager.isManualDelivery = { false }
             $0.migrationBGScheduler.backgroundRefreshStatus = { .available }
             $0.userNotifications.authorizationStatus = { .authorized }
@@ -444,8 +474,7 @@ import ComposableArchitecture
         await store.send(.torSheet(.delegate(.gotIt)))
         await store.receive(\.pushNextPermissionStep)
 
-        let expectedOptions = NetworkPrivacyOptions(useTor: true, submissionEndpoint: nil)
-        #expect(setOptionsCalls.value == [expectedOptions])
+        #expect(setOptionsCalls.value == [true])
         #expect(store.state.networkPrivacyOptions == expectedOptions)
         #expect(store.state.isTorSheetPresented == false)
         #expect(store.state.pendingTorDestination == nil)
@@ -490,7 +519,7 @@ import ComposableArchitecture
     @MainActor @Test func reviewTransferConfirmedPushesSending() async {
         var state = MigrationCoordFlow.State()
         state.mode = .immediate
-        state.networkPrivacyOptions = NetworkPrivacyOptions(useTor: true, submissionEndpoint: nil)
+        state.networkPrivacyOptions = MigrationNetworkPrivacyOptions(useTor: true, submissionEndpoint: LightWalletEndpoint(address: "", port: 0))
         state.path.append(.reviewTransfer(MigrationReviewTransfer.State(mode: .immediate)))
         let store = TestStore(initialState: state) {
             MigrationCoordFlow()
@@ -504,7 +533,7 @@ import ComposableArchitecture
             return
         }
         #expect(sendingState.totalCount == 1)
-        #expect(sendingState.networkPrivacyOptions == NetworkPrivacyOptions(useTor: true, submissionEndpoint: nil))
+        #expect(sendingState.networkPrivacyOptions == MigrationNetworkPrivacyOptions(useTor: true, submissionEndpoint: LightWalletEndpoint(address: "", port: 0)))
     }
 
     // MARK: - MOB-1468: Keystone signing — signRequested sets context + pushes keystoneSign
@@ -517,7 +546,10 @@ import ComposableArchitecture
         }
         store.exhaustivity = .off
 
-        let pczts: [Pczt] = [Data([0xAA]), Data([0xBB])]
+        let pczts: [MigrationUnsignedTransferPczt] = [
+            MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xAA])),
+            MigrationUnsignedTransferPczt(id: "t1", pczt: Data([0xBB]))
+        ]
         await store.send(.path(.element(id: 0, action: .transferPlan(.delegate(.keystoneSignRequested(pczts))))))
 
         #expect(store.state.pendingKeystoneSigning == MigrationCoordFlow.KeystoneSigningContext.planCommit)
@@ -536,7 +568,7 @@ import ComposableArchitecture
         }
         store.exhaustivity = .off
 
-        let pczts: [Pczt] = [Data([0xCC])]
+        let pczts: [MigrationUnsignedTransferPczt] = [MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xCC]))]
         await store.send(.path(.element(id: 0, action: .reviewTransfer(.delegate(.keystoneSignRequested(pczts))))))
 
         #expect(store.state.pendingKeystoneSigning == MigrationCoordFlow.KeystoneSigningContext.immediateReview)
@@ -553,7 +585,7 @@ import ComposableArchitecture
         var state = MigrationCoordFlow.State()
         state.pendingKeystoneSigning = .planCommit
         state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .scheduled)))
-        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: [Pczt()])))
+        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: [MigrationUnsignedTransferPczt(id: "t0", pczt: Data())])))
         let store = TestStore(initialState: state) {
             MigrationCoordFlow()
         }
@@ -574,18 +606,29 @@ import ComposableArchitecture
 
     @MainActor @Test func foundPCZTBatchForPlanCommitContextStoresPopsAndPushesScheduledForScheduledVariant() async {
         let callOrder = LockIsolated<[String]>([])
-        let signed: [Pczt] = [Data([0xAA]), Data([0xBB])]
+        // MOB-1496: `signed` (from `.scan(.foundPCZTBatch)`) is raw bytes in scan order — the
+        // coordinator zips them against the ORIGINAL unsigned batch's ids (still on the
+        // `keystoneSign` element beneath `scan`) to rebuild `[MigrationSignedTransferPczt]`.
+        let unsigned: [MigrationUnsignedTransferPczt] = [
+            MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xAA])),
+            MigrationUnsignedTransferPczt(id: "t1", pczt: Data([0xBB]))
+        ]
+        let signed: [Data] = [Data([0xAA, 0x01]), Data([0xBB, 0x01])]
+        let expectedStored: [MigrationSignedTransferPczt] = [
+            MigrationSignedTransferPczt(id: "t0", pczt: Data([0xAA, 0x01])),
+            MigrationSignedTransferPczt(id: "t1", pczt: Data([0xBB, 0x01]))
+        ]
         var state = MigrationCoordFlow.State()
         state.pendingKeystoneSigning = .planCommit
         state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .scheduled)))
-        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: signed)))
+        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: unsigned)))
         state.path.append(.scan(Scan.State.initial))
         let store = TestStore(initialState: state) {
             MigrationCoordFlow()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.storeSignedMigrationTransactions = { stored in
-                #expect(stored == signed)
+            $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, stored in
+                #expect(stored == expectedStored)
                 callOrder.withValue { $0.append("store") }
             }
             $0.migrationBGScheduler.scheduleFirstWindow = { callOrder.withValue { $0.append("scheduleFirstWindow") } }
@@ -610,22 +653,33 @@ import ComposableArchitecture
 
     // MOB-1478 (W4): TransferPlan's Keystone fork prepends the note-split PCZT when needed — the
     // coordinator treats the resulting (longer) batch opaquely and stores the WHOLE array atomically,
-    // no per-element handling required.
+    // no per-element handling required. MOB-1496: known gap — the note-split entry (sentinel id
+    // "note-split") rides through `storeSignedMigrationSchedulePCZTs` here rather than the dedicated
+    // `storeSignedNoteSplitPCZT` path; see `MigrationTransferPlanStore.requestKeystoneSignature`'s doc.
     @MainActor @Test func foundPCZTBatchForPlanCommitContextWithNoteSplitPrefixStoresWholeBatchAtomically() async {
         let callOrder = LockIsolated<[String]>([])
-        let splitPczt: Pczt = Data([0x01])
-        let signed: [Pczt] = [splitPczt, Data([0xAA]), Data([0xBB])]
+        let unsigned: [MigrationUnsignedTransferPczt] = [
+            MigrationUnsignedTransferPczt(id: "note-split", pczt: Data([0x01])),
+            MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xAA])),
+            MigrationUnsignedTransferPczt(id: "t1", pczt: Data([0xBB]))
+        ]
+        let signed: [Data] = [Data([0x01, 0x99]), Data([0xAA, 0x99]), Data([0xBB, 0x99])]
+        let expectedStored: [MigrationSignedTransferPczt] = [
+            MigrationSignedTransferPczt(id: "note-split", pczt: Data([0x01, 0x99])),
+            MigrationSignedTransferPczt(id: "t0", pczt: Data([0xAA, 0x99])),
+            MigrationSignedTransferPczt(id: "t1", pczt: Data([0xBB, 0x99]))
+        ]
         var state = MigrationCoordFlow.State()
         state.pendingKeystoneSigning = .planCommit
         state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .scheduled)))
-        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: signed)))
+        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: unsigned)))
         state.path.append(.scan(Scan.State.initial))
         let store = TestStore(initialState: state) {
             MigrationCoordFlow()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.storeSignedMigrationTransactions = { stored in
-                #expect(stored == signed)
+            $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, stored in
+                #expect(stored == expectedStored)
                 callOrder.withValue { $0.append("store") }
             }
             $0.migrationBGScheduler.scheduleFirstWindow = { callOrder.withValue { $0.append("scheduleFirstWindow") } }
@@ -644,18 +698,19 @@ import ComposableArchitecture
     }
 
     @MainActor @Test func foundPCZTBatchForPlanCommitContextPushesSendingForManualVariant() async {
-        let signed: [Pczt] = [Data([0xCC])]
+        let unsigned: [MigrationUnsignedTransferPczt] = [MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xCC]))]
+        let signed: [Data] = [Data([0xCC, 0x01])]
         var state = MigrationCoordFlow.State()
-        state.networkPrivacyOptions = NetworkPrivacyOptions(useTor: true, submissionEndpoint: nil)
+        state.networkPrivacyOptions = MigrationNetworkPrivacyOptions(useTor: true, submissionEndpoint: LightWalletEndpoint(address: "", port: 0))
         state.pendingKeystoneSigning = .planCommit
         state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .manual)))
-        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: signed)))
+        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: unsigned)))
         state.path.append(.scan(Scan.State.initial))
         let store = TestStore(initialState: state) {
             MigrationCoordFlow()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.storeSignedMigrationTransactions = { _ in }
+            $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, _ in }
             $0.migrationBGScheduler.scheduleFirstWindow = { }
         }
         store.exhaustivity = .off
@@ -668,32 +723,34 @@ import ComposableArchitecture
             return
         }
         #expect(sendingState.totalCount == 1)
-        #expect(sendingState.networkPrivacyOptions == NetworkPrivacyOptions(useTor: true, submissionEndpoint: nil))
+        #expect(sendingState.networkPrivacyOptions == MigrationNetworkPrivacyOptions(useTor: true, submissionEndpoint: LightWalletEndpoint(address: "", port: 0)))
     }
 
     // MARK: - MOB-1468: Keystone signing — foundPCZTBatch resumes immediateReview
 
     @MainActor @Test func foundPCZTBatchForImmediateReviewContextStoresPopsAndPushesSending() async {
-        let storeCalls = LockIsolated<[[Pczt]]>([])
-        let signed: [Pczt] = [Data([0xDD])]
+        let storeCalls = LockIsolated<[[MigrationSignedTransferPczt]]>([])
+        let unsigned: [MigrationUnsignedTransferPczt] = [MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xDD]))]
+        let signed: [Data] = [Data([0xDD, 0x01])]
+        let expectedStored: [MigrationSignedTransferPczt] = [MigrationSignedTransferPczt(id: "t0", pczt: Data([0xDD, 0x01]))]
         var state = MigrationCoordFlow.State()
-        state.networkPrivacyOptions = NetworkPrivacyOptions(useTor: false, submissionEndpoint: nil)
+        state.networkPrivacyOptions = MigrationNetworkPrivacyOptions(useTor: false, submissionEndpoint: LightWalletEndpoint(address: "", port: 0))
         state.pendingKeystoneSigning = .immediateReview
         state.path.append(.reviewTransfer(MigrationReviewTransfer.State(mode: .immediate)))
-        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: signed)))
+        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: unsigned)))
         state.path.append(.scan(Scan.State.initial))
         let store = TestStore(initialState: state) {
             MigrationCoordFlow()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.storeSignedMigrationTransactions = { stored in storeCalls.withValue { $0.append(stored) } }
+            $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, stored in storeCalls.withValue { $0.append(stored) } }
         }
         store.exhaustivity = .off
 
         await store.send(.path(.element(id: 2, action: .scan(.foundPCZTBatch(signed)))))
         await store.receive(\.keystoneSigningSubmitted)
 
-        #expect(storeCalls.value == [signed])
+        #expect(storeCalls.value == [expectedStored])
         #expect(store.state.pendingKeystoneSigning == nil)
         #expect(store.state.path.count == 2)
         guard case let .sending(sendingState) = try? #require(store.state.path.last) else {
@@ -714,13 +771,13 @@ import ComposableArchitecture
         var state = MigrationCoordFlow.State()
         state.pendingKeystoneSigning = .planCommit
         state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .scheduled)))
-        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: [Pczt()])))
+        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: [MigrationUnsignedTransferPczt(id: "t0", pczt: Data())])))
         state.path.append(.scan(Scan.State.initial))
         let store = TestStore(initialState: state) {
             MigrationCoordFlow()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.storeSignedMigrationTransactions = { _ in storeCalls.withValue { $0 += 1 } }
+            $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, _ in storeCalls.withValue { $0 += 1 } }
         }
         store.exhaustivity = .off
 
@@ -744,7 +801,7 @@ import ComposableArchitecture
         var state = MigrationCoordFlow.State()
         state.pendingKeystoneSigning = .planCommit
         state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .scheduled)))
-        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: [Pczt(), Pczt()])))
+        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: [MigrationUnsignedTransferPczt(id: "t0", pczt: Data()), MigrationUnsignedTransferPczt(id: "t1", pczt: Data())])))
         let store = TestStore(initialState: state) {
             MigrationCoordFlow()
         }
@@ -766,12 +823,12 @@ import ComposableArchitecture
         var state = MigrationCoordFlow.State()
         state.pendingKeystoneSigning = .planCommit
         state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .scheduled)))
-        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: [Pczt()])))
+        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: [MigrationUnsignedTransferPczt(id: "t0", pczt: Data())])))
         let store = TestStore(initialState: state) {
             MigrationCoordFlow()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.storeSignedMigrationTransactions = { _ in storeCalls.withValue { $0 += 1 } }
+            $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, _ in storeCalls.withValue { $0 += 1 } }
         }
         store.exhaustivity = .off
 
@@ -810,7 +867,7 @@ import ComposableArchitecture
         } withDependencies: {
             $0.migrationManager.setMigrationMode = { _ in }
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.isNoteSplitNeeded = { true }
+            $0.sdkSynchronizer.isNoteSplitNeeded = { _ in true }
         }
         store.exhaustivity = .off
 
@@ -829,7 +886,8 @@ import ComposableArchitecture
         // Flag-on shortcut: `useTor` is implicitly on and persisted (MOB-1487's persist-fix — a
         // background send reads the persisted copy, not this in-memory state), no sheet, straight
         // into the permission chain.
-        let setOptionsCalls = LockIsolated<[NetworkPrivacyOptions]>([])
+        let setOptionsCalls = LockIsolated<[Bool]>([])
+        let expectedOptions = MigrationNetworkPrivacyOptions(useTor: true, submissionEndpoint: LightWalletEndpoint(address: "", port: 0))
         var state = MigrationCoordFlow.State()
         state.mode = .privateScheduled
         state.path.append(.howItWorks(MigrationHowItWorks.State()))
@@ -838,7 +896,8 @@ import ComposableArchitecture
         } withDependencies: {
             $0.walletStorage = .noOp
             $0.walletStorage.exportTorSetupFlag = { true }
-            $0.migrationManager.setNetworkPrivacyOptions = { options in setOptionsCalls.withValue { $0.append(options) } }
+            $0.migrationManager.setNetworkPrivacyOptions = { useTor in setOptionsCalls.withValue { $0.append(useTor) } }
+            $0.migrationManager.networkPrivacyOptions = { expectedOptions }
             $0.migrationBGScheduler.backgroundRefreshStatus = { .available }
             $0.userNotifications.authorizationStatus = { .authorized }
             $0.migrationManager.isManualDelivery = { false }
@@ -849,9 +908,8 @@ import ComposableArchitecture
         await store.send(.path(.element(id: 0, action: .howItWorks(.delegate(.continueTapped)))))
         await store.receive(\.pushNextPermissionStep)
 
-        let expectedOptions = NetworkPrivacyOptions(useTor: true, submissionEndpoint: nil)
         #expect(store.state.networkPrivacyOptions == expectedOptions)
-        #expect(setOptionsCalls.value == [expectedOptions])
+        #expect(setOptionsCalls.value == [true])
         #expect(store.state.isTorSheetPresented == false)
         #expect(store.state.pendingTorDestination == nil)
         guard case let .transferPlan(planState) = try? #require(store.state.path.last) else {
@@ -865,7 +923,7 @@ import ComposableArchitecture
         // MOB-1494 (round 4): flag unset presents the toggle sheet (default ON, scheduled
         // "your balance" body variant) and stashes `.permissionChain`; nothing is persisted or
         // pushed until the sheet resolves.
-        let setOptionsCalls = LockIsolated<[NetworkPrivacyOptions]>([])
+        let setOptionsCalls = LockIsolated<[Bool]>([])
         var state = MigrationCoordFlow.State()
         state.mode = .privateScheduled
         state.path.append(.howItWorks(MigrationHowItWorks.State()))
@@ -874,7 +932,7 @@ import ComposableArchitecture
         } withDependencies: {
             $0.walletStorage = .noOp
             $0.walletStorage.exportTorSetupFlag = { false }
-            $0.migrationManager.setNetworkPrivacyOptions = { options in setOptionsCalls.withValue { $0.append(options) } }
+            $0.migrationManager.setNetworkPrivacyOptions = { useTor in setOptionsCalls.withValue { $0.append(useTor) } }
         }
         store.exhaustivity = .off
 
@@ -1028,7 +1086,7 @@ import ComposableArchitecture
     @MainActor @Test func transferPlanConfirmedInManualVariantSchedulesFirstWindowAndPushesSendingWithTotalCountOne() async {
         let scheduleFirstWindowCalls = LockIsolated<Int>(0)
         var state = MigrationCoordFlow.State()
-        state.networkPrivacyOptions = NetworkPrivacyOptions(useTor: true, submissionEndpoint: nil)
+        state.networkPrivacyOptions = MigrationNetworkPrivacyOptions(useTor: true, submissionEndpoint: LightWalletEndpoint(address: "", port: 0))
         state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .manual)))
         let store = TestStore(initialState: state) {
             MigrationCoordFlow()
@@ -1045,20 +1103,20 @@ import ComposableArchitecture
             return
         }
         #expect(sendingState.totalCount == 1)
-        #expect(sendingState.networkPrivacyOptions == NetworkPrivacyOptions(useTor: true, submissionEndpoint: nil))
+        #expect(sendingState.networkPrivacyOptions == MigrationNetworkPrivacyOptions(useTor: true, submissionEndpoint: LightWalletEndpoint(address: "", port: 0)))
     }
 
     @MainActor @Test func manualPlanConfirmPushesSendingWithSingleTransfer() async {
         let schedule = MigrationSchedule(
             transfers: [
-                TransferProposal(id: "t0", amount: Zatoshi(500_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
+                MigrationTransferProposal(id: "t0", amount: Zatoshi(500_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
             ],
             estimatedDurationHours: 24
         )
         var planState = MigrationTransferPlan.State(variant: .manual, requiresSigning: true)
         planState.schedule = schedule
         var state = MigrationCoordFlow.State()
-        state.networkPrivacyOptions = NetworkPrivacyOptions(useTor: true, submissionEndpoint: nil)
+        state.networkPrivacyOptions = MigrationNetworkPrivacyOptions(useTor: true, submissionEndpoint: LightWalletEndpoint(address: "", port: 0))
         state.path.append(.transferPlan(planState))
         let store = TestStore(initialState: state) {
             MigrationCoordFlow()
@@ -1095,8 +1153,8 @@ import ComposableArchitecture
         } withDependencies: {
             $0.migrationManager.sendGate = { .allowed }
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.migrationTransfers = { rows }
-            $0.sdkSynchronizer.migrationSummary = { summary }
+            $0.migrationManager.migrationTransfers = { _ in rows }
+            $0.migrationManager.migrationSummary = { _ in summary }
         }
         store.exhaustivity = .off
 
@@ -1121,13 +1179,13 @@ import ComposableArchitecture
             MigrationTransferRow(id: "2", index: 2, amount: Zatoshi(1_000), status: .overdue, hoursFromNow: 3)
         ]
         var state = MigrationCoordFlow.State()
-        state.networkPrivacyOptions = NetworkPrivacyOptions(useTor: true, submissionEndpoint: nil)
+        state.networkPrivacyOptions = MigrationNetworkPrivacyOptions(useTor: true, submissionEndpoint: LightWalletEndpoint(address: "", port: 0))
         state.path.append(.status(MigrationStatus.State(presentation: .resume, isFlowRoot: true)))
         let store = TestStore(initialState: state) {
             MigrationCoordFlow()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.migrationTransfers = { rows }
+            $0.migrationManager.migrationTransfers = { _ in rows }
         }
         store.exhaustivity = .off
 
@@ -1139,7 +1197,7 @@ import ComposableArchitecture
             return
         }
         #expect(sendingState.totalCount == 2)
-        #expect(sendingState.networkPrivacyOptions == NetworkPrivacyOptions(useTor: true, submissionEndpoint: nil))
+        #expect(sendingState.networkPrivacyOptions == MigrationNetworkPrivacyOptions(useTor: true, submissionEndpoint: LightWalletEndpoint(address: "", port: 0)))
     }
 
     @MainActor @Test func sendingClosedAfterSendNowPopsBackToStatusWithRefreshedRows() async {
@@ -1154,7 +1212,7 @@ import ComposableArchitecture
             MigrationCoordFlow()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.migrationTransfers = { refreshedRows }
+            $0.migrationManager.migrationTransfers = { _ in refreshedRows }
         }
         store.exhaustivity = .off
 
@@ -1200,11 +1258,12 @@ import ComposableArchitecture
             MigrationCoordFlow()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.rescheduleStalledMigrationTransfer = {
+            $0.sdkSynchronizer.rescheduleOverdueMigrationTransfer = { _ in
                 callOrder.withValue { $0.append("reschedule") }
+                return nil
             }
-            $0.sdkSynchronizer.migrationTransfers = { refreshedRows }
-            $0.sdkSynchronizer.migrationSummary = { summary }
+            $0.migrationManager.migrationTransfers = { _ in refreshedRows }
+            $0.migrationManager.migrationSummary = { _ in summary }
             $0.migrationBGScheduler.scheduleFirstWindow = { callOrder.withValue { $0.append("scheduleFirstWindow") } }
         }
         store.exhaustivity = .off
@@ -1233,7 +1292,7 @@ import ComposableArchitecture
             MigrationTransferPlan()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.signAndStoreMigrationSchedule = { _ in signCalls.withValue { $0 += 1 } }
+            $0.sdkSynchronizer.signAndStoreMigrationSchedule = { _, _, _ in signCalls.withValue { $0 += 1 } }
         }
 
         await store.send(.confirmTapped)
@@ -1264,7 +1323,7 @@ import ComposableArchitecture
     @MainActor @Test func recoveryRecreateCallsRestartAndPushesRecreatedPlanWithInjectedSchedule() async {
         let schedule = MigrationSchedule(
             transfers: [
-                TransferProposal(id: "t0", amount: Zatoshi(500_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
+                MigrationTransferProposal(id: "t0", amount: Zatoshi(500_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
             ],
             estimatedDurationHours: 24
         )
@@ -1275,7 +1334,8 @@ import ComposableArchitecture
             MigrationCoordFlow()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.restartCurrentMigrationStep = {
+            $0.sdkSynchronizer.restartCurrentMigrationStep = { _, includeResidual in
+                #expect(includeResidual == false)
                 restartCalls.withValue { $0 += 1 }
                 return schedule
             }
@@ -1298,7 +1358,7 @@ import ComposableArchitecture
     @MainActor @Test func recreatedPlanConfirmDoesSign() async {
         let schedule = MigrationSchedule(
             transfers: [
-                TransferProposal(id: "t0", amount: Zatoshi(500_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
+                MigrationTransferProposal(id: "t0", amount: Zatoshi(500_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
             ],
             estimatedDurationHours: 24
         )
@@ -1309,7 +1369,15 @@ import ComposableArchitecture
             MigrationTransferPlan()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.signAndStoreMigrationSchedule = { signedSchedule.setValue($0) }
+            $0.sdkSynchronizer.signAndStoreMigrationSchedule = { _, schedule, _ in signedSchedule.setValue(schedule) }
+            // MOB-1496: the software-signing path derives a real USK from the wallet's stored seed
+            // (`UnifiedSpendingKey` has no public initializer anywhere in the SDK) — see
+            // `MigrationTransferPlanTests`' `withDependenciesUSKDerivable` helper for the rationale;
+            // this file has no shared helper of its own since this is its only such case.
+            $0.derivationTool = .liveValue
+            $0.mnemonic = .mock
+            $0.walletStorage = .noOp
+            $0.zcashSDKEnvironment = .testnet
         }
 
         await store.send(.confirmTapped)
@@ -1393,7 +1461,7 @@ import ComposableArchitecture
 
     @MainActor @Test func completeMigrateAnywayPushesSendingConfiguredForDustLane() async {
         var state = MigrationCoordFlow.State()
-        state.networkPrivacyOptions = NetworkPrivacyOptions(useTor: true, submissionEndpoint: nil)
+        state.networkPrivacyOptions = MigrationNetworkPrivacyOptions(useTor: true, submissionEndpoint: LightWalletEndpoint(address: "", port: 0))
         state.path.append(.complete(MigrationComplete.State(isFlowRoot: true)))
         let store = TestStore(initialState: state) {
             MigrationCoordFlow()
@@ -1408,7 +1476,7 @@ import ComposableArchitecture
         }
         #expect(sendingState.totalCount == 1)
         #expect(sendingState.isDustLane == true)
-        #expect(sendingState.networkPrivacyOptions == NetworkPrivacyOptions(useTor: true, submissionEndpoint: nil))
+        #expect(sendingState.networkPrivacyOptions == MigrationNetworkPrivacyOptions(useTor: true, submissionEndpoint: LightWalletEndpoint(address: "", port: 0)))
     }
 
     @MainActor @Test func sendingClosedOverCompleteAcknowledgesCompleteAndFinishesFlow() async {
@@ -1437,18 +1505,21 @@ import ComposableArchitecture
     // MARK: - MOB-1480: Keystone signing — simulator-only bypass (no `.scan` ever pushed)
 
     @MainActor @Test func keystoneSignSimulateSignatureForImmediateReviewContextStoresPopsAndPushesSendingWithoutScan() async {
-        let storeCalls = LockIsolated<[[Pczt]]>([])
-        let signed: [Pczt] = [Data([0xEE])]
+        let storeCalls = LockIsolated<[[MigrationSignedTransferPczt]]>([])
+        let unsigned: [MigrationUnsignedTransferPczt] = [MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xEE]))]
+        // "Signing" is pretending the unsigned bytes are already signed (same id/bytes) — see
+        // `MigrationCoordFlowCoordinator`'s `.simulateSignature` handler doc.
+        let expectedStored: [MigrationSignedTransferPczt] = [MigrationSignedTransferPczt(id: "t0", pczt: Data([0xEE]))]
         var state = MigrationCoordFlow.State()
-        state.networkPrivacyOptions = NetworkPrivacyOptions(useTor: false, submissionEndpoint: nil)
+        state.networkPrivacyOptions = MigrationNetworkPrivacyOptions(useTor: false, submissionEndpoint: LightWalletEndpoint(address: "", port: 0))
         state.pendingKeystoneSigning = .immediateReview
         state.path.append(.reviewTransfer(MigrationReviewTransfer.State(mode: .immediate)))
-        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: signed)))
+        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: unsigned)))
         let store = TestStore(initialState: state) {
             MigrationCoordFlow()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.storeSignedMigrationTransactions = { stored in storeCalls.withValue { $0.append(stored) } }
+            $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, stored in storeCalls.withValue { $0.append(stored) } }
         }
         store.exhaustivity = .off
 
@@ -1462,7 +1533,7 @@ import ComposableArchitecture
         await store.send(.path(.element(id: 1, action: .keystoneSign(.delegate(.simulateSignature)))))
         await store.receive(\.keystoneSigningSubmitted)
 
-        #expect(storeCalls.value == [signed])
+        #expect(storeCalls.value == [expectedStored])
         #expect(store.state.pendingKeystoneSigning == nil)
         #expect(store.state.path.count == 2)
         guard case let .sending(sendingState) = try? #require(store.state.path.last) else {
@@ -1477,7 +1548,7 @@ import ComposableArchitecture
     }
 
     @MainActor @Test func keystoneSignSimulateSignatureWithEmptyBatchFallsBackToPlaceholderAndResumesPlanCommit() async {
-        let storeCalls = LockIsolated<[[Pczt]]>([])
+        let storeCalls = LockIsolated<[[MigrationSignedTransferPczt]]>([])
         var state = MigrationCoordFlow.State()
         state.pendingKeystoneSigning = .planCommit
         state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .scheduled)))
@@ -1486,20 +1557,20 @@ import ComposableArchitecture
             MigrationCoordFlow()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.storeSignedMigrationTransactions = { stored in storeCalls.withValue { $0.append(stored) } }
+            $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, stored in storeCalls.withValue { $0.append(stored) } }
             $0.migrationBGScheduler.scheduleFirstWindow = { }
         }
         store.exhaustivity = .off
 
         // Unlike the real `.scan(.foundPCZTBatch([]))` path (which abandons the session — see
         // `foundPCZTBatchWithEmptyArrayForPlanCommitContextAbandonsSessionWithoutStoring` above),
-        // the simulator bypass falls back to a single fabricated placeholder `Pczt` instead: this
+        // the simulator bypass falls back to a single fabricated placeholder entry instead: this
         // button exists purely to exercise the resume chain for manual QA, never a real signing
         // session that could legitimately fail to decode.
         await store.send(.path(.element(id: 1, action: .keystoneSign(.delegate(.simulateSignature)))))
         await store.receive(\.keystoneSigningSubmitted)
 
-        #expect(storeCalls.value == [[Pczt()]])
+        #expect(storeCalls.value == [[MigrationSignedTransferPczt(id: "simulated", pczt: Data())]])
         #expect(store.state.pendingKeystoneSigning == nil)
         #expect(store.state.path.count == 2)
         guard case .scheduled = try? #require(store.state.path.last) else {

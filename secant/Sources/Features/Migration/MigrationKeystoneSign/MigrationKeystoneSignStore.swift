@@ -28,13 +28,13 @@ import ComposableArchitecture
 struct MigrationKeystoneSign {
     @ObservableState
     struct State: Equatable {
-        var pczts: [Pczt] = []
+        var pczts: [MigrationUnsignedTransferPczt] = []
         /// MOB-1480: drives the simulator-only "Simulate signed result" button's visibility — set
         /// once in `onAppear`, never touched anywhere else.
         var isSimulatorBypassVisible = false
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
 
-        init(pczts: [Pczt] = []) {
+        init(pczts: [MigrationUnsignedTransferPczt] = []) {
             self.pczts = pczts
         }
     }

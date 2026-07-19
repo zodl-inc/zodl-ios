@@ -45,7 +45,7 @@ struct MigrationSimulatorClient: Sendable {
     var advanceTime: @Sendable (TimeInterval) -> Void
     var makeNextTransferDueNow: @Sendable () -> Void
     var confirmSplitNow: @Sendable () -> Void
-    var armTransferResult: @Sendable (TransferResult) -> Void
+    var armTransferResult: @Sendable (MigrationTransferResult) -> Void
     var armSplitFailure: @Sendable () -> Void
     var setSyncRequired: @Sendable (Bool) -> Void
 }

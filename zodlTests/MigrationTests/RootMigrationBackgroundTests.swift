@@ -20,14 +20,72 @@
 //  below except the two Branch 1 (gated) tests exists to exercise post-activation behavior, so
 //  that's the natural shared baseline; the gated tests override it back to `false` locally.
 //
+//  MOB-1496: `migrationBackgroundSessionEffect` now needs a selected account (the real per-account
+//  SDK surface) — every test below sets one via `selectedAccountState()` before constructing the
+//  `Store`, mirroring `MigrationTransferPlanTests`' `walletAccount(keystone:idByte:)` fixture
+//  pattern. Every migration SDK closure override gained the `AccountUUID` parameter the real
+//  surface requires.
+//
 
 import Foundation
 import Testing
 import ComposableArchitecture
-@preconcurrency import ZcashLightClientKit
+@testable @preconcurrency import ZcashLightClientKit
 @testable import zodl_internal
 
 @Suite(.serialized) @MainActor struct RootMigrationBackgroundTests {
+    private static func walletAccount(idByte: UInt8 = 1) -> WalletAccount {
+        WalletAccount(
+            Account(
+                id: AccountUUID(id: [UInt8](repeating: idByte, count: 16)),
+                name: "Zodl",
+                keySource: nil,
+                seedFingerprint: nil,
+                hdAccountIndex: Zip32AccountIndex(0),
+                ufvk: nil,
+                uivk: nil
+            )
+        )
+    }
+
+    /// `Root.State.initial` with a selected account stashed — every migration BG session test
+    /// needs one (`migrationBackgroundSessionEffect` reads `state.selectedWalletAccount?.id`).
+    private static func selectedAccountState() -> Root.State {
+        var state = Root.State.initial
+        state.$selectedWalletAccount.withLock { $0 = walletAccount() }
+        return state
+    }
+
+    // MARK: - Branch 0 (MOB-1496): no selected account
+
+    /// No selected account (e.g. a background-only cold launch that raced wallet initialization):
+    /// complete immediately, no work — mirrors the pre-activation branch's shape.
+    @Test func noSelectedAccountCompletesSessionWithoutAnyWork() async {
+        let executeNextPendingMigrationTransferCalls = LockIsolated<Int>(0)
+        let completeCalls = LockIsolated<[Bool]>([])
+
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let store = Store(initialState: Root.State.initial) {
+                Root()
+            } withDependencies: {
+                baseNoOpDependencies(&$0)
+                $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in
+                    executeNextPendingMigrationTransferCalls.withValue { $0 += 1 }
+                    return nil
+                }
+            }
+
+            let handle = MigrationBGSessionHandle(rawTask: nil) { success in completeCalls.withValue { $0.append(success) } }
+            store.send(.initialization(.migrationBackgroundSession(handle)))
+            await waitForRootStore { completeCalls.withValue { !$0.isEmpty } }
+
+            #expect(executeNextPendingMigrationTransferCalls.withValue { $0 } == 0)
+            #expect(completeCalls.withValue { $0 } == [true])
+        }
+    }
+
     // MARK: - Branch 1 (MOB-1483): Ironwood not yet activated
 
     /// Pre-activation, the whole decision tree is a no-op: complete the handle immediately, with
@@ -45,12 +103,12 @@ import ComposableArchitecture
         await withDependencies {
             $0.defaultInMemoryStorage = InMemoryStorage()
         } operation: {
-            let store = Store(initialState: Root.State.initial) {
+            let store = Store(initialState: Self.selectedAccountState()) {
                 Root()
             } withDependencies: {
                 baseNoOpDependencies(&$0)
                 $0.migrationManager.isIronwoodActivated = { false }
-                $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _ in
+                $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in
                     executeNextPendingMigrationTransferCalls.withValue { $0 += 1 }
                     return nil
                 }
@@ -82,7 +140,7 @@ import ComposableArchitecture
         await withDependencies {
             $0.defaultInMemoryStorage = InMemoryStorage()
         } operation: {
-            let store = Store(initialState: Root.State.initial) {
+            let store = Store(initialState: Self.selectedAccountState()) {
                 Root()
             } withDependencies: {
                 baseNoOpDependencies(&$0)
@@ -116,11 +174,11 @@ import ComposableArchitecture
         await withDependencies {
             $0.defaultInMemoryStorage = InMemoryStorage()
         } operation: {
-            let store = Store(initialState: Root.State.initial) {
+            let store = Store(initialState: Self.selectedAccountState()) {
                 Root()
             } withDependencies: {
                 baseNoOpDependencies(&$0)
-                $0.sdkSynchronizer.hasInvalidMigrationTransfers = { true }
+                $0.sdkSynchronizer.hasInvalidMigrationTransfers = { _ in true }
                 $0.migrationBGScheduler.scheduleNextWindow = { scheduleNextWindowCalls.withValue { $0 += 1 } }
                 $0.userNotifications.scheduleMigrationNotification = { notification, date in
                     notifications.withValue { $0.append(notification) }
@@ -148,12 +206,12 @@ import ComposableArchitecture
         await withDependencies {
             $0.defaultInMemoryStorage = InMemoryStorage()
         } operation: {
-            let store = Store(initialState: Root.State.initial) {
+            let store = Store(initialState: Self.selectedAccountState()) {
                 Root()
             } withDependencies: {
                 baseNoOpDependencies(&$0)
-                $0.sdkSynchronizer.hasInvalidMigrationTransfers = { false }
-                $0.sdkSynchronizer.getMigrationState = { MigrationState.requiresAttention(AttentionReason.transferExpired) }
+                $0.sdkSynchronizer.hasInvalidMigrationTransfers = { _ in false }
+                $0.sdkSynchronizer.getMigrationState = { _ in MigrationState.requiresAttention(MigrationAttentionReason.transferExpired) }
                 $0.migrationBGScheduler.scheduleNextWindow = { scheduleNextWindowCalls.withValue { $0 += 1 } }
                 $0.userNotifications.scheduleMigrationNotification = { notification, _ in
                     notifications.withValue { $0.append(notification) }
@@ -182,11 +240,11 @@ import ComposableArchitecture
         await withDependencies {
             $0.defaultInMemoryStorage = InMemoryStorage()
         } operation: {
-            let store = Store(initialState: Root.State.initial) {
+            let store = Store(initialState: Self.selectedAccountState()) {
                 Root()
             } withDependencies: {
                 baseNoOpDependencies(&$0)
-                $0.sdkSynchronizer.isSyncRequiredBeforeNextMigrationTransfer = { true }
+                $0.sdkSynchronizer.isSyncRequiredBeforeNextMigrationTransfer = { _ in true }
                 $0.migrationManager.isSyncDeferredAfterBroadcast = { true }
                 $0.migrationBGScheduler.scheduleNextWindow = { scheduleNextWindowCalls.withValue { $0 += 1 } }
             }
@@ -209,6 +267,10 @@ import ComposableArchitecture
     /// opened via a mutated `SynchronizerState.zero` with `.upToDate` status). This branch never
     /// completes `handle` itself — that's the existing `synchronizerStateChanged` machinery's job,
     /// exactly as for the `power_wifi_sync` task it mirrors — so `completeCalls` stays empty here.
+    /// MOB-1496: the decision tree now sends `.migrationBackgroundSyncOnly(handle)` back into the
+    /// reducer to do the `state.bgTask` stash (effects can't mutate `state` directly) — observed
+    /// here exactly the same way (`store.state.bgTask`), since that's an implementation detail of
+    /// how the stash happens, not what's being asserted.
     @Test func syncRequiredNotDeferredRearmsAndStashesBgTaskForSyncOnlySession() async {
         let scheduleNextWindowCalls = LockIsolated<Int>(0)
         let startCalls = LockIsolated<[Bool]>([])
@@ -223,7 +285,7 @@ import ComposableArchitecture
         await withDependencies {
             $0.defaultInMemoryStorage = InMemoryStorage()
         } operation: {
-            let store = Store(initialState: Root.State.initial) {
+            let store = Store(initialState: Self.selectedAccountState()) {
                 Root()
             } withDependencies: {
                 baseNoOpDependencies(&$0)
@@ -235,7 +297,7 @@ import ComposableArchitecture
                     latestState: { preparedState },
                     start: { _ in startCalls.withValue { $0.append(true) } }
                 )
-                $0.sdkSynchronizer.isSyncRequiredBeforeNextMigrationTransfer = { true }
+                $0.sdkSynchronizer.isSyncRequiredBeforeNextMigrationTransfer = { _ in true }
                 $0.migrationManager.isSyncDeferredAfterBroadcast = { false }
                 $0.migrationBGScheduler.scheduleNextWindow = { scheduleNextWindowCalls.withValue { $0 += 1 } }
                 $0.diskSpaceChecker.hasEnoughFreeSpaceForSync = { true }
@@ -277,13 +339,13 @@ import ComposableArchitecture
         await withDependencies {
             $0.defaultInMemoryStorage = InMemoryStorage()
         } operation: {
-            let store = Store(initialState: Root.State.initial) {
+            let store = Store(initialState: Self.selectedAccountState()) {
                 Root()
             } withDependencies: {
                 baseNoOpDependencies(&$0)
-                $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _ in TransferResult.success(txId: "tx-1") }
-                $0.sdkSynchronizer.getMigrationState = { MigrationState.inProgress(progress) }
-                $0.sdkSynchronizer.getMigrationProgress = { progress }
+                $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in MigrationTransferResult.success(txId: "tx-1") }
+                $0.sdkSynchronizer.getMigrationState = { _ in MigrationState.inProgress(progress) }
+                $0.sdkSynchronizer.getMigrationProgress = { _ in progress }
                 $0.migrationManager.recordMigrationBroadcast = { recordBroadcastCalls.withValue { $0 += 1 } }
                 $0.migrationBGScheduler.scheduleNextWindow = { scheduleNextWindowCalls.withValue { $0 += 1 } }
                 $0.migrationBGScheduler.cancelAll = { cancelAllCalls.withValue { $0 += 1 } }
@@ -325,12 +387,12 @@ import ComposableArchitecture
         await withDependencies {
             $0.defaultInMemoryStorage = InMemoryStorage()
         } operation: {
-            let store = Store(initialState: Root.State.initial) {
+            let store = Store(initialState: Self.selectedAccountState()) {
                 Root()
             } withDependencies: {
                 baseNoOpDependencies(&$0)
-                $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _ in TransferResult.success(txId: "tx-final") }
-                $0.sdkSynchronizer.getMigrationState = { MigrationState.complete }
+                $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in MigrationTransferResult.success(txId: "tx-final") }
+                $0.sdkSynchronizer.getMigrationState = { _ in MigrationState.complete }
                 $0.migrationManager.recordMigrationBroadcast = { recordBroadcastCalls.withValue { $0 += 1 } }
                 $0.migrationBGScheduler.scheduleNextWindow = { scheduleNextWindowCalls.withValue { $0 += 1 } }
                 $0.migrationBGScheduler.cancelAll = { cancelAllCalls.withValue { $0 += 1 } }
@@ -368,12 +430,12 @@ import ComposableArchitecture
         await withDependencies {
             $0.defaultInMemoryStorage = InMemoryStorage()
         } operation: {
-            let store = Store(initialState: Root.State.initial) {
+            let store = Store(initialState: Self.selectedAccountState()) {
                 Root()
             } withDependencies: {
                 baseNoOpDependencies(&$0)
-                $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _ in TransferResult.networkError(retryable: true) }
-                $0.sdkSynchronizer.getMigrationProgress = { progress }
+                $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in MigrationTransferResult.networkError(retryable: true) }
+                $0.sdkSynchronizer.getMigrationProgress = { _ in progress }
                 $0.migrationBGScheduler.scheduleNextWindow = { scheduleNextWindowCalls.withValue { $0 += 1 } }
                 $0.userNotifications.scheduleMigrationNotification = { notification, _ in
                     notifications.withValue { $0.append(notification) }
@@ -402,11 +464,45 @@ import ComposableArchitecture
         await withDependencies {
             $0.defaultInMemoryStorage = InMemoryStorage()
         } operation: {
-            let store = Store(initialState: Root.State.initial) {
+            let store = Store(initialState: Self.selectedAccountState()) {
                 Root()
             } withDependencies: {
                 baseNoOpDependencies(&$0)
-                $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _ in nil }
+                $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in nil }
+                $0.migrationBGScheduler.scheduleNextWindow = { scheduleNextWindowCalls.withValue { $0 += 1 } }
+                $0.userNotifications.scheduleMigrationNotification = { notification, _ in
+                    notifications.withValue { $0.append(notification) }
+                }
+            }
+
+            let handle = MigrationBGSessionHandle(rawTask: nil) { success in completeCalls.withValue { $0.append(success) } }
+            store.send(.initialization(.migrationBackgroundSession(handle)))
+            await waitForRootStore { completeCalls.withValue { !$0.isEmpty } }
+
+            #expect(notifications.withValue { $0 }.isEmpty)
+            #expect(scheduleNextWindowCalls.withValue { $0 } == 1)
+            #expect(completeCalls.withValue { $0 } == [true])
+        }
+    }
+
+    /// MOB-1496: a throwing broadcast attempt (e.g. `ZcashError.migrationRecordFailedAfterBroadcast`
+    /// — the broadcast DID land, only recording failed) is treated like the `nil` "nothing
+    /// executed" case: re-arm, no notification (there's no definite outcome to report), complete
+    /// the session.
+    @Test func throwingExecuteNextPendingTransferOnlyRearmsWithoutNotifying() async {
+        struct SomeError: Error { }
+        let notifications = LockIsolated<[MigrationNotification]>([])
+        let scheduleNextWindowCalls = LockIsolated<Int>(0)
+        let completeCalls = LockIsolated<[Bool]>([])
+
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let store = Store(initialState: Self.selectedAccountState()) {
+                Root()
+            } withDependencies: {
+                baseNoOpDependencies(&$0)
+                $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in throw SomeError() }
                 $0.migrationBGScheduler.scheduleNextWindow = { scheduleNextWindowCalls.withValue { $0 += 1 } }
                 $0.userNotifications.scheduleMigrationNotification = { notification, _ in
                     notifications.withValue { $0.append(notification) }
@@ -436,7 +532,7 @@ import ComposableArchitecture
         await withDependencies {
             $0.defaultInMemoryStorage = InMemoryStorage()
         } operation: {
-            let store = Store(initialState: Root.State.initial) {
+            let store = Store(initialState: Self.selectedAccountState()) {
                 Root()
             } withDependencies: {
                 baseNoOpDependencies(&$0)
@@ -478,7 +574,9 @@ private func baseNoOpDependencies(_ values: inout DependencyValues) {
     values.migrationManager.recordMigrationBroadcast = { }
     values.migrationManager.reconcile = { }
     values.migrationManager.isSyncDeferredAfterBroadcast = { false }
-    values.migrationManager.networkPrivacyOptions = { NetworkPrivacyOptions(useTor: false, submissionEndpoint: nil) }
+    values.migrationManager.networkPrivacyOptions = {
+        MigrationNetworkPrivacyOptions(useTor: false, submissionEndpoint: LightWalletEndpoint(address: "", port: 0))
+    }
     values.readTransactionsStorage.resetZashi = { }
     values.sdkSynchronizer = .noOp
     values.userMetadataProvider.load = { _ in }

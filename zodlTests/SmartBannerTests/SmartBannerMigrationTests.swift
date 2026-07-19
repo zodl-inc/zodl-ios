@@ -5,7 +5,9 @@
 //  MOB-1466: covers the `priorityMigration` wiring added to `SmartBannerStore.swift` — the
 //  `PriorityContent.rank` ordering (below priority1/priority2, above everything else), the
 //  `.evaluatePriorityMigration` walk step slotted between priority2 and priority3, the
-//  `migrationStateStream()` reactive trigger (`.migrationStateChanged`/`.migrationVariantUpdated`),
+//  reactive trigger (`.migrationStateChanged`/`.migrationVariantUpdated` — MOB-1496: fed by
+//  `migrationManager.stateEvents()` now, not the SDK's old wallet-wide `migrationStateStream()`,
+//  though this file drives `.migrationStateChanged` directly and so is unaffected by that swap),
 //  and the `.migrationScreenRequested` tap leaf action. `.serialized`: state touches the
 //  process-global `@Shared(.inMemory(.selectedWalletAccount))`.
 //

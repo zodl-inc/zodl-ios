@@ -10,8 +10,9 @@
 
 import Testing
 import Foundation
+@preconcurrency import Combine
 import ComposableArchitecture
-@preconcurrency import ZcashLightClientKit
+@testable @preconcurrency import ZcashLightClientKit
 @testable import zodl_internal
 
 @Suite(.serialized)
@@ -194,12 +195,22 @@ struct MigrationManagerTests {
         #expect(variant == MigrationBannerVariant.inProgress(done: 3, total: 6))
     }
 
-    @Test func requiresAttentionTransferStalledIsTransferWaiting() {
+    // MOB-1496: the SDK's `MigrationAttentionReason` has no `.transferStalled` case — "stalled" is
+    // now derived from `hasOverdue` on an `.inProgress` state (see `bannerVariant`'s doc), checked
+    // BEFORE the manual-ready check below.
+    @Test func inProgressWithHasOverdueIsTransferWaiting() {
+        let progress = MigrationProgress(
+            completedTransfers: 2,
+            totalTransfers: 5,
+            remainingOrchard: Zatoshi(1_000),
+            nextTransferReadyAtHeight: 100
+        )
+
         let variant = MigrationDerivations.bannerVariant(
             isIronwoodActivated: true,
-            state: MigrationState.requiresAttention(AttentionReason.transferStalled(transferNumber: 3)),
+            state: MigrationState.inProgress(progress),
             hasInvalid: false,
-            hasOverdue: false,
+            hasOverdue: true,
             isManualDelivery: false,
             isNextTransferDue: false,
             orchardBalance: Zatoshi.zero,
@@ -210,10 +221,69 @@ struct MigrationManagerTests {
         #expect(variant == MigrationBannerVariant.transferWaiting(number: 3))
     }
 
+    @Test func hasOverdueWinsOverManualReadyForBannerVariant() {
+        let progress = MigrationProgress(
+            completedTransfers: 2,
+            totalTransfers: 5,
+            remainingOrchard: Zatoshi(1_000),
+            nextTransferReadyAtHeight: 100
+        )
+
+        // Maximally-offering input for `.transferReady` (manual + due) — `hasOverdue` must still
+        // win, mirroring `reentryRoute`'s existing `hasOverdue`-before-manual precedence.
+        let variant = MigrationDerivations.bannerVariant(
+            isIronwoodActivated: true,
+            state: MigrationState.inProgress(progress),
+            hasInvalid: false,
+            hasOverdue: true,
+            isManualDelivery: true,
+            isNextTransferDue: true,
+            orchardBalance: Zatoshi.zero,
+            isCompleteAcknowledged: false,
+            transferRows: []
+        )
+
+        #expect(variant == MigrationBannerVariant.transferWaiting(number: 3))
+    }
+
+    @Test func notStartedIgnoresHasOverdueEvenWhenTrue() {
+        // `hasOverdue` is only consulted inside the `.inProgress` switch case — states outside it
+        // must behave identically regardless of its value.
+        let variant = MigrationDerivations.bannerVariant(
+            isIronwoodActivated: true,
+            state: MigrationState.notStarted,
+            hasInvalid: false,
+            hasOverdue: true,
+            isManualDelivery: false,
+            isNextTransferDue: false,
+            orchardBalance: Zatoshi(1),
+            isCompleteAcknowledged: false,
+            transferRows: []
+        )
+
+        #expect(variant == MigrationBannerVariant.required)
+    }
+
+    @Test func completeIgnoresHasOverdueEvenWhenTrue() {
+        let variant = MigrationDerivations.bannerVariant(
+            isIronwoodActivated: true,
+            state: MigrationState.complete,
+            hasInvalid: false,
+            hasOverdue: true,
+            isManualDelivery: false,
+            isNextTransferDue: false,
+            orchardBalance: Zatoshi.zero,
+            isCompleteAcknowledged: false,
+            transferRows: []
+        )
+
+        #expect(variant == MigrationBannerVariant.complete)
+    }
+
     @Test func requiresAttentionInvalidTransferIsUpdatePlan() {
         let variant = MigrationDerivations.bannerVariant(
             isIronwoodActivated: true,
-            state: MigrationState.requiresAttention(AttentionReason.invalidTransfer(transferId: "t1")),
+            state: MigrationState.requiresAttention(MigrationAttentionReason.invalidTransfer(transferId: "t1")),
             hasInvalid: true,
             hasOverdue: false,
             isManualDelivery: false,
@@ -237,7 +307,7 @@ struct MigrationManagerTests {
 
         let variant = MigrationDerivations.bannerVariant(
             isIronwoodActivated: true,
-            state: MigrationState.requiresAttention(AttentionReason.transferExpired),
+            state: MigrationState.requiresAttention(MigrationAttentionReason.transferExpired),
             hasInvalid: false,
             hasOverdue: false,
             isManualDelivery: false,
@@ -258,7 +328,7 @@ struct MigrationManagerTests {
 
         let variant = MigrationDerivations.bannerVariant(
             isIronwoodActivated: true,
-            state: MigrationState.requiresAttention(AttentionReason.transferExpired),
+            state: MigrationState.requiresAttention(MigrationAttentionReason.transferExpired),
             hasInvalid: false,
             hasOverdue: false,
             isManualDelivery: false,
@@ -274,7 +344,7 @@ struct MigrationManagerTests {
     @Test func requiresAttentionTransferExpiredFallsBackToOneAndZeroWithNoRowsAtAll() {
         let variant = MigrationDerivations.bannerVariant(
             isIronwoodActivated: true,
-            state: MigrationState.requiresAttention(AttentionReason.transferExpired),
+            state: MigrationState.requiresAttention(MigrationAttentionReason.transferExpired),
             hasInvalid: false,
             hasOverdue: false,
             isManualDelivery: false,
@@ -412,7 +482,7 @@ struct MigrationManagerTests {
     @Test func invalidTransferWithTransferExpiredAttentionReasonIsExpiredRecovery() {
         let route = MigrationDerivations.reentryRoute(
             isIronwoodActivated: true,
-            state: MigrationState.requiresAttention(AttentionReason.transferExpired),
+            state: MigrationState.requiresAttention(MigrationAttentionReason.transferExpired),
             hasInvalid: true,
             hasOverdue: false,
             isManualDelivery: false,
@@ -427,7 +497,7 @@ struct MigrationManagerTests {
     @Test func invalidTransferWithOtherAttentionReasonIsNonExpiredRecovery() {
         let route = MigrationDerivations.reentryRoute(
             isIronwoodActivated: true,
-            state: MigrationState.requiresAttention(AttentionReason.invalidTransfer(transferId: "t1")),
+            state: MigrationState.requiresAttention(MigrationAttentionReason.invalidTransfer(transferId: "t1")),
             hasInvalid: true,
             hasOverdue: false,
             isManualDelivery: false,
@@ -649,7 +719,7 @@ struct MigrationManagerTests {
                 isManualDelivery: false,
                 isNextTransferDue: false,
                 isCompleteAcknowledged: false,
-                state: MigrationState.requiresAttention(AttentionReason.invalidTransfer(transferId: "t1")),
+                state: MigrationState.requiresAttention(MigrationAttentionReason.invalidTransfer(transferId: "t1")),
                 expected: MigrationReentryRoute.entry
             ),
             Row(
@@ -660,7 +730,7 @@ struct MigrationManagerTests {
                 isManualDelivery: false,
                 isNextTransferDue: false,
                 isCompleteAcknowledged: false,
-                state: MigrationState.requiresAttention(AttentionReason.invalidTransfer(transferId: "t1")),
+                state: MigrationState.requiresAttention(MigrationAttentionReason.invalidTransfer(transferId: "t1")),
                 expected: MigrationReentryRoute.recovery(isExpired: false)
             ),
             Row(
@@ -952,20 +1022,72 @@ struct MigrationManagerTests {
         #expect(storage.isManualDelivery() == false)
     }
 
-    @Test func networkPrivacyOptionsPersistenceRoundTrip() throws {
+    /// MOB-1496: the SDK's `MigrationNetworkPrivacyOptions` isn't `Codable` (it carries a
+    /// `LightWalletEndpoint`) — only the persisted `useTor` choice lives on `MigrationGateStorage`
+    /// now (`isTorEnabledForMigration`/`setTorEnabledForMigration`); the endpoint half is
+    /// materialized at read time by `MigrationManagerImpl.networkPrivacyOptions()`, not persisted.
+    @Test func torEnabledForMigrationPersistenceRoundTrip() throws {
         let userDefaults = try #require(
-            UserDefaults(suiteName: "testNetworkPrivacyOptionsPersistenceRoundTrip"),
+            UserDefaults(suiteName: "testTorEnabledForMigrationPersistenceRoundTrip"),
             "MigrationGateStorage: UserDefaults failed to initialize"
         )
-        defer { userDefaults.removePersistentDomain(forName: "testNetworkPrivacyOptionsPersistenceRoundTrip") }
+        defer { userDefaults.removePersistentDomain(forName: "testTorEnabledForMigrationPersistenceRoundTrip") }
 
         let storage = MigrationGateStorage(userDefaults: userDefaults)
 
-        #expect(storage.networkPrivacyOptions() == NetworkPrivacyOptions(useTor: false, submissionEndpoint: nil))
+        #expect(storage.isTorEnabledForMigration() == false)
 
-        let options = NetworkPrivacyOptions(useTor: true, submissionEndpoint: "https://example.com:9067")
-        storage.setNetworkPrivacyOptions(options)
-        #expect(storage.networkPrivacyOptions() == options)
+        storage.setTorEnabledForMigration(true)
+        #expect(storage.isTorEnabledForMigration() == true)
+
+        storage.setTorEnabledForMigration(false)
+        #expect(storage.isTorEnabledForMigration() == false)
+    }
+
+    /// MOB-1487/MOB-1496: "Lock balance" persistence — relocated onto `MigrationGateStorage` from
+    /// the (inert, pre-real-SDK) `SDKSynchronizerClient` stub.
+    @Test func dustLockedPersistenceRoundTrip() throws {
+        let userDefaults = try #require(
+            UserDefaults(suiteName: "testDustLockedPersistenceRoundTrip"),
+            "MigrationGateStorage: UserDefaults failed to initialize"
+        )
+        defer { userDefaults.removePersistentDomain(forName: "testDustLockedPersistenceRoundTrip") }
+
+        let storage = MigrationGateStorage(userDefaults: userDefaults)
+
+        #expect(storage.isDustLocked() == false)
+
+        storage.setDustLocked(true)
+        #expect(storage.isDustLocked() == true)
+
+        storage.setDustLocked(false)
+        #expect(storage.isDustLocked() == false)
+    }
+
+    @Test func resetPersistedFlagsClearsDustLockedAlongWithEveryOtherFlag() throws {
+        let userDefaults = try #require(
+            UserDefaults(suiteName: "testResetPersistedFlagsClearsDustLockedAlongWithEveryOtherFlag"),
+            "MigrationGateStorage: UserDefaults failed to initialize"
+        )
+        defer {
+            userDefaults.removePersistentDomain(forName: "testResetPersistedFlagsClearsDustLockedAlongWithEveryOtherFlag")
+        }
+
+        let storage = MigrationGateStorage(userDefaults: userDefaults)
+        storage.setMigrationMode(MigrationMode.immediate)
+        storage.setManualDelivery(true)
+        storage.setTorEnabledForMigration(true)
+        storage.acknowledgeComplete()
+        storage.setDustLocked(true)
+        storage.recordMigrationBroadcast(at: Date(timeIntervalSince1970: 5_000_000))
+
+        storage.resetPersistedFlags()
+
+        #expect(storage.migrationMode() == nil)
+        #expect(storage.isManualDelivery() == false)
+        #expect(storage.isTorEnabledForMigration() == false)
+        #expect(storage.isCompleteAcknowledged() == false)
+        #expect(storage.isDustLocked() == false)
     }
 
     @Test func completeAcknowledgedPersistenceRoundTrip() throws {
@@ -991,9 +1113,12 @@ struct MigrationManagerTests {
     // These two exercise the real `MigrationManagerImpl.reconcile()` (MigrationManagerLiveKey.swift)
     // against an isolated `UserDefaults` suite via the Impl's injectable `gateStorage` seam, with
     // `getMigrationState` stubbed through `withDependencies` — the stale-acknowledge reset must
-    // clear the flag for any non-`.complete` state and preserve it while `.complete`.
+    // clear the flag for any non-`.complete` state and preserve it while `.complete`. MOB-1496:
+    // `reconcile()` is now `async` and needs a selected account (`@Shared(.inMemory(...))`) to
+    // resolve anything at all — with no Keystone account in `walletAccounts`, only that one account
+    // is refreshed, keeping these tests' single-account shape.
 
-    @Test func reconcileClearsAcknowledgedFlagWhenStateIsNotComplete() throws {
+    @Test func reconcileClearsAcknowledgedFlagWhenStateIsNotComplete() async throws {
         let userDefaults = try #require(
             UserDefaults(suiteName: "testReconcileClearsAcknowledgedFlagWhenStateIsNotComplete"),
             "MigrationGateStorage: UserDefaults failed to initialize"
@@ -1006,7 +1131,23 @@ struct MigrationManagerTests {
         storage.acknowledgeComplete()
         #expect(storage.isCompleteAcknowledged() == true)
 
-        withDependencies {
+        @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
+        @Shared(.inMemory(.walletAccounts)) var walletAccounts: [WalletAccount] = []
+        let account = WalletAccount(
+            Account(
+                id: AccountUUID(id: [UInt8](repeating: 1, count: 16)),
+                name: "Zodl",
+                keySource: nil,
+                seedFingerprint: nil,
+                hdAccountIndex: Zip32AccountIndex(0),
+                ufvk: nil,
+                uivk: nil
+            )
+        )
+        $selectedWalletAccount.withLock { $0 = account }
+        $walletAccounts.withLock { $0 = [account] }
+
+        await withDependencies {
             // MOB-1483: `reconcile()` now gates on `isIronwoodActivated()` first — open the gate
             // (tip past the ambient `ZcashSDKEnvironment.testValue` activation height) so this
             // test still exercises the stale-acknowledge reset it's actually about. `latestState`
@@ -1018,20 +1159,20 @@ struct MigrationManagerTests {
                     return state
                 }
             )
-            $0.sdkSynchronizer.getMigrationState = {
+            $0.sdkSynchronizer.getMigrationState = { _ in
                 MigrationState.inProgress(
                     MigrationProgress(completedTransfers: 1, totalTransfers: 5, remainingOrchard: Zatoshi(1), nextTransferReadyAtHeight: nil)
                 )
             }
         } operation: {
             let impl = MigrationManagerImpl(gateStorage: storage)
-            impl.reconcile()
+            await impl.reconcile()
         }
 
         #expect(storage.isCompleteAcknowledged() == false)
     }
 
-    @Test func reconcileKeepsAcknowledgedFlagWhenStateIsComplete() throws {
+    @Test func reconcileKeepsAcknowledgedFlagWhenStateIsComplete() async throws {
         let userDefaults = try #require(
             UserDefaults(suiteName: "testReconcileKeepsAcknowledgedFlagWhenStateIsComplete"),
             "MigrationGateStorage: UserDefaults failed to initialize"
@@ -1042,7 +1183,23 @@ struct MigrationManagerTests {
         storage.acknowledgeComplete()
         #expect(storage.isCompleteAcknowledged() == true)
 
-        withDependencies {
+        @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
+        @Shared(.inMemory(.walletAccounts)) var walletAccounts: [WalletAccount] = []
+        let account = WalletAccount(
+            Account(
+                id: AccountUUID(id: [UInt8](repeating: 2, count: 16)),
+                name: "Zodl",
+                keySource: nil,
+                seedFingerprint: nil,
+                hdAccountIndex: Zip32AccountIndex(0),
+                ufvk: nil,
+                uivk: nil
+            )
+        )
+        $selectedWalletAccount.withLock { $0 = account }
+        $walletAccounts.withLock { $0 = [account] }
+
+        await withDependencies {
             // MOB-1483: open the gate — see the comment in
             // `reconcileClearsAcknowledgedFlagWhenStateIsNotComplete` above.
             $0.sdkSynchronizer = SDKSynchronizerClient.mocked(
@@ -1052,13 +1209,88 @@ struct MigrationManagerTests {
                     return state
                 }
             )
-            $0.sdkSynchronizer.getMigrationState = { MigrationState.complete }
+            $0.sdkSynchronizer.getMigrationState = { _ in MigrationState.complete }
         } operation: {
             let impl = MigrationManagerImpl(gateStorage: storage)
-            impl.reconcile()
+            await impl.reconcile()
         }
 
         #expect(storage.isCompleteAcknowledged() == true)
+    }
+
+    // MARK: - stateEvents(): emits only on a reconcile-observed change
+
+    /// `stateEvents(accountUUID:)` is backed by a `CurrentValueSubject` seeded `.notStarted`
+    /// (`MigrationManagerImpl.subject(for:)`), and `reconcile()` only `.send()`s into it when a
+    /// fresh `getMigrationState` read differs from the subject's current value
+    /// (`pushStateIfChanged`). A brand-new `CurrentValueSubject` subscriber immediately replays its
+    /// current value, so the first collected element is always the `.notStarted` seed — genuine
+    /// changes across three `reconcile()` calls (notStarted -> inProgress -> inProgress (identical)
+    /// -> complete) must then show up as exactly two MORE emissions, not three.
+    @Test func stateEventsEmitsOnReconcileObservedChangeAndNotOnIdenticalReRead() async throws {
+        let userDefaults = try #require(
+            UserDefaults(suiteName: "testStateEventsEmitsOnReconcileObservedChangeAndNotOnIdenticalReRead"),
+            "MigrationGateStorage: UserDefaults failed to initialize"
+        )
+        defer {
+            userDefaults.removePersistentDomain(forName: "testStateEventsEmitsOnReconcileObservedChangeAndNotOnIdenticalReRead")
+        }
+
+        let storage = MigrationGateStorage(userDefaults: userDefaults)
+
+        @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
+        @Shared(.inMemory(.walletAccounts)) var walletAccounts: [WalletAccount] = []
+        let account = WalletAccount(
+            Account(
+                id: AccountUUID(id: [UInt8](repeating: 6, count: 16)),
+                name: "Zodl",
+                keySource: nil,
+                seedFingerprint: nil,
+                hdAccountIndex: Zip32AccountIndex(0),
+                ufvk: nil,
+                uivk: nil
+            )
+        )
+        $selectedWalletAccount.withLock { $0 = account }
+        $walletAccounts.withLock { $0 = [account] }
+
+        let progress = MigrationProgress(
+            completedTransfers: 1, totalTransfers: 5, remainingOrchard: Zatoshi(1), nextTransferReadyAtHeight: nil
+        )
+        let currentState = LockIsolated<MigrationState>(MigrationState.inProgress(progress))
+
+        await withDependencies {
+            $0.sdkSynchronizer = SDKSynchronizerClient.mocked(
+                latestState: {
+                    var state = SynchronizerState.zero
+                    state.latestBlockHeight = 5_000_000
+                    return state
+                }
+            )
+            $0.sdkSynchronizer.getMigrationState = { _ in currentState.value }
+        } operation: {
+            let impl = MigrationManagerImpl(gateStorage: storage)
+            let collected = LockIsolated<[MigrationState]>([])
+            let cancellable = impl.stateEvents(accountUUID: account.id).sink { state in
+                collected.withValue { $0.append(state) }
+            }
+
+            // 1st reconcile: notStarted (seed) -> inProgress is a genuine change -> emits.
+            await impl.reconcile()
+            // 2nd reconcile: same inProgress value re-read -> no emission.
+            await impl.reconcile()
+            // 3rd reconcile: flips to complete -> a second genuine change -> emits.
+            currentState.setValue(MigrationState.complete)
+            await impl.reconcile()
+
+            #expect(collected.value == [
+                MigrationState.notStarted,
+                MigrationState.inProgress(progress),
+                MigrationState.complete
+            ])
+
+            cancellable.cancel()
+        }
     }
 
     // MARK: - isIronwoodActivated(): MOB-1483 activation gate
@@ -1131,15 +1363,18 @@ struct MigrationManagerTests {
 
     // MARK: - reconcile(): Ironwood activation gate (MOB-1483)
     //
-    // `reconcile()` must skip `initializeMigrationPostUpgrade()` and the acknowledged-flag
-    // maintenance entirely while Ironwood is not activated on the current network — there is
-    // nothing to reconcile pre-activation. `initializeMigrationPostUpgrade` / `getMigrationState`
-    // are wrapped in `LockIsolated<Int>` call counters (the `RootMigrationBackgroundTests` spy
-    // precedent) asserted `== 0`; `gateStorage`'s persisted flag is asserted unchanged as evidence
+    // `reconcile()` must skip `getMigrationState` entirely (and, with it, the acknowledged-flag
+    // maintenance) while Ironwood is not activated on the current network — there is nothing to
+    // reconcile pre-activation. MOB-1496: the pre-real-SDK `initializeMigrationPostUpgrade` member
+    // this used to also assert on is gone — the real SDK's migration state machine bootstraps
+    // itself, no app-side "initialize" call exists any more. `getMigrationState` is wrapped in a
+    // `LockIsolated<Int>` call counter (the `RootMigrationBackgroundTests` spy precedent) asserted
+    // `== 0`; `gateStorage`'s persisted flag is asserted unchanged as evidence
     // `clearAcknowledgedComplete()` was never reached either. (`sdkSynchronizer.latestState()`
-    // itself *is* called — that's the gate check.)
+    // itself *is* called — that's the gate check. No selected account is needed: the gate's early
+    // `return` fires before account resolution.)
 
-    @Test func reconcileSkipsSDKAndStorageCallsWhenIronwoodIsNotActivated() throws {
+    @Test func reconcileSkipsSDKAndStorageCallsWhenIronwoodIsNotActivated() async throws {
         let userDefaults = try #require(
             UserDefaults(suiteName: "testReconcileSkipsSDKAndStorageCallsWhenIronwoodIsNotActivated"),
             "MigrationGateStorage: UserDefaults failed to initialize"
@@ -1152,31 +1387,28 @@ struct MigrationManagerTests {
         storage.acknowledgeComplete()
         #expect(storage.isCompleteAcknowledged() == true)
 
-        let initializeCalls = LockIsolated<Int>(0)
         let getMigrationStateCalls = LockIsolated<Int>(0)
 
-        withDependencies {
+        await withDependencies {
             // Tip 0 == "no server round-trip yet": the gate's own fail-safe sentinel, independent
             // of whatever height `zcashSDKEnvironment.ironwoodActivationHeight()` reports.
             // `mocked()` keeps `latestState` at `.zero` (it's a `let` on the client).
             $0.sdkSynchronizer = SDKSynchronizerClient.mocked()
-            $0.sdkSynchronizer.initializeMigrationPostUpgrade = { initializeCalls.withValue { $0 += 1 } }
-            $0.sdkSynchronizer.getMigrationState = {
+            $0.sdkSynchronizer.getMigrationState = { _ in
                 getMigrationStateCalls.withValue { $0 += 1 }
                 return MigrationState.notStarted
             }
         } operation: {
             let impl = MigrationManagerImpl(gateStorage: storage)
-            impl.reconcile()
+            await impl.reconcile()
         }
 
-        #expect(initializeCalls.withValue { $0 } == 0)
         #expect(getMigrationStateCalls.withValue { $0 } == 0)
         // Unchanged (still true): `clearAcknowledgedComplete()` was never reached either.
         #expect(storage.isCompleteAcknowledged() == true)
     }
 
-    @Test func reconcileSkipsSDKAndStorageCallsWhenTipIsBelowActivationHeight() throws {
+    @Test func reconcileSkipsSDKAndStorageCallsWhenTipIsBelowActivationHeight() async throws {
         let userDefaults = try #require(
             UserDefaults(suiteName: "testReconcileSkipsSDKAndStorageCallsWhenTipIsBelowActivationHeight"),
             "MigrationGateStorage: UserDefaults failed to initialize"
@@ -1189,10 +1421,9 @@ struct MigrationManagerTests {
         storage.acknowledgeComplete()
         #expect(storage.isCompleteAcknowledged() == true)
 
-        let initializeCalls = LockIsolated<Int>(0)
         let getMigrationStateCalls = LockIsolated<Int>(0)
 
-        withDependencies {
+        await withDependencies {
             // A known, synced tip that simply hasn't reached activation yet — distinct from the
             // tip == 0 sentinel case above, exercising the actual height comparison.
             $0.sdkSynchronizer = SDKSynchronizerClient.mocked(
@@ -1203,17 +1434,15 @@ struct MigrationManagerTests {
                 }
             )
             $0.zcashSDKEnvironment.ironwoodActivationHeight = { 100 }
-            $0.sdkSynchronizer.initializeMigrationPostUpgrade = { initializeCalls.withValue { $0 += 1 } }
-            $0.sdkSynchronizer.getMigrationState = {
+            $0.sdkSynchronizer.getMigrationState = { _ in
                 getMigrationStateCalls.withValue { $0 += 1 }
                 return MigrationState.notStarted
             }
         } operation: {
             let impl = MigrationManagerImpl(gateStorage: storage)
-            impl.reconcile()
+            await impl.reconcile()
         }
 
-        #expect(initializeCalls.withValue { $0 } == 0)
         #expect(getMigrationStateCalls.withValue { $0 } == 0)
         #expect(storage.isCompleteAcknowledged() == true)
     }

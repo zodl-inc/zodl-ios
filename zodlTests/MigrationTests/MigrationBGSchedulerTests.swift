@@ -81,7 +81,7 @@ import Foundation
 
     @Test func requiresAttentionScheduledModeSubmitsTask() {
         let action = WakeupAction.decide(
-            state: MigrationState.requiresAttention(AttentionReason.transferStalled(transferNumber: 2)),
+            state: MigrationState.requiresAttention(MigrationAttentionReason.transferExpired),
             isManualDelivery: false,
             window: Self.window,
             nextTransferNumber: 2
@@ -92,7 +92,7 @@ import Foundation
 
     @Test func requiresAttentionManualModeSchedulesReadyNotification() {
         let action = WakeupAction.decide(
-            state: MigrationState.requiresAttention(AttentionReason.invalidTransfer(transferId: "t1")),
+            state: MigrationState.requiresAttention(MigrationAttentionReason.invalidTransfer(transferId: "t1")),
             isManualDelivery: true,
             window: Self.window,
             nextTransferNumber: 1
