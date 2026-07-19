@@ -239,10 +239,11 @@ struct MigrationTransferPlan {
     /// signed side, `MigrationCoordFlowCoordinator`'s `.scan(.foundPCZTBatch)`/`.simulateSignature`
     /// handlers split the sentinel entry back out before storing — only the schedule's own
     /// engine-id-paired entries reach `storeSignedMigrationTransactions`, and the sentinel routes
-    /// through the dedicated `submitSignedNoteSplit` broadcast instead (via the existing
-    /// `MigrationNoteSplit` resubmit lane) — see that coordinator's doc for the full mechanism. The
-    /// software path above (which routes the split through `submitNoteSplit` directly) is unaffected
-    /// either way.
+    /// through the dedicated `storeSignedNoteSplit`/`broadcastStoredNoteSplit` pair instead (via the
+    /// existing `MigrationNoteSplit` resubmit lane) — see that coordinator's doc for the full
+    /// mechanism, including why (C-1 fix, final review R6) the split now stores BEFORE the schedule.
+    /// The software path above (which routes the split through `submitNoteSplit` directly) is
+    /// unaffected either way.
     private func requestKeystoneSignature(for schedule: MigrationSchedule, account: WalletAccount) -> Effect<Action> {
         .run { send in
             let needsNoteSplit = (try? await sdkSynchronizer.isNoteSplitNeeded(account.id)) ?? false

@@ -116,7 +116,7 @@ enum MigrationSendGate: Equatable, Sendable {
 }
 
 enum MigrationReentryRoute: Equatable, Sendable {
-    case recovery(isExpired: Bool)       // §4.3 row 1 — variant from AttentionReason (.transferExpired → true, else false)
+    case recovery(isExpired: Bool)       // §4.3 row 1 — variant from MigrationAttentionReason (.transferExpired → true, else false)
     case statusResume                    // row 2
     case statusProgress                  // row 3
     case complete                        // row 4 (unacknowledged)

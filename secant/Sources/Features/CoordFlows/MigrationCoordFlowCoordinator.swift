@@ -70,6 +70,20 @@
 //  lane's existing `executeNextPendingMigrationTransfer` path (never `migrateMigrationDust`, a USK
 //  composite that would re-propose from scratch).
 //
+//  MOB-1496 (final review R6, C-1 fix): W6's store order was backwards against the real engine —
+//  `storeSignedNoteSplitPCZT` unconditionally starts a NEW run, while `storeSignedMigrationTransactions`
+//  uses-or-creates the active (newest non-terminal) run; storing the schedule first let the split's
+//  later store create a second run that shadowed the schedule's forever. The `.scan(.foundPCZTBatch)`/
+//  `.simulateSignature` store step now stores the split FIRST (when present) — creating the run the
+//  schedule store then joins — and abandons (same `keystoneScanAbandoned` semantics the re-pair-failure
+//  guard already used, generalized to pop the right number of elements for either caller) if that
+//  store itself fails, since nothing was persisted yet. The old `submitSignedNoteSplit` composite
+//  (store-then-broadcast in one call, with no memory of a prior success) is deleted in favor of
+//  `storeSignedNoteSplit`/`broadcastStoredNoteSplit`: the coordinator only ever calls the former, and
+//  `resumeAfterKeystoneSigning` pushes `MigrationNoteSplit` with `splitStored: true` so its retry lane
+//  only ever (re)broadcasts — idempotent by construction, unlike the old composite's retry, which
+//  re-ran the by-then-already-consumed store and threw forever.
+//
 
 import Foundation
 import ComposableArchitecture
@@ -276,11 +290,21 @@ extension MigrationCoordFlow {
                 let (splitEntry, scheduleEntries) = MigrationCoordFlow.splitKeystoneBatch(signedPczts)
 
                 return .run { [sdkSynchronizer, migrationManager, accountUUID, schedule, splitEntry, scheduleEntries] send in
-                    // Order is load-bearing (MOB-1496 W6 §1): the schedule is stored BEFORE the
-                    // split (if any) broadcasts, so a split-broadcast failure still leaves a
-                    // fully-committed plan behind — the note-split screen's own retry sheet then
-                    // only needs to retry the broadcast, and the engine keeps serving the
-                    // already-stored split as next-due in the meantime.
+                    // Order is load-bearing (MOB-1496 C-1 fix, final review R6): the split — when
+                    // present — MUST store FIRST, because `storeSignedNoteSplit` is what creates the
+                    // engine run `storeSignedMigrationTransactions` then joins (uses-or-creates the
+                    // active run). Both stores are still local (no broadcast), so W6's "the schedule
+                    // is committed before the split broadcasts" still holds — the split-store simply
+                    // has to run first to create the run the schedule store joins into, rather than
+                    // being shadowed by a second, later run.
+                    if let splitEntry {
+                        guard (try? await sdkSynchronizer.storeSignedNoteSplit(accountUUID, splitEntry.pczt)) != nil else {
+                            // Nothing was stored at all — abandon exactly like a re-pair failure:
+                            // nothing to resume, same `keystoneScanAbandoned` semantics.
+                            await send(.keystoneScanAbandoned)
+                            return
+                        }
+                    }
                     let stored = (try? await sdkSynchronizer.storeSignedMigrationTransactions(accountUUID, scheduleEntries)) != nil
                     if stored {
                         // [MOB-1496] W2: persist the just-committed schedule (the SDK keeps no
@@ -291,7 +315,11 @@ extension MigrationCoordFlow {
                         }
                         await migrationManager.reconcile()
                     }
-                    // A split only ever broadcasts once its schedule is safely stored.
+                    // The split (if any) is already stored by this point — the note-split screen only
+                    // needs to know whether a broadcast awaits, never the raw bytes to store. Gating
+                    // on the SCHEDULE store's success here is unchanged from before (MOB-1496 W6):
+                    // when it fails, the split's run is left staged-but-unbroadcast rather than
+                    // routed to the broadcast screen — see the report for that state's reasoning.
                     await send(.keystoneSigningSubmitted(context: context, splitPczt: stored ? splitEntry?.pczt : nil))
                 }
 
@@ -323,6 +351,15 @@ extension MigrationCoordFlow {
                 let (splitEntry, scheduleEntries) = MigrationCoordFlow.splitKeystoneBatch(signedPczts)
 
                 return .run { [sdkSynchronizer, migrationManager, accountUUID, schedule, splitEntry, scheduleEntries] send in
+                    // Same order + abandon-on-split-store-failure as the real round-trip above
+                    // (MOB-1496 C-1 fix) — `keystoneScanAbandoned`'s pop count adapts to whichever
+                    // caller reached it, so reusing it here (no `.scan` on this path) is safe.
+                    if let splitEntry {
+                        guard (try? await sdkSynchronizer.storeSignedNoteSplit(accountUUID, splitEntry.pczt)) != nil else {
+                            await send(.keystoneScanAbandoned)
+                            return
+                        }
+                    }
                     let stored = (try? await sdkSynchronizer.storeSignedMigrationTransactions(accountUUID, scheduleEntries)) != nil
                     if stored {
                         if let schedule {
@@ -353,8 +390,14 @@ extension MigrationCoordFlow {
 
             case .keystoneScanAbandoned:
                 state.pendingKeystoneSigning = nil
-                let _ = state.path.popLast()
-                let _ = state.path.popLast()
+                // MOB-1496 (C-1 fix): as well as the real round-trip's re-pair-failure guard above
+                // (`.scan` always on top there — pop 2, unchanged), this now also fires from the
+                // split-store-failure branch of EITHER Keystone store effect above, including the
+                // simulator bypass, which never pushes `.scan` (pop 1) — mirrors
+                // `resumeAfterKeystoneSigning`'s identical "how many elements are actually on top"
+                // check.
+                let topElementIsScan = state.path.last?.is(\.scan) == true
+                state.path.removeLast(topElementIsScan ? 2 : 1)
                 return .none
 
                 // MARK: - Sending
@@ -557,9 +600,11 @@ extension MigrationCoordFlow {
     ///   mirroring how the equivalent software `.confirmed` row would proceed.
     /// - `splitPczt != nil`: a note-split sentinel rode the batch — pushes `MigrationNoteSplit`
     ///   carrying the signed PCZT the SAME way the existing Keystone resubmit lane receives one
-    ///   (`State.signedNoteSplitPczt`), then dispatches that screen's OWN `.retryTapped` so its
-    ///   existing `resubmitSignedNoteSplit` effect (`stopSyncBeforeMigrationBroadcast()` ->
-    ///   `submitSignedNoteSplit(account, pczt, options)`) broadcasts it with the existing
+    ///   (`State.signedNoteSplitPczt`), WITH `splitStored: true` (MOB-1496 C-1 fix: the store effect
+    ///   above already called `storeSignedNoteSplit` before this ever runs), then dispatches that
+    ///   screen's OWN `.retryTapped` so its existing `resubmitSignedNoteSplit` effect
+    ///   (`stopSyncBeforeMigrationBroadcast()` -> `broadcastStoredNoteSplit(account, options)`, no
+    ///   re-store since `splitStored` is already `true`) broadcasts it with the existing
     ///   success/failure/retry UX — no new UI, no duplicated broadcast logic.
     ///   `pendingKeystoneSplitResume` stashes `context` so that screen's own `.continued` can land on
     ///   `resumeCommittedMigrationChain` too, once the broadcast is confirmed.
@@ -584,7 +629,17 @@ extension MigrationCoordFlow {
         if let splitPczt {
             state.pendingKeystoneSplitResume = context
             state.path.append(
-                .noteSplit(MigrationNoteSplit.State(phase: .splitting, isFlowRoot: false, signedNoteSplitPczt: splitPczt))
+                .noteSplit(
+                    MigrationNoteSplit.State(
+                        phase: .splitting,
+                        isFlowRoot: false,
+                        signedNoteSplitPczt: splitPczt,
+                        // MOB-1496 (C-1 fix): the store effect above already stored this split (it
+                        // had to, to create the run the schedule store joined) — this screen only
+                        // ever needs to (re)broadcast it, never re-store.
+                        splitStored: true
+                    )
+                )
             )
             guard let newId = state.path.ids.last else { return .none }
             return .send(.path(.element(id: newId, action: .noteSplit(.retryTapped))))

@@ -41,13 +41,24 @@
 //  anything (`MigrationCoordFlow.rePairedKeystoneBatch`), splits any sentinel entry out
 //  (`MigrationCoordFlow.splitKeystoneBatch`), stores ONLY the schedule's engine-id entries, and — iff
 //  a split was present — routes it to a freshly pushed `MigrationNoteSplit` screen via that screen's
-//  OWN existing Keystone resubmit lane (`.retryTapped` -> `resubmitSignedNoteSplit` ->
-//  `submitSignedNoteSplit`), never a new UI. `pendingKeystoneSplitResume` stashes what to resume with
-//  once that screen's `.continued` fires — the same post-commit routing `resumeAfterKeystoneSigning`
-//  would have reached immediately had no split been needed. `KeystoneSigningContext` gains a `.dust`
-//  case: `.complete(.delegate(.migrateAnyway))` now forks on vendor, and a Keystone account proposes
-//  + PCZT-signs a batch-of-1 dust transfer through this SAME signing machinery before broadcasting it
-//  via the dust Sending lane's existing `executeNextPendingMigrationTransfer` path.
+//  OWN existing Keystone resubmit lane, never a new UI. `pendingKeystoneSplitResume` stashes what to
+//  resume with once that screen's `.continued` fires — the same post-commit routing
+//  `resumeAfterKeystoneSigning` would have reached immediately had no split been needed.
+//  `KeystoneSigningContext` gains a `.dust` case: `.complete(.delegate(.migrateAnyway))` now forks on
+//  vendor, and a Keystone account proposes + PCZT-signs a batch-of-1 dust transfer through this SAME
+//  signing machinery before broadcasting it via the dust Sending lane's existing
+//  `executeNextPendingMigrationTransfer` path.
+//
+//  MOB-1496 (final review R6, C-1 fix): W6's store order (schedule, then split) was backwards against
+//  the real engine — the split's store unconditionally starts a NEW run, so storing it second created
+//  a run that shadowed the just-committed schedule forever. The store step now stores the split FIRST
+//  (when present) — the run-creating call the schedule's uses-or-creates store then joins — and
+//  abandons if that alone fails (nothing stored, same `keystoneScanAbandoned` semantics as a re-pair
+//  failure). The old `submitSignedNoteSplit` composite (store-then-broadcast, no memory of a prior
+//  success — so a retry after a successful store re-ran the store and threw) is deleted; the resubmit
+//  lane's `.retryTapped` -> `resubmitSignedNoteSplit` now calls `storeSignedNoteSplit`/
+//  `broadcastStoredNoteSplit` as two members, tracked via `MigrationNoteSplit.State.splitStored` so a
+//  retry only ever re-broadcasts once the store has succeeded.
 //
 
 import SwiftUI
@@ -172,10 +183,12 @@ struct MigrationCoordFlow {
         /// includes the note-split PCZT first when `isNoteSplitNeeded()` — there's no separate
         /// per-source result to carry any more (the old `.noteSplit` context's `TransferResult`/
         /// signed-PCZT payload is gone along with that context). MOB-1496 (W6): `splitPczt` is the
-        /// sentinel entry's PCZT bytes, split out of the stored batch (`nil` when the run needed no
-        /// split, or when the store itself failed) — non-`nil` routes to the note-split screen
-        /// instead of resuming the schedule/review chain immediately (see
-        /// `resumeAfterKeystoneSigning`).
+        /// sentinel entry's PCZT bytes, split out of the batch and stored separately (via
+        /// `storeSignedNoteSplit`, BEFORE `storeSignedMigrationTransactions` — C-1 fix, final review
+        /// R6) — `nil` when the run needed no split, or when the SCHEDULE store failed (the split
+        /// store failing takes an earlier, separate abandon path — see the `.run` effects in
+        /// `MigrationCoordFlowCoordinator`) — non-`nil` routes to the note-split screen instead of
+        /// resuming the schedule/review chain immediately (see `resumeAfterKeystoneSigning`).
         case keystoneSigningSubmitted(context: KeystoneSigningContext, splitPczt: Data?)
         /// Internal: MOB-1496 (W6 §3) — the Keystone dust lane's upfront propose
         /// (`.complete(.delegate(.migrateAnyway))`'s Keystone fork) came back with a non-empty
@@ -195,9 +208,12 @@ struct MigrationCoordFlow {
         /// `keystoneSign` element inline in the `.path(.element(...))` case would race
         /// `.forEach(\.path, action:)`'s delivery of that same action to the (then-missing) element.
         case keystoneSignRejected
-        /// Internal: an empty scanned batch abandons the signing session — pops BOTH the `scan`
-        /// and `keystoneSign` elements back to the initiating screen (deferred like
-        /// `keystoneSignRejected`, since `scan` is the acting element) and clears the context.
+        /// Internal: an empty/mismatched scanned batch, OR a split-store failure (MOB-1496 C-1 fix,
+        /// final review R6 — nothing was stored, so there is nothing to resume), abandons the signing
+        /// session — pops back to the initiating screen (deferred like `keystoneSignRejected`) and
+        /// clears the context. Pop count adapts to the caller: 2 (`scan` + `keystoneSign`) for the
+        /// real round-trip, where `scan` is always the acting/top element; 1 (`keystoneSign` only) for
+        /// the simulator bypass, which never pushes `scan`.
         case keystoneScanAbandoned
         /// MOB-1478 (W2): the Tor bottom sheet's own actions (toggle binding + "Got it").
         case torSheet(MigrationTorSheet.Action)
