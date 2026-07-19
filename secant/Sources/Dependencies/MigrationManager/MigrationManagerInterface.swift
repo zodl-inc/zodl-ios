@@ -28,8 +28,8 @@ struct MigrationManagerClient: Sendable {
     // MOB-1496: async — the SDK's per-account migration reads are now `async throws`.
     var reentryRoute: @Sendable () async -> MigrationReentryRoute = { .entry }
     // MOB-1483: "Ironwood (NU6.3) activated on the current network" — gates `bannerVariant`,
-    // `reentryRoute`, and `reconcile()`. Defaults closed so a test that doesn't override it stays
-    // fail-safe instead of trapping via the macro's `unimplemented`.
+    // `reentryRoute`, and `reconcile()`. `= { false }` is a required macro default (non-Void,
+    // non-throwing return), NOT a test fallback — see the `recordCommittedSchedule` note below.
     var isIronwoodActivated: @Sendable () -> Bool = { false }
     var orchardBalanceToMigrate: @Sendable (_ accountUUID: AccountUUID?) async -> Zatoshi = { _ in .zero }
     // Progress UI (MOB-1496: relocated from SDKSynchronizerClient — app-side derivations over the
@@ -40,8 +40,12 @@ struct MigrationManagerClient: Sendable {
     // Persisted committed schedule (MOB-1496 W2): the SDK retains no proposal list once a schedule
     // is committed — these persist the app's own record of it, which `migrationSummary`/
     // `migrationTransfers` above derive from. `nil` accountUUID resolves the selected account
-    // internally, same convention as the other members here. Defaulted to a no-op (like
-    // `reconcile` below) so a test exercising an op's success path doesn't have to mock these too.
+    // internally, same convention as the other members here.
+    // swift-dependencies gotcha: these no-op defaults do NOT let a test skip mocking. The client has
+    // no `testValue`, so the first uncustomized `@Dependency(\.migrationManager)` access in a test
+    // fails "has no test implementation" (whole-client, any member/arity — not per-endpoint).
+    // Customizing ANY one member unlocks the client for that test; un-overridden members then fall
+    // through to their LIVE impl, not these no-ops.
     var recordCommittedSchedule: @Sendable (_ accountUUID: AccountUUID?, _ schedule: MigrationSchedule) async -> Void = { _, _ in }
     var recordTransferBroadcast: @Sendable (_ accountUUID: AccountUUID?, _ result: MigrationTransferResult) async -> Void = { _, _ in }
     // Dust resolution (MOB-1487/MOB-1496: relocated — app persistence, not SDK calls).
@@ -60,7 +64,7 @@ struct MigrationManagerClient: Sendable {
     // provider). Endpoint is materialized at read time as the app's current sync endpoint. Default
     // is the closed/no-Tor, unset-endpoint value — the macro requires a concrete default for a
     // non-throwing, non-`Void`/non-`Optional`-returning closure; every real call site resolves a
-    // live endpoint, so this only surfaces if a test exercises the member without mocking it.
+    // live endpoint. Tests never observe this default (see the `recordCommittedSchedule` note).
     var networkPrivacyOptions: @Sendable () -> MigrationNetworkPrivacyOptions = {
         MigrationNetworkPrivacyOptions(useTor: false, submissionEndpoint: LightWalletEndpoint(address: "", port: 0))
     }
@@ -75,14 +79,12 @@ struct MigrationManagerClient: Sendable {
     var sendGate: @Sendable () async -> MigrationSendGate = { .allowed }
     // MOB-1496 (W3): written once per completed sync from Root's existing sync-completion edge
     // (`RootInitialization.swift`'s `.synchronizerStateChanged`, the same place `reconcile()` fires
-    // on the false->true transition into `.upToDate`) — NOT on every tick. Defaulted to a no-op
-    // (like `reconcile`) since that call site fires in many tests that don't care about the gate.
+    // on the false->true transition into `.upToDate`) — NOT on every tick. `= { }` mirrors
+    // `reconcile`'s no-op but is not a test fallback (see the `recordCommittedSchedule` note).
     var recordSyncCompleted: @Sendable () -> Void = { }
-    // Reconciliation. MOB-1496: async — re-reads `getMigrationState` for `stateEvents` too. Default
-    // no-op (unlike most side-effecting members here, which stay `unimplemented`-by-default) since
-    // MOB-1496 adds call sites in `MigrationSendingStore`/`MigrationNoteSplitStore` (post-broadcast
-    // freshness) beyond the original launch/foreground-entry ones — a test exercising those success
-    // paths without caring about `stateEvents` freshness shouldn't have to mock this too.
+    // Reconciliation. MOB-1496: async — re-reads `getMigrationState` for `stateEvents`; call sites in
+    // `MigrationSendingStore`/`MigrationNoteSplitStore` (post-broadcast) join the launch/foreground
+    // ones. `= { }` is a no-op default, not a test fallback (see the `recordCommittedSchedule` note).
     var reconcile: @Sendable () async -> Void = { }
     // Debug/testnet-only: clears every persisted migration flag this client owns (mode, manual
     // delivery, network privacy, complete-acknowledged, dust-locked) — consumed by the
