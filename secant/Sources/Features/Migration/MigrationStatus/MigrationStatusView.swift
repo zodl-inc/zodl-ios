@@ -133,7 +133,7 @@ struct MigrationStatusView: View {
             Asset.Assets.infoOutline.image
                 .zImage(size: 16, style: Design.Text.tertiary)
 
-            Text(localizable: .migrationStatusWindowMissedNote)
+            Text(localizable: .migrationStatusWindowMissedNote(store.syncPrivacyBufferMinutes))
                 .zFont(size: 12, style: Design.Text.tertiary)
                 .multilineTextAlignment(.leading)
                 .fixedSize(horizontal: false, vertical: true)

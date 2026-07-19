@@ -51,6 +51,11 @@ struct MigrationStatus {
         var isFlowRoot = false
         /// Send-now CTA disabled per `manager.sendGate()` (`.syncRequired`/`.waitUntil` -> disabled).
         var isSendNowDisabled = false
+        /// MOB-1496 (W3): the SDK's post-broadcast privacy buffer
+        /// (`sdkSynchronizer.migrationPrivacySyncBufferDuration()`), rounded to whole minutes —
+        /// threads the resume footer's "…about %1$lld mins…" copy (`migrationStatusWindowMissedNote`)
+        /// off the SDK's real value instead of a hardcoded "10". `0` until `statusLoaded` arrives.
+        var syncPrivacyBufferMinutes = 0
         var cancelStateStreamId = UUID()
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
 
@@ -94,8 +99,14 @@ struct MigrationStatus {
         case rescheduleCompleted(rows: [MigrationTransferRow], totalDurationHours: Int)
         case rescheduleTapped
         case sendNowTapped
-        /// `migrationTransfers()` + `migrationSummary()` + `manager.sendGate()` result.
-        case statusLoaded(rows: [MigrationTransferRow], totalDurationHours: Int, isSendNowDisabled: Bool)
+        /// `migrationTransfers()` + `migrationSummary()` + `manager.sendGate()` +
+        /// `sdkSynchronizer.migrationPrivacySyncBufferDuration()` result.
+        case statusLoaded(
+            rows: [MigrationTransferRow],
+            totalDurationHours: Int,
+            isSendNowDisabled: Bool,
+            syncPrivacyBufferMinutes: Int
+        )
 
         enum Delegate: Equatable {
             case done
@@ -105,6 +116,10 @@ struct MigrationStatus {
     }
 
     @Dependency(\.migrationManager) var migrationManager
+    // MOB-1496 (W3): `migrationPrivacySyncBufferDuration()` for the resume footer's minutes copy —
+    // hydrated here (the store already reads dependencies) rather than adding a dependency to the
+    // View.
+    @Dependency(\.sdkSynchronizer) var sdkSynchronizer
 
     init() { }
 
@@ -148,10 +163,11 @@ struct MigrationStatus {
             case .sendNowTapped:
                 return .send(.delegate(.sendNow))
 
-            case .statusLoaded(let rows, let totalDurationHours, let isSendNowDisabled):
+            case .statusLoaded(let rows, let totalDurationHours, let isSendNowDisabled, let syncPrivacyBufferMinutes):
                 state.rows = IdentifiedArrayOf(uniqueElements: rows)
                 state.totalDurationHours = totalDurationHours
                 state.isSendNowDisabled = isSendNowDisabled
+                state.syncPrivacyBufferMinutes = syncPrivacyBufferMinutes
                 return .none
             }
         }
@@ -162,11 +178,15 @@ struct MigrationStatus {
             let rows = await migrationManager.migrationTransfers(accountUUID)
             let summary = await migrationManager.migrationSummary(accountUUID)
             let isSendNowDisabled = await migrationManager.sendGate() != MigrationSendGate.allowed
+            // [MOB-1496] W3: minutes = Int((buffer / 60).rounded()) — the store-level formula the
+            // resume footer's formatted copy is threaded from.
+            let syncPrivacyBufferMinutes = Int((sdkSynchronizer.migrationPrivacySyncBufferDuration() / 60).rounded())
             await send(
                 .statusLoaded(
                     rows: rows,
                     totalDurationHours: summary.estimatedDurationHours,
-                    isSendNowDisabled: isSendNowDisabled
+                    isSendNowDisabled: isSendNowDisabled,
+                    syncPrivacyBufferMinutes: syncPrivacyBufferMinutes
                 )
             )
         }

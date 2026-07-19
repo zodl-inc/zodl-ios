@@ -108,6 +108,12 @@ struct Root {
         /// against each `migrationSyncGateChanged` tick so the gate-flip migration-reconcile
         /// trigger only fires on an actual change.
         var lastMigrationSyncGateBlocked = false
+        /// MOB-1496 (W3): set when `.retryStart` finds `sdkSynchronizer.isMigrationSyncBlocked()`
+        /// true (proactively, before calling `start`) or catches `ZcashError.migrationSyncBlocked`
+        /// (reactively, from a start that raced the gate) — both silent, no alert. Cleared by the
+        /// `.migrationSyncGateChanged(false)` handler, which then replays `.retryStart` so the
+        /// normal start chain resumes identically to an ungated launch.
+        var syncDeferredByMigrationGate = false
         var welcomeState: Welcome.State
         @Shared(.inMemory(.zashiWalletAccount)) var zashiWalletAccount: WalletAccount? = nil
 
