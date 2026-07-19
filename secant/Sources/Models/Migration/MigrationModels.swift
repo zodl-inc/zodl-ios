@@ -94,6 +94,58 @@ enum MigrationMode: String, Equatable, Sendable, Codable {
     case privateScheduled
 }
 
+/// Atomic per-run snapshot of the migration's network configuration (MOB-1496 W4): Tor choice, sync
+/// provider/endpoint, and broadcast provider/endpoint, taken once at the first read of a run and
+/// immune to mid-run auto server switches — see `MigrationManagerClient.migrationNetworkOptions`'s
+/// doc for the full lifecycle. Not part of the SDK surface: `LightWalletEndpoint` itself is not
+/// `Codable`, so `Endpoint` is the persisted wrapper (`toLightWalletEndpoint()` reconstructs one for
+/// SDK calls). [ext]
+struct MigrationNetworkSnapshot: Equatable, Sendable, Codable {
+    /// `Codable`/`Sendable` stand-in for `LightWalletEndpoint` (which is neither). Deliberately
+    /// narrower than the SDK type — `singleCallTimeoutInMillis`/`streamingCallTimeoutInMillis` are
+    /// fixed app constants, not part of a server's persisted identity, so they're re-applied on
+    /// reconstruction (`toLightWalletEndpoint()`) rather than stored.
+    struct Endpoint: Equatable, Sendable, Codable {
+        let host: String
+        let port: Int
+        let secure: Bool
+
+        init(host: String, port: Int, secure: Bool) {
+            self.host = host
+            self.port = port
+            self.secure = secure
+        }
+
+        init(_ endpoint: LightWalletEndpoint) {
+            self.host = endpoint.host
+            self.port = endpoint.port
+            self.secure = endpoint.secure
+        }
+
+        /// Reconstructs a `LightWalletEndpoint` for SDK calls, using the same
+        /// `streamingCallTimeoutInMillis` constant the built-in endpoint list uses.
+        func toLightWalletEndpoint() -> LightWalletEndpoint {
+            LightWalletEndpoint(
+                address: host,
+                port: port,
+                secure: secure,
+                streamingCallTimeoutInMillis: ZcashSDKEnvironment.ZcashSDKConstants.streamingCallTimeoutInMillis
+            )
+        }
+    }
+
+    /// The persisted pre-run Tor choice at the moment this snapshot was taken. Authoritative for the
+    /// whole run once taken — a later flip of the app-wide Tor setting or `setNetworkPrivacyOptions`
+    /// does not alter an already-active run; only a FRESH run (after this snapshot is cleared at
+    /// run-end) picks up a new choice.
+    let useTor: Bool
+    let syncEndpoint: Endpoint
+    let syncProvider: ServerProvider
+    let broadcastEndpoint: Endpoint
+    let broadcastProvider: ServerProvider
+    let takenAt: Date
+}
+
 /// App-persisted record of the committed migration schedule (MOB-1496 W2): the SDK retains no
 /// proposal list once a schedule is committed, so this is the app's only record of it — the
 /// payload `migrationSummary`/`migrationTransfers` derive rows/totals from. Not part of the SDK

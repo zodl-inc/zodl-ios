@@ -13,7 +13,7 @@
 //  MOB-1468's Keystone note-split retry fork: `retryTapped` re-broadcasts a coordinator-set
 //  `signedNoteSplitPczt` via `submitSignedNoteSplit` rather than re-submitting the proposal.
 //  MOB-1496: the software-signing/resubmission paths now hit the real per-account SDK surface
-//  (`AccountUUID` + a derived `UnifiedSpendingKey` + `migrationManager.networkPrivacyOptions()`).
+//  (`AccountUUID` + a derived `UnifiedSpendingKey` + `migrationManager.migrationNetworkOptions(_:)`).
 //  `.serialized`: several cases drive the process-global `@Shared(.inMemory(.selectedWalletAccount))`,
 //  and the copy action writes the shared toast.
 //
@@ -26,7 +26,7 @@ import ComposableArchitecture
 @testable import zodl_internal
 
 @Suite(.serialized) struct MigrationNoteSplitTests {
-    /// MOB-1496: `migrationManager.networkPrivacyOptions()` has no macro default (unlike the SDK
+    /// MOB-1496: `migrationManager.migrationNetworkOptions(_:)` has no macro default (unlike the SDK
     /// synchronizer's `.noOp`), so any test reaching `submitNoteSplit`/`resubmitSignedNoteSplit`
     /// must mock it explicitly or trip `unimplemented`.
     private static let defaultNetworkPrivacyOptions = MigrationNetworkPrivacyOptions(
@@ -313,7 +313,7 @@ import ComposableArchitecture
                 submitCalls.withValue { $0 += 1 }
                 return MigrationTransferResult.success(txId: "retried-tx-id")
             }
-            $0.migrationManager.networkPrivacyOptions = { Self.defaultNetworkPrivacyOptions }
+            $0.migrationManager.migrationNetworkOptions = { _ in Self.defaultNetworkPrivacyOptions }
             withDependenciesUSKDerivable(&$0)
         }
 
@@ -370,7 +370,7 @@ import ComposableArchitecture
                 submitProposalCalls.withValue { $0 += 1 }
                 return MigrationTransferResult.success(txId: "should-not-be-called")
             }
-            $0.migrationManager.networkPrivacyOptions = { Self.defaultNetworkPrivacyOptions }
+            $0.migrationManager.migrationNetworkOptions = { _ in Self.defaultNetworkPrivacyOptions }
         }
 
         await store.send(.retryTapped) {
@@ -402,7 +402,7 @@ import ComposableArchitecture
                 submitProposalCalls.withValue { $0 += 1 }
                 return MigrationTransferResult.success(txId: "retried-tx-id")
             }
-            $0.migrationManager.networkPrivacyOptions = { Self.defaultNetworkPrivacyOptions }
+            $0.migrationManager.migrationNetworkOptions = { _ in Self.defaultNetworkPrivacyOptions }
             withDependenciesUSKDerivable(&$0)
         }
 
@@ -444,7 +444,7 @@ import ComposableArchitecture
             $0.sdkSynchronizer.submitNoteSplit = { _, _, _, _ in
                 throw ZcashError.migrationRecordFailedAfterBroadcast(NSError(domain: "test", code: 1))
             }
-            $0.migrationManager.networkPrivacyOptions = { Self.defaultNetworkPrivacyOptions }
+            $0.migrationManager.migrationNetworkOptions = { _ in Self.defaultNetworkPrivacyOptions }
             $0.migrationManager.reconcile = { reconcileCalls.withValue { $0 += 1 } }
             withDependenciesUSKDerivable(&$0)
         }
@@ -486,7 +486,7 @@ import ComposableArchitecture
                 callOrder.withValue { $0.append("execute") }
                 return MigrationTransferResult.success(txId: "retried-tx-id")
             }
-            $0.migrationManager.networkPrivacyOptions = { Self.defaultNetworkPrivacyOptions }
+            $0.migrationManager.migrationNetworkOptions = { _ in Self.defaultNetworkPrivacyOptions }
             withDependenciesUSKDerivable(&$0)
         }
 
@@ -519,7 +519,7 @@ import ComposableArchitecture
                 isSyncing: { false }
             )
             $0.sdkSynchronizer.submitNoteSplit = { _, _, _, _ in MigrationTransferResult.success(txId: "retried-tx-id") }
-            $0.migrationManager.networkPrivacyOptions = { Self.defaultNetworkPrivacyOptions }
+            $0.migrationManager.migrationNetworkOptions = { _ in Self.defaultNetworkPrivacyOptions }
             withDependenciesUSKDerivable(&$0)
         }
 
@@ -552,7 +552,7 @@ import ComposableArchitecture
                 callOrder.withValue { $0.append("execute") }
                 return MigrationTransferResult.success(txId: "resubmitted-tx-id")
             }
-            $0.migrationManager.networkPrivacyOptions = { Self.defaultNetworkPrivacyOptions }
+            $0.migrationManager.migrationNetworkOptions = { _ in Self.defaultNetworkPrivacyOptions }
         }
 
         await store.send(.retryTapped) {

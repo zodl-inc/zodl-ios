@@ -39,8 +39,6 @@ struct MigrationSending {
         var totalCount = 1
         /// How many of `totalCount` have been successfully broadcast so far.
         var sentCount = 0
-        /// Submission options for `executeNextPendingMigrationTransfer`, injected by the coordinator.
-        var networkPrivacyOptions = MigrationNetworkPrivacyOptions(useTor: false, submissionEndpoint: LightWalletEndpoint(address: "", port: 0))
         /// When true, this instance is the "Migrate anyway" dust lane (MOB-1487): `onAppear`
         /// executes the dedicated dust sweep instead of the next scheduled transfer.
         /// Coordinator-configured; defaults to false so existing lanes are unaffected. Execution
@@ -54,10 +52,6 @@ struct MigrationSending {
             txId: String = "",
             totalCount: Int = 1,
             sentCount: Int = 0,
-            networkPrivacyOptions: MigrationNetworkPrivacyOptions = MigrationNetworkPrivacyOptions(
-                useTor: false,
-                submissionEndpoint: LightWalletEndpoint(address: "", port: 0)
-            ),
             isDustLane: Bool = false
         ) {
             self.phase = phase
@@ -65,7 +59,6 @@ struct MigrationSending {
             self.txId = txId
             self.totalCount = totalCount
             self.sentCount = sentCount
-            self.networkPrivacyOptions = networkPrivacyOptions
             self.isDustLane = isDustLane
         }
     }
@@ -124,11 +117,11 @@ struct MigrationSending {
                 return .none
 
             case .onAppear:
-                return executeNextTransfer(account: state.selectedWalletAccount, options: state.networkPrivacyOptions, isDustLane: state.isDustLane)
+                return executeNextTransfer(account: state.selectedWalletAccount, isDustLane: state.isDustLane)
 
             case .retryTapped:
                 state.isFailurePresented = false
-                return executeNextTransfer(account: state.selectedWalletAccount, options: state.networkPrivacyOptions, isDustLane: state.isDustLane)
+                return executeNextTransfer(account: state.selectedWalletAccount, isDustLane: state.isDustLane)
 
             case .transferResult(let result):
                 switch result {
@@ -140,7 +133,6 @@ struct MigrationSending {
                         ? .send(.allTransfersSent)
                         : executeNextTransfer(
                             account: state.selectedWalletAccount,
-                            options: state.networkPrivacyOptions,
                             isDustLane: state.isDustLane
                         )
 
@@ -186,7 +178,7 @@ struct MigrationSending {
     /// land and only recording failed (the engine self-heals later) — routed to a success-like
     /// result so the UX doesn't offer a needless retry or imply failure for something that worked;
     /// `txId` is a placeholder (the error carries no payload to recover the real one from).
-    private func executeNextTransfer(account: WalletAccount?, options: MigrationNetworkPrivacyOptions, isDustLane: Bool) -> Effect<Action> {
+    private func executeNextTransfer(account: WalletAccount?, isDustLane: Bool) -> Effect<Action> {
         guard let account else {
             return .run { send in await send(.transferResult(nil)) }
         }
@@ -206,9 +198,14 @@ struct MigrationSending {
                         derivationTool: derivationTool,
                         networkType: zcashSDKEnvironment.network().networkType
                     )
+                    // MOB-1496 (W4): read AT EXECUTE TIME, right before the broadcast — never trust a
+                    // value threaded through state, which would go stale across a re-entry (coordinator
+                    // state resets on relaunch) or a long BG-window gap.
+                    let options = await migrationManager.migrationNetworkOptions(account.id)
                     await sdkSynchronizer.stopSyncBeforeMigrationBroadcast()
                     result = try await sdkSynchronizer.migrateMigrationDust(account.id, usk, options)
                 } else {
+                    let options = await migrationManager.migrationNetworkOptions(account.id)
                     await sdkSynchronizer.stopSyncBeforeMigrationBroadcast()
                     result = try await sdkSynchronizer.executeNextPendingMigrationTransfer(account.id, options)
                 }

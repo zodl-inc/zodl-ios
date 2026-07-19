@@ -199,7 +199,7 @@ struct MigrationNoteSplit {
                     derivationTool: derivationTool,
                     networkType: zcashSDKEnvironment.network().networkType
                 )
-                let options = migrationManager.networkPrivacyOptions()
+                let options = await migrationManager.migrationNetworkOptions(account.id)
                 await sdkSynchronizer.stopSyncBeforeMigrationBroadcast()
                 let result = try await sdkSynchronizer.submitNoteSplit(account.id, proposal, usk, options)
                 await send(.splitResult(result))
@@ -226,7 +226,7 @@ struct MigrationNoteSplit {
         }
 
         return .run { send in
-            let options = migrationManager.networkPrivacyOptions()
+            let options = await migrationManager.migrationNetworkOptions(account.id)
             do {
                 await sdkSynchronizer.stopSyncBeforeMigrationBroadcast()
                 let result = try await sdkSynchronizer.submitSignedNoteSplit(account.id, pczt, options)

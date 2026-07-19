@@ -388,6 +388,40 @@ import ComposableArchitecture
         }
     }
 
+    /// MOB-1496 (W4): the BG executor's options for `executeNextPendingMigrationTransfer` come from
+    /// `migrationManager.migrationNetworkOptions(_:)`, read AT EXECUTE TIME — not any stale/local
+    /// value. A mocked sentinel must reach the broadcast call unchanged.
+    @Test func sendReadsOptionsFromMigrationNetworkOptionsAtExecuteTime() async {
+        let sentinel = MigrationNetworkPrivacyOptions(
+            useTor: true,
+            submissionEndpoint: LightWalletEndpoint(address: "sentinel.example.com", port: 443, secure: true, streamingCallTimeoutInMillis: 0)
+        )
+        let receivedOptions = LockIsolated<[MigrationNetworkPrivacyOptions]>([])
+        let completeCalls = LockIsolated<[Bool]>([])
+
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let store = Store(initialState: Self.selectedAccountState()) {
+                Root()
+            } withDependencies: {
+                baseNoOpDependencies(&$0)
+                $0.migrationManager.migrationNetworkOptions = { _ in sentinel }
+                $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, options in
+                    receivedOptions.withValue { $0.append(options) }
+                    return MigrationTransferResult.success(txId: "tx-1")
+                }
+                $0.sdkSynchronizer.getMigrationState = { _ in MigrationState.complete }
+            }
+
+            let handle = MigrationBGSessionHandle(rawTask: nil) { success in completeCalls.withValue { $0.append(success) } }
+            store.send(.initialization(.migrationBackgroundSession(handle)))
+            await waitForRootStore { completeCalls.withValue { !$0.isEmpty } }
+
+            #expect(receivedOptions.withValue { $0 } == [sentinel])
+        }
+    }
+
     /// A successful broadcast that DOES complete the migration: posts `.migrationComplete`
     /// (never `.transferComplete`), cancels everything instead of re-arming, and completes the
     /// session.
@@ -1055,9 +1089,10 @@ private func baseNoOpDependencies(_ values: inout DependencyValues) {
     values.migrationManager.acknowledgeComplete = { }
     values.migrationManager.reconcile = { }
     values.migrationManager.recordSyncCompleted = { }
-    values.migrationManager.networkPrivacyOptions = {
+    values.migrationManager.migrationNetworkOptions = { _ in
         MigrationNetworkPrivacyOptions(useTor: false, submissionEndpoint: LightWalletEndpoint(address: "", port: 0))
     }
+    values.migrationManager.activeNetworkSnapshots = { [] }
     values.readTransactionsStorage.resetZashi = { }
     values.sdkSynchronizer = .noOp
     values.userMetadataProvider.load = { _ in }

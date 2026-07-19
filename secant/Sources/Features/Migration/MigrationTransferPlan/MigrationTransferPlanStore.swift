@@ -157,7 +157,7 @@ struct MigrationTransferPlan {
                         )
                         if needsNoteSplit {
                             let proposal = try await sdkSynchronizer.prepareNoteSplit(account.id)
-                            let options = migrationManager.networkPrivacyOptions()
+                            let options = await migrationManager.migrationNetworkOptions(account.id)
                             // [MOB-1496] W3 review fix A: this silent note-split broadcast was
                             // missed by the original stop-before-broadcast sweep (which only
                             // covered MigrationSendingStore/MigrationNoteSplitStore) — same shared

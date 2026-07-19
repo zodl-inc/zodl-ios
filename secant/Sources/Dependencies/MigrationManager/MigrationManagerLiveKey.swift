@@ -59,7 +59,8 @@ extension MigrationManagerClient: DependencyKey {
             setMigrationMode: { impl.gateStorage.setMigrationMode($0) },
             isManualDelivery: { impl.gateStorage.isManualDelivery() },
             setManualDelivery: { impl.gateStorage.setManualDelivery($0) },
-            networkPrivacyOptions: { impl.networkPrivacyOptions() },
+            migrationNetworkOptions: { accountUUID in await impl.migrationNetworkOptions(accountUUID: accountUUID) },
+            activeNetworkSnapshots: { impl.activeNetworkSnapshots() },
             setNetworkPrivacyOptions: { impl.setNetworkPrivacyOptions(useTor: $0) },
             isCompleteAcknowledged: { impl.gateStorage.isCompleteAcknowledged() },
             acknowledgeComplete: { impl.acknowledgeComplete() },
@@ -78,6 +79,8 @@ extension MigrationManagerClient: DependencyKey {
 final class MigrationManagerImpl: @unchecked Sendable {
     @Dependency(\.sdkSynchronizer) var sdkSynchronizer
     @Dependency(\.zcashSDKEnvironment) var zcashSDKEnvironment
+    @Dependency(\.userStoredPreferences) var userStoredPreferences
+    @Dependency(\.transactionGuard) var transactionGuard
 
     @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
     @Shared(.inMemory(.walletAccounts)) var walletAccounts: [WalletAccount] = []
@@ -85,12 +88,19 @@ final class MigrationManagerImpl: @unchecked Sendable {
     let gateStorage: MigrationGateStorage
     /// MOB-1496 (W2): per-account persisted committed schedule — see `MigrationScheduleStorage`.
     let scheduleStorage: MigrationScheduleStorage
+    /// MOB-1496 (W4): per-account persisted atomic network snapshot — see `MigrationSnapshotStorage`.
+    let snapshotStorage: MigrationSnapshotStorage
 
     /// Internal (not private) with injectable storage so unit tests can exercise the real
     /// `reconcile()` against a scoped `UserDefaults` suite.
-    init(gateStorage: MigrationGateStorage = MigrationGateStorage(), scheduleStorage: MigrationScheduleStorage = MigrationScheduleStorage()) {
+    init(
+        gateStorage: MigrationGateStorage = MigrationGateStorage(),
+        scheduleStorage: MigrationScheduleStorage = MigrationScheduleStorage(),
+        snapshotStorage: MigrationSnapshotStorage = MigrationSnapshotStorage()
+    ) {
         self.gateStorage = gateStorage
         self.scheduleStorage = scheduleStorage
+        self.snapshotStorage = snapshotStorage
     }
 
     /// MOB-1496: one `CurrentValueSubject` per account `stateEvents` has ever been asked about,
@@ -308,12 +318,154 @@ final class MigrationManagerImpl: @unchecked Sendable {
         return subject(for: resolvedAccountUUID).eraseToAnyPublisher()
     }
 
-    func networkPrivacyOptions() -> MigrationNetworkPrivacyOptions {
-        MigrationNetworkPrivacyOptions(useTor: gateStorage.isTorEnabledForMigration(), submissionEndpoint: zcashSDKEnvironment.endpoint())
+    /// MOB-1496 (W4): ensure-or-read `accountUUID`'s atomic network snapshot, mapped onto the SDK's
+    /// `MigrationNetworkPrivacyOptions`. See `MigrationManagerClient.migrationNetworkOptions`'s doc
+    /// for the full contract (idempotent, never throws).
+    ///
+    /// DO-NOT-NEST WARNING: internally serializes creation against a mid-flight server switch via
+    /// `transactionGuard.withSubmission` — `TransactionGuard` is NON-REENTRANT (a nested
+    /// `withSubmission`/`switchIfIdle`/`switchWaiting` deadlocks: the inner `acquire()` waits forever
+    /// for a `release()` that can only happen after the inner call itself returns). NEVER call this
+    /// from inside another `withSubmission`/`switchIfIdle`/`switchWaiting` block — in particular,
+    /// never from inside `SDKSynchronizerLive`'s own guarded closures. Every call site in this
+    /// codebase reads options in the store/effect BEFORE invoking the broadcast client member (which
+    /// takes the guard internally in ITS OWN LiveKey), never from after/inside it.
+    func migrationNetworkOptions(accountUUID: AccountUUID?) async -> MigrationNetworkPrivacyOptions {
+        let snapshot = await ensureNetworkSnapshot(accountUUID: accountUUID)
+        return MigrationNetworkPrivacyOptions(useTor: snapshot.useTor, submissionEndpoint: snapshot.broadcastEndpoint.toLightWalletEndpoint())
     }
 
+    /// MOB-1496 (W4): every persisted network snapshot across `walletAccounts`, plus the selected
+    /// account defensively (deduped) — i.e. every account with a currently-active migration run.
+    /// Drives `AutoServerSelectionLiveKey`'s pinning and `ServerSetupStore`'s manual-switch privacy
+    /// warning.
+    func activeNetworkSnapshots() -> [MigrationNetworkSnapshot] {
+        var seenAccountUUIDs = Set<AccountUUID>()
+        var accountUUIDs = walletAccounts.map { $0.id }
+        if let selectedAccountUUID = selectedWalletAccount?.id {
+            accountUUIDs.append(selectedAccountUUID)
+        }
+
+        var snapshots: [MigrationNetworkSnapshot] = []
+        for accountUUID in accountUUIDs {
+            guard seenAccountUUIDs.insert(accountUUID).inserted else { continue }
+            if let snapshot = snapshotStorage.snapshot(for: accountUUID) {
+                snapshots.append(snapshot)
+            }
+        }
+        return snapshots
+    }
+
+    /// Persists the pre-run Tor choice — consumed the next time THIS account's snapshot is first
+    /// taken (`createNetworkSnapshot`'s `useTor` read). Does not alter an already-active run's
+    /// snapshot (see `MigrationNetworkSnapshot.useTor`'s doc).
     func setNetworkPrivacyOptions(useTor: Bool) {
         gateStorage.setTorEnabledForMigration(useTor)
+    }
+
+    /// Idempotent ensure-or-create for `accountUUID`'s (resolved, if `nil`, to the selected account)
+    /// atomic per-run network snapshot. Returns the persisted snapshot when one already exists;
+    /// otherwise creates one from the CURRENT sync endpoint/Tor choice, persists it, and returns it.
+    /// Double-checks presence again AFTER acquiring the guard (not just before) — a concurrent first
+    /// caller for the SAME account may have already created and persisted one while this call
+    /// waited, and that one must win rather than being silently overwritten. A missing/unresolvable
+    /// account still returns SOME snapshot (the current endpoint/Tor choice, unpersisted) — every
+    /// path ends in a value, never a throw.
+    private func ensureNetworkSnapshot(accountUUID: AccountUUID?) async -> MigrationNetworkSnapshot {
+        let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id
+
+        if let resolvedAccountUUID, let existing = snapshotStorage.snapshot(for: resolvedAccountUUID) {
+            return existing
+        }
+
+        // DO-NOT-NEST: see `migrationNetworkOptions`'s doc — this must never run inside another
+        // `withSubmission`/`switchIfIdle`/`switchWaiting`.
+        let guarded = try? await transactionGuard.withSubmission { () async -> MigrationNetworkSnapshot in
+            if let resolvedAccountUUID, let existing = snapshotStorage.snapshot(for: resolvedAccountUUID) {
+                return existing
+            }
+            let created = await createNetworkSnapshot()
+            if let resolvedAccountUUID {
+                snapshotStorage.recordSnapshot(created, for: resolvedAccountUUID)
+            }
+            return created
+        }
+
+        // `withSubmission` only throws on task cancellation (`acquire()`'s `CancellationError`) — the
+        // closure body above never throws. Even a cancelled guard acquisition must still end in SOME
+        // snapshot (never a throw) — fall back to an unguarded, unpersisted read.
+        if let guarded {
+            return guarded
+        }
+        return await createNetworkSnapshot()
+    }
+
+    /// The actual read+benchmark sequence for a fresh snapshot — see `ensureNetworkSnapshot`'s doc
+    /// for the guard this always runs inside. Never throws; every path ends in a snapshot.
+    private func createNetworkSnapshot() async -> MigrationNetworkSnapshot {
+        let currentEndpoint = zcashSDKEnvironment.endpoint()
+        let storedServerConfig = userStoredPreferences.server()
+        let useTor = gateStorage.isTorEnabledForMigration()
+        let syncProvider = ServerProvider.classify(host: currentEndpoint.host)
+
+        var syncProviderIsCustom = false
+        if case ServerProvider.custom = syncProvider {
+            syncProviderIsCustom = true
+        }
+        let isCustomServer = syncProviderIsCustom || (storedServerConfig?.isCustom ?? false)
+
+        let broadcastEndpoint: LightWalletEndpoint
+        let broadcastProvider: ServerProvider
+
+        if isCustomServer {
+            // Michal's rule: a user-selected custom server is used for ALL operations — sync and
+            // every migration broadcast — no separation.
+            broadcastEndpoint = currentEndpoint
+            broadcastProvider = syncProvider
+        } else {
+            let network = zcashSDKEnvironment.network().networkType
+            let candidates = ZcashSDKEnvironment.endpoints(for: network, skipDefault: false).filter { candidate in
+                let candidateProvider = ServerProvider.classify(host: candidate.host)
+                guard candidateProvider != syncProvider else { return false }
+                if case ServerProvider.custom = candidateProvider { return false }
+                return true
+            }
+
+            if candidates.isEmpty {
+                // Testnet (single endpoint), or defensively no other-family built-in host at all —
+                // same-server fallback (the sanctioned single-server mode extends here too).
+                broadcastEndpoint = currentEndpoint
+                broadcastProvider = syncProvider
+            } else {
+                // Reuse exactly the constants/shape `AutoServerSelectionLiveKey.findBestServer`'s
+                // background benchmark uses.
+                let ranked = await sdkSynchronizer.evaluateBestOf(
+                    candidates,
+                    AutoServerSelectionConstants.evaluationTimeoutSeconds,
+                    AutoServerSelectionConstants.blocksToDownload,
+                    AutoServerSelectionConstants.candidateCount,
+                    network
+                )
+                if let best = ranked.first {
+                    broadcastEndpoint = best
+                } else {
+                    LoggerProxy.event(
+                        "[MigrationNetworkSnapshot] Broadcast benchmark produced no result — falling back to \(candidates[0].host)"
+                    )
+                    broadcastEndpoint = candidates[0]
+                }
+                broadcastProvider = ServerProvider.classify(host: broadcastEndpoint.host)
+            }
+        }
+
+        return MigrationNetworkSnapshot(
+            useTor: useTor,
+            syncEndpoint: MigrationNetworkSnapshot.Endpoint(currentEndpoint),
+            syncProvider: syncProvider,
+            broadcastEndpoint: MigrationNetworkSnapshot.Endpoint(broadcastEndpoint),
+            broadcastProvider: broadcastProvider,
+            takenAt: Date()
+        )
     }
 
     /// MOB-1496 (W3): blocked when EITHER (a) the synchronizer is actively syncing right now, or
@@ -372,8 +524,12 @@ final class MigrationManagerImpl: @unchecked Sendable {
             // engine is authoritative, so `.notStarted` observed against an account that still has
             // a stored payload means that payload no longer corresponds to anything the engine
             // knows about (e.g. a debug reset, or a fresh install reusing a restored seed).
+            // MOB-1496 (W4): the network snapshot's lifetime is tied to the same logical run as the
+            // schedule payload — clear it beside the schedule (a later dust mini-run then takes a
+            // FRESH snapshot, which is correct).
             if state == MigrationState.notStarted && scheduleStorage.hasStoredPayload(for: accountUUID) {
                 scheduleStorage.clear(for: accountUUID)
+                snapshotStorage.clear(for: accountUUID)
             }
         }
     }
@@ -383,24 +539,29 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// so its committed schedule/sent records must not leak into a future run's rows (a fresh
     /// migration, e.g. after reinstall, must start from an empty logical run). The acknowledged
     /// flag itself stays wallet-wide (see `reconcile()`'s doc); only the schedule clear is
-    /// account-scoped here.
+    /// account-scoped here. MOB-1496 (W4): also clears the account's network snapshot — a later
+    /// "Migrate anyway" dust mini-run then takes a FRESH one.
     func acknowledgeComplete() {
         gateStorage.acknowledgeComplete()
         if let accountUUID = selectedWalletAccount?.id {
             scheduleStorage.clear(for: accountUUID)
+            snapshotStorage.clear(for: accountUUID)
         }
     }
 
     /// MOB-1480: the migration SDK simulator's debug panel "Reset app migration flags" control.
     /// MOB-1496 (W2): also clears every known account's persisted schedule — a debug reset must
-    /// leave no stale committed-schedule payload behind either.
+    /// leave no stale committed-schedule payload behind either. MOB-1496 (W4): and its network
+    /// snapshot.
     func resetPersistedFlags() {
         gateStorage.resetPersistedFlags()
         for account in walletAccounts {
             scheduleStorage.clear(for: account.id)
+            snapshotStorage.clear(for: account.id)
         }
         if let accountUUID = selectedWalletAccount?.id {
             scheduleStorage.clear(for: accountUUID)
+            snapshotStorage.clear(for: accountUUID)
         }
     }
 
@@ -790,10 +951,11 @@ enum MigrationDerivations {
 /// named suite.
 final class MigrationGateStorage: @unchecked Sendable {
     /// MOB-1496: the SDK's `MigrationNetworkPrivacyOptions` isn't `Codable` (it carries a
-    /// `LightWalletEndpoint`, materialized at read time from the app's current sync endpoint —
-    /// see `MigrationManagerImpl.networkPrivacyOptions()`), so only the persisted `useTor` choice
-    /// is stored here, under the SAME UserDefaults key/JSON shape as before (minimally migrated:
-    /// the old payload also carried a now-dropped `submissionEndpoint: String?`).
+    /// `LightWalletEndpoint`) — only the persisted `useTor` choice is stored here, under the SAME
+    /// UserDefaults key/JSON shape as before (minimally migrated: the old payload also carried a
+    /// now-dropped `submissionEndpoint: String?`). MOB-1496 (W4): this stored choice is consumed
+    /// once, the first time a run's `MigrationNetworkSnapshot` is taken — see
+    /// `MigrationManagerImpl.createNetworkSnapshot()`.
     private struct PersistedNetworkPrivacyOptions: Codable {
         var useTor: Bool
     }
@@ -857,9 +1019,10 @@ final class MigrationGateStorage: @unchecked Sendable {
         userDefaults.set(isManual, forKey: .migrationManualDelivery)
     }
 
-    /// MOB-1496 Interim: only `useTor` is persisted — see `PersistedNetworkPrivacyOptions`'s doc.
-    /// `MigrationManagerImpl.networkPrivacyOptions()` combines this with the app's current sync
-    /// endpoint to build the SDK's `MigrationNetworkPrivacyOptions`.
+    /// Only `useTor` is persisted — see `PersistedNetworkPrivacyOptions`'s doc.
+    /// `MigrationManagerImpl.createNetworkSnapshot()` reads this once, when a run's
+    /// `MigrationNetworkSnapshot` is first taken, and combines it with the app's then-current sync
+    /// endpoint.
     func isTorEnabledForMigration() -> Bool {
         guard let data = userDefaults.data(forKey: .migrationNetworkPrivacyOptions),
               let stored = try? JSONDecoder().decode(PersistedNetworkPrivacyOptions.self, from: data) else {
@@ -1002,5 +1165,61 @@ final class MigrationScheduleStorage: @unchecked Sendable {
     /// encoding — nothing in this file suffixes a persistence key per-account yet.
     private func key(for accountUUID: AccountUUID) -> String {
         "\(String.migrationCommittedSchedule)_\(Data(accountUUID.id).hexEncodedString())"
+    }
+}
+
+// MARK: - Persistence: migration network snapshot (MOB-1496 W4)
+
+/// Per-account `UserDefaults`-backed persistence for the atomic migration network snapshot — see
+/// `MigrationNetworkSnapshot`'s doc for what it holds and why. Same house pattern as
+/// `MigrationScheduleStorage` (beside which this lives): `final class`, `@unchecked Sendable` guarded
+/// by an `OSAllocatedUnfairLock` around each read-modify-write, injectable `UserDefaults` (default
+/// `.standard`) so tests can use an isolated named suite, same per-account key suffix idiom.
+final class MigrationSnapshotStorage: @unchecked Sendable {
+    private let userDefaults: UserDefaults
+    private let lock = OSAllocatedUnfairLock(initialState: false)
+
+    init(userDefaults: UserDefaults = .standard) {
+        self.userDefaults = userDefaults
+    }
+
+    /// The persisted snapshot for `accountUUID`, or `nil` when none exists (no active run, or a run
+    /// whose snapshot was already cleared at completion).
+    func snapshot(for accountUUID: AccountUUID) -> MigrationNetworkSnapshot? {
+        lock.withLock { _ in readPayload(for: accountUUID) }
+    }
+
+    /// Persists `snapshot` for `accountUUID`, REPLACING any existing one. Callers are responsible
+    /// for the idempotent ensure-or-create semantics (`MigrationManagerImpl.ensureNetworkSnapshot`)
+    /// — this storage itself is a plain, unconditional write.
+    func recordSnapshot(_ snapshot: MigrationNetworkSnapshot, for accountUUID: AccountUUID) {
+        lock.withLock { _ in writePayload(snapshot, for: accountUUID) }
+    }
+
+    /// Clears the run's snapshot: consumed by the SAME three run-end paths `MigrationScheduleStorage
+    /// .clear` is (`acknowledgeComplete()`/`resetPersistedFlags()`/`reconcile()`'s stale-`.notStarted`
+    /// observation) — always alongside the schedule clear, never independently.
+    func clear(for accountUUID: AccountUUID) {
+        lock.withLock { _ in
+            userDefaults.removeObject(forKey: key(for: accountUUID))
+        }
+    }
+
+    private func readPayload(for accountUUID: AccountUUID) -> MigrationNetworkSnapshot? {
+        guard let data = userDefaults.data(forKey: key(for: accountUUID)),
+              let payload = try? JSONDecoder().decode(MigrationNetworkSnapshot.self, from: data) else {
+            return nil
+        }
+        return payload
+    }
+
+    private func writePayload(_ payload: MigrationNetworkSnapshot, for accountUUID: AccountUUID) {
+        guard let data = try? JSONEncoder().encode(payload) else { return }
+        userDefaults.set(data, forKey: key(for: accountUUID))
+    }
+
+    /// Per-account key suffix — same idiom as `MigrationScheduleStorage.key(for:)`.
+    private func key(for accountUUID: AccountUUID) -> String {
+        "\(String.migrationNetworkSnapshot)_\(Data(accountUUID.id).hexEncodedString())"
     }
 }
