@@ -140,4 +140,51 @@ import Foundation
         )
         #expect(proposal.id == "transfer-42")
     }
+
+    // MARK: - MigrationNetworkSnapshot (MOB-1496 W4)
+
+    @Test func migrationNetworkSnapshotCodableRoundTripIncludingCustomProvider() throws {
+        let original = MigrationNetworkSnapshot(
+            useTor: true,
+            syncEndpoint: MigrationNetworkSnapshot.Endpoint(host: "na.zec.rocks", port: 443, secure: true),
+            syncProvider: ServerProvider.zecRocks,
+            broadcastEndpoint: MigrationNetworkSnapshot.Endpoint(host: "mynode.example.com", port: 9067, secure: false),
+            broadcastProvider: ServerProvider.custom(host: "mynode.example.com"),
+            takenAt: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(MigrationNetworkSnapshot.self, from: data)
+
+        #expect(decoded == original)
+        #expect(decoded.broadcastProvider == ServerProvider.custom(host: "mynode.example.com"))
+    }
+
+    @Test func migrationNetworkSnapshotEndpointRoundTripsHostPortSecureThroughLightWalletEndpoint() {
+        let source = LightWalletEndpoint(address: "eu.zec.stardust.rest", port: 8443, secure: false, streamingCallTimeoutInMillis: 12_345)
+
+        let wrapped = MigrationNetworkSnapshot.Endpoint(source)
+
+        #expect(wrapped.host == "eu.zec.stardust.rest")
+        #expect(wrapped.port == 8443)
+        #expect(wrapped.secure == false)
+
+        // Reconstruction uses the SAME streaming-timeout constant the built-in endpoint list uses —
+        // not whatever the original `LightWalletEndpoint` happened to carry (the wrapper doesn't
+        // persist it at all).
+        let reconstructed = wrapped.toLightWalletEndpoint()
+        #expect(reconstructed.host == "eu.zec.stardust.rest")
+        #expect(reconstructed.port == 8443)
+        #expect(reconstructed.secure == false)
+        #expect(reconstructed.streamingCallTimeoutInMillis == ZcashSDKEnvironment.ZcashSDKConstants.streamingCallTimeoutInMillis)
+    }
+
+    @Test func migrationNetworkSnapshotEndpointMemberwiseInitAlsoRoundTrips() {
+        let wrapped = MigrationNetworkSnapshot.Endpoint(host: "zec.rocks", port: 443, secure: true)
+        let reconstructed = wrapped.toLightWalletEndpoint()
+
+        #expect(reconstructed.host == "zec.rocks")
+        #expect(reconstructed.port == 443)
+        #expect(reconstructed.secure == true)
+    }
 }

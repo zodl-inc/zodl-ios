@@ -1044,8 +1044,9 @@ struct MigrationManagerTests {
 
     /// MOB-1496: the SDK's `MigrationNetworkPrivacyOptions` isn't `Codable` (it carries a
     /// `LightWalletEndpoint`) — only the persisted `useTor` choice lives on `MigrationGateStorage`
-    /// now (`isTorEnabledForMigration`/`setTorEnabledForMigration`); the endpoint half is
-    /// materialized at read time by `MigrationManagerImpl.networkPrivacyOptions()`, not persisted.
+    /// now (`isTorEnabledForMigration`/`setTorEnabledForMigration`); MOB-1496 (W4): this stored
+    /// choice is consumed once, the first time a run's `MigrationNetworkSnapshot` is taken (see
+    /// `MigrationManagerImpl.createNetworkSnapshot()`), not read fresh on every call.
     @Test func torEnabledForMigrationPersistenceRoundTrip() throws {
         let userDefaults = try #require(
             UserDefaults(suiteName: "testTorEnabledForMigrationPersistenceRoundTrip"),
@@ -1337,6 +1338,20 @@ struct MigrationManagerTests {
         }
     }
 
+    /// A minimal, arbitrary but well-formed `MigrationNetworkSnapshot` — used by the run-end
+    /// clearing tests below where the exact field values don't matter, only that a snapshot existed
+    /// and then didn't.
+    private static func someNetworkSnapshot() -> MigrationNetworkSnapshot {
+        MigrationNetworkSnapshot(
+            useTor: false,
+            syncEndpoint: MigrationNetworkSnapshot.Endpoint(host: "na.zec.rocks", port: 443, secure: true),
+            syncProvider: ServerProvider.zecRocks,
+            broadcastEndpoint: MigrationNetworkSnapshot.Endpoint(host: "us.zec.stardust.rest", port: 443, secure: true),
+            broadcastProvider: ServerProvider.stardust,
+            takenAt: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+    }
+
     // MARK: - MOB-1496 (W2): persisted-schedule clearing on run-end / reset / stale reconcile
 
     /// `reconcile()` clears a persisted committed schedule the moment it observes `.notStarted`
@@ -1346,15 +1361,19 @@ struct MigrationManagerTests {
     @Test func reconcileClearsStalePersistedScheduleWhenStateIsNotStarted() async throws {
         let gateSuiteName = "testReconcileClearsStalePersistedScheduleWhenStateIsNotStartedGate"
         let scheduleSuiteName = "testReconcileClearsStalePersistedScheduleWhenStateIsNotStartedSchedule"
+        let snapshotSuiteName = "testReconcileClearsStalePersistedScheduleWhenStateIsNotStartedSnapshot"
         let gateUserDefaults = try #require(UserDefaults(suiteName: gateSuiteName))
         let scheduleUserDefaults = try #require(UserDefaults(suiteName: scheduleSuiteName))
+        let snapshotUserDefaults = try #require(UserDefaults(suiteName: snapshotSuiteName))
         defer {
             gateUserDefaults.removePersistentDomain(forName: gateSuiteName)
             scheduleUserDefaults.removePersistentDomain(forName: scheduleSuiteName)
+            snapshotUserDefaults.removePersistentDomain(forName: snapshotSuiteName)
         }
 
         let gateStorage = MigrationGateStorage(userDefaults: gateUserDefaults)
         let scheduleStorage = MigrationScheduleStorage(userDefaults: scheduleUserDefaults)
+        let snapshotStorage = MigrationSnapshotStorage(userDefaults: snapshotUserDefaults)
 
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
         @Shared(.inMemory(.walletAccounts)) var walletAccounts: [WalletAccount] = []
@@ -1379,6 +1398,10 @@ struct MigrationManagerTests {
         scheduleStorage.recordCommittedSchedule(schedule, for: account.id, now: Date())
         #expect(scheduleStorage.hasStoredPayload(for: account.id) == true)
 
+        // MOB-1496 (W4): the network snapshot's lifetime rides the SAME stale-`.notStarted` clear.
+        snapshotStorage.recordSnapshot(Self.someNetworkSnapshot(), for: account.id)
+        #expect(snapshotStorage.snapshot(for: account.id) != nil)
+
         await withDependencies {
             $0.sdkSynchronizer = SDKSynchronizerClient.mocked(
                 latestState: {
@@ -1389,11 +1412,12 @@ struct MigrationManagerTests {
             )
             $0.sdkSynchronizer.getMigrationState = { _ in MigrationState.notStarted }
         } operation: {
-            let impl = MigrationManagerImpl(gateStorage: gateStorage, scheduleStorage: scheduleStorage)
+            let impl = MigrationManagerImpl(gateStorage: gateStorage, scheduleStorage: scheduleStorage, snapshotStorage: snapshotStorage)
             await impl.reconcile()
         }
 
         #expect(scheduleStorage.hasStoredPayload(for: account.id) == false)
+        #expect(snapshotStorage.snapshot(for: account.id) == nil)
     }
 
     /// A genuinely `.notStarted` account with NO stored payload is untouched (nothing to clear) —
@@ -1450,15 +1474,19 @@ struct MigrationManagerTests {
     @Test func acknowledgeCompleteClearsTheSelectedAccountsPersistedSchedule() throws {
         let gateSuiteName = "testAcknowledgeCompleteClearsTheSelectedAccountsPersistedScheduleGate"
         let scheduleSuiteName = "testAcknowledgeCompleteClearsTheSelectedAccountsPersistedScheduleSchedule"
+        let snapshotSuiteName = "testAcknowledgeCompleteClearsTheSelectedAccountsPersistedScheduleSnapshot"
         let gateUserDefaults = try #require(UserDefaults(suiteName: gateSuiteName))
         let scheduleUserDefaults = try #require(UserDefaults(suiteName: scheduleSuiteName))
+        let snapshotUserDefaults = try #require(UserDefaults(suiteName: snapshotSuiteName))
         defer {
             gateUserDefaults.removePersistentDomain(forName: gateSuiteName)
             scheduleUserDefaults.removePersistentDomain(forName: scheduleSuiteName)
+            snapshotUserDefaults.removePersistentDomain(forName: snapshotSuiteName)
         }
 
         let gateStorage = MigrationGateStorage(userDefaults: gateUserDefaults)
         let scheduleStorage = MigrationScheduleStorage(userDefaults: scheduleUserDefaults)
+        let snapshotStorage = MigrationSnapshotStorage(userDefaults: snapshotUserDefaults)
 
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
         let account = WalletAccount(
@@ -1479,12 +1507,16 @@ struct MigrationManagerTests {
             estimatedDurationHours: 6
         )
         scheduleStorage.recordCommittedSchedule(schedule, for: account.id, now: Date())
+        // MOB-1496 (W4): a "Migrate anyway" dust mini-run after this clear must take a FRESH
+        // snapshot — asserted by requiring it gone, not merely unchanged.
+        snapshotStorage.recordSnapshot(Self.someNetworkSnapshot(), for: account.id)
 
-        let impl = MigrationManagerImpl(gateStorage: gateStorage, scheduleStorage: scheduleStorage)
+        let impl = MigrationManagerImpl(gateStorage: gateStorage, scheduleStorage: scheduleStorage, snapshotStorage: snapshotStorage)
         impl.acknowledgeComplete()
 
         #expect(gateStorage.isCompleteAcknowledged() == true)
         #expect(scheduleStorage.hasStoredPayload(for: account.id) == false)
+        #expect(snapshotStorage.snapshot(for: account.id) == nil)
     }
 
     /// `resetPersistedFlags()` (the migration SDK simulator's debug "Reset app migration flags"
@@ -1492,15 +1524,19 @@ struct MigrationManagerTests {
     @Test func resetPersistedFlagsClearsEveryKnownAccountsPersistedSchedule() throws {
         let gateSuiteName = "testResetPersistedFlagsClearsEveryKnownAccountsPersistedScheduleGate"
         let scheduleSuiteName = "testResetPersistedFlagsClearsEveryKnownAccountsPersistedScheduleSchedule"
+        let snapshotSuiteName = "testResetPersistedFlagsClearsEveryKnownAccountsPersistedScheduleSnapshot"
         let gateUserDefaults = try #require(UserDefaults(suiteName: gateSuiteName))
         let scheduleUserDefaults = try #require(UserDefaults(suiteName: scheduleSuiteName))
+        let snapshotUserDefaults = try #require(UserDefaults(suiteName: snapshotSuiteName))
         defer {
             gateUserDefaults.removePersistentDomain(forName: gateSuiteName)
             scheduleUserDefaults.removePersistentDomain(forName: scheduleSuiteName)
+            snapshotUserDefaults.removePersistentDomain(forName: snapshotSuiteName)
         }
 
         let gateStorage = MigrationGateStorage(userDefaults: gateUserDefaults)
         let scheduleStorage = MigrationScheduleStorage(userDefaults: scheduleUserDefaults)
+        let snapshotStorage = MigrationSnapshotStorage(userDefaults: snapshotUserDefaults)
 
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
         @Shared(.inMemory(.walletAccounts)) var walletAccounts: [WalletAccount] = []
@@ -1535,12 +1571,357 @@ struct MigrationManagerTests {
         )
         scheduleStorage.recordCommittedSchedule(schedule, for: selected.id, now: Date())
         scheduleStorage.recordCommittedSchedule(schedule, for: keystone.id, now: Date())
+        snapshotStorage.recordSnapshot(Self.someNetworkSnapshot(), for: selected.id)
+        snapshotStorage.recordSnapshot(Self.someNetworkSnapshot(), for: keystone.id)
 
-        let impl = MigrationManagerImpl(gateStorage: gateStorage, scheduleStorage: scheduleStorage)
+        let impl = MigrationManagerImpl(gateStorage: gateStorage, scheduleStorage: scheduleStorage, snapshotStorage: snapshotStorage)
         impl.resetPersistedFlags()
 
         #expect(scheduleStorage.hasStoredPayload(for: selected.id) == false)
         #expect(scheduleStorage.hasStoredPayload(for: keystone.id) == false)
+        #expect(snapshotStorage.snapshot(for: selected.id) == nil)
+        #expect(snapshotStorage.snapshot(for: keystone.id) == nil)
+    }
+
+    // MARK: - MOB-1496 (W4): migration network snapshot — creation matrix
+    //
+    // `MigrationManagerImpl.migrationNetworkOptions(accountUUID:)` is the ensure-or-create entry
+    // point; every test below inspects the full persisted `MigrationNetworkSnapshot` (not just the
+    // mapped `MigrationNetworkPrivacyOptions`) by reading an isolated `MigrationSnapshotStorage`
+    // directly.
+
+    @Test func snapshotCreationAutoZecRocksSyncPicksStardustBroadcastViaBenchmarkBest() async throws {
+        let suiteName = "testSnapshotCreationAutoZecRocksSyncPicksStardustBroadcastViaBenchmarkBest"
+        let userDefaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { userDefaults.removePersistentDomain(forName: suiteName) }
+        let snapshotStorage = MigrationSnapshotStorage(userDefaults: userDefaults)
+        let account = AccountUUID(id: [UInt8](repeating: 30, count: 16))
+        let capturedCandidates = LockIsolated<[LightWalletEndpoint]>([])
+
+        let options = await withDependencies {
+            $0.zcashSDKEnvironment = .testnet
+            $0.zcashSDKEnvironment.network = { ZcashNetworkBuilder.network(for: .mainnet) }
+            $0.zcashSDKEnvironment.endpoint = {
+                LightWalletEndpoint(address: "na.zec.rocks", port: 443, secure: true, streamingCallTimeoutInMillis: 0)
+            }
+            $0.userStoredPreferences.server = {
+                UserPreferencesStorage.ServerConfig(host: "na.zec.rocks", port: 443, isCustom: false)
+            }
+            $0.sdkSynchronizer.evaluateBestOf = { candidates, _, _, _, _ in
+                capturedCandidates.setValue(candidates)
+                return [LightWalletEndpoint(address: "eu.zec.stardust.rest", port: 443, secure: true, streamingCallTimeoutInMillis: 0)]
+            }
+            $0.transactionGuard = .testValue
+        } operation: {
+            let impl = MigrationManagerImpl(snapshotStorage: snapshotStorage)
+            return await impl.migrationNetworkOptions(accountUUID: account)
+        }
+
+        #expect(options.submissionEndpoint.host == "eu.zec.stardust.rest")
+
+        let snapshot = try #require(snapshotStorage.snapshot(for: account))
+        #expect(snapshot.syncProvider == ServerProvider.zecRocks)
+        #expect(snapshot.syncEndpoint.host == "na.zec.rocks")
+        #expect(snapshot.broadcastProvider == ServerProvider.stardust)
+        #expect(snapshot.broadcastEndpoint.host == "eu.zec.stardust.rest")
+
+        // The benchmark is offered the OTHER family only — the whole zecRocks family (incl. the
+        // default zec.rocks host) is excluded, not just the exact current host.
+        #expect(Set(capturedCandidates.value.map(\.host)) == Set(["us.zec.stardust.rest", "eu.zec.stardust.rest"]))
+    }
+
+    @Test func snapshotCreationBenchmarkEmptyFallsBackToFirstCandidateInListOrder() async throws {
+        let suiteName = "testSnapshotCreationBenchmarkEmptyFallsBackToFirstCandidateInListOrder"
+        let userDefaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { userDefaults.removePersistentDomain(forName: suiteName) }
+        let snapshotStorage = MigrationSnapshotStorage(userDefaults: userDefaults)
+        let account = AccountUUID(id: [UInt8](repeating: 31, count: 16))
+
+        let options = await withDependencies {
+            $0.zcashSDKEnvironment = .testnet
+            $0.zcashSDKEnvironment.network = { ZcashNetworkBuilder.network(for: .mainnet) }
+            $0.zcashSDKEnvironment.endpoint = {
+                LightWalletEndpoint(address: "na.zec.rocks", port: 443, secure: true, streamingCallTimeoutInMillis: 0)
+            }
+            $0.userStoredPreferences.server = {
+                UserPreferencesStorage.ServerConfig(host: "na.zec.rocks", port: 443, isCustom: false)
+            }
+            $0.sdkSynchronizer.evaluateBestOf = { _, _, _, _, _ in [] }
+            $0.transactionGuard = .testValue
+        } operation: {
+            let impl = MigrationManagerImpl(snapshotStorage: snapshotStorage)
+            return await impl.migrationNetworkOptions(accountUUID: account)
+        }
+
+        // List order among the OTHER family: `us.zec.stardust.rest` precedes `eu.zec.stardust.rest`
+        // in `ZcashSDKEnvironment.endpoints(for:)`'s built-in list.
+        #expect(options.submissionEndpoint.host == "us.zec.stardust.rest")
+    }
+
+    @Test func snapshotCreationSyncHostItselfClassifiesCustomUsesSameServer() async throws {
+        let suiteName = "testSnapshotCreationSyncHostItselfClassifiesCustomUsesSameServer"
+        let userDefaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { userDefaults.removePersistentDomain(forName: suiteName) }
+        let snapshotStorage = MigrationSnapshotStorage(userDefaults: userDefaults)
+        let account = AccountUUID(id: [UInt8](repeating: 32, count: 16))
+        let evaluateBestOfCalls = LockIsolated<Int>(0)
+
+        let options = await withDependencies {
+            $0.zcashSDKEnvironment = .testnet
+            $0.zcashSDKEnvironment.network = { ZcashNetworkBuilder.network(for: .mainnet) }
+            $0.zcashSDKEnvironment.endpoint = {
+                LightWalletEndpoint(address: "myserver.example.com", port: 9067, secure: true, streamingCallTimeoutInMillis: 0)
+            }
+            $0.userStoredPreferences.server = {
+                UserPreferencesStorage.ServerConfig(host: "myserver.example.com", port: 9067, isCustom: true)
+            }
+            $0.sdkSynchronizer.evaluateBestOf = { _, _, _, _, _ in
+                evaluateBestOfCalls.withValue { $0 += 1 }
+                return []
+            }
+            $0.transactionGuard = .testValue
+        } operation: {
+            let impl = MigrationManagerImpl(snapshotStorage: snapshotStorage)
+            return await impl.migrationNetworkOptions(accountUUID: account)
+        }
+
+        // Michal's rule: sync AND broadcast go to the SAME custom server — no separation, no
+        // benchmark.
+        #expect(options.submissionEndpoint.host == "myserver.example.com")
+        let snapshot = try #require(snapshotStorage.snapshot(for: account))
+        #expect(snapshot.syncProvider == ServerProvider.custom(host: "myserver.example.com"))
+        #expect(snapshot.broadcastProvider == ServerProvider.custom(host: "myserver.example.com"))
+        #expect(snapshot.broadcastEndpoint == snapshot.syncEndpoint)
+        #expect(evaluateBestOfCalls.value == 0)
+    }
+
+    /// The stored `ServerConfig.isCustom` flag ALONE (independent of whether the host itself
+    /// classifies as `.custom`) also triggers the same-server rule — e.g. a host that happens to
+    /// look like a built-in `zec.rocks` address but was saved through the Custom entry field.
+    /// `syncProvider` itself still reflects the host's NATURAL classification (`.zecRocks` here, not
+    /// forced to `.custom`) — only the BROADCAST pick is affected.
+    @Test func snapshotCreationStoredServerConfigMarkedCustomUsesSameServerEvenWhenHostLooksBuiltIn() async throws {
+        let suiteName = "testSnapshotCreationStoredServerConfigMarkedCustomUsesSameServerEvenWhenHostLooksBuiltIn"
+        let userDefaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { userDefaults.removePersistentDomain(forName: suiteName) }
+        let snapshotStorage = MigrationSnapshotStorage(userDefaults: userDefaults)
+        let account = AccountUUID(id: [UInt8](repeating: 33, count: 16))
+        let evaluateBestOfCalls = LockIsolated<Int>(0)
+
+        let options = await withDependencies {
+            $0.zcashSDKEnvironment = .testnet
+            $0.zcashSDKEnvironment.network = { ZcashNetworkBuilder.network(for: .mainnet) }
+            $0.zcashSDKEnvironment.endpoint = {
+                LightWalletEndpoint(address: "eu.zec.rocks", port: 443, secure: true, streamingCallTimeoutInMillis: 0)
+            }
+            $0.userStoredPreferences.server = {
+                UserPreferencesStorage.ServerConfig(host: "eu.zec.rocks", port: 443, isCustom: true)
+            }
+            $0.sdkSynchronizer.evaluateBestOf = { _, _, _, _, _ in
+                evaluateBestOfCalls.withValue { $0 += 1 }
+                return []
+            }
+            $0.transactionGuard = .testValue
+        } operation: {
+            let impl = MigrationManagerImpl(snapshotStorage: snapshotStorage)
+            return await impl.migrationNetworkOptions(accountUUID: account)
+        }
+
+        #expect(options.submissionEndpoint.host == "eu.zec.rocks")
+        let snapshot = try #require(snapshotStorage.snapshot(for: account))
+        #expect(snapshot.syncProvider == ServerProvider.zecRocks)
+        #expect(snapshot.broadcastProvider == ServerProvider.zecRocks)
+        #expect(snapshot.broadcastEndpoint == snapshot.syncEndpoint)
+        #expect(evaluateBestOfCalls.value == 0)
+    }
+
+    /// Testnet: `endpoints(for: .testnet)` returns a SINGLE endpoint (the default), which is always
+    /// the sync endpoint itself — filtering it out of its own family leaves no candidates, so the
+    /// benchmark never runs and the same-server fallback applies (binding rule 2's testnet clause).
+    @Test func snapshotCreationTestnetSingleEndpointUsesSameServerFallback() async throws {
+        let suiteName = "testSnapshotCreationTestnetSingleEndpointUsesSameServerFallback"
+        let userDefaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { userDefaults.removePersistentDomain(forName: suiteName) }
+        let snapshotStorage = MigrationSnapshotStorage(userDefaults: userDefaults)
+        let account = AccountUUID(id: [UInt8](repeating: 34, count: 16))
+        let evaluateBestOfCalls = LockIsolated<Int>(0)
+
+        let options = await withDependencies {
+            $0.zcashSDKEnvironment = .testValue
+            $0.userStoredPreferences.server = {
+                UserPreferencesStorage.ServerConfig(host: "testnet.zec.rocks", port: 443, isCustom: false)
+            }
+            $0.sdkSynchronizer.evaluateBestOf = { _, _, _, _, _ in
+                evaluateBestOfCalls.withValue { $0 += 1 }
+                return []
+            }
+            $0.transactionGuard = .testValue
+        } operation: {
+            let impl = MigrationManagerImpl(snapshotStorage: snapshotStorage)
+            return await impl.migrationNetworkOptions(accountUUID: account)
+        }
+
+        #expect(options.submissionEndpoint.host == "testnet.zec.rocks")
+        let snapshot = try #require(snapshotStorage.snapshot(for: account))
+        #expect(snapshot.broadcastEndpoint == snapshot.syncEndpoint)
+        #expect(snapshot.broadcastProvider == snapshot.syncProvider)
+        #expect(evaluateBestOfCalls.value == 0)
+    }
+
+    /// Idempotent for the life of a run: a second call for the SAME account returns the FIRST
+    /// snapshot untouched, even though the environment changed in between — the whole point of the
+    /// snapshot (immune to a mid-run auto server switch).
+    @Test func snapshotCreationIsIdempotentSecondCallIgnoresChangedEnvironment() async throws {
+        let suiteName = "testSnapshotCreationIsIdempotentSecondCallIgnoresChangedEnvironment"
+        let userDefaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { userDefaults.removePersistentDomain(forName: suiteName) }
+        let snapshotStorage = MigrationSnapshotStorage(userDefaults: userDefaults)
+        let account = AccountUUID(id: [UInt8](repeating: 35, count: 16))
+
+        let firstOptions = await withDependencies {
+            $0.zcashSDKEnvironment = .testnet
+            $0.zcashSDKEnvironment.network = { ZcashNetworkBuilder.network(for: .mainnet) }
+            $0.zcashSDKEnvironment.endpoint = {
+                LightWalletEndpoint(address: "na.zec.rocks", port: 443, secure: true, streamingCallTimeoutInMillis: 0)
+            }
+            $0.userStoredPreferences.server = {
+                UserPreferencesStorage.ServerConfig(host: "na.zec.rocks", port: 443, isCustom: false)
+            }
+            $0.sdkSynchronizer.evaluateBestOf = { _, _, _, _, _ in
+                [LightWalletEndpoint(address: "us.zec.stardust.rest", port: 443, secure: true, streamingCallTimeoutInMillis: 0)]
+            }
+            $0.transactionGuard = .testValue
+        } operation: {
+            let impl = MigrationManagerImpl(snapshotStorage: snapshotStorage)
+            return await impl.migrationNetworkOptions(accountUUID: account)
+        }
+        #expect(firstOptions.submissionEndpoint.host == "us.zec.stardust.rest")
+
+        // Environment changed: current endpoint AND its family both flip.
+        let secondOptions = await withDependencies {
+            $0.zcashSDKEnvironment = .testnet
+            $0.zcashSDKEnvironment.network = { ZcashNetworkBuilder.network(for: .mainnet) }
+            $0.zcashSDKEnvironment.endpoint = {
+                LightWalletEndpoint(address: "eu.zec.stardust.rest", port: 443, secure: true, streamingCallTimeoutInMillis: 0)
+            }
+            $0.userStoredPreferences.server = {
+                UserPreferencesStorage.ServerConfig(host: "eu.zec.stardust.rest", port: 443, isCustom: false)
+            }
+            $0.sdkSynchronizer.evaluateBestOf = { _, _, _, _, _ in
+                [LightWalletEndpoint(address: "na.zec.rocks", port: 443, secure: true, streamingCallTimeoutInMillis: 0)]
+            }
+            $0.transactionGuard = .testValue
+        } operation: {
+            let impl = MigrationManagerImpl(snapshotStorage: snapshotStorage)
+            return await impl.migrationNetworkOptions(accountUUID: account)
+        }
+
+        #expect(secondOptions == firstOptions)
+        #expect(secondOptions.submissionEndpoint.host == "us.zec.stardust.rest")
+    }
+
+    // MARK: - MOB-1496 (W4): options mapping
+
+    @Test func migrationNetworkOptionsUseTorComesFromTheStoredChoice() async throws {
+        let gateSuiteName = "testMigrationNetworkOptionsUseTorComesFromTheStoredChoiceGate"
+        let snapshotSuiteName = "testMigrationNetworkOptionsUseTorComesFromTheStoredChoiceSnapshot"
+        let gateUserDefaults = try #require(UserDefaults(suiteName: gateSuiteName))
+        let snapshotUserDefaults = try #require(UserDefaults(suiteName: snapshotSuiteName))
+        defer {
+            gateUserDefaults.removePersistentDomain(forName: gateSuiteName)
+            snapshotUserDefaults.removePersistentDomain(forName: snapshotSuiteName)
+        }
+        let gateStorage = MigrationGateStorage(userDefaults: gateUserDefaults)
+        gateStorage.setTorEnabledForMigration(true)
+        let snapshotStorage = MigrationSnapshotStorage(userDefaults: snapshotUserDefaults)
+        let account = AccountUUID(id: [UInt8](repeating: 36, count: 16))
+
+        let options = await withDependencies {
+            $0.zcashSDKEnvironment = .testValue
+            $0.userStoredPreferences.server = { nil }
+            $0.sdkSynchronizer.evaluateBestOf = { _, _, _, _, _ in [] }
+            $0.transactionGuard = .testValue
+        } operation: {
+            let impl = MigrationManagerImpl(gateStorage: gateStorage, snapshotStorage: snapshotStorage)
+            return await impl.migrationNetworkOptions(accountUUID: account)
+        }
+
+        #expect(options.useTor == true)
+    }
+
+    @Test func migrationNetworkOptionsUseTorDefaultsFalseWhenNeverSet() async throws {
+        let gateSuiteName = "testMigrationNetworkOptionsUseTorDefaultsFalseWhenNeverSetGate"
+        let snapshotSuiteName = "testMigrationNetworkOptionsUseTorDefaultsFalseWhenNeverSetSnapshot"
+        let gateUserDefaults = try #require(UserDefaults(suiteName: gateSuiteName))
+        let snapshotUserDefaults = try #require(UserDefaults(suiteName: snapshotSuiteName))
+        defer {
+            gateUserDefaults.removePersistentDomain(forName: gateSuiteName)
+            snapshotUserDefaults.removePersistentDomain(forName: snapshotSuiteName)
+        }
+        let gateStorage = MigrationGateStorage(userDefaults: gateUserDefaults)
+        let snapshotStorage = MigrationSnapshotStorage(userDefaults: snapshotUserDefaults)
+        let account = AccountUUID(id: [UInt8](repeating: 37, count: 16))
+
+        let options = await withDependencies {
+            $0.zcashSDKEnvironment = .testValue
+            $0.userStoredPreferences.server = { nil }
+            $0.sdkSynchronizer.evaluateBestOf = { _, _, _, _, _ in [] }
+            $0.transactionGuard = .testValue
+        } operation: {
+            let impl = MigrationManagerImpl(gateStorage: gateStorage, snapshotStorage: snapshotStorage)
+            return await impl.migrationNetworkOptions(accountUUID: account)
+        }
+
+        #expect(options.useTor == false)
+    }
+
+    // MARK: - MOB-1496 (W4): activeNetworkSnapshots()
+
+    @Test func activeNetworkSnapshotsReturnsOnlyAccountsWithAPersistedSnapshotDedupedAcrossWalletAccountsAndSelected() throws {
+        let suiteName = "testActiveNetworkSnapshotsReturnsOnlyAccountsWithAPersistedSnapshotDeduped"
+        let userDefaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { userDefaults.removePersistentDomain(forName: suiteName) }
+        let snapshotStorage = MigrationSnapshotStorage(userDefaults: userDefaults)
+
+        @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
+        @Shared(.inMemory(.walletAccounts)) var walletAccounts: [WalletAccount] = []
+        func account(_ byte: UInt8) -> WalletAccount {
+            WalletAccount(
+                Account(
+                    id: AccountUUID(id: [UInt8](repeating: byte, count: 16)),
+                    name: "Account\(byte)",
+                    keySource: nil,
+                    seedFingerprint: nil,
+                    hdAccountIndex: Zip32AccountIndex(0),
+                    ufvk: nil,
+                    uivk: nil
+                )
+            )
+        }
+        let withSnapshot = account(40)
+        let withoutSnapshot = account(41)
+        // The selected account is ALSO the first `walletAccounts` entry — exercises the dedup, not
+        // just the union.
+        $selectedWalletAccount.withLock { $0 = withSnapshot }
+        $walletAccounts.withLock { $0 = [withSnapshot, withoutSnapshot] }
+
+        snapshotStorage.recordSnapshot(Self.someNetworkSnapshot(), for: withSnapshot.id)
+
+        let impl = MigrationManagerImpl(snapshotStorage: snapshotStorage)
+        let active = impl.activeNetworkSnapshots()
+
+        #expect(active.count == 1)
+        #expect(active.first?.syncEndpoint.host == Self.someNetworkSnapshot().syncEndpoint.host)
+    }
+
+    @Test func activeNetworkSnapshotsIsEmptyWhenNoAccountHasOne() {
+        @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
+        @Shared(.inMemory(.walletAccounts)) var walletAccounts: [WalletAccount] = []
+        $selectedWalletAccount.withLock { $0 = nil }
+        $walletAccounts.withLock { $0 = [] }
+
+        let impl = MigrationManagerImpl()
+        #expect(impl.activeNetworkSnapshots().isEmpty)
     }
 
     // MARK: - isIronwoodActivated(): MOB-1483 activation gate

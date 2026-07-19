@@ -27,6 +27,8 @@ final class AutoServerSelectionClientTests: XCTestCase {
             $0.zcashSDKEnvironment.network = { ZcashNetworkBuilder.network(for: .mainnet) }
             $0.zcashSDKEnvironment.endpoint = { current }
             $0.sdkSynchronizer.evaluateBestOf = { _, _, _, _, _ in best.map { [$0] } ?? [] }
+            // MOB-1496 (W4): no active migration snapshots -> pinning is unfiltered.
+            $0.migrationManager.activeNetworkSnapshots = { [] }
         } operation: {
             await AutoServerSelectionClient.liveValue.findBestServer()
         }
@@ -74,6 +76,8 @@ final class AutoServerSelectionClientTests: XCTestCase {
                 tryAcquire: { !guardBusy },
                 release: {}
             )
+            // MOB-1496 (W4): no active migration snapshots -> pinning re-validation is unfiltered.
+            $0.migrationManager.activeNetworkSnapshots = { [] }
         } operation: {
             await AutoServerSelectionClient.liveValue.applySwitch(candidate)
         }
@@ -130,6 +134,8 @@ final class AutoServerSelectionClientTests: XCTestCase {
                 tryAcquire: { true },
                 release: {}
             )
+            // MOB-1496 (W4): no active migration snapshots -> pinning re-validation is unfiltered.
+            $0.migrationManager.activeNetworkSnapshots = { [] }
         } operation: {
             await AutoServerSelectionClient.liveValue.applySwitch(
                 LightWalletEndpoint(address: "na.zec.rocks", port: 443, secure: true, streamingCallTimeoutInMillis: 0)

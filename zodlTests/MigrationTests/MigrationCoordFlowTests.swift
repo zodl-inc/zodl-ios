@@ -341,13 +341,11 @@ import ComposableArchitecture
     @MainActor @Test func entryChoseImmediateWithTorFlagOnSkipsTorSheetAndPushesReview() async {
         let setMigrationModeCalls = LockIsolated<[MigrationMode]>([])
         let setOptionsCalls = LockIsolated<[Bool]>([])
-        let expectedOptions = MigrationNetworkPrivacyOptions(useTor: true, submissionEndpoint: LightWalletEndpoint(address: "", port: 0))
         let store = TestStore(initialState: MigrationCoordFlow.State()) {
             MigrationCoordFlow()
         } withDependencies: {
             $0.migrationManager.setMigrationMode = { mode in setMigrationModeCalls.withValue { $0.append(mode) } }
             $0.migrationManager.setNetworkPrivacyOptions = { useTor in setOptionsCalls.withValue { $0.append(useTor) } }
-            $0.migrationManager.networkPrivacyOptions = { expectedOptions }
             $0.sdkSynchronizer = .noOp
             $0.walletStorage = .noOp
             $0.walletStorage.exportTorSetupFlag = { true }
@@ -360,12 +358,13 @@ import ComposableArchitecture
         #expect(setMigrationModeCalls.value == [MigrationMode.immediate])
         // MOB-1496: `selectMigrationMode` had no real-SDK counterpart — `setMigrationMode` above is
         // the only mode-setting call now (see `SDKSynchronizerClient+Simulated.swift`'s doc).
-        #expect(store.state.networkPrivacyOptions.useTor == true)
         // MOB-1487 (round 3): the flag-on shortcut now also persists — previously only the sheet's
         // own confirm did (a pre-existing gap; a background send reads the persisted copy, not this
-        // in-memory state).
+        // in-memory state). MOB-1496 (W4): the coordinator no longer materializes/stashes
+        // `MigrationNetworkPrivacyOptions` at all — the migration network snapshot's execute-time
+        // read (`migrationManager.migrationNetworkOptions(_:)`) is the authoritative source now; the
+        // persisted `useTor` choice below is what feeds it.
         #expect(setOptionsCalls.value == [true])
-        #expect(store.state.networkPrivacyOptions == expectedOptions)
         #expect(store.state.isTorSheetPresented == false)
         guard case let .reviewTransfer(reviewState) = try? #require(store.state.path.last) else {
             Issue.record("Expected .reviewTransfer on the path (Tor sheet skipped)")
@@ -401,7 +400,6 @@ import ComposableArchitecture
 
     @MainActor @Test func torSheetGotItInImmediateModePersistsOptionsAndPushesReviewTransfer() async {
         let setOptionsCalls = LockIsolated<[Bool]>([])
-        let expectedOptions = MigrationNetworkPrivacyOptions(useTor: true, submissionEndpoint: LightWalletEndpoint(address: "", port: 0))
         var state = MigrationCoordFlow.State()
         state.mode = .immediate
         state.torSheetState = MigrationTorSheet.State(isTorOn: true)
@@ -411,14 +409,12 @@ import ComposableArchitecture
             MigrationCoordFlow()
         } withDependencies: {
             $0.migrationManager.setNetworkPrivacyOptions = { useTor in setOptionsCalls.withValue { $0.append(useTor) } }
-            $0.migrationManager.networkPrivacyOptions = { expectedOptions }
         }
         store.exhaustivity = .off
 
         await store.send(.torSheet(.delegate(.gotIt)))
 
         #expect(setOptionsCalls.value == [true])
-        #expect(store.state.networkPrivacyOptions == expectedOptions)
         #expect(store.state.isTorSheetPresented == false)
         #expect(store.state.pendingTorDestination == nil)
         guard case let .reviewTransfer(reviewState) = try? #require(store.state.path.last) else {
@@ -431,7 +427,7 @@ import ComposableArchitecture
     @MainActor @Test func torSheetSwipeDismissInImmediateModePersistsOptionsAndPushesReviewTransfer() async {
         // Spec: sheet dismissal by swipe is identical to "Got it" — same persist-then-proceed logic,
         // using whatever toggle state is showing at that moment.
-        let expectedOptions = MigrationNetworkPrivacyOptions(useTor: false, submissionEndpoint: LightWalletEndpoint(address: "", port: 0))
+        let setOptionsCalls = LockIsolated<[Bool]>([])
         var state = MigrationCoordFlow.State()
         state.mode = .immediate
         state.torSheetState = MigrationTorSheet.State(isTorOn: false)
@@ -440,14 +436,13 @@ import ComposableArchitecture
         let store = TestStore(initialState: state) {
             MigrationCoordFlow()
         } withDependencies: {
-            $0.migrationManager.setNetworkPrivacyOptions = { _ in }
-            $0.migrationManager.networkPrivacyOptions = { expectedOptions }
+            $0.migrationManager.setNetworkPrivacyOptions = { useTor in setOptionsCalls.withValue { $0.append(useTor) } }
         }
         store.exhaustivity = .off
 
         await store.send(.torSheetPresentationChanged(false))
 
-        #expect(store.state.networkPrivacyOptions == expectedOptions)
+        #expect(setOptionsCalls.value == [false])
         #expect(store.state.isTorSheetPresented == false)
         #expect(store.state.pendingTorDestination == nil)
         guard case .reviewTransfer = try? #require(store.state.path.last) else {
@@ -461,7 +456,6 @@ import ComposableArchitecture
         // whatever the toggle shows (default ON) and resumes the permission chain (all permissions
         // satisfied here, so the plan screen pushes directly).
         let setOptionsCalls = LockIsolated<[Bool]>([])
-        let expectedOptions = MigrationNetworkPrivacyOptions(useTor: true, submissionEndpoint: LightWalletEndpoint(address: "", port: 0))
         var state = MigrationCoordFlow.State()
         state.mode = .privateScheduled
         state.path.append(.howItWorks(MigrationHowItWorks.State()))
@@ -472,7 +466,6 @@ import ComposableArchitecture
             MigrationCoordFlow()
         } withDependencies: {
             $0.migrationManager.setNetworkPrivacyOptions = { useTor in setOptionsCalls.withValue { $0.append(useTor) } }
-            $0.migrationManager.networkPrivacyOptions = { expectedOptions }
             $0.migrationManager.isManualDelivery = { false }
             $0.migrationBGScheduler.backgroundRefreshStatus = { .available }
             $0.userNotifications.authorizationStatus = { .authorized }
@@ -484,7 +477,6 @@ import ComposableArchitecture
         await store.receive(\.pushNextPermissionStep)
 
         #expect(setOptionsCalls.value == [true])
-        #expect(store.state.networkPrivacyOptions == expectedOptions)
         #expect(store.state.isTorSheetPresented == false)
         #expect(store.state.pendingTorDestination == nil)
         guard case let .transferPlan(planState) = try? #require(store.state.path.last) else {
@@ -528,7 +520,6 @@ import ComposableArchitecture
     @MainActor @Test func reviewTransferConfirmedPushesSending() async {
         var state = MigrationCoordFlow.State()
         state.mode = .immediate
-        state.networkPrivacyOptions = MigrationNetworkPrivacyOptions(useTor: true, submissionEndpoint: LightWalletEndpoint(address: "", port: 0))
         state.path.append(.reviewTransfer(MigrationReviewTransfer.State(mode: .immediate)))
         let store = TestStore(initialState: state) {
             MigrationCoordFlow()
@@ -541,8 +532,10 @@ import ComposableArchitecture
             Issue.record("Expected .sending pushed on top")
             return
         }
+        // MOB-1496 (W4): `MigrationSending` no longer carries a coordinator-injected options field —
+        // its own effect reads `migrationManager.migrationNetworkOptions(_:)` AT EXECUTE TIME
+        // instead (covered by `MigrationSendingTests`' lane-wiring tests).
         #expect(sendingState.totalCount == 1)
-        #expect(sendingState.networkPrivacyOptions == MigrationNetworkPrivacyOptions(useTor: true, submissionEndpoint: LightWalletEndpoint(address: "", port: 0)))
     }
 
     // MARK: - MOB-1468: Keystone signing — signRequested sets context + pushes keystoneSign
@@ -796,7 +789,6 @@ import ComposableArchitecture
         let unsigned: [MigrationUnsignedTransferPczt] = [MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xCC]))]
         let signed: [Data] = [Data([0xCC, 0x01])]
         var state = MigrationCoordFlow.State()
-        state.networkPrivacyOptions = MigrationNetworkPrivacyOptions(useTor: true, submissionEndpoint: LightWalletEndpoint(address: "", port: 0))
         state.pendingKeystoneSigning = .planCommit
         state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .manual)))
         state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: unsigned)))
@@ -820,7 +812,6 @@ import ComposableArchitecture
             return
         }
         #expect(sendingState.totalCount == 1)
-        #expect(sendingState.networkPrivacyOptions == MigrationNetworkPrivacyOptions(useTor: true, submissionEndpoint: LightWalletEndpoint(address: "", port: 0)))
     }
 
     // MARK: - MOB-1468: Keystone signing — foundPCZTBatch resumes immediateReview
@@ -831,7 +822,6 @@ import ComposableArchitecture
         let signed: [Data] = [Data([0xDD, 0x01])]
         let expectedStored: [MigrationSignedTransferPczt] = [MigrationSignedTransferPczt(id: "t0", pczt: Data([0xDD, 0x01]))]
         var state = MigrationCoordFlow.State()
-        state.networkPrivacyOptions = MigrationNetworkPrivacyOptions(useTor: false, submissionEndpoint: LightWalletEndpoint(address: "", port: 0))
         state.pendingKeystoneSigning = .immediateReview
         state.path.append(.reviewTransfer(MigrationReviewTransfer.State(mode: .immediate)))
         state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: unsigned)))
@@ -986,7 +976,6 @@ import ComposableArchitecture
         // background send reads the persisted copy, not this in-memory state), no sheet, straight
         // into the permission chain.
         let setOptionsCalls = LockIsolated<[Bool]>([])
-        let expectedOptions = MigrationNetworkPrivacyOptions(useTor: true, submissionEndpoint: LightWalletEndpoint(address: "", port: 0))
         var state = MigrationCoordFlow.State()
         state.mode = .privateScheduled
         state.path.append(.howItWorks(MigrationHowItWorks.State()))
@@ -996,7 +985,6 @@ import ComposableArchitecture
             $0.walletStorage = .noOp
             $0.walletStorage.exportTorSetupFlag = { true }
             $0.migrationManager.setNetworkPrivacyOptions = { useTor in setOptionsCalls.withValue { $0.append(useTor) } }
-            $0.migrationManager.networkPrivacyOptions = { expectedOptions }
             $0.migrationBGScheduler.backgroundRefreshStatus = { .available }
             $0.userNotifications.authorizationStatus = { .authorized }
             $0.migrationManager.isManualDelivery = { false }
@@ -1007,7 +995,6 @@ import ComposableArchitecture
         await store.send(.path(.element(id: 0, action: .howItWorks(.delegate(.continueTapped)))))
         await store.receive(\.pushNextPermissionStep)
 
-        #expect(store.state.networkPrivacyOptions == expectedOptions)
         #expect(setOptionsCalls.value == [true])
         #expect(store.state.isTorSheetPresented == false)
         #expect(store.state.pendingTorDestination == nil)
@@ -1185,7 +1172,6 @@ import ComposableArchitecture
     @MainActor @Test func transferPlanConfirmedInManualVariantSchedulesFirstWindowAndPushesSendingWithTotalCountOne() async {
         let scheduleFirstWindowCalls = LockIsolated<Int>(0)
         var state = MigrationCoordFlow.State()
-        state.networkPrivacyOptions = MigrationNetworkPrivacyOptions(useTor: true, submissionEndpoint: LightWalletEndpoint(address: "", port: 0))
         state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .manual)))
         let store = TestStore(initialState: state) {
             MigrationCoordFlow()
@@ -1202,7 +1188,6 @@ import ComposableArchitecture
             return
         }
         #expect(sendingState.totalCount == 1)
-        #expect(sendingState.networkPrivacyOptions == MigrationNetworkPrivacyOptions(useTor: true, submissionEndpoint: LightWalletEndpoint(address: "", port: 0)))
     }
 
     @MainActor @Test func manualPlanConfirmPushesSendingWithSingleTransfer() async {
@@ -1215,7 +1200,6 @@ import ComposableArchitecture
         var planState = MigrationTransferPlan.State(variant: .manual, requiresSigning: true)
         planState.schedule = schedule
         var state = MigrationCoordFlow.State()
-        state.networkPrivacyOptions = MigrationNetworkPrivacyOptions(useTor: true, submissionEndpoint: LightWalletEndpoint(address: "", port: 0))
         state.path.append(.transferPlan(planState))
         let store = TestStore(initialState: state) {
             MigrationCoordFlow()
@@ -1278,7 +1262,6 @@ import ComposableArchitecture
             MigrationTransferRow(id: "2", index: 2, amount: Zatoshi(1_000), status: .overdue, hoursFromNow: 3)
         ]
         var state = MigrationCoordFlow.State()
-        state.networkPrivacyOptions = MigrationNetworkPrivacyOptions(useTor: true, submissionEndpoint: LightWalletEndpoint(address: "", port: 0))
         state.path.append(.status(MigrationStatus.State(presentation: .resume, isFlowRoot: true)))
         let store = TestStore(initialState: state) {
             MigrationCoordFlow()
@@ -1296,7 +1279,6 @@ import ComposableArchitecture
             return
         }
         #expect(sendingState.totalCount == 2)
-        #expect(sendingState.networkPrivacyOptions == MigrationNetworkPrivacyOptions(useTor: true, submissionEndpoint: LightWalletEndpoint(address: "", port: 0)))
     }
 
     @MainActor @Test func sendingClosedAfterSendNowPopsBackToStatusWithRefreshedRows() async {
@@ -1616,7 +1598,6 @@ import ComposableArchitecture
 
     @MainActor @Test func completeMigrateAnywayPushesSendingConfiguredForDustLane() async {
         var state = MigrationCoordFlow.State()
-        state.networkPrivacyOptions = MigrationNetworkPrivacyOptions(useTor: true, submissionEndpoint: LightWalletEndpoint(address: "", port: 0))
         state.path.append(.complete(MigrationComplete.State(isFlowRoot: true)))
         let store = TestStore(initialState: state) {
             MigrationCoordFlow()
@@ -1631,7 +1612,6 @@ import ComposableArchitecture
         }
         #expect(sendingState.totalCount == 1)
         #expect(sendingState.isDustLane == true)
-        #expect(sendingState.networkPrivacyOptions == MigrationNetworkPrivacyOptions(useTor: true, submissionEndpoint: LightWalletEndpoint(address: "", port: 0)))
     }
 
     @MainActor @Test func sendingClosedOverCompleteAcknowledgesCompleteAndFinishesFlow() async {
@@ -1666,7 +1646,6 @@ import ComposableArchitecture
         // `MigrationCoordFlowCoordinator`'s `.simulateSignature` handler doc.
         let expectedStored: [MigrationSignedTransferPczt] = [MigrationSignedTransferPczt(id: "t0", pczt: Data([0xEE]))]
         var state = MigrationCoordFlow.State()
-        state.networkPrivacyOptions = MigrationNetworkPrivacyOptions(useTor: false, submissionEndpoint: LightWalletEndpoint(address: "", port: 0))
         state.pendingKeystoneSigning = .immediateReview
         state.path.append(.reviewTransfer(MigrationReviewTransfer.State(mode: .immediate)))
         state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: unsigned)))

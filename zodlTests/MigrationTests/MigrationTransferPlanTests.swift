@@ -22,7 +22,7 @@ import ComposableArchitecture
 @testable import zodl_internal
 
 @Suite(.serialized) struct MigrationTransferPlanTests {
-    /// MOB-1496: `migrationManager.networkPrivacyOptions()` has no macro default (unlike the SDK
+    /// MOB-1496: `migrationManager.migrationNetworkOptions(_:)` has no macro default (unlike the SDK
     /// synchronizer's `.noOp`), so any test reaching the note-split branch (`isNoteSplitNeeded ==
     /// true`) must mock it explicitly or trip `unimplemented`.
     private static let defaultNetworkPrivacyOptions = MigrationNetworkPrivacyOptions(
@@ -380,7 +380,7 @@ import ComposableArchitecture
             $0.sdkSynchronizer.signAndStoreMigrationSchedule = { _, _, _ in
                 callOrder.withValue { $0.append("signAndStore") }
             }
-            $0.migrationManager.networkPrivacyOptions = { Self.defaultNetworkPrivacyOptions }
+            $0.migrationManager.migrationNetworkOptions = { _ in Self.defaultNetworkPrivacyOptions }
             withDependenciesUSKDerivable(&$0)
         }
 
@@ -432,7 +432,7 @@ import ComposableArchitecture
             $0.sdkSynchronizer.prepareNoteSplit = { _ in NoteSplitProposal(outputNotes: [], fee: Zatoshi.zero) }
             $0.sdkSynchronizer.submitNoteSplit = { _, _, _, _ in MigrationTransferResult.networkError(retryable: true) }
             $0.sdkSynchronizer.signAndStoreMigrationSchedule = { _, _, _ in signCalls.withValue { $0 += 1 } }
-            $0.migrationManager.networkPrivacyOptions = { Self.defaultNetworkPrivacyOptions }
+            $0.migrationManager.migrationNetworkOptions = { _ in Self.defaultNetworkPrivacyOptions }
             withDependenciesUSKDerivable(&$0)
         }
 
@@ -553,7 +553,7 @@ import ComposableArchitecture
             $0.sdkSynchronizer.signAndStoreMigrationSchedule = { _, _, _ in
                 callOrder.withValue { $0.append("signAndStore") }
             }
-            $0.migrationManager.networkPrivacyOptions = { Self.defaultNetworkPrivacyOptions }
+            $0.migrationManager.migrationNetworkOptions = { _ in Self.defaultNetworkPrivacyOptions }
             withDependenciesUSKDerivable(&$0)
         }
 
@@ -590,7 +590,7 @@ import ComposableArchitecture
             $0.sdkSynchronizer.prepareNoteSplit = { _ in NoteSplitProposal(outputNotes: [Zatoshi(500_000_000)], fee: Zatoshi(100_000)) }
             $0.sdkSynchronizer.submitNoteSplit = { _, _, _, _ in MigrationTransferResult.success(txId: "split-tx-id") }
             $0.sdkSynchronizer.signAndStoreMigrationSchedule = { _, _, _ in }
-            $0.migrationManager.networkPrivacyOptions = { Self.defaultNetworkPrivacyOptions }
+            $0.migrationManager.migrationNetworkOptions = { _ in Self.defaultNetworkPrivacyOptions }
             withDependenciesUSKDerivable(&$0)
         }
 
