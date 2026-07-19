@@ -303,16 +303,53 @@ extension Root {
             // the normal chain resumes identically to an ungated launch. The flag clears BEFORE
             // the replay, so a still-blocked re-entry (the proactive check in `.retryStart` reads
             // the gate fresh) just re-defers rather than looping.
+            //
+            // MOB-1496 (W3 review fix B): a foreground broadcast's stop (`SDKSynchronizerClient
+            // .stopSyncBeforeMigrationBroadcast()`) must also guarantee a resume once the gate
+            // clears, even when `syncDeferredByMigrationGate` was never set — that flag only gets
+            // set when a `.retryStart` happens to run (and defer) WHILE the gate is blocked; a user
+            // who never triggers one (e.g. parked on the note-split progress screen) would
+            // otherwise stall until an unrelated app-lifecycle event. `migrationStoppedSyncForBroadcast`
+            // (the shared flag that helper sets) covers that gap: resuming is now checked
+            // independent of `isGenuineChange` (moved ahead of the dedupe early-return) so it isn't
+            // gated on a genuine transition arriving at all. This also covers the edge where the
+            // gate never blocks in the first place (a broadcast fails pre-flight, e.g. a Tor
+            // bootstrap error, before it ever reaches the SDK's own gate-setting code) — no
+            // `true->false` transition will EVER arrive for that case, but the flag stays set until
+            // the NEXT `.migrationSyncGateChanged(false)` reaches here regardless of source (the
+            // seed read this same subscription re-sends on every future successful start), which
+            // this now resumes on too rather than letting the dedupe swallow it as "no change".
+            // `reconcile()` itself stays gated on a genuine change only — unrelated concern (banner/
+            // re-entry-route derivation), unchanged from W3.
+            //
+            // Mechanism choice (see fix report for the full write-up): a store cannot reach this
+            // action directly (`SDKSynchronizerClient`'s stores are typed to their own reducer's
+            // `Action`, not `Root.Action`), stores have no OTHER precedent for kicking sync
+            // themselves (`.retryStart` is `RootInitialization.swift`'s confirmed sole choke point —
+            // W3 already audited this), and no pre-existing delegate/coordinator chain from any of
+            // the four broadcast-bearing stores already serves "resume sync" (the one nested-action
+            // match Root has today, `.sending(.delegate(.viewTransaction))`, is unrelated
+            // navigation) — building one from scratch would mean four new deep nested-action
+            // matches in Root for a single flag check. Extending this already-existing, already-
+            // subscribed handler is the deterministic option that adds no new plumbing.
             case .migrationSyncGateChanged(let isBlocked):
-                guard state.lastMigrationSyncGateBlocked != isBlocked else { return .none }
-                state.lastMigrationSyncGateBlocked = isBlocked
-                let reconcileEffect: Effect<Action> = .run { [migrationManager] _ in await migrationManager.reconcile() }
+                @Shared(.inMemory(.migrationStoppedSyncForBroadcast)) var migrationStoppedSyncForBroadcast: Bool = false
 
-                guard !isBlocked, state.syncDeferredByMigrationGate else {
+                let isGenuineChange = isBlocked != state.lastMigrationSyncGateBlocked
+                let shouldResume = !isBlocked && (state.syncDeferredByMigrationGate || migrationStoppedSyncForBroadcast)
+                guard isGenuineChange || shouldResume else { return .none }
+
+                state.lastMigrationSyncGateBlocked = isBlocked
+                let reconcileEffect: Effect<Action> = isGenuineChange
+                    ? .run { [migrationManager] _ in await migrationManager.reconcile() }
+                    : .none
+
+                guard shouldResume else {
                     return reconcileEffect
                 }
 
                 state.syncDeferredByMigrationGate = false
+                $migrationStoppedSyncForBroadcast.withLock { $0 = false }
                 return .merge(reconcileEffect, .send(.initialization(.retryStart)))
 
             case .initialization(.checkRestoreWalletFlag(let syncStatus)):

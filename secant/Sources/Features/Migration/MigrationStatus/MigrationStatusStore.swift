@@ -178,9 +178,9 @@ struct MigrationStatus {
             let rows = await migrationManager.migrationTransfers(accountUUID)
             let summary = await migrationManager.migrationSummary(accountUUID)
             let isSendNowDisabled = await migrationManager.sendGate() != MigrationSendGate.allowed
-            // [MOB-1496] W3: minutes = Int((buffer / 60).rounded()) — the store-level formula the
-            // resume footer's formatted copy is threaded from.
-            let syncPrivacyBufferMinutes = Int((sdkSynchronizer.migrationPrivacySyncBufferDuration() / 60).rounded())
+            let syncPrivacyBufferMinutes = MigrationStatus.syncPrivacyBufferMinutes(
+                from: sdkSynchronizer.migrationPrivacySyncBufferDuration()
+            )
             await send(
                 .statusLoaded(
                     rows: rows,
@@ -190,5 +190,15 @@ struct MigrationStatus {
                 )
             )
         }
+    }
+}
+
+extension MigrationStatus {
+    /// MOB-1496 (W3 review fix C): shared formula for `State.syncPrivacyBufferMinutes` — this
+    /// store's own `loadStatus()` and `MigrationCoordFlowCoordinator`'s re-entry hydration
+    /// (`statusResumeState`/`statusProgressState`) both compute it from the SDK's raw
+    /// `migrationPrivacySyncBufferDuration()`; extracted to one spot so the two can't drift.
+    static func syncPrivacyBufferMinutes(from duration: TimeInterval) -> Int {
+        Int((duration / 60).rounded())
     }
 }

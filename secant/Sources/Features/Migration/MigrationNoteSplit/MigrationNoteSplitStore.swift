@@ -200,7 +200,7 @@ struct MigrationNoteSplit {
                     networkType: zcashSDKEnvironment.network().networkType
                 )
                 let options = migrationManager.networkPrivacyOptions()
-                stopSyncIfNeeded()
+                await sdkSynchronizer.stopSyncBeforeMigrationBroadcast()
                 let result = try await sdkSynchronizer.submitNoteSplit(account.id, proposal, usk, options)
                 await send(.splitResult(result))
                 if case MigrationTransferResult.success = result {
@@ -228,7 +228,7 @@ struct MigrationNoteSplit {
         return .run { send in
             let options = migrationManager.networkPrivacyOptions()
             do {
-                stopSyncIfNeeded()
+                await sdkSynchronizer.stopSyncBeforeMigrationBroadcast()
                 let result = try await sdkSynchronizer.submitSignedNoteSplit(account.id, pczt, options)
                 await send(.splitResult(result))
                 if case MigrationTransferResult.success = result {
@@ -240,17 +240,6 @@ struct MigrationNoteSplit {
             } catch {
                 await send(.splitResult(MigrationTransferResult.networkError(retryable: true)))
             }
-        }
-    }
-
-    /// MOB-1496 (W3): stops an in-flight sync immediately before a foreground migration broadcast
-    /// — the SDK rejects a broadcast *during* an active sync
-    /// (`ZcashError.migrationBroadcastDuringSync`, caught by the existing catch-all above; belt-
-    /// and-braces, W1 wired it), so stopping first avoids that failure outright. Idempotent: a
-    /// no-op when nothing is syncing (same accessor `sendGate()`'s (a) half reads).
-    private func stopSyncIfNeeded() {
-        if sdkSynchronizer.isSyncing() {
-            sdkSynchronizer.stop()
         }
     }
 
