@@ -239,9 +239,23 @@ extension MigrationCoordFlow {
                 let signedPczts = zip(signState.pczts, signed).map { unsigned, signedBytes in
                     MigrationSignedTransferPczt(id: unsigned.id, pczt: signedBytes)
                 }
+                // [MOB-1496] W2: the schedule that was just signed lives on the `.transferPlan`/
+                // `.reviewTransfer` element still beneath `keystoneSign`+`scan` on the path — read
+                // it now, before `resumeAfterKeystoneSigning` (triggered by
+                // `.keystoneSigningSubmitted` below) pops back up to it.
+                let schedule = pendingKeystoneSchedule(context: context, depthBelowTop: 2, state: state)
 
-                return .run { [sdkSynchronizer, accountUUID] send in
-                    try? await sdkSynchronizer.storeSignedMigrationTransactions(accountUUID, signedPczts)
+                return .run { [sdkSynchronizer, migrationManager, accountUUID, schedule] send in
+                    let stored = (try? await sdkSynchronizer.storeSignedMigrationTransactions(accountUUID, signedPczts)) != nil
+                    if stored {
+                        // [MOB-1496] W2: persist the just-committed schedule (the SDK keeps no
+                        // proposal list post-commit) and reconcile so `stateEvents` picks up the
+                        // fresh state promptly.
+                        if let schedule {
+                            await migrationManager.recordCommittedSchedule(accountUUID, schedule)
+                        }
+                        await migrationManager.reconcile()
+                    }
                     await send(.keystoneSigningSubmitted(context: context))
                 }
 
@@ -263,9 +277,19 @@ extension MigrationCoordFlow {
                 let signed: [MigrationSignedTransferPczt] = signState.pczts.isEmpty
                     ? [MigrationSignedTransferPczt(id: "simulated", pczt: Data())]
                     : signState.pczts.map { MigrationSignedTransferPczt(id: $0.id, pczt: $0.pczt) }
+                // [MOB-1496] W2: same schedule lookup as the real round-trip above, but the
+                // simulator bypass never pushes `scan` — only `keystoneSign` sits above the
+                // schedule-bearing element.
+                let schedule = pendingKeystoneSchedule(context: context, depthBelowTop: 1, state: state)
 
-                return .run { [sdkSynchronizer, accountUUID] send in
-                    try? await sdkSynchronizer.storeSignedMigrationTransactions(accountUUID, signed)
+                return .run { [sdkSynchronizer, migrationManager, accountUUID, schedule] send in
+                    let stored = (try? await sdkSynchronizer.storeSignedMigrationTransactions(accountUUID, signed)) != nil
+                    if stored {
+                        if let schedule {
+                            await migrationManager.recordCommittedSchedule(accountUUID, schedule)
+                        }
+                        await migrationManager.reconcile()
+                    }
                     await send(.keystoneSigningSubmitted(context: context))
                 }
 
@@ -386,9 +410,17 @@ extension MigrationCoordFlow {
                 guard let accountUUID = state.selectedWalletAccount?.id else { return .none }
                 // [MOB-1496] W6 wires the residual choice — `includeResidual` hardcoded `false`
                 // pending that.
-                return .run { [sdkSynchronizer, accountUUID] send in
-                    let schedule = (try? await sdkSynchronizer.restartCurrentMigrationStep(accountUUID, includeResidual: false))
-                        ?? MigrationSchedule(transfers: [], estimatedDurationHours: 0)
+                return .run { [sdkSynchronizer, migrationManager, accountUUID] send in
+                    let restarted = try? await sdkSynchronizer.restartCurrentMigrationStep(accountUUID, includeResidual: false)
+                    if restarted != nil {
+                        // [MOB-1496] W2: reconcile so the fresh restart's state transition (e.g.
+                        // off `.requiresAttention`) is observed promptly. The actual schedule
+                        // commit — and its own reconcile — happens later, when this fresh plan is
+                        // signed+stored (`MigrationTransferPlanStore`'s `.confirmTapped`, which this
+                        // re-created plan funnels through unchanged).
+                        await migrationManager.reconcile()
+                    }
+                    let schedule = restarted ?? MigrationSchedule(transfers: [], estimatedDurationHours: 0)
                     let planState = recreatedPlanState(schedule: schedule)
                     await send(.pushHydratedPathState(.transferPlan(planState)))
                 }
@@ -478,6 +510,32 @@ extension MigrationCoordFlow {
             sendingState.networkPrivacyOptions = state.networkPrivacyOptions
             state.path.append(.sending(sendingState))
             return .none
+        }
+    }
+
+    // MARK: - MOB-1496 (W2): schedule lookup for the Keystone store-success write point
+
+    /// Locates the `MigrationSchedule` that was signed for `context`, read off the `.transferPlan`/
+    /// `.reviewTransfer` element still beneath `keystoneSign` (+ `scan`, on the real round-trip) at
+    /// the point the signed PCZTs are about to be stored — `depthBelowTop` is how many elements sit
+    /// above it on the path (2 for the real scan round-trip: `scan` + `keystoneSign`; 1 for the
+    /// simulator bypass, which never pushes `scan`) — mirrors how `signState.pczts` above reads the
+    /// unsigned batch off the same stack position. `nil` when that element carries no schedule of
+    /// its own (a fixture/test state that never populated one) — the caller then skips
+    /// `recordCommittedSchedule` rather than persisting nothing.
+    private func pendingKeystoneSchedule(
+        context: MigrationCoordFlow.KeystoneSigningContext,
+        depthBelowTop: Int,
+        state: MigrationCoordFlow.State
+    ) -> MigrationSchedule? {
+        switch context {
+        case .planCommit:
+            guard case let .transferPlan(planState)? = state.path.dropLast(depthBelowTop).last else { return nil }
+            return planState.schedule
+
+        case .immediateReview:
+            guard case let .reviewTransfer(reviewState)? = state.path.dropLast(depthBelowTop).last else { return nil }
+            return reviewState.schedule
         }
     }
 

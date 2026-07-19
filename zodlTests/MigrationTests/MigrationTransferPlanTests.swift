@@ -192,6 +192,10 @@ import ComposableArchitecture
             estimatedDurationHours: 24
         )
         let signedSchedule = LockIsolated<MigrationSchedule?>(nil)
+        // MOB-1496 (W2): the write-point for the persisted-schedule storage — fires once the
+        // schedule is actually signed+stored, alongside the existing `reconcile()` trigger.
+        let recordCommittedScheduleCalls = LockIsolated<[(AccountUUID?, MigrationSchedule)]>([])
+        let reconcileCalls = LockIsolated<Int>(0)
         var state = MigrationTransferPlan.State()
         state.schedule = schedule
         let store = TestStore(initialState: state) {
@@ -199,6 +203,10 @@ import ComposableArchitecture
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
             $0.sdkSynchronizer.signAndStoreMigrationSchedule = { _, schedule, _ in signedSchedule.setValue(schedule) }
+            $0.migrationManager.recordCommittedSchedule = { accountUUID, schedule in
+                recordCommittedScheduleCalls.withValue { $0.append((accountUUID, schedule)) }
+            }
+            $0.migrationManager.reconcile = { reconcileCalls.withValue { $0 += 1 } }
             withDependenciesUSKDerivable(&$0)
         }
 
@@ -207,6 +215,10 @@ import ComposableArchitecture
         await store.receive(.delegate(.confirmed))
 
         #expect(signedSchedule.value == schedule)
+        #expect(recordCommittedScheduleCalls.value.count == 1)
+        #expect(recordCommittedScheduleCalls.value.first?.0 == state.selectedWalletAccount?.id)
+        #expect(recordCommittedScheduleCalls.value.first?.1 == schedule)
+        #expect(reconcileCalls.value == 1)
     }
 
     @MainActor @Test func confirmTappedForManualVariantSignsAndStoresScheduleThenEmitsDelegateConfirmed() async {
@@ -217,6 +229,12 @@ import ComposableArchitecture
             MigrationTransferPlan()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
+            // MOB-1496 (W2): the sign+store success path now also calls these two — explicit
+            // no-op overrides (rather than relying on their own defaults) since swift-dependencies
+            // requires `migrationManager` to be customized at least once before any of its
+            // members can run in a test context.
+            $0.migrationManager.recordCommittedSchedule = { _, _ in }
+            $0.migrationManager.reconcile = { }
             withDependenciesUSKDerivable(&$0)
         }
 
@@ -301,6 +319,9 @@ import ComposableArchitecture
                 return []
             }
             $0.sdkSynchronizer.signAndStoreMigrationSchedule = { _, _, _ in }
+            // MOB-1496 (W2): see `confirmTappedForManualVariantSignsAndStoresScheduleThenEmitsDelegateConfirmed`'s comment.
+            $0.migrationManager.recordCommittedSchedule = { _, _ in }
+            $0.migrationManager.reconcile = { }
             withDependenciesUSKDerivable(&$0)
         }
 
@@ -385,6 +406,9 @@ import ComposableArchitecture
                 return NoteSplitProposal(outputNotes: [], fee: Zatoshi.zero)
             }
             $0.sdkSynchronizer.signAndStoreMigrationSchedule = { _, _, _ in }
+            // MOB-1496 (W2): see `confirmTappedForManualVariantSignsAndStoresScheduleThenEmitsDelegateConfirmed`'s comment.
+            $0.migrationManager.recordCommittedSchedule = { _, _ in }
+            $0.migrationManager.reconcile = { }
             withDependenciesUSKDerivable(&$0)
         }
 
@@ -443,6 +467,9 @@ import ComposableArchitecture
             $0.sdkSynchronizer = .noOp
             $0.sdkSynchronizer.isNoteSplitNeeded = { _ in false }
             $0.sdkSynchronizer.signAndStoreMigrationSchedule = { _, _, _ in }
+            // MOB-1496 (W2): see `confirmTappedForManualVariantSignsAndStoresScheduleThenEmitsDelegateConfirmed`'s comment.
+            $0.migrationManager.recordCommittedSchedule = { _, _ in }
+            $0.migrationManager.reconcile = { }
             withDependenciesUSKDerivable(&$0)
         }
 

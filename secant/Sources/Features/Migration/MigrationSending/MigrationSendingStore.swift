@@ -152,7 +152,13 @@ struct MigrationSending {
                     // call-then-continue ordering. MOB-1496: `reconcile()` also runs here so
                     // `migrationManager.stateEvents` picks up the just-completed transfer promptly
                     // (a store completing a migration op is one of `reconcile()`'s two triggers).
+                    // MOB-1496 (W2): `recordTransferBroadcast` persists the sent record the SDK
+                    // itself no longer retains — runs before `reconcile()` so the freshly
+                    // reconciled state is observed alongside an already-updated schedule.
                     return .concatenate(
+                        .run { [migrationManager, accountUUID = state.selectedWalletAccount?.id] _ in
+                            await migrationManager.recordTransferBroadcast(accountUUID, MigrationTransferResult.success(txId: txId))
+                        },
                         .run { [migrationBGScheduler] _ in await migrationBGScheduler.scheduleNextWindow() },
                         .run { [migrationManager] _ in await migrationManager.reconcile() },
                         nextEffect
