@@ -408,6 +408,50 @@ import ComposableArchitecture
         #expect(migrateDustCalls.value == 0)
     }
 
+    /// MOB-1496 (W6 §3): the Keystone dust lane, once its PCZT-signed transfer is stored via the
+    /// coordinator's Keystone batch flow, hands off to THIS existing non-dust execution path
+    /// (`isDustLane: false`) rather than `migrateMigrationDust` (the USK composite the test above
+    /// proves Keystone can never use) — confirms it executes with the snapshot network options,
+    /// records the broadcast, and never touches the USK-deriving member, for a Keystone account.
+    @MainActor @Test func onAppearWithoutDustLaneAndKeystoneAccountExecutesWithSnapshotOptionsAndNeverDerivesUSK() async {
+        let deriveCalls = LockIsolated<Int>(0)
+        let executeCalls = LockIsolated<[MigrationNetworkPrivacyOptions]>([])
+        let recordTransferBroadcastCalls = LockIsolated<Int>(0)
+        let options = MigrationNetworkPrivacyOptions(useTor: true, submissionEndpoint: LightWalletEndpoint(address: "dust.example", port: 1))
+        var state = MigrationSending.State(totalCount: 1, isDustLane: false)
+        state.$selectedWalletAccount.withLock { $0 = walletAccount(keystone: true, idByte: 8) }
+        let store = TestStore(initialState: state) {
+            MigrationSending()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, usedOptions in
+                executeCalls.withValue { $0.append(usedOptions) }
+                return MigrationTransferResult.success(txId: "dust-tx")
+            }
+            $0.derivationTool.deriveSpendingKey = { _, _, _ in
+                deriveCalls.withValue { $0 += 1 }
+                throw TestFailure()
+            }
+            $0.migrationManager.migrationNetworkOptions = { _ in options }
+            $0.migrationManager.recordTransferBroadcast = { _, _ in recordTransferBroadcastCalls.withValue { $0 += 1 } }
+            $0.migrationManager.reconcile = { }
+            $0.migrationBGScheduler.scheduleNextWindow = { }
+        }
+
+        await store.send(.onAppear)
+        await store.receive(\.transferResult) {
+            $0.txId = "dust-tx"
+            $0.sentCount = 1
+        }
+        await store.receive(\.allTransfersSent) {
+            $0.phase = .success
+        }
+
+        #expect(executeCalls.value == [options])
+        #expect(deriveCalls.value == 0)
+        #expect(recordTransferBroadcastCalls.value == 1)
+    }
+
     // MARK: - Failure / nil result: presents failure sheet, stops the sequence
 
     @MainActor @Test func onAppearWithFailureResultPresentsFailureSheetAndStopsSequence() async {

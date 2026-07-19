@@ -9,6 +9,11 @@
 //  `continueTapped` delegate (confirmed phase) is consumed by `MigrationCoordFlowCoordinator`, which
 //  closes the flow too — the commit already happened before the split started.
 //
+//  MOB-1496 (W6): this screen is ALSO pushed mid-Keystone-batch-commit
+//  (`MigrationCoordFlowCoordinator.resumeAfterKeystoneSigning`) to broadcast a signed split PCZT
+//  whose schedule is already stored — the first production case with `isFlowRoot == false`. See
+//  `applyPresentationModifier`'s doc for why its back control is hidden entirely in that case.
+//
 
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
@@ -265,18 +270,29 @@ struct MigrationNoteSplitView: View {
 // MARK: - Presentation modifier
 
 private extension View {
-    /// Re-entry is always the flow root (MOB-1478 W4: forward routing never pushes `.noteSplit` any
-    /// more), across both phases — a plain pop would silently fall back to Entry underneath, which
-    /// is wrong for a screen the user reached via the home banner, not by pushing forward. `false`
-    /// (not reachable in practice, only via directly-constructed state in tests/previews) keeps the
-    /// plain pop as a defensive fallback.
+    /// Re-entry is always the flow root (MOB-1478 W4: forward routing never pushes a FRESH silent
+    /// split's `.noteSplit` any more), across both phases — a plain pop would silently fall back to
+    /// Entry underneath, which is wrong for a screen the user reached via the home banner, not by
+    /// pushing forward.
+    ///
+    /// MOB-1496 (W6): `isFlowRoot == false` is reachable now too — the Keystone batch-commit's
+    /// mid-flow split-broadcast push (`MigrationCoordFlowCoordinator.resumeAfterKeystoneSigning`).
+    /// That push's schedule is ALREADY stored (no-partial-storage invariant already held by the time
+    /// this screen appears); a plain pop would leave the coordinator's `pendingKeystoneSplitResume`
+    /// stashed with no way to clear it (only the `.continued` delegate does), and would strand the
+    /// user back on the underlying TransferPlan/ReviewTransfer screen, which has no way to know its
+    /// schedule is already committed — re-tapping its Confirm would re-sign/re-store transfer ids the
+    /// engine already has. Mirroring `MigrationKeystoneSignView`'s unconditional
+    /// `.navigationBarBackButtonHidden(true)` for the identical "mid-commit, no casual abandon"
+    /// reason, this hides the back control entirely instead: the only way off this screen in that
+    /// case is `continueTapped`, once the split confirms.
     @ViewBuilder func applyPresentationModifier(store: StoreOf<MigrationNoteSplit>) -> some View {
         if store.isFlowRoot {
             zashiBackV2 {
                 store.send(.closeTapped)
             }
         } else {
-            zashiBack()
+            zashiBack(hidden: true)
         }
     }
 }

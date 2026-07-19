@@ -70,6 +70,7 @@ import URKit
         let proposeImmediateMigration = LockIsolated<Int>(0)
         let signAndStoreMigrationSchedule = LockIsolated<Int>(0)
         let executeNextPendingMigrationTransfer = LockIsolated<Int>(0)
+        let migrateMigrationDust = LockIsolated<Int>(0)
         let proposeMigrationPCZTs = LockIsolated<Int>(0)
         let parseMigrationPCZTBatch = LockIsolated<Int>(0)
         let urEncoderForMigrationPCZTBatch = LockIsolated<Int>(0)
@@ -121,6 +122,10 @@ import URKit
         }
         client.executeNextPendingMigrationTransfer = { _, _ in
             counters.executeNextPendingMigrationTransfer.withValue { $0 += 1 }
+            return SentinelValues.transferResult
+        }
+        client.migrateMigrationDust = { _, _, _ in
+            counters.migrateMigrationDust.withValue { $0 += 1 }
             return SentinelValues.transferResult
         }
         client.proposeNoteSplitPCZT = { _ in SentinelValues.pczt }
@@ -249,6 +254,57 @@ import URKit
         let inactiveResult = try await client.executeNextPendingMigrationTransfer(Self.accountUUID, Self.networkPrivacy)
         #expect(inactiveResult == SentinelValues.transferResult)
         #expect(counters.executeNextPendingMigrationTransfer.value == 1)
+    }
+
+    // MARK: - Dust resolution (MOB-1487 software composite; MOB-1496 W6 §4 simulator seam)
+
+    /// Closes the "panel preset -> migrate-anyway -> simulated success" gap (MOB-1496 W6 §4): the
+    /// real-engine residual semantics can't be proven offline, but this exercises the SAME contract
+    /// the LiveKey's `migrateMigrationDust` composite implements (`SDKSynchronizerLive.swift`:
+    /// non-empty proposed schedule -> succeeds) against the simulator's own dust model, through the
+    /// `SDKSynchronizerClient` seam every other test in this file uses.
+    /// `SimulatorPreset.completeWithDust` is the SAME preset the Migration Simulator Panel's own dust
+    /// preset button applies (`MigrationSimulatorPanelTests.presetTappedCompleteWithDustAlsoResetsFlagsBeforeApplyPreset`).
+    @Test func migrateMigrationDustRoutesThroughEngineWhenActiveAndFallsBackWhenInactive() async throws {
+        let counters = CallCounters()
+        var client = makeBaseClient(counters)
+        let engine = MigrationSimulatorEngine(store: MigrationSimulatorStateStore.ephemeral())
+        engine.setActive(true) // the fresh-seed default is inactive (opt-in simulation)
+        client.applySimulatedMigration(engine: engine)
+
+        engine.applyPreset(SimulatorPreset.completeWithDust)
+        #expect(engine.readout().dustRemainder.amount > 0)
+
+        let result = try await client.migrateMigrationDust(Self.accountUUID, try usk(), Self.networkPrivacy)
+        #expect(counters.migrateMigrationDust.value == 0)
+        guard case MigrationTransferResult.success? = result else {
+            Issue.record("Expected the simulated dust sweep to succeed against the .completeWithDust preset")
+            return
+        }
+        #expect(engine.readout().dustRemainder == Zatoshi.zero)
+
+        // Inactive: falls back to the sentinel original, and the engine's own dust state (already
+        // swept above) is untouched by the fallback call.
+        engine.setActive(false)
+        let inactiveResult = try await client.migrateMigrationDust(Self.accountUUID, try usk(), Self.networkPrivacy)
+        #expect(inactiveResult == SentinelValues.transferResult)
+        #expect(counters.migrateMigrationDust.value == 1)
+    }
+
+    /// Empty-residual edge (§4 — mirrors `MigrationSimulatorEngineTests.migrateDustWithNoDustReturnsNil`
+    /// through this file's client seam instead of the raw engine): a fresh engine has no dust
+    /// remainder yet, so the sweep is a no-op `nil` — never a fabricated success.
+    @Test func migrateMigrationDustWithNoDustReturnsNilWhenActive() async throws {
+        let counters = CallCounters()
+        var client = makeBaseClient(counters)
+        let engine = MigrationSimulatorEngine(store: MigrationSimulatorStateStore.ephemeral())
+        engine.setActive(true)
+        client.applySimulatedMigration(engine: engine)
+
+        let result = try await client.migrateMigrationDust(Self.accountUUID, try usk(), Self.networkPrivacy)
+
+        #expect(result == nil)
+        #expect(counters.migrateMigrationDust.value == 0)
     }
 
     // MARK: - Keystone (PCZT fabrication + batch parse round trip)
