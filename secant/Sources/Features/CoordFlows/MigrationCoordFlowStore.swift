@@ -33,6 +33,22 @@
 //  regains `.permissionChain`, and the flag-on shortcut keeps MOB-1487's persist-fix (persisted
 //  options feed background sends) without the forcing.
 //
+//  MOB-1496 (W6) fixes a latent real-SDK break in the Keystone batch flow: the note-split PCZT used
+//  to ride the WHOLE signed batch into `storeSignedMigrationTransactions` (the schedule-PCZT store —
+//  all-or-nothing, keyed by engine-issued ids only), but a `"note-split"` sentinel is not an engine
+//  id, so the real engine would reject the whole store. The `.scan(.foundPCZTBatch)`/
+//  `.simulateSignature` store step now re-pairs + validates the scanned batch before storing
+//  anything (`MigrationCoordFlow.rePairedKeystoneBatch`), splits any sentinel entry out
+//  (`MigrationCoordFlow.splitKeystoneBatch`), stores ONLY the schedule's engine-id entries, and — iff
+//  a split was present — routes it to a freshly pushed `MigrationNoteSplit` screen via that screen's
+//  OWN existing Keystone resubmit lane (`.retryTapped` -> `resubmitSignedNoteSplit` ->
+//  `submitSignedNoteSplit`), never a new UI. `pendingKeystoneSplitResume` stashes what to resume with
+//  once that screen's `.continued` fires — the same post-commit routing `resumeAfterKeystoneSigning`
+//  would have reached immediately had no split been needed. `KeystoneSigningContext` gains a `.dust`
+//  case: `.complete(.delegate(.migrateAnyway))` now forks on vendor, and a Keystone account proposes
+//  + PCZT-signs a batch-of-1 dust transfer through this SAME signing machinery before broadcasting it
+//  via the dust Sending lane's existing `executeNextPendingMigrationTransfer` path.
+//
 
 import SwiftUI
 import ComposableArchitecture
@@ -49,6 +65,11 @@ struct MigrationCoordFlow {
         /// longer has its own signing context (see `MigrationTransferPlanStore`).
         case planCommit
         case immediateReview
+        /// MOB-1496 (W6 §3): the Keystone "Migrate anyway" dust lane — a batch-of-1, no sentinel
+        /// (there is no split in the dust lane). The schedule is proposed directly by the
+        /// coordinator (`.keystoneDustPCZTsProposed`), not read off any path element's own state, so
+        /// it rides along on the context itself for `pendingKeystoneSchedule` to hand back.
+        case dust(MigrationSchedule)
     }
 
     /// MOB-1478 (W2): which destination the coordinator stashed while the Tor bottom sheet is
@@ -101,6 +122,13 @@ struct MigrationCoordFlow {
         var isTorSheetPresented = false
         /// Non-nil exactly while `isTorSheetPresented` is true — see `PendingTorDestination`.
         var pendingTorDestination: PendingTorDestination?
+        /// MOB-1496 (W6): non-nil while a `.noteSplit` screen pushed by `resumeAfterKeystoneSigning`
+        /// (to broadcast a just-stored Keystone split) is showing — carries the SAME context so its
+        /// own `.delegate(.continued)` resumes exactly the post-commit chain that would have run
+        /// immediately had no split been needed (`resumeCommittedMigrationChain`), instead of
+        /// falling into the permission-chain fallback that handler otherwise takes. `nil` for every
+        /// other `.noteSplit` occurrence (re-entry root, or the pre-MOB-1478 defensive branch).
+        var pendingKeystoneSplitResume: KeystoneSigningContext?
         /// MOB-1496: the real per-account SDK surface needs a concrete `AccountUUID` for nearly
         /// every migration call the coordinator makes.
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
@@ -143,8 +171,25 @@ struct MigrationCoordFlow {
         /// resumes the chain `context` represents. MOB-1478 (W4): the stored batch now always
         /// includes the note-split PCZT first when `isNoteSplitNeeded()` — there's no separate
         /// per-source result to carry any more (the old `.noteSplit` context's `TransferResult`/
-        /// signed-PCZT payload is gone along with that context).
-        case keystoneSigningSubmitted(context: KeystoneSigningContext)
+        /// signed-PCZT payload is gone along with that context). MOB-1496 (W6): `splitPczt` is the
+        /// sentinel entry's PCZT bytes, split out of the stored batch (`nil` when the run needed no
+        /// split, or when the store itself failed) — non-`nil` routes to the note-split screen
+        /// instead of resuming the schedule/review chain immediately (see
+        /// `resumeAfterKeystoneSigning`).
+        case keystoneSigningSubmitted(context: KeystoneSigningContext, splitPczt: Data?)
+        /// Internal: MOB-1496 (W6 §3) — the Keystone dust lane's upfront propose
+        /// (`.complete(.delegate(.migrateAnyway))`'s Keystone fork) came back with a non-empty
+        /// schedule and its PCZTs — pushes the existing Keystone signing context as a batch-of-1 (no
+        /// sentinel; there is no split in the dust lane).
+        case keystoneDustPCZTsProposed(schedule: MigrationSchedule, pczts: [MigrationUnsignedTransferPczt])
+        /// Internal: MOB-1496 (W6) — the note-split screen's `.delegate(.continued)` landed while
+        /// `pendingKeystoneSplitResume` was set (the mid-Keystone-commit split-broadcast case) — its
+        /// pop is deferred to this follow-up self-action for the SAME reason `keystoneSignRejected`
+        /// defers its own: popping the `noteSplit` element inline in the `.path(.element(...))` case
+        /// would race `.forEach(\.path, action:)`'s delivery of that same action to the (then-missing)
+        /// element (a TCA "missing element" runtime error, caught by
+        /// `noteSplitContinuedAfterKeystoneSplitRoutingResumesToScheduledAndClearsPendingResume`).
+        case keystoneSplitResumeContinued
         /// Internal: MOB-1468 `keystoneSign(.delegate(.rejected))`'s pop, deferred to a follow-up
         /// self-action for the same reason `sendNowCompleted` defers its pop — popping the
         /// `keystoneSign` element inline in the `.path(.element(...))` case would race

@@ -217,9 +217,8 @@ struct MigrationReviewTransfer {
     /// coordinator for QR signing. MOB-1496: see `MigrationTransferPlanStore`'s twin method for why
     /// the note-split PCZT rides under a `"note-split"` sentinel id (typed-payload mismatch between
     /// `proposeNoteSplitPCZT -> Data` and `proposeMigrationPCZTs -> [MigrationUnsignedTransferPczt]`)
-    /// — same known gap: the signed side stores the whole batch through
-    /// `storeSignedMigrationTransactions` rather than routing the split entry through the dedicated
-    /// `storeSignedNoteSplitPCZT` path.
+    /// and (W6) how the coordinator splits that entry back out before storing, routing it through the
+    /// dedicated `submitSignedNoteSplit` broadcast instead.
     private func requestKeystoneSignature(for schedule: MigrationSchedule, account: WalletAccount) -> Effect<Action> {
         .run { send in
             let needsNoteSplit = (try? await sdkSynchronizer.isNoteSplitNeeded(account.id)) ?? false
