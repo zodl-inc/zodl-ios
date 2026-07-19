@@ -672,6 +672,26 @@ final class MigrationManagerImpl: @unchecked Sendable {
 /// `MigrationAttentionReason`, `MigrationTransferRow`) — so `MigrationManagerTests` can exercise
 /// every row directly.
 enum MigrationDerivations {
+    /// MOB-1496 (W5): deterministic account set for the migration BG session tree and re-arm
+    /// scheduler — selected account first (when present), then the rest of the wallet's accounts in
+    /// their stored order, deduplicated. Shared by `Root.migrationBackgroundSessionEffect` and
+    /// `MigrationBGSchedulerImpl.arm(margin:)` so both fan out over the identical account list
+    /// `MigrationManagerImpl.activeNetworkSnapshots()` already uses as its own "every account with a
+    /// currently-active migration run" source.
+    static func candidateAccountUUIDs(selectedAccountUUID: AccountUUID?, walletAccounts: [WalletAccount]) -> [AccountUUID] {
+        var seenAccountUUIDs = Set<AccountUUID>()
+        var accountUUIDs: [AccountUUID] = []
+
+        if let selectedAccountUUID, seenAccountUUIDs.insert(selectedAccountUUID).inserted {
+            accountUUIDs.append(selectedAccountUUID)
+        }
+        for account in walletAccounts where seenAccountUUIDs.insert(account.id).inserted {
+            accountUUIDs.append(account.id)
+        }
+
+        return accountUUIDs
+    }
+
     /// See MOB-1466 spec, "bannerVariant derivation" table. `isIronwoodActivated` (MOB-1483) is
     /// checked first and gates the whole derivation — pre-activation there is no banner.
     ///

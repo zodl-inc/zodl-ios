@@ -36,47 +36,88 @@ extension MigrationBGSchedulerClient: DependencyKey {
 
 /// Composes `migrationManager` + `sdkSynchronizer` + `userNotifications` and turns their current
 /// readings into a `WakeupAction`, then executes it. `@unchecked Sendable`: holds no mutable state
-/// of its own — every dependency it wraps is itself `Sendable`.
-private final class MigrationBGSchedulerImpl: @unchecked Sendable {
+/// of its own — every dependency it wraps is itself `Sendable`. Not `private` (MOB-1496 W5): unit
+/// tests instantiate this directly with injected dependencies, the same testability pattern
+/// `MigrationManagerImpl` already uses.
+final class MigrationBGSchedulerImpl: @unchecked Sendable {
     @Dependency(\.migrationManager) var migrationManager
     @Dependency(\.sdkSynchronizer) var sdkSynchronizer
     @Dependency(\.userNotifications) var userNotifications
     @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
+    /// MOB-1496 (W5): the rest of the wallet's accounts — `arm(margin:)` fans out over
+    /// `MigrationDerivations.candidateAccountUUIDs(selectedAccountUUID:walletAccounts:)` (selected
+    /// first, then this list's stored order), the same source `MigrationManagerImpl
+    /// .activeNetworkSnapshots()` already reads.
+    @Shared(.inMemory(.walletAccounts)) var walletAccounts: [WalletAccount] = []
 
     /// Shared by `scheduleFirstWindow`/`scheduleNextWindow` — only the margin differs. The
     /// complete-check choke point lives inside `WakeupAction.decide`, so both call sites uniformly
-    /// no-op (cancel) once the migration is done, without duplicating that check here. MOB-1496: no
-    /// selected account, or any SDK read failing, skips arming entirely rather than crashing —
-    /// a later call (foreground entry, the next transfer's own completion) re-attempts.
+    /// no-op (cancel) once every account is done, without duplicating that check here.
+    ///
+    /// MOB-1496 (W5): fans out over EVERY candidate account (selected first, then stored order) —
+    /// each account's `getMigrationState`/`getMigrationProgress`/`rescheduleOverdueMigrationTransfer`
+    /// is `try?`-guarded independently (log-and-skip per the BG session tree's own pattern: a read
+    /// failure degrades to skipping just that account, not aborting the whole arm). No accounts, or
+    /// EVERY account's reads failing, skips arming entirely rather than crashing — a later call
+    /// (foreground entry, the next transfer's own completion) re-attempts. The per-account data is
+    /// reduced to a single earliest-across-accounts window via the pure `MigrationCadence
+    /// .planRearm(_:)` before `window(margin:preferredExecutableAt:now:)`/`WakeupAction.decide` run,
+    /// both unchanged.
     func arm(margin: TimeInterval) async {
-        guard let accountUUID = selectedWalletAccount?.id else {
-            LoggerProxy.event("MigrationBGScheduler.arm: no selected account, skipping.")
+        let accountUUIDs = MigrationDerivations.candidateAccountUUIDs(
+            selectedAccountUUID: selectedWalletAccount?.id,
+            walletAccounts: walletAccounts
+        )
+        guard !accountUUIDs.isEmpty else {
+            LoggerProxy.event("MigrationBGScheduler.arm: no accounts, skipping.")
             return
         }
 
-        do {
-            let progress = try await sdkSynchronizer.getMigrationProgress(accountUUID)
-            let preferredExecutableAt = progress?.nextTransferReadyAtHeight.flatMap { height in
-                sdkSynchronizer.estimateTimestamp(height).map { Date(timeIntervalSince1970: $0) }
+        var rearmInputs: [MigrationCadence.AccountRearmInput] = []
+        for accountUUID in accountUUIDs {
+            do {
+                let state = try await sdkSynchronizer.getMigrationState(accountUUID)
+                let progress = try await sdkSynchronizer.getMigrationProgress(accountUUID)
+                // Double-optional flatten: `rescheduleOverdueMigrationTransfer` already returns an
+                // Optional on success, and `try?` adds a second layer — a thrown read and a
+                // genuinely-empty probe both read as "no proposal" here (mirrors
+                // `MigrationManagerImpl.migrationSummary`'s identical `residual` flatten).
+                let proposal = (try? await sdkSynchronizer.rescheduleOverdueMigrationTransfer(accountUUID)) ?? nil
+                rearmInputs.append(
+                    MigrationCadence.AccountRearmInput(
+                        state: state,
+                        progress: progress,
+                        nextExecutableAfterHeight: proposal?.nextExecutableAfterHeight
+                    )
+                )
+            } catch {
+                LoggerProxy.error("MigrationBGScheduler.arm: SDK read failed for an account \(error)")
             }
-            let window = MigrationCadence.window(
-                margin: margin,
-                preferredExecutableAt: preferredExecutableAt,
-                now: Date()
-            )
-
-            let state = try await sdkSynchronizer.getMigrationState(accountUUID)
-            let action = WakeupAction.decide(
-                state: state,
-                isManualDelivery: migrationManager.isManualDelivery(),
-                window: window,
-                nextTransferNumber: (progress?.completedTransfers ?? 0) + 1
-            )
-
-            await execute(action)
-        } catch {
-            LoggerProxy.error("MigrationBGScheduler.arm: SDK read failed \(error)")
         }
+
+        guard !rearmInputs.isEmpty else {
+            LoggerProxy.error("MigrationBGScheduler.arm: every account's SDK read failed, skipping.")
+            return
+        }
+
+        let plan = MigrationCadence.planRearm(rearmInputs)
+        let preferredExecutableAt = plan.earliestNextExecutableAfterHeight.flatMap { height in
+            sdkSynchronizer.estimateTimestamp(height).map { Date(timeIntervalSince1970: $0) }
+        }
+        let window = MigrationCadence.window(
+            margin: margin,
+            preferredExecutableAt: preferredExecutableAt,
+            now: Date()
+        )
+
+        let action = WakeupAction.decide(
+            state: plan.representativeState,
+            isManualDelivery: migrationManager.isManualDelivery(),
+            window: window,
+            nextTransferNumber: plan.nextTransferNumber
+        )
+
+        await execute(action)
     }
 
     func cancelAll() async {
