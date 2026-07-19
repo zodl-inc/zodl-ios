@@ -1168,8 +1168,14 @@ final class MigrationScheduleStorage: @unchecked Sendable {
     }
 
     private func readPayload(for accountUUID: AccountUUID) -> MigrationCommittedSchedule? {
-        guard let data = userDefaults.data(forKey: key(for: accountUUID)),
-              let payload = try? JSONDecoder().decode(MigrationCommittedSchedule.self, from: data) else {
+        let storageKey = key(for: accountUUID)
+        guard let data = userDefaults.data(forKey: storageKey) else { return nil }
+
+        guard let payload = try? JSONDecoder().decode(MigrationCommittedSchedule.self, from: data) else {
+            // Self-heal: an undecodable blob would otherwise return `nil` forever while the
+            // garbage stays on disk. Delete it so the next commit starts clean.
+            LoggerProxy.error("[MigrationScheduleStorage] Corrupt payload — deleting the stored blob.")
+            userDefaults.removeObject(forKey: storageKey)
             return nil
         }
         return payload
@@ -1226,8 +1232,14 @@ final class MigrationSnapshotStorage: @unchecked Sendable {
     }
 
     private func readPayload(for accountUUID: AccountUUID) -> MigrationNetworkSnapshot? {
-        guard let data = userDefaults.data(forKey: key(for: accountUUID)),
-              let payload = try? JSONDecoder().decode(MigrationNetworkSnapshot.self, from: data) else {
+        let storageKey = key(for: accountUUID)
+        guard let data = userDefaults.data(forKey: storageKey) else { return nil }
+
+        guard let payload = try? JSONDecoder().decode(MigrationNetworkSnapshot.self, from: data) else {
+            // Self-heal: an undecodable blob would otherwise return `nil` forever while the
+            // garbage stays on disk. Delete it so the next commit starts clean.
+            LoggerProxy.error("[MigrationSnapshotStorage] Corrupt payload — deleting the stored blob.")
+            userDefaults.removeObject(forKey: storageKey)
             return nil
         }
         return payload

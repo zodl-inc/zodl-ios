@@ -115,7 +115,8 @@ struct ServerSetup {
         case evaluateServers
         /// MOB-1496 (W4): the migration privacy warning's "Use it anyway" — proceeds with the
         /// `pendingManualSwitch` stashed by `.setServerTapped`. "Choose another" is a plain
-        /// `.alert(.dismiss)` (no state to unwind — the picker is untouched).
+        /// `.alert(.dismiss)`, which also clears `pendingManualSwitch` (W7 review Minor) — the
+        /// picker itself is untouched either way.
         case manualSwitchPrivacyWarningConfirmed
         case onAppear
         case onDisappear
@@ -189,6 +190,11 @@ struct ServerSetup {
 
             case .alert(.dismiss):
                 state.alert = nil
+                // MOB-1496 (W4 review Minor, W7): "Choose another" on the migration privacy warning
+                // reaches this same generic dismiss — clear the stashed switch so it can't linger
+                // into some later alert cycle. A no-op for `endpointSwitchFailed`'s dismiss, which
+                // never sets `pendingManualSwitch` in the first place.
+                state.pendingManualSwitch = nil
                 return .none
 
             case .alert:
