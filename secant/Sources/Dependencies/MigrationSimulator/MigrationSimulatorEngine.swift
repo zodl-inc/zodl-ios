@@ -4,8 +4,9 @@
 //
 //  Stateful simulated implementation of the Orchard -> Ironwood migration SDK surface (MOB-1480).
 //  `MigrationSimulatorClient.liveValue` (Phase B) wires its closures to the shared instance of
-//  this engine so the whole migration UI is walkable end-to-end before the real SDK exists
-//  (MOB-1455). Every piece of actual derivation logic is factored into
+//  this engine so the whole migration UI is walkable end-to-end without a funded wallet or a live
+//  network reaching Ironwood activation — the real SDK is wired in (MOB-1495/1496), but exercising
+//  it for real still needs both of those. Every piece of actual derivation logic is factored into
 //  `MigrationSimulatorEngineDerivations` (pure, table-testable); this type is left with locking,
 //  persistence, the state stream, and the one real timer (the note-split confirm delay).
 //

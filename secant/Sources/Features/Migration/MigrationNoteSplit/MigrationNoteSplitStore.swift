@@ -13,8 +13,11 @@
 //  `confirmed`'s `continueTapped` closes the flow (the schedule/transfer was already committed before
 //  the split even started — the home banner carries the progression from here). `retryTapped`/
 //  `splitResult`/the failure sheet are kept for when a split needs re-attempting from this screen,
-//  though with today's synchronous stubs nothing drives them live yet (real-SDK latency is out of
-//  scope for MOB-1478, tracked for the #2572 integration).
+//  but nothing drives them live today: the actual submission (and its own failure handling)
+//  happens once, earlier, under the TransferPlan/ReviewTransfer commit CTA — this re-entry
+//  screen's `onAppear` only observes `migrationStateStream()`/does a one-shot state read, so
+//  `isFailurePresented` never becomes `true` from a cold mount. Kept ready for a future
+//  re-entry-time retry surface.
 //
 //  MOB-1468 (Keystone): once split signing folded into `MigrationTransferPlan`'s batch (MOB-1478 W4),
 //  this screen no longer requests Keystone signing itself, and no coordinator path sets

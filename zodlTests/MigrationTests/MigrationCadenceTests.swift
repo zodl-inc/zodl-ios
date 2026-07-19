@@ -5,8 +5,9 @@
 //  Covers `MigrationCadence` (Dependencies/MigrationBGScheduler/MigrationCadence.swift) for
 //  MOB-1467: the margin constants (§8.3: 30 min / 6.5 h) and the `window(margin:
 //  preferredExecutableAt:now:)` max rule — the SDK's preferred executable time wins when it is
-//  later than the margin floor, the margin floor wins when the SDK preference is earlier (or
-//  nil, as against the current stubs). Pure math, no shared state -> no `.serialized`.
+//  later than the margin floor, the margin floor wins when the SDK preference is earlier (or nil,
+//  e.g. when `estimateTimestamp` can't resolve the height). Pure math, no shared state -> no
+//  `.serialized`.
 //
 //  `preferredExecutableAt`/`window` inputs and expectations are expressed relative to a fixed
 //  `now` so every row is self-contained and doesn't depend on wall-clock time.

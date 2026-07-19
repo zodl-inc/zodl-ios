@@ -355,6 +355,9 @@ import ComposableArchitecture
 
         await store.send(.alert(.dismiss)) {
             $0.alert = nil
+            // W4 review Minor (fixed W7): the stashed switch must not linger past the alert it was
+            // stashed for.
+            $0.pendingManualSwitch = nil
         }
 
         #expect(switchCalls.value == 0)

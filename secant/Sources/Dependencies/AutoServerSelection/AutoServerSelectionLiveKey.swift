@@ -96,18 +96,17 @@ extension AutoServerSelectionClient: DependencyKey {
 /// candidate filter and `applySwitch`'s re-validation. `true` when NO account has an active
 /// migration network snapshot (unfiltered — byte-identical to pre-W4 behavior), or when `host`'s
 /// classified provider is a member of the snapshotted SYNC providers (rotation within an active
-/// run's own family stays allowed). A provider that is some snapshot's BROADCAST provider is
-/// additionally excluded UNLESS that provider is ALSO a snapshotted sync provider — covers the
-/// custom/testnet same-server snapshots (sync == broadcast) so pinning never empties the candidate
-/// set for them.
+/// run's own family stays allowed). That single check already keeps out any provider that is ONLY
+/// some snapshot's broadcast provider, with no separate exclusion clause needed: the custom/testnet
+/// same-server case (sync == broadcast) stays allowed because that provider IS a sync provider too.
+/// (W7 review: an earlier, separate broadcast-exclusion `guard` here was provably dead — it could
+/// never fail once the sync-provider check above had already passed — and was removed.)
 private func isCandidateAllowedByMigrationPinning(host: String, activeSnapshots: [MigrationNetworkSnapshot]) -> Bool {
     guard !activeSnapshots.isEmpty else { return true }
 
     let syncProviders = Set(activeSnapshots.map { $0.syncProvider })
-    let broadcastProviders = Set(activeSnapshots.map { $0.broadcastProvider })
     let provider = ServerProvider.classify(host: host)
 
     guard syncProviders.contains(provider) else { return false }
-    guard !broadcastProviders.contains(provider) || syncProviders.contains(provider) else { return false }
     return true
 }

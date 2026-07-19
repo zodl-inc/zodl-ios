@@ -6,8 +6,8 @@
 //  migration screens (MOB-1460...1464) into a live, state-driven flow: re-entry routing, mode/
 //  network-privacy persistence, permission-step sequencing, and the scheduled/manual/immediate
 //  chaining table. `MigrationEntry` is the flow's root screen (mirroring `SendCoordFlow`'s
-//  `sendFormState`); every other screen lives in `path`. Everything here runs against the inert
-//  SDK stubs — it goes live when the real SDK (MOB-1455) fills them in.
+//  `sendFormState`); every other screen lives in `path`. Everything here runs against the real
+//  SDK-backed migration APIs (MOB-1495 shipped the SDK surface; MOB-1496 wired the app onto it).
 //
 //  MOB-1468 (Keystone) adds `keystoneSign`/`scan` path elements and `pendingKeystoneSigning`: the
 //  two remaining signing sources (TransferPlan/ReviewTransfer) delegate `.keystoneSignRequested`

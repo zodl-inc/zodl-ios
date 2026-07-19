@@ -516,6 +516,10 @@ import ComposableArchitecture
         await store.receive(.delegate(.keystoneSignRequested(expectedBatch)))
 
         #expect(proposeOrder.value == ["split", "schedule"])
+        // W6 review Minor (sentinel drift guard, W7): the literal three independent sites use
+        // (here, this producer, and `MigrationReviewTransferStore`'s twin) must not silently drift
+        // apart — pin this producer's real, emitted id against the coordinator's own constant.
+        #expect(expectedBatch.first?.id == MigrationCoordFlow.keystoneNoteSplitSentinelId)
     }
 
     // MARK: - MOB-1496 (W3 review fix A): stop an in-flight sync before the silent note-split broadcast
