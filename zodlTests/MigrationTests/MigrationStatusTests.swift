@@ -116,9 +116,9 @@ import ComposableArchitecture
             MigrationStatus()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.migrationTransfers = { rows }
-            $0.sdkSynchronizer.migrationSummary = { summary }
-            $0.sdkSynchronizer.migrationStateStream = { stateStream.eraseToAnyPublisher() }
+            $0.migrationManager.migrationTransfers = { _ in rows }
+            $0.migrationManager.migrationSummary = { _ in summary }
+            $0.migrationManager.stateEvents = { _ in stateStream.eraseToAnyPublisher() }
             $0.migrationManager.sendGate = { .allowed }
         }
 
@@ -154,9 +154,9 @@ import ComposableArchitecture
             MigrationStatus()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.migrationTransfers = { rows }
-            $0.sdkSynchronizer.migrationSummary = { summary }
-            $0.sdkSynchronizer.migrationStateStream = { stateStream.eraseToAnyPublisher() }
+            $0.migrationManager.migrationTransfers = { _ in rows }
+            $0.migrationManager.migrationSummary = { _ in summary }
+            $0.migrationManager.stateEvents = { _ in stateStream.eraseToAnyPublisher() }
             $0.migrationManager.sendGate = { .allowed }
         }
 
@@ -180,7 +180,7 @@ import ComposableArchitecture
             MigrationStatus()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.migrationStateStream = { stateStream.eraseToAnyPublisher() }
+            $0.migrationManager.stateEvents = { _ in stateStream.eraseToAnyPublisher() }
             $0.migrationManager.sendGate = { .syncRequired }
         }
 
@@ -199,7 +199,7 @@ import ComposableArchitecture
             MigrationStatus()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.migrationStateStream = { stateStream.eraseToAnyPublisher() }
+            $0.migrationManager.stateEvents = { _ in stateStream.eraseToAnyPublisher() }
             $0.migrationManager.sendGate = { .waitUntil(Date(timeIntervalSince1970: 1_000_000)) }
         }
 
@@ -225,8 +225,8 @@ import ComposableArchitecture
             MigrationStatus()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.migrationTransfers = { currentRows.value }
-            $0.sdkSynchronizer.migrationStateStream = { stateStream.eraseToAnyPublisher() }
+            $0.migrationManager.migrationTransfers = { _ in currentRows.value }
+            $0.migrationManager.stateEvents = { _ in stateStream.eraseToAnyPublisher() }
             $0.migrationManager.sendGate = { .allowed }
         }
 

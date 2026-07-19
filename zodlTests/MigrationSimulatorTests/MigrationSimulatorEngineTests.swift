@@ -19,7 +19,10 @@ import ComposableArchitecture
 @testable import zodl_internal
 
 @Suite struct MigrationSimulatorEngineTests {
-    private static let networkPrivacy = NetworkPrivacyOptions(useTor: false, submissionEndpoint: nil)
+    private static let networkPrivacy = MigrationNetworkPrivacyOptions(
+        useTor: false,
+        submissionEndpoint: LightWalletEndpoint(address: "", port: 0)
+    )
     private static let defaultBalance = Zatoshi(1_245_800_000)
     private static let fee = Zatoshi(10_000)
     private static let spacing: TimeInterval = 6 * 3600
@@ -91,7 +94,7 @@ import ComposableArchitecture
         #expect(proposal.outputNotes.reduce(Zatoshi.zero, +) == Zatoshi(Self.defaultBalance.amount - Self.fee.amount))
 
         let submitResult = await engine.submitSplit(proposal)
-        guard case TransferResult.success = submitResult else {
+        guard case MigrationTransferResult.success = submitResult else {
             Issue.record("Expected submitSplit to succeed")
             return
         }
@@ -114,7 +117,7 @@ import ComposableArchitecture
         for _ in 0..<schedule.transfers.count {
             engine.makeNextTransferDueNow()
             let result = await engine.executeNext(Self.networkPrivacy)
-            guard case TransferResult.success? = result else {
+            guard case MigrationTransferResult.success? = result else {
                 Issue.record("Expected executeNext to succeed once due")
                 return
             }
@@ -137,7 +140,7 @@ import ComposableArchitecture
 
         await engine.signAndStore(schedule)
         let result = await engine.executeNext(Self.networkPrivacy)
-        guard case TransferResult.success? = result else {
+        guard case MigrationTransferResult.success? = result else {
             Issue.record("Expected the single immediate transfer to be due right away")
             return
         }
@@ -164,7 +167,7 @@ import ComposableArchitecture
 
         engine.advanceTime(by: Self.spacing + 1)
         let after = await engine.executeNext(Self.networkPrivacy)
-        guard case TransferResult.success? = after else {
+        guard case MigrationTransferResult.success? = after else {
             Issue.record("Expected executeNext to succeed once the first transfer is due")
             return
         }
@@ -180,7 +183,7 @@ import ComposableArchitecture
         engine.makeNextTransferDueNow()
         let result = await engine.executeNext(Self.networkPrivacy)
 
-        guard case TransferResult.success? = result else {
+        guard case MigrationTransferResult.success? = result else {
             Issue.record("Expected success after makeNextTransferDueNow")
             return
         }
@@ -194,12 +197,12 @@ import ComposableArchitecture
         let schedule = await engine.propose()
         await engine.signAndStore(schedule)
 
-        engine.armTransferResult(TransferResult.invalidNote)
+        engine.armTransferResult(MigrationTransferResult.invalidNote)
         let result = await engine.executeNext(Self.networkPrivacy)
 
-        #expect(result == TransferResult.invalidNote)
+        #expect(result == MigrationTransferResult.invalidNote)
         guard case MigrationState.requiresAttention(let reason) = engine.currentState(),
-              case AttentionReason.invalidTransfer = reason else {
+              case MigrationAttentionReason.invalidTransfer = reason else {
             Issue.record("Expected .requiresAttention(.invalidTransfer)")
             return
         }
@@ -213,37 +216,42 @@ import ComposableArchitecture
         let schedule = await engine.propose()
         await engine.signAndStore(schedule)
 
-        engine.armTransferResult(TransferResult.expired)
+        engine.armTransferResult(MigrationTransferResult.expired)
         let result = await engine.executeNext(Self.networkPrivacy)
 
-        #expect(result == TransferResult.expired)
-        #expect(engine.currentState() == MigrationState.requiresAttention(AttentionReason.transferExpired))
+        #expect(result == MigrationTransferResult.expired)
+        #expect(engine.currentState() == MigrationState.requiresAttention(MigrationAttentionReason.transferExpired))
         #expect(engine.hasInvalid() == true)
         #expect(engine.transferRows().contains { $0.status == .expired })
     }
 
-    @Test func armedNetworkErrorStallsTransferAndRescheduleRecovers() async {
+    /// MOB-1496: the SDK's `MigrationAttentionReason` has no `.transferStalled` case — an armed
+    /// `.networkError` no longer escalates to a literal `.requiresAttention` state; it now just
+    /// pushes the transfer's `dueAt` past the overdue grace and leaves `state` as `.inProgress`,
+    /// letting `hasOverdue()`'s time math do the signaling (mirrors `MigrationDerivations
+    /// .bannerVariant`'s `hasOverdue`-derived `.transferWaiting`). `rescheduleStalled()` was renamed
+    /// `rescheduleOverdue()` and now returns the rescheduled `MigrationTransferProposal?`.
+    @Test func armedNetworkErrorPushesTransferOverdueAndRescheduleOverdueRecovers() async {
         let engine = makeEngine()
         engine.applyPreset(SimulatorPreset.readyToPropose)
         let schedule = await engine.propose()
         await engine.signAndStore(schedule)
 
-        engine.armTransferResult(TransferResult.networkError(retryable: true))
+        engine.armTransferResult(MigrationTransferResult.networkError(retryable: true))
         let result = await engine.executeNext(Self.networkPrivacy)
 
-        #expect(result == TransferResult.networkError(retryable: true))
-        guard case MigrationState.requiresAttention(let reason) = engine.currentState(),
-              case AttentionReason.transferStalled(let number) = reason else {
-            Issue.record("Expected .requiresAttention(.transferStalled)")
+        #expect(result == MigrationTransferResult.networkError(retryable: true))
+        guard case MigrationState.inProgress = engine.currentState() else {
+            Issue.record("Expected .inProgress (armed networkError no longer sets a literal .transferStalled state)")
             return
         }
-        #expect(number == 1)
         #expect(engine.hasOverdue() == true)
 
-        await engine.rescheduleStalled()
+        let rescheduled = await engine.rescheduleOverdue()
 
+        #expect(rescheduled != nil)
         guard case MigrationState.inProgress = engine.currentState() else {
-            Issue.record("Expected .inProgress after rescheduleStalled")
+            Issue.record("Expected .inProgress after rescheduleOverdue")
             return
         }
         #expect(engine.hasOverdue() == false)
@@ -257,7 +265,7 @@ import ComposableArchitecture
         let proposal = await engine.prepareSplit()
         let result = await engine.submitSplit(proposal)
 
-        #expect(result == TransferResult.networkError(retryable: true))
+        #expect(result == MigrationTransferResult.networkError(retryable: true))
         #expect(engine.currentState() == stateBefore)
         #expect(engine.readout().armedResultDescription == nil)
     }
@@ -295,7 +303,7 @@ import ComposableArchitecture
 
         engine.advanceTime(by: Self.expiryWindow)
         guard case MigrationState.requiresAttention(let reason) = engine.currentState(),
-              case AttentionReason.transferExpired = reason else {
+              case MigrationAttentionReason.transferExpired = reason else {
             Issue.record("Expected passive time-based expiry to escalate to .requiresAttention(.transferExpired)")
             return
         }
@@ -491,7 +499,7 @@ import ComposableArchitecture
         let batchB = engine.fabricateMigrationPCZTs(schedule)
 
         #expect(batchA == batchB)
-        #expect(batchA.allSatisfy { !$0.isEmpty })
+        #expect(batchA.allSatisfy { !$0.pczt.isEmpty })
         #expect(!engine.fabricateNoteSplitPCZT().isEmpty)
     }
 
@@ -499,11 +507,15 @@ import ComposableArchitecture
         let engine = makeEngine()
         engine.applyPreset(SimulatorPreset.readyToPropose)
         let schedule = await engine.propose()
-        let pczts = engine.fabricateMigrationPCZTs(schedule)
+        // storeSignedBatch takes the SIGNED counterpart — fabricateMigrationPCZTs only produces the
+        // unsigned side; "sign" them by re-wrapping each id/pczt pair (this test only cares about
+        // the count, not real signing).
+        let unsigned = engine.fabricateMigrationPCZTs(schedule)
+        let signed = unsigned.map { MigrationSignedTransferPczt(id: $0.id, pczt: $0.pczt) }
 
-        engine.storeSignedBatch(pczts)
+        engine.storeSignedBatch(signed)
 
-        #expect(engine.readout().signedBatchCount == pczts.count)
+        #expect(engine.readout().signedBatchCount == signed.count)
     }
 
     @Test func submitSignedSplitAppliesSameDeterministicSplitAsPrepareSplit() async {
@@ -513,7 +525,7 @@ import ComposableArchitecture
         let pczt = engine.fabricateNoteSplitPCZT()
         let result = await engine.submitSignedSplit(pczt)
 
-        guard case TransferResult.success = result else {
+        guard case MigrationTransferResult.success = result else {
             Issue.record("Expected success from submitSignedSplit")
             return
         }
@@ -731,7 +743,7 @@ import ComposableArchitecture
 
         let result = await engine.migrateDust()
 
-        guard case TransferResult.success? = result else {
+        guard case MigrationTransferResult.success? = result else {
             Issue.record("Expected migrateDust to succeed with unlocked dust present")
             return
         }

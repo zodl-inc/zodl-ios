@@ -8,10 +8,12 @@
 //  `.splitting` phase/state, the txid pasteboard copy, the failure sheet dismissal (cancel/retry),
 //  the `continueTapped`/`closeTapped` delegate contract (both close the flow via the coordinator's
 //  `isFlowRoot` check — re-entry is always the flow root now, across both phases), `onAppear`
-//  subscribing to `migrationStateStream()` (with a defensive jump straight to `.confirmed` if the
-//  split already finished before this screen mounted), and retry re-submission. Also covers
+//  subscribing to `migrationManager.stateEvents()` (with a defensive jump straight to `.confirmed`
+//  if the split already finished before this screen mounted), and retry re-submission. Also covers
 //  MOB-1468's Keystone note-split retry fork: `retryTapped` re-broadcasts a coordinator-set
 //  `signedNoteSplitPczt` via `submitSignedNoteSplit` rather than re-submitting the proposal.
+//  MOB-1496: the software-signing/resubmission paths now hit the real per-account SDK surface
+//  (`AccountUUID` + a derived `UnifiedSpendingKey` + `migrationManager.networkPrivacyOptions()`).
 //  `.serialized`: several cases drive the process-global `@Shared(.inMemory(.selectedWalletAccount))`,
 //  and the copy action writes the shared toast.
 //
@@ -24,6 +26,45 @@ import ComposableArchitecture
 @testable import zodl_internal
 
 @Suite(.serialized) struct MigrationNoteSplitTests {
+    /// MOB-1496: `migrationManager.networkPrivacyOptions()` has no macro default (unlike the SDK
+    /// synchronizer's `.noOp`), so any test reaching `submitNoteSplit`/`resubmitSignedNoteSplit`
+    /// must mock it explicitly or trip `unimplemented`.
+    private static let defaultNetworkPrivacyOptions = MigrationNetworkPrivacyOptions(
+        useTor: false,
+        submissionEndpoint: LightWalletEndpoint(address: "", port: 0)
+    )
+
+    /// MOB-1496: mirrors `MigrationTransferPlanTests`' setup hook — every test gets a selected
+    /// software account by default; the default-state test overrides its own assertion instead
+    /// (see its comment).
+    init() {
+        @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
+        $selectedWalletAccount.withLock { $0 = walletAccount(keystone: false, idByte: 0) }
+    }
+
+    private func walletAccount(keystone: Bool, idByte: UInt8) -> WalletAccount {
+        WalletAccount(
+            Account(
+                id: AccountUUID(id: [UInt8](repeating: idByte, count: 16)),
+                name: keystone ? "Keystone" : "Zodl",
+                keySource: keystone ? String(localizable: .accountsKeystone).lowercased() : nil,
+                seedFingerprint: nil,
+                hdAccountIndex: Zip32AccountIndex(0),
+                ufvk: nil,
+                uivk: nil
+            )
+        )
+    }
+
+    /// MOB-1496: the software-signing path derives a real USK from the wallet's stored seed — see
+    /// `MigrationTransferPlanTests`' twin helper for the rationale.
+    private func withDependenciesUSKDerivable(_ values: inout DependencyValues) {
+        values.derivationTool = .liveValue
+        values.mnemonic = .mock
+        values.walletStorage = .noOp
+        values.zcashSDKEnvironment = .testnet
+    }
+
     @MainActor @Test func defaultStateIsSplittingWithNoFailureSheet() async {
         let state = MigrationNoteSplit.State()
 
@@ -34,7 +75,9 @@ import ComposableArchitecture
         #expect(state.isFailurePresented == false)
         #expect(state.isFlowRoot == false)
         #expect(state.signedNoteSplitPczt == nil)
-        #expect(state.selectedWalletAccount == nil)
+        // Not asserting `selectedWalletAccount == nil`: MOB-1496's `init()` above seeds a default
+        // selected account for every test in this suite — see `MigrationTransferPlanTests`' twin
+        // assertion for the rationale.
     }
 
     @MainActor @Test func closeTappedWhenFlowRootEmitsDelegateContinued() async {
@@ -125,8 +168,8 @@ import ComposableArchitecture
             MigrationNoteSplit()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.getMigrationState = { .splitPendingConfirmation }
-            $0.sdkSynchronizer.migrationStateStream = { stateStream.eraseToAnyPublisher() }
+            $0.sdkSynchronizer.getMigrationState = { _ in .splitPendingConfirmation }
+            $0.migrationManager.stateEvents = { _ in stateStream.eraseToAnyPublisher() }
         }
 
         // No prepare/submit call is made any more — the split already started elsewhere (under the
@@ -147,11 +190,14 @@ import ComposableArchitecture
             MigrationNoteSplit()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.getMigrationState = { .readyToPropose }
-            $0.sdkSynchronizer.migrationStateStream = { stateStream.eraseToAnyPublisher() }
+            $0.sdkSynchronizer.getMigrationState = { _ in .readyToPropose }
+            $0.migrationManager.stateEvents = { _ in stateStream.eraseToAnyPublisher() }
         }
 
-        await store.send(.onAppear) {
+        // `.onAppear` itself mutates no state — the jump-to-confirmed check runs inside its `.run`
+        // effect and arrives asynchronously as a separate `.splitConfirmed` action.
+        await store.send(.onAppear)
+        await store.receive(\.splitConfirmed) {
             $0.phase = .confirmed
         }
 
@@ -165,8 +211,8 @@ import ComposableArchitecture
             MigrationNoteSplit()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.getMigrationState = { .splitPendingConfirmation }
-            $0.sdkSynchronizer.migrationStateStream = { stateStream.eraseToAnyPublisher() }
+            $0.sdkSynchronizer.getMigrationState = { _ in .splitPendingConfirmation }
+            $0.migrationManager.stateEvents = { _ in stateStream.eraseToAnyPublisher() }
         }
 
         await store.send(.onAppear)
@@ -175,6 +221,33 @@ import ComposableArchitecture
         await store.receive(\.splitConfirmed) {
             $0.phase = .confirmed
         }
+
+        stateStream.send(completion: .finished)
+        await store.finish()
+    }
+
+    @MainActor @Test func onAppearWithNoSelectedAccountSkipsOneShotCheckButStillSubscribes() async {
+        // No account -> the one-shot `getMigrationState` guard short-circuits, but the stream
+        // subscription is unconditional (the manager resolves a nil accountUUID internally).
+        @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
+        $selectedWalletAccount.withLock { $0 = nil }
+
+        let stateStream = PassthroughSubject<MigrationState, Never>()
+        let getMigrationStateCalls = LockIsolated<Int>(0)
+        let store = TestStore(initialState: MigrationNoteSplit.State()) {
+            MigrationNoteSplit()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.getMigrationState = { _ in
+                getMigrationStateCalls.withValue { $0 += 1 }
+                return .readyToPropose
+            }
+            $0.migrationManager.stateEvents = { _ in stateStream.eraseToAnyPublisher() }
+        }
+
+        await store.send(.onAppear)
+
+        #expect(getMigrationStateCalls.value == 0)
 
         stateStream.send(completion: .finished)
         await store.finish()
@@ -225,10 +298,9 @@ import ComposableArchitecture
         }
     }
 
-    // MARK: - retryTapped: dismiss + re-submit
+    // MARK: - retryTapped: dismiss + re-submit (software path — needs account + USK)
 
     @MainActor @Test func retryTappedDismissesFailureSheetAndResubmitsStoredProposal() async {
-        let stateStream = PassthroughSubject<MigrationState, Never>()
         let submitCalls = LockIsolated<Int>(0)
         let proposal = NoteSplitProposal(outputNotes: [Zatoshi(500_000_000)], fee: Zatoshi(100_000))
         var state = MigrationNoteSplit.State(phase: .splitting, isFailurePresented: true)
@@ -237,11 +309,12 @@ import ComposableArchitecture
             MigrationNoteSplit()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.migrationStateStream = { stateStream.eraseToAnyPublisher() }
-            $0.sdkSynchronizer.submitNoteSplit = { _ in
+            $0.sdkSynchronizer.submitNoteSplit = { _, _, _, _ in
                 submitCalls.withValue { $0 += 1 }
-                return .success(txId: "retried-tx-id")
+                return MigrationTransferResult.success(txId: "retried-tx-id")
             }
+            $0.migrationManager.networkPrivacyOptions = { Self.defaultNetworkPrivacyOptions }
+            withDependenciesUSKDerivable(&$0)
         }
 
         await store.send(.retryTapped) {
@@ -252,31 +325,52 @@ import ComposableArchitecture
         }
 
         #expect(submitCalls.value == 1)
+    }
 
-        stateStream.send(completion: .finished)
-        await store.finish()
+    @MainActor @Test func retryTappedWithNoProposalAndNoSignedPcztReportsNetworkErrorWithoutCallingSDK() async {
+        // Defensive branch: neither a stored proposal nor a signed PCZT to retry with — the store
+        // reports a retryable network error rather than crashing on a force-unwrap.
+        let submitCalls = LockIsolated<Int>(0)
+        let store = TestStore(
+            initialState: MigrationNoteSplit.State(phase: .splitting, isFailurePresented: true)
+        ) {
+            MigrationNoteSplit()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.submitNoteSplit = { _, _, _, _ in
+                submitCalls.withValue { $0 += 1 }
+                return MigrationTransferResult.success(txId: "should-not-be-called")
+            }
+        }
+
+        await store.send(.retryTapped) {
+            $0.isFailurePresented = false
+        }
+
+        #expect(submitCalls.value == 0)
     }
 
     // MARK: - MOB-1468: Keystone note-split Retry forks on signedNoteSplitPczt
 
     @MainActor @Test func retryTappedWithSignedNoteSplitPcztRebroadcastsSamePcztInsteadOfResubmittingProposal() async {
-        let submitSignedCalls = LockIsolated<[Pczt]>([])
+        let submitSignedCalls = LockIsolated<[Data]>([])
         let submitProposalCalls = LockIsolated<Int>(0)
-        let signedPczt: Pczt = Data([0xCC, 0xDD])
+        let signedPczt = Data([0xCC, 0xDD])
         var state = MigrationNoteSplit.State(phase: .splitting, isFailurePresented: true, signedNoteSplitPczt: signedPczt)
         state.proposal = NoteSplitProposal(outputNotes: [Zatoshi(500_000_000)], fee: Zatoshi(100_000))
         let store = TestStore(initialState: state) {
             MigrationNoteSplit()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.submitSignedNoteSplit = { pczt in
+            $0.sdkSynchronizer.submitSignedNoteSplit = { _, pczt, _ in
                 submitSignedCalls.withValue { $0.append(pczt) }
-                return .success(txId: "resubmitted-tx-id")
+                return MigrationTransferResult.success(txId: "resubmitted-tx-id")
             }
-            $0.sdkSynchronizer.submitNoteSplit = { _ in
+            $0.sdkSynchronizer.submitNoteSplit = { _, _, _, _ in
                 submitProposalCalls.withValue { $0 += 1 }
-                return .success(txId: "should-not-be-called")
+                return MigrationTransferResult.success(txId: "should-not-be-called")
             }
+            $0.migrationManager.networkPrivacyOptions = { Self.defaultNetworkPrivacyOptions }
         }
 
         await store.send(.retryTapped) {
@@ -291,7 +385,6 @@ import ComposableArchitecture
     }
 
     @MainActor @Test func retryTappedWithNoSignedNoteSplitPcztUsesExistingSoftwareRetry() async {
-        let stateStream = PassthroughSubject<MigrationState, Never>()
         let submitSignedCalls = LockIsolated<Int>(0)
         let submitProposalCalls = LockIsolated<Int>(0)
         let proposal = NoteSplitProposal(outputNotes: [Zatoshi(500_000_000)], fee: Zatoshi(100_000))
@@ -301,15 +394,16 @@ import ComposableArchitecture
             MigrationNoteSplit()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.migrationStateStream = { stateStream.eraseToAnyPublisher() }
-            $0.sdkSynchronizer.submitSignedNoteSplit = { _ in
+            $0.sdkSynchronizer.submitSignedNoteSplit = { _, _, _ in
                 submitSignedCalls.withValue { $0 += 1 }
-                return .success(txId: "should-not-be-called")
+                return MigrationTransferResult.success(txId: "should-not-be-called")
             }
-            $0.sdkSynchronizer.submitNoteSplit = { _ in
+            $0.sdkSynchronizer.submitNoteSplit = { _, _, _, _ in
                 submitProposalCalls.withValue { $0 += 1 }
-                return .success(txId: "retried-tx-id")
+                return MigrationTransferResult.success(txId: "retried-tx-id")
             }
+            $0.migrationManager.networkPrivacyOptions = { Self.defaultNetworkPrivacyOptions }
+            withDependenciesUSKDerivable(&$0)
         }
 
         await store.send(.retryTapped) {
@@ -321,9 +415,6 @@ import ComposableArchitecture
 
         #expect(submitSignedCalls.value == 0)
         #expect(submitProposalCalls.value == 1)
-
-        stateStream.send(completion: .finished)
-        await store.finish()
     }
 
     @MainActor @Test func splitConfirmedClearsSignedNoteSplitPczt() async {
@@ -337,5 +428,36 @@ import ComposableArchitecture
             $0.phase = .confirmed
             $0.signedNoteSplitPczt = nil
         }
+    }
+
+    // MARK: - MOB-1496: broadcast-landed-but-record-failed is treated as success, not failure
+
+    @MainActor @Test func retryTappedWhenRecordFailsAfterBroadcastStillReportsSuccessAndReconciles() async {
+        let reconcileCalls = LockIsolated<Int>(0)
+        let proposal = NoteSplitProposal(outputNotes: [Zatoshi(500_000_000)], fee: Zatoshi(100_000))
+        var state = MigrationNoteSplit.State(phase: .splitting, isFailurePresented: true)
+        state.proposal = proposal
+        let store = TestStore(initialState: state) {
+            MigrationNoteSplit()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.submitNoteSplit = { _, _, _, _ in
+                throw ZcashError.migrationRecordFailedAfterBroadcast(NSError(domain: "test", code: 1))
+            }
+            $0.migrationManager.networkPrivacyOptions = { Self.defaultNetworkPrivacyOptions }
+            $0.migrationManager.reconcile = { reconcileCalls.withValue { $0 += 1 } }
+            withDependenciesUSKDerivable(&$0)
+        }
+
+        await store.send(.retryTapped) {
+            $0.isFailurePresented = false
+        }
+        // No further state diff to describe: `txId` was already `""` (the success-like path's
+        // placeholder value matches the untouched default) and `isFailurePresented` was already
+        // flipped to `false` by `.retryTapped` above.
+        await store.receive(\.splitResult)
+
+        #expect(store.state.isFailurePresented == false)
+        #expect(reconcileCalls.value == 1)
     }
 }

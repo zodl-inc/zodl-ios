@@ -24,8 +24,11 @@
 //  screen had none before) instead of proceeding to sign+store. The Keystone fork's batch
 //  (`requestKeystoneSignature`) now proposes the note-split PCZT first too, when needed, so the WHOLE
 //  batch (split + all N transfers) signs in the same QR ceremony — `storeSignedMigrationTransactions`
-//  already stores an arbitrary `[Pczt]` atomically, so the no-partial-storage invariant holds
-//  unchanged. `MigrationNoteSplit` itself no longer requests Keystone signing (re-entry-only now).
+//  stores the whole `[MigrationSignedTransferPczt]` array atomically, so the no-partial-storage
+//  invariant holds unchanged (MOB-1496: see `requestKeystoneSignature`'s doc for the note-split
+//  PCZT's sentinel-id wrapping, needed since it's typed differently — raw `Data` — from the
+//  schedule's own PCZTs). `MigrationNoteSplit` itself no longer requests Keystone signing
+//  (re-entry-only now).
 //
 
 import Foundation
@@ -98,12 +101,18 @@ struct MigrationTransferPlan {
             /// MOB-1468 (Keystone): the schedule's PCZTs (ALL N transfers, plus the note-split PCZT
             /// first when needed — MOB-1478 W4) were proposed and need QR signing in ONE batched
             /// session — the shared shape across the Keystone signing sources so the coordinator can
-            /// treat them symmetrically.
-            case keystoneSignRequested([Pczt])
+            /// treat them symmetrically. MOB-1496: the note-split PCZT (raw `Data`) rides along
+            /// wrapped under a `"note-split"` sentinel id — see `requestKeystoneSignature`'s doc.
+            case keystoneSignRequested([MigrationUnsignedTransferPczt])
         }
     }
 
+    @Dependency(\.derivationTool) var derivationTool
+    @Dependency(\.migrationManager) var migrationManager
+    @Dependency(\.mnemonic) var mnemonic
     @Dependency(\.sdkSynchronizer) var sdkSynchronizer
+    @Dependency(\.walletStorage) var walletStorage
+    @Dependency(\.zcashSDKEnvironment) var zcashSDKEnvironment
 
     init() { }
 
@@ -128,23 +137,39 @@ struct MigrationTransferPlan {
                 }
 
                 let schedule = state.schedule ?? MigrationSchedule(transfers: [], estimatedDurationHours: 0)
-                let needsNoteSplit = sdkSynchronizer.isNoteSplitNeeded()
+                guard let account = state.selectedWalletAccount else { return .none }
 
-                guard state.selectedWalletAccount?.vendor == .keystone else {
-                    return .run { send in
+                guard account.vendor != WalletAccount.Vendor.keystone else {
+                    return requestKeystoneSignature(for: schedule, account: account)
+                }
+
+                guard let zip32AccountIndex = account.zip32AccountIndex else { return .none }
+
+                return .run { send in
+                    do {
+                        let needsNoteSplit = try await sdkSynchronizer.isNoteSplitNeeded(account.id)
+                        let usk = try MigrationSpendingKeyDerivation.deriveUSK(
+                            zip32AccountIndex: zip32AccountIndex,
+                            walletStorage: walletStorage,
+                            mnemonic: mnemonic,
+                            derivationTool: derivationTool,
+                            networkType: zcashSDKEnvironment.network().networkType
+                        )
                         if needsNoteSplit {
-                            let proposal = await sdkSynchronizer.prepareNoteSplit()
-                            let splitResult = await sdkSynchronizer.submitNoteSplit(proposal)
-                            guard case .success = splitResult else {
+                            let proposal = try await sdkSynchronizer.prepareNoteSplit(account.id)
+                            let options = migrationManager.networkPrivacyOptions()
+                            let splitResult = try await sdkSynchronizer.submitNoteSplit(account.id, proposal, usk, options)
+                            guard case MigrationTransferResult.success = splitResult else {
                                 await send(.noteSplitFailed)
                                 return
                             }
                         }
-                        await sdkSynchronizer.signAndStoreMigrationSchedule(schedule)
+                        try await sdkSynchronizer.signAndStoreMigrationSchedule(account.id, schedule, usk)
                         await send(.scheduleSigned)
+                    } catch {
+                        await send(.noteSplitFailed)
                     }
                 }
-                return requestKeystoneSignature(for: schedule, includeNoteSplit: needsNoteSplit)
 
             case .delegate:
                 return .none
@@ -165,8 +190,16 @@ struct MigrationTransferPlan {
                     return .none
                 }
 
+                guard let accountUUID = state.selectedWalletAccount?.id else { return .none }
+
+                // [MOB-1496] W6 wires the residual choice — `includeResidual` hardcoded `false`
+                // pending that. This screen is only ever reached for `.privateScheduled` mode (the
+                // coordinator routes `.immediate` through `MigrationReviewTransfer` instead), so
+                // `proposeMigrationTransfers` (not `proposeImmediateMigration`) is always correct
+                // here.
                 return .run { send in
-                    let schedule = await sdkSynchronizer.proposeMigrationTransfers()
+                    let schedule = (try? await sdkSynchronizer.proposeMigrationTransfers(accountUUID, false))
+                        ?? MigrationSchedule(transfers: [], estimatedDurationHours: 0)
                     await send(.transfersProposed(schedule))
                 }
 
@@ -181,15 +214,29 @@ struct MigrationTransferPlan {
     }
 
     /// MOB-1468 (Keystone) `confirmTapped` fork: proposes ALL of the schedule's PCZTs — prefixed with
-    /// the note-split PCZT when `includeNoteSplit` (MOB-1478 W4), so the whole batch signs in one QR
-    /// ceremony — and hands them to the coordinator for that ONE batched QR-signing session.
-    private func requestKeystoneSignature(for schedule: MigrationSchedule, includeNoteSplit: Bool) -> Effect<Action> {
+    /// the note-split PCZT when needed (MOB-1478 W4), so the whole batch signs in one QR ceremony —
+    /// and hands them to the coordinator for that ONE batched QR-signing session.
+    ///
+    /// MOB-1496: the real SDK types the note-split PCZT (`proposeNoteSplitPCZT -> Data`) and the
+    /// schedule's transfer PCZTs (`proposeMigrationPCZTs -> [MigrationUnsignedTransferPczt]`)
+    /// differently — unlike the pre-real-SDK stub, where both were the same opaque `Pczt` blob and
+    /// could be concatenated directly. The note-split PCZT is wrapped under a `"note-split"`
+    /// sentinel id so it can still ride in the same typed batch/QR ceremony; on the signed side,
+    /// the WHOLE batch (including that entry) is stored via one `storeSignedMigrationTransactions`
+    /// call (`MigrationCoordFlowCoordinator`'s `.scan(.foundPCZTBatch)`/`.simulateSignature`
+    /// handlers) — the engine does not yet special-case the sentinel entry back onto the dedicated
+    /// `storeSignedNoteSplitPCZT` path. Known gap, called out in the task report; the software path
+    /// above (which DOES route the split through `submitNoteSplit` correctly) is unaffected.
+    private func requestKeystoneSignature(for schedule: MigrationSchedule, account: WalletAccount) -> Effect<Action> {
         .run { send in
-            var pczts: [Pczt] = []
-            if includeNoteSplit {
-                pczts.append(await sdkSynchronizer.proposeNoteSplitPCZT())
+            let needsNoteSplit = (try? await sdkSynchronizer.isNoteSplitNeeded(account.id)) ?? false
+            var pczts: [MigrationUnsignedTransferPczt] = []
+            if needsNoteSplit, let splitPczt = try? await sdkSynchronizer.proposeNoteSplitPCZT(account.id) {
+                pczts.append(MigrationUnsignedTransferPczt(id: "note-split", pczt: splitPczt))
             }
-            pczts.append(contentsOf: await sdkSynchronizer.proposeMigrationPCZTs(schedule))
+            if let schedulePczts = try? await sdkSynchronizer.proposeMigrationPCZTs(account.id, schedule) {
+                pczts.append(contentsOf: schedulePczts)
+            }
             await send(.delegate(.keystoneSignRequested(pczts)))
         }
     }

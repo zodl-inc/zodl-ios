@@ -591,6 +591,7 @@ struct SendForm {
     private func orchardSpendCheckEffect(state: inout State) -> Effect<Action> {
         guard
             migrationManager.isIronwoodActivated(),
+            let accountUUID = state.selectedWalletAccount?.id,
             let number = numberFormatter.number(state.zecAmountText.data)
         else {
             state.isOrchardSpendDisclaimerVisible = false
@@ -607,7 +608,7 @@ struct SendForm {
         }
 
         return .run { send in
-            await send(.orchardSpendCheckResult(await sdkSynchronizer.sendRequiresOrchardFunds(parsedAmount)))
+            await send(.orchardSpendCheckResult(await sdkSynchronizer.sendRequiresOrchardFunds(accountUUID, parsedAmount)))
         }
         .cancellable(id: CancelID.orchardSpendCheck, cancelInFlight: true)
     }

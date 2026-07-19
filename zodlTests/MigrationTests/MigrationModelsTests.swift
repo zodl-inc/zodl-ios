@@ -3,8 +3,17 @@
 //  zodlTests
 //
 //  Covers Codable round-trips and basic invariants for the Orchard -> Ironwood migration
-//  value models (Models/Migration/MigrationModels.swift). No shared/global state -> no
-//  `.serialized`.
+//  value models (Models/Migration/MigrationModels.swift). MOB-1496: most of the pre-real-SDK
+//  shadow types this file used to cover (`MigrationState`, `AttentionReason`/`MigrationAttentionReason`,
+//  `TransferResult`/`MigrationTransferResult`, `NetworkPrivacyOptions`/`MigrationNetworkPrivacyOptions`)
+//  are now real SDK types the app no longer owns — and, per the SDK's ground truth
+//  (`Model/MigrationModels.swift`, `Migration/OrchardMigration.swift`), none of them are `Codable`
+//  (`Equatable, Sendable` only; `MigrationNetworkPrivacyOptions` is `Equatable` only, carrying a
+//  non-`Sendable` `LightWalletEndpoint`) — so their round-trip coverage is simply gone, not
+//  replaceable. `MigrationSchedule`/`MigrationTransferProposal` ARE still `Codable` (real SDK types,
+//  kept for local persistence) — their coverage is retargeted, not dropped. What remains app-owned
+//  in `MigrationModels.swift` (`MigrationSummary`, `MigrationTransferRow`, `MigrationMode`) is
+//  unaffected. No shared/global state -> no `.serialized`.
 //
 
 import Testing
@@ -20,86 +29,23 @@ import Foundation
         }
     }
 
-    @Test func networkPrivacyOptionsCodableRoundTripWithNilEndpoint() throws {
-        let original = NetworkPrivacyOptions(useTor: true, submissionEndpoint: nil)
-        let data = try JSONEncoder().encode(original)
-        #expect(try JSONDecoder().decode(NetworkPrivacyOptions.self, from: data) == original)
-    }
-
-    @Test func networkPrivacyOptionsCodableRoundTripWithNonNilEndpoint() throws {
-        let original = NetworkPrivacyOptions(useTor: false, submissionEndpoint: "https://example.com:9067")
-        let data = try JSONEncoder().encode(original)
-        #expect(try JSONDecoder().decode(NetworkPrivacyOptions.self, from: data) == original)
-    }
-
-    @Test func transferResultCodableRoundTripAllCases() throws {
-        let cases: [TransferResult] = [
-            TransferResult.success(txId: "abc123"),
-            TransferResult.networkError(retryable: true),
-            TransferResult.invalidNote,
-            TransferResult.expired
-        ]
-
-        for original in cases {
-            let data = try JSONEncoder().encode(original)
-            #expect(try JSONDecoder().decode(TransferResult.self, from: data) == original)
-        }
-    }
-
-    @Test func attentionReasonCodableRoundTripAllCases() throws {
-        let cases: [AttentionReason] = [
-            AttentionReason.invalidTransfer(transferId: "transfer-1"),
-            AttentionReason.transferExpired,
-            AttentionReason.syncRequiredBeforeNext,
-            AttentionReason.transferStalled(transferNumber: 3)
-        ]
-
-        for original in cases {
-            let data = try JSONEncoder().encode(original)
-            #expect(try JSONDecoder().decode(AttentionReason.self, from: data) == original)
-        }
-    }
-
-    @Test func migrationStateCodableRoundTripAllCases() throws {
-        let progress = MigrationProgress(
-            completedTransfers: 2,
-            totalTransfers: 5,
-            remainingOrchard: Zatoshi(1_000),
-            nextTransferReadyAtHeight: 123_456
-        )
-
-        let cases: [MigrationState] = [
-            MigrationState.notStarted,
-            MigrationState.splitPendingConfirmation,
-            MigrationState.readyToPropose,
-            MigrationState.inProgress(progress),
-            MigrationState.requiresAttention(AttentionReason.transferExpired),
-            MigrationState.complete
-        ]
-
-        for original in cases {
-            let data = try JSONEncoder().encode(original)
-            #expect(try JSONDecoder().decode(MigrationState.self, from: data) == original)
-        }
-    }
-
     @Test func migrationScheduleCodableRoundTripWithNonTrivialTransferGraph() throws {
         let transfers = [
-            TransferProposal(
+            MigrationTransferProposal(
                 id: "transfer-1",
                 amount: Zatoshi(500),
                 anchorHeight: 100,
                 nextExecutableAfterHeight: 110,
                 expiryHeight: 200
             ),
-            TransferProposal(
+            MigrationTransferProposal(
                 id: "transfer-2",
                 amount: Zatoshi(1_500),
                 anchorHeight: 110,
                 nextExecutableAfterHeight: 220,
                 expiryHeight: 310
             ),
-            TransferProposal(
+            MigrationTransferProposal(
                 id: "transfer-3",
                 amount: Zatoshi(2_500),
                 anchorHeight: 220,
@@ -185,7 +131,7 @@ import Foundation
     }
 
     @Test func transferProposalIdDrivesIdentifiable() {
-        let proposal = TransferProposal(
+        let proposal = MigrationTransferProposal(
             id: "transfer-42",
             amount: Zatoshi(999),
             anchorHeight: 10,

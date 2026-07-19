@@ -41,29 +41,42 @@ private final class MigrationBGSchedulerImpl: @unchecked Sendable {
     @Dependency(\.migrationManager) var migrationManager
     @Dependency(\.sdkSynchronizer) var sdkSynchronizer
     @Dependency(\.userNotifications) var userNotifications
+    @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
 
     /// Shared by `scheduleFirstWindow`/`scheduleNextWindow` — only the margin differs. The
     /// complete-check choke point lives inside `WakeupAction.decide`, so both call sites uniformly
-    /// no-op (cancel) once the migration is done, without duplicating that check here.
+    /// no-op (cancel) once the migration is done, without duplicating that check here. MOB-1496: no
+    /// selected account, or any SDK read failing, skips arming entirely rather than crashing —
+    /// a later call (foreground entry, the next transfer's own completion) re-attempts.
     func arm(margin: TimeInterval) async {
-        let progress = sdkSynchronizer.getMigrationProgress()
-        let preferredExecutableAt = progress?.nextTransferReadyAtHeight.flatMap { height in
-            sdkSynchronizer.estimateTimestamp(height).map { Date(timeIntervalSince1970: $0) }
+        guard let accountUUID = selectedWalletAccount?.id else {
+            LoggerProxy.event("MigrationBGScheduler.arm: no selected account, skipping.")
+            return
         }
-        let window = MigrationCadence.window(
-            margin: margin,
-            preferredExecutableAt: preferredExecutableAt,
-            now: Date()
-        )
 
-        let action = WakeupAction.decide(
-            state: sdkSynchronizer.getMigrationState(),
-            isManualDelivery: migrationManager.isManualDelivery(),
-            window: window,
-            nextTransferNumber: (progress?.completedTransfers ?? 0) + 1
-        )
+        do {
+            let progress = try await sdkSynchronizer.getMigrationProgress(accountUUID)
+            let preferredExecutableAt = progress?.nextTransferReadyAtHeight.flatMap { height in
+                sdkSynchronizer.estimateTimestamp(height).map { Date(timeIntervalSince1970: $0) }
+            }
+            let window = MigrationCadence.window(
+                margin: margin,
+                preferredExecutableAt: preferredExecutableAt,
+                now: Date()
+            )
 
-        await execute(action)
+            let state = try await sdkSynchronizer.getMigrationState(accountUUID)
+            let action = WakeupAction.decide(
+                state: state,
+                isManualDelivery: migrationManager.isManualDelivery(),
+                window: window,
+                nextTransferNumber: (progress?.completedTransfers ?? 0) + 1
+            )
+
+            await execute(action)
+        } catch {
+            LoggerProxy.error("MigrationBGScheduler.arm: SDK read failed \(error)")
+        }
     }
 
     func cancelAll() async {

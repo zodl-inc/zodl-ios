@@ -67,8 +67,8 @@ extension MigrationCoordFlow {
 
             case .onAppear:
                 guard state.path.isEmpty else { return .none }
-                return .run { send in
-                    let pathState = await reentryPathState()
+                return .run { [accountUUID = state.selectedWalletAccount?.id] send in
+                    let pathState = await reentryPathState(accountUUID: accountUUID)
                     await send(.pushNextPermissionStep(PermissionStepResult(pathState: pathState)))
                 }
 
@@ -87,7 +87,6 @@ extension MigrationCoordFlow {
             case .entry(.delegate(.chose(let mode))):
                 state.mode = mode
                 migrationManager.setMigrationMode(mode)
-                sdkSynchronizer.selectMigrationMode(mode)
 
                 switch mode {
                 case .immediate:
@@ -98,8 +97,8 @@ extension MigrationCoordFlow {
                     // explicitly. Both checks here are synchronous SDK/dependency reads, so no
                     // effect is needed.
                     if walletStorage.exportTorSetupFlag() == true {
-                        state.networkPrivacyOptions.useTor = true
-                        migrationManager.setNetworkPrivacyOptions(state.networkPrivacyOptions)
+                        migrationManager.setNetworkPrivacyOptions(true)
+                        state.networkPrivacyOptions = migrationManager.networkPrivacyOptions()
                         state.path.append(.reviewTransfer(MigrationReviewTransfer.State(mode: .immediate)))
                     } else {
                         presentTorSheet(destination: .reviewTransfer, state: &state)
@@ -119,8 +118,8 @@ extension MigrationCoordFlow {
                 // read the same value — MOB-1487's persist-fix); otherwise the toggle sheet is
                 // shown and the permission chain resumes from its confirm/dismiss.
                 if walletStorage.exportTorSetupFlag() == true {
-                    state.networkPrivacyOptions.useTor = true
-                    migrationManager.setNetworkPrivacyOptions(state.networkPrivacyOptions)
+                    migrationManager.setNetworkPrivacyOptions(true)
+                    state.networkPrivacyOptions = migrationManager.networkPrivacyOptions()
                     return .run { send in
                         await send(.pushNextPermissionStep(await nextPermissionStepResult()))
                     }
@@ -225,11 +224,24 @@ extension MigrationCoordFlow {
                 // Empty batch: nothing decoded to a usable signed PCZT — this abandons the signing
                 // session like a rejection (deferred pop of scan + sign back to the initiating
                 // screen, context cleared) and never stores anything (no-partial-storage invariant).
-                // The user re-initiates from the confirm button.
-                guard !signed.isEmpty else { return .send(.keystoneScanAbandoned) }
+                // The user re-initiates from the confirm button. MOB-1496: `signed` is the raw PCZT
+                // bytes in scan order (`parseMigrationPCZTBatch`'s shape) — zip back against the
+                // ORIGINAL unsigned batch's ids (still on the `keystoneSign` element beneath `scan`
+                // on the path) to rebuild `[MigrationSignedTransferPczt]`; a count mismatch is
+                // treated the same as an empty batch (nothing safely storable).
+                guard !signed.isEmpty,
+                      case let .keystoneSign(signState)? = state.path.dropLast().last,
+                      signed.count == signState.pczts.count,
+                      let accountUUID = state.selectedWalletAccount?.id else {
+                    return .send(.keystoneScanAbandoned)
+                }
 
-                return .run { [sdkSynchronizer] send in
-                    await sdkSynchronizer.storeSignedMigrationTransactions(signed)
+                let signedPczts = zip(signState.pczts, signed).map { unsigned, signedBytes in
+                    MigrationSignedTransferPczt(id: unsigned.id, pczt: signedBytes)
+                }
+
+                return .run { [sdkSynchronizer, accountUUID] send in
+                    try? await sdkSynchronizer.storeSignedMigrationTransactions(accountUUID, signedPczts)
                     await send(.keystoneSigningSubmitted(context: context))
                 }
 
@@ -238,6 +250,7 @@ extension MigrationCoordFlow {
             case .path(.element(id: let id, action: .keystoneSign(.delegate(.simulateSignature)))):
                 guard let context = state.pendingKeystoneSigning else { return .none }
                 guard case let .keystoneSign(signState) = state.path[id: id] else { return .none }
+                guard let accountUUID = state.selectedWalletAccount?.id else { return .none }
 
                 // Simulator-only bypass: no physical device exists to scan a QR back, so the batch
                 // is read straight off the already-pushed `keystoneSign` element's own state instead
@@ -245,11 +258,14 @@ extension MigrationCoordFlow {
                 // empty batch as a no-partial-storage safeguard against a failed scan), this button
                 // exists purely to exercise the resume chain for manual QA, so an empty batch falls
                 // back to a single fabricated placeholder rather than abandoning — the coordinator
-                // never inspects PCZT contents either way.
-                let signed: [Pczt] = signState.pczts.isEmpty ? [Pczt()] : signState.pczts
+                // never inspects PCZT contents either way. "Signing" is pretending the unsigned
+                // bytes are already signed (MOB-1496 — same fabricated-data spirit as before).
+                let signed: [MigrationSignedTransferPczt] = signState.pczts.isEmpty
+                    ? [MigrationSignedTransferPczt(id: "simulated", pczt: Data())]
+                    : signState.pczts.map { MigrationSignedTransferPczt(id: $0.id, pczt: $0.pczt) }
 
-                return .run { [sdkSynchronizer] send in
-                    await sdkSynchronizer.storeSignedMigrationTransactions(signed)
+                return .run { [sdkSynchronizer, accountUUID] send in
+                    try? await sdkSynchronizer.storeSignedMigrationTransactions(accountUUID, signed)
                     await send(.keystoneSigningSubmitted(context: context))
                 }
 
@@ -295,14 +311,14 @@ extension MigrationCoordFlow {
 
                 let hasStatusBeneath = state.path.contains { $0.is(\.status) }
                 if hasStatusBeneath {
-                    return .run { [sdkSynchronizer] send in
-                        await send(.sendNowCompleted(rows: sdkSynchronizer.migrationTransfers()))
+                    return .run { [migrationManager, accountUUID = state.selectedWalletAccount?.id] send in
+                        await send(.sendNowCompleted(rows: await migrationManager.migrationTransfers(accountUUID)))
                     }
                 }
 
                 // Manual-first-transfer path: no `.status` yet on the path — push a fresh one.
-                return .run { send in
-                    await send(.pushHydratedStatus(await statusProgressState(isFlowRoot: false)))
+                return .run { [accountUUID = state.selectedWalletAccount?.id] send in
+                    await send(.pushHydratedStatus(await statusProgressState(accountUUID: accountUUID, isFlowRoot: false)))
                 }
 
                 // MARK: - Self: pushHydratedStatus / pushHydratedPathState / sendNowCompleted
@@ -329,8 +345,8 @@ extension MigrationCoordFlow {
 
             case .path(.element(id: _, action: .status(.delegate(.sendNow)))):
                 let networkPrivacyOptions = state.networkPrivacyOptions
-                return .run { [sdkSynchronizer] send in
-                    let rows = sdkSynchronizer.migrationTransfers()
+                return .run { [migrationManager, accountUUID = state.selectedWalletAccount?.id] send in
+                    let rows = await migrationManager.migrationTransfers(accountUUID)
                     let overdueCount = rows.filter { $0.status == MigrationTransferRow.Status.overdue }.count
                     var sendingState = MigrationSending.State(totalCount: max(overdueCount, 1))
                     sendingState.networkPrivacyOptions = networkPrivacyOptions
@@ -342,14 +358,18 @@ extension MigrationCoordFlow {
                     statusState.isRescheduling = true
                     state.path[id: id] = .status(statusState)
                 }
+                guard let accountUUID = state.selectedWalletAccount?.id else { return .none }
                 // MOB-1478 (W7): lands `.rescheduleCompleted` on the SAME status element instead of
                 // pushing a fresh `TransferPlan` — `MigrationStatus` itself now owns the
-                // post-reschedule confirmation presentation.
-                return .run { [migrationBGScheduler, sdkSynchronizer, id] send in
-                    await sdkSynchronizer.rescheduleStalledMigrationTransfer()
+                // post-reschedule confirmation presentation. MOB-1496: `rescheduleStalledMigrationTransfer`
+                // is replaced by `rescheduleOverdueMigrationTransfer` — its returned proposal isn't
+                // consumed here either (never was); the coordinator re-reads fresh rows/summary
+                // straight after, same as before.
+                return .run { [migrationBGScheduler, sdkSynchronizer, migrationManager, accountUUID, id] send in
+                    _ = try? await sdkSynchronizer.rescheduleOverdueMigrationTransfer(accountUUID)
                     await migrationBGScheduler.scheduleFirstWindow()
-                    let rows = sdkSynchronizer.migrationTransfers()
-                    let totalDurationHours = sdkSynchronizer.migrationSummary().estimatedDurationHours
+                    let rows = await migrationManager.migrationTransfers(accountUUID)
+                    let totalDurationHours = await migrationManager.migrationSummary(accountUUID).estimatedDurationHours
                     await send(
                         .path(
                             .element(
@@ -363,8 +383,12 @@ extension MigrationCoordFlow {
                 // MARK: - Recovery
 
             case .path(.element(id: _, action: .recovery(.delegate(.recreate)))):
-                return .run { [sdkSynchronizer] send in
-                    let schedule = await sdkSynchronizer.restartCurrentMigrationStep()
+                guard let accountUUID = state.selectedWalletAccount?.id else { return .none }
+                // [MOB-1496] W6 wires the residual choice — `includeResidual` hardcoded `false`
+                // pending that.
+                return .run { [sdkSynchronizer, accountUUID] send in
+                    let schedule = (try? await sdkSynchronizer.restartCurrentMigrationStep(accountUUID, includeResidual: false))
+                        ?? MigrationSchedule(transfers: [], estimatedDurationHours: 0)
                     let planState = recreatedPlanState(schedule: schedule)
                     await send(.pushHydratedPathState(.transferPlan(planState)))
                 }
@@ -480,9 +504,8 @@ extension MigrationCoordFlow {
         state.pendingTorDestination = nil
         state.isTorSheetPresented = false
 
-        let options = NetworkPrivacyOptions(useTor: state.torSheetState.isTorOn, submissionEndpoint: nil)
-        migrationManager.setNetworkPrivacyOptions(options)
-        state.networkPrivacyOptions = options
+        migrationManager.setNetworkPrivacyOptions(state.torSheetState.isTorOn)
+        state.networkPrivacyOptions = migrationManager.networkPrivacyOptions()
 
         switch destination {
         case .reviewTransfer:
@@ -501,25 +524,25 @@ extension MigrationCoordFlow {
     /// Maps `manager.reentryRoute()` onto the flow-root screen State to append, hydrated from SDK
     /// members per the MOB-1466 spec's re-entry table. `.entry` appends nothing (Entry is the
     /// coordinator's own root screen, already showing).
-    private func reentryPathState() async -> MigrationCoordFlow.Path.State? {
-        switch migrationManager.reentryRoute() {
+    private func reentryPathState(accountUUID: AccountUUID?) async -> MigrationCoordFlow.Path.State? {
+        switch await migrationManager.reentryRoute() {
         case .recovery(let isExpired):
-            return .recovery(recoveryState(isExpired: isExpired, isFlowRoot: true))
+            return .recovery(await recoveryState(accountUUID: accountUUID, isExpired: isExpired, isFlowRoot: true))
 
         case .statusResume:
-            return .status(await statusResumeState(isFlowRoot: true))
+            return .status(await statusResumeState(accountUUID: accountUUID, isFlowRoot: true))
 
         case .statusProgress:
-            return .status(await statusProgressState(isFlowRoot: true))
+            return .status(await statusProgressState(accountUUID: accountUUID, isFlowRoot: true))
 
         case .complete:
-            return .complete(completeState(isFlowRoot: true))
+            return .complete(await completeState(accountUUID: accountUUID, isFlowRoot: true))
 
         case .noteSplitProgress:
             return .noteSplit(MigrationNoteSplit.State(phase: .splitting, isFlowRoot: true))
 
         case .reviewManual(let step, let total):
-            return .reviewTransfer(await reviewManualState(step: step, total: total, isFlowRoot: true))
+            return .reviewTransfer(await reviewManualState(accountUUID: accountUUID, step: step, total: total, isFlowRoot: true))
 
         case .entry:
             return nil
@@ -567,8 +590,8 @@ extension MigrationCoordFlow {
         return state
     }
 
-    private func recoveryState(isExpired: Bool, isFlowRoot: Bool) -> MigrationRecovery.State {
-        let rows = sdkSynchronizer.migrationTransfers()
+    private func recoveryState(accountUUID: AccountUUID?, isExpired: Bool, isFlowRoot: Bool) async -> MigrationRecovery.State {
+        let rows = await migrationManager.migrationTransfers(accountUUID)
         let (first, last) = expiredOrInvalidBounds(rows: rows)
         return MigrationRecovery.State(
             reason: isExpired ? .expired : .notesSpent,
@@ -578,9 +601,9 @@ extension MigrationCoordFlow {
         )
     }
 
-    private func statusResumeState(isFlowRoot: Bool) async -> MigrationStatus.State {
-        let rows = sdkSynchronizer.migrationTransfers()
-        let summary = sdkSynchronizer.migrationSummary()
+    private func statusResumeState(accountUUID: AccountUUID?, isFlowRoot: Bool) async -> MigrationStatus.State {
+        let rows = await migrationManager.migrationTransfers(accountUUID)
+        let summary = await migrationManager.migrationSummary(accountUUID)
         let stalledRow = rows.first { $0.status == MigrationTransferRow.Status.overdue }
         var state = MigrationStatus.State(
             presentation: .resume,
@@ -590,25 +613,25 @@ extension MigrationCoordFlow {
             stalledHoursAgo: stalledRow?.hoursFromNow ?? 0,
             isFlowRoot: isFlowRoot
         )
-        state.isSendNowDisabled = migrationManager.sendGate() != MigrationSendGate.allowed
+        state.isSendNowDisabled = await migrationManager.sendGate() != MigrationSendGate.allowed
         return state
     }
 
-    private func statusProgressState(isFlowRoot: Bool) async -> MigrationStatus.State {
-        let rows = sdkSynchronizer.migrationTransfers()
-        let summary = sdkSynchronizer.migrationSummary()
+    private func statusProgressState(accountUUID: AccountUUID?, isFlowRoot: Bool) async -> MigrationStatus.State {
+        let rows = await migrationManager.migrationTransfers(accountUUID)
+        let summary = await migrationManager.migrationSummary(accountUUID)
         var state = MigrationStatus.State(
             presentation: .progress,
             rows: IdentifiedArrayOf(uniqueElements: rows),
             totalDurationHours: summary.estimatedDurationHours,
             isFlowRoot: isFlowRoot
         )
-        state.isSendNowDisabled = migrationManager.sendGate() != MigrationSendGate.allowed
+        state.isSendNowDisabled = await migrationManager.sendGate() != MigrationSendGate.allowed
         return state
     }
 
-    private func completeState(isFlowRoot: Bool) -> MigrationComplete.State {
-        let summary = sdkSynchronizer.migrationSummary()
+    private func completeState(accountUUID: AccountUUID?, isFlowRoot: Bool) async -> MigrationComplete.State {
+        let summary = await migrationManager.migrationSummary(accountUUID)
         return MigrationComplete.State(
             totalTransferred: summary.transferred,
             dust: summary.dust,
@@ -618,14 +641,14 @@ extension MigrationCoordFlow {
             isFlowRoot: isFlowRoot,
             // MOB-1487: a previously locked remainder re-enters on the locked confirmation
             // instead of re-offering resolution (offered/none derive from `dust` otherwise).
-            dustResolution: sdkSynchronizer.isMigrationDustLocked()
+            dustResolution: migrationManager.isMigrationDustLocked()
                 ? MigrationComplete.State.DustResolution.locked
                 : nil
         )
     }
 
-    private func reviewManualState(step: Int, total: Int, isFlowRoot: Bool) async -> MigrationReviewTransfer.State {
-        let rows = sdkSynchronizer.migrationTransfers()
+    private func reviewManualState(accountUUID: AccountUUID?, step: Int, total: Int, isFlowRoot: Bool) async -> MigrationReviewTransfer.State {
+        let rows = await migrationManager.migrationTransfers(accountUUID)
         let nextRow = rows.first { $0.status == MigrationTransferRow.Status.active }
             ?? rows.first { $0.status == MigrationTransferRow.Status.overdue }
         return MigrationReviewTransfer.State(
