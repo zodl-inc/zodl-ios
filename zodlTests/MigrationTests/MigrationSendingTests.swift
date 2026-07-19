@@ -10,17 +10,54 @@
 //  scheduling the next background window after each success, presenting the failure sheet on
 //  failure/`nil`, and retry re-running only the failed step. Also covers (MOB-1487/MOB-1494)
 //  `isDustLane` defaulting to false and being settable via init — since MOB-1494 the flag only
-//  selects the dust-sweep execution (the on-screen copy is identical in every lane). No
-//  shared/global state -> no `.serialized`.
+//  selects the dust-sweep execution (the on-screen copy is identical in every lane). MOB-1496: both
+//  lanes now hit the real per-account SDK surface — `executeNextPendingMigrationTransfer` needs a
+//  concrete `AccountUUID`, and the dust lane additionally derives a real `UnifiedSpendingKey` (never
+//  for a Keystone account, which has no PCZT-based dust-sweep lane yet). `.serialized`: several
+//  cases drive the process-global `@Shared(.inMemory(.selectedWalletAccount))`.
 //
 
 import Testing
 import Foundation
 import ComposableArchitecture
-@preconcurrency import ZcashLightClientKit
+@testable @preconcurrency import ZcashLightClientKit
 @testable import zodl_internal
 
-@Suite struct MigrationSendingTests {
+@Suite(.serialized) struct MigrationSendingTests {
+    private struct TestFailure: Error { }
+
+    /// MOB-1496: every SDK call this store makes needs a concrete `AccountUUID` — this `init()` acts
+    /// as a per-test setup hook (Swift Testing instantiates a fresh struct per `@Test`), seeding a
+    /// selected software account by default; Keystone-specific tests override it locally. See
+    /// `MigrationTransferPlanTests`' twin helper for the fuller rationale.
+    init() {
+        @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
+        $selectedWalletAccount.withLock { $0 = walletAccount(keystone: false, idByte: 0) }
+    }
+
+    private func walletAccount(keystone: Bool, idByte: UInt8) -> WalletAccount {
+        WalletAccount(
+            Account(
+                id: AccountUUID(id: [UInt8](repeating: idByte, count: 16)),
+                name: keystone ? "Keystone" : "Zodl",
+                keySource: keystone ? String(localizable: .accountsKeystone).lowercased() : nil,
+                seedFingerprint: nil,
+                hdAccountIndex: Zip32AccountIndex(0),
+                ufvk: nil,
+                uivk: nil
+            )
+        )
+    }
+
+    /// MOB-1496: the dust lane's software path derives a real USK from the wallet's stored seed —
+    /// see `MigrationTransferPlanTests`' twin helper for the rationale.
+    private func withDependenciesUSKDerivable(_ values: inout DependencyValues) {
+        values.derivationTool = .liveValue
+        values.mnemonic = .mock
+        values.walletStorage = .noOp
+        values.zcashSDKEnvironment = .testnet
+    }
+
     @MainActor @Test func defaultStateIsSendingPhaseWithNoFailureSheet() async {
         let state = MigrationSending.State()
 
@@ -79,6 +116,31 @@ import ComposableArchitecture
         await store.send(.delegate(.closed))
     }
 
+    // MARK: - onAppear: no selected account -> nil result, same as any other failure
+
+    @MainActor @Test func onAppearWithNoSelectedAccountReportsNilResultWithoutCallingSDK() async {
+        @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
+        $selectedWalletAccount.withLock { $0 = nil }
+
+        let executedCount = LockIsolated<Int>(0)
+        let store = TestStore(initialState: MigrationSending.State(totalCount: 1)) {
+            MigrationSending()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in
+                executedCount.withValue { $0 += 1 }
+                return MigrationTransferResult.success(txId: "should-not-be-called")
+            }
+        }
+
+        await store.send(.onAppear)
+        await store.receive(\.transferResult) {
+            $0.isFailurePresented = true
+        }
+
+        #expect(executedCount.value == 0)
+    }
+
     // MARK: - onAppear: single transfer (immediate/manual/plan-first)
 
     @MainActor @Test func onAppearWithSingleTransferSucceedsAndReachesSentPhase() async {
@@ -88,7 +150,7 @@ import ComposableArchitecture
             MigrationSending()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _ in .success(txId: "tx-0") }
+            $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in MigrationTransferResult.success(txId: "tx-0") }
             $0.migrationManager.recordMigrationBroadcast = { recordBroadcastCalls.withValue { $0 += 1 } }
             $0.migrationBGScheduler.scheduleNextWindow = { scheduleNextWindowCalls.withValue { $0 += 1 } }
         }
@@ -116,12 +178,12 @@ import ComposableArchitecture
             MigrationSending()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _ in
+            $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in
                 let callIndex = executedCount.withValue { count -> Int in
                     count += 1
                     return count
                 }
-                return .success(txId: "tx-\(callIndex)")
+                return MigrationTransferResult.success(txId: "tx-\(callIndex)")
             }
             $0.migrationManager.recordMigrationBroadcast = { recordBroadcastCalls.withValue { $0 += 1 } }
             $0.migrationBGScheduler.scheduleNextWindow = { scheduleNextWindowCalls.withValue { $0 += 1 } }
@@ -150,15 +212,18 @@ import ComposableArchitecture
     }
 
     @MainActor @Test func onAppearPassesInjectedNetworkPrivacyOptionsToExecute() async {
-        let capturedOptions = LockIsolated<NetworkPrivacyOptions?>(nil)
-        let options = NetworkPrivacyOptions(useTor: true, submissionEndpoint: "https://example.com:9067")
+        let capturedOptions = LockIsolated<MigrationNetworkPrivacyOptions?>(nil)
+        let options = MigrationNetworkPrivacyOptions(
+            useTor: true,
+            submissionEndpoint: LightWalletEndpoint(address: "example.com", port: 9067)
+        )
         let store = TestStore(initialState: MigrationSending.State(totalCount: 1, networkPrivacyOptions: options)) {
             MigrationSending()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { passedOptions in
+            $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, passedOptions in
                 capturedOptions.setValue(passedOptions)
-                return .success(txId: "tx-0")
+                return MigrationTransferResult.success(txId: "tx-0")
             }
             $0.migrationManager.recordMigrationBroadcast = { }
             $0.migrationBGScheduler.scheduleNextWindow = { }
@@ -188,16 +253,17 @@ import ComposableArchitecture
             MigrationSending()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.migrateMigrationDust = { _ in
+            $0.sdkSynchronizer.migrateMigrationDust = { _, _, _ in
                 migrateDustCalls.withValue { $0 += 1 }
-                return .success(txId: "tx-dust")
+                return MigrationTransferResult.success(txId: "tx-dust")
             }
-            $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _ in
+            $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in
                 executeNextCalls.withValue { $0 += 1 }
-                return .success(txId: "tx-wrong-lane")
+                return MigrationTransferResult.success(txId: "tx-wrong-lane")
             }
             $0.migrationManager.recordMigrationBroadcast = { recordBroadcastCalls.withValue { $0 += 1 } }
             $0.migrationBGScheduler.scheduleNextWindow = { scheduleNextWindowCalls.withValue { $0 += 1 } }
+            withDependenciesUSKDerivable(&$0)
         }
 
         await store.send(.onAppear)
@@ -223,13 +289,13 @@ import ComposableArchitecture
             MigrationSending()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _ in
+            $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in
                 executeNextCalls.withValue { $0 += 1 }
-                return .success(txId: "tx-0")
+                return MigrationTransferResult.success(txId: "tx-0")
             }
-            $0.sdkSynchronizer.migrateMigrationDust = { _ in
+            $0.sdkSynchronizer.migrateMigrationDust = { _, _, _ in
                 migrateDustCalls.withValue { $0 += 1 }
-                return .success(txId: "tx-dust")
+                return MigrationTransferResult.success(txId: "tx-dust")
             }
             $0.migrationManager.recordMigrationBroadcast = { }
             $0.migrationBGScheduler.scheduleNextWindow = { }
@@ -248,6 +314,37 @@ import ComposableArchitecture
         #expect(migrateDustCalls.value == 0)
     }
 
+    /// MOB-1496: the dust lane's USK derivation is never attempted for a Keystone account (no
+    /// PCZT-based dust-sweep lane exists yet) — the guard reports a `nil` result (ordinary failure
+    /// sheet) rather than deriving a USK for an account with no locally-held seed phrase.
+    @MainActor @Test func onAppearWithDustLaneAndKeystoneAccountNeverDerivesUSKOrCallsMigrateMigrationDust() async {
+        let deriveCalls = LockIsolated<Int>(0)
+        let migrateDustCalls = LockIsolated<Int>(0)
+        var state = MigrationSending.State(totalCount: 1, isDustLane: true)
+        state.$selectedWalletAccount.withLock { $0 = walletAccount(keystone: true, idByte: 7) }
+        let store = TestStore(initialState: state) {
+            MigrationSending()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.migrateMigrationDust = { _, _, _ in
+                migrateDustCalls.withValue { $0 += 1 }
+                return MigrationTransferResult.success(txId: "should-not-be-called")
+            }
+            $0.derivationTool.deriveSpendingKey = { _, _, _ in
+                deriveCalls.withValue { $0 += 1 }
+                throw TestFailure()
+            }
+        }
+
+        await store.send(.onAppear)
+        await store.receive(\.transferResult) {
+            $0.isFailurePresented = true
+        }
+
+        #expect(deriveCalls.value == 0)
+        #expect(migrateDustCalls.value == 0)
+    }
+
     // MARK: - Failure / nil result: presents failure sheet, stops the sequence
 
     @MainActor @Test func onAppearWithFailureResultPresentsFailureSheetAndStopsSequence() async {
@@ -256,9 +353,9 @@ import ComposableArchitecture
             MigrationSending()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _ in
+            $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in
                 executedCount.withValue { $0 += 1 }
-                return .networkError(retryable: true)
+                return MigrationTransferResult.networkError(retryable: true)
             }
         }
 
@@ -276,12 +373,36 @@ import ComposableArchitecture
             MigrationSending()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _ in nil }
+            $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in nil }
         }
 
         await store.send(.onAppear)
         await store.receive(\.transferResult) {
             $0.isFailurePresented = true
+        }
+    }
+
+    // MARK: - MOB-1496: broadcast-landed-but-record-failed is treated as success, not failure
+
+    @MainActor @Test func onAppearWhenRecordFailsAfterBroadcastStillReachesSentPhase() async {
+        let store = TestStore(initialState: MigrationSending.State(totalCount: 1)) {
+            MigrationSending()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in
+                throw ZcashError.migrationRecordFailedAfterBroadcast(TestFailure())
+            }
+            $0.migrationManager.recordMigrationBroadcast = { }
+            $0.migrationBGScheduler.scheduleNextWindow = { }
+        }
+
+        await store.send(.onAppear)
+        await store.receive(\.transferResult) {
+            $0.sentCount = 1
+            $0.txId = ""
+        }
+        await store.receive(\.allTransfersSent) {
+            $0.phase = .success
         }
     }
 
@@ -294,9 +415,9 @@ import ComposableArchitecture
             MigrationSending()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _ in
+            $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in
                 executedCount.withValue { $0 += 1 }
-                return .success(txId: "retried-tx")
+                return MigrationTransferResult.success(txId: "retried-tx")
             }
             $0.migrationManager.recordMigrationBroadcast = { }
             $0.migrationBGScheduler.scheduleNextWindow = { }

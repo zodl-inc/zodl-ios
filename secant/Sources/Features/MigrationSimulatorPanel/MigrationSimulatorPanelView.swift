@@ -13,6 +13,7 @@
 //
 
 import SwiftUI
+@preconcurrency import ZcashLightClientKit
 import ComposableArchitecture
 
 struct MigrationSimulatorPanelView: View {
@@ -154,19 +155,19 @@ struct MigrationSimulatorPanelView: View {
     @ViewBuilder private func armResultSection() -> some View {
         Section("Arm next result") {
             Button("Success") {
-                store.send(.armResultTapped(TransferResult.success(txId: "")))
+                store.send(.armResultTapped(MigrationTransferResult.success(txId: "")))
             }
 
             Button("Network error") {
-                store.send(.armResultTapped(TransferResult.networkError(retryable: true)))
+                store.send(.armResultTapped(MigrationTransferResult.networkError(retryable: true)))
             }
 
             Button("Invalid note") {
-                store.send(.armResultTapped(TransferResult.invalidNote))
+                store.send(.armResultTapped(MigrationTransferResult.invalidNote))
             }
 
             Button("Expired") {
-                store.send(.armResultTapped(TransferResult.expired))
+                store.send(.armResultTapped(MigrationTransferResult.expired))
             }
 
             Button("Arm note-split failure") {

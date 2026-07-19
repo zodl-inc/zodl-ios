@@ -195,6 +195,7 @@ struct SmartBanner {
                     state.isSyncTimedOutSheetPresented = state.isSyncTimedOut
                     state.isSyncTimedOutAutoAppeareDisabled = state.isSyncTimedOutSheetPresented
                 }
+                let migrationAccountUUID = state.selectedWalletAccount?.id
                 return .merge(
                     .publisher {
                         networkMonitor.networkMonitorStream()
@@ -210,7 +211,7 @@ struct SmartBanner {
                     }
                     .cancellable(id: state.CancelStateStreamId, cancelInFlight: true),
                     .publisher {
-                        sdkSynchronizer.migrationStateStream()
+                        migrationManager.stateEvents(migrationAccountUUID)
                             .throttle(for: .seconds(0.2), scheduler: mainQueue, latest: true)
                             .map(Action.migrationStateChanged)
                     }

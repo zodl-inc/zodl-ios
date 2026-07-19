@@ -56,7 +56,7 @@ struct MigrationNoteSplit {
         /// MOB-1468 (Keystone): set by the coordinator once a QR round-trip signs the note-split
         /// PCZT. Non-`nil` forks `retryTapped` to re-broadcast this SAME signed PCZT via
         /// `submitSignedNoteSplit` instead of re-preparing. Cleared once `.splitConfirmed` lands.
-        var signedNoteSplitPczt: Pczt?
+        var signedNoteSplitPczt: Data?
 
         init(
             phase: Phase = .splitting,
@@ -65,7 +65,7 @@ struct MigrationNoteSplit {
             txId: String = "",
             isFailurePresented: Bool = false,
             isFlowRoot: Bool = false,
-            signedNoteSplitPczt: Pczt? = nil
+            signedNoteSplitPczt: Data? = nil
         ) {
             self.phase = phase
             self.amount = amount
@@ -91,17 +91,22 @@ struct MigrationNoteSplit {
         case onAppear
         /// Failure sheet: dismiss, then re-submit the stored proposal.
         case retryTapped
-        /// `migrationStateStream()` reported `.readyToPropose` while splitting.
+        /// `migrationManager.stateEvents()` reported `.readyToPropose` while splitting.
         case splitConfirmed
-        case splitResult(TransferResult)
+        case splitResult(MigrationTransferResult)
 
         enum Delegate: Equatable {
             case continued
         }
     }
 
+    @Dependency(\.derivationTool) var derivationTool
+    @Dependency(\.migrationManager) var migrationManager
+    @Dependency(\.mnemonic) var mnemonic
     @Dependency(\.pasteboard) var pasteboard
     @Dependency(\.sdkSynchronizer) var sdkSynchronizer
+    @Dependency(\.walletStorage) var walletStorage
+    @Dependency(\.zcashSDKEnvironment) var zcashSDKEnvironment
 
     init() { }
 
@@ -132,20 +137,27 @@ struct MigrationNoteSplit {
                 return .none
 
             case .onAppear:
-                // Defensive: the split may have already reached `.readyToPropose` between the
-                // banner's `reentryRoute()` snapshot and this screen mounting — jump straight to
-                // `.confirmed` rather than waiting on a stream event that already fired.
-                if sdkSynchronizer.getMigrationState() == .readyToPropose {
-                    state.phase = .confirmed
-                }
-                return subscribeToMigrationState(cancelId: state.cancelStateStreamId)
+                let accountUUID = state.selectedWalletAccount?.id
+                return .merge(
+                    // Defensive: the split may have already reached `.readyToPropose` between the
+                    // banner's `reentryRoute()` snapshot and this screen mounting — jump straight
+                    // to `.confirmed` via a one-shot read rather than waiting on a stream event
+                    // that already fired.
+                    .run { send in
+                        guard let accountUUID else { return }
+                        if (try? await sdkSynchronizer.getMigrationState(accountUUID)) == MigrationState.readyToPropose {
+                            await send(.splitConfirmed)
+                        }
+                    },
+                    subscribeToMigrationState(accountUUID: accountUUID, cancelId: state.cancelStateStreamId)
+                )
 
             case .retryTapped:
                 state.isFailurePresented = false
                 if let signedNoteSplitPczt = state.signedNoteSplitPczt {
-                    return resubmitSignedNoteSplit(signedNoteSplitPczt)
+                    return resubmitSignedNoteSplit(signedNoteSplitPczt, account: state.selectedWalletAccount)
                 }
-                return submitNoteSplit(state.proposal)
+                return submitNoteSplit(state.proposal, account: state.selectedWalletAccount)
 
             case .splitConfirmed:
                 state.phase = .confirmed
@@ -165,29 +177,75 @@ struct MigrationNoteSplit {
         }
     }
 
-    private func submitNoteSplit(_ proposal: NoteSplitProposal?) -> Effect<Action> {
+    private func submitNoteSplit(_ proposal: NoteSplitProposal?, account: WalletAccount?) -> Effect<Action> {
         guard let proposal else { return .none }
 
+        guard let account, let zip32AccountIndex = account.zip32AccountIndex, account.vendor != WalletAccount.Vendor.keystone else {
+            // Keystone accounts never reach here in practice — the coordinator's existing routing
+            // keeps them on the PCZT lane (`resubmitSignedNoteSplit`) before this software path
+            // would ever run; guarded defensively rather than deriving a USK for an account with
+            // no locally-held seed phrase.
+            return .run { send in
+                await send(.splitResult(MigrationTransferResult.networkError(retryable: true)))
+            }
+        }
+
         return .run { send in
-            let result = await sdkSynchronizer.submitNoteSplit(proposal)
-            await send(.splitResult(result))
+            do {
+                let usk = try MigrationSpendingKeyDerivation.deriveUSK(
+                    zip32AccountIndex: zip32AccountIndex,
+                    walletStorage: walletStorage,
+                    mnemonic: mnemonic,
+                    derivationTool: derivationTool,
+                    networkType: zcashSDKEnvironment.network().networkType
+                )
+                let options = migrationManager.networkPrivacyOptions()
+                let result = try await sdkSynchronizer.submitNoteSplit(account.id, proposal, usk, options)
+                await send(.splitResult(result))
+                if case MigrationTransferResult.success = result {
+                    await migrationManager.reconcile()
+                }
+            } catch ZcashError.migrationRecordFailedAfterBroadcast(_) {
+                // [MOB-1496] The broadcast DID land; only recording failed (the engine self-heals
+                // on a later read/attempt) — route to the success-like path rather than implying a
+                // failure that didn't happen.
+                await send(.splitResult(MigrationTransferResult.success(txId: "")))
+                await migrationManager.reconcile()
+            } catch {
+                await send(.splitResult(MigrationTransferResult.networkError(retryable: true)))
+            }
         }
     }
 
     /// MOB-1468 (Keystone) `retryTapped` fork: re-broadcasts the SAME already-signed PCZT — never a
     /// new signing round.
-    private func resubmitSignedNoteSplit(_ pczt: Pczt) -> Effect<Action> {
-        .run { send in
-            let result = await sdkSynchronizer.submitSignedNoteSplit(pczt)
-            await send(.splitResult(result))
+    private func resubmitSignedNoteSplit(_ pczt: Data, account: WalletAccount?) -> Effect<Action> {
+        guard let account else {
+            return .run { send in await send(.splitResult(MigrationTransferResult.networkError(retryable: true))) }
+        }
+
+        return .run { send in
+            let options = migrationManager.networkPrivacyOptions()
+            do {
+                let result = try await sdkSynchronizer.submitSignedNoteSplit(account.id, pczt, options)
+                await send(.splitResult(result))
+                if case MigrationTransferResult.success = result {
+                    await migrationManager.reconcile()
+                }
+            } catch ZcashError.migrationRecordFailedAfterBroadcast(_) {
+                await send(.splitResult(MigrationTransferResult.success(txId: "")))
+                await migrationManager.reconcile()
+            } catch {
+                await send(.splitResult(MigrationTransferResult.networkError(retryable: true)))
+            }
         }
     }
 
-    private func subscribeToMigrationState(cancelId: UUID) -> Effect<Action> {
+    private func subscribeToMigrationState(accountUUID: AccountUUID?, cancelId: UUID) -> Effect<Action> {
         .publisher {
-            sdkSynchronizer.migrationStateStream()
+            migrationManager.stateEvents(accountUUID)
                 .compactMap { state -> Action? in
-                    state == .readyToPropose ? Action.splitConfirmed : nil
+                    state == MigrationState.readyToPropose ? Action.splitConfirmed : nil
                 }
         }
         .cancellable(id: cancelId, cancelInFlight: true)

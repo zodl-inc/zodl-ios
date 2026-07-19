@@ -40,12 +40,13 @@ struct MigrationSending {
         /// How many of `totalCount` have been successfully broadcast so far.
         var sentCount = 0
         /// Submission options for `executeNextPendingMigrationTransfer`, injected by the coordinator.
-        var networkPrivacyOptions = NetworkPrivacyOptions(useTor: false, submissionEndpoint: nil)
+        var networkPrivacyOptions = MigrationNetworkPrivacyOptions(useTor: false, submissionEndpoint: LightWalletEndpoint(address: "", port: 0))
         /// When true, this instance is the "Migrate anyway" dust lane (MOB-1487): `onAppear`
         /// executes the dedicated dust sweep instead of the next scheduled transfer.
         /// Coordinator-configured; defaults to false so existing lanes are unaffected. Execution
         /// only — the on-screen copy is identical in every lane (MOB-1494).
         var isDustLane = false
+        @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
 
         init(
             phase: Phase = .sending,
@@ -53,7 +54,10 @@ struct MigrationSending {
             txId: String = "",
             totalCount: Int = 1,
             sentCount: Int = 0,
-            networkPrivacyOptions: NetworkPrivacyOptions = NetworkPrivacyOptions(useTor: false, submissionEndpoint: nil),
+            networkPrivacyOptions: MigrationNetworkPrivacyOptions = MigrationNetworkPrivacyOptions(
+                useTor: false,
+                submissionEndpoint: LightWalletEndpoint(address: "", port: 0)
+            ),
             isDustLane: Bool = false
         ) {
             self.phase = phase
@@ -78,7 +82,7 @@ struct MigrationSending {
         /// Failure sheet: dismiss, then re-run the failed step.
         case retryTapped
         /// `executeNextPendingMigrationTransfer` result for the current step; `nil` on a stub/no-op.
-        case transferResult(TransferResult?)
+        case transferResult(MigrationTransferResult?)
         case viewTransactionTapped
 
         enum Delegate: Equatable {
@@ -87,9 +91,13 @@ struct MigrationSending {
         }
     }
 
+    @Dependency(\.derivationTool) var derivationTool
     @Dependency(\.migrationBGScheduler) var migrationBGScheduler
     @Dependency(\.migrationManager) var migrationManager
+    @Dependency(\.mnemonic) var mnemonic
     @Dependency(\.sdkSynchronizer) var sdkSynchronizer
+    @Dependency(\.walletStorage) var walletStorage
+    @Dependency(\.zcashSDKEnvironment) var zcashSDKEnvironment
 
     init() { }
 
@@ -116,11 +124,11 @@ struct MigrationSending {
                 return .none
 
             case .onAppear:
-                return executeNextTransfer(options: state.networkPrivacyOptions, isDustLane: state.isDustLane)
+                return executeNextTransfer(account: state.selectedWalletAccount, options: state.networkPrivacyOptions, isDustLane: state.isDustLane)
 
             case .retryTapped:
                 state.isFailurePresented = false
-                return executeNextTransfer(options: state.networkPrivacyOptions, isDustLane: state.isDustLane)
+                return executeNextTransfer(account: state.selectedWalletAccount, options: state.networkPrivacyOptions, isDustLane: state.isDustLane)
 
             case .transferResult(let result):
                 switch result {
@@ -132,14 +140,21 @@ struct MigrationSending {
 
                     let nextEffect: Effect<Action> = state.sentCount >= state.totalCount
                         ? .send(.allTransfersSent)
-                        : executeNextTransfer(options: state.networkPrivacyOptions, isDustLane: state.isDustLane)
+                        : executeNextTransfer(
+                            account: state.selectedWalletAccount,
+                            options: state.networkPrivacyOptions,
+                            isDustLane: state.isDustLane
+                        )
 
                     // scheduleNextWindow() is async (MOB-1467) — concatenated ahead of the
                     // follow-up effect so it still runs to completion before the next transfer
                     // kicks off (or before .allTransfersSent), matching the previous synchronous
-                    // call-then-continue ordering.
+                    // call-then-continue ordering. MOB-1496: `reconcile()` also runs here so
+                    // `migrationManager.stateEvents` picks up the just-completed transfer promptly
+                    // (a store completing a migration op is one of `reconcile()`'s two triggers).
                     return .concatenate(
                         .run { [migrationBGScheduler] _ in await migrationBGScheduler.scheduleNextWindow() },
+                        .run { [migrationManager] _ in await migrationManager.reconcile() },
                         nextEffect
                     )
 
@@ -157,12 +172,46 @@ struct MigrationSending {
     /// The dust lane ("Migrate anyway", MOB-1487) executes the dedicated dust sweep — never
     /// `executeNextPendingMigrationTransfer`, which is the scheduled-transfer path a background
     /// poll also drives and which must not move unconsented dust.
-    private func executeNextTransfer(options: NetworkPrivacyOptions, isDustLane: Bool) -> Effect<Action> {
-        .run { send in
-            let result = isDustLane
-                ? await sdkSynchronizer.migrateMigrationDust(options)
-                : await sdkSynchronizer.executeNextPendingMigrationTransfer(options)
-            await send(.transferResult(result))
+    ///
+    /// MOB-1496: `migrateMigrationDust` needs the account's USK to sign — Keystone accounts have no
+    /// PCZT-based dust-sweep lane yet (the SDK's composite has no PCZT variant), so they short-
+    /// circuit to `nil` (surfaces as the ordinary failure sheet) rather than attempting a USK
+    /// derivation that would misbehave for a hardware-wallet account. `executeNextPendingMigrationTransfer`
+    /// needs no signing (it broadcasts an already-signed pending transfer), so it stays account-only
+    /// for both vendors. `ZcashError.migrationRecordFailedAfterBroadcast` means the broadcast DID
+    /// land and only recording failed (the engine self-heals later) — routed to a success-like
+    /// result so the UX doesn't offer a needless retry or imply failure for something that worked;
+    /// `txId` is a placeholder (the error carries no payload to recover the real one from).
+    private func executeNextTransfer(account: WalletAccount?, options: MigrationNetworkPrivacyOptions, isDustLane: Bool) -> Effect<Action> {
+        guard let account else {
+            return .run { send in await send(.transferResult(nil)) }
+        }
+
+        return .run { send in
+            do {
+                let result: MigrationTransferResult?
+                if isDustLane {
+                    guard account.vendor != WalletAccount.Vendor.keystone, let zip32AccountIndex = account.zip32AccountIndex else {
+                        await send(.transferResult(nil))
+                        return
+                    }
+                    let usk = try MigrationSpendingKeyDerivation.deriveUSK(
+                        zip32AccountIndex: zip32AccountIndex,
+                        walletStorage: walletStorage,
+                        mnemonic: mnemonic,
+                        derivationTool: derivationTool,
+                        networkType: zcashSDKEnvironment.network().networkType
+                    )
+                    result = try await sdkSynchronizer.migrateMigrationDust(account.id, usk, options)
+                } else {
+                    result = try await sdkSynchronizer.executeNextPendingMigrationTransfer(account.id, options)
+                }
+                await send(.transferResult(result))
+            } catch ZcashError.migrationRecordFailedAfterBroadcast(_) {
+                await send(.transferResult(MigrationTransferResult.success(txId: "")))
+            } catch {
+                await send(.transferResult(nil))
+            }
         }
     }
 }

@@ -5,7 +5,7 @@
 //  Covers the MigrationReviewTransfer reducer
 //  (Features/Migration/MigrationReviewTransfer/MigrationReviewTransferStore.swift) for MOB-1463/1466:
 //  the default `mode`, and (MOB-1466) two divergent `onAppear`/`confirmTapped` paths keyed off
-//  `mode` — immediate proposes a single-transfer schedule via `proposeMigrationTransfers()` for
+//  `mode` — immediate proposes a single-transfer schedule via `proposeImmediateMigration()` for
 //  Amount/Fee and signs+stores it on confirm before delegating; manual step has its data injected by
 //  the coordinator (no propose) and confirm delegates directly (the transfer was already signed at
 //  plan commit). Also covers the `isFlowRoot`-gated back control for the manual-step variant: a new
@@ -25,6 +25,21 @@ import ComposableArchitecture
 @testable import zodl_internal
 
 @Suite(.serialized) struct MigrationReviewTransferTests {
+    /// MOB-1496: `migrationManager.networkPrivacyOptions()` has no macro default (unlike the SDK
+    /// synchronizer's `.noOp`), so any test reaching the note-split branch (`isNoteSplitNeeded ==
+    /// true`) must mock it explicitly or trip `unimplemented`.
+    private static let defaultNetworkPrivacyOptions = MigrationNetworkPrivacyOptions(
+        useTor: false,
+        submissionEndpoint: LightWalletEndpoint(address: "", port: 0)
+    )
+
+    /// MOB-1496: mirrors `MigrationTransferPlanTests`' setup hook — every test gets a selected
+    /// software account by default; Keystone-specific tests override it locally.
+    init() {
+        @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
+        $selectedWalletAccount.withLock { $0 = walletAccount(keystone: false, idByte: 0) }
+    }
+
     private func walletAccount(keystone: Bool, idByte: UInt8) -> WalletAccount {
         WalletAccount(
             Account(
@@ -39,6 +54,15 @@ import ComposableArchitecture
         )
     }
 
+    /// MOB-1496: the software-signing path derives a real USK from the wallet's stored seed — see
+    /// `MigrationTransferPlanTests`' twin helper for the rationale.
+    private func withDependenciesUSKDerivable(_ values: inout DependencyValues) {
+        values.derivationTool = .liveValue
+        values.mnemonic = .mock
+        values.walletStorage = .noOp
+        values.zcashSDKEnvironment = .testnet
+    }
+
     @MainActor @Test func defaultStateIsImmediateModeWithZeroAmounts() async {
         let state = MigrationReviewTransfer.State()
 
@@ -46,7 +70,9 @@ import ComposableArchitecture
         #expect(state.amount == Zatoshi.zero)
         #expect(state.fee == Zatoshi.zero)
         #expect(state.isFlowRoot == false)
-        #expect(state.selectedWalletAccount == nil)
+        // Not asserting `selectedWalletAccount == nil`: MOB-1496's `init()` above seeds a default
+        // selected account for every test in this suite — see `MigrationTransferPlanTests`' twin
+        // assertion for the rationale.
     }
 
     @MainActor @Test func closeTappedWhenFlowRootEmitsDelegateClosed() async {
@@ -87,7 +113,7 @@ import ComposableArchitecture
     @MainActor @Test func onAppearInImmediateModeProposesSingleTransferScheduleForAmountFee() async {
         let schedule = MigrationSchedule(
             transfers: [
-                TransferProposal(id: "t0", amount: Zatoshi(1_245_800_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
+                MigrationTransferProposal(id: "t0", amount: Zatoshi(1_245_800_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
             ],
             estimatedDurationHours: 0
         )
@@ -95,7 +121,7 @@ import ComposableArchitecture
             MigrationReviewTransfer()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.proposeMigrationTransfers = { schedule }
+            $0.sdkSynchronizer.proposeImmediateMigration = { _ in schedule }
         }
 
         await store.send(.onAppear)
@@ -118,7 +144,7 @@ import ComposableArchitecture
             MigrationReviewTransfer()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.proposeMigrationTransfers = {
+            $0.sdkSynchronizer.proposeImmediateMigration = { _ in
                 proposeCalls.withValue { $0 += 1 }
                 return MigrationSchedule(transfers: [], estimatedDurationHours: 0)
             }
@@ -133,7 +159,7 @@ import ComposableArchitecture
     @MainActor @Test func confirmTappedInImmediateModeSignsAndStoresScheduleThenDelegatesConfirmed() async {
         let schedule = MigrationSchedule(
             transfers: [
-                TransferProposal(id: "t0", amount: Zatoshi(1_245_800_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
+                MigrationTransferProposal(id: "t0", amount: Zatoshi(1_245_800_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
             ],
             estimatedDurationHours: 0
         )
@@ -144,7 +170,8 @@ import ComposableArchitecture
             MigrationReviewTransfer()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.signAndStoreMigrationSchedule = { signedSchedule.setValue($0) }
+            $0.sdkSynchronizer.signAndStoreMigrationSchedule = { _, schedule, _ in signedSchedule.setValue(schedule) }
+            withDependenciesUSKDerivable(&$0)
         }
 
         await store.send(.confirmTapped)
@@ -162,7 +189,7 @@ import ComposableArchitecture
             MigrationReviewTransfer()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.signAndStoreMigrationSchedule = { _ in signCalls.withValue { $0 += 1 } }
+            $0.sdkSynchronizer.signAndStoreMigrationSchedule = { _, _, _ in signCalls.withValue { $0 += 1 } }
         }
 
         await store.send(.confirmTapped)
@@ -178,11 +205,11 @@ import ComposableArchitecture
         let signCalls = LockIsolated<Int>(0)
         let schedule = MigrationSchedule(
             transfers: [
-                TransferProposal(id: "t0", amount: Zatoshi(1_245_800_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
+                MigrationTransferProposal(id: "t0", amount: Zatoshi(1_245_800_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
             ],
             estimatedDurationHours: 0
         )
-        let pczts: [Pczt] = [Data([0xAA])]
+        let pczts: [MigrationUnsignedTransferPczt] = [MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xAA]))]
         var state = MigrationReviewTransfer.State(mode: .immediate)
         state.schedule = schedule
         state.$selectedWalletAccount.withLock { $0 = walletAccount(keystone: true, idByte: 1) }
@@ -190,11 +217,12 @@ import ComposableArchitecture
             MigrationReviewTransfer()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.proposeMigrationPCZTs = { proposed in
+            $0.sdkSynchronizer.isNoteSplitNeeded = { _ in false }
+            $0.sdkSynchronizer.proposeMigrationPCZTs = { _, proposed in
                 proposeCalls.withValue { $0.append(proposed) }
                 return pczts
             }
-            $0.sdkSynchronizer.signAndStoreMigrationSchedule = { _ in signCalls.withValue { $0 += 1 } }
+            $0.sdkSynchronizer.signAndStoreMigrationSchedule = { _, _, _ in signCalls.withValue { $0 += 1 } }
         }
 
         await store.send(.confirmTapped)
@@ -208,7 +236,7 @@ import ComposableArchitecture
         let proposeCalls = LockIsolated<Int>(0)
         let schedule = MigrationSchedule(
             transfers: [
-                TransferProposal(id: "t0", amount: Zatoshi(1_245_800_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
+                MigrationTransferProposal(id: "t0", amount: Zatoshi(1_245_800_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
             ],
             estimatedDurationHours: 0
         )
@@ -219,11 +247,12 @@ import ComposableArchitecture
             MigrationReviewTransfer()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.proposeMigrationPCZTs = { _ in
+            $0.sdkSynchronizer.proposeMigrationPCZTs = { _, _ in
                 proposeCalls.withValue { $0 += 1 }
                 return []
             }
-            $0.sdkSynchronizer.signAndStoreMigrationSchedule = { _ in }
+            $0.sdkSynchronizer.signAndStoreMigrationSchedule = { _, _, _ in }
+            withDependenciesUSKDerivable(&$0)
         }
 
         await store.send(.confirmTapped)
@@ -242,11 +271,11 @@ import ComposableArchitecture
             MigrationReviewTransfer()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.proposeMigrationPCZTs = { _ in
+            $0.sdkSynchronizer.proposeMigrationPCZTs = { _, _ in
                 proposeCalls.withValue { $0 += 1 }
                 return []
             }
-            $0.sdkSynchronizer.signAndStoreMigrationSchedule = { _ in signCalls.withValue { $0 += 1 } }
+            $0.sdkSynchronizer.signAndStoreMigrationSchedule = { _, _, _ in signCalls.withValue { $0 += 1 } }
         }
 
         await store.send(.confirmTapped)
@@ -262,7 +291,7 @@ import ComposableArchitecture
         let callOrder = LockIsolated<[String]>([])
         let schedule = MigrationSchedule(
             transfers: [
-                TransferProposal(id: "t0", amount: Zatoshi(1_245_800_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
+                MigrationTransferProposal(id: "t0", amount: Zatoshi(1_245_800_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
             ],
             estimatedDurationHours: 0
         )
@@ -272,18 +301,20 @@ import ComposableArchitecture
             MigrationReviewTransfer()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.isNoteSplitNeeded = { true }
-            $0.sdkSynchronizer.prepareNoteSplit = {
+            $0.sdkSynchronizer.isNoteSplitNeeded = { _ in true }
+            $0.sdkSynchronizer.prepareNoteSplit = { _ in
                 callOrder.withValue { $0.append("prepare") }
                 return NoteSplitProposal(outputNotes: [], fee: Zatoshi.zero)
             }
-            $0.sdkSynchronizer.submitNoteSplit = { _ in
+            $0.sdkSynchronizer.submitNoteSplit = { _, _, _, _ in
                 callOrder.withValue { $0.append("submit") }
-                return .success(txId: "split-tx-id")
+                return MigrationTransferResult.success(txId: "split-tx-id")
             }
-            $0.sdkSynchronizer.signAndStoreMigrationSchedule = { _ in
+            $0.sdkSynchronizer.signAndStoreMigrationSchedule = { _, _, _ in
                 callOrder.withValue { $0.append("signAndStore") }
             }
+            $0.migrationManager.networkPrivacyOptions = { Self.defaultNetworkPrivacyOptions }
+            withDependenciesUSKDerivable(&$0)
         }
 
         await store.send(.confirmTapped)
@@ -297,7 +328,7 @@ import ComposableArchitecture
         let signCalls = LockIsolated<Int>(0)
         let schedule = MigrationSchedule(
             transfers: [
-                TransferProposal(id: "t0", amount: Zatoshi(1_245_800_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
+                MigrationTransferProposal(id: "t0", amount: Zatoshi(1_245_800_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
             ],
             estimatedDurationHours: 0
         )
@@ -307,10 +338,12 @@ import ComposableArchitecture
             MigrationReviewTransfer()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.isNoteSplitNeeded = { true }
-            $0.sdkSynchronizer.prepareNoteSplit = { NoteSplitProposal(outputNotes: [], fee: Zatoshi.zero) }
-            $0.sdkSynchronizer.submitNoteSplit = { _ in .invalidNote }
-            $0.sdkSynchronizer.signAndStoreMigrationSchedule = { _ in signCalls.withValue { $0 += 1 } }
+            $0.sdkSynchronizer.isNoteSplitNeeded = { _ in true }
+            $0.sdkSynchronizer.prepareNoteSplit = { _ in NoteSplitProposal(outputNotes: [], fee: Zatoshi.zero) }
+            $0.sdkSynchronizer.submitNoteSplit = { _, _, _, _ in MigrationTransferResult.invalidNote }
+            $0.sdkSynchronizer.signAndStoreMigrationSchedule = { _, _, _ in signCalls.withValue { $0 += 1 } }
+            $0.migrationManager.networkPrivacyOptions = { Self.defaultNetworkPrivacyOptions }
+            withDependenciesUSKDerivable(&$0)
         }
 
         await store.send(.confirmTapped)
@@ -342,8 +375,9 @@ import ComposableArchitecture
             MigrationReviewTransfer()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.isNoteSplitNeeded = { false }
-            $0.sdkSynchronizer.signAndStoreMigrationSchedule = { _ in }
+            $0.sdkSynchronizer.isNoteSplitNeeded = { _ in false }
+            $0.sdkSynchronizer.signAndStoreMigrationSchedule = { _, _, _ in }
+            withDependenciesUSKDerivable(&$0)
         }
 
         await store.send(.retryTapped) {
@@ -354,14 +388,17 @@ import ComposableArchitecture
     }
 
     // MOB-1478 (W4): the Keystone fork's batch now carries the note-split PCZT first, when needed —
-    // proved via proposal ORDER (split proposed before the schedule's own PCZT).
+    // proved via proposal ORDER (split proposed before the schedule's own PCZT). MOB-1496: the
+    // note-split entry now rides the batch under a `"note-split"` sentinel id — see
+    // `MigrationTransferPlanTests`' twin test / `requestKeystoneSignature`'s doc.
     @MainActor @Test func confirmTappedInImmediateModeWithKeystoneAccountAndNoteSplitNeededProposesSplitPcztFirst() async {
         let proposeOrder = LockIsolated<[String]>([])
-        let splitPczt: Pczt = Data([0x02])
-        let schedulePczt: [Pczt] = [Data([0xEE])]
+        let splitPczt = Data([0x02])
+        let schedulePczt: [MigrationUnsignedTransferPczt] = [MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xEE]))]
+        let expectedBatch = [MigrationUnsignedTransferPczt(id: "note-split", pczt: splitPczt)] + schedulePczt
         let schedule = MigrationSchedule(
             transfers: [
-                TransferProposal(id: "t0", amount: Zatoshi(1_245_800_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
+                MigrationTransferProposal(id: "t0", amount: Zatoshi(1_245_800_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
             ],
             estimatedDurationHours: 0
         )
@@ -372,19 +409,19 @@ import ComposableArchitecture
             MigrationReviewTransfer()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.isNoteSplitNeeded = { true }
-            $0.sdkSynchronizer.proposeNoteSplitPCZT = {
+            $0.sdkSynchronizer.isNoteSplitNeeded = { _ in true }
+            $0.sdkSynchronizer.proposeNoteSplitPCZT = { _ in
                 proposeOrder.withValue { $0.append("split") }
                 return splitPczt
             }
-            $0.sdkSynchronizer.proposeMigrationPCZTs = { _ in
+            $0.sdkSynchronizer.proposeMigrationPCZTs = { _, _ in
                 proposeOrder.withValue { $0.append("schedule") }
                 return schedulePczt
             }
         }
 
         await store.send(.confirmTapped)
-        await store.receive(.delegate(.keystoneSignRequested([splitPczt] + schedulePczt)))
+        await store.receive(.delegate(.keystoneSignRequested(expectedBatch)))
 
         #expect(proposeOrder.value == ["split", "schedule"])
     }

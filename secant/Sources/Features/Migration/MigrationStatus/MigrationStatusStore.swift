@@ -52,6 +52,7 @@ struct MigrationStatus {
         /// Send-now CTA disabled per `manager.sendGate()` (`.syncRequired`/`.waitUntil` -> disabled).
         var isSendNowDisabled = false
         var cancelStateStreamId = UUID()
+        @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
 
         var remainingCount: Int {
             rows.filter { $0.status != .sent }.count
@@ -104,7 +105,6 @@ struct MigrationStatus {
     }
 
     @Dependency(\.migrationManager) var migrationManager
-    @Dependency(\.sdkSynchronizer) var sdkSynchronizer
 
     init() { }
 
@@ -121,13 +121,14 @@ struct MigrationStatus {
                 return .none
 
             case .migrationStateChanged:
-                return loadStatus()
+                return loadStatus(accountUUID: state.selectedWalletAccount?.id)
 
             case .onAppear:
+                let accountUUID = state.selectedWalletAccount?.id
                 return .merge(
-                    loadStatus(),
+                    loadStatus(accountUUID: accountUUID),
                     .publisher {
-                        sdkSynchronizer.migrationStateStream()
+                        migrationManager.stateEvents(accountUUID)
                             .map { _ in Action.migrationStateChanged }
                     }
                     .cancellable(id: state.cancelStateStreamId, cancelInFlight: true)
@@ -156,11 +157,11 @@ struct MigrationStatus {
         }
     }
 
-    private func loadStatus() -> Effect<Action> {
+    private func loadStatus(accountUUID: AccountUUID?) -> Effect<Action> {
         .run { send in
-            let rows = sdkSynchronizer.migrationTransfers()
-            let summary = sdkSynchronizer.migrationSummary()
-            let isSendNowDisabled = migrationManager.sendGate() != MigrationSendGate.allowed
+            let rows = await migrationManager.migrationTransfers(accountUUID)
+            let summary = await migrationManager.migrationSummary(accountUUID)
+            let isSendNowDisabled = await migrationManager.sendGate() != MigrationSendGate.allowed
             await send(
                 .statusLoaded(
                     rows: rows,

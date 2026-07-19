@@ -8,6 +8,14 @@
 //  only the wiring between those types and `@Dependency(\.sdkSynchronizer)` /
 //  `@Dependency(\.zcashSDKEnvironment)`.
 //
+//  MOB-1496: `bannerVariant`/`reentryRoute`/`sendGate`/`reconcile` now read the real per-account,
+//  throwing SDK surface — every SDK read degrades to a safe default (false/nil/entry) on either a
+//  missing selected account or a thrown error, so a migration-surface hiccup never crashes launch,
+//  foreground entry, or the smart banner. `migrationSummary`/`migrationTransfers`/`lockMigrationDust`/
+//  `isMigrationDustLocked`/`stateEvents` are new here — relocated from `SDKSynchronizerClient`
+//  (summary/transfers/dust-lock are app-side derivations/persistence, not SDK calls; stateEvents is
+//  the per-account replacement for the old wallet-wide `migrationStateStream`).
+//
 
 import Foundation
 @preconcurrency import Combine
@@ -23,33 +31,42 @@ extension MigrationManagerClient: DependencyKey {
 
         return MigrationManagerClient(
             bannerVariant: { accountUUID in await impl.bannerVariant(accountUUID: accountUUID) },
-            reentryRoute: { impl.reentryRoute() },
+            reentryRoute: { await impl.reentryRoute() },
             isIronwoodActivated: { impl.isIronwoodActivated() },
             orchardBalanceToMigrate: { accountUUID in await impl.orchardBalanceToMigrate(accountUUID: accountUUID) },
+            migrationSummary: { accountUUID in await impl.migrationSummary(accountUUID: accountUUID) },
+            migrationTransfers: { accountUUID in await impl.migrationTransfers(accountUUID: accountUUID) },
+            lockMigrationDust: { try await impl.lockMigrationDust() },
+            isMigrationDustLocked: { impl.isMigrationDustLocked() },
+            stateEvents: { accountUUID in impl.stateEvents(accountUUID: accountUUID) },
             migrationMode: { impl.gateStorage.migrationMode() },
             setMigrationMode: { impl.gateStorage.setMigrationMode($0) },
             isManualDelivery: { impl.gateStorage.isManualDelivery() },
             setManualDelivery: { impl.gateStorage.setManualDelivery($0) },
-            networkPrivacyOptions: { impl.gateStorage.networkPrivacyOptions() },
-            setNetworkPrivacyOptions: { impl.gateStorage.setNetworkPrivacyOptions($0) },
+            networkPrivacyOptions: { impl.networkPrivacyOptions() },
+            setNetworkPrivacyOptions: { impl.setNetworkPrivacyOptions(useTor: $0) },
             isCompleteAcknowledged: { impl.gateStorage.isCompleteAcknowledged() },
             acknowledgeComplete: { impl.gateStorage.acknowledgeComplete() },
-            sendGate: { impl.sendGate() },
+            sendGate: { await impl.sendGate() },
             recordMigrationBroadcast: { impl.recordMigrationBroadcast() },
             isSyncDeferredAfterBroadcast: { impl.isSyncDeferredAfterBroadcast() },
-            reconcile: { impl.reconcile() },
+            reconcile: { await impl.reconcile() },
             resetPersistedFlags: { impl.resetPersistedFlags() }
         )
     }
 }
 
 /// Composes `sdkSynchronizer` + `MigrationGateStorage` and owns the lazy `stateStream()`
-/// subscription that drives the sync<->send gate. `@unchecked Sendable`: the only mutable state
-/// is `gateStorage`'s own `OSAllocatedUnfairLock`-protected storage plus the Combine
-/// subscription handle below, both of which are safe to share across isolation domains.
+/// subscription that drives the sync<->send gate, plus the per-account `stateEvents` subjects.
+/// `@unchecked Sendable`: the only mutable state is `gateStorage`'s own `OSAllocatedUnfairLock`-
+/// protected storage plus the Combine subscription/subjects below, all of which are safe to share
+/// across isolation domains.
 final class MigrationManagerImpl: @unchecked Sendable {
     @Dependency(\.sdkSynchronizer) var sdkSynchronizer
     @Dependency(\.zcashSDKEnvironment) var zcashSDKEnvironment
+
+    @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
+    @Shared(.inMemory(.walletAccounts)) var walletAccounts: [WalletAccount] = []
 
     let gateStorage: MigrationGateStorage
 
@@ -60,6 +77,11 @@ final class MigrationManagerImpl: @unchecked Sendable {
     }
 
     private let subscriptionState = OSAllocatedUnfairLock<AnyCancellable?>(initialState: nil)
+    /// MOB-1496: one `CurrentValueSubject` per account `stateEvents` has ever been asked about,
+    /// seeded `.notStarted`. `reconcile()` (and, indirectly, every store that calls it after a
+    /// completed migration op) is the only writer; it emits only when a re-read's value differs
+    /// from the subject's current value.
+    private let stateSubjects = OSAllocatedUnfairLock<[AccountUUID: CurrentValueSubject<MigrationState, Never>]>(initialState: [:])
 
     /// Subscribes to `sdkSynchronizer.stateStream()` on first use so gate transitions (pending ->
     /// resolved) are observed as soon as anything asks this client for a derivation or the gate,
@@ -79,35 +101,40 @@ final class MigrationManagerImpl: @unchecked Sendable {
     func bannerVariant(accountUUID: AccountUUID?) async -> MigrationBannerVariant? {
         ensureSubscribed()
 
-        let state = normalizedState()
-        let rows = sdkSynchronizer.migrationTransfers()
-        let balance = await orchardBalanceToMigrate(accountUUID: accountUUID)
+        guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return nil }
+        guard let state = await normalizedState(accountUUID: resolvedAccountUUID) else { return nil }
+
+        let rows = await migrationTransfers(accountUUID: resolvedAccountUUID)
+        let balance = await orchardBalanceToMigrate(accountUUID: resolvedAccountUUID)
 
         return MigrationDerivations.bannerVariant(
             isIronwoodActivated: isIronwoodActivated(),
             state: state,
-            hasInvalid: sdkSynchronizer.hasInvalidMigrationTransfers(),
-            hasOverdue: sdkSynchronizer.hasOverdueMigrationTransfers(),
+            hasInvalid: await hasInvalidMigrationTransfers(accountUUID: resolvedAccountUUID),
+            hasOverdue: await hasOverdueMigrationTransfers(accountUUID: resolvedAccountUUID),
             isManualDelivery: gateStorage.isManualDelivery(),
-            isNextTransferDue: isNextTransferDue(),
+            isNextTransferDue: await isNextTransferDue(accountUUID: resolvedAccountUUID),
             orchardBalance: balance,
             isCompleteAcknowledged: gateStorage.isCompleteAcknowledged(),
             transferRows: rows
         )
     }
 
-    func reentryRoute() -> MigrationReentryRoute {
+    func reentryRoute() async -> MigrationReentryRoute {
         ensureSubscribed()
 
-        let progress = sdkSynchronizer.getMigrationProgress()
+        guard let accountUUID = selectedWalletAccount?.id else { return MigrationReentryRoute.entry }
+
+        let state = await normalizedState(accountUUID: accountUUID) ?? MigrationState.notStarted
+        let progress = await migrationProgress(accountUUID: accountUUID)
 
         return MigrationDerivations.reentryRoute(
             isIronwoodActivated: isIronwoodActivated(),
-            state: normalizedState(),
-            hasInvalid: sdkSynchronizer.hasInvalidMigrationTransfers(),
-            hasOverdue: sdkSynchronizer.hasOverdueMigrationTransfers(),
+            state: state,
+            hasInvalid: await hasInvalidMigrationTransfers(accountUUID: accountUUID),
+            hasOverdue: await hasOverdueMigrationTransfers(accountUUID: accountUUID),
             isManualDelivery: gateStorage.isManualDelivery(),
-            isNextTransferDue: isNextTransferDue(),
+            isNextTransferDue: await isNextTransferDue(accountUUID: accountUUID),
             isCompleteAcknowledged: gateStorage.isCompleteAcknowledged(),
             progress: progress
         )
@@ -130,10 +157,109 @@ final class MigrationManagerImpl: @unchecked Sendable {
         return balance.orchardBalance.total()
     }
 
-    func sendGate() -> MigrationSendGate {
+    /// [MOB-1496] W2 replaces this with a persisted-schedule derivation. For W1, everything
+    /// derivable comes from `getMigrationProgress` alone: counts and the remaining Orchard value
+    /// (mapped onto `dust`). `transferred`/`estimatedDurationHours` need per-transfer amounts and
+    /// the schedule's own duration estimate, neither recoverable from progress alone, so they stay
+    /// `0` until W2. On a missing account or any SDK-read error, `.zero`.
+    ///
+    /// Simulator reach-around: the W1 derivation above is far cruder than the simulator engine's
+    /// own purpose-built `summary()` (real sent/pending amounts, durations, etc. — the whole point
+    /// of the simulator's demo data) — reading through the SDK members alone would otherwise
+    /// silently downgrade every simulated QA session to the crude approximation. Gated exactly like
+    /// `orchardBalanceToMigrate`'s existing reach-around.
+    func migrationSummary(accountUUID: AccountUUID?) async -> MigrationSummary {
+        if MigrationSimulatorFlag.isEnabled && MigrationSimulatorClient.sharedEngine.isActive {
+            return MigrationSimulatorClient.sharedEngine.summary()
+        }
+
+        guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return MigrationSummary.zero }
+        guard let progress = await migrationProgress(accountUUID: resolvedAccountUUID) else { return MigrationSummary.zero }
+
+        return MigrationSummary(
+            transferred: Zatoshi.zero,
+            dust: progress.remainingOrchard,
+            transfersSent: progress.completedTransfers,
+            transfersTotal: progress.totalTransfers,
+            estimatedDurationHours: 0
+        )
+    }
+
+    /// [MOB-1496] W2 replaces this with a persisted-schedule derivation. For W1, rows are
+    /// synthesized purely from `getMigrationProgress`'s counts: index < completedTransfers reads
+    /// `.sent`, everything else `.pending` (no `.active`/`.overdue`/`.invalid`/`.expired` — those
+    /// need per-transfer identity a persisted schedule would carry); `hoursFromNow` is a rough
+    /// `(index - completed) × 6h` cadence estimate (matching the real transfer spacing), clamped
+    /// ≥ 0. `amount`/`id` are placeholders (`.zero` / the row's own index) pending W2. On a missing
+    /// account or any SDK-read error, `[]`.
+    ///
+    /// Simulator reach-around — see `migrationSummary`'s doc: the engine's own `transferRows()`
+    /// carries real per-row status (sent/active/overdue/invalid/expired, broadcasting, precise
+    /// recency) the W1 derivation can't reproduce from counts alone.
+    func migrationTransfers(accountUUID: AccountUUID?) async -> [MigrationTransferRow] {
+        if MigrationSimulatorFlag.isEnabled && MigrationSimulatorClient.sharedEngine.isActive {
+            return MigrationSimulatorClient.sharedEngine.transferRows()
+        }
+
+        guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return [] }
+        guard let progress = await migrationProgress(accountUUID: resolvedAccountUUID) else { return [] }
+
+        return (0..<progress.totalTransfers).map { index in
+            MigrationTransferRow(
+                id: "\(index)",
+                index: index,
+                amount: Zatoshi.zero,
+                status: index < progress.completedTransfers ? MigrationTransferRow.Status.sent : MigrationTransferRow.Status.pending,
+                hoursFromNow: max(0, (index - progress.completedTransfers) * 6)
+            )
+        }
+    }
+
+    /// MOB-1487/MOB-1496: no SDK primitive — "Lock balance" is app-only bookkeeping (marks the
+    /// identified Orchard remainder unspendable instead of migrating it). The short pause keeps the
+    /// "Locking balance" in-flight state observable, matching the pre-relocation
+    /// `SDKSynchronizerClient` stub. Simulator reach-around mirrors the engine's own (shorter)
+    /// simulated latency, matching its pre-relocation wiring in `SDKSynchronizerClient+Simulated`.
+    func lockMigrationDust() async throws {
+        if MigrationSimulatorFlag.isEnabled && MigrationSimulatorClient.sharedEngine.isActive {
+            try await Task.sleep(for: .seconds(0.5))
+            MigrationSimulatorClient.sharedEngine.lockDust()
+            return
+        }
+
+        try await Task.sleep(nanoseconds: 800_000_000)
+        gateStorage.setDustLocked(true)
+    }
+
+    func isMigrationDustLocked() -> Bool {
+        if MigrationSimulatorFlag.isEnabled && MigrationSimulatorClient.sharedEngine.isActive {
+            return MigrationSimulatorClient.sharedEngine.isDustLocked()
+        }
+        return gateStorage.isDustLocked()
+    }
+
+    /// MOB-1496: per-account replacement for the old wallet-wide `migrationStateStream`. `nil`
+    /// resolves the selected account; a genuinely unresolvable account (neither passed in nor
+    /// selected) gets an inert, never-emitting stream rather than a crash.
+    func stateEvents(accountUUID: AccountUUID?) -> AnyPublisher<MigrationState, Never> {
+        guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else {
+            return Empty().eraseToAnyPublisher()
+        }
+        return subject(for: resolvedAccountUUID).eraseToAnyPublisher()
+    }
+
+    func networkPrivacyOptions() -> MigrationNetworkPrivacyOptions {
+        MigrationNetworkPrivacyOptions(useTor: gateStorage.isTorEnabledForMigration(), submissionEndpoint: zcashSDKEnvironment.endpoint())
+    }
+
+    func setNetworkPrivacyOptions(useTor: Bool) {
+        gateStorage.setTorEnabledForMigration(useTor)
+    }
+
+    func sendGate() async -> MigrationSendGate {
         ensureSubscribed()
 
-        if sdkSynchronizer.isSyncRequiredBeforeNextMigrationTransfer() {
+        if let accountUUID = selectedWalletAccount?.id, await isSyncRequiredBeforeNextMigrationTransfer(accountUUID: accountUUID) {
             gateStorage.markSyncRequired()
         }
 
@@ -148,18 +274,35 @@ final class MigrationManagerImpl: @unchecked Sendable {
         gateStorage.isSyncDeferredAfterBroadcast(now: Date())
     }
 
-    func reconcile() {
-        // MOB-1483: pre-activation there is nothing to reconcile — the SDK has no migration state
-        // to initialize or acknowledge yet, so skip both entirely rather than touch the SDK/storage
-        // on every launch before Ironwood activates.
+    /// Re-reads `getMigrationState` for the selected account (single-account semantics — MOB-1496
+    /// W1; a later task fans this out per-account) and, when it differs from the account, the
+    /// Keystone-vendor account too, pushing each into its `stateEvents` subject only on change.
+    /// Also runs the stale-acknowledge reset (selected account only, since the acknowledged flag
+    /// is not yet per-account): the acknowledged flag must never suppress a *new* migration's
+    /// completion banner (reinstall, Path F) — only meaningful while state is `.complete`. Called
+    /// on every foreground entry / launch (`RootInitialization.swift`) and after a store reports a
+    /// completed migration op (`MigrationSendingStore`/`MigrationNoteSplitStore`).
+    func reconcile() async {
         guard isIronwoodActivated() else { return }
 
-        sdkSynchronizer.initializeMigrationPostUpgrade()
+        let selectedAccountUUID = selectedWalletAccount?.id
+        var accountsToRefresh: [AccountUUID] = []
+        if let selectedAccountUUID {
+            accountsToRefresh.append(selectedAccountUUID)
+        }
+        if let keystoneAccountUUID = walletAccounts.first(where: { $0.vendor == WalletAccount.Vendor.keystone })?.id,
+           keystoneAccountUUID != selectedAccountUUID {
+            accountsToRefresh.append(keystoneAccountUUID)
+        }
 
-        // Stale-acknowledge reset: the acknowledged flag must never suppress a *new* migration's
-        // completion banner (reinstall, Path F). It's only meaningful while state is `.complete`.
-        if sdkSynchronizer.getMigrationState() != MigrationState.complete {
-            gateStorage.clearAcknowledgedComplete()
+        for accountUUID in accountsToRefresh {
+            guard let state = await migrationState(accountUUID: accountUUID) else { continue }
+
+            pushStateIfChanged(state, for: accountUUID)
+
+            if accountUUID == selectedAccountUUID && state != MigrationState.complete {
+                gateStorage.clearAcknowledgedComplete()
+            }
         }
     }
 
@@ -171,12 +314,13 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// `.requiresAttention(.syncRequiredBeforeNext)` carries no progress payload of its own, but
     /// per spec it renders identically to a plain `.inProgress(p)` banner — so it's normalized to
     /// that shape here, using the SDK's own out-of-band `getMigrationProgress()` snapshot, before
-    /// ever reaching `MigrationDerivations` (which only needs to know about `.inProgress`).
-    private func normalizedState() -> MigrationState {
-        let state = sdkSynchronizer.getMigrationState()
+    /// ever reaching `MigrationDerivations` (which only needs to know about `.inProgress`). `nil`
+    /// when the state read itself fails (rather than guessing a fallback state).
+    private func normalizedState(accountUUID: AccountUUID) async -> MigrationState? {
+        guard let state = await migrationState(accountUUID: accountUUID) else { return nil }
 
-        guard case MigrationState.requiresAttention(AttentionReason.syncRequiredBeforeNext) = state,
-              let progress = sdkSynchronizer.getMigrationProgress() else {
+        guard case MigrationState.requiresAttention(MigrationAttentionReason.syncRequiredBeforeNext) = state,
+              let progress = await migrationProgress(accountUUID: accountUUID) else {
             return state
         }
 
@@ -184,7 +328,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
     }
 
     /// "Next due" (manual): ready height already reached (or unknown / no progress -> not due).
-    private func isNextTransferDue() -> Bool {
+    private func isNextTransferDue(accountUUID: AccountUUID) async -> Bool {
         // MOB-1480: `nextTransferReadyAtHeight` is a synthetic (epoch-seconds) height while the
         // simulator is active, which can never compare true against the real chain's
         // `latestBlockHeight` below — ask the engine directly instead.
@@ -192,7 +336,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
             return MigrationSimulatorClient.sharedEngine.isNextTransferDue()
         }
 
-        guard let readyAtHeight = sdkSynchronizer.getMigrationProgress()?.nextTransferReadyAtHeight else {
+        guard let readyAtHeight = await migrationProgress(accountUUID: accountUUID)?.nextTransferReadyAtHeight else {
             return false
         }
 
@@ -215,6 +359,50 @@ final class MigrationManagerImpl: @unchecked Sendable {
         let tip = sdkSynchronizer.latestState().latestBlockHeight
         return tip > 0 && tip >= zcashSDKEnvironment.ironwoodActivationHeight()
     }
+
+    // MARK: - MOB-1496: throwing-SDK-read helpers (account-scoped, degrade on error)
+
+    private func migrationState(accountUUID: AccountUUID) async -> MigrationState? {
+        guard let result = try? await sdkSynchronizer.getMigrationState(accountUUID) else { return nil }
+        return result
+    }
+
+    private func migrationProgress(accountUUID: AccountUUID) async -> MigrationProgress? {
+        guard let result = try? await sdkSynchronizer.getMigrationProgress(accountUUID) else { return nil }
+        return result
+    }
+
+    private func hasInvalidMigrationTransfers(accountUUID: AccountUUID) async -> Bool {
+        (try? await sdkSynchronizer.hasInvalidMigrationTransfers(accountUUID)) ?? false
+    }
+
+    private func hasOverdueMigrationTransfers(accountUUID: AccountUUID) async -> Bool {
+        (try? await sdkSynchronizer.hasOverdueMigrationTransfers(accountUUID)) ?? false
+    }
+
+    private func isSyncRequiredBeforeNextMigrationTransfer(accountUUID: AccountUUID) async -> Bool {
+        (try? await sdkSynchronizer.isSyncRequiredBeforeNextMigrationTransfer(accountUUID)) ?? false
+    }
+
+    // MARK: - MOB-1496: per-account stateEvents subjects
+
+    private func subject(for accountUUID: AccountUUID) -> CurrentValueSubject<MigrationState, Never> {
+        stateSubjects.withLock { subjects in
+            if let existing = subjects[accountUUID] {
+                return existing
+            }
+            let fresh = CurrentValueSubject<MigrationState, Never>(MigrationState.notStarted)
+            subjects[accountUUID] = fresh
+            return fresh
+        }
+    }
+
+    private func pushStateIfChanged(_ state: MigrationState, for accountUUID: AccountUUID) {
+        let subject = subject(for: accountUUID)
+        if subject.value != state {
+            subject.send(state)
+        }
+    }
 }
 
 // MARK: - Pure derivations (table-testable, no SDK dependency)
@@ -222,11 +410,18 @@ final class MigrationManagerImpl: @unchecked Sendable {
 /// Pure mappings from SDK-observed migration state (plus a handful of app-side flags) onto what
 /// the UI shows. Every function here is a straight table lookup — no dates, no I/O, no SDK types
 /// beyond the value models already `Equatable`/`Sendable` (`MigrationState`, `MigrationProgress`,
-/// `AttentionReason`, `MigrationTransferRow`) — so `MigrationManagerTests` can exercise every row
-/// directly.
+/// `MigrationAttentionReason`, `MigrationTransferRow`) — so `MigrationManagerTests` can exercise
+/// every row directly.
 enum MigrationDerivations {
     /// See MOB-1466 spec, "bannerVariant derivation" table. `isIronwoodActivated` (MOB-1483) is
     /// checked first and gates the whole derivation — pre-activation there is no banner.
+    ///
+    /// MOB-1496: the SDK's `MigrationAttentionReason` has no `.transferStalled` case (that was a
+    /// pre-real-SDK invention) — "stalled" is now derived, not carried by the state itself: an
+    /// `.inProgress` migration with `hasOverdue` true reads as `.transferWaiting`, checked BEFORE
+    /// the manual-ready check (mirrors `reentryRoute`'s existing `hasOverdue`-before-
+    /// `isManualDelivery && isNextTransferDue` precedence), transferNumber = `completedTransfers +
+    /// 1`.
     static func bannerVariant(
         isIronwoodActivated: Bool,
         state: MigrationState,
@@ -248,6 +443,9 @@ enum MigrationDerivations {
             return MigrationBannerVariant.splitting
 
         case let MigrationState.inProgress(progress):
+            if hasOverdue {
+                return MigrationBannerVariant.transferWaiting(number: progress.completedTransfers + 1)
+            }
             if isManualDelivery && isNextTransferDue {
                 return MigrationBannerVariant.transferReady(number: progress.completedTransfers + 1)
             }
@@ -255,17 +453,14 @@ enum MigrationDerivations {
 
         case let MigrationState.requiresAttention(reason):
             switch reason {
-            case let AttentionReason.transferStalled(transferNumber):
-                return MigrationBannerVariant.transferWaiting(number: transferNumber)
-
-            case AttentionReason.invalidTransfer:
+            case MigrationAttentionReason.invalidTransfer:
                 return MigrationBannerVariant.updatePlan
 
-            case AttentionReason.transferExpired:
+            case MigrationAttentionReason.transferExpired:
                 let (first, last) = expiredBounds(transferRows: transferRows)
                 return MigrationBannerVariant.transfersExpired(first: first, last: last)
 
-            case AttentionReason.syncRequiredBeforeNext:
+            case MigrationAttentionReason.syncRequiredBeforeNext:
                 // Normalized to `.inProgress` by the LiveKey before this function is ever called
                 // with this state — this branch only exists so the switch stays exhaustive.
                 return nil
@@ -336,7 +531,7 @@ enum MigrationDerivations {
 
     private static func isTransferExpired(_ state: MigrationState) -> Bool {
         guard case let MigrationState.requiresAttention(reason) = state else { return false }
-        return reason == AttentionReason.transferExpired
+        return reason == MigrationAttentionReason.transferExpired
     }
 }
 
@@ -347,6 +542,15 @@ enum MigrationDerivations {
 /// reads `Date()` internally — so tests can drive the clock explicitly. Injectable
 /// `UserDefaults` (default `.standard`) lets tests use an isolated named suite.
 final class MigrationGateStorage: @unchecked Sendable {
+    /// MOB-1496: the SDK's `MigrationNetworkPrivacyOptions` isn't `Codable` (it carries a
+    /// `LightWalletEndpoint`, materialized at read time from the app's current sync endpoint —
+    /// see `MigrationManagerImpl.networkPrivacyOptions()`), so only the persisted `useTor` choice
+    /// is stored here, under the SAME UserDefaults key/JSON shape as before (minimally migrated:
+    /// the old payload also carried a now-dropped `submissionEndpoint: String?`).
+    private struct PersistedNetworkPrivacyOptions: Codable {
+        var useTor: Bool
+    }
+
     private enum Constants {
         static let tenMinutes: TimeInterval = 10 * 60
     }
@@ -436,7 +640,7 @@ final class MigrationGateStorage: @unchecked Sendable {
         return now < Date(timeIntervalSince1970: interval).addingTimeInterval(Constants.tenMinutes)
     }
 
-    // MARK: Mode / manual delivery / network privacy / acknowledge
+    // MARK: Mode / manual delivery / network privacy / acknowledge / dust-lock
 
     func migrationMode() -> MigrationMode? {
         guard let rawValue = userDefaults.string(forKey: .migrationMode) else { return nil }
@@ -455,17 +659,20 @@ final class MigrationGateStorage: @unchecked Sendable {
         userDefaults.set(isManual, forKey: .migrationManualDelivery)
     }
 
-    func networkPrivacyOptions() -> NetworkPrivacyOptions {
+    /// MOB-1496 Interim: only `useTor` is persisted — see `PersistedNetworkPrivacyOptions`'s doc.
+    /// `MigrationManagerImpl.networkPrivacyOptions()` combines this with the app's current sync
+    /// endpoint to build the SDK's `MigrationNetworkPrivacyOptions`.
+    func isTorEnabledForMigration() -> Bool {
         guard let data = userDefaults.data(forKey: .migrationNetworkPrivacyOptions),
-              let options = try? JSONDecoder().decode(NetworkPrivacyOptions.self, from: data) else {
-            return NetworkPrivacyOptions(useTor: false, submissionEndpoint: nil)
+              let stored = try? JSONDecoder().decode(PersistedNetworkPrivacyOptions.self, from: data) else {
+            return false
         }
 
-        return options
+        return stored.useTor
     }
 
-    func setNetworkPrivacyOptions(_ options: NetworkPrivacyOptions) {
-        guard let data = try? JSONEncoder().encode(options) else { return }
+    func setTorEnabledForMigration(_ useTor: Bool) {
+        guard let data = try? JSONEncoder().encode(PersistedNetworkPrivacyOptions(useTor: useTor)) else { return }
         userDefaults.set(data, forKey: .migrationNetworkPrivacyOptions)
     }
 
@@ -481,9 +688,21 @@ final class MigrationGateStorage: @unchecked Sendable {
         userDefaults.set(false, forKey: .migrationCompleteAcknowledged)
     }
 
+    /// MOB-1487/MOB-1496: "Lock balance" acknowledged on Migration Complete — the dust remainder is
+    /// marked unspendable and the complete screen re-enters on its locked confirmation instead of
+    /// re-offering resolution. Relocated here from the (inert, pre-real-SDK) `SDKSynchronizerClient`
+    /// stub — this was always app-only bookkeeping, never an SDK call.
+    func isDustLocked() -> Bool {
+        userDefaults.bool(forKey: .migrationDustLocked)
+    }
+
+    func setDustLocked(_ isLocked: Bool) {
+        userDefaults.set(isLocked, forKey: .migrationDustLocked)
+    }
+
     /// Clears every persisted migration flag this storage owns: mode, manual delivery, network
-    /// privacy, complete-acknowledged, last-broadcast. Backs the migration SDK simulator's debug
-    /// panel "Reset app migration flags" control (MOB-1480). Deliberately leaves
+    /// privacy, complete-acknowledged, dust-locked, last-broadcast. Backs the migration SDK
+    /// simulator's debug panel "Reset app migration flags" control (MOB-1480). Deliberately leaves
     /// `migrationSyncGateUntil`/the transient sync-required flag alone: the 10-minute send gate is
     /// a short-lived timing window, not a durable app flag, and expires on its own.
     func resetPersistedFlags() {
@@ -491,6 +710,7 @@ final class MigrationGateStorage: @unchecked Sendable {
         userDefaults.removeObject(forKey: .migrationManualDelivery)
         userDefaults.removeObject(forKey: .migrationNetworkPrivacyOptions)
         userDefaults.removeObject(forKey: .migrationCompleteAcknowledged)
+        userDefaults.removeObject(forKey: .migrationDustLocked)
         userDefaults.removeObject(forKey: .migrationLastBroadcastAt)
     }
 }

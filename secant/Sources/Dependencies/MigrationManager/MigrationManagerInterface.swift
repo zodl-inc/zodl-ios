@@ -9,6 +9,7 @@
 //
 
 import Foundation
+@preconcurrency import Combine
 @preconcurrency import ZcashLightClientKit
 import ComposableArchitecture
 
@@ -23,27 +24,52 @@ extension DependencyValues {
 struct MigrationManagerClient: Sendable {
     // Derivations (pure given SDK members + persistence; unit-tested as tables)
     var bannerVariant: @Sendable (_ accountUUID: AccountUUID?) async -> MigrationBannerVariant? = { _ in nil }
-    var reentryRoute: @Sendable () -> MigrationReentryRoute = { .entry }
+    // MOB-1496: async — the SDK's per-account migration reads are now `async throws`.
+    var reentryRoute: @Sendable () async -> MigrationReentryRoute = { .entry }
     // MOB-1483: "Ironwood (NU6.3) activated on the current network" — gates `bannerVariant`,
     // `reentryRoute`, and `reconcile()`. Defaults closed so a test that doesn't override it stays
     // fail-safe instead of trapping via the macro's `unimplemented`.
     var isIronwoodActivated: @Sendable () -> Bool = { false }
     var orchardBalanceToMigrate: @Sendable (_ accountUUID: AccountUUID?) async -> Zatoshi = { _ in .zero }
+    // Progress UI (MOB-1496: relocated from SDKSynchronizerClient — app-side derivations over the
+    // SDK's per-account state, not raw SDK calls). `nil` accountUUID resolves the selected account
+    // internally, same convention as `bannerVariant` above.
+    var migrationSummary: @Sendable (_ accountUUID: AccountUUID?) async -> MigrationSummary = { _ in MigrationSummary.zero }
+    var migrationTransfers: @Sendable (_ accountUUID: AccountUUID?) async -> [MigrationTransferRow] = { _ in [] }
+    // Dust resolution (MOB-1487/MOB-1496: relocated — app persistence, not SDK calls).
+    var lockMigrationDust: @Sendable () async throws -> Void
+    var isMigrationDustLocked: @Sendable () -> Bool = { false }
+    // Per-account migration-state stream (MOB-1496: relocated from SDKSynchronizerClient's
+    // `migrationStateStream`) — emits on `reconcile()` and whenever a store reports a completed
+    // migration op. `nil` accountUUID resolves the selected account internally.
+    var stateEvents: @Sendable (_ accountUUID: AccountUUID?) -> AnyPublisher<MigrationState, Never> = { _ in Empty().eraseToAnyPublisher() }
     // Persistence (UserDefaults-backed; keys in SharedStateKeys.swift)
     var migrationMode: @Sendable () -> MigrationMode?
     var setMigrationMode: @Sendable (MigrationMode) -> Void
     var isManualDelivery: @Sendable () -> Bool = { false }
     var setManualDelivery: @Sendable (Bool) -> Void
-    var networkPrivacyOptions: @Sendable () -> NetworkPrivacyOptions = { NetworkPrivacyOptions(useTor: false, submissionEndpoint: nil) }
-    var setNetworkPrivacyOptions: @Sendable (NetworkPrivacyOptions) -> Void
+    // MOB-1496 Interim: W4 replaces this with the migration network snapshot (separate broadcast
+    // provider). Endpoint is materialized at read time as the app's current sync endpoint. Default
+    // is the closed/no-Tor, unset-endpoint value — the macro requires a concrete default for a
+    // non-throwing, non-`Void`/non-`Optional`-returning closure; every real call site resolves a
+    // live endpoint, so this only surfaces if a test exercises the member without mocking it.
+    var networkPrivacyOptions: @Sendable () -> MigrationNetworkPrivacyOptions = {
+        MigrationNetworkPrivacyOptions(useTor: false, submissionEndpoint: LightWalletEndpoint(address: "", port: 0))
+    }
+    var setNetworkPrivacyOptions: @Sendable (_ useTor: Bool) -> Void
     var isCompleteAcknowledged: @Sendable () -> Bool = { false }
     var acknowledgeComplete: @Sendable () -> Void
-    // 10-minute sync<->send gate
-    var sendGate: @Sendable () -> MigrationSendGate = { .allowed }
+    // 10-minute sync<->send gate. MOB-1496: async — `isSyncRequiredBeforeNextMigrationTransfer` is
+    // now `async throws`.
+    var sendGate: @Sendable () async -> MigrationSendGate = { .allowed }
     var recordMigrationBroadcast: @Sendable () -> Void
     var isSyncDeferredAfterBroadcast: @Sendable () -> Bool = { false }   // consumed by MOB-1467
-    // Reconciliation
-    var reconcile: @Sendable () -> Void
+    // Reconciliation. MOB-1496: async — re-reads `getMigrationState` for `stateEvents` too. Default
+    // no-op (unlike most side-effecting members here, which stay `unimplemented`-by-default) since
+    // MOB-1496 adds call sites in `MigrationSendingStore`/`MigrationNoteSplitStore` (post-broadcast
+    // freshness) beyond the original launch/foreground-entry ones — a test exercising those success
+    // paths without caring about `stateEvents` freshness shouldn't have to mock this too.
+    var reconcile: @Sendable () async -> Void = { }
     // Debug/testnet-only: clears every persisted migration flag this client owns (mode, manual
     // delivery, network privacy, complete-acknowledged, last-broadcast) — consumed by the
     // migration SDK simulator's debug panel "Reset app migration flags" control (MOB-1480).
