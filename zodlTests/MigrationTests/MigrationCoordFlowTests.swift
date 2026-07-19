@@ -1253,9 +1253,16 @@ import ComposableArchitecture
         #expect(statusState.isFlowRoot == false)
     }
 
-    // MARK: - sendNow: overdue count drives Sending totalCount, completion returns to Status
+    // MARK: - sendNow: totalCount capped at one transfer (ZIP-0318), completion returns to Status
 
-    @MainActor @Test func statusSendNowPushesSendingConfiguredForOverdueCount() async {
+    /// MOB-1496 (fix-wave, review MINOR-5): the push site's `totalCount` used to be driven by the
+    /// overdue row count (`max(overdueCount, 1)`) — vestigial once `MigrationSendingStore` stopped
+    /// looping on `totalCount` (W5, ZIP-0318 MUST: at most one broadcast per screen/session
+    /// regardless of how many transfers are overdue). Renamed from
+    /// `statusSendNowPushesSendingConfiguredForOverdueCount`: the cap is the contract now, not the
+    /// overdue count, so the pushed `Sending` state's `totalCount` is always exactly 1 — asserted
+    /// here even with MULTIPLE overdue rows present, to prove the count no longer drives it.
+    @MainActor @Test func statusSendNowPushesSendingConfiguredWithSingleTransferCap() async {
         let rows: [MigrationTransferRow] = [
             MigrationTransferRow(id: "0", index: 0, amount: Zatoshi(1_000), status: .sent, hoursFromNow: 0),
             MigrationTransferRow(id: "1", index: 1, amount: Zatoshi(1_000), status: .overdue, hoursFromNow: 5),
@@ -1278,7 +1285,7 @@ import ComposableArchitecture
             Issue.record("Expected .sending pushed")
             return
         }
-        #expect(sendingState.totalCount == 2)
+        #expect(sendingState.totalCount == 1)
     }
 
     @MainActor @Test func sendingClosedAfterSendNowPopsBackToStatusWithRefreshedRows() async {

@@ -37,15 +37,21 @@
 //      the bare default alone — see its own doc for why).
 //  (2) A brand-new probe, `rescheduleOverdueMigrationTransfer`, gates broadcast candidacy (its
 //      non-nil return is what makes an account a candidate at all — see the tree's own "height-due
-//      semantics" doc) — `baseNoOpDependencies` now defaults it to a sentinel non-nil proposal so
-//      every pre-existing single-account "Branch 4: Send" test still reaches the broadcast without
-//      per-test boilerplate; a test exercising multiple accounts' relative ordering overrides it
-//      explicitly per account.
+//      semantics" doc). `.noOp`'s own bare default (`{ _ in nil }`) means NO account is ever a
+//      broadcast candidate — every single-account "Branch 4: Send" test below sets a non-nil
+//      proposal explicitly. (Fix-wave: an earlier `baseNoOpDependencies` override defaulted this to
+//      a non-nil sentinel instead, which accidentally erased ALL coverage of the nil-probe/
+//      `activeNoCandidate` path — reverted back to the safe-by-default nil, with the override
+//      pushed to each test that actually needs a candidate.) A test exercising multiple accounts'
+//      relative ordering overrides it explicitly per account too.
 //  New tests below (`MARK: - Branch 1.5/4.5 (MOB-1496 W5): multi-account fan-out`) cover the
 //  multi-account resolution itself: earliest-height/overdue/tie-break candidate selection,
 //  per-account `migrationNetworkOptions` threading, sync-needed deferring every broadcast, plan-
 //  broken not blocking a healthy account's broadcast, and the all-complete/one-active cancelAll
-//  split.
+//  split. Further additions (`MARK: - Fix wave`) pin the review's findings: the nil-probe/
+//  `activeNoCandidate` path itself, the invariant that a winner completing must NOT `cancelAll`/
+//  announce `.migrationComplete` while another account is still active (finding 1), its sibling
+//  legitimate-cancelAll case, and the planner-level `readyToPropose` nuance.
 //
 
 import Foundation
@@ -443,6 +449,9 @@ import ComposableArchitecture
                 Root()
             } withDependencies: {
                 baseNoOpDependencies(&$0)
+                // MOB-1496 (fix-wave): `rescheduleOverdueMigrationTransfer` now defaults to nil
+                // (IMPORTANT-2) — escape it explicitly so classification reaches the broadcast at all.
+                $0.sdkSynchronizer.rescheduleOverdueMigrationTransfer = { _ in Self.proposal(nextExecutableAfterHeight: 100) }
                 $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in MigrationTransferResult.success(txId: "tx-1") }
                 $0.sdkSynchronizer.getMigrationState = { _ in MigrationState.inProgress(progress) }
                 $0.sdkSynchronizer.getMigrationProgress = { _ in progress }
@@ -497,6 +506,9 @@ import ComposableArchitecture
                 Root()
             } withDependencies: {
                 baseNoOpDependencies(&$0)
+                // MOB-1496 (fix-wave): `rescheduleOverdueMigrationTransfer` now defaults to nil
+                // (IMPORTANT-2) — escape it explicitly so classification reaches the broadcast at all.
+                $0.sdkSynchronizer.rescheduleOverdueMigrationTransfer = { _ in Self.proposal(nextExecutableAfterHeight: 100) }
                 $0.migrationManager.migrationNetworkOptions = { _ in sentinel }
                 $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, options in
                     receivedOptions.withValue { $0.append(options) }
@@ -541,6 +553,9 @@ import ComposableArchitecture
                 Root()
             } withDependencies: {
                 baseNoOpDependencies(&$0)
+                // MOB-1496 (fix-wave): `rescheduleOverdueMigrationTransfer` now defaults to nil
+                // (IMPORTANT-2) — escape it explicitly so classification reaches the broadcast at all.
+                $0.sdkSynchronizer.rescheduleOverdueMigrationTransfer = { _ in Self.proposal(nextExecutableAfterHeight: 100) }
                 $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in MigrationTransferResult.success(txId: "tx-final") }
                 $0.sdkSynchronizer.getMigrationState = { _ in
                     let call = getMigrationStateCallCount.withValue { count -> Int in
@@ -592,6 +607,9 @@ import ComposableArchitecture
                 // test already mocks `getMigrationProgress` with, so both reads describe one
                 // consistent in-progress account.
                 $0.sdkSynchronizer.getMigrationState = { _ in MigrationState.inProgress(progress) }
+                // MOB-1496 (fix-wave): `rescheduleOverdueMigrationTransfer` now defaults to nil
+                // (IMPORTANT-2) — escape it explicitly so classification reaches the broadcast at all.
+                $0.sdkSynchronizer.rescheduleOverdueMigrationTransfer = { _ in Self.proposal(nextExecutableAfterHeight: 100) }
                 $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in MigrationTransferResult.networkError(retryable: true) }
                 $0.sdkSynchronizer.getMigrationProgress = { _ in progress }
                 $0.migrationBGScheduler.scheduleNextWindow = { scheduleNextWindowCalls.withValue { $0 += 1 } }
@@ -627,8 +645,11 @@ import ComposableArchitecture
             } withDependencies: {
                 baseNoOpDependencies(&$0)
                 // MOB-1496 (W5): escape the "nothing to do" bucket so classification reaches the
-                // broadcast-candidate probe (defaulted non-nil by `baseNoOpDependencies`) at all.
+                // broadcast-candidate probe at all.
                 $0.sdkSynchronizer.getMigrationState = { _ in MigrationState.inProgress(Self.placeholderProgress) }
+                // MOB-1496 (fix-wave): `rescheduleOverdueMigrationTransfer` now defaults to nil
+                // (IMPORTANT-2) — escape it explicitly so classification reaches the broadcast at all.
+                $0.sdkSynchronizer.rescheduleOverdueMigrationTransfer = { _ in Self.proposal(nextExecutableAfterHeight: 100) }
                 $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in nil }
                 $0.migrationBGScheduler.scheduleNextWindow = { scheduleNextWindowCalls.withValue { $0 += 1 } }
                 $0.userNotifications.scheduleMigrationNotification = { notification, _ in
@@ -665,8 +686,11 @@ import ComposableArchitecture
             } withDependencies: {
                 baseNoOpDependencies(&$0)
                 // MOB-1496 (W5): escape the "nothing to do" bucket so classification reaches the
-                // broadcast-candidate probe (defaulted non-nil by `baseNoOpDependencies`) at all.
+                // broadcast-candidate probe at all.
                 $0.sdkSynchronizer.getMigrationState = { _ in MigrationState.inProgress(Self.placeholderProgress) }
+                // MOB-1496 (fix-wave): `rescheduleOverdueMigrationTransfer` now defaults to nil
+                // (IMPORTANT-2) — escape it explicitly so classification reaches the broadcast at all.
+                $0.sdkSynchronizer.rescheduleOverdueMigrationTransfer = { _ in Self.proposal(nextExecutableAfterHeight: 100) }
                 $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in throw SomeError() }
                 $0.migrationBGScheduler.scheduleNextWindow = { scheduleNextWindowCalls.withValue { $0 += 1 } }
                 $0.userNotifications.scheduleMigrationNotification = { notification, _ in
@@ -713,6 +737,9 @@ import ComposableArchitecture
                 Root()
             } withDependencies: {
                 baseNoOpDependencies(&$0)
+                // MOB-1496 (fix-wave): `rescheduleOverdueMigrationTransfer` now defaults to nil
+                // (IMPORTANT-2) — escape it explicitly so classification reaches the broadcast at all.
+                $0.sdkSynchronizer.rescheduleOverdueMigrationTransfer = { _ in Self.proposal(nextExecutableAfterHeight: 100) }
                 $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in
                     throw ZcashError.migrationRecordFailedAfterBroadcast(RecordingFailure())
                 }
@@ -1017,12 +1044,19 @@ import ComposableArchitecture
         }
     }
 
-    /// One account `.complete`, the other active: `cancelAll` must NOT fire, and the active
-    /// account's own broadcast still proceeds.
-    @Test func oneCompleteOneActiveDoesNotCancelAllAndActiveProceeds() async {
+    /// One account already `.complete` BEFORE the session even starts (i.e. the NON-winner — the
+    /// winner is the other, active account), the other active: `cancelAll` must NOT fire, and the
+    /// active account's own broadcast still proceeds. Named to be explicit about which direction
+    /// this covers — the `.complete` account here never reaches `handleLandedBroadcast`'s own
+    /// post-broadcast complete-check at all (it's not the winner); the sibling direction, where
+    /// the WINNER's OWN broadcast is what completes it while the other account is still active, is
+    /// `winnerCompletingWhileOtherAccountStillActiveDoesNotCancelAllAndRearms` below (fix-wave
+    /// finding 1 — review confirmed this test alone doesn't pin that invariant).
+    @Test func oneCompleteNonWinnerOneActiveDoesNotCancelAllAndActiveProceeds() async {
         let selected = Self.walletAccount()
         let second = Self.secondAccount()
         let cancelAllCalls = LockIsolated<Int>(0)
+        let scheduleNextWindowCalls = LockIsolated<Int>(0)
         let executedAccountUUIDs = LockIsolated<[AccountUUID]>([])
         let completeCalls = LockIsolated<[Bool]>([])
 
@@ -1042,6 +1076,7 @@ import ComposableArchitecture
                     return MigrationTransferResult.success(txId: "tx-active")
                 }
                 $0.migrationBGScheduler.cancelAll = { cancelAllCalls.withValue { $0 += 1 } }
+                $0.migrationBGScheduler.scheduleNextWindow = { scheduleNextWindowCalls.withValue { $0 += 1 } }
             }
 
             let handle = MigrationBGSessionHandle(rawTask: nil) { success in completeCalls.withValue { $0.append(success) } }
@@ -1049,7 +1084,231 @@ import ComposableArchitecture
             await waitForRootStore { completeCalls.withValue { !$0.isEmpty } }
 
             #expect(cancelAllCalls.withValue { $0 } == 0)
+            #expect(scheduleNextWindowCalls.withValue { $0 } == 1)
             #expect(executedAccountUUIDs.withValue { $0 } == [second.id])
+            #expect(completeCalls.withValue { $0 } == [true])
+        }
+    }
+
+    // MARK: - Fix wave (review findings): nil-probe coverage + winner-completes-while-another-
+    // account-is-active invariant (finding 1) + its sibling legitimate-cancelAll case + the
+    // planner-level `readyToPropose` nuance.
+
+    /// IMPORTANT-2: an active (`.inProgress`) account whose `rescheduleOverdueMigrationTransfer`
+    /// probe returns nil is `.activeNoCandidate` — never a broadcast candidate, and (unlike
+    /// `.complete`/`.notStarted`) never counts as "done" for the cancel-all gate either, so the
+    /// session just re-arms.
+    @Test func activeAccountWithNilProbeIsNotABroadcastCandidate() async {
+        let executeNextPendingMigrationTransferCalls = LockIsolated<Int>(0)
+        let cancelAllCalls = LockIsolated<Int>(0)
+        let scheduleNextWindowCalls = LockIsolated<Int>(0)
+        let completeCalls = LockIsolated<[Bool]>([])
+
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let store = Store(initialState: Self.selectedAccountState()) {
+                Root()
+            } withDependencies: {
+                baseNoOpDependencies(&$0)
+                $0.sdkSynchronizer.getMigrationState = { _ in MigrationState.inProgress(Self.placeholderProgress) }
+                $0.sdkSynchronizer.rescheduleOverdueMigrationTransfer = { _ in nil }
+                $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in
+                    executeNextPendingMigrationTransferCalls.withValue { $0 += 1 }
+                    return MigrationTransferResult.success(txId: "should-not-be-called")
+                }
+                $0.migrationBGScheduler.cancelAll = { cancelAllCalls.withValue { $0 += 1 } }
+                $0.migrationBGScheduler.scheduleNextWindow = { scheduleNextWindowCalls.withValue { $0 += 1 } }
+            }
+
+            let handle = MigrationBGSessionHandle(rawTask: nil) { success in completeCalls.withValue { $0.append(success) } }
+            store.send(.initialization(.migrationBackgroundSession(handle)))
+            await waitForRootStore { completeCalls.withValue { !$0.isEmpty } }
+
+            #expect(executeNextPendingMigrationTransferCalls.withValue { $0 } == 0)
+            #expect(cancelAllCalls.withValue { $0 } == 0)
+            #expect(scheduleNextWindowCalls.withValue { $0 } == 1)
+            #expect(completeCalls.withValue { $0 } == [true])
+        }
+    }
+
+    /// Fix-wave finding 1 (the review's headline SPEC violation) — THIS IS THE PINNING TEST: two
+    /// accounts, the winner's OWN broadcast finishes IT (`getMigrationState(winner)` reads
+    /// `.complete` on the post-broadcast check), but the OTHER account is still `.inProgress` with
+    /// its own broadcast candidate (i.e. still has an active run). The session must NOT
+    /// `cancelAll`/announce `.migrationComplete` — that would kill the wakeup chain and orphan the
+    /// other account's migration. Instead: `.transferComplete` (an ordinary successful-transfer
+    /// notification) and `scheduleNextWindow()` so the other account's chain continues. Winner-
+    /// scoped bookkeeping (`recordTransferBroadcast`/`reconcile`) still runs exactly as it would
+    /// for any other landed broadcast.
+    ///
+    /// Recorded RED against the unfixed code (review IMPORTANT-1): `cancelAllCalls == 1`,
+    /// `notifications == [.migrationComplete]` — see the fix-wave report's red-run evidence.
+    @Test func winnerCompletingWhileOtherAccountStillActiveDoesNotCancelAllAndRearms() async {
+        let selected = Self.walletAccount()
+        let recordTransferBroadcastCalls = LockIsolated<[(AccountUUID?, MigrationTransferResult)]>([])
+        let reconcileCalls = LockIsolated<Int>(0)
+        let notifications = LockIsolated<[MigrationNotification]>([])
+        let scheduleNextWindowCalls = LockIsolated<Int>(0)
+        let cancelAllCalls = LockIsolated<Int>(0)
+        let executedAccountUUIDs = LockIsolated<[AccountUUID]>([])
+        let completeCalls = LockIsolated<[Bool]>([])
+        // The winner (`selected`)'s `getMigrationState` must read `.inProgress` during pre-flight
+        // classification (else it short-circuits to "nothing to do" and is never a candidate at
+        // all) and `.complete` on `handleLandedBroadcast`'s post-broadcast check — a call-counted
+        // stub models exactly that, mirroring `sendSuccessToCompleteNotifiesMigrationCompleteAndCancelsAll`'s
+        // single-account precedent. `second` stays `.inProgress` on every read — it's the account
+        // that must still be "active" when the winner's own completion is evaluated.
+        let selectedGetMigrationStateCallCount = LockIsolated<Int>(0)
+
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let store = Store(initialState: Self.twoAccountState()) {
+                Root()
+            } withDependencies: {
+                baseNoOpDependencies(&$0)
+                $0.sdkSynchronizer.getMigrationState = { accountUUID in
+                    guard accountUUID == selected.id else {
+                        return MigrationState.inProgress(Self.placeholderProgress)
+                    }
+                    let call = selectedGetMigrationStateCallCount.withValue { count -> Int in
+                        count += 1
+                        return count
+                    }
+                    return call == 1 ? MigrationState.inProgress(Self.placeholderProgress) : MigrationState.complete
+                }
+                // `selected` due earliest (height 100) -> wins; `second` also a candidate (height
+                // 200, still active) but loses and must stay untouched (never executed).
+                $0.sdkSynchronizer.rescheduleOverdueMigrationTransfer = { accountUUID in
+                    accountUUID == selected.id
+                        ? Self.proposal(nextExecutableAfterHeight: 100)
+                        : Self.proposal(nextExecutableAfterHeight: 200)
+                }
+                $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { accountUUID, _ in
+                    executedAccountUUIDs.withValue { $0.append(accountUUID) }
+                    return MigrationTransferResult.success(txId: "tx-selected-final")
+                }
+                $0.migrationManager.recordTransferBroadcast = { accountUUID, result in
+                    recordTransferBroadcastCalls.withValue { $0.append((accountUUID, result)) }
+                }
+                $0.migrationManager.reconcile = { reconcileCalls.withValue { $0 += 1 } }
+                $0.migrationBGScheduler.scheduleNextWindow = { scheduleNextWindowCalls.withValue { $0 += 1 } }
+                $0.migrationBGScheduler.cancelAll = { cancelAllCalls.withValue { $0 += 1 } }
+                $0.userNotifications.scheduleMigrationNotification = { notification, _ in
+                    notifications.withValue { $0.append(notification) }
+                }
+            }
+
+            let handle = MigrationBGSessionHandle(rawTask: nil) { success in completeCalls.withValue { $0.append(success) } }
+            store.send(.initialization(.migrationBackgroundSession(handle)))
+            await waitForRootStore { completeCalls.withValue { !$0.isEmpty } }
+
+            #expect(executedAccountUUIDs.withValue { $0 } == [selected.id])
+            #expect(recordTransferBroadcastCalls.withValue { $0 }.count == 1)
+            #expect(recordTransferBroadcastCalls.withValue { $0 }.first?.1 == MigrationTransferResult.success(txId: "tx-selected-final"))
+            #expect(reconcileCalls.withValue { $0 } == 1)
+            #expect(cancelAllCalls.withValue { $0 } == 0)
+            #expect(scheduleNextWindowCalls.withValue { $0 } == 1)
+            #expect(notifications.withValue { $0 }.count == 1)
+            if case MigrationNotification.transferComplete? = notifications.withValue({ $0 }).first {
+                // Exact payload fields already covered by `sendSuccessNotCompleteNotifiesTransferCompleteAndRearms`.
+            } else {
+                Issue.record("Expected a .transferComplete notification, got \(notifications.withValue { $0 })")
+            }
+            #expect(completeCalls.withValue { $0 } == [true])
+        }
+    }
+
+    /// The sibling legitimate-cancelAll case at the multi-account level: the winner's OWN
+    /// broadcast finishes it, and the OTHER account is ALREADY done (`.complete`, i.e.
+    /// `nothingToDo`) — every account is now done, so `cancelAll` + `.migrationComplete` fire
+    /// exactly as the single-account precedent (`sendSuccessToCompleteNotifiesMigrationCompleteAndCancelsAll`)
+    /// always has.
+    @Test func winnerCompletingWithAllOtherAccountsDoneCancelsAllAndNotifiesComplete() async {
+        let selected = Self.walletAccount()
+        let notifications = LockIsolated<[MigrationNotification]>([])
+        let scheduleNextWindowCalls = LockIsolated<Int>(0)
+        let cancelAllCalls = LockIsolated<Int>(0)
+        let executedAccountUUIDs = LockIsolated<[AccountUUID]>([])
+        let completeCalls = LockIsolated<[Bool]>([])
+        let selectedGetMigrationStateCallCount = LockIsolated<Int>(0)
+
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let store = Store(initialState: Self.twoAccountState()) {
+                Root()
+            } withDependencies: {
+                baseNoOpDependencies(&$0)
+                $0.sdkSynchronizer.getMigrationState = { accountUUID in
+                    guard accountUUID == selected.id else {
+                        return MigrationState.complete
+                    }
+                    let call = selectedGetMigrationStateCallCount.withValue { count -> Int in
+                        count += 1
+                        return count
+                    }
+                    return call == 1 ? MigrationState.inProgress(Self.placeholderProgress) : MigrationState.complete
+                }
+                // `second` is `nothingToDo(.complete)` -> its probe is never even read; only
+                // `selected` needs a candidate proposal to become the (sole) winner.
+                $0.sdkSynchronizer.rescheduleOverdueMigrationTransfer = { _ in Self.proposal(nextExecutableAfterHeight: 100) }
+                $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { accountUUID, _ in
+                    executedAccountUUIDs.withValue { $0.append(accountUUID) }
+                    return MigrationTransferResult.success(txId: "tx-selected-final")
+                }
+                $0.migrationBGScheduler.scheduleNextWindow = { scheduleNextWindowCalls.withValue { $0 += 1 } }
+                $0.migrationBGScheduler.cancelAll = { cancelAllCalls.withValue { $0 += 1 } }
+                $0.userNotifications.scheduleMigrationNotification = { notification, _ in
+                    notifications.withValue { $0.append(notification) }
+                }
+            }
+
+            let handle = MigrationBGSessionHandle(rawTask: nil) { success in completeCalls.withValue { $0.append(success) } }
+            store.send(.initialization(.migrationBackgroundSession(handle)))
+            await waitForRootStore { completeCalls.withValue { !$0.isEmpty } }
+
+            #expect(executedAccountUUIDs.withValue { $0 } == [selected.id])
+            #expect(notifications.withValue { $0 } == [MigrationNotification.migrationComplete])
+            #expect(scheduleNextWindowCalls.withValue { $0 } == 0)
+            #expect(cancelAllCalls.withValue { $0 } == 1)
+            #expect(completeCalls.withValue { $0 } == [true])
+        }
+    }
+
+    /// MINOR-3: the planner's cancel-all gate requires `.nothingToDo(state)` with `state ==
+    /// .complete || .notStarted` — a `.readyToPropose` account (real balance, no committed plan
+    /// yet) is deliberately EXCLUDED, so it must force a re-arm instead of `cancelAll`, keeping the
+    /// wakeup chain alive in case the user eventually commits a plan. Only `MigrationCadence
+    /// .planRearm`'s adjacent nuance had store-independent coverage before this; `MigrationSessionPlanner`
+    /// itself is `private`, so this pins it the only way available — via the Root store.
+    @Test func oneCompleteOneReadyToProposeDoesNotCancelAllAndRearms() async {
+        let cancelAllCalls = LockIsolated<Int>(0)
+        let scheduleNextWindowCalls = LockIsolated<Int>(0)
+        let completeCalls = LockIsolated<[Bool]>([])
+
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let selected = Self.walletAccount()
+            let store = Store(initialState: Self.twoAccountState()) {
+                Root()
+            } withDependencies: {
+                baseNoOpDependencies(&$0)
+                $0.sdkSynchronizer.getMigrationState = { accountUUID in
+                    accountUUID == selected.id ? MigrationState.complete : MigrationState.readyToPropose
+                }
+                $0.migrationBGScheduler.cancelAll = { cancelAllCalls.withValue { $0 += 1 } }
+                $0.migrationBGScheduler.scheduleNextWindow = { scheduleNextWindowCalls.withValue { $0 += 1 } }
+            }
+
+            let handle = MigrationBGSessionHandle(rawTask: nil) { success in completeCalls.withValue { $0.append(success) } }
+            store.send(.initialization(.migrationBackgroundSession(handle)))
+            await waitForRootStore { completeCalls.withValue { !$0.isEmpty } }
+
+            #expect(cancelAllCalls.withValue { $0 } == 0)
+            #expect(scheduleNextWindowCalls.withValue { $0 } == 1)
             #expect(completeCalls.withValue { $0 } == [true])
         }
     }
@@ -1517,22 +1776,15 @@ private func baseNoOpDependencies(_ values: inout DependencyValues) {
     values.migrationManager.activeNetworkSnapshots = { [] }
     values.readTransactionsStorage.resetZashi = { }
     values.sdkSynchronizer = .noOp
-    // MOB-1496 (W5): `.noOp`'s own default (`{ _ in nil }`) means NO account is a broadcast
-    // candidate at all — every pre-existing single-account "Branch 4: Send" test below wants the
-    // OPPOSITE (an ordinary account with something pending), matching `.noOp`'s already-permissive
-    // defaults for `isSyncRequiredBeforeNextMigrationTransfer`/`hasInvalidMigrationTransfers`
-    // (`false`) elsewhere. Deliberately NOT touching `getMigrationState` here (still `.noOp`'s bare
-    // `.notStarted`) — unlike this probe, an account's STATE is directly meaningful to session
-    // routing (the "nothing to do" bucket), so it stays an explicit per-test choice.
-    values.sdkSynchronizer.rescheduleOverdueMigrationTransfer = { _ in
-        MigrationTransferProposal(
-            id: "default-candidate",
-            amount: Zatoshi(1_000),
-            anchorHeight: 0,
-            nextExecutableAfterHeight: 100,
-            expiryHeight: 1_000
-        )
-    }
+    // MOB-1496 (fix-wave, review IMPORTANT-2): deliberately left at `.noOp`'s own bare default
+    // (`{ _ in nil }`, i.e. no account is ever a broadcast candidate) — a prior override here (a
+    // non-nil sentinel proposal) accidentally erased the ONLY coverage of the nil-probe/
+    // `activeNoCandidate` path (an active account whose probe returns nil must never become a
+    // broadcast candidate AND must never count as "done" for cancelAll). Every single-account
+    // "Branch 4: Send" test below that needs a candidate now sets
+    // `rescheduleOverdueMigrationTransfer` explicitly instead of being silently satisfied by a
+    // shared default — the same "explicit per-test choice" precedent this file's own header doc
+    // already calls out for `getMigrationState`.
     values.userMetadataProvider.load = { _ in }
     values.userNotifications.authorizationStatus = { .notDetermined }
     values.userNotifications.requestAuthorization = { false }

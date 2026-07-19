@@ -365,11 +365,13 @@ extension MigrationCoordFlow {
                 // MARK: - Status
 
             case .path(.element(id: _, action: .status(.delegate(.sendNow)))):
-                return .run { [migrationManager, accountUUID = state.selectedWalletAccount?.id] send in
-                    let rows = await migrationManager.migrationTransfers(accountUUID)
-                    let overdueCount = rows.filter { $0.status == MigrationTransferRow.Status.overdue }.count
-                    let sendingState = MigrationSending.State(totalCount: max(overdueCount, 1))
-                    await send(.pushHydratedPathState(.sending(sendingState)))
+                // MOB-1496 (fix-wave, review MINOR-5): `totalCount` used to be driven by the
+                // overdue row count — vestigial once `MigrationSendingStore` stopped looping on it
+                // (W5, ZIP-0318 MUST: at most one broadcast per screen regardless of how many
+                // transfers are overdue). The cap is the contract now, so this no longer needs to
+                // read `migrationTransfers` at all.
+                return .run { send in
+                    await send(.pushHydratedPathState(.sending(MigrationSending.State(totalCount: 1))))
                 }
 
             case .path(.element(id: let id, action: .status(.delegate(.reschedule)))):
