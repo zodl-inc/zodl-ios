@@ -31,6 +31,19 @@
 //  same reasoning as the failure sheet above — so a future caller that hands over an un-stored PCZT
 //  has somewhere to plug in.
 //
+//  MOB-1496 (C-1b fix, final review R6 fix-wave 2): the coordinator no longer stores this commit's
+//  schedule before pushing this screen — Step 0 of the fix-wave-2 report traced the engine's phase
+//  machine and found that order lets the split's own broadcast-success record silently strand the
+//  schedule once the split mines (see `MigrationCoordFlowCoordinator`'s header comment). The schedule
+//  now stores AFTER this screen's Keystone-fork broadcast lands: `resubmitSignedNoteSplit` sends
+//  `.splitBroadcastSucceeded` instead of reconciling directly, which sets `awaitingScheduleStore` and
+//  asks the coordinator (`.delegate(.storeScheduleRequested)`) to run the deferred store — the
+//  coordinator owns it because it alone holds the signed schedule entries. The coordinator reports
+//  back via this screen's OWN `.splitConfirmed` (success — same as the legacy re-entry path) or the
+//  new `.scheduleStoreFailed` (failure — reuses the EXISTING failure sheet); while
+//  `awaitingScheduleStore` is `true`, `retryTapped` re-asks the coordinator instead of re-broadcasting
+//  (the split already landed safely) or re-storing (nothing here to store — the coordinator holds it).
+//
 
 import Foundation
 import ComposableArchitecture
@@ -76,6 +89,13 @@ struct MigrationNoteSplit {
         /// every later retry (after e.g. a broadcast-only failure) skips straight to broadcasting.
         /// Cleared once `.splitConfirmed` lands, alongside `signedNoteSplitPczt`.
         var splitStored = false
+        /// MOB-1496 (C-1b fix, fix-wave 2): true once this screen's Keystone-fork broadcast has
+        /// landed and the coordinator's deferred schedule store is in flight (or has failed and is
+        /// awaiting a retry) — `retryTapped` then re-asks the coordinator
+        /// (`.delegate(.storeScheduleRequested)`) instead of re-broadcasting the already-safe split
+        /// or re-submitting the software proposal. Set by `.splitBroadcastSucceeded`; cleared by
+        /// `.splitConfirmed` once the coordinator reports the store succeeded.
+        var awaitingScheduleStore = false
 
         init(
             phase: Phase = .splitting,
@@ -85,7 +105,8 @@ struct MigrationNoteSplit {
             isFailurePresented: Bool = false,
             isFlowRoot: Bool = false,
             signedNoteSplitPczt: Data? = nil,
-            splitStored: Bool = false
+            splitStored: Bool = false,
+            awaitingScheduleStore: Bool = false
         ) {
             self.phase = phase
             self.amount = amount
@@ -95,6 +116,7 @@ struct MigrationNoteSplit {
             self.isFlowRoot = isFlowRoot
             self.signedNoteSplitPczt = signedNoteSplitPczt
             self.splitStored = splitStored
+            self.awaitingScheduleStore = awaitingScheduleStore
         }
     }
 
@@ -117,12 +139,31 @@ struct MigrationNoteSplit {
         /// succeeded — flips `state.splitStored` so a LATER retry (e.g. after a broadcast-only
         /// failure) skips straight to `broadcastStoredNoteSplit` instead of re-storing.
         case noteSplitStored
-        /// `migrationManager.stateEvents()` reported `.readyToPropose` while splitting.
+        /// MOB-1496 (C-1b fix, fix-wave 2): the Keystone fork's `broadcastStoredNoteSplit` call
+        /// succeeded (including the landed-but-record-failed success-like case) — sets
+        /// `state.awaitingScheduleStore` and asks the coordinator to run its deferred schedule store
+        /// (`.delegate(.storeScheduleRequested)`); the coordinator alone holds the signed schedule
+        /// entries. Never sent by the software fork (`submitNoteSplit`), which has no deferred store.
+        case splitBroadcastSucceeded
+        /// MOB-1496 (C-1b fix, fix-wave 2): the coordinator's deferred schedule store failed —
+        /// re-presents the EXISTING failure sheet; `awaitingScheduleStore` stays `true` so the next
+        /// `retryTapped` asks the coordinator again rather than re-broadcasting or re-storing here.
+        case scheduleStoreFailed
+        /// `migrationManager.stateEvents()` reported `.readyToPropose` while splitting — OR (MOB-1496
+        /// C-1b fix, fix-wave 2) the coordinator's deferred schedule store just succeeded. Either way
+        /// this is the durable "fully committed" signal: clears `awaitingScheduleStore` alongside the
+        /// existing `signedNoteSplitPczt`/`splitStored` clearing.
         case splitConfirmed
         case splitResult(MigrationTransferResult)
 
         enum Delegate: Equatable {
             case continued
+            /// MOB-1496 (C-1b fix, fix-wave 2): ask the coordinator to run its deferred
+            /// `storeSignedMigrationTransactions` -> `recordCommittedSchedule` -> `reconcile()`
+            /// sequence now — sent automatically once this screen's Keystone-fork broadcast lands
+            /// (`.splitBroadcastSucceeded`), and again by `retryTapped` on every subsequent tap while
+            /// `awaitingScheduleStore` is `true`.
+            case storeScheduleRequested
         }
     }
 
@@ -163,6 +204,22 @@ struct MigrationNoteSplit {
                 return .none
 
             case .onAppear:
+                // MOB-1496 (C-1b fix, fix-wave 2): while `signedNoteSplitPczt` is set, this mount is
+                // the Keystone mid-commit push, not a plain re-entry — its confirmation comes
+                // EXCLUSIVELY from the coordinator's own deferred-store success signal
+                // (`MigrationCoordFlowCoordinator.storeDeferredKeystoneSchedule` dispatching
+                // `.splitConfirmed` once `storeSignedMigrationTransactions` actually succeeds), never
+                // from this generic engine-state observation. Trusting `.readyToPropose` here too
+                // would re-open the exact race Step 0 closed: if a deferred-store attempt fails and
+                // the split independently mines before the user retries, the engine legitimately
+                // (if unhelpfully) reports `.readyToPropose` via the denom-advance even though the
+                // schedule was never stored — jumping to `.confirmed` from THIS read would let
+                // Continue resume the chain over a schedule that is still genuinely unstored,
+                // exactly the "context dropped while entries are unstored" outcome the retry
+                // affordance exists to prevent.
+                guard state.signedNoteSplitPczt == nil else {
+                    return .none
+                }
                 let accountUUID = state.selectedWalletAccount?.id
                 return .merge(
                     // Defensive: the split may have already reached `.readyToPropose` between the
@@ -180,6 +237,13 @@ struct MigrationNoteSplit {
 
             case .retryTapped:
                 state.isFailurePresented = false
+                // MOB-1496 (C-1b fix, fix-wave 2): checked FIRST — a broadcast that already landed
+                // is safe and must never be re-sent; only the coordinator's deferred schedule store
+                // needs retrying (it alone holds the signed entries, so there is nothing to store
+                // here).
+                if state.awaitingScheduleStore {
+                    return .send(.delegate(.storeScheduleRequested))
+                }
                 if let signedNoteSplitPczt = state.signedNoteSplitPczt {
                     return resubmitSignedNoteSplit(
                         signedNoteSplitPczt,
@@ -193,10 +257,19 @@ struct MigrationNoteSplit {
                 state.splitStored = true
                 return .none
 
+            case .splitBroadcastSucceeded:
+                state.awaitingScheduleStore = true
+                return .send(.delegate(.storeScheduleRequested))
+
+            case .scheduleStoreFailed:
+                state.isFailurePresented = true
+                return .none
+
             case .splitConfirmed:
                 state.phase = .confirmed
                 state.signedNoteSplitPczt = nil
                 state.splitStored = false
+                state.awaitingScheduleStore = false
                 return .none
 
             case .splitResult(let result):
@@ -266,6 +339,13 @@ struct MigrationNoteSplit {
     /// flipping `state.splitStored` via `.noteSplitStored` so a LATER retry (e.g. after a
     /// broadcast-only failure) never re-stores — so this lane is self-sufficient for a hypothetical
     /// future caller that hands over an un-stored PCZT.
+    ///
+    /// MOB-1496 (C-1b fix, fix-wave 2): a successful broadcast (including the landed-but-
+    /// record-failed success-like case) sends `.splitBroadcastSucceeded` instead of reconciling
+    /// directly — the coordinator owns the schedule store this commit deferred (it alone holds the
+    /// signed entries) and runs its OWN `reconcile()` once that store settles; reconciling here too
+    /// would be premature (the run's phase hasn't reached `BroadcastScheduled` yet at this point) and
+    /// is no longer this lane's responsibility.
     private func resubmitSignedNoteSplit(_ pczt: Data, stored: Bool, account: WalletAccount?) -> Effect<Action> {
         guard let account else {
             return .run { send in await send(.splitResult(MigrationTransferResult.networkError(retryable: true))) }
@@ -282,11 +362,11 @@ struct MigrationNoteSplit {
                 let result = try await sdkSynchronizer.broadcastStoredNoteSplit(account.id, options)
                 await send(.splitResult(result))
                 if case MigrationTransferResult.success = result {
-                    await migrationManager.reconcile()
+                    await send(.splitBroadcastSucceeded)
                 }
             } catch ZcashError.migrationRecordFailedAfterBroadcast(_) {
                 await send(.splitResult(MigrationTransferResult.success(txId: "")))
-                await migrationManager.reconcile()
+                await send(.splitBroadcastSucceeded)
             } catch {
                 await send(.splitResult(MigrationTransferResult.networkError(retryable: true)))
             }

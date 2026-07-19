@@ -60,6 +60,28 @@
 //  `broadcastStoredNoteSplit` as two members, tracked via `MigrationNoteSplit.State.splitStored` so a
 //  retry only ever re-broadcasts once the store has succeeded.
 //
+//  MOB-1496 (final review R6, C-1b fix — fix-wave 2): the C-1 fix closed the run-shadowing hazard but
+//  traced only the RUN-CREATION half of the engine's phase machine, not the phase machine itself. The
+//  engine's `record_transfer_result` prep branch (`context.rs:1299-1303`) UNCONDITIONALLY overwrites
+//  the run's phase to `WaitingDenomConfirmations` the instant the split's broadcast is recorded — so
+//  storing the schedule (which sets `BroadcastScheduled`) BEFORE that broadcast, as the C-1 fix did,
+//  gets silently clobbered the moment the broadcast lands; the run then parks at `.readyToPropose`
+//  forever once the split mines (`context.rs:361-378`, unconditional — no pending-rows check), and the
+//  committed schedule never executes. Step 0 of the fix-wave-2 report traced the denom-advance guard
+//  and found it fires from phase ∈ {`PreparingDenominations`, `WaitingDenomConfirmations`} — NOT
+//  `BroadcastScheduled` — so a schedule store performed right after the split's broadcast SUCCEEDS
+//  (not waiting for on-chain confirmation) is the earliest point provably safe: mining cannot occur in
+//  the synchronous window between "broadcast accepted" and "schedule stored", so the run's phase is
+//  already `BroadcastScheduled` by the time any later read could observe the split as mined. The
+//  store step now stores ONLY the split up front (`storeSignedNoteSplit`) when one is present, carries
+//  the ALREADY-SIGNED schedule entries forward in `pendingKeystoneScheduleStore` instead of storing
+//  them immediately, and defers `storeSignedMigrationTransactions` -> `recordCommittedSchedule` ->
+//  `reconcile()` to `MigrationCoordFlowCoordinator.storeDeferredKeystoneSchedule`, triggered by the
+//  note-split screen's `.delegate(.storeScheduleRequested)` — sent automatically once its Keystone
+//  broadcast lands, and again on every subsequent store-retry tap (a store failure never re-signs or
+//  re-broadcasts the already-safe split, only the store itself retries). No-split batches (including
+//  the Keystone dust lane) are unaffected — the schedule store still runs immediately, as before.
+//
 
 import SwiftUI
 import ComposableArchitecture
@@ -81,6 +103,17 @@ struct MigrationCoordFlow {
         /// coordinator (`.keystoneDustPCZTsProposed`), not read off any path element's own state, so
         /// it rides along on the context itself for `pendingKeystoneSchedule` to hand back.
         case dust(MigrationSchedule)
+    }
+
+    /// MOB-1496 (C-1b fix, fix-wave 2): the ALREADY-SIGNED schedule payload a Keystone-with-split
+    /// commit must store only after its split's broadcast succeeds (Step 0's engine trace — see the
+    /// header comment above). Threaded from the batch-commit store effect, through
+    /// `.keystoneSigningSubmitted`, into `State.pendingKeystoneScheduleStore`; consumed by
+    /// `MigrationCoordFlowCoordinator.storeDeferredKeystoneSchedule`.
+    struct PendingScheduleStore: Equatable {
+        let accountUUID: AccountUUID
+        let scheduleEntries: [MigrationSignedTransferPczt]
+        let schedule: MigrationSchedule?
     }
 
     /// MOB-1478 (W2): which destination the coordinator stashed while the Tor bottom sheet is
@@ -140,6 +173,14 @@ struct MigrationCoordFlow {
         /// falling into the permission-chain fallback that handler otherwise takes. `nil` for every
         /// other `.noteSplit` occurrence (re-entry root, or the pre-MOB-1478 defensive branch).
         var pendingKeystoneSplitResume: KeystoneSigningContext?
+        /// MOB-1496 (C-1b fix, fix-wave 2): non-nil exactly while `pendingKeystoneSplitResume` is —
+        /// the Keystone commit's already-signed schedule entries, held back from
+        /// `storeSignedMigrationTransactions` until the split's broadcast succeeds (see this file's
+        /// header comment for why storing any earlier strands the run once the split mines).
+        /// `storeDeferredKeystoneSchedule` consumes this, clearing it on a successful store (the
+        /// `.noteSplit(.splitConfirmed)` case) but leaving it intact across a store failure so a
+        /// retry can read the same entries again.
+        var pendingKeystoneScheduleStore: PendingScheduleStore?
         /// MOB-1496: the real per-account SDK surface needs a concrete `AccountUUID` for nearly
         /// every migration call the coordinator makes.
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
@@ -185,11 +226,20 @@ struct MigrationCoordFlow {
         /// signed-PCZT payload is gone along with that context). MOB-1496 (W6): `splitPczt` is the
         /// sentinel entry's PCZT bytes, split out of the batch and stored separately (via
         /// `storeSignedNoteSplit`, BEFORE `storeSignedMigrationTransactions` — C-1 fix, final review
-        /// R6) — `nil` when the run needed no split, or when the SCHEDULE store failed (the split
-        /// store failing takes an earlier, separate abandon path — see the `.run` effects in
+        /// R6) — `nil` when the run needed no split, or when the SPLIT store failed (that failure
+        /// takes an earlier, separate abandon path — see the `.run` effects in
         /// `MigrationCoordFlowCoordinator`) — non-`nil` routes to the note-split screen instead of
         /// resuming the schedule/review chain immediately (see `resumeAfterKeystoneSigning`).
-        case keystoneSigningSubmitted(context: KeystoneSigningContext, splitPczt: Data?)
+        /// MOB-1496 (C-1b fix, fix-wave 2): `pendingScheduleStore` carries the already-signed
+        /// schedule entries when (and only when) `splitPczt != nil` — the schedule is no longer
+        /// stored inline here; it rides along to be stored once the split's broadcast succeeds (see
+        /// this file's header comment). `nil` for a no-split batch, whose schedule already stored
+        /// immediately, unchanged.
+        case keystoneSigningSubmitted(
+            context: KeystoneSigningContext,
+            splitPczt: Data?,
+            pendingScheduleStore: PendingScheduleStore?
+        )
         /// Internal: MOB-1496 (W6 §3) — the Keystone dust lane's upfront propose
         /// (`.complete(.delegate(.migrateAnyway))`'s Keystone fork) came back with a non-empty
         /// schedule and its PCZTs — pushes the existing Keystone signing context as a batch-of-1 (no
