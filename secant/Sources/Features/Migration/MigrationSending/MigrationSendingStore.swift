@@ -3,13 +3,21 @@
 //  zodl
 //
 //  "Sending" / "Sent" screen (MOB-1463, Figma S8 · sending 2618:6858 / sent 2618:6895). Shown while
-//  migration transfers broadcast — one for immediate/manual/plan-first sends, or a sequential batch
-//  for "send now" — then flips to a success state once every transfer in `totalCount` has been
-//  executed. `onAppear` runs `executeNextPendingMigrationTransfer` strictly in sequence, recording a
-//  broadcast and scheduling the next background window after each success; a failure/`nil` result
-//  stops the sequence and presents the failure sheet, and `retryTapped` re-runs only the failed step
-//  (MOB-1466). The `closeTapped` / `viewTransactionTapped` delegates are consumed by
-//  `MigrationCoordFlowCoordinator` (MOB-1466).
+//  a migration transfer broadcasts — for immediate/manual/plan-first sends, the dust lane, or the
+//  S10 "Send now" lane — then flips to a success state once that one transfer has been executed.
+//  `onAppear` runs `executeNextPendingMigrationTransfer`, recording a broadcast and scheduling the
+//  next background window on success; a failure/`nil` result presents the failure sheet, and
+//  `retryTapped` re-runs the same step (MOB-1466).
+//
+//  MOB-1496 (W5, ZIP-0318 MUST): a background session — and this screen's own executor — may
+//  broadcast at most ONE overdue transfer. `totalCount`/`sentCount` remain (the "Send now" push site
+//  still configures `totalCount` off the overdue row count, informational only now), but
+//  `.transferResult`'s success handler no longer loops back into `executeNextTransfer` — a single
+//  success always finishes the screen. Remaining overdue transfers stay scheduled; the next
+//  background window (armed by `scheduleNextWindow()` below, per-account fanned-out — MOB-1496 W5
+//  §2) picks them up, or the user taps "Send now" again (a separate, explicit decision each time —
+//  the CTA is deliberately never disabled after a send). The `closeTapped` / `viewTransactionTapped`
+//  delegates are consumed by `MigrationCoordFlowCoordinator` (MOB-1466).
 //
 //  This same screen is reused for the "Migrate anyway" dust lane (MOB-1487): `isDustLane` routes
 //  execution through the dedicated dust sweep instead of the next scheduled transfer. MOB-1494
@@ -34,10 +42,12 @@ struct MigrationSending {
         var isFailurePresented = false
         /// The most recently broadcast transfer's tx id (wires up View Transaction).
         var txId = ""
-        /// How many transfers this screen instance is responsible for: 1 for immediate/manual/
-        /// plan-first sends, N for a sequential "send now" batch. Coordinator-configured.
+        /// MOB-1496 (W5, ZIP-0318): informational only — `onAppear` always executes AT MOST ONE
+        /// transfer regardless of this value (the "send now" push site still configures it off the
+        /// overdue row count, but `.transferResult`'s success handler no longer loops against it).
+        /// Coordinator-configured.
         var totalCount = 1
-        /// How many of `totalCount` have been successfully broadcast so far.
+        /// 0 before a send, 1 after — this screen never executes more than one transfer (MOB-1496 W5).
         var sentCount = 0
         /// When true, this instance is the "Migrate anyway" dust lane (MOB-1487): `onAppear`
         /// executes the dedicated dust sweep instead of the next scheduled transfer.
@@ -64,7 +74,8 @@ struct MigrationSending {
     }
 
     enum Action: BindableAction, Equatable {
-        /// All `totalCount` transfers have been successfully broadcast.
+        /// The screen's one transfer has been successfully broadcast (MOB-1496 W5: never more than
+        /// one, regardless of `totalCount`).
         case allTransfersSent
         case binding(BindingAction<State>)
         /// Failure sheet: dismiss (stay on screen).
@@ -129,21 +140,20 @@ struct MigrationSending {
                     state.txId = txId
                     state.sentCount += 1
 
-                    let nextEffect: Effect<Action> = state.sentCount >= state.totalCount
-                        ? .send(.allTransfersSent)
-                        : executeNextTransfer(
-                            account: state.selectedWalletAccount,
-                            isDustLane: state.isDustLane
-                        )
-
+                    // MOB-1496 (W5, ZIP-0318 MUST): a single successful broadcast always finishes
+                    // this screen — never chain into another `executeNextTransfer` call, regardless
+                    // of `totalCount` (the "send now" push site's overdue-row count is informational
+                    // only now). Remaining overdue transfers stay scheduled; the next background
+                    // window (armed by `scheduleNextWindow()` below) or a separate, explicit "Send
+                    // now" tap picks them up.
+                    //
                     // scheduleNextWindow() is async (MOB-1467) — concatenated ahead of the
-                    // follow-up effect so it still runs to completion before the next transfer
-                    // kicks off (or before .allTransfersSent), matching the previous synchronous
-                    // call-then-continue ordering. MOB-1496: `reconcile()` also runs here so
-                    // `migrationManager.stateEvents` picks up the just-completed transfer promptly
-                    // (a store completing a migration op is one of `reconcile()`'s two triggers).
-                    // MOB-1496 (W2): `recordTransferBroadcast` persists the sent record the SDK
-                    // itself no longer retains — runs before `reconcile()` so the freshly
+                    // follow-up effect so it still runs to completion first, matching the previous
+                    // synchronous call-then-continue ordering. MOB-1496: `reconcile()` also runs
+                    // here so `migrationManager.stateEvents` picks up the just-completed transfer
+                    // promptly (a store completing a migration op is one of `reconcile()`'s two
+                    // triggers). MOB-1496 (W2): `recordTransferBroadcast` persists the sent record
+                    // the SDK itself no longer retains — runs before `reconcile()` so the freshly
                     // reconciled state is observed alongside an already-updated schedule.
                     return .concatenate(
                         .run { [migrationManager, accountUUID = state.selectedWalletAccount?.id] _ in
@@ -151,7 +161,7 @@ struct MigrationSending {
                         },
                         .run { [migrationBGScheduler] _ in await migrationBGScheduler.scheduleNextWindow() },
                         .run { [migrationManager] _ in await migrationManager.reconcile() },
-                        nextEffect
+                        .send(.allTransfersSent)
                     )
 
                 case .networkError, .invalidNote, .expired, nil:

@@ -45,6 +45,196 @@ extension MigrationBGSessionHandle: Equatable {
     }
 }
 
+/// MOB-1496 (W5): one candidate account's classification within a single migration BG session,
+/// computed by `migrationBackgroundSessionEffect`'s per-account probe (`classifyMigrationAccount`)
+/// and consumed by `MigrationSessionPlanner.plan(_:)` to pick the session's single action. Mirrors
+/// the ordered classification the spec's "Per-account background decision tree" describes.
+private enum MigrationAccountClassification: Equatable {
+    /// `complete`/`notStarted`/`readyToPropose` — no broadcast, no sync need for this account.
+    case nothingToDo(MigrationState)
+    /// `hasInvalidMigrationTransfers` OR state is `.requiresAttention(.transferExpired)` /
+    /// `.requiresAttention(.invalidTransfer)`.
+    case planBroken
+    /// `isSyncRequiredBeforeNextMigrationTransfer` is true.
+    case syncNeeded
+    /// `rescheduleOverdueMigrationTransfer` returned a proposal — a candidate for this session's
+    /// single broadcast, ordered by `isOverdue` then `nextExecutableAfterHeight`. Due-ness itself is
+    /// NOT decided here (see `migrationBackgroundSessionEffect`'s "height-due semantics" doc) —
+    /// `executeNextPendingMigrationTransfer`'s own nil-return is the authority.
+    case broadcastCandidate(nextExecutableAfterHeight: BlockHeight, isOverdue: Bool)
+    /// An active run (not `nothingToDo`/`planBroken`/`syncNeeded`) whose reschedule probe came back
+    /// nil — nothing pending to order against this session, but still an active run (excluded from
+    /// the "every account complete/notStarted" cancel-all trigger).
+    case activeNoCandidate
+    /// A `try?`-guarded read failed for this account — logged and skipped; conservatively excluded
+    /// from the cancel-all trigger too (its true state is unknown).
+    case unreadable
+}
+
+/// MOB-1496 (W5): classifies one account for `migrationBackgroundSessionEffect`'s per-account probe.
+/// Every SDK read is `try?`-guarded — log-and-skip per the existing single-account pattern (MOB-1496
+/// W1-W4): a read failure degrades this ONE account to `.unreadable` rather than aborting the whole
+/// session.
+private func classifyMigrationAccount(
+    _ accountUUID: AccountUUID,
+    sdkSynchronizer: SDKSynchronizerClient
+) async -> MigrationAccountClassification {
+    guard let migrationState = try? await sdkSynchronizer.getMigrationState(accountUUID) else {
+        LoggerProxy.error("BGTask migration session: state read failed for an account")
+        return MigrationAccountClassification.unreadable
+    }
+
+    switch migrationState {
+    case MigrationState.complete, MigrationState.notStarted, MigrationState.readyToPropose:
+        return MigrationAccountClassification.nothingToDo(migrationState)
+    default:
+        break
+    }
+
+    guard let hasInvalid = try? await sdkSynchronizer.hasInvalidMigrationTransfers(accountUUID) else {
+        LoggerProxy.error("BGTask migration session: plan-broken check failed for an account")
+        return MigrationAccountClassification.unreadable
+    }
+
+    let isPlanBrokenByState: Bool
+    switch migrationState {
+    case MigrationState.requiresAttention(MigrationAttentionReason.transferExpired),
+         MigrationState.requiresAttention(MigrationAttentionReason.invalidTransfer):
+        isPlanBrokenByState = true
+    default:
+        isPlanBrokenByState = false
+    }
+
+    if hasInvalid || isPlanBrokenByState {
+        return MigrationAccountClassification.planBroken
+    }
+
+    guard let isSyncRequired = try? await sdkSynchronizer.isSyncRequiredBeforeNextMigrationTransfer(accountUUID) else {
+        LoggerProxy.error("BGTask migration session: sync-required check failed for an account")
+        return MigrationAccountClassification.unreadable
+    }
+
+    if isSyncRequired {
+        return MigrationAccountClassification.syncNeeded
+    }
+
+    // Double-optional flatten: `rescheduleOverdueMigrationTransfer` already returns an Optional on
+    // success, and `try?` adds a second layer — a thrown read and a genuinely-empty probe both read
+    // as "no candidate" here (mirrors `MigrationManagerImpl.migrationSummary`'s identical `residual`
+    // flatten). Per the tree's "height-due semantics" doc, a nil probe is NOT itself an error worth
+    // logging — it just means nothing is pending to order against this session.
+    let proposal = (try? await sdkSynchronizer.rescheduleOverdueMigrationTransfer(accountUUID)) ?? nil
+    guard let proposal else {
+        return MigrationAccountClassification.activeNoCandidate
+    }
+
+    let isOverdue = (try? await sdkSynchronizer.hasOverdueMigrationTransfers(accountUUID)) ?? false
+    return MigrationAccountClassification.broadcastCandidate(
+        nextExecutableAfterHeight: proposal.nextExecutableAfterHeight,
+        isOverdue: isOverdue
+    )
+}
+
+/// MOB-1496 (W5): pure per-session resolution — table-testable given already-classified accounts, no
+/// SDK dependency. Mirrors `WakeupAction.decide`'s "pure decision, effectful caller" split; verified
+/// indirectly here via the Store-level `RootMigrationBackgroundTests` (this file has no direct-SDK
+/// escape hatch the way `MigrationCadence`/`WakeupAction` do, since account CLASSIFICATION itself
+/// needs async SDK reads — only the RESOLUTION over already-classified accounts is pure).
+private enum MigrationSessionPlanner {
+    struct Plan: Equatable {
+        let notifyPlanNeedsUpdate: Bool
+        let action: Action
+
+        enum Action: Equatable {
+            case syncOnly
+            case broadcast(winner: AccountUUID)
+            case cancelAll
+            case rearm
+            /// Plan-broken-only (nothing else fired this session): no rearm, no cancel — mirrors the
+            /// single-account precedent (a broken plan needs the user's own Recovery-flow re-arm,
+            /// not an automatic retry).
+            case none
+        }
+    }
+
+    /// Session resolution, checked in this exact order (spec "Session resolution"):
+    /// 1. Any `planNeedsUpdate` account -> notify once for the whole session; continue evaluating
+    ///    the rest (a plan-broken account doesn't block a healthy account's own broadcast/sync).
+    /// 2. Any `syncNeeded` account -> sync-only session; ALL broadcasts deferred (ZIP: never both).
+    /// 3. Else any `broadcastCandidate` -> pick exactly one (prefer overdue; earliest
+    ///    `nextExecutableAfterHeight`; tie -> earliest in `classifications`' own order, i.e. the
+    ///    selected account, since callers pass accounts selected-first).
+    /// 4. Nothing else fired: plan-broken-only -> `.none` (no rearm, no cancel); else cancelAll when
+    ///    EVERY classified account is `.complete`/`.notStarted` (no active run anywhere); else rearm.
+    static func plan(_ classifications: [(accountUUID: AccountUUID, classification: MigrationAccountClassification)]) -> Plan {
+        let hasPlanBroken = classifications.contains { if case .planBroken = $0.classification { return true } else { return false } }
+        let hasSyncNeeded = classifications.contains { if case .syncNeeded = $0.classification { return true } else { return false } }
+
+        if hasSyncNeeded {
+            return Plan(notifyPlanNeedsUpdate: hasPlanBroken, action: Plan.Action.syncOnly)
+        }
+
+        if let winner = pickBroadcastWinner(classifications) {
+            return Plan(notifyPlanNeedsUpdate: hasPlanBroken, action: Plan.Action.broadcast(winner: winner))
+        }
+
+        if hasPlanBroken {
+            return Plan(notifyPlanNeedsUpdate: true, action: Plan.Action.none)
+        }
+
+        let everyAccountIsCompleteOrNotStarted = !classifications.isEmpty && classifications.allSatisfy { _, classification in
+            guard case let .nothingToDo(state) = classification else { return false }
+            return state == MigrationState.complete || state == MigrationState.notStarted
+        }
+
+        return Plan(
+            notifyPlanNeedsUpdate: false,
+            action: everyAccountIsCompleteOrNotStarted ? Plan.Action.cancelAll : Plan.Action.rearm
+        )
+    }
+
+    /// A broadcast candidate mid-comparison in `pickBroadcastWinner` — a small named type instead
+    /// of a 3-member tuple (SwiftLint's `large_tuple` caps tuples at 2 members).
+    private struct BroadcastCandidate {
+        let accountUUID: AccountUUID
+        let height: BlockHeight
+        let isOverdue: Bool
+    }
+
+    /// Prefers a candidate with the overdue flag; among several, earliest `nextExecutableAfterHeight`;
+    /// a tie keeps whichever the loop reached first — callers pass accounts selected-first, so that
+    /// is the selected account per the spec's own tie-break rule.
+    private static func pickBroadcastWinner(
+        _ classifications: [(accountUUID: AccountUUID, classification: MigrationAccountClassification)]
+    ) -> AccountUUID? {
+        var winner: BroadcastCandidate?
+
+        for (accountUUID, classification) in classifications {
+            guard case let .broadcastCandidate(height, isOverdue) = classification else { continue }
+
+            guard let current = winner else {
+                winner = BroadcastCandidate(accountUUID: accountUUID, height: height, isOverdue: isOverdue)
+                continue
+            }
+
+            let isBetter: Bool
+            if isOverdue != current.isOverdue {
+                isBetter = isOverdue
+            } else if height != current.height {
+                isBetter = height < current.height
+            } else {
+                isBetter = false
+            }
+
+            if isBetter {
+                winner = BroadcastCandidate(accountUUID: accountUUID, height: height, isOverdue: isOverdue)
+            }
+        }
+
+        return winner?.accountUUID
+    }
+}
+
 /// In this file is a collection of helpers that control all state and action related operations
 /// for the `Root` with a connection to the app/wallet initialization and erasure of the wallet.
 extension Root {
@@ -993,7 +1183,7 @@ extension Root {
 
     /// The migration BG session's decision tree (spec "Root: BG session decision tree"), checked
     /// in this exact order:
-    /// 0. No selected account (MOB-1496: e.g. a background-only cold launch that raced wallet
+    /// 0. No candidate accounts (MOB-1496: e.g. a background-only cold launch that raced wallet
     ///    initialization) — nothing to evaluate against; complete without notifying/re-arming so a
     ///    later session (once an account is selected) re-attempts.
     /// 1. Ironwood not yet activated (MOB-1483) — there is no migration work to do
@@ -1001,17 +1191,32 @@ extension Root {
     ///    and deliberately no re-arm — a task chain armed before activation (or before this gate
     ///    landed) is left to lapse here rather than kept alive; the next arm happens once
     ///    `isIronwoodActivated()` flips true (self-healing).
-    /// 2. Plan broken (invalid transfer, or expired-attention state) — notify, do NOT re-arm.
-    /// 3. Sync required before the next transfer — either skip (the SDK's own
-    ///    `isMigrationSyncBlocked()` wallet-scope privacy gate, MOB-1496 W3) or run a sync-only
-    ///    session that never broadcasts, reusing the existing `power_wifi_sync` sync-kick
-    ///    machinery verbatim (`state.bgTask` + `.retryStart`; `synchronizerStateChanged` completes
-    ///    the task on `.upToDate`/`.stopped`/`.error`).
-    /// 4. Otherwise, send: `executeNextPendingMigrationTransfer` and notify/re-arm per outcome. A
-    ///    thrown `ZcashError.migrationRecordFailedAfterBroadcast` (MOB-1496 W3) is routed through
-    ///    the SAME landed-broadcast handling as a `.success` result — the broadcast DID land, only
-    ///    the engine's own recording of it failed, so the session must not re-send or treat it as a
-    ///    `networkError`.
+    /// 2. MOB-1496 (W5): every OTHER candidate account (the wallet's accounts, selected first, then
+    ///    stored order — `MigrationDerivations.candidateAccountUUIDs`) is independently classified
+    ///    (`classifyMigrationAccount`) into `.nothingToDo`/`.planBroken`/`.syncNeeded`/
+    ///    `.broadcastCandidate`/`.activeNoCandidate`/`.unreadable`, then `MigrationSessionPlanner
+    ///    .plan(_:)` resolves the WHOLE session to exactly one action:
+    ///    - Any plan-broken account -> ONE `.planNeedsUpdate` notification for the whole session
+    ///      (not per account); continue evaluating the rest (does not itself block a healthy
+    ///      account's own sync/broadcast).
+    ///    - Else any sync-needed account -> a sync-only session (skip if the SDK's own
+    ///      `isMigrationSyncBlocked()` wallet-scope privacy gate; else the existing sync-kick path,
+    ///      reusing the `power_wifi_sync` machinery verbatim). ALL broadcasts deferred this session
+    ///      — ZIP-0318: a background session either syncs or broadcasts, never both. Sync serves
+    ///      every account at once.
+    ///    - Else any broadcast candidate -> exactly ONE broadcast this session (ZIP-0318: no more
+    ///      than one overdue transfer sent at wallet open) — `executeNextPendingMigrationTransfer`
+    ///      + notify/re-arm per outcome, now parameterized by the WINNING account. A thrown
+    ///      `ZcashError.migrationRecordFailedAfterBroadcast` (MOB-1496 W3) is routed through the
+    ///      SAME landed-broadcast handling as a `.success` result — the broadcast DID land, only
+    ///      the engine's own recording of it failed, so the session must not re-send or treat it as
+    ///      a `networkError`. Height-due semantics: the classification's `nextExecutableAfterHeight`
+    ///      is for ORDERING/re-arm math only — `executeNextPendingMigrationTransfer`'s own
+    ///      nil-return (nothing actually due yet) is the sole due-ness authority.
+    ///    - Else (nothing anywhere): a plan-broken-only session does NOT re-arm (the user's own
+    ///      Recovery-flow re-arms once the plan is fixed); otherwise `cancelAll` when EVERY
+    ///      classified account is `.complete`/`.notStarted` (no active run left anywhere —
+    ///      preserves the single-account complete->cancelAll precedent), else re-arm.
     /// Every branch except the sync-only session completes `handle` itself (that session's
     /// completion is the existing `synchronizerStateChanged` machinery, exactly like the
     /// `power_wifi_sync` task it mirrors).
@@ -1021,8 +1226,8 @@ extension Root {
     /// sends `.migrationBackgroundSyncOnly(handle)` back into the reducer to mutate `state.bgTask`
     /// (effects can't mutate `state` directly). Every SDK read is wrapped so a thrown error
     /// degrades to "treat as false/skip" and completes the session rather than crashing a
-    /// background launch; `single-account semantics preserved in W1` — a later task fans this
-    /// decision tree out per-account.
+    /// background launch.
+    // swiftlint:disable:next cyclomatic_complexity
     private func migrationBackgroundSessionEffect(
         state: inout Root.State,
         handle: MigrationBGSessionHandle
@@ -1031,19 +1236,25 @@ extension Root {
             return .run { _ in handle.complete(true) }
         }
 
-        guard let accountUUID = state.selectedWalletAccount?.id else {
-            LoggerProxy.event("BGTask migration session: no selected account yet, completing.")
+        let accountUUIDs = MigrationDerivations.candidateAccountUUIDs(
+            selectedAccountUUID: state.selectedWalletAccount?.id,
+            walletAccounts: state.walletAccounts
+        )
+        guard !accountUUIDs.isEmpty else {
+            LoggerProxy.event("BGTask migration session: no accounts yet, completing.")
             return .run { _ in handle.complete(true) }
         }
 
-        return .run { [migrationManager, sdkSynchronizer, migrationBGScheduler, userNotifications, accountUUID] send in
+        return .run { [migrationManager, sdkSynchronizer, migrationBGScheduler, userNotifications, accountUUIDs] send in
             // [MOB-1496] Shared by the `.success` outcome below and the
             // `ZcashError.migrationRecordFailedAfterBroadcast` catch clause — the broadcast landed
             // either way (only the engine's own recording of it failed in the latter case), so both
             // paths persist the sent record, reconcile, and notify/re-arm (or cancel-on-complete)
             // identically. Mirrors the same rationale `MigrationSendingStore`/
             // `MigrationNoteSplitStore` already apply for their own foreground broadcasts.
-            func handleLandedBroadcast(_ result: MigrationTransferResult) async {
+            // MOB-1496 (W5): now parameterized by `accountUUID` — the session's single winning
+            // account, not necessarily the selected one.
+            func handleLandedBroadcast(_ accountUUID: AccountUUID, _ result: MigrationTransferResult) async {
                 await migrationManager.recordTransferBroadcast(accountUUID, result)
                 await migrationManager.reconcile()
 
@@ -1058,34 +1269,20 @@ extension Root {
                 }
             }
 
-            let isPlanBroken: Bool
-            do {
-                let migrationState = try await sdkSynchronizer.getMigrationState(accountUUID)
-                let hasInvalid = try await sdkSynchronizer.hasInvalidMigrationTransfers(accountUUID)
-                isPlanBroken = hasInvalid
-                    || migrationState == MigrationState.requiresAttention(MigrationAttentionReason.transferExpired)
-            } catch {
-                LoggerProxy.error("BGTask migration session: plan-broken check failed \(error)")
-                handle.complete(true)
-                return
+            var classifications: [(accountUUID: AccountUUID, classification: MigrationAccountClassification)] = []
+            for accountUUID in accountUUIDs {
+                let classification = await classifyMigrationAccount(accountUUID, sdkSynchronizer: sdkSynchronizer)
+                classifications.append((accountUUID, classification))
             }
 
-            if isPlanBroken {
+            let plan = MigrationSessionPlanner.plan(classifications)
+
+            if plan.notifyPlanNeedsUpdate {
                 await userNotifications.scheduleMigrationNotification(MigrationNotification.planNeedsUpdate, nil)
-                handle.complete(true)
-                return
             }
 
-            let isSyncRequired: Bool
-            do {
-                isSyncRequired = try await sdkSynchronizer.isSyncRequiredBeforeNextMigrationTransfer(accountUUID)
-            } catch {
-                LoggerProxy.error("BGTask migration session: sync-required check failed \(error)")
-                handle.complete(true)
-                return
-            }
-
-            if isSyncRequired {
+            switch plan.action {
+            case .syncOnly:
                 // MOB-1496 (W3): the SDK now owns the broadcast->sync direction outright — skip the
                 // sync session while it reports the wallet-scope privacy gate blocked (same outward
                 // behavior the retired app-side `isSyncDeferredAfterBroadcast` flag produced).
@@ -1097,49 +1294,59 @@ extension Root {
 
                 await send(.initialization(.migrationBackgroundSyncOnly(handle)))
                 return
-            }
 
-            // MOB-1496 (W4): ensure-or-read the run's atomic snapshot — a missing snapshot this deep
-            // into a BG session (e.g. an exotic scheduled path whose first-ever read lands here)
-            // self-heals by creating one on the spot; acceptable, and `createNetworkSnapshot` logs
-            // its own fallback path when the benchmark comes back empty.
-            let options = await migrationManager.migrationNetworkOptions(accountUUID)
-            do {
-                let result = try await sdkSynchronizer.executeNextPendingMigrationTransfer(accountUUID, options)
+            case .broadcast(let winnerAccountUUID):
+                // MOB-1496 (W4): ensure-or-read the winning account's atomic snapshot — a missing
+                // snapshot this deep into a BG session (e.g. an exotic scheduled path whose
+                // first-ever read lands here) self-heals by creating one on the spot; acceptable,
+                // and `createNetworkSnapshot` logs its own fallback path when the benchmark comes
+                // back empty.
+                let options = await migrationManager.migrationNetworkOptions(winnerAccountUUID)
+                do {
+                    let result = try await sdkSynchronizer.executeNextPendingMigrationTransfer(winnerAccountUUID, options)
 
-                switch result {
-                case .success:
-                    // [MOB-1496] W2: persist the sent record + reconcile (this op's success is one
-                    // of `reconcile()`'s triggers) — single-account semantics here, matching the
-                    // rest of this decision tree (W5 fans the whole tree out per-account).
-                    if let result {
-                        await handleLandedBroadcast(result)
+                    switch result {
+                    case .success:
+                        // [MOB-1496] W2: persist the sent record + reconcile (this op's success is
+                        // one of `reconcile()`'s triggers).
+                        if let result {
+                            await handleLandedBroadcast(winnerAccountUUID, result)
+                        }
+
+                    case .networkError, .invalidNote, .expired:
+                        let progress = (try? await sdkSynchronizer.getMigrationProgress(winnerAccountUUID)) ?? nil
+                        let nextNumber = (progress?.completedTransfers ?? 0) + 1
+                        await userNotifications.scheduleMigrationNotification(MigrationNotification.transferWaiting(number: nextNumber), nil)
+                        await migrationBGScheduler.scheduleNextWindow()
+
+                    case nil:
+                        await migrationBGScheduler.scheduleNextWindow()
                     }
-
-                case .networkError, .invalidNote, .expired:
-                    let progress = (try? await sdkSynchronizer.getMigrationProgress(accountUUID)) ?? nil
-                    let nextNumber = (progress?.completedTransfers ?? 0) + 1
-                    await userNotifications.scheduleMigrationNotification(MigrationNotification.transferWaiting(number: nextNumber), nil)
-                    await migrationBGScheduler.scheduleNextWindow()
-
-                case nil:
+                } catch ZcashError.migrationRecordFailedAfterBroadcast(_) {
+                    // [MOB-1496] The broadcast DID land; only the engine's own recording of it
+                    // failed — route through the SAME handling as a `.success` result, with an
+                    // unknown txId (`MigrationScheduleStorage` maps an empty string to `nil`). The
+                    // BG session must not re-send (this isn't a networkError) and must not skip the
+                    // notification/re-arm a landed transfer deserves. Mirrors `MigrationSendingStore`/
+                    // `MigrationNoteSplitStore`'s identical foreground rationale for this same error.
+                    await handleLandedBroadcast(winnerAccountUUID, MigrationTransferResult.success(txId: ""))
+                } catch {
+                    // A throwing broadcast attempt for any OTHER reason is not itself a definite
+                    // outcome to notify about — treat it like the `nil` "nothing executed" case:
+                    // re-arm the next window and let that session's own outcome (or the engine's
+                    // self-heal) settle it, without a possibly-wrong notification.
+                    LoggerProxy.error("BGTask migration session: executeNextPendingMigrationTransfer failed \(error)")
                     await migrationBGScheduler.scheduleNextWindow()
                 }
-            } catch ZcashError.migrationRecordFailedAfterBroadcast(_) {
-                // [MOB-1496] The broadcast DID land; only the engine's own recording of it failed —
-                // route through the SAME handling as a `.success` result, with an unknown txId
-                // (`MigrationScheduleStorage` maps an empty string to `nil`). The BG session must
-                // not re-send (this isn't a networkError) and must not skip the notification/re-arm
-                // a landed transfer deserves. Mirrors `MigrationSendingStore`/`MigrationNoteSplitStore`'s
-                // identical foreground rationale for this same error.
-                await handleLandedBroadcast(MigrationTransferResult.success(txId: ""))
-            } catch {
-                // A throwing broadcast attempt for any OTHER reason is not itself a definite
-                // outcome to notify about — treat it like the `nil` "nothing executed" case: re-arm
-                // the next window and let that session's own outcome (or the engine's self-heal)
-                // settle it, without a possibly-wrong notification.
-                LoggerProxy.error("BGTask migration session: executeNextPendingMigrationTransfer failed \(error)")
+
+            case .cancelAll:
+                await migrationBGScheduler.cancelAll()
+
+            case .rearm:
                 await migrationBGScheduler.scheduleNextWindow()
+
+            case .none:
+                break
             }
 
             handle.complete(true)

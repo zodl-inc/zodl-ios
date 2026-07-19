@@ -11,9 +11,13 @@
 //  `preferredExecutableAt`/`window` inputs and expectations are expressed relative to a fixed
 //  `now` so every row is self-contained and doesn't depend on wall-clock time.
 //
+//  MOB-1496 (W5): also covers `planRearm(_:)`, the multi-account earliest-across-accounts
+//  reduction — still pure/no shared state, hence still no `.serialized`.
+//
 
 import Testing
 import Foundation
+@preconcurrency import ZcashLightClientKit
 @testable import zodl_internal
 
 @Suite struct MigrationCadenceTests {
@@ -172,5 +176,145 @@ import Foundation
 
             #expect(window == expected, "Row \(row.name) expected \(expected) but got \(window)")
         }
+    }
+
+    // MARK: - planRearm(_:) — earliest-across-accounts reduction (MOB-1496 W5)
+
+    private static let progress = MigrationProgress(
+        completedTransfers: 1,
+        totalTransfers: 4,
+        remainingOrchard: Zatoshi(1_000),
+        nextTransferReadyAtHeight: nil
+    )
+
+    @Test func emptyInputHasNoActiveRunAndNoHeight() {
+        let plan = MigrationCadence.planRearm([])
+
+        #expect(plan.representativeState == MigrationState.complete)
+        #expect(plan.earliestNextExecutableAfterHeight == nil)
+        #expect(plan.nextTransferNumber == 1)
+    }
+
+    @Test func everyAccountCompleteOrNotStartedHasNoActiveRun() {
+        let inputs = [
+            MigrationCadence.AccountRearmInput(state: MigrationState.complete, progress: nil, nextExecutableAfterHeight: nil),
+            MigrationCadence.AccountRearmInput(state: MigrationState.notStarted, progress: nil, nextExecutableAfterHeight: nil)
+        ]
+
+        let plan = MigrationCadence.planRearm(inputs)
+
+        #expect(plan.representativeState == MigrationState.complete)
+        #expect(plan.earliestNextExecutableAfterHeight == nil)
+    }
+
+    /// `.readyToPropose`/`.inProgress`/`.requiresAttention` all count as an active run — proven here
+    /// via `.readyToPropose` specifically (no height available yet, but still active).
+    @Test func readyToProposeCountsAsActiveEvenWithoutAHeight() {
+        let inputs = [
+            MigrationCadence.AccountRearmInput(state: MigrationState.readyToPropose, progress: nil, nextExecutableAfterHeight: nil)
+        ]
+
+        let plan = MigrationCadence.planRearm(inputs)
+
+        #expect(plan.representativeState == MigrationState.readyToPropose)
+        #expect(plan.earliestNextExecutableAfterHeight == nil)
+    }
+
+    @Test func singleActiveAccountsHeightWins() {
+        let inputs = [
+            MigrationCadence.AccountRearmInput(state: MigrationState.inProgress(Self.progress), progress: Self.progress, nextExecutableAfterHeight: 500)
+        ]
+
+        let plan = MigrationCadence.planRearm(inputs)
+
+        #expect(plan.representativeState == MigrationState.inProgress(Self.progress))
+        #expect(plan.earliestNextExecutableAfterHeight == 500)
+        #expect(plan.nextTransferNumber == Self.progress.completedTransfers + 1)
+    }
+
+    @Test func twoActiveAccountsEarliestHeightWinsRegardlessOfInputOrder() {
+        let laterProgress = MigrationProgress(completedTransfers: 5, totalTransfers: 9, remainingOrchard: Zatoshi(1), nextTransferReadyAtHeight: nil)
+        let earlierProgress = MigrationProgress(completedTransfers: 2, totalTransfers: 9, remainingOrchard: Zatoshi(1), nextTransferReadyAtHeight: nil)
+
+        let inputs = [
+            MigrationCadence.AccountRearmInput(state: MigrationState.inProgress(laterProgress), progress: laterProgress, nextExecutableAfterHeight: 900),
+            MigrationCadence.AccountRearmInput(state: MigrationState.inProgress(earlierProgress), progress: earlierProgress, nextExecutableAfterHeight: 100)
+        ]
+
+        let plan = MigrationCadence.planRearm(inputs)
+
+        #expect(plan.earliestNextExecutableAfterHeight == 100)
+        #expect(plan.nextTransferNumber == earlierProgress.completedTransfers + 1)
+    }
+
+    /// The `nextExecutableAfterHeight` probe value is preferred over `progress
+    /// .nextTransferReadyAtHeight` when both are present.
+    @Test func probeHeightIsPreferredOverProgressReadyHeightWhenBothPresent() {
+        let progressWithReadyHeight = MigrationProgress(
+            completedTransfers: 0,
+            totalTransfers: 1,
+            remainingOrchard: Zatoshi(1_000),
+            nextTransferReadyAtHeight: 777
+        )
+        let inputs = [
+            MigrationCadence.AccountRearmInput(
+                state: MigrationState.inProgress(progressWithReadyHeight),
+                progress: progressWithReadyHeight,
+                nextExecutableAfterHeight: 111
+            )
+        ]
+
+        let plan = MigrationCadence.planRearm(inputs)
+
+        #expect(plan.earliestNextExecutableAfterHeight == 111)
+    }
+
+    /// A nil probe falls back to `progress?.nextTransferReadyAtHeight`.
+    @Test func nilProbeFallsBackToProgressReadyHeight() {
+        let progressWithReadyHeight = MigrationProgress(
+            completedTransfers: 0,
+            totalTransfers: 1,
+            remainingOrchard: Zatoshi(1_000),
+            nextTransferReadyAtHeight: 42
+        )
+        let inputs = [
+            MigrationCadence.AccountRearmInput(
+                state: MigrationState.inProgress(progressWithReadyHeight),
+                progress: progressWithReadyHeight,
+                nextExecutableAfterHeight: nil
+            )
+        ]
+
+        let plan = MigrationCadence.planRearm(inputs)
+
+        #expect(plan.earliestNextExecutableAfterHeight == 42)
+    }
+
+    /// An active account contributes `hasActiveRun`/`representativeState` even when NEITHER height
+    /// source is available (mirrors `readyToProposeCountsAsActiveEvenWithoutAHeight`, but for an
+    /// `.inProgress` account with a progress payload carrying no ready height yet).
+    @Test func activeAccountWithNeitherHeightSourceStillCountsAsActive() {
+        let inputs = [
+            MigrationCadence.AccountRearmInput(state: MigrationState.inProgress(Self.progress), progress: Self.progress, nextExecutableAfterHeight: nil)
+        ]
+
+        let plan = MigrationCadence.planRearm(inputs)
+
+        #expect(plan.representativeState == MigrationState.inProgress(Self.progress))
+        #expect(plan.earliestNextExecutableAfterHeight == nil)
+    }
+
+    /// One complete account beside one active account: the active account's height/state still
+    /// wins — a completed account contributes nothing.
+    @Test func completeAccountBesideActiveAccountContributesNothing() {
+        let inputs = [
+            MigrationCadence.AccountRearmInput(state: MigrationState.complete, progress: nil, nextExecutableAfterHeight: nil),
+            MigrationCadence.AccountRearmInput(state: MigrationState.inProgress(Self.progress), progress: Self.progress, nextExecutableAfterHeight: 250)
+        ]
+
+        let plan = MigrationCadence.planRearm(inputs)
+
+        #expect(plan.representativeState == MigrationState.inProgress(Self.progress))
+        #expect(plan.earliestNextExecutableAfterHeight == 250)
     }
 }
