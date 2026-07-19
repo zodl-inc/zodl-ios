@@ -5,16 +5,18 @@
 //  Covers the MigrationSending reducer
 //  (Features/Migration/MigrationSending/MigrationSendingStore.swift) for MOB-1463/1466: the default
 //  phase/state, the `closeTapped` / `viewTransactionTapped` delegate contracts, the failure sheet
-//  dismissal (cancel/retry), and (MOB-1466) `onAppear` executing `totalCount` transfers strictly in
-//  sequence via `executeNextPendingMigrationTransfer`, recording a broadcast +
-//  scheduling the next background window after each success, presenting the failure sheet on
-//  failure/`nil`, and retry re-running only the failed step. Also covers (MOB-1487/MOB-1494)
-//  `isDustLane` defaulting to false and being settable via init — since MOB-1494 the flag only
-//  selects the dust-sweep execution (the on-screen copy is identical in every lane). MOB-1496: both
-//  lanes now hit the real per-account SDK surface — `executeNextPendingMigrationTransfer` needs a
-//  concrete `AccountUUID`, and the dust lane additionally derives a real `UnifiedSpendingKey` (never
-//  for a Keystone account, which has no PCZT-based dust-sweep lane yet). `.serialized`: several
-//  cases drive the process-global `@Shared(.inMemory(.selectedWalletAccount))`.
+//  dismissal (cancel/retry), and `onAppear` executing `executeNextPendingMigrationTransfer`,
+//  recording a broadcast + scheduling the next background window after success, presenting the
+//  failure sheet on failure/`nil`, and retry re-running the failed step. Also covers (MOB-1487/
+//  MOB-1494) `isDustLane` defaulting to false and being settable via init — since MOB-1494 the flag
+//  only selects the dust-sweep execution (the on-screen copy is identical in every lane). MOB-1496:
+//  both lanes now hit the real per-account SDK surface — `executeNextPendingMigrationTransfer` needs
+//  a concrete `AccountUUID`, and the dust lane additionally derives a real `UnifiedSpendingKey`
+//  (never for a Keystone account, which has no PCZT-based dust-sweep lane yet). MOB-1496 (W5,
+//  ZIP-0318): a single `onAppear` now executes AT MOST ONE transfer, even when the screen is
+//  configured with `totalCount` > 1 (the S10 "Send now" lane's old multi-overdue shape) — see
+//  `onAppearWithMultipleOverdueExecutesExactlyOneTransfer`. `.serialized`: several cases drive the
+//  process-global `@Shared(.inMemory(.selectedWalletAccount))`.
 //
 
 import Testing
@@ -176,23 +178,34 @@ import ComposableArchitecture
         #expect(reconcileCalls.value == 1)
     }
 
-    // MARK: - onAppear: sequential N transfers (send-now)
+    // MARK: - onAppear: send-now cap (ZIP-0318 MUST, MOB-1496 W5) — exactly ONE transfer
 
-    @MainActor @Test func onAppearWithMultipleTransfersExecutesStrictlyInSequence() async {
+    /// ZIP-0318: a background session — and the S10 "Send now" lane it shares this executor with —
+    /// may broadcast at most ONE overdue transfer per session/tap. Even when the screen is
+    /// configured the old "multiple overdue" way (`totalCount` > 1, still how the coordinator counts
+    /// overdue rows for its send-now push), `onAppear` executes exactly ONE
+    /// `executeNextPendingMigrationTransfer` call and reaches `.allTransfersSent` immediately after —
+    /// it must NEVER chain into a second broadcast. Replaces the retired
+    /// `onAppearWithMultipleTransfersExecutesStrictlyInSequence` (which asserted the OPPOSITE: 3
+    /// sequential calls) — the per-broadcast bookkeeping (`recordTransferBroadcast`, `reconcile`,
+    /// `scheduleNextWindow`) still fires exactly once, identical to an ordinary single send.
+    @MainActor @Test func onAppearWithMultipleOverdueExecutesExactlyOneTransfer() async {
         let executedCount = LockIsolated<Int>(0)
         let scheduleNextWindowCalls = LockIsolated<Int>(0)
+        let recordTransferBroadcastCalls = LockIsolated<[(AccountUUID?, MigrationTransferResult)]>([])
+        let reconcileCalls = LockIsolated<Int>(0)
         let store = TestStore(initialState: MigrationSending.State(totalCount: 3)) {
             MigrationSending()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
             $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in
-                let callIndex = executedCount.withValue { count -> Int in
-                    count += 1
-                    return count
-                }
-                return MigrationTransferResult.success(txId: "tx-\(callIndex)")
+                executedCount.withValue { $0 += 1 }
+                return MigrationTransferResult.success(txId: "tx-1")
             }
-            $0.migrationManager.recordTransferBroadcast = { _, _ in }
+            $0.migrationManager.recordTransferBroadcast = { accountUUID, result in
+                recordTransferBroadcastCalls.withValue { $0.append((accountUUID, result)) }
+            }
+            $0.migrationManager.reconcile = { reconcileCalls.withValue { $0 += 1 } }
             $0.migrationBGScheduler.scheduleNextWindow = { scheduleNextWindowCalls.withValue { $0 += 1 } }
         }
 
@@ -201,20 +214,15 @@ import ComposableArchitecture
             $0.sentCount = 1
             $0.txId = "tx-1"
         }
-        await store.receive(\.transferResult) {
-            $0.sentCount = 2
-            $0.txId = "tx-2"
-        }
-        await store.receive(\.transferResult) {
-            $0.sentCount = 3
-            $0.txId = "tx-3"
-        }
         await store.receive(\.allTransfersSent) {
             $0.phase = .success
         }
 
-        #expect(executedCount.value == 3)
-        #expect(scheduleNextWindowCalls.value == 3)
+        #expect(executedCount.value == 1)
+        #expect(scheduleNextWindowCalls.value == 1)
+        #expect(recordTransferBroadcastCalls.value.count == 1)
+        #expect(recordTransferBroadcastCalls.value.first?.1 == MigrationTransferResult.success(txId: "tx-1"))
+        #expect(reconcileCalls.value == 1)
     }
 
     /// MOB-1496 (W4): the scheduled-lane options come from `migrationManager.migrationNetworkOptions
