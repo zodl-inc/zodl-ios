@@ -327,6 +327,42 @@ import ComposableArchitecture
         #expect(submitCalls.value == 1)
     }
 
+    /// MOB-1496 (W4 review Minor): the sentinel-endpoint assertion variant — the test above only
+    /// counts calls after a mock-swap, which wouldn't catch the wrong options reaching the
+    /// broadcast. A mocked, distinctive endpoint must reach `submitNoteSplit` unchanged, matching
+    /// `MigrationSendingTests.onAppearReadsOptionsFromMigrationNetworkOptionsAtExecuteTime`'s
+    /// pattern.
+    @MainActor @Test func retryTappedPassesTheMockedNetworkOptionsToSubmitNoteSplit() async {
+        let capturedOptions = LockIsolated<MigrationNetworkPrivacyOptions?>(nil)
+        let sentinel = MigrationNetworkPrivacyOptions(
+            useTor: true,
+            submissionEndpoint: LightWalletEndpoint(address: "note-split-sentinel.example.com", port: 9067)
+        )
+        let proposal = NoteSplitProposal(outputNotes: [Zatoshi(500_000_000)], fee: Zatoshi(100_000))
+        var state = MigrationNoteSplit.State(phase: .splitting, isFailurePresented: true)
+        state.proposal = proposal
+        let store = TestStore(initialState: state) {
+            MigrationNoteSplit()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.submitNoteSplit = { _, _, _, passedOptions in
+                capturedOptions.setValue(passedOptions)
+                return MigrationTransferResult.success(txId: "retried-tx-id")
+            }
+            $0.migrationManager.migrationNetworkOptions = { _ in sentinel }
+            withDependenciesUSKDerivable(&$0)
+        }
+
+        await store.send(.retryTapped) {
+            $0.isFailurePresented = false
+        }
+        await store.receive(\.splitResult) {
+            $0.txId = "retried-tx-id"
+        }
+
+        #expect(capturedOptions.value == sentinel)
+    }
+
     @MainActor @Test func retryTappedWithNoProposalAndNoSignedPcztReportsNetworkErrorWithoutCallingSDK() async {
         // Defensive branch: neither a stored proposal nor a signed PCZT to retry with — the store
         // reports a retryable network error rather than crashing on a force-unwrap.

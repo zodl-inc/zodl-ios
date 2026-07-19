@@ -448,8 +448,10 @@ extension MigrationCoordFlow {
 
             case .path(.element(id: _, action: .recovery(.delegate(.recreate)))):
                 guard let accountUUID = state.selectedWalletAccount?.id else { return .none }
-                // [MOB-1496] W6 wires the residual choice — `includeResidual` hardcoded `false`
-                // pending that.
+                // `includeResidual: false` by design, same as the initial plan proposal
+                // (`MigrationTransferPlanStore.onAppear`) — the re-created plan doesn't fold the
+                // dust remainder in either; it stays on the separate post-completion "Migrate
+                // anyway" lane.
                 return .run { [sdkSynchronizer, migrationManager, accountUUID] send in
                     let restarted = try? await sdkSynchronizer.restartCurrentMigrationStep(accountUUID, includeResidual: false)
                     if restarted != nil {

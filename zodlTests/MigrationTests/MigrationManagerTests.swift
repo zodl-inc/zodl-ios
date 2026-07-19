@@ -1583,6 +1583,45 @@ struct MigrationManagerTests {
         #expect(snapshotStorage.snapshot(for: keystone.id) == nil)
     }
 
+    // MARK: - Corrupt payload self-heal (W2 review Minor)
+
+    /// A genuinely undecodable blob (as opposed to no data at all) must not wedge the storage into
+    /// returning `nil` forever while the garbage stays on disk — the read self-heals by deleting
+    /// the stored blob, so the very next commit starts clean. Seeds garbage directly at the
+    /// storage's own key format (private to `MigrationScheduleStorage`, so reconstructed here the
+    /// same way `key(for:)` does) and confirms via a raw `UserDefaults` read afterward.
+    @Test func scheduleStorageSelfHealsOnCorruptPayload() throws {
+        let suiteName = "testScheduleStorageSelfHealsOnCorruptPayload"
+        let userDefaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { userDefaults.removePersistentDomain(forName: suiteName) }
+
+        let accountUUID = AccountUUID(id: [UInt8](repeating: 30, count: 16))
+        let key = "\(String.migrationCommittedSchedule)_\(Data(accountUUID.id).hexEncodedString())"
+        userDefaults.set(Data("not valid json".utf8), forKey: key)
+
+        let storage = MigrationScheduleStorage(userDefaults: userDefaults)
+
+        #expect(storage.committedSchedule(for: accountUUID) == nil)
+        #expect(userDefaults.data(forKey: key) == nil)
+    }
+
+    /// Same self-heal for `MigrationSnapshotStorage`, which shares the identical decode-or-nil
+    /// pattern as `MigrationScheduleStorage`.
+    @Test func snapshotStorageSelfHealsOnCorruptPayload() throws {
+        let suiteName = "testSnapshotStorageSelfHealsOnCorruptPayload"
+        let userDefaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { userDefaults.removePersistentDomain(forName: suiteName) }
+
+        let accountUUID = AccountUUID(id: [UInt8](repeating: 31, count: 16))
+        let key = "\(String.migrationNetworkSnapshot)_\(Data(accountUUID.id).hexEncodedString())"
+        userDefaults.set(Data("not valid json".utf8), forKey: key)
+
+        let storage = MigrationSnapshotStorage(userDefaults: userDefaults)
+
+        #expect(storage.snapshot(for: accountUUID) == nil)
+        #expect(userDefaults.data(forKey: key) == nil)
+    }
+
     // MARK: - MOB-1496 (W4): migration network snapshot — creation matrix
     //
     // `MigrationManagerImpl.migrationNetworkOptions(accountUUID:)` is the ensure-or-create entry

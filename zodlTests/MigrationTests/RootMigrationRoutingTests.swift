@@ -145,11 +145,12 @@ import ComposableArchitecture
 
     // MARK: - View Transaction (Sending delegate)
 
-    /// The migration Sending screen's `.viewTransaction` delegate carries only a bare stub
+    /// The migration Sending screen's `.viewTransaction` delegate carries only a bare
     /// `txId: String` — never a real `TransactionState` the existing transaction-detail plumbing
-    /// (`TransactionDetails.State.transaction`, non-optional) could open. Root's v1 handling (see
-    /// the doc comment on this case in `RootCoordinator.swift`) treats it as a flow close rather
-    /// than opening a broken/empty detail screen, pending real txids from the SDK (MOB-1455).
+    /// (`TransactionDetails.State.transaction`, non-optional) could open, and the app has no
+    /// by-txid lookup to build one from. Root's v1 handling (see the doc comment on this case in
+    /// `RootCoordinator.swift`) treats it as a flow close rather than opening a broken/empty
+    /// detail screen, pending a by-txid transaction lookup (MOB-1458).
     @Test func sendingViewTransactionDelegateClosesMigrationFlow() async {
         await withDependencies {
             $0.defaultInMemoryStorage = InMemoryStorage()

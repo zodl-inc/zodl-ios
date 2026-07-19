@@ -23,9 +23,9 @@ enum MigrationCadence {
     static let nextWindowMargin: TimeInterval = 6.5 * 60 * 60     // §8.3
 
     /// earliestBeginDate for the next wakeup. The SDK's per-transfer executable time is
-    /// authoritative when known; the app margin is both the fallback (stubs return nil) and a
-    /// floor (never wake before the margin — §8.3's 30 min/6.5 h cushions over the SDK's
-    /// ~10 min/~6 h expectations).
+    /// authoritative when known; the app margin is both the fallback (used whenever the SDK can't
+    /// resolve a preferred time, e.g. `estimateTimestamp` returns `nil`) and a floor (never wake
+    /// before the margin — §8.3's 30 min/6.5 h cushions over the SDK's ~10 min/~6 h expectations).
     static func window(margin: TimeInterval, preferredExecutableAt: Date?, now: Date) -> Date {
         max(preferredExecutableAt ?? Date.distantPast, now.addingTimeInterval(margin))
     }

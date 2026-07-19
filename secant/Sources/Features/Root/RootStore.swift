@@ -51,8 +51,13 @@ struct Root {
         var shieldingProcessorCancelId = UUID()
         var automaticServerRefreshCancelId = UUID()
         /// MOB-1496 (W2): the migration gate-flip reconcile trigger's own subscription
-        /// (`sdkSynchronizer.migrationSyncBlockedStream()`), started/stopped alongside
-        /// `CancelStateId`'s `stateStream()` subscription in `.registerForSynchronizersUpdate`.
+        /// (`sdkSynchronizer.migrationSyncBlockedStream()`), started together with `CancelStateId`'s
+        /// `stateStream()` subscription in `.registerForSynchronizersUpdate` (both `.merge`d from
+        /// the same action) — but not stopped alongside it. This id relies solely on its own
+        /// `cancelInFlight: true` to supersede the previous subscription when
+        /// `.registerForSynchronizersUpdate` re-runs; unlike `CancelStateId`, it has no explicit
+        /// `.cancel(id:)` teardown anywhere (e.g. on background entry, only
+        /// `CancelStateId`/`CancelTransactionsStateId` are cancelled explicitly).
         var migrationSyncGateCancelId = UUID()
 
         @Shared(.inMemory(.addressBookContacts)) var addressBookContacts: AddressBookContacts = .empty

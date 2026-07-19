@@ -203,9 +203,12 @@ struct MigrationTransferPlan {
 
                 guard let accountUUID = state.selectedWalletAccount?.id else { return .none }
 
-                // [MOB-1496] W6 wires the residual choice — `includeResidual` hardcoded `false`
-                // pending that. This screen is only ever reached for `.privateScheduled` mode (the
-                // coordinator routes `.immediate` through `MigrationReviewTransfer` instead), so
+                // `includeResidual: false` by design: the scheduled plan never folds the Orchard
+                // remainder into its own run — dust stays on the separate, post-completion
+                // "Migrate anyway" lane (`migrateMigrationDust`/the Keystone propose fork in
+                // `MigrationCoordFlowCoordinator`, both `includeResidual: true`, MOB-1496 W6). This
+                // screen is only ever reached for `.privateScheduled` mode (the coordinator routes
+                // `.immediate` through `MigrationReviewTransfer` instead), so
                 // `proposeMigrationTransfers` (not `proposeImmediateMigration`) is always correct
                 // here.
                 return .run { send in
@@ -257,7 +260,7 @@ struct MigrationTransferPlan {
     /// Populates `rows`/`totalDurationHours`/`schedule` from a `MigrationSchedule`, whether it was
     /// freshly proposed or injected by the coordinator. The first transfer is `.active` (ready now);
     /// the rest are `.pending`. `hoursFromNow` comes from `estimateTimestamp` where the SDK can
-    /// resolve a height to a timestamp; unresolved (incl. the inert stub) defaults to `0`.
+    /// resolve a height to a timestamp; unresolved heights default to `0`.
     private func apply(_ schedule: MigrationSchedule, to state: inout State) {
         state.rows = IdentifiedArrayOf(
             uniqueElements: schedule.transfers.enumerated().map { index, transfer in
