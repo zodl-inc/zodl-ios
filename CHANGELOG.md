@@ -45,6 +45,7 @@ directly impact users rather than highlighting other crucial architectural updat
 - [MOB-1494] Migration dark mode now matches the designs in the error-and-recovery screens: the completed-migration badge inverts correctly, the recovery step connector uses the intended color, and the home banner's More/Review button stays legible.
 - [MOB-1496] Fixed a bug affecting Keystone hardware-wallet accounts: confirming a scheduled migration plan that also needed a note split could leave the rest of the plan stuck and unable to send, requiring the whole migration to be set up again from scratch. Gated behind Ironwood network activation and not yet in a released build.
 - [MOB-1496] Fixed a further case of the same Keystone note-split issue: even after the previous fix, the plan could still silently stall — showing "Migration required" again over a schedule that was already signed and committed — once the note-split transaction confirmed. Confirming now waits for the split to broadcast before finishing the plan, so it stays committed and sends on schedule. Gated behind Ironwood network activation and not yet in a released build.
+- [MOB-1496] Fixed the Server Setup migration privacy warning: tapping "Use it anyway" to proceed with a manual server switch despite the warning was a silent no-op — the switch never applied and the warning just sat there. Gated behind Ironwood network activation and not yet in a released build.
 
 ## 3.7.2 build 1
 

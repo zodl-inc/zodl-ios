@@ -188,6 +188,16 @@ struct ServerSetup {
                 state.isEvaluatingServers = false
                 return .none
 
+            case .alert(.presented(let action)):
+                // MOB-1496 (W4/W7): AlertState<Action> reuses this reducer's own Action type, so
+                // TCA wraps whatever a tapped button's `action:` carries as `.alert(.presented(_))`
+                // — including plain member cases like `.manualSwitchPrivacyWarningConfirmed`
+                // ("Use it anyway"). Re-dispatching unwrapped is the same pattern MigrationComplete
+                // uses for its own `AlertState<Action>`; a bare `case .alert:` catch-all here would
+                // (and previously did) swallow every presented payload before it could reach its
+                // real case.
+                return .send(action)
+
             case .alert(.dismiss):
                 state.alert = nil
                 // MOB-1496 (W4 review Minor, W7): "Choose another" on the migration privacy warning
@@ -195,9 +205,6 @@ struct ServerSetup {
                 // into some later alert cycle. A no-op for `endpointSwitchFailed`'s dismiss, which
                 // never sets `pendingManualSwitch` in the first place.
                 state.pendingManualSwitch = nil
-                return .none
-
-            case .alert:
                 return .none
 
             case .binding:
