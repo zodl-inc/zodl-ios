@@ -245,4 +245,137 @@ struct MigrationSnapshotStorageTests {
             #expect(storage.snapshot(for: accountUUID) == nil)
         }
     }
+
+    // MARK: - MOB-1497 (R7-T3): sanctioned COMMITTED-snapshot mutations (R14/R16/R17)
+
+    @Test func overrideUseTorForCommittedMutatesOnlyUseTorOnACommittedSnapshot() throws {
+        try withStorage("testOverrideUseTorForCommittedMutatesOnlyUseTorOnACommittedSnapshot") { storage in
+            let accountUUID = Self.accountUUID(19)
+            let committedAt = Date(timeIntervalSince1970: 1_000_000)
+            let original = Self.snapshot(useTor: true, syncHost: "eu.zec.rocks", broadcastHost: "us.zec.stardust.rest", committedAt: committedAt)
+            storage.recordSnapshot(original, for: accountUUID)
+
+            storage.overrideUseTorForCommitted(false, for: accountUUID)
+
+            let updated = try #require(storage.snapshot(for: accountUUID))
+            #expect(updated.useTor == false)
+            #expect(updated.syncEndpoint == original.syncEndpoint)
+            #expect(updated.syncProvider == original.syncProvider)
+            #expect(updated.broadcastEndpoint == original.broadcastEndpoint)
+            #expect(updated.broadcastProvider == original.broadcastProvider)
+            #expect(updated.takenAt == original.takenAt)
+            #expect(updated.committedAt == committedAt)
+        }
+    }
+
+    @Test func overrideUseTorForCommittedIsANoOpOnAProvisionalSnapshot() throws {
+        try withStorage("testOverrideUseTorForCommittedIsANoOpOnAProvisionalSnapshot") { storage in
+            let accountUUID = Self.accountUUID(20)
+            storage.recordSnapshot(Self.snapshot(useTor: true), for: accountUUID)
+
+            storage.overrideUseTorForCommitted(false, for: accountUUID)
+
+            #expect(storage.snapshot(for: accountUUID)?.useTor == true)
+            #expect(storage.snapshot(for: accountUUID)?.committedAt == nil)
+        }
+    }
+
+    @Test func overrideUseTorForCommittedIsANoOpWhenNoSnapshotIsPersisted() throws {
+        try withStorage("testOverrideUseTorForCommittedIsANoOpWhenNoSnapshotIsPersisted") { storage in
+            let accountUUID = Self.accountUUID(21)
+
+            storage.overrideUseTorForCommitted(false, for: accountUUID)
+
+            #expect(storage.snapshot(for: accountUUID) == nil)
+        }
+    }
+
+    @Test func rotateBroadcastEndpointMutatesOnlyBroadcastEndpointOnACommittedSnapshot() throws {
+        try withStorage("testRotateBroadcastEndpointMutatesOnlyBroadcastEndpointOnACommittedSnapshot") { storage in
+            let accountUUID = Self.accountUUID(22)
+            let committedAt = Date(timeIntervalSince1970: 1_000_000)
+            let original = Self.snapshot(useTor: true, syncHost: "zec.rocks", broadcastHost: "us.zec.stardust.rest", committedAt: committedAt)
+            storage.recordSnapshot(original, for: accountUUID)
+            let rotated = MigrationNetworkSnapshot.Endpoint(host: "eu.zec.stardust.rest", port: 443, secure: true)
+
+            storage.rotateBroadcastEndpoint(to: rotated, for: accountUUID)
+
+            let updated = try #require(storage.snapshot(for: accountUUID))
+            #expect(updated.broadcastEndpoint == rotated)
+            // Provider unchanged — rotation is within-provider by construction (the caller only
+            // ever offers a same-provider candidate).
+            #expect(updated.broadcastProvider == original.broadcastProvider)
+            #expect(updated.useTor == original.useTor)
+            #expect(updated.syncEndpoint == original.syncEndpoint)
+            #expect(updated.syncProvider == original.syncProvider)
+            #expect(updated.takenAt == original.takenAt)
+            #expect(updated.committedAt == committedAt)
+        }
+    }
+
+    @Test func rotateBroadcastEndpointIsANoOpOnAProvisionalSnapshot() throws {
+        try withStorage("testRotateBroadcastEndpointIsANoOpOnAProvisionalSnapshot") { storage in
+            let accountUUID = Self.accountUUID(23)
+            let original = Self.snapshot(broadcastHost: "us.zec.stardust.rest")
+            storage.recordSnapshot(original, for: accountUUID)
+            let rotated = MigrationNetworkSnapshot.Endpoint(host: "eu.zec.stardust.rest", port: 443, secure: true)
+
+            storage.rotateBroadcastEndpoint(to: rotated, for: accountUUID)
+
+            #expect(storage.snapshot(for: accountUUID)?.broadcastEndpoint == original.broadcastEndpoint)
+        }
+    }
+
+    @Test func rotateBroadcastEndpointIsANoOpWhenNoSnapshotIsPersisted() throws {
+        try withStorage("testRotateBroadcastEndpointIsANoOpWhenNoSnapshotIsPersisted") { storage in
+            let accountUUID = Self.accountUUID(24)
+            let rotated = MigrationNetworkSnapshot.Endpoint(host: "eu.zec.stardust.rest", port: 443, secure: true)
+
+            storage.rotateBroadcastEndpoint(to: rotated, for: accountUUID)
+
+            #expect(storage.snapshot(for: accountUUID) == nil)
+        }
+    }
+
+    @Test func overrideBroadcastEndpointToSyncServerForCommittedSetsBroadcastToSyncOnACommittedSnapshot() throws {
+        try withStorage("testOverrideBroadcastEndpointToSyncServerForCommittedSetsBroadcastToSyncOnACommittedSnapshot") { storage in
+            let accountUUID = Self.accountUUID(25)
+            let committedAt = Date(timeIntervalSince1970: 1_000_000)
+            let original = Self.snapshot(useTor: true, syncHost: "na.zec.rocks", broadcastHost: "us.zec.stardust.rest", committedAt: committedAt)
+            storage.recordSnapshot(original, for: accountUUID)
+
+            storage.overrideBroadcastEndpointToSyncServerForCommitted(for: accountUUID)
+
+            let updated = try #require(storage.snapshot(for: accountUUID))
+            #expect(updated.broadcastEndpoint == original.syncEndpoint)
+            #expect(updated.broadcastProvider == original.syncProvider)
+            #expect(updated.useTor == original.useTor)
+            #expect(updated.syncEndpoint == original.syncEndpoint)
+            #expect(updated.syncProvider == original.syncProvider)
+            #expect(updated.takenAt == original.takenAt)
+            #expect(updated.committedAt == committedAt)
+        }
+    }
+
+    @Test func overrideBroadcastEndpointToSyncServerForCommittedIsANoOpOnAProvisionalSnapshot() throws {
+        try withStorage("testOverrideBroadcastEndpointToSyncServerForCommittedIsANoOpOnAProvisionalSnapshot") { storage in
+            let accountUUID = Self.accountUUID(26)
+            let original = Self.snapshot(syncHost: "na.zec.rocks", broadcastHost: "us.zec.stardust.rest")
+            storage.recordSnapshot(original, for: accountUUID)
+
+            storage.overrideBroadcastEndpointToSyncServerForCommitted(for: accountUUID)
+
+            #expect(storage.snapshot(for: accountUUID)?.broadcastEndpoint == original.broadcastEndpoint)
+        }
+    }
+
+    @Test func overrideBroadcastEndpointToSyncServerForCommittedIsANoOpWhenNoSnapshotIsPersisted() throws {
+        try withStorage("testOverrideBroadcastEndpointToSyncServerForCommittedIsANoOpWhenNoSnapshotIsPersisted") { storage in
+            let accountUUID = Self.accountUUID(27)
+
+            storage.overrideBroadcastEndpointToSyncServerForCommitted(for: accountUUID)
+
+            #expect(storage.snapshot(for: accountUUID) == nil)
+        }
+    }
 }

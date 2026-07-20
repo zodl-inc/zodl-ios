@@ -1611,12 +1611,19 @@ import ComposableArchitecture
             $0.migrationManager.recordCommittedSchedule = { _, _ in recordCommittedScheduleCalls.withValue { $0 += 1 } }
             $0.migrationManager.reconcile = { }
             $0.migrationManager.migrationNetworkOptions = { _ in Self.defaultNetworkPrivacyOptions }
+            // R7-T3 (MOB-1497): `.networkError(retryable: true)` now classifies as `.endpointUnreachable`
+            // and routes BEFORE `.splitResult` — `.plainRetry` keeps this test's own "existing
+            // generic failure sheet" shape (no committed snapshot exists here to route against
+            // meaningfully; this pins the coordinator-level integration, not the routing decision
+            // itself — see `MigrationFailureRoutingTests` for that).
+            $0.migrationManager.routeBroadcastFailure = { _, _ in MigrationBroadcastFailureRoute.plainRetry }
         }
         store.exhaustivity = .off
 
         await store.send(.path(.element(id: 2, action: .scan(.foundPCZTBatch(signed)))))
         await store.receive(\.keystoneSigningSubmitted)
         await store.receive(\.path) // dispatched .noteSplit(.retryTapped)
+        await store.receive(\.path) // .noteSplit(.broadcastFailureRouted(.plainRetry)) — R7-T3
         await store.receive(\.path) // .noteSplit(.splitResult(.networkError)) — broadcast failed
 
         // MOB-1496 (C-1b fix, fix-wave 2): the deferred store is never even attempted — the broadcast
@@ -1628,6 +1635,8 @@ import ComposableArchitecture
             return
         }
         #expect(noteSplitState.isFailurePresented == true)
+        // R7-T3 (MOB-1497): the routed kind reached the screen's state too.
+        #expect(noteSplitState.failureKind == MigrationBroadcastFailureRoute.plainRetry)
         #expect(noteSplitState.signedNoteSplitPczt == [MigrationSignedTransferPczt(id: "p0", pczt: Data([0x01, 0x99]))])
         #expect(noteSplitState.awaitingScheduleStore == false)
     }

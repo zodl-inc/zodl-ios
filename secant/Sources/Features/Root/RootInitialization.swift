@@ -1652,6 +1652,17 @@ extension Root {
     /// remains the sole due-ness authority (the classification height was for ordering/re-arm math
     /// only) — nil, or any other throw, re-arms without a possibly-wrong notification and does NOT
     /// try another candidate (one broadcast per session, full stop).
+    /// R7-T3 (MOB-1497): both failure paths below now classify + call `routeBroadcastFailure` before
+    /// their existing notification/re-arm handling — see that member's own doc for the R14-R17
+    /// decision table. The BACKGROUND lane maps EVERY route to the SAME re-arm-only behavior it
+    /// already had: no route changes the notification content or adds a fallback, since consent
+    /// (R14's choice, R17's sync-server offer) is strictly foreground-only, and a Tor-class failure
+    /// (R14/R15) never rotates by construction (`routeBroadcastFailure` itself enforces this — see
+    /// its doc). The ONE state change this lane may observe is `.retryRotated`'s embedded rotation
+    /// (performed INSIDE `routeBroadcastFailure`, not here) — rotate-then-re-arm, so the NEXT
+    /// session's `migrationNetworkOptions` read picks up the newly-rotated endpoint. The one-
+    /// broadcast-per-session invariant is untouched: this call site never retries within the same
+    /// session regardless of route.
     private static func executeBroadcastAction(
         _ winnerAccountUUID: AccountUUID,
         classifications: [(accountUUID: AccountUUID, classification: MigrationAccountClassification)],
@@ -1670,6 +1681,9 @@ extension Root {
                 }
 
             case .networkError, .invalidNote, .expired:
+                if let result, let failureClass = MigrationBroadcastFailureClass.classify(result: result) {
+                    _ = await dependencies.migrationManager.routeBroadcastFailure(winnerAccountUUID, failureClass)
+                }
                 let progress = (try? await dependencies.sdkSynchronizer.getMigrationProgress(winnerAccountUUID)) ?? nil
                 let nextNumber = (progress?.completedTransfers ?? 0) + 1
                 // R8-T5 (S4): attributed to the winning account this broadcast attempt was for.
@@ -1697,6 +1711,12 @@ extension Root {
                 dependencies: dependencies
             )
         } catch {
+            // R7-T3 (MOB-1497): classify + route the thrown error too (e.g. `migrationTorUnavailable`
+            // routes as Tor-class here) — same re-arm-only outward behavior as before; the route's
+            // only effect is the possible embedded rotation (see this method's own doc).
+            if let failureClass = MigrationBroadcastFailureClass.classify(error: error) {
+                _ = await dependencies.migrationManager.routeBroadcastFailure(winnerAccountUUID, failureClass)
+            }
             // A throwing broadcast attempt for any OTHER reason is not itself a definite outcome to
             // notify about — treat it like the `nil` "nothing executed" case: re-arm the next
             // window and let that session's own outcome (or the engine's self-heal) settle it,

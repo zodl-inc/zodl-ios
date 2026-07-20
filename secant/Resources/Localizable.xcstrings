@@ -10418,6 +10418,159 @@
         }
       }
     },
+    "migrationFailure.providerExhausted.bodyTorOff" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "None of the broadcast servers for your migration could be reached. You can broadcast via your sync server instead: it will receive your IP address and the migration amounts together."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "No se pudo contactar con ninguno de los servidores de difusión de tu migración. Puedes difundir a través de tu servidor de sincronización en su lugar: recibirá tu dirección IP y los montos de la migración juntos."
+          }
+        }
+      }
+    },
+    "migrationFailure.providerExhausted.bodyTorOn" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "None of the broadcast servers for your migration could be reached. You can broadcast via your sync server instead: it will receive the transactions over Tor, and since it already knows your IP address from syncing, it may be able to correlate the two by timing."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "No se pudo contactar con ninguno de los servidores de difusión de tu migración. Puedes difundir a través de tu servidor de sincronización en su lugar: recibirá las transacciones a través de Tor, y como ya conoce tu dirección IP por la sincronización, podría correlacionar ambas cosas por el tiempo."
+          }
+        }
+      }
+    },
+    "migrationFailure.providerExhausted.keepWaiting" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Keep waiting"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Seguir esperando"
+          }
+        }
+      }
+    },
+    "migrationFailure.providerExhausted.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Broadcast Servers Unreachable"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Servidores de difusión inaccesibles"
+          }
+        }
+      }
+    },
+    "migrationFailure.providerExhausted.useSyncServer" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Broadcast via sync server"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Difundir a través del servidor de sincronización"
+          }
+        }
+      }
+    },
+    "migrationFailure.torFirstRun.body" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "A Tor connection could not be established, and nothing has been sent. You can retry, or proceed without Tor."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "No se pudo establecer una conexión Tor y no se ha enviado nada. Puedes reintentar o continuar sin Tor."
+          }
+        }
+      }
+    },
+    "migrationFailure.torFirstRun.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tor Unavailable"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tor no disponible"
+          }
+        }
+      }
+    },
+    "migrationFailure.torHold.body" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The migration is on hold until Tor can be re-established. Remaining transfers are paused — retrying keeps Tor on."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La migración está en pausa hasta que se pueda restablecer Tor. Las transferencias restantes están pausadas; reintentar mantiene Tor activado."
+          }
+        }
+      }
+    },
+    "migrationFailure.torHold.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tor Connection Lost"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Conexión Tor perdida"
+          }
+        }
+      }
+    },
     "migrationHowItWorks.approveOnceDesc" : {
       "extractionState" : "manual",
       "localizations" : {
