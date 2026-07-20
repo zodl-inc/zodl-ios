@@ -56,6 +56,7 @@
 
 import Foundation
 import Testing
+@preconcurrency import Combine
 import ComposableArchitecture
 @testable @preconcurrency import ZcashLightClientKit
 @testable import zodl_internal
@@ -77,8 +78,14 @@ import ComposableArchitecture
 
     /// `Root.State.initial` with a selected account stashed — every migration BG session test
     /// needs one (`migrationBackgroundSessionEffect` reads `state.selectedWalletAccount?.id`).
+    /// R8-T4 (#7): also `.initialized` — `Root.State.initial`'s own default (`.uninitialized`,
+    /// from `Root.State.init`'s default parameter) would otherwise hit
+    /// `.migrationBackgroundSession`'s NEW stash guard and never reach the decision tree at all.
+    /// Every test below that specifically wants the PRE-init stash behavior overrides this back to
+    /// `.uninitialized` afterward (see the R8-T4 #7 section).
     private static func selectedAccountState() -> Root.State {
         var state = Root.State.initial
+        state.appInitializationState = InitializationState.initialized
         state.$selectedWalletAccount.withLock { $0 = walletAccount() }
         return state
     }
@@ -101,9 +108,11 @@ import ComposableArchitecture
 
     /// `Root.State.initial` with TWO accounts stashed: `walletAccount()` selected, `secondAccount()`
     /// the rest of the wallet's accounts — the account-set order the tree fans out over (selected
-    /// first, then stored order).
+    /// first, then stored order). R8-T4 (#7): also `.initialized` — see `selectedAccountState()`'s
+    /// twin doc.
     private static func twoAccountState() -> Root.State {
         var state = Root.State.initial
+        state.appInitializationState = InitializationState.initialized
         let selected = walletAccount()
         let second = secondAccount()
         state.$selectedWalletAccount.withLock { $0 = selected }
@@ -139,15 +148,26 @@ import ComposableArchitecture
     // MARK: - Branch 0 (MOB-1496): no selected account
 
     /// No selected account (e.g. a background-only cold launch that raced wallet initialization):
-    /// complete immediately, no work — mirrors the pre-activation branch's shape.
-    @Test func noSelectedAccountCompletesSessionWithoutAnyWork() async {
+    /// complete immediately, no send/notification work — mirrors the pre-activation branch's shape.
+    /// R8-T4 (#7): re-targeted — this branch now ALSO re-arms (`scheduleNextWindow`), since
+    /// `.migrationBackgroundSession`'s own stash guard (see its doc) means it only ever runs
+    /// POST-hydration now; no path out of the decision tree may consume the BG request without
+    /// re-arming (see `migrationBackgroundSessionEffect`'s updated doc for branches 0/1).
+    @Test func noSelectedAccountCompletesSessionWithoutAnyWorkButStillRearms() async {
         let executeNextPendingMigrationTransferCalls = LockIsolated<Int>(0)
+        let scheduleNextWindowCalls = LockIsolated<Int>(0)
         let completeCalls = LockIsolated<[Bool]>([])
 
         await withDependencies {
             $0.defaultInMemoryStorage = InMemoryStorage()
         } operation: {
-            let store = Store(initialState: Root.State.initial) {
+            var initialState = Root.State.initial
+            // R8-T4 (#7): `.initialized` — see `selectedAccountState()`'s twin doc; this test
+            // deliberately uses bare `Root.State.initial` (no selected account) rather than that
+            // helper, so it needs the SAME override applied directly here.
+            initialState.appInitializationState = InitializationState.initialized
+
+            let store = Store(initialState: initialState) {
                 Root()
             } withDependencies: {
                 baseNoOpDependencies(&$0)
@@ -155,6 +175,7 @@ import ComposableArchitecture
                     executeNextPendingMigrationTransferCalls.withValue { $0 += 1 }
                     return nil
                 }
+                $0.migrationBGScheduler.scheduleNextWindow = { scheduleNextWindowCalls.withValue { $0 += 1 } }
             }
 
             let handle = MigrationBGSessionHandle(rawTask: nil) { success in completeCalls.withValue { $0.append(success) } }
@@ -162,19 +183,25 @@ import ComposableArchitecture
             await waitForRootStore { completeCalls.withValue { !$0.isEmpty } }
 
             #expect(executeNextPendingMigrationTransferCalls.withValue { $0 } == 0)
+            #expect(scheduleNextWindowCalls.withValue { $0 } == 1)
             #expect(completeCalls.withValue { $0 } == [true])
         }
     }
 
     // MARK: - Branch 1 (MOB-1483): Ironwood not yet activated
 
-    /// Pre-activation, the whole decision tree is a no-op: complete the handle immediately, with
-    /// zero notification/scheduler/executor calls — none of the later branches (plan-broken,
-    /// sync-required, send) are even consulted. `sdkSynchronizer`'s other migration-facing
-    /// dependencies are deliberately left at their `baseNoOpDependencies` defaults (which would
-    /// otherwise route into "plan broken") to prove the gate short-circuits before any of them
-    /// are read.
-    @Test func ironwoodNotActivatedCompletesSessionWithoutAnyWork() async {
+    /// Pre-activation, the whole decision tree short-circuits before any later branch (plan-broken,
+    /// sync-required, send) is even consulted — zero notification/executor calls, and
+    /// `sdkSynchronizer`'s other migration-facing dependencies are deliberately left at their
+    /// `baseNoOpDependencies` defaults (which would otherwise route into "plan broken") to prove
+    /// that. R8-T4 (#7): re-targeted — this branch now ALSO re-arms; see the twin comment on
+    /// `noSelectedAccountCompletesSessionWithoutAnyWorkButStillRearms` above for why (this branch's
+    /// own updated doc in `migrationBackgroundSessionEffect` has the full rationale: pre-fix, a cold
+    /// launch racing this exact check could read a not-yet-`prepare`d `isIronwoodActivated()` as
+    /// false and permanently kill the wakeup chain by completing without re-arming; the new
+    /// `.migrationBackgroundSession` stash guard means this branch only runs post-hydration now, so
+    /// re-arming unconditionally is safe and removes that dependency entirely).
+    @Test func ironwoodNotActivatedCompletesSessionWithoutAnyWorkButStillRearms() async {
         let notifications = LockIsolated<[MigrationNotification]>([])
         let scheduleNextWindowCalls = LockIsolated<Int>(0)
         let executeNextPendingMigrationTransferCalls = LockIsolated<Int>(0)
@@ -203,7 +230,7 @@ import ComposableArchitecture
             await waitForRootStore { completeCalls.withValue { !$0.isEmpty } }
 
             #expect(notifications.withValue { $0 }.isEmpty)
-            #expect(scheduleNextWindowCalls.withValue { $0 } == 0)
+            #expect(scheduleNextWindowCalls.withValue { $0 } == 1)
             #expect(executeNextPendingMigrationTransferCalls.withValue { $0 } == 0)
             #expect(completeCalls.withValue { $0 } == [true])
         }
@@ -1341,6 +1368,215 @@ import ComposableArchitecture
         }
     }
 
+    // MARK: - MOB-1496 (R8-T4, #7): BG session dispatched before init — stash, then replay
+
+    /// A cold launch races `.migrationBackgroundSession` against wallet-state hydration — mirrors
+    /// `RootMigrationRoutingTests`' `pendingMigrationDeepLink` precedent exactly: stashed rather
+    /// than evaluated against not-yet-hydrated state (an unprepared `isIronwoodActivated()`/empty
+    /// `walletAccounts` would otherwise misclassify a genuinely activated/populated wallet as
+    /// neither, per branches 0/1's updated doc). The decision tree must NOT run at all while
+    /// stashed.
+    @Test func migrationBackgroundSessionBeforeInitializedStashesWithoutRunningTheDecisionTree() async {
+        let executeNextPendingMigrationTransferCalls = LockIsolated<Int>(0)
+        let completeCalls = LockIsolated<[Bool]>([])
+
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            var initialState = Self.selectedAccountState()
+            initialState.appInitializationState = InitializationState.uninitialized
+
+            let store = Store(initialState: initialState) {
+                Root()
+            } withDependencies: {
+                baseNoOpDependencies(&$0)
+                $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in
+                    executeNextPendingMigrationTransferCalls.withValue { $0 += 1 }
+                    return nil
+                }
+            }
+
+            let handle = MigrationBGSessionHandle(rawTask: nil) { success in completeCalls.withValue { $0.append(success) } }
+            store.send(.initialization(.migrationBackgroundSession(handle)))
+            await waitForRootStore { store.state.pendingMigrationBackgroundSession != nil }
+
+            #expect(store.state.pendingMigrationBackgroundSession == handle)
+            #expect(store.state.activeMigrationBackgroundSessionHandle == nil)
+            #expect(executeNextPendingMigrationTransferCalls.withValue { $0 } == 0)
+            #expect(completeCalls.withValue { $0 }.isEmpty)
+        }
+    }
+
+    /// The stash replays at `checkBackupPhraseValidation` — the SAME checkpoint that replays
+    /// `pendingMigrationDeepLink` — and the decision tree then runs normally (this test's only
+    /// concern is that it runs at all, so a "nothing to do" completion is enough to prove it).
+    @Test func migrationBackgroundSessionStashReplaysAtCheckBackupPhraseValidation() async {
+        let completeCalls = LockIsolated<[Bool]>([])
+
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            var initialState = Self.selectedAccountState()
+            initialState.appInitializationState = InitializationState.uninitialized
+
+            let store = Store(initialState: initialState) {
+                Root()
+            } withDependencies: {
+                baseNoOpDependencies(&$0)
+            }
+
+            let handle = MigrationBGSessionHandle(rawTask: nil) { success in completeCalls.withValue { $0.append(success) } }
+            store.send(.initialization(.migrationBackgroundSession(handle)))
+            await waitForRootStore { store.state.pendingMigrationBackgroundSession != nil }
+
+            store.send(.initialization(.checkBackupPhraseValidation))
+            await waitForRootStore { completeCalls.withValue { !$0.isEmpty } }
+
+            #expect(store.state.pendingMigrationBackgroundSession == nil)
+            #expect(completeCalls.withValue { $0 } == [true])
+        }
+    }
+
+    /// Expiration while a session is stashed (pre-init) — completes it `false` immediately rather
+    /// than betting hydration replays it before the OS reclaims the task, re-arms so the wakeup
+    /// chain survives regardless, and clears the stash.
+    @Test func migrationBackgroundTaskExpiredWhileStashedCompletesFalseAndRearmsAndClearsStash() async {
+        let scheduleNextWindowCalls = LockIsolated<Int>(0)
+        let completeCalls = LockIsolated<[Bool]>([])
+
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            var initialState = Self.selectedAccountState()
+            initialState.appInitializationState = InitializationState.uninitialized
+
+            let store = Store(initialState: initialState) {
+                Root()
+            } withDependencies: {
+                baseNoOpDependencies(&$0)
+                $0.migrationBGScheduler.scheduleNextWindow = { scheduleNextWindowCalls.withValue { $0 += 1 } }
+            }
+
+            let handle = MigrationBGSessionHandle(rawTask: nil) { success in completeCalls.withValue { $0.append(success) } }
+            store.send(.initialization(.migrationBackgroundSession(handle)))
+            await waitForRootStore { store.state.pendingMigrationBackgroundSession != nil }
+
+            store.send(.initialization(.appDelegate(.migrationBackgroundTaskExpired)))
+            await waitForRootStore { completeCalls.withValue { !$0.isEmpty } }
+
+            #expect(completeCalls.withValue { $0 } == [false])
+            #expect(store.state.pendingMigrationBackgroundSession == nil)
+            // `scheduleNextWindow()` runs inside its own async effect, spawned alongside (not
+            // before) the synchronous `complete(false)` call above — wait for it explicitly rather
+            // than assuming it has already landed by the time `completeCalls` flips.
+            await waitForRootStore { scheduleNextWindowCalls.withValue { $0 } == 1 }
+            #expect(scheduleNextWindowCalls.withValue { $0 } == 1)
+        }
+    }
+
+    // MARK: - MOB-1496 (R8-T4, #11): expiration cancels the tree and completes exactly once
+
+    /// Expiration mid-session cancels the ACTIVE tree — proven via a cancellation handler on the
+    /// broadcast call the tree is suspended in, not just via the expiration handler's own bookkeeping
+    /// — completes the handle `false` through the STORED handle (never `state.bgTask`, which stays
+    /// `nil` for this plan; see `MigrationBGSessionHandle`'s doc), and re-arms.
+    @Test func migrationBackgroundTaskExpiredMidSessionCancelsTreeCompletesFalseAndRearms() async {
+        let cancellationObserved = LockIsolated<Bool>(false)
+        let executeStarted = LockIsolated<Bool>(false)
+        let scheduleNextWindowCalls = LockIsolated<Int>(0)
+        let completeCalls = LockIsolated<[Bool]>([])
+
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let store = Store(initialState: Self.selectedAccountState()) {
+                Root()
+            } withDependencies: {
+                baseNoOpDependencies(&$0)
+                $0.sdkSynchronizer.getMigrationState = { _ in MigrationState.inProgress(Self.placeholderProgress) }
+                $0.sdkSynchronizer.rescheduleOverdueMigrationTransfer = { _ in Self.proposal(nextExecutableAfterHeight: 100) }
+                $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in
+                    executeStarted.setValue(true)
+                    return try await withTaskCancellationHandler {
+                        try await Task.sleep(nanoseconds: 60_000_000_000)
+                        return MigrationTransferResult.success(txId: "should-not-land")
+                    } onCancel: {
+                        cancellationObserved.setValue(true)
+                    }
+                }
+                $0.migrationBGScheduler.scheduleNextWindow = { scheduleNextWindowCalls.withValue { $0 += 1 } }
+            }
+
+            let handle = MigrationBGSessionHandle(rawTask: nil) { success in completeCalls.withValue { $0.append(success) } }
+            store.send(.initialization(.migrationBackgroundSession(handle)))
+            await waitForRootStore { executeStarted.withValue { $0 } }
+            #expect(store.state.activeMigrationBackgroundSessionHandle == handle)
+
+            // A brief settle so the stubbed broadcast call has genuinely reached `Task.sleep` (and
+            // registered its cancellation handler) before expiring — not required for correctness
+            // (Swift guarantees `onCancel` fires even for an already-cancelled task), just extra
+            // margin against scheduling jitter.
+            try? await Task.sleep(nanoseconds: 50_000_000)
+            store.send(.initialization(.appDelegate(.migrationBackgroundTaskExpired)))
+            await waitForRootStore { completeCalls.withValue { !$0.isEmpty } }
+
+            #expect(completeCalls.withValue { $0 } == [false])
+            #expect(store.state.activeMigrationBackgroundSessionHandle == nil)
+            await waitForRootStore { cancellationObserved.withValue { $0 } }
+            #expect(cancellationObserved.withValue { $0 } == true)
+            // `scheduleNextWindow()` runs inside its own async effect (merged alongside the
+            // synchronous `complete(false)` + `.cancel(id:)` above) — wait for it explicitly. The
+            // cancelled tree's own recovery path (its generic `catch` in `executeBroadcastAction`)
+            // may ALSO call `scheduleNextWindow()` once the cancellation surfaces as a thrown error
+            // — re-submitting with the same identifier is idempotent (the existing `power_wifi_sync`
+            // precedent), so this only waits for/asserts AT LEAST the expiration handler's own
+            // explicit re-arm, not an exact count.
+            await waitForRootStore { scheduleNextWindowCalls.withValue { $0 } >= 1 }
+            #expect(scheduleNextWindowCalls.withValue { $0 } >= 1)
+
+            // Let the cancelled tree's own (safely guarded) recovery finish settling, then confirm it
+            // did NOT also complete the handle a second time.
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            #expect(completeCalls.withValue { $0 } == [false])
+        }
+    }
+
+    /// Normal completion clears the stored handle FIRST — a LATE expiration arriving afterward finds
+    /// the slot already `nil` and falls through to the untouched sync-bgTask tail (harmless: `state
+    /// .bgTask` is `nil` for this plan too) rather than completing the same `BGProcessingTask` twice.
+    @Test func normalCompletionThenLateExpirationOnlyCompletesOnce() async {
+        let completeCalls = LockIsolated<[Bool]>([])
+        let stopCalls = LockIsolated<Int>(0)
+
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let store = Store(initialState: Self.selectedAccountState()) {
+                Root()
+            } withDependencies: {
+                baseNoOpDependencies(&$0)
+                $0.sdkSynchronizer = SDKSynchronizerClient.mocked(
+                    stop: { stopCalls.withValue { $0 += 1 } }
+                )
+            }
+
+            let handle = MigrationBGSessionHandle(rawTask: nil) { success in completeCalls.withValue { $0.append(success) } }
+            store.send(.initialization(.migrationBackgroundSession(handle)))
+            await waitForRootStore { completeCalls.withValue { !$0.isEmpty } }
+
+            // `.mocked(...)`'s own `getMigrationState` default (`.notStarted`) resolves this
+            // single-account session to `cancelAll` (every account already "done") — an ordinary
+            // normal completion, exactly what this test needs.
+            #expect(completeCalls.withValue { $0 } == [true])
+            #expect(store.state.activeMigrationBackgroundSessionHandle == nil)
+
+            store.send(.initialization(.appDelegate(.migrationBackgroundTaskExpired)))
+            await waitForRootStore { stopCalls.withValue { $0 } == 1 }
+
+            #expect(completeCalls.withValue { $0 } == [true])
+        }
+    }
+
     // MARK: - MOB-1496 (W2): Root-level migration-reconcile triggers
 
     /// `.synchronizerStateChanged` reconciles migration state on the EDGE into `.upToDate` — a
@@ -1624,6 +1860,139 @@ import ComposableArchitecture
         }
     }
 
+    // MARK: - MOB-1496 (R8-T4, #2): `.initializeSDK` cold-start gate deferral
+
+    /// `.initializeSDK` falling through to `.initializationSuccessfullyDone` (per the fix — see that
+    /// case's doc) reaches dependencies neither `RootMigrationBackgroundTests` nor
+    /// `RootMigrationRoutingTests` had ever exercised before (both stop earlier in the init chain):
+    /// `exchangeRate`/`autolockHandler`/`userDefaults`/`shieldingProcessor` each have NO `testValue`
+    /// of their own (same "whole-client, any member" gotcha `baseNoOpDependencies` documents for
+    /// `migrationManager`/`sdkSynchronizer` above) — customizing one member of each unlocks it.
+    @MainActor
+    private func initializeSDKDependencies(_ values: inout DependencyValues) {
+        baseNoOpDependencies(&values)
+        values.exchangeRate.refreshExchangeRateUSD = { }
+        values.autolockHandler.value = { _ in }
+        values.userDefaults.objectForKey = { _ in nil }
+        values.shieldingProcessor.observe = { Empty().eraseToAnyPublisher() }
+    }
+
+    /// Proactive half, mirroring `.retryStart`'s own EXACTLY: `isMigrationSyncBlocked() == true` is
+    /// checked BEFORE ever calling `start` — `start` itself must never fire, no failure alert
+    /// surfaces, and `appInitializationState` never flips `.failed`. Unlike `.retryStart` (see
+    /// `initializeSDKDeferralStillReachesRegisterForSynchronizersUpdateSoALaterGateClearReplaysRetryStart`
+    /// below for the end-to-end proof), the rest of THIS chain still runs.
+    @Test func initializeSDKProactivelyDefersWhenMigrationSyncBlockedWithoutFailingOrCallingStart() async {
+        let startCalls = LockIsolated<[Bool]>([])
+
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let store = Store(initialState: Root.State.initial) {
+                Root()
+            } withDependencies: {
+                initializeSDKDependencies(&$0)
+                $0.sdkSynchronizer = SDKSynchronizerClient.mocked(
+                    start: { _ in startCalls.withValue { $0.append(true) } }
+                )
+                $0.sdkSynchronizer.isMigrationSyncBlocked = { true }
+            }
+
+            store.send(.initialization(.initializeSDK(.existingWallet)))
+            await waitForRootStore { store.state.syncDeferredByMigrationGate }
+
+            #expect(startCalls.withValue { $0 }.isEmpty)
+            #expect(store.state.alert == nil)
+            #expect(store.state.appInitializationState != InitializationState.failed)
+            #expect(store.state.syncDeferredByMigrationGate == true)
+        }
+    }
+
+    /// Reactive half: the proactive check passes (gate reads open), but `start` itself races the
+    /// gate and throws `ZcashError.migrationSyncBlocked` — same silent deferral, no alert, no
+    /// failed state; every OTHER error keeps the existing generic catch (`.initializationFailed`).
+    ///
+    /// `isMigrationSyncBlocked` is call-counted (false first, true after) rather than a fixed
+    /// `false`: a fixed-false stub is unrealistic here — once this chain falls through to
+    /// `.initializationSuccessfullyDone` -> `.registerForSynchronizersUpdate`, THAT subscription's
+    /// own initial gate read would ALSO see the fixed `false` and immediately resume/clear the very
+    /// flag this test is checking (a genuine race that flips `start()` blocked would leave the gate
+    /// observably blocked moments later too, which is what the call-counted stub simulates).
+    @Test func initializeSDKReactivelyDefersWhenStartThrowsMigrationSyncBlockedWithoutFailingOrAlerting() async {
+        let isMigrationSyncBlockedCallCount = LockIsolated<Int>(0)
+
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let store = Store(initialState: Root.State.initial) {
+                Root()
+            } withDependencies: {
+                initializeSDKDependencies(&$0)
+                $0.sdkSynchronizer = SDKSynchronizerClient.mocked(
+                    start: { _ in throw ZcashError.migrationSyncBlocked }
+                )
+                $0.sdkSynchronizer.isMigrationSyncBlocked = {
+                    isMigrationSyncBlockedCallCount.withValue { count -> Bool in
+                        count += 1
+                        return count > 1
+                    }
+                }
+            }
+
+            store.send(.initialization(.initializeSDK(.existingWallet)))
+            await waitForRootStore { store.state.syncDeferredByMigrationGate }
+
+            #expect(store.state.alert == nil)
+            #expect(store.state.appInitializationState != InitializationState.failed)
+            #expect(store.state.syncDeferredByMigrationGate == true)
+        }
+    }
+
+    /// End-to-end: a cold start whose gate is blocked must still reach
+    /// `.registerForSynchronizersUpdate` (observers register even inside the deferral) — proven by
+    /// the ONLY way that could happen: a LATER `.migrationSyncGateChanged(false)` replays
+    /// `.retryStart`, which then runs the deferred start for real. If `.initializeSDK` had returned
+    /// early instead of falling through to `.initializationSuccessfullyDone`, nothing would ever be
+    /// subscribed to observe the gate clearing, and this `start` call could never happen — this is
+    /// the existing gate-clear resume machinery (`.migrationSyncGateChanged`), pinned end-to-end
+    /// from a COLD-START deferral instead of `.retryStart`'s own.
+    @Test func initializeSDKDeferralStillReachesRegisterForSynchronizersUpdateSoALaterGateClearReplaysRetryStart() async {
+        let startCalls = LockIsolated<[Bool]>([])
+        // Toggled `true` -> `false` between the cold start (gate blocked) and the later gate-clear
+        // event, mirroring the gate ACTUALLY clearing in reality — a fixed stub could never let
+        // `.retryStart`'s own fresh re-check see anything other than what it saw the first time.
+        let isMigrationSyncBlockedValue = LockIsolated<Bool>(true)
+
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let store = Store(initialState: Root.State.initial) {
+                Root()
+            } withDependencies: {
+                initializeSDKDependencies(&$0)
+                $0.diskSpaceChecker.hasEnoughFreeSpaceForSync = { true }
+                $0.sdkSynchronizer = SDKSynchronizerClient.mocked(
+                    latestState: { Self.preparedState },
+                    start: { _ in startCalls.withValue { $0.append(true) } }
+                )
+                $0.sdkSynchronizer.isMigrationSyncBlocked = { isMigrationSyncBlockedValue.withValue { $0 } }
+            }
+
+            store.send(.initialization(.initializeSDK(.existingWallet)))
+            await waitForRootStore { store.state.syncDeferredByMigrationGate }
+            #expect(startCalls.withValue { $0 }.isEmpty)
+
+            // The gate clears for real — `.registerForSynchronizersUpdate`'s own subscription
+            // (seeded despite the deferral) is what delivers this.
+            isMigrationSyncBlockedValue.setValue(false)
+            store.send(.migrationSyncGateChanged(false))
+            await waitForRootStore { startCalls.withValue { !$0.isEmpty } }
+
+            #expect(startCalls.withValue { $0 } == [true])
+            #expect(store.state.syncDeferredByMigrationGate == false)
+        }
+    }
+
     // MARK: - MOB-1496 (W3 review fix B): resume-after-broadcast-stop via the shared flag
 
     /// Review scenario: a foreground broadcast stopped sync (`SDKSynchronizerClient
@@ -1741,6 +2110,82 @@ import ComposableArchitecture
             #expect(migrationStoppedSyncForBroadcast == false)
             #expect(reconcileCalls.withValue { $0 } == 0)
             #expect(store.state.lastMigrationSyncGateBlocked == false)
+        }
+    }
+
+    // MARK: - MOB-1496 (R8-T4, #3): app-side migration sync gate feed merge
+
+    /// `.registerForSynchronizersUpdate` merges `migrationManager.migrationSyncGateFeed()` into the
+    /// SAME `.migrationSyncGateChanged` mapping the SDK's own stream feeds. The SDK's own gate reads
+    /// BLOCKED only for the INITIAL synchronous read (`migrationSyncBlockedStream` itself stays at
+    /// its never-emitting default throughout) — the ONLY `false` this test ever produces comes
+    /// through the NEW app-side feed, isolating the merge itself from the pre-existing SDK-stream
+    /// path. With `migrationStoppedSyncForBroadcast` set and that fed value `false`, this must
+    /// resume (`.retryStart` replays, reaching `start`) and clear the flag — exactly like a genuine
+    /// SDK gate transition would (the existing `migrationSyncGateChangedResumesWhenBroadcastStopFlagSet...`
+    /// tests above pin that same resume logic; this test pins the NEW feed actually reaching it).
+    ///
+    /// `isMigrationSyncBlocked` is call-counted (true first, false after) rather than a fixed
+    /// `true`: a fixed-true stub is unrealistic AND self-defeating here — `.retryStart`'s OWN
+    /// proactive re-check (once replayed by the resume this fed value triggers) reads the SAME
+    /// dependency, and a fixed `true` would make it immediately re-defer instead of ever reaching
+    /// `start`. A real gate that the app-side feed is nudging about clearing would read `false` on
+    /// that very next check too, which is what the call-counted stub simulates.
+    @Test func migrationSyncGateFeedValueReachesMigrationSyncGateChangedAndResumesWhenBroadcastStopFlagSet() async {
+        let startCalls = LockIsolated<[Bool]>([])
+        let isMigrationSyncBlockedCallCount = LockIsolated<Int>(0)
+        let feedContinuationBox = LockIsolated<AsyncStream<Bool>.Continuation?>(nil)
+        let feedStream = AsyncStream<Bool> { continuation in
+            feedContinuationBox.setValue(continuation)
+        }
+
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            @Shared(.inMemory(.migrationStoppedSyncForBroadcast)) var migrationStoppedSyncForBroadcast: Bool = false
+            $migrationStoppedSyncForBroadcast.withLock { $0 = true }
+
+            let store = Store(initialState: Self.selectedAccountState()) {
+                Root()
+            } withDependencies: {
+                baseNoOpDependencies(&$0)
+                $0.diskSpaceChecker.hasEnoughFreeSpaceForSync = { true }
+                $0.sdkSynchronizer = SDKSynchronizerClient.mocked(
+                    latestState: { Self.preparedState },
+                    start: { _ in startCalls.withValue { $0.append(true) } }
+                )
+                $0.sdkSynchronizer.isMigrationSyncBlocked = {
+                    isMigrationSyncBlockedCallCount.withValue { count -> Bool in
+                        count += 1
+                        return count == 1
+                    }
+                }
+                $0.migrationManager.migrationSyncGateFeed = { feedStream }
+            }
+
+            store.send(.initialization(.registerForSynchronizersUpdate))
+            await waitForRootStore { store.state.lastMigrationSyncGateBlocked }
+
+            // Sanity: the SDK's own initial (blocked) read must not itself have resumed anything.
+            #expect(startCalls.withValue { $0 }.isEmpty)
+
+            // The merged feed-consuming effect is spawned as its own Task alongside
+            // `.registerForSynchronizersUpdate`'s other effects — `lastMigrationSyncGateBlocked`
+            // flipping only proves ONE of them (the SDK-stream branch) has started, not this one.
+            // Give the feed's own `for await` a generous settle window to actually begin consuming
+            // before yielding into it (AsyncStream buffers regardless, but the SPAWNED Task needs a
+            // scheduling slice first), then retry the yield on a short poll — idempotent once the
+            // flag clears, so re-yielding costs nothing — to absorb whatever scheduling gap remains
+            // under load.
+            let deadline = DispatchTime.now().uptimeNanoseconds + 10_000_000_000
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            while startCalls.withValue({ $0 }).isEmpty, DispatchTime.now().uptimeNanoseconds < deadline {
+                feedContinuationBox.withValue { $0 }?.yield(false)
+                try? await Task.sleep(nanoseconds: 200_000_000)
+            }
+
+            #expect(startCalls.withValue { $0 } == [true])
+            #expect(migrationStoppedSyncForBroadcast == false)
         }
     }
 }

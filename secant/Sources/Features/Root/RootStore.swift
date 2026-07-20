@@ -60,6 +60,11 @@ struct Root {
         /// `.cancel(id:)` teardown anywhere (e.g. on background entry, only
         /// `CancelStateId`/`CancelTransactionsStateId` are cancelled explicitly).
         var migrationSyncGateCancelId = UUID()
+        /// MOB-1496 (R8-T4, #11): the migration BG session tree's own cancel id — separate from
+        /// `bgTask`'s implicit lifetime, since the tree's `MigrationBGSessionHandle` is tracked via
+        /// `activeMigrationBackgroundSessionHandle` below, not `bgTask` (which stays reserved for the
+        /// plain sync BG task and the sync-only hand-off, per `MigrationBGSessionHandle`'s doc).
+        var migrationBackgroundSessionCancelId = UUID()
 
         @Shared(.inMemory(.addressBookContacts)) var addressBookContacts: AddressBookContacts = .empty
         @Presents var alert: AlertState<Action>?
@@ -91,6 +96,22 @@ struct Root {
         /// and fires from `checkBackupPhraseValidation`'s existing "did we just reach Home"
         /// checkpoint once initialization completes. Cleared immediately after firing.
         var pendingMigrationDeepLink = false
+        /// MOB-1496 (R8-T4, #7): set by `.migrationBackgroundSession` when it arrives before the app
+        /// has reached Home (`appInitializationState != .initialized`) — a cold launch racing this
+        /// dispatch would otherwise evaluate `migrationBackgroundSessionEffect`'s early-return checks
+        /// (`isIronwoodActivated()`, `walletAccounts`) against unhydrated state and misread them as
+        /// "nothing to do," consuming the BG request without re-arming. Mirrors
+        /// `pendingMigrationDeepLink` exactly: replayed from the SAME `checkBackupPhraseValidation`
+        /// checkpoint once initialization completes, then cleared.
+        var pendingMigrationBackgroundSession: MigrationBGSessionHandle?
+        /// MOB-1496 (R8-T4, #11): the migration BG session tree's own handle, stored for the duration
+        /// of that tree's `.cancellable(id: migrationBackgroundSessionCancelId)` effect so
+        /// `.migrationBackgroundTaskExpired` can complete it directly — `bgTask` stays `nil` for this
+        /// plan (only the sync-only hand-off populates it; see `MigrationBGSessionHandle`'s doc).
+        /// Cleared by whichever of normal completion (`.migrationBackgroundSessionCompleted`) or
+        /// expiration reaches it first — the other then finds `nil` and no-ops, so the two completion
+        /// paths can never double-complete the same `BGProcessingTask`.
+        var activeMigrationBackgroundSessionHandle: MigrationBGSessionHandle?
         var pendingServerCandidate: PendingServerCandidate?
         var phraseDisplayState: RecoveryPhraseDisplay.State
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil

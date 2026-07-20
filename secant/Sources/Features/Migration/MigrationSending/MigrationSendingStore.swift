@@ -194,6 +194,11 @@ struct MigrationSending {
         }
 
         return .run { send in
+            // MOB-1496 (R8-T4, #3): tracks whether `stopSyncBeforeMigrationBroadcast()` actually ran
+            // THIS attempt — only a stop that was never followed by a successful broadcast needs the
+            // nudge (see `migrationManager.refreshMigrationSyncGate`'s doc); the guards above (no
+            // account / Keystone dust lane) return before ever stopping sync, so they must not nudge.
+            var didStopSyncForBroadcast = false
             do {
                 let result: MigrationTransferResult?
                 if isDustLane {
@@ -213,16 +218,31 @@ struct MigrationSending {
                     // state resets on relaunch) or a long BG-window gap.
                     let options = await migrationManager.migrationNetworkOptions(account.id)
                     await sdkSynchronizer.stopSyncBeforeMigrationBroadcast()
+                    didStopSyncForBroadcast = true
                     result = try await sdkSynchronizer.migrateMigrationDust(account.id, usk, options)
                 } else {
                     let options = await migrationManager.migrationNetworkOptions(account.id)
                     await sdkSynchronizer.stopSyncBeforeMigrationBroadcast()
+                    didStopSyncForBroadcast = true
                     result = try await sdkSynchronizer.executeNextPendingMigrationTransfer(account.id, options)
                 }
                 await send(.transferResult(result))
+                // A `.success` result is the ONLY outcome the SDK's own gate transitions on — every
+                // other outcome (`.networkError`/`.invalidNote`/`.expired`/`nil`) stopped sync above
+                // without ever reaching that transition, so nudge Root's gate feed directly.
+                if case MigrationTransferResult.success? = result {
+                    // no nudge — the SDK's gate transition covers the resume.
+                } else if didStopSyncForBroadcast {
+                    await migrationManager.refreshMigrationSyncGate()
+                }
             } catch ZcashError.migrationRecordFailedAfterBroadcast(_) {
+                // The broadcast DID land; only recording failed — treated as landed (like `.success`),
+                // so no nudge either.
                 await send(.transferResult(MigrationTransferResult.success(txId: "")))
             } catch {
+                if didStopSyncForBroadcast {
+                    await migrationManager.refreshMigrationSyncGate()
+                }
                 await send(.transferResult(nil))
             }
         }
