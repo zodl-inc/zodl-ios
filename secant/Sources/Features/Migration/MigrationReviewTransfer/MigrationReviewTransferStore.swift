@@ -96,6 +96,16 @@ struct MigrationReviewTransfer {
         /// MOB-1496 (R8-T1, S3): which kind of failure `isFailurePresented` is showing; see
         /// `FailureReason`.
         var failureReason: FailureReason?
+
+        /// MOB-1497 (T2, R13): the formed snapshot's broadcast host — populated for the immediate
+        /// mode, whether reached via the sheet-SKIPPED shortcut (whose footer disclosure this IS) or
+        /// via the sheet's own confirm (redundant with the sheet's disclosure line the user just saw,
+        /// but harmless — same "always hydrate" precedent as `MigrationStatus.State
+        /// .syncPrivacyBufferMinutes`). Never populated for the manual-step mode (re-entry only, out
+        /// of this task's scope — see the brief's "immediate-path Review Transfer footer" wording).
+        /// `nil` hides the footer row: no snapshot yet, or an identity-custom user (R13 doesn't apply
+        /// to them — see `MigrationTransferPlan.State.broadcastDisclosureHost`'s twin doc).
+        var broadcastDisclosureHost: String?
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
 
         init(

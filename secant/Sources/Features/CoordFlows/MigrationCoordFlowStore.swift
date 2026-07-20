@@ -94,6 +94,16 @@
 //  created earlier, at PCZT-build time); see `storeKeystoneSignedBatch`'s doc for the corrected
 //  account.
 //
+//  MOB-1497 (T2 of the Tor & broadcast-routing requirements round): forming the run's network
+//  snapshot moves from the Tor-choice RESOLUTION points to sheet PRESENTATION (R13 needs the
+//  broadcast endpoint to exist ON the choice surface) — `torSheetStateReady` carries the
+//  fully-hydrated `MigrationTorSheet.State` (host, identity-custom classification) the new async
+//  `torSheetState(usesFullBalanceCopy:accountUUID:)` helper resolves. The sheet's own confirm no
+//  longer forms at all (`confirmTorSheet` — the "confirm must not re-roll" rule): it persists the
+//  stored choice exactly as before, plus calls the new `migrationManager.confirmProvisionalTorChoice`
+//  to flip `useTor` on the ALREADY-formed provisional snapshot without touching its endpoint. See
+//  `MigrationCoordFlowCoordinator.swift`'s header doc for the full routing detail.
+//
 
 import SwiftUI
 import ComposableArchitecture
@@ -286,6 +296,13 @@ struct MigrationCoordFlow {
         /// same-value echo), `false` on dismissal (both an explicit "Got it" — which also flips this
         /// itself — and a swipe-to-dismiss, which the sheet's own gesture drives).
         case torSheetPresentationChanged(Bool)
+        /// MOB-1497 (T2): the async presentation-time helper (`torSheetState(usesFullBalanceCopy:
+        /// accountUUID:)`) resolved a fully-hydrated `MigrationTorSheet.State` — forms the run's
+        /// snapshot and threads its `broadcastEndpoint.host`/identity-custom classification in
+        /// (R13/R2/R12) before the sheet is actually shown. Presenting is deferred to this follow-up
+        /// action (rather than done inline at the send site) because forming is async and R13
+        /// requires the endpoint to exist ON the choice surface the moment it appears.
+        case torSheetStateReady(MigrationTorSheet.State, destination: PendingTorDestination)
     }
 
     @Dependency(\.migrationBGScheduler) var migrationBGScheduler

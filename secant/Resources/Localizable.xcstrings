@@ -11977,6 +11977,108 @@
         }
       }
     },
+    "migrationTorSheet.disclosure" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Migration transfers will be sent to %@ — a different server than the one you sync with."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Las transferencias de migración se enviarán a %@, un servidor diferente al que usas para sincronizar."
+          }
+        }
+      }
+    },
+    "migrationTorSheet.offWarning.keepOn" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Keep Tor on"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mantener Tor activado"
+          }
+        }
+      }
+    },
+    "migrationTorSheet.offWarning.messageFull" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The provider can observe your IP address and your total balance, and the total is visible on-chain regardless."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "El proveedor puede observar tu dirección IP y tu saldo total, y el total es visible en la cadena de todos modos."
+          }
+        }
+      }
+    },
+    "migrationTorSheet.offWarning.messageGradual" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The lightwalletd provider can observe your IP address and the migration amounts. Observers of the chain alone still cannot determine your total."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "El proveedor de lightwalletd puede observar tu dirección IP y los montos de la migración. Los observadores de la cadena por sí solos no pueden determinar tu total."
+          }
+        }
+      }
+    },
+    "migrationTorSheet.offWarning.proceed" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Proceed without Tor"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Continuar sin Tor"
+          }
+        }
+      }
+    },
+    "migrationTorSheet.offWarning.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Proceed without Tor?"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "¿Continuar sin Tor?"
+          }
+        }
+      }
+    },
     "migrationTorSheet.title" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -11984,6 +12086,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Enable Tor Protection"
+          }
+        }
+      }
+    },
+    "migrationTorSheet.unavailable.bodyFull" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tor is unavailable for your configuration. Your server (%@) will receive the migration transactions directly. It can observe your IP address and your total balance, and the total is visible on-chain regardless."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tor no está disponible para tu configuración. Tu servidor (%@) recibirá las transacciones de migración directamente. Puede observar tu dirección IP y tu saldo total, y el total es visible en la cadena de todos modos."
+          }
+        }
+      }
+    },
+    "migrationTorSheet.unavailable.bodyGradual" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tor is unavailable for your configuration. Your server (%@) will receive the migration transactions directly. It can observe your IP address and the migration amounts; observers of the chain alone still cannot determine your total."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tor no está disponible para tu configuración. Tu servidor (%@) recibirá las transacciones de migración directamente. Puede observar tu dirección IP y los montos de la migración; los observadores de la cadena por sí solos no pueden determinar tu total."
           }
         }
       }
