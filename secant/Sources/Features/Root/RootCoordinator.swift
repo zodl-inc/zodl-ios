@@ -330,17 +330,14 @@ extension Root {
                 // `.success`, by which point `.sendNowGateResolved(.allowed)` has already cleared
                 // the hold itself, so this is a no-op in practice; kept for the same "Root pops the
                 // flow from outside the store's own exit" reasoning as `.flowFinished` above.
+                // (MOB-1497 fix wave: the provisional-snapshot clear that briefly lived here was a
+                // documented dead no-op — `.flowFinished` is the one live provisional-teardown site.)
                 let releaseEffect = releaseSendWaitHold()
                 // MOB-1496: same defensive reasoning for a live Keystone signing ceremony — by the
                 // `.success` phase `pendingKeystoneSigning` is already `nil` in every reachable case
                 // (the Keystone resume chain clears it well before Sending is ever pushed), so this
                 // too is a no-op in practice; kept for symmetry with `.flowFinished` above.
                 let cancelEffect = cancelAbandonedKeystoneMigrationRun(state: state)
-                // MOB-1497: also a migration flow teardown point (see `.flowFinished` above) — in
-                // practice always a no-op here (reaching Sending's View Transaction implies a
-                // broadcast already landed, which implies an already-committed snapshot), but called
-                // for the same reason: this is a place `Root` closes `migrationCoordFlow`.
-                migrationManager.clearProvisionalNetworkSnapshot(nil)
                 state.path = nil
                 return .merge(releaseEffect, cancelEffect)
 

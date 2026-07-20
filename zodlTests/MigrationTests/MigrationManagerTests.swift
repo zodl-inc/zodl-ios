@@ -3059,14 +3059,143 @@ struct MigrationManagerTests {
         #expect(snapshot.committedAt == nil)
     }
 
-    @Test func formNetworkSnapshotIsIdempotentReturningTheExistingSnapshotWithoutDrawingAgain() async throws {
-        let suiteName = "testFormNetworkSnapshotIsIdempotentReturningTheExistingSnapshotWithoutDrawingAgain"
-        let userDefaults = try #require(UserDefaults(suiteName: suiteName))
-        defer { userDefaults.removePersistentDomain(forName: suiteName) }
-        let snapshotStorage = MigrationSnapshotStorage(userDefaults: userDefaults)
+    // MARK: - R7 review fix (Important-1): re-form over a stale PROVISIONAL snapshot
+    //
+    // `ensureOrCreateNetworkSnapshot` used to return ANY existing snapshot before creating,
+    // regardless of committed/provisional state — so `formNetworkSnapshot` never re-formed over a
+    // stale provisional left behind by an abandoned attempt (app killed before commit, or a
+    // same-session back-and-reconfirm), and the fresh Tor choice at THIS attempt's sheet never
+    // reached it. Worst case: a silent clearnet broadcast under a screen that showed Tor ON. The two
+    // tests below ("kill-edge pin" / "reconfirm pin") exercise the fix directly and fail red against
+    // the pre-fix code; "committed guard" / the safety-net test further down pin the fix's scope —
+    // ONLY `formNetworkSnapshot` reforms, ONLY over a still-provisional existing snapshot.
+
+    /// "Kill-edge pin": a PROVISIONAL snapshot left behind by an abandoned attempt (app killed before
+    /// commit) must NOT silently win over a fresh Tor choice on a later attempt — `formNetworkSnapshot`
+    /// must discard it and re-form from the CURRENT stored choice plus a fresh random roll, never fall
+    /// back to the stale pick.
+    @Test func formNetworkSnapshotReformsAStaleProvisionalSnapshotWithTheFreshTorChoiceAndANewRoll() async throws {
+        let snapshotSuiteName = "testFormNetworkSnapshotReformsAStaleProvisionalSnapshotWithTheFreshTorChoiceAndANewRollSnapshot"
+        let gateSuiteName = "testFormNetworkSnapshotReformsAStaleProvisionalSnapshotWithTheFreshTorChoiceAndANewRollGate"
+        let snapshotUserDefaults = try #require(UserDefaults(suiteName: snapshotSuiteName))
+        let gateUserDefaults = try #require(UserDefaults(suiteName: gateSuiteName))
+        defer {
+            snapshotUserDefaults.removePersistentDomain(forName: snapshotSuiteName)
+            gateUserDefaults.removePersistentDomain(forName: gateSuiteName)
+        }
+        let snapshotStorage = MigrationSnapshotStorage(userDefaults: snapshotUserDefaults)
+        let gateStorage = MigrationGateStorage(userDefaults: gateUserDefaults)
+        let account = AccountUUID(id: [UInt8](repeating: 60, count: 16))
+
+        // Abandoned first attempt: a PROVISIONAL snapshot from a Tor-OFF choice, endpoint E1.
+        let stale = Self.someNetworkSnapshot()
+        #expect(stale.useTor == false)
+        #expect(stale.broadcastEndpoint.host == "us.zec.stardust.rest")
+        #expect(stale.committedAt == nil)
+        snapshotStorage.recordSnapshot(stale, for: account)
+
+        // Fresh attempt: the user now leaves Tor ON.
+        gateStorage.setTorEnabledForMigration(true)
+
+        await withDependencies {
+            $0.zcashSDKEnvironment = .testnet
+            $0.zcashSDKEnvironment.network = { ZcashNetworkBuilder.network(for: .mainnet) }
+            $0.zcashSDKEnvironment.endpoint = {
+                LightWalletEndpoint(address: "na.zec.rocks", port: 443, secure: true, streamingCallTimeoutInMillis: 0)
+            }
+            // Seeded to land on the OTHER P2 member — proves a genuine re-roll, not a coincidence.
+            $0.migrationRandomness.randomIndex = { _ in 1 }
+            $0.transactionGuard = .testValue
+        } operation: {
+            let impl = MigrationManagerImpl(gateStorage: gateStorage, snapshotStorage: snapshotStorage)
+            await impl.formNetworkSnapshot(accountUUID: account)
+        }
+
+        let reformed = try #require(snapshotStorage.snapshot(for: account))
+        #expect(reformed.useTor == true)
+        #expect(reformed.broadcastEndpoint.host == "eu.zec.stardust.rest")
+        #expect(reformed.broadcastEndpoint.host != stale.broadcastEndpoint.host)
+        #expect(reformed.committedAt == nil)
+    }
+
+    /// "Reconfirm pin": the same-session variant of the stale-provisional gap — form, change the
+    /// stored choice (e.g. back out and re-choose), form again. The second form must reflect the NEW
+    /// choice, not the first.
+    @Test func formNetworkSnapshotCalledAgainAfterAStoredChoiceChangeReflectsTheNewChoiceAndReRolls() async throws {
+        let snapshotSuiteName = "testFormNetworkSnapshotCalledAgainAfterAStoredChoiceChangeReflectsTheNewChoiceAndReRollsSnapshot"
+        let gateSuiteName = "testFormNetworkSnapshotCalledAgainAfterAStoredChoiceChangeReflectsTheNewChoiceAndReRollsGate"
+        let snapshotUserDefaults = try #require(UserDefaults(suiteName: snapshotSuiteName))
+        let gateUserDefaults = try #require(UserDefaults(suiteName: gateSuiteName))
+        defer {
+            snapshotUserDefaults.removePersistentDomain(forName: snapshotSuiteName)
+            gateUserDefaults.removePersistentDomain(forName: gateSuiteName)
+        }
+        let snapshotStorage = MigrationSnapshotStorage(userDefaults: snapshotUserDefaults)
+        let gateStorage = MigrationGateStorage(userDefaults: gateUserDefaults)
+        let account = AccountUUID(id: [UInt8](repeating: 61, count: 16))
+
+        gateStorage.setTorEnabledForMigration(false)
+        await withDependencies {
+            $0.zcashSDKEnvironment = .testnet
+            $0.zcashSDKEnvironment.network = { ZcashNetworkBuilder.network(for: .mainnet) }
+            $0.zcashSDKEnvironment.endpoint = {
+                LightWalletEndpoint(address: "na.zec.rocks", port: 443, secure: true, streamingCallTimeoutInMillis: 0)
+            }
+            $0.migrationRandomness.randomIndex = { _ in 0 }
+            $0.transactionGuard = .testValue
+        } operation: {
+            let impl = MigrationManagerImpl(gateStorage: gateStorage, snapshotStorage: snapshotStorage)
+            await impl.formNetworkSnapshot(accountUUID: account)
+        }
+
+        let first = try #require(snapshotStorage.snapshot(for: account))
+        #expect(first.useTor == false)
+        #expect(first.broadcastEndpoint.host == "us.zec.stardust.rest")
+        #expect(first.committedAt == nil)
+
+        // Back out and re-choose with the OPPOSITE Tor choice — same session, nothing committed.
+        gateStorage.setTorEnabledForMigration(true)
+        await withDependencies {
+            $0.zcashSDKEnvironment = .testnet
+            $0.zcashSDKEnvironment.network = { ZcashNetworkBuilder.network(for: .mainnet) }
+            $0.zcashSDKEnvironment.endpoint = {
+                LightWalletEndpoint(address: "na.zec.rocks", port: 443, secure: true, streamingCallTimeoutInMillis: 0)
+            }
+            $0.migrationRandomness.randomIndex = { _ in 1 }
+            $0.transactionGuard = .testValue
+        } operation: {
+            let impl = MigrationManagerImpl(gateStorage: gateStorage, snapshotStorage: snapshotStorage)
+            await impl.formNetworkSnapshot(accountUUID: account)
+        }
+
+        let second = try #require(snapshotStorage.snapshot(for: account))
+        #expect(second.useTor == true)
+        #expect(second.broadcastEndpoint.host == "eu.zec.stardust.rest")
+        #expect(second.committedAt == nil)
+    }
+
+    /// "Committed guard": mid-run idempotence must survive the fix above — once COMMITTED, a
+    /// snapshot is returned byte-for-byte unchanged by `formNetworkSnapshot`, even when the account's
+    /// stored Tor choice has since changed (R4: immutable for the run in either direction). Only a
+    /// still-PROVISIONAL snapshot is eligible for re-forming. (Supersedes the old identically-shaped
+    /// "idempotent, returns any existing snapshot" pin, whose premise the fix above deliberately
+    /// narrows to committed-only.)
+    @Test func formNetworkSnapshotReturnsACommittedSnapshotUnchangedEvenWhenTheStoredChoiceDiffers() async throws {
+        let snapshotSuiteName = "testFormNetworkSnapshotReturnsACommittedSnapshotUnchangedEvenWhenTheStoredChoiceDiffersSnapshot"
+        let gateSuiteName = "testFormNetworkSnapshotReturnsACommittedSnapshotUnchangedEvenWhenTheStoredChoiceDiffersGate"
+        let snapshotUserDefaults = try #require(UserDefaults(suiteName: snapshotSuiteName))
+        let gateUserDefaults = try #require(UserDefaults(suiteName: gateSuiteName))
+        defer {
+            snapshotUserDefaults.removePersistentDomain(forName: snapshotSuiteName)
+            gateUserDefaults.removePersistentDomain(forName: gateSuiteName)
+        }
+        let snapshotStorage = MigrationSnapshotStorage(userDefaults: snapshotUserDefaults)
+        let gateStorage = MigrationGateStorage(userDefaults: gateUserDefaults)
         let account = AccountUUID(id: [UInt8](repeating: 43, count: 16))
-        let existing = Self.someNetworkSnapshot()
+        let existing = Self.someNetworkSnapshot(committedAt: Date(timeIntervalSince1970: 1_650_000_000))
         snapshotStorage.recordSnapshot(existing, for: account)
+        // Disagrees with the committed snapshot's own `useTor: false` — must NOT be re-read.
+        gateStorage.setTorEnabledForMigration(true)
         let randomIndexCalls = LockIsolated<Int>(0)
 
         await withDependencies {
@@ -3076,7 +3205,7 @@ struct MigrationManagerTests {
             }
             $0.transactionGuard = .testValue
         } operation: {
-            let impl = MigrationManagerImpl(snapshotStorage: snapshotStorage)
+            let impl = MigrationManagerImpl(gateStorage: gateStorage, snapshotStorage: snapshotStorage)
             await impl.formNetworkSnapshot(accountUUID: account)
         }
 
@@ -3182,6 +3311,35 @@ struct MigrationManagerTests {
         }
 
         #expect(snapshotStorage.snapshot(for: account)?.committedAt != nil)
+    }
+
+    /// "Safety-net guard" (R7 review fix scoping pin): unlike `formNetworkSnapshot`, the
+    /// broadcast-read safety net must stay idempotent against a PROVISIONAL existing snapshot too —
+    /// re-rolling here would break R7's "made at migration start and held for the run" for the very
+    /// mid-run/BG-executor lane this safety net exists for.
+    @Test func migrationNetworkOptionsSafetyNetLeavesAnExistingProvisionalSnapshotUnchanged() async throws {
+        let suiteName = "testMigrationNetworkOptionsSafetyNetLeavesAnExistingProvisionalSnapshotUnchanged"
+        let userDefaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { userDefaults.removePersistentDomain(forName: suiteName) }
+        let snapshotStorage = MigrationSnapshotStorage(userDefaults: userDefaults)
+        let account = AccountUUID(id: [UInt8](repeating: 62, count: 16))
+        let existing = Self.someNetworkSnapshot()
+        snapshotStorage.recordSnapshot(existing, for: account)
+        let randomIndexCalls = LockIsolated<Int>(0)
+
+        await withDependencies {
+            $0.migrationRandomness.randomIndex = { _ in
+                randomIndexCalls.withValue { $0 += 1 }
+                return 0
+            }
+            $0.transactionGuard = .testValue
+        } operation: {
+            let impl = MigrationManagerImpl(snapshotStorage: snapshotStorage)
+            _ = await impl.migrationNetworkOptions(accountUUID: account)
+        }
+
+        #expect(snapshotStorage.snapshot(for: account) == existing)
+        #expect(randomIndexCalls.value == 0)
     }
 
     // MARK: - MOB-1497: options mapping — Tor default (R1) / explicit stored choice
