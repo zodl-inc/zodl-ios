@@ -212,9 +212,14 @@ import ComposableArchitecture
     }
 
     @MainActor @Test func onAppearWithStatusResumeRouteAppendsFlowRootStatusScreenInResumePresentation() async {
+        // R8-T5 (#13): `hoursFromNow: 0` here is the REAL value `MigrationDerivations.transferRows`
+        // always produces for the first non-sent (= stalled) row — `nonSentPosition × 6`, `0` BY
+        // CONSTRUCTION — no longer meaningful for `stalledHoursAgo` (see below); this fixture used to
+        // hand-pick `5` here directly, which happened to mask the bug this row's real construction
+        // has (the mock bypassed the real derivation entirely).
         let rows: [MigrationTransferRow] = [
             MigrationTransferRow(id: "0", index: 0, amount: Zatoshi(1_000), status: .sent, hoursFromNow: 0),
-            MigrationTransferRow(id: "1", index: 1, amount: Zatoshi(1_000), status: .overdue, hoursFromNow: 5)
+            MigrationTransferRow(id: "1", index: 1, amount: Zatoshi(1_000), status: .overdue, hoursFromNow: 0)
         ]
         let summary = MigrationSummary(
             transferred: Zatoshi.zero,
@@ -223,6 +228,12 @@ import ComposableArchitecture
             transfersTotal: 2,
             estimatedDurationHours: 24
         )
+        // R8-T5 (#13): the REAL source `stalledHoursAgo` now reads from — a stalled transfer that
+        // became executable 5 REAL hours ago, via the SAME `rescheduleOverdueMigrationTransfer` +
+        // `estimateTimestamp` combination `MigrationBGSchedulerImpl.arm`/`classifyMigrationAccount`
+        // already use elsewhere. Red against HEAD (pre-fix): HEAD ignores both mocks below and reads
+        // the row's `hoursFromNow` (`0` above) instead, so this assertion would read `0`, not `5`.
+        let becameDueAt = Date().addingTimeInterval(-5 * 3600)
         let store = TestStore(initialState: MigrationCoordFlow.State()) {
             MigrationCoordFlow()
         } withDependencies: {
@@ -233,6 +244,10 @@ import ComposableArchitecture
             // its zero default (the "about 0 mins" footer-flash regression, Minor-1) would visibly
             // fail — `.resume` is the only presentation that renders the footer.
             $0.sdkSynchronizer.migrationPrivacySyncBufferDuration = { 900 }
+            $0.sdkSynchronizer.rescheduleOverdueMigrationTransfer = { _ in
+                MigrationTransferProposal(id: "1", amount: Zatoshi(1_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
+            }
+            $0.sdkSynchronizer.estimateTimestamp = { _ in becameDueAt.timeIntervalSince1970 }
             $0.migrationManager.migrationTransfers = { _ in rows }
             $0.migrationManager.migrationSummary = { _ in summary }
         }
@@ -251,6 +266,48 @@ import ComposableArchitecture
         #expect(statusState.stalledHoursAgo == 5)
         #expect(statusState.isSendNowDisabled == true)
         #expect(statusState.syncPrivacyBufferMinutes == 15)
+    }
+
+    /// R8-T5 (#13): when there's no stalled (overdue) row at all, `stalledHoursAgo` must stay `0`
+    /// without even attempting the live probe — guards the fix's `hasStalledRow` short-circuit.
+    @MainActor @Test func onAppearWithStatusResumeRouteAndNoStalledRowHasZeroStalledHoursAgo() async {
+        let rows: [MigrationTransferRow] = [
+            MigrationTransferRow(id: "0", index: 0, amount: Zatoshi(1_000), status: .sent, hoursFromNow: 0),
+            MigrationTransferRow(id: "1", index: 1, amount: Zatoshi(1_000), status: .active, hoursFromNow: 0)
+        ]
+        let summary = MigrationSummary(
+            transferred: Zatoshi.zero,
+            dust: Zatoshi.zero,
+            transfersSent: 1,
+            transfersTotal: 2,
+            estimatedDurationHours: 24
+        )
+        let probeCalls = LockIsolated<Int>(0)
+        let store = TestStore(initialState: MigrationCoordFlow.State()) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.migrationManager.reentryRoute = { .statusResume }
+            $0.migrationManager.sendGate = { .allowed }
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.migrationPrivacySyncBufferDuration = { 900 }
+            $0.sdkSynchronizer.rescheduleOverdueMigrationTransfer = { _ in
+                probeCalls.withValue { $0 += 1 }
+                return MigrationTransferProposal(id: "1", amount: Zatoshi(1_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
+            }
+            $0.migrationManager.migrationTransfers = { _ in rows }
+            $0.migrationManager.migrationSummary = { _ in summary }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.onAppear)
+        await store.receive(\.pushNextPermissionStep)
+
+        guard case let .status(statusState) = try? #require(store.state.path.last) else {
+            Issue.record("Expected .status on the path")
+            return
+        }
+        #expect(statusState.stalledHoursAgo == 0)
+        #expect(probeCalls.withValue { $0 } == 0)
     }
 
     @MainActor @Test func onAppearWithCompleteRouteAppendsFlowRootCompleteScreen() async {

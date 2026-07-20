@@ -96,6 +96,12 @@ struct Root {
         /// and fires from `checkBackupPhraseValidation`'s existing "did we just reach Home"
         /// checkpoint once initialization completes. Cleared immediately after firing.
         var pendingMigrationDeepLink = false
+        /// R8-T5 (S4): the ACCOUNT a stashed `.migrationNotificationTapped` tap carried (`nil` for a
+        /// legacy/no-account payload) — paired with `pendingMigrationDeepLink` above so the deferred
+        /// replay from `checkBackupPhraseValidation` can switch accounts exactly like the immediate-
+        /// routing path does. Only meaningful while `pendingMigrationDeepLink` is `true`; cleared
+        /// alongside it.
+        var pendingMigrationDeepLinkAccountUUID: String? = nil
         /// MOB-1496 (R8-T4, #7): set by `.migrationBackgroundSession` when it arrives before the app
         /// has reached Home (`appInitializationState != .initialized`) — a cold launch racing this
         /// dispatch would otherwise evaluate `migrationBackgroundSessionEffect`'s early-return checks

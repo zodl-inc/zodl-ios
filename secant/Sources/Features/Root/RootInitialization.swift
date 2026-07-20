@@ -144,6 +144,14 @@ private func classifyMigrationAccount(
 private enum MigrationSessionPlanner {
     struct Plan: Equatable {
         let notifyPlanNeedsUpdate: Bool
+        /// R8-T5 (S4): the FIRST plan-broken account found (selected-first order, same "whichever"
+        /// tie-break the rest of this planner already uses) — carried so the `.planNeedsUpdate`
+        /// notification can be attributed to the account that actually needs attention, instead of
+        /// composing for the session's broadcast winner: a DIFFERENT, healthy account may be the one
+        /// that broadcasts this very session (see `plan(_:)`'s ordering doc — a plan-broken account
+        /// does not block a healthy account's own broadcast/sync). `nil` exactly when
+        /// `notifyPlanNeedsUpdate` is `false`.
+        let planBrokenAccountUUID: AccountUUID?
         let action: Action
 
         enum Action: Equatable {
@@ -168,25 +176,32 @@ private enum MigrationSessionPlanner {
     /// 4. Nothing else fired: plan-broken-only -> `.none` (no rearm, no cancel); else cancelAll when
     ///    EVERY classified account is `.complete`/`.notStarted` (no active run anywhere); else rearm.
     static func plan(_ classifications: [(accountUUID: AccountUUID, classification: MigrationAccountClassification)]) -> Plan {
-        let hasPlanBroken = classifications.contains { if case .planBroken = $0.classification { return true } else { return false } }
         let hasSyncNeeded = classifications.contains { if case .syncNeeded = $0.classification { return true } else { return false } }
+        // R8-T5 (S4): the FIRST plan-broken account (selected-first order) — non-nil exactly when a
+        // plan-broken account exists, so this doubles as the old `hasPlanBroken` check too.
+        let planBrokenAccountUUID = classifications.first { if case .planBroken = $0.classification { return true } else { return false } }?.accountUUID
 
         if hasSyncNeeded {
-            return Plan(notifyPlanNeedsUpdate: hasPlanBroken, action: Plan.Action.syncOnly)
+            return Plan(notifyPlanNeedsUpdate: planBrokenAccountUUID != nil, planBrokenAccountUUID: planBrokenAccountUUID, action: Plan.Action.syncOnly)
         }
 
         if let winner = pickBroadcastWinner(classifications) {
-            return Plan(notifyPlanNeedsUpdate: hasPlanBroken, action: Plan.Action.broadcast(winner: winner))
+            return Plan(
+                notifyPlanNeedsUpdate: planBrokenAccountUUID != nil,
+                planBrokenAccountUUID: planBrokenAccountUUID,
+                action: Plan.Action.broadcast(winner: winner)
+            )
         }
 
-        if hasPlanBroken {
-            return Plan(notifyPlanNeedsUpdate: true, action: Plan.Action.none)
+        if let planBrokenAccountUUID {
+            return Plan(notifyPlanNeedsUpdate: true, planBrokenAccountUUID: planBrokenAccountUUID, action: Plan.Action.none)
         }
 
         let everyAccountIsCompleteOrNotStarted = !classifications.isEmpty && allAccountsAreDone(classifications)
 
         return Plan(
             notifyPlanNeedsUpdate: false,
+            planBrokenAccountUUID: nil,
             action: everyAccountIsCompleteOrNotStarted ? Plan.Action.cancelAll : Plan.Action.rearm
         )
     }
@@ -297,6 +312,11 @@ extension Root {
         case initializationSuccessfullyDone
         case loadedWalletAccounts([WalletAccount])
         case migrationBackgroundSession(MigrationBGSessionHandle)
+        /// R8-T5 (S4): fires after `.migrationNotificationTapped`'s account-switch effect (`.home
+        /// (.walletAccountTapped(_:))`) completes — `.concatenate` orders the two dispatches so the
+        /// migration flow opens only once the switch is fully applied. See
+        /// `migrationNotificationTappedRoutingEffect`'s doc.
+        case migrationNotificationRoute
         /// MOB-1496 (R8-T4, #11): the migration BG session tree's own "I'm done" round-trip —
         /// effects can't mutate `state` directly, so both `runMigrationSession`'s normal-completion
         /// tail and `completeSyncOnlySession`'s gate-blocked branch send this instead of calling
@@ -494,16 +514,25 @@ extension Root {
                 }
                 return .run { [migrationBGScheduler] _ in await migrationBGScheduler.scheduleNextWindow() }
 
-            case .initialization(.appDelegate(.migrationNotificationTapped)):
+            case .initialization(.appDelegate(.migrationNotificationTapped(let accountUUID))):
                 // Same gate as `checkBackupPhraseValidation` uses for `isAtDeeplinkWarningScreen`:
                 // `.initialized` is set exactly once, at that checkpoint, so it doubles as "Home
                 // is up" here. If we're not there yet (cold start still in flight), stash the
                 // request — `checkBackupPhraseValidation` fires it once initialization completes.
+                // R8-T5 (S4): the stash now carries the tapped notification's account too, so the
+                // deferred replay can switch accounts exactly like the immediate path below does.
                 guard state.appInitializationState == .initialized else {
                     state.pendingMigrationDeepLink = true
+                    state.pendingMigrationDeepLinkAccountUUID = accountUUID
                     return .none
                 }
-                return migrationNotificationTappedRoutingEffect(state: &state)
+                return migrationNotificationTappedRoutingEffect(state: &state, accountUUID: accountUUID)
+
+            case .initialization(.migrationNotificationRoute):
+                // R8-T5 (S4): see `migrationNotificationTappedRoutingEffect`'s doc — reached only
+                // after the account-switch effect it dispatched ahead of this has completed.
+                openMigrationCoordFlow(state: &state)
+                return .none
 
             case .synchronizerStateChanged(let latestState):
                 let snapshot = SyncStatusSnapshot.snapshotFor(state: latestState.data.syncStatus)
@@ -1114,6 +1143,10 @@ extension Root {
                 // sends Home, right alongside it.
                 let hasPendingMigrationDeepLink = state.pendingMigrationDeepLink
                 state.pendingMigrationDeepLink = false
+                // R8-T5 (S4): the stashed tap's account rides along on replay too — see
+                // `pendingMigrationDeepLinkAccountUUID`'s doc.
+                let pendingMigrationDeepLinkAccountUUID = state.pendingMigrationDeepLinkAccountUUID
+                state.pendingMigrationDeepLinkAccountUUID = nil
 
                 // MOB-1496 (R8-T4, #7): the SAME checkpoint replays a `.migrationBackgroundSession`
                 // that arrived before this — see `pendingMigrationBackgroundSession`'s doc.
@@ -1127,7 +1160,7 @@ extension Root {
                         await send(.destination(.updateDestination(Root.DestinationState.Destination.home)))
                     }
                     if hasPendingMigrationDeepLink {
-                        await send(.initialization(.appDelegate(.migrationNotificationTapped)))
+                        await send(.initialization(.appDelegate(.migrationNotificationTapped(accountUUID: pendingMigrationDeepLinkAccountUUID))))
                     }
                     if let pendingMigrationBackgroundSession {
                         await send(.initialization(.migrationBackgroundSession(pendingMigrationBackgroundSession)))
@@ -1516,7 +1549,15 @@ extension Root {
         let plan = MigrationSessionPlanner.plan(classifications)
 
         if plan.notifyPlanNeedsUpdate {
-            await dependencies.userNotifications.scheduleMigrationNotification(MigrationNotification.planNeedsUpdate, nil)
+            // R8-T5 (S4): attributed to the plan-broken account, NOT the session's broadcast winner
+            // — a different, healthy account may be the one broadcasting this very session (see
+            // `MigrationSessionPlanner.Plan.planBrokenAccountUUID`'s doc).
+            let planBrokenAccountUUIDString = plan.planBrokenAccountUUID.map { Data($0.id).hexEncodedString() }
+            await dependencies.userNotifications.scheduleMigrationNotification(
+                MigrationNotification.planNeedsUpdate,
+                nil,
+                planBrokenAccountUUIDString
+            )
         }
 
         switch plan.action {
@@ -1595,7 +1636,12 @@ extension Root {
             case .networkError, .invalidNote, .expired:
                 let progress = (try? await dependencies.sdkSynchronizer.getMigrationProgress(winnerAccountUUID)) ?? nil
                 let nextNumber = (progress?.completedTransfers ?? 0) + 1
-                await dependencies.userNotifications.scheduleMigrationNotification(MigrationNotification.transferWaiting(number: nextNumber), nil)
+                // R8-T5 (S4): attributed to the winning account this broadcast attempt was for.
+                await dependencies.userNotifications.scheduleMigrationNotification(
+                    MigrationNotification.transferWaiting(number: nextNumber),
+                    nil,
+                    Data(winnerAccountUUID.id).hexEncodedString()
+                )
                 await dependencies.migrationBGScheduler.scheduleNextWindow()
 
             case nil:
@@ -1654,12 +1700,16 @@ extension Root {
         let otherAccounts = classifications.filter { $0.accountUUID != accountUUID }
         let everyOtherAccountDone = MigrationSessionPlanner.allAccountsAreDone(otherAccounts)
 
+        // R8-T5 (S4): both branches below attribute to `accountUUID` — the account whose broadcast
+        // just landed, which is what either notification is actually reporting on.
+        let accountUUIDString = Data(accountUUID.id).hexEncodedString()
+
         if migrationState == MigrationState.complete && everyOtherAccountDone {
-            await dependencies.userNotifications.scheduleMigrationNotification(MigrationNotification.migrationComplete, nil)
+            await dependencies.userNotifications.scheduleMigrationNotification(MigrationNotification.migrationComplete, nil, accountUUIDString)
             await dependencies.migrationBGScheduler.cancelAll()
         } else {
             let notification = await Self.transferCompleteNotification(accountUUID: accountUUID, sdkSynchronizer: dependencies.sdkSynchronizer)
-            await dependencies.userNotifications.scheduleMigrationNotification(notification, nil)
+            await dependencies.userNotifications.scheduleMigrationNotification(notification, nil, accountUUIDString)
             await dependencies.migrationBGScheduler.scheduleNextWindow()
         }
     }
@@ -1702,10 +1752,40 @@ extension Root {
     /// Exactly the SmartBanner-tap routing (`RootCoordinator`'s
     /// `.home(.smartBanner(.migrationScreenRequested))`): fresh flow state, open the migration
     /// path. Shared by the immediate (Home already up) and deferred (fired from
-    /// `checkBackupPhraseValidation` once initialization reaches Home) call sites.
-    private func migrationNotificationTappedRoutingEffect(state: inout Root.State) -> Effect<Root.Action> {
+    /// `checkBackupPhraseValidation` once initialization reaches Home) call sites, and by
+    /// `.migrationNotificationRoute` below.
+    private func openMigrationCoordFlow(state: inout Root.State) {
         state.migrationCoordFlowState = MigrationCoordFlow.State.initial
         state.path = Root.State.Path.migrationCoordFlow
+    }
+
+    /// R8-T5 (S4): `accountUUID` is the tapped notification's payload account (hex-encoded, matching
+    /// every compose site's own `Data.hexEncodedString()` encoding). When it resolves to a wallet
+    /// account that ISN'T already selected, that account is switched to FIRST — via the house
+    /// account-switch action (`.home(.walletAccountTapped(_:))`, the SAME one `WalletAccountsSheet`'s
+    /// tap uses; `RootCoordinator`'s handler does the real work: the `@Shared` write plus balance/
+    /// contacts/metadata refresh, never hand-rolled here) — THEN the flow opens.
+    /// `.concatenate` orders the two dispatches so the switch action's reducer pass (the synchronous
+    /// `@Shared` write) is fully applied before `.migrationNotificationRoute` opens the flow — see
+    /// `RootMigrationRoutingTests.migrationNotificationTappedWithDifferentAccountSwitchesBeforeRouting`'s
+    /// own doc for why that test verifies the OUTCOME rather than empirically proving the order
+    /// (`TestStore` would be the tool for that, but it requires `Root.State: Equatable`, which it
+    /// isn't). A nil/unresolvable/already-selected payload skips the switch and opens the flow
+    /// immediately in this SAME pass, exactly as before S4.
+    private func migrationNotificationTappedRoutingEffect(
+        state: inout Root.State,
+        accountUUID: String?
+    ) -> Effect<Root.Action> {
+        if let accountUUID,
+           let targetAccount = state.walletAccounts.first(where: { Data($0.id.id).hexEncodedString() == accountUUID }),
+           targetAccount != state.selectedWalletAccount {
+            return .concatenate(
+                .send(.home(.walletAccountTapped(targetAccount))),
+                .send(.initialization(.migrationNotificationRoute))
+            )
+        }
+
+        openMigrationCoordFlow(state: &state)
         return .none
     }
 }
