@@ -1346,6 +1346,11 @@ extension MigrationCoordFlow {
         state.syncPrivacyBufferMinutes = MigrationStatus.syncPrivacyBufferMinutes(
             from: sdkSynchronizer.migrationPrivacySyncBufferDuration()
         )
+        // MOB-1497 (R7 final review, Important-1): same "hydrate every `.statusLoaded`-covered field
+        // at re-entry too" precedent as `syncPrivacyBufferMinutes` right above (MOB-1496 W3 review
+        // fix C) — otherwise the Tor line would briefly be absent for a frame at re-entry, before
+        // `onAppear`'s own `.statusLoaded` lands.
+        state.isTorHoldActive = migrationManager.isMigrationTorHoldActive(accountUUID)
         return state
     }
 
@@ -1418,6 +1423,10 @@ extension MigrationCoordFlow {
         state.syncPrivacyBufferMinutes = MigrationStatus.syncPrivacyBufferMinutes(
             from: sdkSynchronizer.migrationPrivacySyncBufferDuration()
         )
+        // MOB-1497 (R7 final review, Important-1): see `statusResumeState`'s twin hydration above —
+        // this presentation doesn't render the Tor line today either, but hydrating both builders
+        // identically keeps them from drifting if that changes.
+        state.isTorHoldActive = migrationManager.isMigrationTorHoldActive(accountUUID)
         return state
     }
 

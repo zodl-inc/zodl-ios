@@ -15,7 +15,12 @@ enum MigrationBannerVariant: Equatable {
     case required
     case splitting
     case inProgress(done: Int, total: Int)
-    case transferWaiting(number: Int)
+    /// R7 final review, Important-1 (spec §G): `torHold` is true iff the wait is Tor-caused — the
+    /// account's persisted Tor-hold indicator (`MigrationManagerClient.routeBroadcastFailure`
+    /// maintains it; `MigrationManagerImpl.bannerVariant` threads it through). Carries a
+    /// Tor-specific `info` line instead of the generic waiting copy. Defaults `false` so every
+    /// pre-existing call site (none of which know about the indicator) is unaffected.
+    case transferWaiting(number: Int, torHold: Bool = false)
     case updatePlan
     case transfersExpired(first: Int, last: Int)
     case transferReady(number: Int)
@@ -27,7 +32,7 @@ enum MigrationBannerVariant: Equatable {
             return String(localizable: .migrationBannerRequiredTitle)
         case .inProgress:
             return String(localizable: .migrationBannerProgressTitle)
-        case .transferWaiting(let number):
+        case .transferWaiting(let number, _):
             return String(localizable: .migrationBannerWaitingTitle(number))
         case .updatePlan:
             return String(localizable: .migrationBannerUpdatePlanTitle)
@@ -48,8 +53,10 @@ enum MigrationBannerVariant: Equatable {
             return String(localizable: .migrationBannerSplittingInfo)
         case .inProgress(let done, let total):
             return String(localizable: .migrationBannerProgressInfo(done, total, percent ?? 0))
-        case .transferWaiting:
-            return String(localizable: .migrationBannerWaitingInfo)
+        case .transferWaiting(_, let torHold):
+            return torHold
+                ? String(localizable: .migrationFailureTorHoldBannerInfo)
+                : String(localizable: .migrationBannerWaitingInfo)
         case .updatePlan:
             return String(localizable: .migrationBannerUpdatePlanInfo)
         case .transfersExpired:

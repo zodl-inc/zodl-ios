@@ -221,6 +221,34 @@ struct MigrationManagerTests {
         #expect(variant == MigrationBannerVariant.transferWaiting(number: 3))
     }
 
+    /// R7 final review, Important-1 (spec §G): `isTorHoldActive` threads through into
+    /// `.transferWaiting`'s new `torHold` flag — defaults `false` (every OTHER `bannerVariant` test
+    /// in this file omits the parameter and still expects the un-flagged `.transferWaiting`, proving
+    /// the default keeps every pre-existing call site byte-for-byte unaffected).
+    @Test func inProgressWithHasOverdueAndTorHoldActiveCarriesTheFlag() {
+        let progress = MigrationProgress(
+            completedTransfers: 2,
+            totalTransfers: 5,
+            remainingOrchard: Zatoshi(1_000),
+            nextTransferReadyAtHeight: 100
+        )
+
+        let variant = MigrationDerivations.bannerVariant(
+            isIronwoodActivated: true,
+            state: MigrationState.inProgress(progress),
+            hasInvalid: false,
+            hasOverdue: true,
+            isManualDelivery: false,
+            isNextTransferDue: false,
+            orchardBalance: Zatoshi.zero,
+            isCompleteAcknowledged: false,
+            transferRows: [],
+            isTorHoldActive: true
+        )
+
+        #expect(variant == MigrationBannerVariant.transferWaiting(number: 3, torHold: true))
+    }
+
     @Test func hasOverdueWinsOverManualReadyForBannerVariant() {
         let progress = MigrationProgress(
             completedTransfers: 2,
@@ -452,6 +480,74 @@ struct MigrationManagerTests {
         )
 
         #expect(variant == nil)
+    }
+
+    // MARK: - bannerVariant(accountUUID:) instance wiring (R7 final review, Important-1)
+    //
+    // Every test above exercises the PURE `MigrationDerivations.bannerVariant` table — none of them
+    // touch `MigrationManagerImpl.bannerVariant(accountUUID:)`'s own wiring, so none of them could
+    // catch a regression where the instance method stopped actually reading
+    // `failureRoutingStorage.torHoldActive(for:)` and threading it through. These two pin that real
+    // wiring end to end (real impl, real storage — only the SDK read is mocked).
+
+    @Test func bannerVariantCarriesTorHoldWhenTheIndicatorIsActiveForTheAccount() async throws {
+        let routingSuiteName = "testBannerVariantCarriesTorHoldWhenTheIndicatorIsActiveForTheAccount"
+        let routingUserDefaults = try #require(UserDefaults(suiteName: routingSuiteName))
+        defer { routingUserDefaults.removePersistentDomain(forName: routingSuiteName) }
+        let failureRoutingStorage = MigrationFailureRoutingStorage(userDefaults: routingUserDefaults)
+        let account = AccountUUID(id: [UInt8](repeating: 50, count: 16))
+        failureRoutingStorage.setTorHoldActive(true, for: account)
+
+        let progress = MigrationProgress(
+            completedTransfers: 2, totalTransfers: 5, remainingOrchard: Zatoshi(500), nextTransferReadyAtHeight: nil
+        )
+
+        let variant = await withDependencies {
+            $0.sdkSynchronizer = SDKSynchronizerClient.mocked(
+                latestState: {
+                    var state = SynchronizerState.zero
+                    state.latestBlockHeight = 5_000_000
+                    return state
+                }
+            )
+            $0.sdkSynchronizer.getMigrationState = { _ in MigrationState.inProgress(progress) }
+            $0.sdkSynchronizer.hasOverdueMigrationTransfers = { _ in true }
+        } operation: {
+            let impl = MigrationManagerImpl(failureRoutingStorage: failureRoutingStorage)
+            return await impl.bannerVariant(accountUUID: account)
+        }
+
+        #expect(variant == MigrationBannerVariant.transferWaiting(number: 3, torHold: true))
+    }
+
+    @Test func bannerVariantDoesNotCarryTorHoldWhenTheIndicatorIsInactive() async throws {
+        let routingSuiteName = "testBannerVariantDoesNotCarryTorHoldWhenTheIndicatorIsInactive"
+        let routingUserDefaults = try #require(UserDefaults(suiteName: routingSuiteName))
+        defer { routingUserDefaults.removePersistentDomain(forName: routingSuiteName) }
+        let failureRoutingStorage = MigrationFailureRoutingStorage(userDefaults: routingUserDefaults)
+        let account = AccountUUID(id: [UInt8](repeating: 51, count: 16))
+        // Indicator left at its default (false) — no `setTorHoldActive` call.
+
+        let progress = MigrationProgress(
+            completedTransfers: 2, totalTransfers: 5, remainingOrchard: Zatoshi(500), nextTransferReadyAtHeight: nil
+        )
+
+        let variant = await withDependencies {
+            $0.sdkSynchronizer = SDKSynchronizerClient.mocked(
+                latestState: {
+                    var state = SynchronizerState.zero
+                    state.latestBlockHeight = 5_000_000
+                    return state
+                }
+            )
+            $0.sdkSynchronizer.getMigrationState = { _ in MigrationState.inProgress(progress) }
+            $0.sdkSynchronizer.hasOverdueMigrationTransfers = { _ in true }
+        } operation: {
+            let impl = MigrationManagerImpl(failureRoutingStorage: failureRoutingStorage)
+            return await impl.bannerVariant(accountUUID: account)
+        }
+
+        #expect(variant == MigrationBannerVariant.transferWaiting(number: 3, torHold: false))
     }
 
     // MARK: - reentryRoute
@@ -3225,6 +3321,62 @@ struct MigrationManagerTests {
         impl.markNetworkSnapshotCommitted(accountUUID: account)
 
         #expect(snapshotStorage.snapshot(for: account)?.committedAt != nil)
+    }
+
+    /// R7 final review, Minor M-A: a stale R16 episode surviving an abandoned earlier attempt could
+    /// trigger the R17 consent prematurely, without a fresh full sweep of the provider's endpoints
+    /// this run. Fix: a new run committing resets the episode — no matter how the committing
+    /// snapshot got here (freshly formed, or `formNetworkSnapshot`'s own `reformIfProvisional` reform
+    /// over a stale provisional left by an abandoned attempt), the moment it commits is a reliable
+    /// "this account's endpoint-rotation history starts fresh" signal.
+    @Test func markNetworkSnapshotCommittedResetsAPopulatedEpisode() throws {
+        let snapshotSuiteName = "testMarkNetworkSnapshotCommittedResetsAPopulatedEpisodeSnapshot"
+        let routingSuiteName = "testMarkNetworkSnapshotCommittedResetsAPopulatedEpisodeRouting"
+        let snapshotUserDefaults = try #require(UserDefaults(suiteName: snapshotSuiteName))
+        let routingUserDefaults = try #require(UserDefaults(suiteName: routingSuiteName))
+        defer {
+            snapshotUserDefaults.removePersistentDomain(forName: snapshotSuiteName)
+            routingUserDefaults.removePersistentDomain(forName: routingSuiteName)
+        }
+        let snapshotStorage = MigrationSnapshotStorage(userDefaults: snapshotUserDefaults)
+        let failureRoutingStorage = MigrationFailureRoutingStorage(userDefaults: routingUserDefaults)
+        let account = AccountUUID(id: [UInt8](repeating: 48, count: 16))
+        snapshotStorage.recordSnapshot(Self.someNetworkSnapshot(), for: account)
+        failureRoutingStorage.addEpisodeHost("na.zec.rocks", for: account)
+        failureRoutingStorage.addEpisodeHost("sa.zec.rocks", for: account)
+        #expect(failureRoutingStorage.episodeHosts(for: account) == ["na.zec.rocks", "sa.zec.rocks"])
+
+        let impl = MigrationManagerImpl(snapshotStorage: snapshotStorage, failureRoutingStorage: failureRoutingStorage)
+        impl.markNetworkSnapshotCommitted(accountUUID: account)
+
+        #expect(failureRoutingStorage.episodeHosts(for: account).isEmpty)
+    }
+
+    /// Twin of the test above: the had-broadcast flag must survive a commit UNTOUCHED — episode
+    /// only, never the flag (review's M-A section: a landed note-split broadcast before an abandoned
+    /// deferred-store commit means a re-entry that later commits genuinely IS mid-run; clearing the
+    /// flag here would wrongly re-open an R14 clearnet offer on a run that already has a landed
+    /// transaction — the unsafe direction).
+    @Test func markNetworkSnapshotCommittedLeavesTheHadBroadcastFlagUntouched() throws {
+        let snapshotSuiteName = "testMarkNetworkSnapshotCommittedLeavesTheHadBroadcastFlagUntouchedSnapshot"
+        let routingSuiteName = "testMarkNetworkSnapshotCommittedLeavesTheHadBroadcastFlagUntouchedRouting"
+        let snapshotUserDefaults = try #require(UserDefaults(suiteName: snapshotSuiteName))
+        let routingUserDefaults = try #require(UserDefaults(suiteName: routingSuiteName))
+        defer {
+            snapshotUserDefaults.removePersistentDomain(forName: snapshotSuiteName)
+            routingUserDefaults.removePersistentDomain(forName: routingSuiteName)
+        }
+        let snapshotStorage = MigrationSnapshotStorage(userDefaults: snapshotUserDefaults)
+        let failureRoutingStorage = MigrationFailureRoutingStorage(userDefaults: routingUserDefaults)
+        let account = AccountUUID(id: [UInt8](repeating: 49, count: 16))
+        snapshotStorage.recordSnapshot(Self.someNetworkSnapshot(), for: account)
+        failureRoutingStorage.markHadBroadcast(for: account)
+        #expect(failureRoutingStorage.hadBroadcast(for: account) == true)
+
+        let impl = MigrationManagerImpl(snapshotStorage: snapshotStorage, failureRoutingStorage: failureRoutingStorage)
+        impl.markNetworkSnapshotCommitted(accountUUID: account)
+
+        #expect(failureRoutingStorage.hadBroadcast(for: account) == true)
     }
 
     /// MOB-1497: `recordCommittedSchedule` is the SINGLE production call site for the commit stamp —
