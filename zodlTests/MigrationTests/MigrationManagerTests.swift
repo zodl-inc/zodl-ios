@@ -3284,6 +3284,134 @@ struct MigrationManagerTests {
         #expect(snapshotStorage.snapshot(for: account) != nil)
     }
 
+    // MARK: - MOB-1497 (T2): networkSnapshot (read-only peek)
+
+    @Test func networkSnapshotReturnsNilWhenNoneIsPersisted() async throws {
+        let suiteName = "testNetworkSnapshotReturnsNilWhenNoneIsPersisted"
+        let userDefaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { userDefaults.removePersistentDomain(forName: suiteName) }
+        let snapshotStorage = MigrationSnapshotStorage(userDefaults: userDefaults)
+        let account = AccountUUID(id: [UInt8](repeating: 70, count: 16))
+
+        let impl = MigrationManagerImpl(snapshotStorage: snapshotStorage)
+        let result = await impl.networkSnapshot(accountUUID: account)
+
+        #expect(result == nil)
+    }
+
+    /// The disclosure/unavailable-variant UI reads this AFTER `formNetworkSnapshot` already formed
+    /// one — a peek must return exactly that persisted value and must NEVER itself form/draw
+    /// randomness (unlike `migrationNetworkOptions`'s safety net).
+    @Test func networkSnapshotReturnsThePersistedSnapshotWithoutForming() async throws {
+        let suiteName = "testNetworkSnapshotReturnsThePersistedSnapshotWithoutForming"
+        let userDefaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { userDefaults.removePersistentDomain(forName: suiteName) }
+        let snapshotStorage = MigrationSnapshotStorage(userDefaults: userDefaults)
+        let account = AccountUUID(id: [UInt8](repeating: 71, count: 16))
+        let existing = Self.someNetworkSnapshot()
+        snapshotStorage.recordSnapshot(existing, for: account)
+        let randomIndexCalls = LockIsolated<Int>(0)
+
+        let result = await withDependencies {
+            $0.migrationRandomness.randomIndex = { _ in
+                randomIndexCalls.withValue { $0 += 1 }
+                return 0
+            }
+            $0.transactionGuard = .testValue
+        } operation: {
+            let impl = MigrationManagerImpl(snapshotStorage: snapshotStorage)
+            return await impl.networkSnapshot(accountUUID: account)
+        }
+
+        #expect(result == existing)
+        #expect(randomIndexCalls.value == 0)
+    }
+
+    // MARK: - MOB-1497 (T2): confirmProvisionalTorChoice — the Tor sheet's confirm-must-not-re-roll pin
+
+    /// Confirm-stability pin (useTor -> true side): mutates ONLY `useTor` — every other field,
+    /// notably `broadcastEndpoint` (the host the user was just shown on the sheet), is byte-for-byte
+    /// unchanged. "Both values" (per the brief) — this is the true side; the false side is pinned
+    /// separately below.
+    @Test func confirmProvisionalTorChoiceUpdatesUseTorOnAnExistingProvisionalSnapshotToTrue() throws {
+        let suiteName = "testConfirmProvisionalTorChoiceUpdatesUseTorOnAnExistingProvisionalSnapshotToTrue"
+        let userDefaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { userDefaults.removePersistentDomain(forName: suiteName) }
+        let snapshotStorage = MigrationSnapshotStorage(userDefaults: userDefaults)
+        let account = AccountUUID(id: [UInt8](repeating: 73, count: 16))
+        let existing = Self.someNetworkSnapshot()
+        #expect(existing.useTor == false)
+        snapshotStorage.recordSnapshot(existing, for: account)
+
+        let impl = MigrationManagerImpl(snapshotStorage: snapshotStorage)
+        impl.confirmProvisionalTorChoice(accountUUID: account, useTor: true)
+
+        let updated = try #require(snapshotStorage.snapshot(for: account))
+        #expect(updated.useTor == true)
+        #expect(updated.broadcastEndpoint == existing.broadcastEndpoint)
+        #expect(updated.syncEndpoint == existing.syncEndpoint)
+        #expect(updated.broadcastProvider == existing.broadcastProvider)
+        #expect(updated.syncProvider == existing.syncProvider)
+        #expect(updated.takenAt == existing.takenAt)
+        #expect(updated.committedAt == nil)
+    }
+
+    /// Confirm-stability pin (useTor -> false side) — the other value.
+    @Test func confirmProvisionalTorChoiceUpdatesUseTorOnAnExistingProvisionalSnapshotToFalse() throws {
+        let suiteName = "testConfirmProvisionalTorChoiceUpdatesUseTorOnAnExistingProvisionalSnapshotToFalse"
+        let userDefaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { userDefaults.removePersistentDomain(forName: suiteName) }
+        let snapshotStorage = MigrationSnapshotStorage(userDefaults: userDefaults)
+        let account = AccountUUID(id: [UInt8](repeating: 74, count: 16))
+        let base = Self.someNetworkSnapshot()
+        let onExisting = MigrationNetworkSnapshot(
+            useTor: true,
+            syncEndpoint: base.syncEndpoint,
+            syncProvider: base.syncProvider,
+            broadcastEndpoint: base.broadcastEndpoint,
+            broadcastProvider: base.broadcastProvider,
+            takenAt: base.takenAt
+        )
+        snapshotStorage.recordSnapshot(onExisting, for: account)
+
+        let impl = MigrationManagerImpl(snapshotStorage: snapshotStorage)
+        impl.confirmProvisionalTorChoice(accountUUID: account, useTor: false)
+
+        let updated = try #require(snapshotStorage.snapshot(for: account))
+        #expect(updated.useTor == false)
+        #expect(updated.broadcastEndpoint == onExisting.broadcastEndpoint)
+        #expect(updated.committedAt == nil)
+    }
+
+    @Test func confirmProvisionalTorChoiceIsANoOpAgainstACommittedSnapshot() throws {
+        let suiteName = "testConfirmProvisionalTorChoiceIsANoOpAgainstACommittedSnapshot"
+        let userDefaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { userDefaults.removePersistentDomain(forName: suiteName) }
+        let snapshotStorage = MigrationSnapshotStorage(userDefaults: userDefaults)
+        let account = AccountUUID(id: [UInt8](repeating: 75, count: 16))
+        let committed = Self.someNetworkSnapshot(committedAt: Date(timeIntervalSince1970: 1_650_000_000))
+        #expect(committed.useTor == false)
+        snapshotStorage.recordSnapshot(committed, for: account)
+
+        let impl = MigrationManagerImpl(snapshotStorage: snapshotStorage)
+        impl.confirmProvisionalTorChoice(accountUUID: account, useTor: true)
+
+        #expect(snapshotStorage.snapshot(for: account) == committed)
+    }
+
+    @Test func confirmProvisionalTorChoiceIsANoOpWhenNoSnapshotExists() throws {
+        let suiteName = "testConfirmProvisionalTorChoiceIsANoOpWhenNoSnapshotExists"
+        let userDefaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { userDefaults.removePersistentDomain(forName: suiteName) }
+        let snapshotStorage = MigrationSnapshotStorage(userDefaults: userDefaults)
+        let account = AccountUUID(id: [UInt8](repeating: 76, count: 16))
+
+        let impl = MigrationManagerImpl(snapshotStorage: snapshotStorage)
+        impl.confirmProvisionalTorChoice(accountUUID: account, useTor: true)
+
+        #expect(snapshotStorage.snapshot(for: account) == nil)
+    }
+
     /// The broadcast-read safety net (`migrationNetworkOptions` -> `ensureNetworkSnapshot`) stamps a
     /// snapshot IT creates committed immediately — a broadcast-bearing read with no prior snapshot
     /// implies a committed run reached this point some other way (e.g. a lane that predates forming,

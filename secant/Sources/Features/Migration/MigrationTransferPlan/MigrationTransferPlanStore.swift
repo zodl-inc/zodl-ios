@@ -96,6 +96,15 @@ struct MigrationTransferPlan {
         /// MOB-1496 (R8-T1, S3): which kind of failure `isFailurePresented` is showing; see
         /// `FailureReason`.
         var failureReason: FailureReason?
+
+        /// MOB-1497 (T2, R13): the formed snapshot's broadcast host, for provider users reached via
+        /// the sheet-SKIPPED (app-wide Tor on) shortcut — those users never see the Tor sheet's own
+        /// disclosure line, so this screen's footer carries it instead. Hydrated by the coordinator
+        /// (`MigrationCoordFlowCoordinator.nextPermissionStepResult`) exactly like `injectedSchedule`/
+        /// `schedule` — never part of the memberwise `init` below. `nil` hides the footer row
+        /// entirely: no snapshot yet, or an identity-custom user (their server IS the sync server —
+        /// R13 doesn't apply; they got R2/R12's unavailable-variant message on the sheet instead).
+        var broadcastDisclosureHost: String?
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
 
         init(

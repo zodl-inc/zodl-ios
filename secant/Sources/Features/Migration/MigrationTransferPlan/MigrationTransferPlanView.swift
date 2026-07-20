@@ -54,6 +54,11 @@ struct MigrationTransferPlanView: View {
                     .padding(.vertical, 1)
                 }
 
+                if let broadcastDisclosureHost = store.broadcastDisclosureHost {
+                    disclosureFooter(host: broadcastDisclosureHost)
+                        .padding(.top, 16)
+                }
+
                 ZashiButton(String(localizable: .generalConfirm)) {
                     store.send(.confirmTapped)
                 }
@@ -126,6 +131,21 @@ struct MigrationTransferPlanView: View {
         return store.variant == .scheduled
             ? String(localizable: .migrationPlanEtaHoursIn(hoursFromNow))
             : String(localizable: .migrationPlanEtaHours(hoursFromNow))
+    }
+
+    // MARK: - Disclosure footer (MOB-1497 T2, R13 — sheet-skipped provider users)
+
+    /// Same visual shape as `MigrationStatusView.footerNote` (info icon + tertiary caption).
+    @ViewBuilder private func disclosureFooter(host: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Asset.Assets.infoOutline.image
+                .zImage(size: 16, style: Design.Text.tertiary)
+
+            Text(String(localizable: .migrationTorSheetDisclosure(host)))
+                .zFont(size: 12, style: Design.Text.tertiary)
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 
     // MARK: - Failure sheet (MOB-1478 W4 — silent note split; MOB-1496 R8-T1 — also a propose failure)

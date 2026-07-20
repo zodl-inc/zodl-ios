@@ -7,6 +7,12 @@
 //  coordinator's shared gate. Ports the circular Tor badge composition from the deleted
 //  `MigrationNetworkPrivacyView`.
 //
+//  MOB-1497 (T2): `store.isCustomServer` swaps the toggle card + its new disclosure line (R13) for
+//  the no-toggle "unavailable" body copy (R2/R12) — badge and title stay the same in both variants
+//  (no new title string exists for the unavailable case; flagged for a product/design pass). The
+//  off-warning alert (R3/R11) is presented via the standard `.alert(store:)` binding — see
+//  `MigrationTorSheetStore`'s `AlertState.offWarning`.
+//
 
 import ComposableArchitecture
 import SwiftUI
@@ -30,21 +36,44 @@ struct MigrationTorSheetView: View {
                     .zFont(.semiBold, size: 24, style: Design.Text.primary)
                     .padding(.bottom, 12)
 
-                Text(localizable: store.usesFullBalanceCopy ? .migrationTorSheetBodyImmediate : .migrationTorSheetBody)
+                Text(bodyText)
                     .zFont(size: 14, style: Design.Text.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
                     .multilineTextAlignment(.leading)
                     .padding(.bottom, Design.Spacing._3xl)
 
-                toggleCard
-                    .padding(.bottom, 32)
+                if !store.isCustomServer {
+                    toggleCard
+                        .padding(.bottom, 12)
+
+                    disclosureLine
+                        .padding(.bottom, 32)
+                }
 
                 ZashiButton(String(localizable: .migrationGotIt)) {
                     store.send(.gotItTapped)
                 }
                 .padding(.bottom, Design.Spacing.sheetBottomSpace)
             }
+            .alert($store.scope(state: \.alert, action: \.alert))
         }
+    }
+
+    // MARK: - Body copy
+
+    /// MOB-1497 (T2, R2/R11/R12): identity-custom users see the no-toggle unavailable-variant copy
+    /// (the formed snapshot's host, plus the path-specific R11 exposure line — combined into one
+    /// string per path, since design has no split-line frame for this variant); provider users keep
+    /// the existing toggle-sheet body copy, unchanged.
+    private var bodyText: String {
+        guard store.isCustomServer else {
+            return store.usesFullBalanceCopy
+                ? String(localizable: .migrationTorSheetBodyImmediate)
+                : String(localizable: .migrationTorSheetBody)
+        }
+        return store.usesFullBalanceCopy
+            ? String(localizable: .migrationTorSheetUnavailableBodyFull(store.broadcastHost))
+            : String(localizable: .migrationTorSheetUnavailableBodyGradual(store.broadcastHost))
     }
 
     // MARK: - Tor badge
@@ -88,6 +117,15 @@ struct MigrationTorSheetView: View {
                         .strokeBorder(Design.Surfaces.strokeSecondary.color(colorScheme))
                 }
         }
+    }
+
+    // MARK: - Disclosure (MOB-1497 T2, R13)
+
+    @ViewBuilder private var disclosureLine: some View {
+        Text(String(localizable: .migrationTorSheetDisclosure(store.broadcastHost)))
+            .zFont(size: 12, style: Design.Text.tertiary)
+            .fixedSize(horizontal: false, vertical: true)
+            .multilineTextAlignment(.leading)
     }
 }
 
