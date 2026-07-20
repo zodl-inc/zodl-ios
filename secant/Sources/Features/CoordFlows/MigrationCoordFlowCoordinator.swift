@@ -191,6 +191,18 @@
 //    gesture through the alert. Every other combination (ON, or identity-custom) keeps its existing
 //    "persist the shown choice and resume" semantics unchanged.
 //
+//  R7-T2 fix-wave 1 (Important-1): the R13 disclosure (sheet line + both TransferPlan/ReviewTransfer
+//  footers) was gated on `isIdentityCustom` — right for R2/R12's unavailable variant, wrong for R13,
+//  since `MigrationManagerLiveKey.createNetworkSnapshot`'s empty-candidates branch (testnet's single
+//  shipped endpoint; the defensive no-other-family fallback) also sets `broadcastProvider ==
+//  syncProvider` without the snapshot being identity-custom — those users kept the toggle sheet
+//  (correctly) but saw a "different server" claim that wasn't true. The disclosure now has its own
+//  gate, `showsBroadcastDisclosure` (coordinator) / `MigrationTorSheet.State.showsBroadcastDisclosure`
+//  (sheet) — `broadcastProvider != syncProvider` — threaded alongside `broadcastHost` at every
+//  hydration site (`torSheetState`, `confirmTorSheet`'s `.reviewTransfer` case, and the shared
+//  `broadcastDisclosureHost` helper `nextPermissionStepResult`/`reviewTransferImmediateState` both
+//  call). R2/R12's own unavailable-variant gate (`isCustomServer`/`isIdentityCustom`) is untouched.
+//
 
 import Foundation
 import ComposableArchitecture
@@ -1099,6 +1111,11 @@ extension MigrationCoordFlow {
     /// for a custom server; there is no toggle to draw ON here either — see `MigrationTorSheet.State
     /// .isCustomServer`'s doc). The immediate destination gets the "your full balance" body variant;
     /// the scheduled one "your balance" — same `usesFullBalanceCopy` convention as before.
+    ///
+    /// R7-T2 fix-wave 1 (Important-1): also threads `showsBroadcastDisclosure` —
+    /// `broadcastProvider != syncProvider` — so testnet and the defensive same-server fallback (both
+    /// classify as a normal, non-custom provider yet share a server) keep the toggle sheet without
+    /// the R13 disclosure line's false "different server" claim.
     private func torSheetState(usesFullBalanceCopy: Bool, accountUUID: AccountUUID?) async -> MigrationTorSheet.State {
         await migrationManager.formNetworkSnapshot(accountUUID)
         let snapshot = await migrationManager.networkSnapshot(accountUUID)
@@ -1107,6 +1124,9 @@ extension MigrationCoordFlow {
         var sheetState = MigrationTorSheet.State(usesFullBalanceCopy: usesFullBalanceCopy)
         sheetState.isCustomServer = isCustomServer
         sheetState.broadcastHost = snapshot?.broadcastEndpoint.host ?? ""
+        // R7-T2 fix-wave 1 (Important-1): the disclosure line is gated separately from the
+        // unavailable variant above — see `showsBroadcastDisclosure`'s doc below.
+        sheetState.showsBroadcastDisclosure = Self.showsBroadcastDisclosure(snapshot)
         if isCustomServer {
             sheetState.isTorOn = false
         }
@@ -1136,6 +1156,7 @@ extension MigrationCoordFlow {
         let isTorOn = state.torSheetState.isTorOn
         let isCustomServer = state.torSheetState.isCustomServer
         let broadcastHost = state.torSheetState.broadcastHost
+        let showsBroadcastDisclosure = state.torSheetState.showsBroadcastDisclosure
         let accountUUID = state.selectedWalletAccount?.id
 
         migrationManager.setNetworkPrivacyOptions(isTorOn)
@@ -1146,9 +1167,10 @@ extension MigrationCoordFlow {
         switch destination {
         case .reviewTransfer:
             // Already known from the sheet's own (just-resolved) state — no need to re-read the
-            // snapshot; nothing has re-formed it since presentation.
+            // snapshot; nothing has re-formed it since presentation. R7-T2 fix-wave 1 (Important-1):
+            // gated on `showsBroadcastDisclosure`, not `isCustomServer` — see that field's doc.
             var reviewState = MigrationReviewTransfer.State(mode: .immediate)
-            reviewState.broadcastDisclosureHost = isCustomServer ? nil : broadcastHost
+            reviewState.broadcastDisclosureHost = showsBroadcastDisclosure ? broadcastHost : nil
             state.path.append(.reviewTransfer(reviewState))
             return .none
 
@@ -1239,15 +1261,32 @@ extension MigrationCoordFlow {
         return false
     }
 
-    /// The formed snapshot's broadcast host for a PROVIDER user; `nil` for an identity-custom one
-    /// (their server IS the sync server — R13 doesn't apply, they got R2/R12's unavailable-variant
-    /// message on the sheet instead) or when no snapshot is persisted yet. Shared by the
-    /// sheet-SKIPPED footers (`reviewTransferImmediateState` / `nextPermissionStepResult`'s
+    /// R7-T2 fix-wave 1 (Important-1): whether the R13 disclosure (sheet line + both footers) should
+    /// render — true iff the formed snapshot's broadcast server differs from its sync server
+    /// (`broadcastProvider != syncProvider`). Deliberately NOT the same test as `isIdentityCustom`
+    /// above: `MigrationManagerLiveKey.createNetworkSnapshot`'s empty-candidates branch sets
+    /// `broadcastProvider = syncProvider` for testnet (single shipped endpoint) and the defensive
+    /// no-other-family fallback too, even though neither classifies as identity-custom — those users
+    /// keep the toggle sheet (`isIdentityCustom` stays false) but must not see a disclosure line
+    /// claiming a server difference that doesn't exist. Identity-custom snapshots always fall out of
+    /// this the same way (their broadcast endpoint is forced to the sync endpoint at forming), so
+    /// this still reads `false` for R2/R12 custom users without needing to special-case them here.
+    /// `nil` snapshot (defensive) reads as `true`, matching the pre-fix gate's fallback
+    /// (`!isIdentityCustom(nil)`).
+    private static func showsBroadcastDisclosure(_ snapshot: MigrationNetworkSnapshot?) -> Bool {
+        guard let snapshot else { return true }
+        return snapshot.broadcastProvider != snapshot.syncProvider
+    }
+
+    /// The formed snapshot's broadcast host when the R13 disclosure should render (see
+    /// `showsBroadcastDisclosure`'s doc — covers identity-custom, testnet, and the defensive
+    /// same-server fallback uniformly); `nil` otherwise or when no snapshot is persisted yet. Shared
+    /// by the sheet-SKIPPED footers (`reviewTransferImmediateState` / `nextPermissionStepResult`'s
     /// `.transferPlan` branch above) — never forms; every caller has already run `formNetworkSnapshot`
     /// earlier in its own chain.
     private func broadcastDisclosureHost(accountUUID: AccountUUID?) async -> String? {
         guard let snapshot = await migrationManager.networkSnapshot(accountUUID) else { return nil }
-        guard !Self.isIdentityCustom(snapshot) else { return nil }
+        guard Self.showsBroadcastDisclosure(snapshot) else { return nil }
         return snapshot.broadcastEndpoint.host
     }
 

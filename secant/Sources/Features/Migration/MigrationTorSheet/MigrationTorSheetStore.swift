@@ -59,13 +59,32 @@ struct MigrationTorSheet {
         /// coordinator at presentation time. Empty until a snapshot has been formed — the coordinator
         /// always forms one before presenting, so a live sheet never actually shows it empty.
         var broadcastHost = ""
+        /// R7-T2 fix-wave 1 (Important-1): true iff the formed snapshot's broadcast server differs
+        /// from its sync server (`broadcastProvider != syncProvider`), threaded in by the coordinator
+        /// alongside `broadcastHost`. Gates the R13 disclosure line INDEPENDENTLY of `isCustomServer`
+        /// — that flag only decides the R2/R12 no-toggle unavailable variant. Testnet and the
+        /// defensive same-server fallback (`MigrationManagerLiveKey.createNetworkSnapshot`'s
+        /// empty-candidates branch) both set `broadcastProvider == syncProvider` while still
+        /// classifying as a normal provider (`isCustomServer == false`) — those users keep the toggle
+        /// sheet but must not see a disclosure line claiming a "different server" that isn't true.
+        var showsBroadcastDisclosure = true
         @Presents var alert: AlertState<Action>?
 
-        init(isTorOn: Bool = true, usesFullBalanceCopy: Bool = false, isCustomServer: Bool = false, broadcastHost: String = "") {
+        init(
+            isTorOn: Bool = true,
+            usesFullBalanceCopy: Bool = false,
+            isCustomServer: Bool = false,
+            broadcastHost: String = "",
+            showsBroadcastDisclosure: Bool? = nil
+        ) {
             self.isTorOn = isTorOn
             self.usesFullBalanceCopy = usesFullBalanceCopy
             self.isCustomServer = isCustomServer
             self.broadcastHost = broadcastHost
+            // Undeclared callers infer `!isCustomServer` — the pre-fix gate's exact rule — so any
+            // caller that only ever set `isCustomServer` (every call site before this fix-wave) keeps
+            // its original disclosure behavior without needing to learn about this new axis.
+            self.showsBroadcastDisclosure = showsBroadcastDisclosure ?? !isCustomServer
         }
     }
 
