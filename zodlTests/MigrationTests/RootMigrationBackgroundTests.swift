@@ -1767,8 +1767,9 @@ private func baseNoOpDependencies(_ values: inout DependencyValues) {
     values.migrationManager.setMigrationMode = { _ in }
     values.migrationManager.setManualDelivery = { _ in }
     values.migrationManager.setNetworkPrivacyOptions = { _ in }
-    values.migrationManager.acknowledgeComplete = { }
+    values.migrationManager.acknowledgeComplete = { _ in }
     values.migrationManager.reconcile = { }
+    values.migrationManager.clearAbandonedNetworkSnapshot = { _ in }
     values.migrationManager.recordSyncCompleted = { }
     values.migrationManager.migrationNetworkOptions = { _ in
         MigrationNetworkPrivacyOptions(useTor: false, submissionEndpoint: LightWalletEndpoint(address: "", port: 0))

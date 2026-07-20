@@ -1526,7 +1526,13 @@ import ComposableArchitecture
         #expect(storeCalls.value == 0)
     }
 
-    @MainActor @Test func sendingClosedInImmediateModeAcknowledgesCompleteAndFinishesFlow() async {
+    /// R8-T3 (V18-b): the immediate-mode Sending close no longer acknowledges AT ALL — the engine
+    /// may still be genuinely `.inProgress` at this point (completion needs mined-confirmed +
+    /// `orchard_spendable == 0`, not merely "the last broadcast succeeded"), so acknowledging here
+    /// unconditionally (the pre-fix behavior) risked wiping a still-live run's own
+    /// schedule/snapshot records. It now just sends `.flowFinished`; storages are asserted intact
+    /// via the absent acknowledge call (a spy that must see zero invocations).
+    @MainActor @Test func sendingClosedInImmediateModeFinishesFlowWithoutAcknowledging() async {
         let acknowledgeCalls = LockIsolated<Int>(0)
         var state = MigrationCoordFlow.State()
         state.mode = .immediate
@@ -1534,14 +1540,14 @@ import ComposableArchitecture
         let store = TestStore(initialState: state) {
             MigrationCoordFlow()
         } withDependencies: {
-            $0.migrationManager.acknowledgeComplete = { acknowledgeCalls.withValue { $0 += 1 } }
+            $0.migrationManager.acknowledgeComplete = { _ in acknowledgeCalls.withValue { $0 += 1 } }
         }
         store.exhaustivity = .off
 
         await store.send(.path(.element(id: 0, action: .sending(.delegate(.closed)))))
         await store.receive(\.flowFinished)
 
-        #expect(acknowledgeCalls.value == 1)
+        #expect(acknowledgeCalls.value == 0)
     }
 
     // MARK: - Scheduled flow (§6.2, MOB-1478 W3): Entry always pushes How This Works
@@ -2241,21 +2247,27 @@ import ComposableArchitecture
         await store.receive(\.flowFinished)
     }
 
+    /// R8-T3 (V18): "Got it" keeps acknowledging (the Complete screen only shows once the run is
+    /// genuinely `.complete`) — now async + account-scoped, merged with the navigation send rather
+    /// than awaited before it.
     @MainActor @Test func completeDoneAcknowledgesCompleteAndFinishesFlow() async {
-        let acknowledgeCalls = LockIsolated<Int>(0)
+        let acknowledgeCalls = LockIsolated<[AccountUUID?]>([])
         var state = MigrationCoordFlow.State()
         state.path.append(.complete(MigrationComplete.State(isFlowRoot: true)))
         let store = TestStore(initialState: state) {
             MigrationCoordFlow()
         } withDependencies: {
-            $0.migrationManager.acknowledgeComplete = { acknowledgeCalls.withValue { $0 += 1 } }
+            $0.migrationManager.acknowledgeComplete = { accountUUID in acknowledgeCalls.withValue { $0.append(accountUUID) } }
         }
         store.exhaustivity = .off
 
         await store.send(.path(.element(id: 0, action: .complete(.delegate(.done)))))
         await store.receive(\.flowFinished)
+        // R8-T3: acknowledge now runs as a separate effect `.merge`d alongside the navigation send
+        // (never awaited before it) — `store.finish()` drains it before the spy is asserted.
+        await store.finish()
 
-        #expect(acknowledgeCalls.value == 1)
+        #expect(acknowledgeCalls.value == [Self.defaultAccount.id])
     }
 
     // MARK: - MOB-1487: dust lane ("Migrate anyway" over Migration Complete)
@@ -2282,8 +2294,10 @@ import ComposableArchitecture
         // MOB-1487: this Sending sits over the complete screen (reached via "Migrate anyway") —
         // closing it must end the flow with the same bookkeeping as the complete screen's own
         // "Got it" (`completeDoneAcknowledgesCompleteAndFinishesFlow` above), even though `.sending`
-        // is on top and the flow is NOT in `.immediate` mode.
-        let acknowledgeCalls = LockIsolated<Int>(0)
+        // is on top and the flow is NOT in `.immediate` mode. R8-T3 (V18): acknowledge stays here
+        // too (the dust lane only reaches this over an already-`.complete` screen) — async +
+        // account-scoped now, merged with the navigation send.
+        let acknowledgeCalls = LockIsolated<[AccountUUID?]>([])
         var state = MigrationCoordFlow.State()
         state.mode = .privateScheduled
         state.path.append(.complete(MigrationComplete.State(isFlowRoot: true)))
@@ -2291,14 +2305,15 @@ import ComposableArchitecture
         let store = TestStore(initialState: state) {
             MigrationCoordFlow()
         } withDependencies: {
-            $0.migrationManager.acknowledgeComplete = { acknowledgeCalls.withValue { $0 += 1 } }
+            $0.migrationManager.acknowledgeComplete = { accountUUID in acknowledgeCalls.withValue { $0.append(accountUUID) } }
         }
         store.exhaustivity = .off
 
         await store.send(.path(.element(id: 1, action: .sending(.delegate(.closed)))))
         await store.receive(\.flowFinished)
+        await store.finish()
 
-        #expect(acknowledgeCalls.value == 1)
+        #expect(acknowledgeCalls.value == [Self.defaultAccount.id])
     }
 
     // MARK: - MOB-1480: Keystone signing — simulator-only bypass (no `.scan` ever pushed)

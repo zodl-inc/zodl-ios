@@ -227,9 +227,7 @@ import ComposableArchitecture
         MigrationNetworkSnapshot(
             useTor: false,
             syncEndpoint: MigrationNetworkSnapshot.Endpoint(host: syncHost, port: 443, secure: true),
-            syncProvider: ServerProvider.classify(host: syncHost),
             broadcastEndpoint: MigrationNetworkSnapshot.Endpoint(host: broadcastHost, port: 443, secure: true),
-            broadcastProvider: ServerProvider.classify(host: broadcastHost),
             takenAt: Date(timeIntervalSince1970: 1_700_000_000)
         )
     }

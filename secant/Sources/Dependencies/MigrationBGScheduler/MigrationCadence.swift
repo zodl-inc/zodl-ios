@@ -60,14 +60,28 @@ enum MigrationCadence {
     /// .nextTransferReadyAtHeight`; the minimum wins. A tie, or an active account with neither
     /// height available, keeps whichever the loop reached first — callers pass accounts selected-
     /// first, matching the BG session tree's own tie-break precedence.
+    ///
+    /// R8-T3 (#16): `nextTransferNumber` used to be assigned ONLY inside the height-resolution
+    /// branch below, so an active account whose height is unresolvable on BOTH sources left it
+    /// stranded at the loop's initial `1` regardless of `completedTransfers` — the BG-scheduled
+    /// manual-ready notification then read "Transfer 1" instead of "Transfer N". `fallbackTransferNumber`
+    /// restores the pre-PR floor (unconditional `completedTransfers + 1`, `git show 1c3ef253 --
+    /// Dependencies/MigrationBGScheduler/MigrationCadence.swift`) by tracking the last active
+    /// account's own next-transfer-number alongside `representativeState` (same "whichever, it
+    /// doesn't matter which" tie-break); it's used only when NO account anywhere resolved a height
+    /// (`earliestHeight == nil`) — the resolvable path's `nextTransferNumber` (set exclusively
+    /// inside the height-resolution branch, never touched by a later account that merely re-sets
+    /// the fallback) is unchanged.
     static func planRearm(_ accounts: [AccountRearmInput]) -> RearmPlan {
         var representativeState = MigrationState.complete
         var earliestHeight: BlockHeight?
         var nextTransferNumber = 1
+        var fallbackTransferNumber = 1
 
         for account in accounts {
             guard account.state != MigrationState.complete, account.state != MigrationState.notStarted else { continue }
             representativeState = account.state
+            fallbackTransferNumber = (account.progress?.completedTransfers ?? 0) + 1
 
             guard let height = account.nextExecutableAfterHeight ?? account.progress?.nextTransferReadyAtHeight else { continue }
 
@@ -81,7 +95,7 @@ enum MigrationCadence {
         return RearmPlan(
             representativeState: representativeState,
             earliestNextExecutableAfterHeight: earliestHeight,
-            nextTransferNumber: nextTransferNumber
+            nextTransferNumber: earliestHeight != nil ? nextTransferNumber : fallbackTransferNumber
         )
     }
 }

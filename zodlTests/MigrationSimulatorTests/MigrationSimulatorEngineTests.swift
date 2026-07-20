@@ -792,7 +792,6 @@ import ComposableArchitecture
         MigrationDerivations.bannerVariant(
             isIronwoodActivated: true,
             state: engine.currentState(),
-            hasInvalid: engine.hasInvalid(),
             hasOverdue: engine.hasOverdue(),
             isManualDelivery: isManualDelivery,
             isNextTransferDue: isNextTransferDue,

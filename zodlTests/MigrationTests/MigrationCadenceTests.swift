@@ -318,4 +318,35 @@ import Foundation
         #expect(plan.representativeState == MigrationState.inProgress(Self.progress))
         #expect(plan.earliestNextExecutableAfterHeight == 250)
     }
+
+    /// R8-T3 (#16): an active account with completed transfers but an unresolvable height on BOTH
+    /// sources (nil probe, nil `progress.nextTransferReadyAtHeight`) must still float
+    /// `nextTransferNumber` to `completedTransfers + 1` — the pre-PR floor (`git show 1c3ef253 --
+    /// Dependencies/MigrationBGScheduler/MigrationCadence.swift`) was an unconditional
+    /// `completedTransfers + 1`; the current code only ever assigns `nextTransferNumber` inside the
+    /// `guard let height = ... else { continue }` branch, so an unresolvable height leaves it
+    /// stranded at the loop's initial `1` regardless of how many transfers already completed. Left
+    /// uncaught, the BG-scheduled manual-ready notification reads "Transfer 1 — ready to send"
+    /// instead of "Transfer 4 — ready to send".
+    @Test func nextTransferNumberFallsBackToCompletedPlusOneWhenHeightUnresolvable() {
+        let progressWithNoReadyHeight = MigrationProgress(
+            completedTransfers: 3,
+            totalTransfers: 9,
+            remainingOrchard: Zatoshi(1_000),
+            nextTransferReadyAtHeight: nil
+        )
+        let inputs = [
+            MigrationCadence.AccountRearmInput(
+                state: MigrationState.inProgress(progressWithNoReadyHeight),
+                progress: progressWithNoReadyHeight,
+                nextExecutableAfterHeight: nil
+            )
+        ]
+
+        let plan = MigrationCadence.planRearm(inputs)
+
+        #expect(plan.representativeState == MigrationState.inProgress(progressWithNoReadyHeight))
+        #expect(plan.earliestNextExecutableAfterHeight == nil)
+        #expect(plan.nextTransferNumber == 4)
+    }
 }

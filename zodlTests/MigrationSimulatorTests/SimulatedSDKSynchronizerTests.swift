@@ -445,10 +445,11 @@ struct MigrationManagerResetPersistedFlagsTests {
         defer { userDefaults.removePersistentDomain(forName: suiteName) }
 
         let storage = MigrationGateStorage(userDefaults: userDefaults)
+        let accountUUID = AccountUUID(id: [UInt8](repeating: 1, count: 16))
         storage.setMigrationMode(MigrationMode.immediate)
         storage.setManualDelivery(true)
         storage.setTorEnabledForMigration(true)
-        storage.acknowledgeComplete()
+        storage.acknowledgeComplete(for: accountUUID)
         storage.setDustLocked(true)
         storage.recordSyncCompleted(at: Date())
 
@@ -457,8 +458,12 @@ struct MigrationManagerResetPersistedFlagsTests {
         #expect(storage.migrationMode() == nil)
         #expect(storage.isManualDelivery() == false)
         #expect(storage.isTorEnabledForMigration() == false)
-        #expect(storage.isCompleteAcknowledged() == false)
         #expect(storage.isDustLocked() == false)
+        // R8-T3 (S2): the acknowledged flag is per-account now — `MigrationGateStorage
+        // .resetPersistedFlags()` only clears the dead legacy (wallet-wide, unsuffixed) key; see
+        // `MigrationManagerTests.resetPersistedFlagsClearsDustLockedAlongWithEveryOtherFlag`'s
+        // twin assertion for the full explanation.
+        #expect(storage.isCompleteAcknowledged(for: accountUUID) == true)
 
         // Deliberately untouched: the send gate's timing window is a short-lived value, not a
         // durable app flag (see `resetPersistedFlags`'s doc comment) — MOB-1496 (W3): a non-zero
