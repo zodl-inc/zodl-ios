@@ -56,6 +56,28 @@ import Foundation
         #expect(variant.percent == nil)
     }
 
+    /// R7 final review, Important-1 (spec §G): `torHold` defaults `false` — the test above already
+    /// pins that default reading the generic waiting copy; this pins the explicit `false` reads
+    /// identically (proving the parameter, not just its absence, drives the same result).
+    @Test func transferWaitingWithTorHoldFalseReadsIdenticallyToTheDefault() {
+        let variant = MigrationBannerVariant.transferWaiting(number: 3, torHold: false)
+
+        #expect(variant.title == String(localizable: .migrationBannerWaitingTitle(3)))
+        #expect(variant.info == String(localizable: .migrationBannerWaitingInfo))
+    }
+
+    /// R7 final review, Important-1 (spec §G): `torHold: true` carries the Tor-specific `.info` line
+    /// instead of the generic waiting copy — the title (which just interpolates the transfer number)
+    /// is unaffected, since the number, not the cause, is what it communicates.
+    @Test func transferWaitingWithTorHoldTrueCarriesTheTorSpecificInfoLine() {
+        let variant = MigrationBannerVariant.transferWaiting(number: 3, torHold: true)
+
+        #expect(variant.title == String(localizable: .migrationBannerWaitingTitle(3)))
+        #expect(variant.info == String(localizable: .migrationFailureTorHoldBannerInfo))
+        #expect(variant.buttonLabel == String(localizable: .generalMore))
+        #expect(variant.percent == nil)
+    }
+
     @Test func updatePlanTitleAndInfo() {
         let variant = MigrationBannerVariant.updatePlan
 

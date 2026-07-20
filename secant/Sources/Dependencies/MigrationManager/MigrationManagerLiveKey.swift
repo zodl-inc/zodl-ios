@@ -103,6 +103,7 @@ extension MigrationManagerClient: DependencyKey {
             routeBroadcastFailure: { accountUUID, failureClass in
                 await impl.routeBroadcastFailure(accountUUID: accountUUID, failureClass: failureClass)
             },
+            isMigrationTorHoldActive: { accountUUID in impl.isTorHoldActive(accountUUID: accountUUID) },
             overrideTorForRun: { accountUUID, useTor in
                 impl.overrideTorForRun(accountUUID: accountUUID, useTor: useTor)
             },
@@ -275,9 +276,23 @@ final class MigrationManagerImpl: @unchecked Sendable {
             // MOB-1496: nil (never evaluated) reads as `false` here, same "not known to be
             // pending" convention `MigrationManagerImpl.isMigrationRemainderPending` uses.
             isMigrationRemainderPending: gateStorage.remainderPending(for: resolvedAccountUUID) ?? false,
-            transferRows: rows
+            transferRows: rows,
+            // R7 final review, Important-1 (spec §G): threads the persisted Tor-hold indicator into
+            // `.transferWaiting`'s `torHold` flag — see `MigrationFailureRoutingStorage
+            // .torHoldActive`'s doc.
+            isTorHoldActive: failureRoutingStorage.torHoldActive(for: resolvedAccountUUID)
         )
     }
+
+    /// R7 final review, Important-1 (spec §G): per-account read of the persisted Tor-hold indicator
+    /// — see `MigrationFailureRoutingStorage.torHoldActive`'s doc. Backs `MigrationManagerClient
+    /// .isMigrationTorHoldActive`, consumed by `MigrationStatusStore`'s resume-presentation footer
+    /// (and `MigrationCoordFlowCoordinator`'s twin re-entry hydration).
+    func isTorHoldActive(accountUUID: AccountUUID?) -> Bool {
+        guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return false }
+        return failureRoutingStorage.torHoldActive(for: resolvedAccountUUID)
+    }
+
 
     /// R8-T3 (#23): same one-read-each treatment as `bannerVariant` above — the pre-fix version
     /// read `progress` up to 3x (once inside `normalizedState`'s conditional branch, once directly
@@ -606,9 +621,23 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// `MigrationSnapshotStorage.markCommitted`. Production has exactly one call site,
     /// `recordCommittedSchedule` above (inside its serialized critical section) — see that method's
     /// doc for why.
+    ///
+    /// R7 final review, Minor M-A: also resets the R16 episode set here — a NEW run committing is a
+    /// reliable "this account's endpoint-rotation history starts fresh" signal no matter how the
+    /// committing snapshot got here (freshly formed, or `formNetworkSnapshot`'s own
+    /// `reformIfProvisional` reform over a stale provisional left by an abandoned earlier attempt —
+    /// see that method's doc). Without this, a stale episode from an abandoned attempt (e.g. a
+    /// Keystone note-split that rotated/exhausted pre-commit, then got closed without committing)
+    /// could survive into a later attempt and trigger R17's provider-exhausted consent before a
+    /// fresh sweep of the provider's endpoints actually happened this run. EPISODE ONLY — never the
+    /// had-broadcast flag: a landed note-split broadcast before an abandoned deferred-store commit
+    /// means a re-entry that later commits genuinely IS mid-run, and clearing the flag here would
+    /// wrongly re-open an R14 clearnet offer on a run that already has a landed transaction (the
+    /// unsafe direction).
     func markNetworkSnapshotCommitted(accountUUID: AccountUUID?) {
         guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return }
         snapshotStorage.markCommitted(for: resolvedAccountUUID, now: Date())
+        failureRoutingStorage.resetEpisode(for: resolvedAccountUUID)
     }
 
     /// MOB-1497: discards `accountUUID`'s persisted network snapshot ONLY while still provisional —
@@ -681,38 +710,55 @@ final class MigrationManagerImpl: @unchecked Sendable {
     ///   for P1/zecRocks, 2 for P2/stardust) -> `.providerExhausted(torEnabled:)`, WITHOUT rotating
     ///   anything — the episode itself stays full (nothing resets it except a landed broadcast or the
     ///   R17 sync-server override), so a REPEATED failure keeps returning `.providerExhausted`.
+    ///
+    /// R7 final review, Important-1 (spec §G): single chokepoint for `failureRoutingStorage`'s
+    /// Tor-hold indicator — right before returning, persists whether the route ABOUT TO BE RETURNED
+    /// is `.torHold` (`true`) or anything else (`false`, including the defensive no-snapshot
+    /// fallback and `.torFirstRunChoice` — a first-run Tor failure is a foreground CHOICE point, not
+    /// a silent hold). This is what lets the waiting/stalled surfaces show a Tor-specific line
+    /// without the BG lane needing any UI of its own: BG already discards the route for presentation
+    /// purposes (see `RootInitialization.executeBroadcastAction`), but it calls this SAME member, so
+    /// the indicator persists regardless of which lane called it.
     func routeBroadcastFailure(accountUUID: AccountUUID?, failureClass: MigrationBroadcastFailureClass) async -> MigrationBroadcastFailureRoute {
-        guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id,
-              let snapshot = snapshotStorage.snapshot(for: resolvedAccountUUID) else {
+        guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else {
+            LoggerProxy.warn("[MigrationManagerImpl] routeBroadcastFailure: no account to route against — defaulting to plainRetry.")
+            return MigrationBroadcastFailureRoute.plainRetry
+        }
+        guard let snapshot = snapshotStorage.snapshot(for: resolvedAccountUUID) else {
             LoggerProxy.warn("[MigrationManagerImpl] routeBroadcastFailure: no active network snapshot for the account — defaulting to plainRetry.")
+            failureRoutingStorage.setTorHoldActive(false, for: resolvedAccountUUID)
             return MigrationBroadcastFailureRoute.plainRetry
         }
 
+        let route: MigrationBroadcastFailureRoute
         switch failureClass {
         case MigrationBroadcastFailureClass.torUnavailable:
             let hadBroadcast = failureRoutingStorage.hadBroadcast(for: resolvedAccountUUID)
-            return hadBroadcast ? MigrationBroadcastFailureRoute.torHold : MigrationBroadcastFailureRoute.torFirstRunChoice
+            route = hadBroadcast ? MigrationBroadcastFailureRoute.torHold : MigrationBroadcastFailureRoute.torFirstRunChoice
 
         case MigrationBroadcastFailureClass.endpointUnreachable:
-            guard snapshot.broadcastProvider != snapshot.syncProvider else {
-                return MigrationBroadcastFailureRoute.plainRetry
-            }
+            if snapshot.broadcastProvider == snapshot.syncProvider {
+                route = MigrationBroadcastFailureRoute.plainRetry
+            } else {
+                let episodeHosts = Set(failureRoutingStorage.addEpisodeHost(snapshot.broadcastEndpoint.host, for: resolvedAccountUUID))
+                let network = zcashSDKEnvironment.network().networkType
+                let candidates = ZcashSDKEnvironment.endpoints(for: network, skipDefault: false).filter { candidate in
+                    ServerProvider.classify(host: candidate.host) == snapshot.broadcastProvider && !episodeHosts.contains(candidate.host)
+                }
 
-            let episodeHosts = Set(failureRoutingStorage.addEpisodeHost(snapshot.broadcastEndpoint.host, for: resolvedAccountUUID))
-            let network = zcashSDKEnvironment.network().networkType
-            let candidates = ZcashSDKEnvironment.endpoints(for: network, skipDefault: false).filter { candidate in
-                ServerProvider.classify(host: candidate.host) == snapshot.broadcastProvider && !episodeHosts.contains(candidate.host)
+                if candidates.isEmpty {
+                    route = MigrationBroadcastFailureRoute.providerExhausted(torEnabled: snapshot.useTor)
+                } else {
+                    let index = migrationRandomness.randomIndex(candidates.count)
+                    let chosen = MigrationNetworkSnapshot.Endpoint(candidates[index])
+                    snapshotStorage.rotateBroadcastEndpoint(to: chosen, for: resolvedAccountUUID)
+                    route = MigrationBroadcastFailureRoute.retryRotated
+                }
             }
-
-            guard !candidates.isEmpty else {
-                return MigrationBroadcastFailureRoute.providerExhausted(torEnabled: snapshot.useTor)
-            }
-
-            let index = migrationRandomness.randomIndex(candidates.count)
-            let chosen = MigrationNetworkSnapshot.Endpoint(candidates[index])
-            snapshotStorage.rotateBroadcastEndpoint(to: chosen, for: resolvedAccountUUID)
-            return MigrationBroadcastFailureRoute.retryRotated
         }
+
+        failureRoutingStorage.setTorHoldActive(route == MigrationBroadcastFailureRoute.torHold, for: resolvedAccountUUID)
+        return route
     }
 
     /// MOB-1497 (R7-T3, R14): see `MigrationManagerClient.overrideTorForRun`'s doc. Purely a storage
@@ -1343,6 +1389,10 @@ enum MigrationDerivations {
     /// no longer computes it either, removing a wasted `hasInvalidMigrationTransfers` SDK read per
     /// call. `reentryRoute` below keeps its OWN `hasInvalid` parameter — that one genuinely is
     /// consulted (row 1, `.recovery`).
+    ///
+    /// R7 final review, Important-1 (spec §G): `isTorHoldActive` carries into `.transferWaiting`'s
+    /// `torHold` flag (see that case's own doc) — defaults `false` so every pre-existing call site
+    /// (none of which know about the indicator) is unaffected.
     static func bannerVariant(
         isIronwoodActivated: Bool,
         state: MigrationState,
@@ -1352,7 +1402,8 @@ enum MigrationDerivations {
         orchardBalance: Zatoshi,
         isCompleteAcknowledged: Bool,
         isMigrationRemainderPending: Bool,
-        transferRows: [MigrationTransferRow]
+        transferRows: [MigrationTransferRow],
+        isTorHoldActive: Bool = false
     ) -> MigrationBannerVariant? {
         guard isIronwoodActivated else { return nil }
 
@@ -1367,7 +1418,7 @@ enum MigrationDerivations {
 
         case let MigrationState.inProgress(progress):
             if hasOverdue {
-                return MigrationBannerVariant.transferWaiting(number: progress.completedTransfers + 1)
+                return MigrationBannerVariant.transferWaiting(number: progress.completedTransfers + 1, torHold: isTorHoldActive)
             }
             if isManualDelivery && isNextTransferDue {
                 return MigrationBannerVariant.transferReady(number: progress.completedTransfers + 1)
@@ -2170,10 +2221,12 @@ final class MigrationSnapshotStorage: @unchecked Sendable {
 // MARK: - Persistence: broadcast-failure routing state (MOB-1497, R7-T3)
 
 /// Per-account `UserDefaults`-backed persistence for `MigrationManagerImpl.routeBroadcastFailure`'s
-/// two pieces of state: the had-broadcast flag (R14 first-run vs R15 mid-run) and the broadcast-
+/// three pieces of state: the had-broadcast flag (R14 first-run vs R15 mid-run), the broadcast-
 /// endpoint "episode" (R16's per-account set of hosts already tried since the last landed
-/// broadcast). Same house pattern as `MigrationSnapshotStorage` beside which this lives: `final
-/// class`, `@unchecked Sendable` guarded by an `OSAllocatedUnfairLock` around each read-modify-write,
+/// broadcast), and the Tor-hold indicator (R7 final review, Important-1 / spec §G — whether the
+/// account's MOST RECENT routing outcome was `.torHold`, read by the waiting/stalled surfaces).
+/// Same house pattern as `MigrationSnapshotStorage` beside which this lives: `final class`,
+/// `@unchecked Sendable` guarded by an `OSAllocatedUnfairLock` around each read-modify-write,
 /// injectable `UserDefaults` (default `.standard`) so tests can use an isolated named suite, same
 /// per-account key suffix idiom.
 final class MigrationFailureRoutingStorage: @unchecked Sendable {
@@ -2194,20 +2247,27 @@ final class MigrationFailureRoutingStorage: @unchecked Sendable {
     /// SET on any LANDED broadcast, on every lane (FG send, note split, BG — see
     /// `MigrationManagerImpl.recordTransferBroadcast`, the single call site). Also resets the R16
     /// episode: a fresh episode starts with every new transfer attempt window.
+    ///
+    /// R7 final review, Important-1: also clears the Tor-hold indicator — a landed broadcast is the
+    /// freshest possible signal that Tor (if on) is reachable right now, so any previously-persisted
+    /// hold no longer describes reality. Same lock acquisition as the two clears above (one
+    /// read-modify-write, not three).
     func markHadBroadcast(for accountUUID: AccountUUID) {
         lock.withLock { _ in
             userDefaults.set(true, forKey: hadBroadcastKey(for: accountUUID))
             userDefaults.removeObject(forKey: episodeKey(for: accountUUID))
+            userDefaults.removeObject(forKey: torHoldKey(for: accountUUID))
         }
     }
 
     /// CLEARED at the run-end trio (`MigrationManagerImpl.acknowledgeComplete`/`resetPersistedFlags`/
     /// `reconcile`'s stale-`.notStarted` observation), beside the existing schedule/snapshot clears.
-    /// Clears both the flag and the episode.
+    /// Clears the flag, the episode, and the Tor-hold indicator.
     func clear(for accountUUID: AccountUUID) {
         lock.withLock { _ in
             userDefaults.removeObject(forKey: hadBroadcastKey(for: accountUUID))
             userDefaults.removeObject(forKey: episodeKey(for: accountUUID))
+            userDefaults.removeObject(forKey: torHoldKey(for: accountUUID))
         }
     }
 
@@ -2236,13 +2296,41 @@ final class MigrationFailureRoutingStorage: @unchecked Sendable {
 
     /// RESET on: a landed broadcast (see `markHadBroadcast`), the R17 sync-server override
     /// (`MigrationManagerImpl.overrideBroadcastEndpointToSyncServer`), and the run-end trio (see
-    /// `clear`).
+    /// `clear`). Episode ONLY — deliberately does not touch the Tor-hold indicator below (same
+    /// "never the flag" scoping this method already applies to `hadBroadcast`); by the time the R17
+    /// override runs, `routeBroadcastFailure` has already cleared the indicator itself
+    /// (`.providerExhausted` is one of the routes that clears it).
     func resetEpisode(for accountUUID: AccountUUID) {
         lock.withLock { _ in userDefaults.removeObject(forKey: episodeKey(for: accountUUID)) }
     }
 
     private func readEpisodeHosts(for accountUUID: AccountUUID) -> [String] {
         userDefaults.stringArray(forKey: episodeKey(for: accountUUID)) ?? []
+    }
+
+    // MARK: Tor-hold indicator (R7 final review, Important-1 / spec §G)
+
+    /// Per-account: true iff the MOST RECENT `routeBroadcastFailure` outcome for this account was
+    /// `.torHold` (R15 — a mid-run Tor outage) — i.e. the run is currently stalled specifically
+    /// because Tor can't be reached, as opposed to any other reason. Read by the waiting/stalled
+    /// surfaces (`MigrationStatusStore`'s resume presentation, `SmartBanner`'s transfer-waiting
+    /// variant via `MigrationManagerImpl.bannerVariant`) to show a Tor-specific line — spec §G:
+    /// "existing waiting/stalled surfaces gain a Tor-specific line." Defaults `false` (no known
+    /// hold).
+    func torHoldActive(for accountUUID: AccountUUID) -> Bool {
+        lock.withLock { _ in userDefaults.bool(forKey: torHoldKey(for: accountUUID)) }
+    }
+
+    /// SET by `MigrationManagerImpl.routeBroadcastFailure`'s single chokepoint on EVERY call —
+    /// `true` only when it is about to return `.torHold`, `false` for every other route (INCLUDING
+    /// `.torFirstRunChoice`: a first-run Tor failure is a foreground CHOICE point, not a silent
+    /// hold). Reflects the LAST known failure cause, not a sticky/latched flag — a later non-hold
+    /// route (e.g. a rotation succeeding) clears it even before any broadcast lands. Both lanes hit
+    /// this automatically since FG and BG call the same routing member — the BG lane needs no UI of
+    /// its own; the indicator persisting here is the whole point. ALSO cleared by `markHadBroadcast`
+    /// (a landed broadcast) and `clear` (the run-end trio) — see their docs.
+    func setTorHoldActive(_ active: Bool, for accountUUID: AccountUUID) {
+        lock.withLock { _ in userDefaults.set(active, forKey: torHoldKey(for: accountUUID)) }
     }
 
     // MARK: Keys
@@ -2253,5 +2341,9 @@ final class MigrationFailureRoutingStorage: @unchecked Sendable {
 
     private func episodeKey(for accountUUID: AccountUUID) -> String {
         "\(String.migrationBroadcastEpisode)_\(Data(accountUUID.id).hexEncodedString())"
+    }
+
+    private func torHoldKey(for accountUUID: AccountUUID) -> String {
+        "\(String.migrationTorHold)_\(Data(accountUUID.id).hexEncodedString())"
     }
 }

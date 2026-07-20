@@ -141,6 +141,16 @@ struct MigrationManagerClient: Sendable {
     var routeBroadcastFailure: @Sendable (
         _ accountUUID: AccountUUID?, _ failureClass: MigrationBroadcastFailureClass
     ) async -> MigrationBroadcastFailureRoute = { _, _ in MigrationBroadcastFailureRoute.plainRetry }
+    // MOB-1497 (R7 final review, Important-1 — spec §G): per-account read of the persisted Tor-hold
+    // indicator `routeBroadcastFailure` maintains (see that member's doc and
+    // `MigrationFailureRoutingStorage.torHoldActive`) — true iff the account's MOST RECENT broadcast
+    // failure was a mid-run Tor hold (`.torHold`/R15), false for every other outcome, including a
+    // landed broadcast or a first-run Tor choice. Consumed by the waiting/stalled surfaces
+    // (`MigrationStatusStore`'s resume presentation, `SmartBanner`'s transfer-waiting variant via
+    // `bannerVariant` above) so a Tor-caused stall is never silent. `nil` accountUUID resolves the
+    // selected account, same convention as `migrationNetworkOptions` above. `= { _ in false }` is a
+    // required macro default, not a test fallback (see the `recordCommittedSchedule` note above).
+    var isMigrationTorHoldActive: @Sendable (_ accountUUID: AccountUUID?) -> Bool = { _ in false }
     // MOB-1497 (R7-T3, R14): the R11-warning-gated, doc-sanctioned exception to R4's run-immutability
     // for "Tor unavailable on the first broadcast of the run" — mutates ONLY `useTor` on `accountUUID`'s
     // (`nil` resolves the selected account) ACTIVE network snapshot (committed if one exists, else the
@@ -258,13 +268,19 @@ enum MigrationReentryRoute: Equatable, Sendable {
 /// store should present, or (background) that a route was resolved at all (background maps every
 /// route to re-arm-only — see `RootInitialization.executeBroadcastAction`). See
 /// `MigrationManagerImpl.routeBroadcastFailure`'s doc for the full decision table.
+///
+/// R7 final review, Important-1 (spec §G): every call ALSO persists whether this route is `.torHold`
+/// into the account's Tor-hold indicator (`MigrationFailureRoutingStorage.torHoldActive`) — the
+/// "No [snapshot/episode] state change" notes below are about the network snapshot/episode only; the
+/// indicator update happens on every route, every lane, unconditionally.
 enum MigrationBroadcastFailureRoute: Equatable, Sendable {
     /// R14: Tor was unavailable on the FIRST broadcast attempt of the run (no prior landed
     /// broadcast) — offer the choice to retry (keeping Tor), proceed without it (subject to the R11
-    /// warning), or cancel. No state change.
+    /// warning), or cancel. No snapshot/episode state change.
     case torFirstRunChoice
     /// R15: Tor was unavailable MID-run (at least one broadcast already landed this run) — hold and
-    /// retry; never an implicit clearnet opt-out. No state change.
+    /// retry; never an implicit clearnet opt-out. No snapshot/episode state change; this IS the one
+    /// route that sets the Tor-hold indicator (see the enum's own doc above).
     case torHold
     /// R16: the broadcast endpoint was unreachable and a same-provider rotation to an untried
     /// endpoint was just performed — retry re-executes against the newly-rotated endpoint. Presents
