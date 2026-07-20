@@ -134,6 +134,24 @@ import ComposableArchitecture
         )
     }
 
+    /// R7-T2 fix-wave 1 (Important-1): a same-server NON-custom `MigrationNetworkSnapshot` fixture —
+    /// sync AND broadcast on the SAME `.zecRocks` host, matching what
+    /// `MigrationManagerLiveKey.createNetworkSnapshot`'s empty-candidates branch actually produces for
+    /// testnet (single shipped endpoint) and the defensive no-other-family fallback. NOT
+    /// identity-custom (`syncProvider`/`broadcastProvider` are both `.zecRocks`, never `.custom`) yet
+    /// still shares one server end to end — the exact matrix cell the pre-fix `isIdentityCustom` gate
+    /// missed for R13's disclosure.
+    private static func someSameServerProviderNetworkSnapshot(host: String = "testnet.zec.rocks") -> MigrationNetworkSnapshot {
+        MigrationNetworkSnapshot(
+            useTor: false,
+            syncEndpoint: MigrationNetworkSnapshot.Endpoint(host: host, port: 443, secure: true),
+            syncProvider: ServerProvider.zecRocks,
+            broadcastEndpoint: MigrationNetworkSnapshot.Endpoint(host: host, port: 443, secure: true),
+            broadcastProvider: ServerProvider.zecRocks,
+            takenAt: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+    }
+
     // MARK: - Re-entry: .onAppear with empty path
 
     @MainActor @Test func onAppearWithEntryRouteAppendsNothing() async {
@@ -641,6 +659,36 @@ import ComposableArchitecture
         #expect(store.state.torSheetState.usesFullBalanceCopy == true)
     }
 
+    /// R7-T2 fix-wave 1 (Important-1, RED-FIRST PIN 1): testnet / the defensive same-server fallback
+    /// classify as a normal provider (`isCustomServer == false` — NOT identity-custom) yet still
+    /// share one server end to end (`broadcastProvider == syncProvider`). Before the fix, the sheet's
+    /// disclosure line rendered anyway (gated on `isCustomServer` alone), printing a false "different
+    /// server" claim. Must keep the TOGGLE variant (unlike identity-custom) while suppressing only
+    /// the disclosure line.
+    @MainActor @Test func entryChoseImmediateWithTorFlagOffAndSameServerNonCustomPresentsToggleVariantWithoutDisclosure() async {
+        let store = TestStore(initialState: MigrationCoordFlow.State()) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.migrationManager.setMigrationMode = { _ in }
+            $0.migrationManager.formNetworkSnapshot = { _ in }
+            $0.migrationManager.networkSnapshot = { _ in Self.someSameServerProviderNetworkSnapshot() }
+            $0.sdkSynchronizer = .noOp
+            $0.walletStorage = .noOp
+            $0.walletStorage.exportTorSetupFlag = { false }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.entry(.delegate(.chose(.immediate))))
+        await store.receive(\.torSheetStateReady)
+
+        #expect(store.state.isTorSheetPresented == true)
+        // Still the TOGGLE variant — same-server non-custom is NOT identity-custom.
+        #expect(store.state.torSheetState.isCustomServer == false)
+        #expect(store.state.torSheetState.isTorOn == true)
+        // The actual pin: no disclosure for a same-server user, even though they're a provider.
+        #expect(store.state.torSheetState.showsBroadcastDisclosure == false)
+    }
+
     /// MOB-1497 (T2): a second presentation re-forms (T1's reform-when-provisional rule) and must
     /// thread whatever THAT fresh roll produced — not silently keep showing the first roll's host.
     /// Re-triggers presentation directly (no intervening confirm) — `.entry(.chose(.immediate))`
@@ -654,7 +702,10 @@ import ComposableArchitecture
             $0.migrationManager.setMigrationMode = { _ in }
             $0.migrationManager.formNetworkSnapshot = { _ in }
             $0.migrationManager.networkSnapshot = { _ in
-                let call = snapshotCalls.withValue { $0 += 1; return $0 }
+                let call = snapshotCalls.withValue {
+                    $0 += 1
+                    return $0
+                }
                 return call == 1
                     ? Self.someProviderNetworkSnapshot(host: "eu.zec.stardust.rest")
                     : Self.someProviderNetworkSnapshot(host: "us.zec.stardust.rest")
@@ -749,6 +800,42 @@ import ComposableArchitecture
             return
         }
         // No disclosure for a custom user — their server IS the sync server (R13 doesn't apply).
+        #expect(reviewState.broadcastDisclosureHost == nil)
+    }
+
+    /// R7-T2 fix-wave 1 (Important-1, RED-FIRST PIN 2a): the same-server-non-custom twin of the
+    /// custom test above, driven through `confirmTorSheet`'s `.reviewTransfer` case — the footer must
+    /// carry no disclosure host either, even though this IS a provider confirm
+    /// (`confirmProvisionalTorChoice` still runs, unlike the identity-custom case — only the
+    /// disclosure is suppressed, nothing else about provider handling changes).
+    @MainActor @Test func torSheetGotItForSameServerNonCustomFooterCarriesNoDisclosureHost() async {
+        let confirmProvisionalCalls = LockIsolated<Int>(0)
+        var state = MigrationCoordFlow.State()
+        state.mode = .immediate
+        state.torSheetState = MigrationTorSheet.State(
+            isTorOn: true,
+            broadcastHost: "testnet.zec.rocks",
+            showsBroadcastDisclosure: false
+        )
+        state.isTorSheetPresented = true
+        state.pendingTorDestination = .reviewTransfer
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.migrationManager.setNetworkPrivacyOptions = { _ in }
+            $0.migrationManager.confirmProvisionalTorChoice = { _, _ in confirmProvisionalCalls.withValue { $0 += 1 } }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.torSheet(.delegate(.gotIt)))
+        await store.finish()
+
+        // Not identity-custom — the choice still persists like any provider confirm.
+        #expect(confirmProvisionalCalls.value == 1)
+        guard case let .reviewTransfer(reviewState) = try? #require(store.state.path.last) else {
+            Issue.record("Expected .reviewTransfer pushed on top")
+            return
+        }
         #expect(reviewState.broadcastDisclosureHost == nil)
     }
 
@@ -893,6 +980,41 @@ import ComposableArchitecture
         }
         #expect(planState.variant == MigrationTransferPlan.State.Variant.scheduled)
         #expect(planState.broadcastDisclosureHost == "us.zec.stardust.rest")
+    }
+
+    /// R7-T2 fix-wave 1 (Important-1, RED-FIRST PIN 2b): the TransferPlan-footer twin of the pin
+    /// above — same same-server fixture, reached via the scheduled lane's permission-chain resume
+    /// (`nextPermissionStepResult`'s `.transferPlan` branch, driven by the shared
+    /// `broadcastDisclosureHost` helper). Must also carry no disclosure host.
+    @MainActor @Test func torSheetGotItInScheduledModeForSameServerNonCustomTransferPlanFooterCarriesNoDisclosureHost() async {
+        var state = MigrationCoordFlow.State()
+        state.mode = .privateScheduled
+        state.path.append(.howItWorks(MigrationHowItWorks.State()))
+        state.torSheetState = MigrationTorSheet.State(broadcastHost: "testnet.zec.rocks", showsBroadcastDisclosure: false)
+        state.isTorSheetPresented = true
+        state.pendingTorDestination = .permissionChain
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.migrationManager.setNetworkPrivacyOptions = { _ in }
+            $0.migrationManager.formNetworkSnapshot = { _ in }
+            $0.migrationManager.confirmProvisionalTorChoice = { _, _ in }
+            $0.migrationManager.isManualDelivery = { false }
+            $0.migrationManager.networkSnapshot = { _ in Self.someSameServerProviderNetworkSnapshot() }
+            $0.migrationBGScheduler.backgroundRefreshStatus = { .available }
+            $0.userNotifications.authorizationStatus = { .authorized }
+            $0.sdkSynchronizer = .noOp
+        }
+        store.exhaustivity = .off
+
+        await store.send(.torSheet(.delegate(.gotIt)))
+        await store.receive(\.pushNextPermissionStep)
+
+        guard case let .transferPlan(planState) = try? #require(store.state.path.last) else {
+            Issue.record("Expected .transferPlan pushed (permission chain resumed from the sheet)")
+            return
+        }
+        #expect(planState.broadcastDisclosureHost == nil)
     }
 
     @MainActor @Test func torSheetPresentationChangedToFalseWithNothingPendingIsANoOp() async {

@@ -7,11 +7,13 @@
 //  coordinator's shared gate. Ports the circular Tor badge composition from the deleted
 //  `MigrationNetworkPrivacyView`.
 //
-//  MOB-1497 (T2): `store.isCustomServer` swaps the toggle card + its new disclosure line (R13) for
-//  the no-toggle "unavailable" body copy (R2/R12) — badge and title stay the same in both variants
-//  (no new title string exists for the unavailable case; flagged for a product/design pass). The
-//  off-warning alert (R3/R11) is presented via the standard `.alert(store:)` binding — see
-//  `MigrationTorSheetStore`'s `AlertState.offWarning`.
+//  MOB-1497 (T2): `store.isCustomServer` swaps the toggle card for the no-toggle "unavailable" body
+//  copy (R2/R12) — badge and title stay the same in both variants (no new title string exists for
+//  the unavailable case; flagged for a product/design pass). Within the toggle variant,
+//  `store.showsBroadcastDisclosure` (R7-T2 fix-wave 1, Important-1) independently gates the R13
+//  disclosure line — testnet and the defensive same-server fallback keep the toggle but must not
+//  show a "different server" claim that isn't true. The off-warning alert (R3/R11) is presented via
+//  the standard `.alert(store:)` binding — see `MigrationTorSheetStore`'s `AlertState.offWarning`.
 //
 
 import ComposableArchitecture
@@ -46,8 +48,10 @@ struct MigrationTorSheetView: View {
                     toggleCard
                         .padding(.bottom, 12)
 
-                    disclosureLine
-                        .padding(.bottom, 32)
+                    if store.showsBroadcastDisclosure {
+                        disclosureLine
+                            .padding(.bottom, 32)
+                    }
                 }
 
                 ZashiButton(String(localizable: .migrationGotIt)) {
