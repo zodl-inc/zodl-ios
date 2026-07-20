@@ -726,14 +726,20 @@ import ComposableArchitecture
         #expect(reconcileCalls.value == 1)
     }
 
-    /// A store failure (`storeSignedMigrationTransactions` throws) must not persist the schedule —
-    /// the coordinator's existing `try?` swallows the error either way (no-partial-storage
-    /// invariant lives one layer up, at `.foundPCZTBatch`'s empty/count-mismatch guard), but a
-    /// failed store is not a "just-committed" schedule.
-    @MainActor @Test func foundPCZTBatchForPlanCommitContextDoesNotRecordCommittedScheduleWhenStoreFails() async {
+    /// [MOB-1496] R8-T2 (#5): a store failure (`storeSignedMigrationTransactions` throws) must not
+    /// persist the schedule NOR report success — the pre-fix coordinator discarded the thrown error
+    /// into a bare `Bool` (`(try? await ...) != nil`) and fired `.keystoneSigningSubmitted` (->
+    /// terminal "Migration Scheduled" screen, `scheduleFirstWindow()`) UNCONDITIONALLY regardless,
+    /// with nothing stored in the engine and no schedule recorded. This now abandons the session
+    /// instead (same `keystoneScanAbandoned` semantics as a re-pair failure or a split-store
+    /// failure) — see `MigrationCoordFlowCoordinator.storeKeystoneSignedBatch`'s doc for why
+    /// `MigrationNoteSplit`'s store-only retry affordance was investigated and rejected as the reuse
+    /// target for this, the no-split case.
+    @MainActor @Test func foundPCZTBatchForPlanCommitContextAbandonsSessionWithoutSubmittingWhenStoreFails() async {
         struct StoreFailure: Error { }
         let recordCommittedScheduleCalls = LockIsolated<Int>(0)
         let reconcileCalls = LockIsolated<Int>(0)
+        let scheduleFirstWindowCalls = LockIsolated<Int>(0)
         let unsigned: [MigrationUnsignedTransferPczt] = [MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xAA]))]
         let signed: [Data] = [Data([0xAA, 0x01])]
         var planState = MigrationTransferPlan.State(variant: .scheduled)
@@ -751,17 +757,65 @@ import ComposableArchitecture
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
             $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, _ in throw StoreFailure() }
-            $0.migrationBGScheduler.scheduleFirstWindow = { }
+            $0.migrationBGScheduler.scheduleFirstWindow = { scheduleFirstWindowCalls.withValue { $0 += 1 } }
             $0.migrationManager.recordCommittedSchedule = { _, _ in recordCommittedScheduleCalls.withValue { $0 += 1 } }
             $0.migrationManager.reconcile = { reconcileCalls.withValue { $0 += 1 } }
         }
         store.exhaustivity = .off
 
         await store.send(.path(.element(id: 2, action: .scan(.foundPCZTBatch(signed)))))
-        await store.receive(\.keystoneSigningSubmitted)
+        await store.receive(\.keystoneScanAbandoned)
 
         #expect(recordCommittedScheduleCalls.value == 0)
         #expect(reconcileCalls.value == 0)
+        #expect(scheduleFirstWindowCalls.value == 0)
+        #expect(store.state.pendingKeystoneSigning == nil)
+        #expect(store.state.path.count == 1)
+        guard case .transferPlan = try? #require(store.state.path.last) else {
+            Issue.record("Expected pop back to .transferPlan (scan + sign removed) — an honest failure, not a false 'Migration Scheduled'")
+            return
+        }
+    }
+
+    /// [MOB-1496] R8-T2 (#5-b): same fix, through the simulator-only bypass — proves it lives in the
+    /// shared `storeKeystoneSignedBatch` helper both callers use, not just the real round-trip. Never
+    /// pushes `.scan`, so only 1 element (`keystoneSign`) unwinds — mirrors
+    /// `keystoneSignSimulateSignatureWithSplitStoreFailureAbandonsSessionWithoutScanPopped`'s pop-count
+    /// proof for the split-store-failure branch.
+    @MainActor @Test func keystoneSignSimulateSignatureAbandonsSessionWithoutSubmittingWhenStoreFails() async {
+        struct StoreFailure: Error { }
+        let recordCommittedScheduleCalls = LockIsolated<Int>(0)
+        let reconcileCalls = LockIsolated<Int>(0)
+        let scheduleFirstWindowCalls = LockIsolated<Int>(0)
+        var state = MigrationCoordFlow.State()
+        state.pendingKeystoneSigning = .planCommit
+        state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .scheduled)))
+        state.path.append(
+            .keystoneSign(MigrationKeystoneSign.State(pczts: [MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xAA]))]))
+        )
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, _ in throw StoreFailure() }
+            $0.migrationBGScheduler.scheduleFirstWindow = { scheduleFirstWindowCalls.withValue { $0 += 1 } }
+            $0.migrationManager.recordCommittedSchedule = { _, _ in recordCommittedScheduleCalls.withValue { $0 += 1 } }
+            $0.migrationManager.reconcile = { reconcileCalls.withValue { $0 += 1 } }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 1, action: .keystoneSign(.delegate(.simulateSignature)))))
+        await store.receive(\.keystoneScanAbandoned)
+
+        #expect(recordCommittedScheduleCalls.value == 0)
+        #expect(reconcileCalls.value == 0)
+        #expect(scheduleFirstWindowCalls.value == 0)
+        #expect(store.state.pendingKeystoneSigning == nil)
+        #expect(store.state.path.count == 1)
+        guard case .transferPlan = try? #require(store.state.path.last) else {
+            Issue.record("Expected pop back to .transferPlan (keystoneSign removed, no .scan was ever pushed)")
+            return
+        }
     }
 
     // MARK: - MOB-1496 (W6 §1): Keystone signing — foundPCZTBatch splits the note-split sentinel out
@@ -1858,6 +1912,54 @@ import ComposableArchitecture
             return
         }
         #expect(statusState.rows == IdentifiedArrayOf(uniqueElements: refreshedRows))
+        #expect(statusState.isFlowRoot == true)
+    }
+
+    /// [MOB-1496] R8-T2 (#14): the Sending success-phase Close button stays enabled while its own
+    /// `.sending(.delegate(.closed))` handler's async effect is in flight, and that handler
+    /// (`hasStatusBeneath`'s branch, above) spawns a FRESH effect per delivery — a double-tap before
+    /// the first effect's result comes back therefore queues TWO `.sendNowCompleted` deliveries
+    /// (driven directly here, rather than via two `.closed` sends: with the test's synchronous
+    /// `migrationTransfers` stub, TestStore's first `send` runs its spawned effect to completion
+    /// before the test can issue a second `.closed` send, popping `.sending` for real and making a
+    /// literal double-`.closed`-send an invalid/misleading repro of the race — the REAL bug is in how
+    /// `sendNowCompleted` itself handles being delivered twice, which is what this exercises directly).
+    /// Before this fix, `sendNowCompleted` popped the path unconditionally, so the second delivery
+    /// popped the `.status` element the first had already landed on, dumping the user out to Entry
+    /// mid-run. The pop is now guarded on the top element still being `.sending`, so the second
+    /// delivery is a no-op.
+    @MainActor @Test func secondSendNowCompletedDeliveryIsANoOpAfterFirstAlreadyPoppedSending() async {
+        let firstRows: [MigrationTransferRow] = [
+            MigrationTransferRow(id: "0", index: 0, amount: Zatoshi(1_000), status: .sent, hoursFromNow: 0)
+        ]
+        let secondRows: [MigrationTransferRow] = [
+            MigrationTransferRow(id: "0", index: 0, amount: Zatoshi(1_000), status: .sent, hoursFromNow: 0),
+            MigrationTransferRow(id: "1", index: 1, amount: Zatoshi(1_000), status: .sent, hoursFromNow: 0)
+        ]
+        var state = MigrationCoordFlow.State()
+        state.path.append(.status(MigrationStatus.State(presentation: .resume, isFlowRoot: true)))
+        state.path.append(.sending(MigrationSending.State(phase: .success, totalCount: 2)))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+        }
+        store.exhaustivity = .off
+
+        // First delivery: `.sending` is on top — pops it, refreshes `.status` with `firstRows`.
+        await store.send(.sendNowCompleted(rows: firstRows))
+        #expect(store.state.path.count == 1)
+
+        // Second delivery (the double-tap's second spawned effect landing): `.sending` is no longer
+        // on top, so this must be a no-op — no further pop, and `secondRows` is never applied.
+        await store.send(.sendNowCompleted(rows: secondRows))
+
+        #expect(store.state.path.count == 1)
+        guard case let .status(statusState) = try? #require(store.state.path.last) else {
+            Issue.record("Expected .status still on top — a second pop would have emptied the path down to Entry")
+            return
+        }
+        #expect(statusState.rows == IdentifiedArrayOf(uniqueElements: firstRows))
         #expect(statusState.isFlowRoot == true)
     }
 
