@@ -224,4 +224,65 @@ import Foundation
         #expect(reconstructed.port == 443)
         #expect(reconstructed.secure == true)
     }
+
+    // MARK: - MigrationNetworkSnapshot.committedAt (MOB-1497)
+
+    @Test func migrationNetworkSnapshotDefaultsToProvisionalWhenCommittedAtOmittedFromInit() {
+        let snapshot = MigrationNetworkSnapshot(
+            useTor: true,
+            syncEndpoint: MigrationNetworkSnapshot.Endpoint(host: "na.zec.rocks", port: 443, secure: true),
+            syncProvider: ServerProvider.zecRocks,
+            broadcastEndpoint: MigrationNetworkSnapshot.Endpoint(host: "us.zec.stardust.rest", port: 443, secure: true),
+            broadcastProvider: ServerProvider.stardust,
+            takenAt: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+
+        #expect(snapshot.committedAt == nil)
+    }
+
+    @Test func migrationNetworkSnapshotCommittedAtRoundTripsThroughCodableWhenSet() throws {
+        let original = MigrationNetworkSnapshot(
+            useTor: true,
+            syncEndpoint: MigrationNetworkSnapshot.Endpoint(host: "na.zec.rocks", port: 443, secure: true),
+            syncProvider: ServerProvider.zecRocks,
+            broadcastEndpoint: MigrationNetworkSnapshot.Endpoint(host: "us.zec.stardust.rest", port: 443, secure: true),
+            broadcastProvider: ServerProvider.stardust,
+            takenAt: Date(timeIntervalSince1970: 1_700_000_000),
+            committedAt: Date(timeIntervalSince1970: 1_700_000_500)
+        )
+
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(MigrationNetworkSnapshot.self, from: data)
+
+        #expect(decoded == original)
+        #expect(decoded.committedAt == original.committedAt)
+    }
+
+    /// The feature is unreleased (no pre-MOB-1497 payload without `committedAt` exists in the wild),
+    /// but Swift's synthesized `Decodable` conformance already treats a missing key on an `Optional`
+    /// property as `nil`. Rather than hand-authoring the whole payload (and guessing at
+    /// `ServerProvider`'s synthesized JSON shape), this encodes a real committed snapshot and strips
+    /// the `committedAt` key back out, standing in for a hypothetical old payload that never had it —
+    /// confirming decode comes back PROVISIONAL rather than throwing or defaulting some other way.
+    @Test func migrationNetworkSnapshotDecodesAsProvisionalWhenCommittedAtKeyIsMissingFromThePayload() throws {
+        let committed = MigrationNetworkSnapshot(
+            useTor: true,
+            syncEndpoint: MigrationNetworkSnapshot.Endpoint(host: "na.zec.rocks", port: 443, secure: true),
+            syncProvider: ServerProvider.zecRocks,
+            broadcastEndpoint: MigrationNetworkSnapshot.Endpoint(host: "us.zec.stardust.rest", port: 443, secure: true),
+            broadcastProvider: ServerProvider.stardust,
+            takenAt: Date(timeIntervalSince1970: 1_700_000_000),
+            committedAt: Date(timeIntervalSince1970: 1_700_000_500)
+        )
+        let encoded = try JSONEncoder().encode(committed)
+        var json = try #require(try JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        json.removeValue(forKey: "committedAt")
+        let strippedData = try JSONSerialization.data(withJSONObject: json)
+
+        let decoded = try JSONDecoder().decode(MigrationNetworkSnapshot.self, from: strippedData)
+
+        #expect(decoded.committedAt == nil)
+        #expect(decoded.useTor == true)
+        #expect(decoded.syncEndpoint.host == "na.zec.rocks")
+    }
 }

@@ -150,6 +150,15 @@
 //  `.keystoneScanAbandoned`'s abandon-reconciliation hook and `RootInitialization`'s external-teardown
 //  twin for the fire-and-forget `restartCurrentMigrationStep` cancel this requires.
 //
+//  MOB-1497: the Tor-choice RESOLUTION points — the Tor sheet's confirm (`confirmTorSheet`, both
+//  destinations) and the sheet-skipped app-wide-Tor-on shortcuts (Entry's `.immediate` case and How
+//  This Works' `.continueTapped`, both lanes) — now also call `migrationManager.formNetworkSnapshot`
+//  right after the Tor choice persists, forming the run's provisional network snapshot at the same
+//  moment the choice is made rather than later at the first broadcast-bearing read. See
+//  `MigrationManagerLiveKey.swift`'s header doc for the full snapshot-lifecycle change this is one
+//  half of (the other half — `clearProvisionalNetworkSnapshot` at flow teardown — lives in
+//  `RootCoordinator.swift`, since that is where `Root` actually pops `migrationCoordFlow`).
+//
 
 import Foundation
 import ComposableArchitecture
@@ -190,14 +199,18 @@ extension MigrationCoordFlow {
                     // `useTor` is implicitly `true`, persisted the same way the sheet's own confirm
                     // does (so a background send effect reads the same persisted value), and Review
                     // is pushed directly; otherwise the sheet is shown so the user can opt in
-                    // explicitly. Both checks here are synchronous SDK/dependency reads, so no
-                    // effect is needed.
+                    // explicitly. MOB-1497: the flag-on shortcut is a Tor-choice RESOLUTION point
+                    // exactly like the sheet's own confirm — it forms the run's (provisional) network
+                    // snapshot here too, after the choice persists, via a fire-and-forget effect (the
+                    // push doesn't wait on it; `formNetworkSnapshot` is idempotent either way).
                     if walletStorage.exportTorSetupFlag() == true {
                         migrationManager.setNetworkPrivacyOptions(true)
                         state.path.append(.reviewTransfer(MigrationReviewTransfer.State(mode: .immediate)))
-                    } else {
-                        presentTorSheet(destination: .reviewTransfer, state: &state)
+                        return .run { [migrationManager, accountUUID = state.selectedWalletAccount?.id] _ in
+                            await migrationManager.formNetworkSnapshot(accountUUID)
+                        }
                     }
+                    presentTorSheet(destination: .reviewTransfer, state: &state)
                     return .none
 
                 case .privateScheduled:
@@ -211,10 +224,14 @@ extension MigrationCoordFlow {
                 // MOB-1494 (round 4): same Tor gate as the immediate lane — the app-wide Tor setup
                 // flag skips the sheet with `useTor` implicitly on (persisted, so background sends
                 // read the same value — MOB-1487's persist-fix); otherwise the toggle sheet is
-                // shown and the permission chain resumes from its confirm/dismiss.
+                // shown and the permission chain resumes from its confirm/dismiss. MOB-1497: same
+                // Tor-choice-resolution snapshot forming as the immediate lane's flag-on shortcut
+                // above — sequenced ahead of the permission-step push (not merely concurrent with
+                // it) so the snapshot is guaranteed formed before anything downstream could read it.
                 if walletStorage.exportTorSetupFlag() == true {
                     migrationManager.setNetworkPrivacyOptions(true)
-                    return .run { send in
+                    return .run { [migrationManager, accountUUID = state.selectedWalletAccount?.id] send in
+                        await migrationManager.formNetworkSnapshot(accountUUID)
                         await send(.pushNextPermissionStep(await nextPermissionStepResult()))
                     }
                 }
@@ -1027,13 +1044,23 @@ extension MigrationCoordFlow {
 
         migrationManager.setNetworkPrivacyOptions(state.torSheetState.isTorOn)
 
+        // MOB-1497: the Tor choice just persisted above — this is THE Tor-choice resolution point,
+        // so it forms the run's (provisional) network snapshot here, for both destinations. A
+        // re-confirm of an already-resolved run (there isn't one on this path — `pendingTorDestination`
+        // is only ever non-nil while the sheet is up) would still be safe: `formNetworkSnapshot` is
+        // idempotent, returning the existing snapshot rather than re-rolling.
+        let accountUUID = state.selectedWalletAccount?.id
+
         switch destination {
         case .reviewTransfer:
             state.path.append(.reviewTransfer(MigrationReviewTransfer.State(mode: .immediate)))
-            return .none
+            return .run { [migrationManager] _ in
+                await migrationManager.formNetworkSnapshot(accountUUID)
+            }
 
         case .permissionChain:
-            return .run { send in
+            return .run { [migrationManager] send in
+                await migrationManager.formNetworkSnapshot(accountUUID)
                 await send(.pushNextPermissionStep(await nextPermissionStepResult()))
             }
         }

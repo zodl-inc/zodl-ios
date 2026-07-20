@@ -181,6 +181,34 @@ import ComposableArchitecture
         }
     }
 
+    /// MOB-1497: `.flowFinished` is the migration flow's teardown point — discards the account's
+    /// network snapshot iff it is still provisional (never committed this run). Verified via a spy
+    /// override on `clearProvisionalNetworkSnapshot` rather than real storage, matching this file's
+    /// existing style of observing Root-level wiring through dependency spies.
+    @Test func migrationCoordFlowFinishedClearsProvisionalNetworkSnapshot() async {
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            var initialState = Root.State.initial
+            initialState.path = Root.State.Path.migrationCoordFlow
+            let clearProvisionalCalls = LockIsolated<[AccountUUID?]>([])
+
+            let store = Store(initialState: initialState) {
+                Root()
+            } withDependencies: {
+                baseNoOpDependencies(&$0)
+                $0.migrationManager.clearProvisionalNetworkSnapshot = { accountUUID in
+                    clearProvisionalCalls.withValue { $0.append(accountUUID) }
+                }
+            }
+
+            store.send(.migrationCoordFlow(.flowFinished))
+            await waitForRootStore { store.state.path == nil }
+
+            #expect(clearProvisionalCalls.value.count == 1)
+        }
+    }
+
     // MARK: - isSensitiveFlowActive
 
     /// Pure computed-property check: `.migrationCoordFlow` must classify as sensitive, alongside
@@ -638,6 +666,9 @@ private func baseNoOpDependencies(_ values: inout DependencyValues) {
     values.migrationManager.setMigrationMode = { _ in }
     values.migrationManager.setManualDelivery = { _ in }
     values.migrationManager.setNetworkPrivacyOptions = { _ in }
+    values.migrationManager.formNetworkSnapshot = { _ in }
+    values.migrationManager.markNetworkSnapshotCommitted = { _ in }
+    values.migrationManager.clearProvisionalNetworkSnapshot = { _ in }
     values.migrationManager.acknowledgeComplete = { _ in }
     values.migrationManager.reconcile = { }
     values.migrationManager.clearAbandonedNetworkSnapshot = { _ in }

@@ -26,6 +26,25 @@
 //  `migrationPrivacySyncBufferDuration()`, since the SDK only rejects a broadcast *during* an
 //  active sync (advisory, point-in-time) rather than enforcing a post-sync cooldown itself.
 //
+//  MOB-1497 (T1 of the Tor & broadcast-routing requirements round): four changes to the network
+//  snapshot. (1) Forming moves from the first broadcast-bearing `migrationNetworkOptions` read to
+//  the Tor-choice step (`formNetworkSnapshot`, called by the coordinator), with a provisional-
+//  until-commit lifecycle — `MigrationNetworkSnapshot.committedAt` is nil until
+//  `markNetworkSnapshotCommitted` stamps it (co-located inside `recordCommittedSchedule`, its one
+//  production call site); a provisional snapshot is discarded at flow teardown
+//  (`clearProvisionalNetworkSnapshot`) rather than surviving to be silently reused, and survives a
+//  background reconcile's stale-`.notStarted` observation (`clearIfCommitted`, not the old
+//  unconditional `clear`) so a user mid-flow never has their just-formed pick wiped out from under
+//  them. `ensureNetworkSnapshot` (the old entry point) is now the safety net for a lane that never
+//  formed one, sharing `ensureOrCreateNetworkSnapshot`'s body with `formNetworkSnapshot` and
+//  stamping committed immediately on creation. (2) R7: `createNetworkSnapshot`'s broadcast pick is
+//  now a uniform-random draw (`@Dependency(\.migrationRandomness)`) over the other provider's
+//  shipped endpoints, replacing `evaluateBestOf` entirely — creation now makes zero network calls.
+//  (3) R8: custom-server detection is identity-based only — the stored `ServerConfig.isCustom` flag
+//  is no longer read here. (4) R1: `MigrationGateStorage.isTorEnabledForMigration()`'s never-
+//  written default flips from `false` to `true`; the identity-custom forced-false (R2's data half)
+//  still wins over either the default or an explicit stored choice.
+//
 
 import Foundation
 @preconcurrency import Combine
@@ -60,6 +79,9 @@ extension MigrationManagerClient: DependencyKey {
             isManualDelivery: { impl.gateStorage.isManualDelivery() },
             setManualDelivery: { impl.gateStorage.setManualDelivery($0) },
             migrationNetworkOptions: { accountUUID in await impl.migrationNetworkOptions(accountUUID: accountUUID) },
+            formNetworkSnapshot: { accountUUID in await impl.formNetworkSnapshot(accountUUID: accountUUID) },
+            markNetworkSnapshotCommitted: { accountUUID in impl.markNetworkSnapshotCommitted(accountUUID: accountUUID) },
+            clearProvisionalNetworkSnapshot: { accountUUID in impl.clearProvisionalNetworkSnapshot(accountUUID: accountUUID) },
             activeNetworkSnapshots: { impl.activeNetworkSnapshots() },
             setNetworkPrivacyOptions: { impl.setNetworkPrivacyOptions(useTor: $0) },
             isCompleteAcknowledged: { accountUUID in impl.isCompleteAcknowledged(accountUUID: accountUUID) },
@@ -142,8 +164,11 @@ actor MigrationManagerSerialExecutor {
 final class MigrationManagerImpl: @unchecked Sendable {
     @Dependency(\.sdkSynchronizer) var sdkSynchronizer
     @Dependency(\.zcashSDKEnvironment) var zcashSDKEnvironment
-    @Dependency(\.userStoredPreferences) var userStoredPreferences
     @Dependency(\.transactionGuard) var transactionGuard
+    // MOB-1497 (R7): the uniform-random broadcast-endpoint pick's test-controllable randomness seam
+    // — see `MigrationRandomnessInterface.swift`'s doc for why this exists instead of a raw
+    // `RandomNumberGenerator`.
+    @Dependency(\.migrationRandomness) var migrationRandomness
 
     @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
     @Shared(.inMemory(.walletAccounts)) var walletAccounts: [WalletAccount] = []
@@ -407,10 +432,24 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// `reconcile`/`acknowledgeComplete`/`clearAbandonedNetworkSnapshot` — see
     /// `MigrationManagerSerialExecutor`'s doc; this is the "commit" half of the TOCTOU `reconcile()`
     /// otherwise races.
+    ///
+    /// MOB-1497: also stamps the account's network snapshot committed (`markNetworkSnapshotCommitted`)
+    /// — this is the SINGLE production call site for that stamp, deliberately co-located here rather
+    /// than duplicated at each of `recordCommittedSchedule`'s several external callers (software
+    /// sign+store success in `MigrationTransferPlanStore`/`MigrationReviewTransferStore`, Keystone
+    /// deferred store success in `MigrationCoordFlowCoordinator.storeDeferredKeystoneSchedule`, the
+    /// Keystone no-split immediate store, and the software dust commit) so the schedule commit and
+    /// the snapshot commit can never drift out of sync. Ordered after the schedule write: a snapshot
+    /// briefly still reading provisional while the schedule is already durable is harmless (nothing
+    /// reads `committedAt` in that narrow window), whereas the reverse order risks a snapshot that
+    /// reads committed for a schedule write that then fails. The stamp rides INSIDE the same
+    /// serialized critical section as the schedule write (rebase of MOB-1497 onto R8-T3): it is a
+    /// mutating pass over the same per-run storage pair the executor exists to serialize.
     func recordCommittedSchedule(accountUUID: AccountUUID?, schedule: MigrationSchedule) async {
         guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return }
         await serialExecutor.run { [self] in
             scheduleStorage.recordCommittedSchedule(schedule, for: resolvedAccountUUID, now: Date())
+            markNetworkSnapshotCommitted(accountUUID: resolvedAccountUUID)
         }
     }
 
@@ -473,6 +512,42 @@ final class MigrationManagerImpl: @unchecked Sendable {
         return MigrationNetworkPrivacyOptions(useTor: snapshot.useTor, submissionEndpoint: snapshot.broadcastEndpoint.toLightWalletEndpoint())
     }
 
+    /// MOB-1497: forms (or, idempotently, returns the existing) provisional network snapshot for
+    /// `accountUUID` — called by the coordinator at the Tor-choice RESOLUTION points (the Tor sheet's
+    /// confirm, and the sheet-skipped app-wide-Tor-on shortcut, on both the immediate and scheduled
+    /// entry chains). Shares `ensureOrCreateNetworkSnapshot`'s body with `ensureNetworkSnapshot`
+    /// below, `stampCommitted: false` — a freshly created snapshot here stays PROVISIONAL
+    /// (`committedAt == nil`) until `markNetworkSnapshotCommitted` stamps it at schedule-commit. A
+    /// re-entry path that never shows the Tor step never calls this, so it never forms one; if a
+    /// committed snapshot from an earlier session already exists, this naturally just returns it
+    /// (the ensure-or-create body never re-forms over an existing snapshot, committed or not).
+    func formNetworkSnapshot(accountUUID: AccountUUID?) async {
+        _ = await ensureOrCreateNetworkSnapshot(accountUUID: accountUUID, stampCommitted: false)
+    }
+
+    /// MOB-1497: stamps `accountUUID`'s persisted network snapshot committed. A no-op when no
+    /// snapshot is persisted (defensive — should not happen for a live commit, since
+    /// `formNetworkSnapshot` always runs first) or when it is already committed (idempotent) — see
+    /// `MigrationSnapshotStorage.markCommitted`. Production has exactly one call site,
+    /// `recordCommittedSchedule` above (inside its serialized critical section) — see that method's
+    /// doc for why.
+    func markNetworkSnapshotCommitted(accountUUID: AccountUUID?) {
+        guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return }
+        snapshotStorage.markCommitted(for: resolvedAccountUUID, now: Date())
+    }
+
+    /// MOB-1497: discards `accountUUID`'s persisted network snapshot ONLY while still provisional —
+    /// a no-op against an already-committed one. Called at migration flow teardown (`RootCoordinator`'s
+    /// `migrationCoordFlow` path-clearing sites) so closing the flow without committing discards the
+    /// provisional pick; a re-entry re-forms and re-rolls. See `MigrationSnapshotStorage
+    /// .clearIfProvisional`. Complementary to R8-T3's `clearAbandonedNetworkSnapshot` (which guards
+    /// on engine `.notStarted` + no stored payload and handles COMMITTED-but-dead leftovers): this
+    /// one only ever touches a provisional pick.
+    func clearProvisionalNetworkSnapshot(accountUUID: AccountUUID?) {
+        guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return }
+        snapshotStorage.clearIfProvisional(for: resolvedAccountUUID)
+    }
+
     /// MOB-1496 (W4): every persisted network snapshot across every candidate account — i.e. every
     /// account with a currently-active migration run. Drives `AutoServerSelectionLiveKey`'s pinning
     /// and `ServerSetupStore`'s manual-switch privacy warning. R8-T3: sourced from
@@ -495,15 +570,31 @@ final class MigrationManagerImpl: @unchecked Sendable {
         gateStorage.setTorEnabledForMigration(useTor)
     }
 
+    /// MOB-1496 (W4) safety net: ensure-or-read `accountUUID`'s atomic per-run network snapshot for a
+    /// lane that reaches a broadcast without one already formed (e.g. the BG executor on a mid-run
+    /// account after a reinstall-edge — a snapshot from before this device had ever seen the Tor
+    /// sheet). Shares `ensureOrCreateNetworkSnapshot`'s body with `formNetworkSnapshot` above,
+    /// `stampCommitted: true` (MOB-1497): a broadcast-bearing read implies a committed run reached
+    /// this point some other way, so a snapshot created HERE is stamped committed immediately rather
+    /// than left provisional forever — this lane has no guaranteed later `recordCommittedSchedule`
+    /// call to stamp it (a bare dust broadcast, for one, commits no schedule at all).
+    private func ensureNetworkSnapshot(accountUUID: AccountUUID?) async -> MigrationNetworkSnapshot {
+        await ensureOrCreateNetworkSnapshot(accountUUID: accountUUID, stampCommitted: true)
+    }
+
     /// Idempotent ensure-or-create for `accountUUID`'s (resolved, if `nil`, to the selected account)
-    /// atomic per-run network snapshot. Returns the persisted snapshot when one already exists;
-    /// otherwise creates one from the CURRENT sync endpoint/Tor choice, persists it, and returns it.
-    /// Double-checks presence again AFTER acquiring the guard (not just before) — a concurrent first
-    /// caller for the SAME account may have already created and persisted one while this call
+    /// atomic per-run network snapshot — shared body for `formNetworkSnapshot` (provisional,
+    /// `stampCommitted: false`) and `ensureNetworkSnapshot` (safety net, `stampCommitted: true`).
+    /// Returns the persisted snapshot when one already exists — REGARDLESS of `stampCommitted`; an
+    /// existing snapshot's committed state is never promoted by this method, only by
+    /// `markNetworkSnapshotCommitted`. Otherwise creates one from the CURRENT sync endpoint/Tor
+    /// choice, persists it (stamped committed or left provisional per `stampCommitted`), and returns
+    /// it. Double-checks presence again AFTER acquiring the guard (not just before) — a concurrent
+    /// first caller for the SAME account may have already created and persisted one while this call
     /// waited, and that one must win rather than being silently overwritten. A missing/unresolvable
     /// account still returns SOME snapshot (the current endpoint/Tor choice, unpersisted) — every
     /// path ends in a value, never a throw.
-    private func ensureNetworkSnapshot(accountUUID: AccountUUID?) async -> MigrationNetworkSnapshot {
+    private func ensureOrCreateNetworkSnapshot(accountUUID: AccountUUID?, stampCommitted: Bool) async -> MigrationNetworkSnapshot {
         let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id
 
         if let resolvedAccountUUID, let existing = snapshotStorage.snapshot(for: resolvedAccountUUID) {
@@ -516,7 +607,10 @@ final class MigrationManagerImpl: @unchecked Sendable {
             if let resolvedAccountUUID, let existing = snapshotStorage.snapshot(for: resolvedAccountUUID) {
                 return existing
             }
-            let created = await createNetworkSnapshot()
+            var created = await createNetworkSnapshot()
+            if stampCommitted {
+                created.committedAt = Date()
+            }
             if let resolvedAccountUUID {
                 snapshotStorage.recordSnapshot(created, for: resolvedAccountUUID)
             }
@@ -529,22 +623,32 @@ final class MigrationManagerImpl: @unchecked Sendable {
         if let guarded {
             return guarded
         }
-        return await createNetworkSnapshot()
+        var fallback = await createNetworkSnapshot()
+        if stampCommitted {
+            fallback.committedAt = Date()
+        }
+        return fallback
     }
 
-    /// The actual read+benchmark sequence for a fresh snapshot — see `ensureNetworkSnapshot`'s doc
-    /// for the guard this always runs inside. Never throws; every path ends in a snapshot.
+    /// The actual read+random-pick sequence for a fresh snapshot — see
+    /// `ensureOrCreateNetworkSnapshot`'s doc for the guard this always runs inside. Never throws;
+    /// every path ends in a snapshot, always freshly PROVISIONAL (`committedAt == nil` — the caller
+    /// stamps it when `stampCommitted` is set). MOB-1497 (R7): makes ZERO network calls — no
+    /// benchmark, no clearnet pre-probe.
     private func createNetworkSnapshot() async -> MigrationNetworkSnapshot {
         let currentEndpoint = zcashSDKEnvironment.endpoint()
-        let storedServerConfig = userStoredPreferences.server()
         let useTor = gateStorage.isTorEnabledForMigration()
         let syncProvider = ServerProvider.classify(host: currentEndpoint.host)
 
-        var syncProviderIsCustom = false
+        // MOB-1497 (R8): identity-based ONLY — the stored `ServerConfig.isCustom` flag no longer
+        // drives migration routing (it keeps its non-migration uses, e.g. `ServerSetupStore`'s own
+        // "Custom" picker state). A manually-entered host that resolves to a known provider's
+        // infrastructure (e.g. `eu.zec.rocks`) is that provider, full stop — only a host that
+        // classifies as `.custom` BY IDENTITY is treated as custom.
+        var isCustomServer = false
         if case ServerProvider.custom = syncProvider {
-            syncProviderIsCustom = true
+            isCustomServer = true
         }
-        let isCustomServer = syncProviderIsCustom || (storedServerConfig?.isCustom ?? false)
 
         let broadcastEndpoint: LightWalletEndpoint
 
@@ -566,30 +670,29 @@ final class MigrationManagerImpl: @unchecked Sendable {
                 // same-server fallback (the sanctioned single-server mode extends here too).
                 broadcastEndpoint = currentEndpoint
             } else {
-                // Reuse exactly the constants/shape `AutoServerSelectionLiveKey.findBestServer`'s
-                // background benchmark uses.
-                let ranked = await sdkSynchronizer.evaluateBestOf(
-                    candidates,
-                    AutoServerSelectionConstants.evaluationTimeoutSeconds,
-                    AutoServerSelectionConstants.blocksToDownload,
-                    AutoServerSelectionConstants.candidateCount,
-                    network
-                )
-                if let best = ranked.first {
-                    broadcastEndpoint = best
-                } else {
-                    LoggerProxy.event(
-                        "[MigrationNetworkSnapshot] Broadcast benchmark produced no result — falling back to \(candidates[0].host)"
-                    )
-                    broadcastEndpoint = candidates[0]
-                }
+                // MOB-1497 (R7): uniform-random pick across the OTHER provider's shipped endpoints —
+                // replaces the old `evaluateBestOf` benchmark entirely. Snapshot creation must make
+                // ZERO network calls (the benchmark's clearnet pre-probe was itself a privacy leak
+                // while Tor is on) and must not select by proximity/latency/locale — either would
+                // carry a hint about the user's region that the Tor circuit otherwise conceals — so a
+                // uniform index draw over the full candidate set satisfies both at once.
+                let index = migrationRandomness.randomIndex(candidates.count)
+                broadcastEndpoint = candidates[index]
             }
         }
+
+        // MOB-1497 (R2 data half / R8 consequence): a custom server can't be reached over Tor — force
+        // the formed snapshot's `useTor` false for a custom sync provider, regardless of the stored
+        // pre-run choice. T2's sheet UI disables/hides the toggle for a custom user, but the stored
+        // choice could in principle still read `true` (e.g. the app-wide Tor flag) — this is the
+        // data-layer belt to that UI belt, since this is the value background broadcasts actually
+        // read.
+        let effectiveUseTor = isCustomServer ? false : useTor
 
         // R8-T3 (#22): `syncProvider`/`broadcastProvider` are computed on `MigrationNetworkSnapshot`
         // now (from `syncEndpoint`/`broadcastEndpoint`'s own hosts) — no longer constructor args.
         return MigrationNetworkSnapshot(
-            useTor: useTor,
+            useTor: effectiveUseTor,
             syncEndpoint: MigrationNetworkSnapshot.Endpoint(currentEndpoint),
             broadcastEndpoint: MigrationNetworkSnapshot.Endpoint(broadcastEndpoint),
             takenAt: Date()
@@ -724,9 +827,17 @@ final class MigrationManagerImpl: @unchecked Sendable {
                 // seed). MOB-1496 (W4): the network snapshot's lifetime is tied to the same logical
                 // run as the schedule payload — clear it beside the schedule (a later dust mini-run
                 // then takes a FRESH snapshot, which is correct).
+                // MOB-1497: `clearIfCommitted`, not the unconditional `clear` — this is a BACKGROUND
+                // reconcile tick, which can race a user sitting on the Tor sheet/plan screen with
+                // state still `.notStarted` and a just-formed PROVISIONAL snapshot (forming now
+                // happens at the Tor-choice step, before any schedule is committed). Wiping that
+                // snapshot out from under them mid-flow is exactly the hazard this guards against; a
+                // committed snapshot still clears here exactly as before. Provisional snapshots are
+                // cleared only by flow teardown (`clearProvisionalNetworkSnapshot`) or promoted to
+                // committed (`markNetworkSnapshotCommitted`).
                 if state == MigrationState.notStarted && scheduleStorage.hasStoredPayload(for: accountUUID) {
                     scheduleStorage.clear(for: accountUUID)
-                    snapshotStorage.clear(for: accountUUID)
+                    snapshotStorage.clearIfCommitted(for: accountUUID)
                 }
             }
         }
@@ -1409,10 +1520,17 @@ final class MigrationGateStorage: @unchecked Sendable {
     /// `MigrationManagerImpl.createNetworkSnapshot()` reads this once, when a run's
     /// `MigrationNetworkSnapshot` is first taken, and combines it with the app's then-current sync
     /// endpoint.
+    ///
+    /// MOB-1497 (R1): defaults to `true`, not `false`, when never written — Tor is on by default for
+    /// a provider user. The sheet's own visual default is already ON (`MigrationTorSheet.State
+    /// .isTorOn`); this closes the belt-and-braces gap where a broadcast could theoretically read an
+    /// implicit false (e.g. a lane that reaches a broadcast before the sheet has ever written a
+    /// choice). The identity-custom forced-false in `createNetworkSnapshot` still wins over this for
+    /// a custom sync server, same as it would over an explicit stored `true`.
     func isTorEnabledForMigration() -> Bool {
         guard let data = userDefaults.data(forKey: .migrationNetworkPrivacyOptions),
               let stored = try? JSONDecoder().decode(PersistedNetworkPrivacyOptions.self, from: data) else {
-            return false
+            return true
         }
 
         return stored.useTor
@@ -1679,10 +1797,51 @@ final class MigrationSnapshotStorage: @unchecked Sendable {
     }
 
     /// Clears the run's snapshot: consumed by the SAME run-end paths `MigrationScheduleStorage.clear`
-    /// is (`acknowledgeComplete()`/`resetPersistedFlags()`/`reconcile()`'s stale-`.notStarted`
-    /// observation/`clearAbandonedNetworkSnapshot()`) — always alongside the schedule clear (except
-    /// the abandon-clear, which by design has no schedule to clear — see that method's doc).
+    /// is (`acknowledgeComplete()`/`resetPersistedFlags()`/`clearAbandonedNetworkSnapshot()`) —
+    /// always alongside the schedule clear (except the abandon-clear, which by design has no
+    /// schedule to clear — see that method's doc).
+    ///
+    /// MOB-1497: `acknowledgeComplete()`/`resetPersistedFlags()` still call this unconditional clear
+    /// directly (a genuine run-end/reset always wipes, committed or not) — only `reconcile()`'s
+    /// stale-`.notStarted` observation was moved onto `clearIfCommitted` below, since THAT path can
+    /// race a still-provisional in-flight formation. See `clearIfCommitted`/`clearIfProvisional`.
     func clear(for accountUUID: AccountUUID) {
         storage.clear(for: accountUUID)
+    }
+
+    /// MOB-1497: stamps `accountUUID`'s persisted snapshot committed (`committedAt = now`) — a no-op
+    /// when no snapshot is persisted, or when it is already committed (idempotent: `committedAt`
+    /// only ever moves nil -> a date, never back, so a second stamp must not overwrite the FIRST
+    /// commit's timestamp with a later one). Atomic read-mutate-write via the generic's `modify`
+    /// (R8-T3 #21 rebase — the hand-rolled lock/read/write this was written against is gone).
+    func markCommitted(for accountUUID: AccountUUID, now: Date) {
+        storage.modify(for: accountUUID) { payload in
+            guard var existing = payload, existing.committedAt == nil else { return }
+            existing.committedAt = now
+            payload = existing
+        }
+    }
+
+    /// MOB-1497: clears `accountUUID`'s persisted snapshot ONLY when it is already COMMITTED
+    /// (`committedAt != nil`) — a no-op against a still-provisional one, or when none is persisted.
+    /// Used by `reconcile()`'s stale-`.notStarted` observation, which is a BACKGROUND tick that must
+    /// not wipe a snapshot a user just formed by reaching the Tor-choice step (state is still
+    /// `.notStarted` at that point — nothing has been proposed/committed yet) out from under them.
+    func clearIfCommitted(for accountUUID: AccountUUID) {
+        storage.modify(for: accountUUID) { payload in
+            guard let existing = payload, existing.committedAt != nil else { return }
+            payload = nil
+        }
+    }
+
+    /// MOB-1497: clears `accountUUID`'s persisted snapshot ONLY when it is still PROVISIONAL
+    /// (`committedAt == nil`) — a no-op against an already-committed one, or when none is persisted.
+    /// Used at migration flow teardown: leaving the flow without ever committing a schedule discards
+    /// the provisional pick, so a re-entry re-forms and re-rolls rather than resuming a stale one.
+    func clearIfProvisional(for accountUUID: AccountUUID) {
+        storage.modify(for: accountUUID) { payload in
+            guard let existing = payload, existing.committedAt == nil else { return }
+            payload = nil
+        }
     }
 }

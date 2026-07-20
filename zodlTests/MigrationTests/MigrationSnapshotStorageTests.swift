@@ -22,13 +22,15 @@ struct MigrationSnapshotStorageTests {
         useTor: Bool = false,
         syncHost: String = "zec.rocks",
         broadcastHost: String = "us.zec.stardust.rest",
-        takenAt: Date = Date(timeIntervalSince1970: 1_000_000)
+        takenAt: Date = Date(timeIntervalSince1970: 1_000_000),
+        committedAt: Date? = nil
     ) -> MigrationNetworkSnapshot {
         MigrationNetworkSnapshot(
             useTor: useTor,
             syncEndpoint: MigrationNetworkSnapshot.Endpoint(host: syncHost, port: 443, secure: true),
             broadcastEndpoint: MigrationNetworkSnapshot.Endpoint(host: broadcastHost, port: 443, secure: true),
-            takenAt: takenAt
+            takenAt: takenAt,
+            committedAt: committedAt
         )
     }
 
@@ -138,5 +140,109 @@ struct MigrationSnapshotStorageTests {
         // persisted snapshot, not start empty.
         let secondStorage = MigrationSnapshotStorage(userDefaults: userDefaults)
         #expect(secondStorage.snapshot(for: accountUUID)?.syncEndpoint.host == "sa.zec.rocks")
+    }
+
+    // MARK: - MOB-1497: provisional-until-commit lifecycle (committedAt / markCommitted /
+    // clearIfCommitted / clearIfProvisional)
+
+    @Test func recordedSnapshotDefaultsToProvisionalWhenCommittedAtOmitted() throws {
+        try withStorage("testRecordedSnapshotDefaultsToProvisionalWhenCommittedAtOmitted") { storage in
+            let accountUUID = Self.accountUUID(10)
+            storage.recordSnapshot(Self.snapshot(), for: accountUUID)
+
+            #expect(storage.snapshot(for: accountUUID)?.committedAt == nil)
+        }
+    }
+
+    @Test func markCommittedStampsCommittedAtOnAProvisionalSnapshot() throws {
+        try withStorage("testMarkCommittedStampsCommittedAtOnAProvisionalSnapshot") { storage in
+            let accountUUID = Self.accountUUID(11)
+            storage.recordSnapshot(Self.snapshot(), for: accountUUID)
+            let now = Date(timeIntervalSince1970: 5_000_000)
+
+            storage.markCommitted(for: accountUUID, now: now)
+
+            #expect(storage.snapshot(for: accountUUID)?.committedAt == now)
+        }
+    }
+
+    @Test func markCommittedIsANoOpWhenNoSnapshotIsPersisted() throws {
+        try withStorage("testMarkCommittedIsANoOpWhenNoSnapshotIsPersisted") { storage in
+            let accountUUID = Self.accountUUID(12)
+
+            storage.markCommitted(for: accountUUID, now: Date())
+
+            #expect(storage.snapshot(for: accountUUID) == nil)
+        }
+    }
+
+    /// Idempotent: `committedAt` only ever moves nil -> a date, never back — a second stamp must not
+    /// overwrite the FIRST commit's timestamp with a later one.
+    @Test func markCommittedDoesNotOverwriteAnAlreadyCommittedTimestamp() throws {
+        try withStorage("testMarkCommittedDoesNotOverwriteAnAlreadyCommittedTimestamp") { storage in
+            let accountUUID = Self.accountUUID(13)
+            storage.recordSnapshot(Self.snapshot(), for: accountUUID)
+            let firstCommit = Date(timeIntervalSince1970: 1_000_000)
+            let secondCommit = Date(timeIntervalSince1970: 2_000_000)
+
+            storage.markCommitted(for: accountUUID, now: firstCommit)
+            storage.markCommitted(for: accountUUID, now: secondCommit)
+
+            #expect(storage.snapshot(for: accountUUID)?.committedAt == firstCommit)
+        }
+    }
+
+    @Test func clearIfCommittedRemovesACommittedSnapshot() throws {
+        try withStorage("testClearIfCommittedRemovesACommittedSnapshot") { storage in
+            let accountUUID = Self.accountUUID(14)
+            storage.recordSnapshot(Self.snapshot(committedAt: Date(timeIntervalSince1970: 1_000_000)), for: accountUUID)
+
+            storage.clearIfCommitted(for: accountUUID)
+
+            #expect(storage.snapshot(for: accountUUID) == nil)
+        }
+    }
+
+    @Test func clearIfCommittedLeavesAProvisionalSnapshotIntact() throws {
+        try withStorage("testClearIfCommittedLeavesAProvisionalSnapshotIntact") { storage in
+            let accountUUID = Self.accountUUID(15)
+            storage.recordSnapshot(Self.snapshot(), for: accountUUID)
+
+            storage.clearIfCommitted(for: accountUUID)
+
+            #expect(storage.snapshot(for: accountUUID) != nil)
+        }
+    }
+
+    @Test func clearIfProvisionalRemovesAProvisionalSnapshot() throws {
+        try withStorage("testClearIfProvisionalRemovesAProvisionalSnapshot") { storage in
+            let accountUUID = Self.accountUUID(16)
+            storage.recordSnapshot(Self.snapshot(), for: accountUUID)
+
+            storage.clearIfProvisional(for: accountUUID)
+
+            #expect(storage.snapshot(for: accountUUID) == nil)
+        }
+    }
+
+    @Test func clearIfProvisionalLeavesACommittedSnapshotIntact() throws {
+        try withStorage("testClearIfProvisionalLeavesACommittedSnapshotIntact") { storage in
+            let accountUUID = Self.accountUUID(17)
+            storage.recordSnapshot(Self.snapshot(committedAt: Date(timeIntervalSince1970: 1_000_000)), for: accountUUID)
+
+            storage.clearIfProvisional(for: accountUUID)
+
+            #expect(storage.snapshot(for: accountUUID) != nil)
+        }
+    }
+
+    @Test func clearIfProvisionalIsANoOpWhenNoSnapshotIsPersisted() throws {
+        try withStorage("testClearIfProvisionalIsANoOpWhenNoSnapshotIsPersisted") { storage in
+            let accountUUID = Self.accountUUID(18)
+
+            storage.clearIfProvisional(for: accountUUID)
+
+            #expect(storage.snapshot(for: accountUUID) == nil)
+        }
     }
 }

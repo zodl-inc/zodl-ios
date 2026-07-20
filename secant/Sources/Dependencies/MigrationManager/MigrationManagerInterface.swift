@@ -71,17 +71,49 @@ struct MigrationManagerClient: Sendable {
     // default for a non-throwing, non-`Void`/non-`Optional`-returning closure; every real call site
     // resolves a live snapshot. Tests never observe this default (see the `recordCommittedSchedule`
     // note).
+    //
+    // MOB-1497: by the time a broadcast reaches this member, `formNetworkSnapshot` below has almost
+    // always already formed the run's (provisional or committed) snapshot at the Tor-choice step —
+    // this ensure-or-create path is now mainly the safety net for a lane that reaches a broadcast
+    // without ever forming one (see `MigrationManagerImpl.ensureNetworkSnapshot`'s doc).
     var migrationNetworkOptions: @Sendable (_ accountUUID: AccountUUID?) async -> MigrationNetworkPrivacyOptions = { _ in
         MigrationNetworkPrivacyOptions(useTor: false, submissionEndpoint: LightWalletEndpoint(address: "", port: 0))
     }
+    // MOB-1497: forms (or, idempotently, returns the existing) provisional network snapshot for
+    // `accountUUID` (`nil` resolves the selected account, same convention as `migrationNetworkOptions`
+    // above) — called from the coordinator at the Tor-choice RESOLUTION points (the Tor sheet's
+    // confirm, and the sheet-skipped app-wide-Tor-on shortcut, on both the immediate and scheduled
+    // entry chains), never at plan-confirm or any re-entry path (a re-entry that never shows the Tor
+    // step must not form — see `MigrationManagerImpl.ensureOrCreateNetworkSnapshot`'s doc for the
+    // shared ensure-or-create body this and `migrationNetworkOptions`'s safety net both run through).
+    // The formed snapshot is PROVISIONAL (`committedAt == nil`) until `markNetworkSnapshotCommitted`
+    // stamps it. `= { _ in }` is a no-op default, not a test fallback (see the
+    // `recordCommittedSchedule` note above).
+    var formNetworkSnapshot: @Sendable (_ accountUUID: AccountUUID?) async -> Void = { _ in }
+    // MOB-1497: stamps `accountUUID`'s network snapshot committed (`nil` resolves the selected
+    // account). Production has exactly ONE call site — inside `recordCommittedSchedule` itself,
+    // co-located there so the two can never drift out of sync across `recordCommittedSchedule`'s
+    // several external write points (software sign+store success, Keystone deferred store success,
+    // dust commit) — see `MigrationManagerImpl.recordCommittedSchedule`'s doc. Also exposed as its
+    // own member so tests can exercise the stamp directly. `= { _ in }` is a no-op default, not a
+    // test fallback.
+    var markNetworkSnapshotCommitted: @Sendable (_ accountUUID: AccountUUID?) -> Void = { _ in }
+    // MOB-1497: discards `accountUUID`'s network snapshot (`nil` resolves the selected account) ONLY
+    // while still PROVISIONAL (`committedAt == nil`) — a no-op against an already-committed snapshot.
+    // Called at the migration flow's teardown (`RootCoordinator`'s `migrationCoordFlow` path-clearing
+    // sites) so closing the flow without committing discards the provisional pick; a re-entry
+    // re-forms and re-rolls. `= { _ in }` is a no-op default, not a test fallback.
+    var clearProvisionalNetworkSnapshot: @Sendable (_ accountUUID: AccountUUID?) -> Void = { _ in }
     // MOB-1496 (W4): every persisted network snapshot across `walletAccounts` (+ the selected
     // account, defensively, deduped) — i.e. every account with a currently-active migration run.
     // Drives `AutoServerSelectionLiveKey`'s pinning (auto server selection stays within an active
     // run's sync-provider family) and `ServerSetupStore`'s manual-switch privacy warning.
     var activeNetworkSnapshots: @Sendable () -> [MigrationNetworkSnapshot] = { [] }
     // Persists the pre-run Tor choice the migration entry/Tor sheet writes. Consumed by
-    // `ensureNetworkSnapshot` when a run's snapshot is first taken — a later call does NOT alter an
-    // already-active run's snapshot (see `MigrationNetworkSnapshot.useTor`'s doc).
+    // `ensureNetworkSnapshot`/`formNetworkSnapshot` when a run's snapshot is first taken — a later
+    // call does NOT alter an already-active run's snapshot (see `MigrationNetworkSnapshot.useTor`'s
+    // doc). MOB-1497 (R1): the READ side of this choice (`MigrationGateStorage
+    // .isTorEnabledForMigration`) now defaults to `true`, not `false`, when never written.
     var setNetworkPrivacyOptions: @Sendable (_ useTor: Bool) -> Void
     // R8-T3 (S2): per-account now — a wallet-wide flag suppressed a SECOND account's own
     // completion banner/re-entry the moment the FIRST account acknowledged, made that account's
