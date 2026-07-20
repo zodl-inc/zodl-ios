@@ -330,12 +330,26 @@ import ComposableArchitecture
         }
         store.exhaustivity = .off
 
-        await store.send(.manualSwitchPrivacyWarningConfirmed)
+        // MOB-1496 (W4/W7 regression): drive the ACTUAL route TCA uses when "Use it anyway" is
+        // tapped. `AlertState<Action>` reuses the parent's own `Action` type, so the button's
+        // configured action (`.manualSwitchPrivacyWarningConfirmed`) arrives at the store wrapped
+        // as `.alert(.presented(.manualSwitchPrivacyWarningConfirmed))` -- never as the raw
+        // top-level action. Sending the raw action directly (as this test used to) false-passes
+        // even when a catch-all `case .alert:` swallows every presented payload, because it skips
+        // the wrapper entirely.
+        await store.send(.alert(.presented(.manualSwitchPrivacyWarningConfirmed)))
+        await store.receive(\.manualSwitchPrivacyWarningConfirmed)
+
+        #expect(store.state.alert == nil, "the alert must be cleared once the presented action is routed")
+        #expect(store.state.pendingManualSwitch == nil, "the stashed switch must be consumed")
+        #expect(store.state.isUpdatingServer == true, "the gated switch must actually start applying")
+
         await store.receive(\.switchSucceeded)
 
         #expect(switched.value?.host == "eu.zec.stardust.rest")
         #expect(store.state.alert == nil)
         #expect(store.state.pendingManualSwitch == nil)
+        #expect(store.state.isUpdatingServer == false)
     }
 
     @Test func chooseAnotherDismissesWithoutApplying() async {
