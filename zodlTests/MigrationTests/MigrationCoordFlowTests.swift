@@ -228,18 +228,27 @@ import ComposableArchitecture
             transfersTotal: 2,
             estimatedDurationHours: 24
         )
-        // R8-T5 (#13): the REAL source `stalledHoursAgo` now reads from — a stalled transfer that
-        // became executable 5 REAL hours ago, via the SAME `rescheduleOverdueMigrationTransfer` +
-        // `estimateTimestamp` combination `MigrationBGSchedulerImpl.arm`/`classifyMigrationAccount`
-        // already use elsewhere. Red against HEAD (pre-fix): HEAD ignores both mocks below and reads
-        // the row's `hoursFromNow` (`0` above) instead, so this assertion would read `0`, not `5`.
-        let becameDueAt = Date().addingTimeInterval(-5 * 3600)
+        // R8-T5 review (Important-1): `stalledHoursAgo` now derives from a BLOCK DELTA against the
+        // LIVE tip (`latestState().latestBlockHeight`), not `estimateTimestamp` (checkpoint-snapped —
+        // see `liveStalledHoursAgo`'s doc). `nextExecutableAfterHeight` below is 100; a tip 240
+        // blocks ahead (340) is EXACTLY 5 hours at 75s/block (240 × 75 ÷ 3600 = 5). Red against HEAD
+        // (pre-fix): HEAD ignores `latestState` entirely and calls `estimateTimestamp` (no longer
+        // mocked here, so it resolves to `.noOp`'s `nil` default), so this assertion would read the
+        // fallback `0`, not `5`.
+        let tipState: SynchronizerState = {
+            var state = SynchronizerState.zero
+            state.latestBlockHeight = 340
+            return state
+        }()
         let store = TestStore(initialState: MigrationCoordFlow.State()) {
             MigrationCoordFlow()
         } withDependencies: {
             $0.migrationManager.reentryRoute = { .statusResume }
             $0.migrationManager.sendGate = { .syncRequired }
-            $0.sdkSynchronizer = .noOp
+            // `latestState` is a non-`@DependencyClient` `let` field (no per-field override) — replace
+            // the whole client via `.mocked(...)` (same defaults as `.noOp` for every other field, per
+            // `RootMigrationBackgroundTests`' identical precedent), then layer the `var` overrides below.
+            $0.sdkSynchronizer = SDKSynchronizerClient.mocked(latestState: { tipState })
             // MOB-1496 (W3 review fix C): a non-10-minute value (900s = 15 min) so a field left at
             // its zero default (the "about 0 mins" footer-flash regression, Minor-1) would visibly
             // fail — `.resume` is the only presentation that renders the footer.
@@ -247,7 +256,6 @@ import ComposableArchitecture
             $0.sdkSynchronizer.rescheduleOverdueMigrationTransfer = { _ in
                 MigrationTransferProposal(id: "1", amount: Zatoshi(1_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
             }
-            $0.sdkSynchronizer.estimateTimestamp = { _ in becameDueAt.timeIntervalSince1970 }
             $0.migrationManager.migrationTransfers = { _ in rows }
             $0.migrationManager.migrationSummary = { _ in summary }
         }
@@ -266,6 +274,51 @@ import ComposableArchitecture
         #expect(statusState.stalledHoursAgo == 5)
         #expect(statusState.isSendNowDisabled == true)
         #expect(statusState.syncPrivacyBufferMinutes == 15)
+    }
+
+    /// R8-T5 review (Important-1): a pre-first-sync tip (`latestState().latestBlockHeight == 0`,
+    /// `SynchronizerState.zero`'s own default — before the very first server round-trip) is an
+    /// UNKNOWN tip, not a low one (same fail-safe-sentinel idiom as
+    /// `MigrationManagerLiveKey.isIronwoodActivated()`), so `liveStalledHoursAgo` must guard on it
+    /// explicitly and fall back to `0` rather than compute a meaningless block delta against it —
+    /// even though a live proposal DID resolve (the probe is still exercised; only the tip is
+    /// unknown).
+    @MainActor @Test func onAppearWithStatusResumeRouteAndZeroTipHasZeroStalledHoursAgo() async {
+        let rows: [MigrationTransferRow] = [
+            MigrationTransferRow(id: "0", index: 0, amount: Zatoshi(1_000), status: .sent, hoursFromNow: 0),
+            MigrationTransferRow(id: "1", index: 1, amount: Zatoshi(1_000), status: .overdue, hoursFromNow: 0)
+        ]
+        let summary = MigrationSummary(
+            transferred: Zatoshi.zero,
+            dust: Zatoshi.zero,
+            transfersSent: 1,
+            transfersTotal: 2,
+            estimatedDurationHours: 24
+        )
+        let store = TestStore(initialState: MigrationCoordFlow.State()) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.migrationManager.reentryRoute = { .statusResume }
+            $0.migrationManager.sendGate = { .syncRequired }
+            // `.noOp`'s `latestState` already defaults to `.zero` (tip 0, pre-first-sync) — exactly
+            // the case under test, so no override is needed here.
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.rescheduleOverdueMigrationTransfer = { _ in
+                MigrationTransferProposal(id: "1", amount: Zatoshi(1_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
+            }
+            $0.migrationManager.migrationTransfers = { _ in rows }
+            $0.migrationManager.migrationSummary = { _ in summary }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.onAppear)
+        await store.receive(\.pushNextPermissionStep)
+
+        guard case let .status(statusState) = try? #require(store.state.path.last) else {
+            Issue.record("Expected .status on the path")
+            return
+        }
+        #expect(statusState.stalledHoursAgo == 0)
     }
 
     /// R8-T5 (#13): when there's no stalled (overdue) row at all, `stalledHoursAgo` must stay `0`
