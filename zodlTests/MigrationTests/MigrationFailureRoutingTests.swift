@@ -23,6 +23,17 @@
 //  storage (not a mock) — the store-level tests (`MigrationSendingTests`/`MigrationNoteSplitTests`)
 //  mock `routeBroadcastFailure`'s result and so cannot see this gap either way.
 //
+//  R7 FINAL review fix (Important-1, spec §G): `MigrationFailureRoutingStorage` gained a third piece
+//  of persisted state — the Tor-hold indicator (`torHoldActive`/`setTorHoldActive`) — maintained by
+//  `routeBroadcastFailure` itself as a single chokepoint: `true` iff the account's MOST RECENT
+//  routing outcome was `.torHold` (R15), `false` for every other route. The "Tor-hold indicator"
+//  section below pins the storage member directly; the route-level sections above/below each gained
+//  one extra assertion (real manager + real storage, never a mock) proving the indicator tracks the
+//  route that was ACTUALLY computed — this is what lets the waiting/stalled surfaces
+//  (`MigrationStatusStore`'s resume presentation, `SmartBanner`'s transfer-waiting variant) show a
+//  Tor-specific line without the BG lane needing any UI of its own (it already discards the route;
+//  the indicator persisting inside the routing member is the whole point).
+//
 
 import Testing
 import Foundation
@@ -154,16 +165,98 @@ struct MigrationFailureRoutingTests {
         }
     }
 
+    // MARK: - MigrationFailureRoutingStorage: Tor-hold indicator (R7 final review, Important-1)
+
+    @Test func torHoldActiveDefaultsFalse() throws {
+        try withRoutingStorage("testTorHoldActiveDefaultsFalse") { storage in
+            #expect(storage.torHoldActive(for: Self.accountUUID(11)) == false)
+        }
+    }
+
+    @Test func setTorHoldActiveSetsAndClearsTheIndicator() throws {
+        try withRoutingStorage("testSetTorHoldActiveSetsAndClearsTheIndicator") { storage in
+            let accountUUID = Self.accountUUID(12)
+
+            storage.setTorHoldActive(true, for: accountUUID)
+            #expect(storage.torHoldActive(for: accountUUID) == true)
+
+            storage.setTorHoldActive(false, for: accountUUID)
+            #expect(storage.torHoldActive(for: accountUUID) == false)
+        }
+    }
+
+    /// A landed broadcast is the freshest possible signal that Tor (if on) is reachable right now —
+    /// any previously-persisted hold no longer describes reality.
+    @Test func markHadBroadcastClearsTheTorHoldIndicator() throws {
+        try withRoutingStorage("testMarkHadBroadcastClearsTheTorHoldIndicator") { storage in
+            let accountUUID = Self.accountUUID(13)
+            storage.setTorHoldActive(true, for: accountUUID)
+
+            storage.markHadBroadcast(for: accountUUID)
+
+            #expect(storage.torHoldActive(for: accountUUID) == false)
+        }
+    }
+
+    @Test func clearAlsoClearsTheTorHoldIndicator() throws {
+        try withRoutingStorage("testClearAlsoClearsTheTorHoldIndicator") { storage in
+            let accountUUID = Self.accountUUID(14)
+            storage.markHadBroadcast(for: accountUUID)
+            storage.addEpisodeHost("na.zec.rocks", for: accountUUID)
+            storage.setTorHoldActive(true, for: accountUUID)
+
+            storage.clear(for: accountUUID)
+
+            #expect(storage.hadBroadcast(for: accountUUID) == false)
+            #expect(storage.episodeHosts(for: accountUUID).isEmpty)
+            #expect(storage.torHoldActive(for: accountUUID) == false)
+        }
+    }
+
+    /// `resetEpisode` is the R17 sync-server-override chokepoint too — it must stay scoped to the
+    /// episode ONLY, exactly like it already is scoped away from the had-broadcast flag (the sibling
+    /// test above). By the time `overrideBroadcastEndpointToSyncServer` runs, `routeBroadcastFailure`
+    /// has already cleared the indicator itself (a `.providerExhausted` route is one of the "false"
+    /// routes) — `resetEpisode` has no business touching it independently.
+    @Test func resetEpisodeDoesNotClearTheTorHoldIndicator() throws {
+        try withRoutingStorage("testResetEpisodeDoesNotClearTheTorHoldIndicator") { storage in
+            let accountUUID = Self.accountUUID(15)
+            storage.addEpisodeHost("na.zec.rocks", for: accountUUID)
+            storage.setTorHoldActive(true, for: accountUUID)
+
+            storage.resetEpisode(for: accountUUID)
+
+            #expect(storage.episodeHosts(for: accountUUID).isEmpty)
+            #expect(storage.torHoldActive(for: accountUUID) == true)
+        }
+    }
+
+    @Test func perAccountTorHoldIndicatorsAreIsolated() throws {
+        try withRoutingStorage("testPerAccountTorHoldIndicatorsAreIsolated") { storage in
+            let accountA = Self.accountUUID(16)
+            let accountB = Self.accountUUID(17)
+            storage.setTorHoldActive(true, for: accountA)
+
+            #expect(storage.torHoldActive(for: accountB) == false)
+        }
+    }
+
     // MARK: - routeBroadcastFailure: defensive no-active-snapshot fallback
 
     @Test func routeBroadcastFailureWithNoSnapshotAtAllReturnsPlainRetry() async throws {
         try await withImpl("testRouteBroadcastFailureWithNoSnapshotAtAllReturnsPlainRetry") { impl, account, storages in
+            // R7 final review, Important-1: pre-seeded true so the post-call assertion below is a
+            // real pin (the indicator chokepoint clears it even on this defensive, should-not-happen
+            // path — see `routeBroadcastFailure`'s doc).
+            storages.failureRoutingStorage.setTorHoldActive(true, for: account.id)
+
             let route = await impl.routeBroadcastFailure(accountUUID: account.id, failureClass: MigrationBroadcastFailureClass.endpointUnreachable)
 
             #expect(route == MigrationBroadcastFailureRoute.plainRetry)
             // The defensive branch must not conjure a snapshot into existence — it only ever routes
             // against one that's already there, committed or provisional (R7-review fix, Important-1).
             #expect(storages.snapshotStorage.snapshot(for: account.id) == nil)
+            #expect(storages.failureRoutingStorage.torHoldActive(for: account.id) == false)
         }
     }
 
@@ -263,12 +356,17 @@ struct MigrationFailureRoutingTests {
     @Test func torUnavailableFirstRunReturnsTorFirstRunChoice() async throws {
         try await withImpl("testTorUnavailableFirstRunReturnsTorFirstRunChoice") { impl, account, storages in
             storages.snapshotStorage.recordSnapshot(Self.snapshot(broadcastHost: "us.zec.stardust.rest"), for: account.id)
+            // R7 final review, Important-1: pre-seeded true so the post-call assertion below is a
+            // real pin — `.torFirstRunChoice` is a foreground CHOICE point, not a silent hold, so the
+            // indicator must clear even though this IS a Tor-class failure.
+            storages.failureRoutingStorage.setTorHoldActive(true, for: account.id)
 
             let route = await impl.routeBroadcastFailure(accountUUID: account.id, failureClass: MigrationBroadcastFailureClass.torUnavailable)
 
             #expect(route == MigrationBroadcastFailureRoute.torFirstRunChoice)
             #expect(storages.snapshotStorage.snapshot(for: account.id)?.broadcastEndpoint.host == "us.zec.stardust.rest")
             #expect(storages.failureRoutingStorage.episodeHosts(for: account.id).isEmpty)
+            #expect(storages.failureRoutingStorage.torHoldActive(for: account.id) == false)
         }
     }
 
@@ -282,6 +380,9 @@ struct MigrationFailureRoutingTests {
             #expect(route == MigrationBroadcastFailureRoute.torHold)
             #expect(storages.snapshotStorage.snapshot(for: account.id)?.broadcastEndpoint.host == "us.zec.stardust.rest")
             #expect(storages.failureRoutingStorage.episodeHosts(for: account.id).isEmpty)
+            // R7 final review, Important-1: THE positive pin — `.torHold` is the one route that sets
+            // the persisted indicator, which the waiting/stalled surfaces read.
+            #expect(storages.failureRoutingStorage.torHoldActive(for: account.id) == true)
         }
     }
 
@@ -293,11 +394,15 @@ struct MigrationFailureRoutingTests {
                 Self.snapshot(syncHost: "myserver.example.com", broadcastHost: "myserver.example.com"),
                 for: account.id
             )
+            // R7 final review, Important-1: pre-seeded true so the post-call assertion below is a
+            // real pin — `.plainRetry` is an endpoint-class route and must clear the indicator.
+            storages.failureRoutingStorage.setTorHoldActive(true, for: account.id)
 
             let route = await impl.routeBroadcastFailure(accountUUID: account.id, failureClass: MigrationBroadcastFailureClass.endpointUnreachable)
 
             #expect(route == MigrationBroadcastFailureRoute.plainRetry)
             #expect(storages.failureRoutingStorage.episodeHosts(for: account.id).isEmpty)
+            #expect(storages.failureRoutingStorage.torHoldActive(for: account.id) == false)
         }
     }
 
@@ -328,6 +433,9 @@ struct MigrationFailureRoutingTests {
                 Self.snapshot(useTor: true, syncHost: "zec.rocks", broadcastHost: "us.zec.stardust.rest"),
                 for: account.id
             )
+            // R7 final review, Important-1: pre-seeded true so the post-call assertion below is a
+            // real pin — `.retryRotated` is an endpoint-class route and must clear the indicator.
+            storages.failureRoutingStorage.setTorHoldActive(true, for: account.id)
             let capturedCandidateCount = LockIsolated<Int?>(nil)
 
             let route = await withDependencies {
@@ -354,6 +462,7 @@ struct MigrationFailureRoutingTests {
             // The FAILED (pre-rotation) host — never the newly-rotated one, never a sync-provider
             // host — is what's recorded as tried.
             #expect(storages.failureRoutingStorage.episodeHosts(for: account.id) == ["us.zec.stardust.rest"])
+            #expect(storages.failureRoutingStorage.torHoldActive(for: account.id) == false)
         }
     }
 
@@ -397,6 +506,10 @@ struct MigrationFailureRoutingTests {
             storages.failureRoutingStorage.addEpisodeHost("eu.zec.stardust.rest", for: account.id)
             // The current host itself is the ONLY one not yet in the episode going in — this call
             // must add it too, exhausting the 2-member P2 family.
+            // R7 final review, Important-1: pre-seeded true so the assertions below are real pins —
+            // `.providerExhausted` is an endpoint-class route and must clear the indicator, on BOTH
+            // the first call and the repeated one.
+            storages.failureRoutingStorage.setTorHoldActive(true, for: account.id)
 
             let route = await withDependencies {
                 $0.zcashSDKEnvironment = .testnet
@@ -409,6 +522,8 @@ struct MigrationFailureRoutingTests {
             #expect(route == MigrationBroadcastFailureRoute.providerExhausted(torEnabled: true))
             // No rotation — the snapshot's broadcast endpoint is exactly as it was.
             #expect(storages.snapshotStorage.snapshot(for: account.id)?.broadcastEndpoint.host == "us.zec.stardust.rest")
+            #expect(storages.failureRoutingStorage.torHoldActive(for: account.id) == false)
+            storages.failureRoutingStorage.setTorHoldActive(true, for: account.id)
 
             // A REPEATED call keeps returning exhausted (the episode stays full).
             let secondRoute = await withDependencies {
@@ -420,6 +535,7 @@ struct MigrationFailureRoutingTests {
             }
             #expect(secondRoute == MigrationBroadcastFailureRoute.providerExhausted(torEnabled: true))
             #expect(storages.snapshotStorage.snapshot(for: account.id)?.broadcastEndpoint.host == "us.zec.stardust.rest")
+            #expect(storages.failureRoutingStorage.torHoldActive(for: account.id) == false)
         }
     }
 
@@ -478,6 +594,25 @@ struct MigrationFailureRoutingTests {
             // The Tor-class route also now reads mid-run, since a broadcast has landed.
             let torRoute = await impl.routeBroadcastFailure(accountUUID: account.id, failureClass: MigrationBroadcastFailureClass.torUnavailable)
             #expect(torRoute == MigrationBroadcastFailureRoute.torHold)
+        }
+    }
+
+    /// R7 final review, Important-1: the realistic "Tor reconnects" trace — a mid-run Tor hold sets
+    /// the indicator, then a LATER landed broadcast (Tor came back, retry succeeded) must clear it,
+    /// independent of any subsequent routing call. This is the chokepoint `recordTransferBroadcast`
+    /// funnels through for every lane (FG send, note split, BG) — see that method's doc.
+    @Test func landedBroadcastAfterATorHoldClearsTheIndicator() async throws {
+        try await withImpl("testLandedBroadcastAfterATorHoldClearsTheIndicator") { impl, account, storages in
+            storages.snapshotStorage.recordSnapshot(Self.snapshot(broadcastHost: "us.zec.stardust.rest"), for: account.id)
+            storages.failureRoutingStorage.markHadBroadcast(for: account.id)
+
+            let route = await impl.routeBroadcastFailure(accountUUID: account.id, failureClass: MigrationBroadcastFailureClass.torUnavailable)
+            #expect(route == MigrationBroadcastFailureRoute.torHold)
+            #expect(storages.failureRoutingStorage.torHoldActive(for: account.id) == true)
+
+            await impl.recordTransferBroadcast(accountUUID: account.id, result: MigrationTransferResult.success(txId: "tx-after-hold"))
+
+            #expect(storages.failureRoutingStorage.torHoldActive(for: account.id) == false)
         }
     }
 
@@ -556,11 +691,16 @@ struct MigrationFailureRoutingTests {
         try await withImpl("testAcknowledgeCompleteClearsTheSelectedAccountsFailureRoutingState") { impl, account, storages in
             storages.failureRoutingStorage.markHadBroadcast(for: account.id)
             storages.failureRoutingStorage.addEpisodeHost("na.zec.rocks", for: account.id)
+            // R7 final review, Important-1: `markHadBroadcast` above already clears the indicator
+            // (landed-broadcast chokepoint) — set it true again afterward so the run-end trio's OWN
+            // clear is what's actually under test here, not a leftover from the arrange step.
+            storages.failureRoutingStorage.setTorHoldActive(true, for: account.id)
 
             impl.acknowledgeComplete()
 
             #expect(storages.failureRoutingStorage.hadBroadcast(for: account.id) == false)
             #expect(storages.failureRoutingStorage.episodeHosts(for: account.id).isEmpty)
+            #expect(storages.failureRoutingStorage.torHoldActive(for: account.id) == false)
         }
     }
 
@@ -585,12 +725,17 @@ struct MigrationFailureRoutingTests {
             storages.failureRoutingStorage.markHadBroadcast(for: account.id)
             storages.failureRoutingStorage.markHadBroadcast(for: otherAccount.id)
             storages.failureRoutingStorage.addEpisodeHost("na.zec.rocks", for: otherAccount.id)
+            // R7 final review, Important-1: see the twin comment above.
+            storages.failureRoutingStorage.setTorHoldActive(true, for: account.id)
+            storages.failureRoutingStorage.setTorHoldActive(true, for: otherAccount.id)
 
             impl.resetPersistedFlags()
 
             #expect(storages.failureRoutingStorage.hadBroadcast(for: account.id) == false)
             #expect(storages.failureRoutingStorage.hadBroadcast(for: otherAccount.id) == false)
             #expect(storages.failureRoutingStorage.episodeHosts(for: otherAccount.id).isEmpty)
+            #expect(storages.failureRoutingStorage.torHoldActive(for: account.id) == false)
+            #expect(storages.failureRoutingStorage.torHoldActive(for: otherAccount.id) == false)
         }
     }
 
@@ -603,6 +748,8 @@ struct MigrationFailureRoutingTests {
             storages.scheduleStorage.recordCommittedSchedule(schedule, for: account.id, now: Date())
             storages.failureRoutingStorage.markHadBroadcast(for: account.id)
             storages.failureRoutingStorage.addEpisodeHost("na.zec.rocks", for: account.id)
+            // R7 final review, Important-1: see the twin comment above.
+            storages.failureRoutingStorage.setTorHoldActive(true, for: account.id)
 
             await withDependencies {
                 $0.sdkSynchronizer = SDKSynchronizerClient.mocked(
@@ -619,6 +766,7 @@ struct MigrationFailureRoutingTests {
 
             #expect(storages.failureRoutingStorage.hadBroadcast(for: account.id) == false)
             #expect(storages.failureRoutingStorage.episodeHosts(for: account.id).isEmpty)
+            #expect(storages.failureRoutingStorage.torHoldActive(for: account.id) == false)
         }
     }
 

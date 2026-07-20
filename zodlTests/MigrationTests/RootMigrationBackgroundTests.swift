@@ -2681,6 +2681,75 @@ import ComposableArchitecture
         }
     }
 
+    // MARK: - R7 final review (Important-1, spec §G): the Tor-hold indicator persists through BG
+
+    /// The BG lane discards the ROUTE by design (see the section above) — but the persisted Tor-hold
+    /// indicator (read by `MigrationStatusStore`'s resume presentation and the SmartBanner
+    /// transfer-waiting variant) must still end up set, since that indicator is the ENTIRE mechanism
+    /// spec §G relies on to make a BG mid-run Tor outage diagnosable. Unlike this file's other R7-T3
+    /// tests, `routeBroadcastFailure` is wired to a REAL `MigrationManagerImpl` (isolated storages),
+    /// not a canned mock — a canned `{ _, _ in .torHold }` mock would bypass the indicator entirely
+    /// (it lives inside the real routing member's own body), so this is the one test in this file
+    /// that must NOT mock that member away.
+    @Test func backgroundTorClassMidRunFailureLeavesTheTorHoldIndicatorSetThroughExecuteBroadcastAction() async throws {
+        let account = Self.walletAccount(idByte: 77)
+        let routingSuite = "testBackgroundTorClassMidRunFailureLeavesTheTorHoldIndicatorSet_routing"
+        let snapshotSuite = "testBackgroundTorClassMidRunFailureLeavesTheTorHoldIndicatorSet_snapshot"
+        let routingUserDefaults = try #require(UserDefaults(suiteName: routingSuite))
+        let snapshotUserDefaults = try #require(UserDefaults(suiteName: snapshotSuite))
+        defer {
+            routingUserDefaults.removePersistentDomain(forName: routingSuite)
+            snapshotUserDefaults.removePersistentDomain(forName: snapshotSuite)
+        }
+
+        let failureRoutingStorage = MigrationFailureRoutingStorage(userDefaults: routingUserDefaults)
+        let snapshotStorage = MigrationSnapshotStorage(userDefaults: snapshotUserDefaults)
+        // Mid-run: a broadcast has already landed this run, so a Tor-class failure routes `.torHold`
+        // (R15), not `.torFirstRunChoice` (R14) — `.torHold` is the ONE route that sets the
+        // indicator.
+        failureRoutingStorage.markHadBroadcast(for: account.id)
+        snapshotStorage.recordSnapshot(
+            MigrationNetworkSnapshot(
+                useTor: true,
+                syncEndpoint: MigrationNetworkSnapshot.Endpoint(host: "zec.rocks", port: 443, secure: true),
+                syncProvider: ServerProvider.classify(host: "zec.rocks"),
+                broadcastEndpoint: MigrationNetworkSnapshot.Endpoint(host: "us.zec.stardust.rest", port: 443, secure: true),
+                broadcastProvider: ServerProvider.classify(host: "us.zec.stardust.rest"),
+                takenAt: Date(),
+                committedAt: Date()
+            ),
+            for: account.id
+        )
+        let realImpl = MigrationManagerImpl(snapshotStorage: snapshotStorage, failureRoutingStorage: failureRoutingStorage)
+
+        var accountState = Self.selectedAccountState()
+        accountState.$selectedWalletAccount.withLock { $0 = account }
+        let completeCalls = LockIsolated<[Bool]>([])
+
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let store = Store(initialState: accountState) {
+                Root()
+            } withDependencies: {
+                baseNoOpDependencies(&$0)
+                $0.sdkSynchronizer.getMigrationState = { _ in MigrationState.inProgress(Self.placeholderProgress) }
+                $0.sdkSynchronizer.rescheduleOverdueMigrationTransfer = { _ in Self.proposal(nextExecutableAfterHeight: 100) }
+                $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in throw ZcashError.migrationTorUnavailable }
+                $0.migrationManager.routeBroadcastFailure = { accountUUID, failureClass in
+                    await realImpl.routeBroadcastFailure(accountUUID: accountUUID, failureClass: failureClass)
+                }
+            }
+
+            let handle = MigrationBGSessionHandle(rawTask: nil) { success in completeCalls.withValue { $0.append(success) } }
+            store.send(.initialization(.migrationBackgroundSession(handle)))
+            await waitForRootStore { completeCalls.withValue { !$0.isEmpty } }
+        }
+
+        #expect(completeCalls.withValue { $0 } == [true])
+        #expect(failureRoutingStorage.torHoldActive(for: account.id) == true)
+    }
+
     /// A landed broadcast (`.success`, and its `migrationRecordFailedAfterBroadcast` twin) is never a
     /// failure to route — `routeBroadcastFailure` must stay uncalled on both paths.
     @Test func landedBroadcastNeverCallsRouteBroadcastFailure() async {

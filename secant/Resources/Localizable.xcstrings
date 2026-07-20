@@ -10520,6 +10520,40 @@
         }
       }
     },
+    "migrationFailure.torHold.bannerInfo" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Waiting for a Tor connection"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Esperando una conexión Tor"
+          }
+        }
+      }
+    },
+    "migrationFailure.torHold.statusNote" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Waiting for a Tor connection. Transfers resume automatically once Tor is reachable — retrying never leaves Tor."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Esperando una conexión Tor. Las transferencias se reanudan automáticamente en cuanto Tor esté disponible: reintentar nunca desactiva Tor."
+          }
+        }
+      }
+    },
     "migrationHowItWorks.approveOnceDesc" : {
       "extractionState" : "manual",
       "localizations" : {

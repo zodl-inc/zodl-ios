@@ -188,6 +188,11 @@ import ComposableArchitecture
             $0.sdkSynchronizer.migrationPrivacySyncBufferDuration = { 900 }
             $0.migrationManager.migrationTransfers = { _ in rows }
             $0.migrationManager.migrationSummary = { _ in summary }
+            // R7 final review, Important-1: same "hydrate every `.statusLoaded`-covered field at
+            // re-entry too" precedent as `syncPrivacyBufferMinutes` above (avoids a one-frame flash
+            // of "no Tor line" before `onAppear`'s own load lands) — `true` here so a stale default
+            // (`false`) would visibly fail the new assertion below.
+            $0.migrationManager.isMigrationTorHoldActive = { _ in true }
         }
         store.exhaustivity = .off
 
@@ -204,6 +209,7 @@ import ComposableArchitecture
         #expect(statusState.rows == IdentifiedArrayOf(uniqueElements: rows))
         #expect(statusState.totalDurationHours == 24)
         #expect(statusState.syncPrivacyBufferMinutes == 15)
+        #expect(statusState.isTorHoldActive == true)
     }
 
     @MainActor @Test func onAppearWithRecoveryNotExpiredRouteAppendsFlowRootRecoveryScreen() async {
@@ -301,6 +307,9 @@ import ComposableArchitecture
             }
             $0.migrationManager.migrationTransfers = { _ in rows }
             $0.migrationManager.migrationSummary = { _ in summary }
+            // R7 final review, Important-1: see the twin comment in
+            // `onAppearWithStatusProgressRouteAppendsFlowRootStatusScreen` above.
+            $0.migrationManager.isMigrationTorHoldActive = { _ in true }
         }
         store.exhaustivity = .off
 
@@ -319,6 +328,7 @@ import ComposableArchitecture
         // regardless of the gate (no longer consulted by this hydration path at all).
         #expect(statusState.isSendNowDisabled == false)
         #expect(statusState.syncPrivacyBufferMinutes == 15)
+        #expect(statusState.isTorHoldActive == true)
     }
 
     /// R8-T5 review (Important-1): a pre-first-sync tip (`latestState().latestBlockHeight == 0`,
@@ -2481,6 +2491,9 @@ import ComposableArchitecture
             $0.sdkSynchronizer = .noOp
             $0.migrationManager.migrationTransfers = { _ in rows }
             $0.migrationManager.migrationSummary = { _ in summary }
+            // R7 final review, Important-1: `statusProgressState` now reads this member too — see
+            // `MigrationCoordFlowTests.onAppearWithStatusProgressRouteAppendsFlowRootStatusScreen`.
+            $0.migrationManager.isMigrationTorHoldActive = { _ in false }
         }
         store.exhaustivity = .off
 
