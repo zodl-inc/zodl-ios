@@ -1612,10 +1612,11 @@ import ComposableArchitecture
             $0.migrationManager.reconcile = { }
             $0.migrationManager.migrationNetworkOptions = { _ in Self.defaultNetworkPrivacyOptions }
             // R7-T3 (MOB-1497): `.networkError(retryable: true)` now classifies as `.endpointUnreachable`
-            // and routes BEFORE `.splitResult` — `.plainRetry` keeps this test's own "existing
-            // generic failure sheet" shape (no committed snapshot exists here to route against
-            // meaningfully; this pins the coordinator-level integration, not the routing decision
-            // itself — see `MigrationFailureRoutingTests` for that).
+            // and routes BEFORE `.splitResult` — `routeBroadcastFailure` is mocked to `.plainRetry`
+            // here (this pins the coordinator-level integration, not the routing decision itself — see
+            // `MigrationFailureRoutingTests` for the real router exercised against a provisional
+            // snapshot, the actual shape this lane's pre-commit broadcast produces per the R7-review
+            // Important-1 fix).
             $0.migrationManager.routeBroadcastFailure = { _, _ in MigrationBroadcastFailureRoute.plainRetry }
         }
         store.exhaustivity = .off

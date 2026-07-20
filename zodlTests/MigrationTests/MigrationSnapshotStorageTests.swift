@@ -246,16 +246,20 @@ struct MigrationSnapshotStorageTests {
         }
     }
 
-    // MARK: - MOB-1497 (R7-T3): sanctioned COMMITTED-snapshot mutations (R14/R16/R17)
+    // MARK: - MOB-1497 (R7-T3, R7-review fix Important-1): sanctioned ACTIVE-snapshot mutations
+    // (R14/R16/R17) — committed if one exists, else the still-provisional one. Originally
+    // committed-only; widened because the live Keystone note-split lane's broadcast (and therefore
+    // its first R14/R16/R17 failure) happens against a snapshot that is STILL PROVISIONAL by design
+    // — see `MigrationManagerImpl.routeBroadcastFailure`'s doc.
 
-    @Test func overrideUseTorForCommittedMutatesOnlyUseTorOnACommittedSnapshot() throws {
-        try withStorage("testOverrideUseTorForCommittedMutatesOnlyUseTorOnACommittedSnapshot") { storage in
+    @Test func overrideUseTorOnActiveSnapshotMutatesOnlyUseTorOnACommittedSnapshot() throws {
+        try withStorage("testOverrideUseTorOnActiveSnapshotMutatesOnlyUseTorOnACommittedSnapshot") { storage in
             let accountUUID = Self.accountUUID(19)
             let committedAt = Date(timeIntervalSince1970: 1_000_000)
             let original = Self.snapshot(useTor: true, syncHost: "eu.zec.rocks", broadcastHost: "us.zec.stardust.rest", committedAt: committedAt)
             storage.recordSnapshot(original, for: accountUUID)
 
-            storage.overrideUseTorForCommitted(false, for: accountUUID)
+            storage.overrideUseTorOnActiveSnapshot(false, for: accountUUID)
 
             let updated = try #require(storage.snapshot(for: accountUUID))
             #expect(updated.useTor == false)
@@ -268,23 +272,31 @@ struct MigrationSnapshotStorageTests {
         }
     }
 
-    @Test func overrideUseTorForCommittedIsANoOpOnAProvisionalSnapshot() throws {
-        try withStorage("testOverrideUseTorForCommittedIsANoOpOnAProvisionalSnapshot") { storage in
+    /// R7-review fix (Important-1): RED against the pre-fix committed-only guard, which left
+    /// `useTor` at `true` here — the note-split lane's R14 override must be able to act on a
+    /// still-provisional snapshot too, since that lane's first broadcast happens before commit.
+    @Test func overrideUseTorOnActiveSnapshotMutatesUseTorOnAProvisionalSnapshotToo() throws {
+        try withStorage("testOverrideUseTorOnActiveSnapshotMutatesUseTorOnAProvisionalSnapshotToo") { storage in
             let accountUUID = Self.accountUUID(20)
-            storage.recordSnapshot(Self.snapshot(useTor: true), for: accountUUID)
+            let original = Self.snapshot(useTor: true, syncHost: "eu.zec.rocks", broadcastHost: "us.zec.stardust.rest")
+            storage.recordSnapshot(original, for: accountUUID)
 
-            storage.overrideUseTorForCommitted(false, for: accountUUID)
+            storage.overrideUseTorOnActiveSnapshot(false, for: accountUUID)
 
-            #expect(storage.snapshot(for: accountUUID)?.useTor == true)
-            #expect(storage.snapshot(for: accountUUID)?.committedAt == nil)
+            let updated = try #require(storage.snapshot(for: accountUUID))
+            #expect(updated.useTor == false)
+            #expect(updated.committedAt == nil)
+            // Every other field stays byte-for-byte untouched, same as the committed case.
+            #expect(updated.syncEndpoint == original.syncEndpoint)
+            #expect(updated.broadcastEndpoint == original.broadcastEndpoint)
         }
     }
 
-    @Test func overrideUseTorForCommittedIsANoOpWhenNoSnapshotIsPersisted() throws {
-        try withStorage("testOverrideUseTorForCommittedIsANoOpWhenNoSnapshotIsPersisted") { storage in
+    @Test func overrideUseTorOnActiveSnapshotIsANoOpWhenNoSnapshotIsPersisted() throws {
+        try withStorage("testOverrideUseTorOnActiveSnapshotIsANoOpWhenNoSnapshotIsPersisted") { storage in
             let accountUUID = Self.accountUUID(21)
 
-            storage.overrideUseTorForCommitted(false, for: accountUUID)
+            storage.overrideUseTorOnActiveSnapshot(false, for: accountUUID)
 
             #expect(storage.snapshot(for: accountUUID) == nil)
         }
@@ -313,8 +325,12 @@ struct MigrationSnapshotStorageTests {
         }
     }
 
-    @Test func rotateBroadcastEndpointIsANoOpOnAProvisionalSnapshot() throws {
-        try withStorage("testRotateBroadcastEndpointIsANoOpOnAProvisionalSnapshot") { storage in
+    /// R7-review fix (Important-1): RED against the pre-fix committed-only guard, which left
+    /// `broadcastEndpoint` untouched here — the R16 rotation must be able to act on a
+    /// still-provisional snapshot too. See `overrideUseTorOnActiveSnapshotMutatesUseTorOnAProvisionalSnapshotToo`'s
+    /// doc for the shared rationale.
+    @Test func rotateBroadcastEndpointMutatesABroadcastEndpointOnAProvisionalSnapshotToo() throws {
+        try withStorage("testRotateBroadcastEndpointMutatesABroadcastEndpointOnAProvisionalSnapshotToo") { storage in
             let accountUUID = Self.accountUUID(23)
             let original = Self.snapshot(broadcastHost: "us.zec.stardust.rest")
             storage.recordSnapshot(original, for: accountUUID)
@@ -322,7 +338,10 @@ struct MigrationSnapshotStorageTests {
 
             storage.rotateBroadcastEndpoint(to: rotated, for: accountUUID)
 
-            #expect(storage.snapshot(for: accountUUID)?.broadcastEndpoint == original.broadcastEndpoint)
+            let updated = try #require(storage.snapshot(for: accountUUID))
+            #expect(updated.broadcastEndpoint == rotated)
+            #expect(updated.committedAt == nil)
+            #expect(updated.broadcastProvider == original.broadcastProvider)
         }
     }
 
@@ -337,14 +356,14 @@ struct MigrationSnapshotStorageTests {
         }
     }
 
-    @Test func overrideBroadcastEndpointToSyncServerForCommittedSetsBroadcastToSyncOnACommittedSnapshot() throws {
-        try withStorage("testOverrideBroadcastEndpointToSyncServerForCommittedSetsBroadcastToSyncOnACommittedSnapshot") { storage in
+    @Test func overrideBroadcastEndpointToSyncServerOnActiveSnapshotSetsBroadcastToSyncOnACommittedSnapshot() throws {
+        try withStorage("testOverrideBroadcastEndpointToSyncServerOnActiveSnapshotSetsBroadcastToSyncOnACommittedSnapshot") { storage in
             let accountUUID = Self.accountUUID(25)
             let committedAt = Date(timeIntervalSince1970: 1_000_000)
             let original = Self.snapshot(useTor: true, syncHost: "na.zec.rocks", broadcastHost: "us.zec.stardust.rest", committedAt: committedAt)
             storage.recordSnapshot(original, for: accountUUID)
 
-            storage.overrideBroadcastEndpointToSyncServerForCommitted(for: accountUUID)
+            storage.overrideBroadcastEndpointToSyncServerOnActiveSnapshot(for: accountUUID)
 
             let updated = try #require(storage.snapshot(for: accountUUID))
             #expect(updated.broadcastEndpoint == original.syncEndpoint)
@@ -357,23 +376,30 @@ struct MigrationSnapshotStorageTests {
         }
     }
 
-    @Test func overrideBroadcastEndpointToSyncServerForCommittedIsANoOpOnAProvisionalSnapshot() throws {
-        try withStorage("testOverrideBroadcastEndpointToSyncServerForCommittedIsANoOpOnAProvisionalSnapshot") { storage in
+    /// R7-review fix (Important-1): RED against the pre-fix committed-only guard, which left
+    /// `broadcastEndpoint` untouched here — the R17 sync-server fallback must be able to act on a
+    /// still-provisional snapshot too. See `overrideUseTorOnActiveSnapshotMutatesUseTorOnAProvisionalSnapshotToo`'s
+    /// doc for the shared rationale.
+    @Test func overrideBroadcastEndpointToSyncServerOnActiveSnapshotSetsBroadcastToSyncOnAProvisionalSnapshotToo() throws {
+        try withStorage("testOverrideBroadcastEndpointToSyncServerOnActiveSnapshotSetsBroadcastToSyncOnAProvisionalSnapshotToo") { storage in
             let accountUUID = Self.accountUUID(26)
             let original = Self.snapshot(syncHost: "na.zec.rocks", broadcastHost: "us.zec.stardust.rest")
             storage.recordSnapshot(original, for: accountUUID)
 
-            storage.overrideBroadcastEndpointToSyncServerForCommitted(for: accountUUID)
+            storage.overrideBroadcastEndpointToSyncServerOnActiveSnapshot(for: accountUUID)
 
-            #expect(storage.snapshot(for: accountUUID)?.broadcastEndpoint == original.broadcastEndpoint)
+            let updated = try #require(storage.snapshot(for: accountUUID))
+            #expect(updated.broadcastEndpoint == original.syncEndpoint)
+            #expect(updated.broadcastProvider == original.syncProvider)
+            #expect(updated.committedAt == nil)
         }
     }
 
-    @Test func overrideBroadcastEndpointToSyncServerForCommittedIsANoOpWhenNoSnapshotIsPersisted() throws {
-        try withStorage("testOverrideBroadcastEndpointToSyncServerForCommittedIsANoOpWhenNoSnapshotIsPersisted") { storage in
+    @Test func overrideBroadcastEndpointToSyncServerOnActiveSnapshotIsANoOpWhenNoSnapshotIsPersisted() throws {
+        try withStorage("testOverrideBroadcastEndpointToSyncServerOnActiveSnapshotIsANoOpWhenNoSnapshotIsPersisted") { storage in
             let accountUUID = Self.accountUUID(27)
 
-            storage.overrideBroadcastEndpointToSyncServerForCommitted(for: accountUUID)
+            storage.overrideBroadcastEndpointToSyncServerOnActiveSnapshot(for: accountUUID)
 
             #expect(storage.snapshot(for: accountUUID) == nil)
         }

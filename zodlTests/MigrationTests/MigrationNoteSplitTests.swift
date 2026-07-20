@@ -1163,6 +1163,20 @@ import ComposableArchitecture
         #expect(overrideTorCalls.value == 0)
     }
 
+    /// R7-review fix (Minor-3): see `MigrationSending`'s identical
+    /// `proceedWithoutTorTappedInTorHoldStateIsANoOp` for the full rationale — gated to
+    /// `.torFirstRunChoice`, a no-op everywhere else. RED against the pre-fix reducer, which
+    /// presented the alert unconditionally.
+    @MainActor @Test func proceedWithoutTorTappedInTorHoldStateIsANoOp() async {
+        var state = stateWithProposal()
+        state.failureKind = MigrationBroadcastFailureRoute.torHold
+        let store = TestStore(initialState: state) {
+            MigrationNoteSplit()
+        }
+
+        await store.send(.proceedWithoutTorTapped)
+    }
+
     // MARK: - R7-T3 (MOB-1497): R16 within-provider rotation — no new UI
 
     @MainActor @Test func retryTappedWithEndpointUnreachableRotatedSetsFailureKindButKeepsGenericFailureSheet() async {
