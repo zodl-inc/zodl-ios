@@ -516,7 +516,10 @@ struct MigrationManagerResetPersistedFlagsTests {
 
         #expect(storage.migrationMode() == nil)
         #expect(storage.isManualDelivery() == false)
-        #expect(storage.isTorEnabledForMigration() == false)
+        // MOB-1497 (R1): the stored choice is genuinely gone (see the raw-key check below) — it just
+        // reads back `true` now, the new never-written default, rather than `false`.
+        #expect(storage.isTorEnabledForMigration() == true)
+        #expect(userDefaults.data(forKey: .migrationNetworkPrivacyOptions) == nil)
         #expect(storage.isDustLocked() == false)
         // R8-T3 (S2): the acknowledged flag is per-account now — `MigrationGateStorage
         // .resetPersistedFlags()` only clears the dead legacy (wallet-wide, unsuffixed) key; see

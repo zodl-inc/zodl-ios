@@ -476,11 +476,13 @@ import ComposableArchitecture
     @MainActor @Test func entryChoseImmediateWithTorFlagOnSkipsTorSheetAndPushesReview() async {
         let setMigrationModeCalls = LockIsolated<[MigrationMode]>([])
         let setOptionsCalls = LockIsolated<[Bool]>([])
+        let formNetworkSnapshotCalls = LockIsolated<[AccountUUID?]>([])
         let store = TestStore(initialState: MigrationCoordFlow.State()) {
             MigrationCoordFlow()
         } withDependencies: {
             $0.migrationManager.setMigrationMode = { mode in setMigrationModeCalls.withValue { $0.append(mode) } }
             $0.migrationManager.setNetworkPrivacyOptions = { useTor in setOptionsCalls.withValue { $0.append(useTor) } }
+            $0.migrationManager.formNetworkSnapshot = { accountUUID in formNetworkSnapshotCalls.withValue { $0.append(accountUUID) } }
             $0.sdkSynchronizer = .noOp
             $0.walletStorage = .noOp
             $0.walletStorage.exportTorSetupFlag = { true }
@@ -488,6 +490,7 @@ import ComposableArchitecture
         store.exhaustivity = .off
 
         await store.send(.entry(.delegate(.chose(.immediate))))
+        await store.finish()
 
         #expect(store.state.mode == MigrationMode.immediate)
         #expect(setMigrationModeCalls.value == [MigrationMode.immediate])
@@ -501,6 +504,10 @@ import ComposableArchitecture
         // persisted `useTor` choice below is what feeds it.
         #expect(setOptionsCalls.value == [true])
         #expect(store.state.isTorSheetPresented == false)
+        // MOB-1497: the flag-on shortcut is a Tor-choice RESOLUTION point exactly like the sheet's
+        // own confirm — it forms the run's (provisional) network snapshot here too.
+        #expect(formNetworkSnapshotCalls.value.count == 1)
+        #expect(formNetworkSnapshotCalls.value.first == Self.defaultAccount.id)
         guard case let .reviewTransfer(reviewState) = try? #require(store.state.path.last) else {
             Issue.record("Expected .reviewTransfer on the path (Tor sheet skipped)")
             return
@@ -509,10 +516,12 @@ import ComposableArchitecture
     }
 
     @MainActor @Test func entryChoseImmediateWithTorFlagOffPresentsTorSheetAndStashesReviewDestination() async {
+        let formNetworkSnapshotCalls = LockIsolated<Int>(0)
         let store = TestStore(initialState: MigrationCoordFlow.State()) {
             MigrationCoordFlow()
         } withDependencies: {
             $0.migrationManager.setMigrationMode = { _ in }
+            $0.migrationManager.formNetworkSnapshot = { _ in formNetworkSnapshotCalls.withValue { $0 += 1 } }
             $0.sdkSynchronizer = .noOp
             $0.walletStorage = .noOp
             $0.walletStorage.exportTorSetupFlag = { false }
@@ -520,6 +529,7 @@ import ComposableArchitecture
         store.exhaustivity = .off
 
         await store.send(.entry(.delegate(.chose(.immediate))))
+        await store.finish()
 
         #expect(store.state.isTorSheetPresented == true)
         #expect(store.state.pendingTorDestination == MigrationCoordFlow.PendingTorDestination.reviewTransfer)
@@ -529,12 +539,16 @@ import ComposableArchitecture
         #expect(store.state.torSheetState.usesFullBalanceCopy == true)
         // Nothing pushed yet — the sheet gates the push until confirmed/dismissed.
         #expect(store.state.path.isEmpty)
+        // MOB-1497: presenting the sheet is NOT itself a Tor-choice resolution — nothing forms until
+        // the sheet is actually confirmed/dismissed.
+        #expect(formNetworkSnapshotCalls.value == 0)
     }
 
     // MARK: - Tor bottom sheet (MOB-1478 W2): "Got it" and swipe-dismiss resume the stashed destination
 
     @MainActor @Test func torSheetGotItInImmediateModePersistsOptionsAndPushesReviewTransfer() async {
         let setOptionsCalls = LockIsolated<[Bool]>([])
+        let formNetworkSnapshotCalls = LockIsolated<[AccountUUID?]>([])
         var state = MigrationCoordFlow.State()
         state.mode = .immediate
         state.torSheetState = MigrationTorSheet.State(isTorOn: true)
@@ -544,14 +558,20 @@ import ComposableArchitecture
             MigrationCoordFlow()
         } withDependencies: {
             $0.migrationManager.setNetworkPrivacyOptions = { useTor in setOptionsCalls.withValue { $0.append(useTor) } }
+            $0.migrationManager.formNetworkSnapshot = { accountUUID in formNetworkSnapshotCalls.withValue { $0.append(accountUUID) } }
         }
         store.exhaustivity = .off
 
         await store.send(.torSheet(.delegate(.gotIt)))
+        await store.finish()
 
         #expect(setOptionsCalls.value == [true])
         #expect(store.state.isTorSheetPresented == false)
         #expect(store.state.pendingTorDestination == nil)
+        // MOB-1497: the Tor sheet's confirm IS the Tor-choice resolution point — forms the run's
+        // (provisional) network snapshot.
+        #expect(formNetworkSnapshotCalls.value.count == 1)
+        #expect(formNetworkSnapshotCalls.value.first == Self.defaultAccount.id)
         guard case let .reviewTransfer(reviewState) = try? #require(store.state.path.last) else {
             Issue.record("Expected .reviewTransfer pushed on top")
             return
@@ -563,6 +583,7 @@ import ComposableArchitecture
         // Spec: sheet dismissal by swipe is identical to "Got it" — same persist-then-proceed logic,
         // using whatever toggle state is showing at that moment.
         let setOptionsCalls = LockIsolated<[Bool]>([])
+        let formNetworkSnapshotCalls = LockIsolated<Int>(0)
         var state = MigrationCoordFlow.State()
         state.mode = .immediate
         state.torSheetState = MigrationTorSheet.State(isTorOn: false)
@@ -572,14 +593,18 @@ import ComposableArchitecture
             MigrationCoordFlow()
         } withDependencies: {
             $0.migrationManager.setNetworkPrivacyOptions = { useTor in setOptionsCalls.withValue { $0.append(useTor) } }
+            $0.migrationManager.formNetworkSnapshot = { _ in formNetworkSnapshotCalls.withValue { $0 += 1 } }
         }
         store.exhaustivity = .off
 
         await store.send(.torSheetPresentationChanged(false))
+        await store.finish()
 
         #expect(setOptionsCalls.value == [false])
         #expect(store.state.isTorSheetPresented == false)
         #expect(store.state.pendingTorDestination == nil)
+        // MOB-1497: swipe-dismiss resolves the Tor choice exactly like "Got it" — forms too.
+        #expect(formNetworkSnapshotCalls.value == 1)
         guard case .reviewTransfer = try? #require(store.state.path.last) else {
             Issue.record("Expected .reviewTransfer pushed on top (swipe-dismiss == Got it)")
             return
@@ -591,6 +616,7 @@ import ComposableArchitecture
         // whatever the toggle shows (default ON) and resumes the permission chain (all permissions
         // satisfied here, so the plan screen pushes directly).
         let setOptionsCalls = LockIsolated<[Bool]>([])
+        let formNetworkSnapshotCalls = LockIsolated<Int>(0)
         var state = MigrationCoordFlow.State()
         state.mode = .privateScheduled
         state.path.append(.howItWorks(MigrationHowItWorks.State()))
@@ -601,6 +627,7 @@ import ComposableArchitecture
             MigrationCoordFlow()
         } withDependencies: {
             $0.migrationManager.setNetworkPrivacyOptions = { useTor in setOptionsCalls.withValue { $0.append(useTor) } }
+            $0.migrationManager.formNetworkSnapshot = { _ in formNetworkSnapshotCalls.withValue { $0 += 1 } }
             $0.migrationManager.isManualDelivery = { false }
             $0.migrationBGScheduler.backgroundRefreshStatus = { .available }
             $0.userNotifications.authorizationStatus = { .authorized }
@@ -614,6 +641,8 @@ import ComposableArchitecture
         #expect(setOptionsCalls.value == [true])
         #expect(store.state.isTorSheetPresented == false)
         #expect(store.state.pendingTorDestination == nil)
+        // MOB-1497: forms on the scheduled/permission-chain destination too, not just immediate.
+        #expect(formNetworkSnapshotCalls.value == 1)
         guard case let .transferPlan(planState) = try? #require(store.state.path.last) else {
             Issue.record("Expected .transferPlan pushed (permission chain resumed from the sheet)")
             return
@@ -1751,6 +1780,7 @@ import ComposableArchitecture
         // background send reads the persisted copy, not this in-memory state), no sheet, straight
         // into the permission chain.
         let setOptionsCalls = LockIsolated<[Bool]>([])
+        let formNetworkSnapshotCalls = LockIsolated<Int>(0)
         var state = MigrationCoordFlow.State()
         state.mode = .privateScheduled
         state.path.append(.howItWorks(MigrationHowItWorks.State()))
@@ -1760,6 +1790,7 @@ import ComposableArchitecture
             $0.walletStorage = .noOp
             $0.walletStorage.exportTorSetupFlag = { true }
             $0.migrationManager.setNetworkPrivacyOptions = { useTor in setOptionsCalls.withValue { $0.append(useTor) } }
+            $0.migrationManager.formNetworkSnapshot = { _ in formNetworkSnapshotCalls.withValue { $0 += 1 } }
             $0.migrationBGScheduler.backgroundRefreshStatus = { .available }
             $0.userNotifications.authorizationStatus = { .authorized }
             $0.migrationManager.isManualDelivery = { false }
@@ -1773,6 +1804,9 @@ import ComposableArchitecture
         #expect(setOptionsCalls.value == [true])
         #expect(store.state.isTorSheetPresented == false)
         #expect(store.state.pendingTorDestination == nil)
+        // MOB-1497: the flag-on shortcut on the scheduled/How-This-Works chain is a Tor-choice
+        // resolution point too — forms the run's (provisional) network snapshot here.
+        #expect(formNetworkSnapshotCalls.value == 1)
         guard case let .transferPlan(planState) = try? #require(store.state.path.last) else {
             Issue.record("Expected .transferPlan pushed (Tor sheet skipped, flag on)")
             return
@@ -1785,6 +1819,7 @@ import ComposableArchitecture
         // "your balance" body variant) and stashes `.permissionChain`; nothing is persisted or
         // pushed until the sheet resolves.
         let setOptionsCalls = LockIsolated<[Bool]>([])
+        let formNetworkSnapshotCalls = LockIsolated<Int>(0)
         var state = MigrationCoordFlow.State()
         state.mode = .privateScheduled
         state.path.append(.howItWorks(MigrationHowItWorks.State()))
@@ -1794,16 +1829,20 @@ import ComposableArchitecture
             $0.walletStorage = .noOp
             $0.walletStorage.exportTorSetupFlag = { false }
             $0.migrationManager.setNetworkPrivacyOptions = { useTor in setOptionsCalls.withValue { $0.append(useTor) } }
+            $0.migrationManager.formNetworkSnapshot = { _ in formNetworkSnapshotCalls.withValue { $0 += 1 } }
         }
         store.exhaustivity = .off
 
         await store.send(.path(.element(id: 0, action: .howItWorks(.delegate(.continueTapped)))))
+        await store.finish()
 
         #expect(store.state.isTorSheetPresented == true)
         #expect(store.state.pendingTorDestination == MigrationCoordFlow.PendingTorDestination.permissionChain)
         #expect(store.state.torSheetState.isTorOn == true)
         #expect(store.state.torSheetState.usesFullBalanceCopy == false)
         #expect(setOptionsCalls.value.isEmpty)
+        // MOB-1497: presenting the sheet is NOT itself a resolution — nothing forms yet.
+        #expect(formNetworkSnapshotCalls.value == 0)
         // Nothing new pushed — `.howItWorks` is still the top element.
         guard case .howItWorks = try? #require(store.state.path.last) else {
             Issue.record("Expected .howItWorks still on top (sheet gates the push)")
@@ -1912,18 +1951,27 @@ import ComposableArchitecture
 
     @MainActor @Test func transferPlanConfirmedInScheduledVariantSchedulesFirstWindowAndPushesScheduled() async {
         let scheduleFirstWindowCalls = LockIsolated<Int>(0)
+        let formNetworkSnapshotCalls = LockIsolated<Int>(0)
         var state = MigrationCoordFlow.State()
         state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .scheduled)))
         let store = TestStore(initialState: state) {
             MigrationCoordFlow()
         } withDependencies: {
             $0.migrationBGScheduler.scheduleFirstWindow = { scheduleFirstWindowCalls.withValue { $0 += 1 } }
+            $0.migrationManager.formNetworkSnapshot = { _ in formNetworkSnapshotCalls.withValue { $0 += 1 } }
         }
         store.exhaustivity = .off
 
         await store.send(.path(.element(id: 0, action: .transferPlan(.delegate(.confirmed)))))
+        await store.finish()
 
         #expect(scheduleFirstWindowCalls.value == 1)
+        // MOB-1497: plan-confirm does NOT form a network snapshot — forming already happened at the
+        // Tor-choice step, earlier in the chain (see the `torSheet...`/`howItWorksContinued...`
+        // tests above). `migrationNetworkOptions`'s eventual broadcast-time read is naturally
+        // idempotent against the already-formed snapshot; this coordinator step itself never calls
+        // `formNetworkSnapshot` at all.
+        #expect(formNetworkSnapshotCalls.value == 0)
         guard case .scheduled = try? #require(store.state.path.last) else {
             Issue.record("Expected .scheduled pushed")
             return

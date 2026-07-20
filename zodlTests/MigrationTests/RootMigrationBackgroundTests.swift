@@ -2581,6 +2581,9 @@ private func baseNoOpDependencies(_ values: inout DependencyValues) {
     values.migrationManager.setMigrationMode = { _ in }
     values.migrationManager.setManualDelivery = { _ in }
     values.migrationManager.setNetworkPrivacyOptions = { _ in }
+    values.migrationManager.formNetworkSnapshot = { _ in }
+    values.migrationManager.markNetworkSnapshotCommitted = { _ in }
+    values.migrationManager.clearProvisionalNetworkSnapshot = { _ in }
     values.migrationManager.acknowledgeComplete = { _ in }
     // MOB-1496: default false — the existing single-account/multi-account "landed broadcast
     // reaches .complete" tests below all assume the plain `.migrationComplete` notification
