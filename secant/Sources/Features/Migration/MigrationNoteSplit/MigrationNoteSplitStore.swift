@@ -299,6 +299,9 @@ struct MigrationNoteSplit {
         }
 
         return .run { send in
+            // MOB-1496 (R8-T4, #3): see `MigrationSendingStore.executeNextTransfer`'s twin comment —
+            // only a stop that was never followed by a successful broadcast needs the nudge.
+            var didStopSyncForBroadcast = false
             do {
                 let usk = try MigrationSpendingKeyDerivation.deriveUSK(
                     zip32AccountIndex: zip32AccountIndex,
@@ -309,10 +312,13 @@ struct MigrationNoteSplit {
                 )
                 let options = await migrationManager.migrationNetworkOptions(account.id)
                 await sdkSynchronizer.stopSyncBeforeMigrationBroadcast()
+                didStopSyncForBroadcast = true
                 let result = try await sdkSynchronizer.submitNoteSplit(account.id, proposal, usk, options)
                 await send(.splitResult(result))
                 if case MigrationTransferResult.success = result {
                     await migrationManager.reconcile()
+                } else if didStopSyncForBroadcast {
+                    await migrationManager.refreshMigrationSyncGate()
                 }
             } catch ZcashError.migrationRecordFailedAfterBroadcast(_) {
                 // [MOB-1496] The broadcast DID land; only recording failed (the engine self-heals
@@ -321,6 +327,9 @@ struct MigrationNoteSplit {
                 await send(.splitResult(MigrationTransferResult.success(txId: "")))
                 await migrationManager.reconcile()
             } catch {
+                if didStopSyncForBroadcast {
+                    await migrationManager.refreshMigrationSyncGate()
+                }
                 await send(.splitResult(MigrationTransferResult.networkError(retryable: true)))
             }
         }
@@ -353,21 +362,30 @@ struct MigrationNoteSplit {
 
         return .run { send in
             let options = await migrationManager.migrationNetworkOptions(account.id)
+            // MOB-1496 (R8-T4, #3): see `MigrationSendingStore.executeNextTransfer`'s twin comment —
+            // only a stop that was never followed by a successful broadcast needs the nudge.
+            var didStopSyncForBroadcast = false
             do {
                 if !stored {
                     try await sdkSynchronizer.storeSignedNoteSplit(account.id, pczt)
                     await send(.noteSplitStored)
                 }
                 await sdkSynchronizer.stopSyncBeforeMigrationBroadcast()
+                didStopSyncForBroadcast = true
                 let result = try await sdkSynchronizer.broadcastStoredNoteSplit(account.id, options)
                 await send(.splitResult(result))
                 if case MigrationTransferResult.success = result {
                     await send(.splitBroadcastSucceeded)
+                } else if didStopSyncForBroadcast {
+                    await migrationManager.refreshMigrationSyncGate()
                 }
             } catch ZcashError.migrationRecordFailedAfterBroadcast(_) {
                 await send(.splitResult(MigrationTransferResult.success(txId: "")))
                 await send(.splitBroadcastSucceeded)
             } catch {
+                if didStopSyncForBroadcast {
+                    await migrationManager.refreshMigrationSyncGate()
+                }
                 await send(.splitResult(MigrationTransferResult.networkError(retryable: true)))
             }
         }

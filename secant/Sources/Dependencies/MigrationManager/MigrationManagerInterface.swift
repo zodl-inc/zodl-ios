@@ -104,6 +104,21 @@ struct MigrationManagerClient: Sendable {
     // on the false->true transition into `.upToDate`) — NOT on every tick. `= { }` mirrors
     // `reconcile`'s no-op but is not a test fallback (see the `recordCommittedSchedule` note).
     var recordSyncCompleted: @Sendable () -> Void = { }
+    // MOB-1496 (R8-T4, #3): app-side companion to the SDK's own `migrationSyncBlockedStream` — a
+    // broadcast-failure call site that ran `stopSyncBeforeMigrationBroadcast()` without ever
+    // reaching a successful broadcast calls `refreshMigrationSyncGate()` to manually re-push the
+    // CURRENT gate value through this independent feed. The SDK's own stream only transitions on a
+    // SUCCESSFUL broadcast and dedupes via `removeDuplicates()`, so a pre-broadcast throw or a
+    // `.networkError`/`.invalidNote`/`.expired` result — which never flips the SDK's gate — would
+    // otherwise leave `RootInitialization.swift`'s `.migrationSyncGateChanged` handler waiting for an
+    // event that never arrives, stranding sync stopped all session. `migrationSyncGateFeed()` returns
+    // the SAME long-lived stream on every call (a fresh `AsyncStream` per subscriber would each get
+    // their own continuation and miss each other's pushes) — subscribed exactly once, alongside the
+    // SDK's own stream, in `.registerForSynchronizersUpdate`. `refreshMigrationSyncGate()` is a
+    // read+yield only: it does NOT acquire `MigrationManagerSerialExecutor` (mutates nothing this
+    // class owns) and does NOT touch `transactionGuard` (not a broadcast/server-switch).
+    var migrationSyncGateFeed: @Sendable () -> AsyncStream<Bool> = { AsyncStream { _ in } }
+    var refreshMigrationSyncGate: @Sendable () async -> Void = { }
     // Reconciliation. MOB-1496: async — re-reads `getMigrationState` for `stateEvents`; call sites in
     // `MigrationSendingStore`/`MigrationNoteSplitStore` (post-broadcast) join the launch/foreground
     // ones. `= { }` is a no-op default, not a test fallback (see the `recordCommittedSchedule` note).

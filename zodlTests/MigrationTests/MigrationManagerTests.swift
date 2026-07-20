@@ -983,6 +983,45 @@ struct MigrationManagerTests {
         #expect(abs(gateUntil.timeIntervalSince(syncCompletedAt) - 1_800) < 2)
     }
 
+    // MARK: - R8-T4 (#3): app-side migration sync gate feed
+
+    /// `refreshMigrationSyncGate()` is a read+yield: it reads `sdkSynchronizer.isMigrationSyncBlocked()`
+    /// FRESH and yields that value into whatever stream `migrationSyncGateFeed()` currently backs —
+    /// the manager-owned companion `Root.registerForSynchronizersUpdate` merges into its
+    /// `.migrationSyncGateChanged` mapping (see `MigrationManagerClient.migrationSyncGateFeed`'s doc
+    /// for the full write-up: a broadcast-failure call site that stopped sync without ever reaching
+    /// a successful broadcast nudges this so Root's resume logic isn't stranded waiting for an SDK
+    /// stream event that will never arrive).
+    @Test func refreshMigrationSyncGateYieldsTheCurrentBlockedGateValueIntoTheFeed() async {
+        await withDependencies {
+            $0.sdkSynchronizer.isMigrationSyncBlocked = { true }
+        } operation: {
+            let impl = MigrationManagerImpl()
+            var iterator = impl.migrationSyncGateFeed().makeAsyncIterator()
+
+            await impl.refreshMigrationSyncGate()
+
+            let received = await iterator.next()
+            #expect(received == true)
+        }
+    }
+
+    /// Same mechanism, the OTHER value — proves this is a genuine fresh read, not a hardcoded
+    /// constant.
+    @Test func refreshMigrationSyncGateYieldsTheCurrentUnblockedGateValueIntoTheFeed() async {
+        await withDependencies {
+            $0.sdkSynchronizer.isMigrationSyncBlocked = { false }
+        } operation: {
+            let impl = MigrationManagerImpl()
+            var iterator = impl.migrationSyncGateFeed().makeAsyncIterator()
+
+            await impl.refreshMigrationSyncGate()
+
+            let received = await iterator.next()
+            #expect(received == false)
+        }
+    }
+
     // MARK: - Persistence: mode / manual delivery / network privacy / acknowledge
 
     @Test func migrationModePersistenceRoundTrip() throws {

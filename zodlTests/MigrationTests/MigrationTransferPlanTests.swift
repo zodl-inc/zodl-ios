@@ -448,6 +448,10 @@ import ComposableArchitecture
 
     @MainActor @Test func confirmTappedWithNoteSplitFailurePresentsFailureSheetAndNeverSigns() async {
         let signCalls = LockIsolated<Int>(0)
+        // MOB-1496 (R8-T4, #3): the split broadcast stopped sync without ever reaching a successful
+        // outcome — the T1 shared commit helper (`MigrationCommitPipeline.commitSoftware`) must
+        // nudge Root's app-side gate feed directly (the SDK's own gate only transitions on SUCCESS).
+        let refreshMigrationSyncGateCalls = LockIsolated<Int>(0)
         // MOB-1496 (R8-T1, S3): non-empty — Confirm now guards against a zero-transfer schedule
         // BEFORE the commit effect even runs; this test's actual concern (a genuine split failure)
         // needs a real schedule to reach that effect at all.
@@ -468,6 +472,7 @@ import ComposableArchitecture
             $0.sdkSynchronizer.submitNoteSplit = { _, _, _, _ in MigrationTransferResult.networkError(retryable: true) }
             $0.sdkSynchronizer.signAndStoreMigrationSchedule = { _, _, _ in signCalls.withValue { $0 += 1 } }
             $0.migrationManager.migrationNetworkOptions = { _ in Self.defaultNetworkPrivacyOptions }
+            $0.migrationManager.refreshMigrationSyncGate = { refreshMigrationSyncGateCalls.withValue { $0 += 1 } }
             withDependenciesUSKDerivable(&$0)
         }
 
@@ -480,6 +485,7 @@ import ComposableArchitecture
         }
 
         #expect(signCalls.value == 0)
+        #expect(refreshMigrationSyncGateCalls.value == 1)
     }
 
     @MainActor @Test func cancelTappedDismissesFailureSheet() async {
@@ -782,6 +788,9 @@ import ComposableArchitecture
         let signedSchedule = LockIsolated<MigrationSchedule?>(nil)
         let recordCommittedScheduleCalls = LockIsolated<Int>(0)
         let reconcileCalls = LockIsolated<Int>(0)
+        // MOB-1496 (R8-T4, #3): the broadcast DID land here (only recording failed) — treated
+        // exactly like `.success`, so this must NOT nudge the gate feed.
+        let refreshMigrationSyncGateCalls = LockIsolated<Int>(0)
         let schedule = MigrationSchedule(
             transfers: [
                 MigrationTransferProposal(id: "t0", amount: Zatoshi(500_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
@@ -804,6 +813,7 @@ import ComposableArchitecture
             $0.migrationManager.migrationNetworkOptions = { _ in Self.defaultNetworkPrivacyOptions }
             $0.migrationManager.recordCommittedSchedule = { _, _ in recordCommittedScheduleCalls.withValue { $0 += 1 } }
             $0.migrationManager.reconcile = { reconcileCalls.withValue { $0 += 1 } }
+            $0.migrationManager.refreshMigrationSyncGate = { refreshMigrationSyncGateCalls.withValue { $0 += 1 } }
             withDependenciesUSKDerivable(&$0)
         }
 
@@ -817,6 +827,7 @@ import ComposableArchitecture
         #expect(signedSchedule.value == schedule)
         #expect(recordCommittedScheduleCalls.value == 1)
         #expect(reconcileCalls.value == 1)
+        #expect(refreshMigrationSyncGateCalls.value == 0)
     }
 
     // MARK: - MOB-1496 (R8-T1, #4): Keystone propose failures surface instead of dead-ending

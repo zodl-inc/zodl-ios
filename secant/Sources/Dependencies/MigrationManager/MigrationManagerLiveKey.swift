@@ -66,6 +66,8 @@ extension MigrationManagerClient: DependencyKey {
             acknowledgeComplete: { accountUUID in await impl.acknowledgeComplete(accountUUID: accountUUID) },
             sendGate: { await impl.sendGate() },
             recordSyncCompleted: { impl.recordSyncCompleted() },
+            migrationSyncGateFeed: { impl.migrationSyncGateFeed() },
+            refreshMigrationSyncGate: { await impl.refreshMigrationSyncGate() },
             reconcile: { await impl.reconcile() },
             clearAbandonedNetworkSnapshot: { accountUUID in await impl.clearAbandonedNetworkSnapshot(accountUUID: accountUUID) },
             resetPersistedFlags: { impl.resetPersistedFlags() }
@@ -608,6 +610,32 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// `reconcile()` fires on) so this updates once per completed sync, never per tick.
     func recordSyncCompleted() {
         gateStorage.recordSyncCompleted(at: Date())
+    }
+
+    /// MOB-1496 (R8-T4, #3): backing continuation for `migrationSyncGateFeed()` — see
+    /// `MigrationManagerClient.migrationSyncGateFeed`'s doc for the full mechanism this feeds.
+    /// `migrationSyncGateFeed()` hands back a FRESH `AsyncStream` (and continuation) on every call,
+    /// retaining only the MOST RECENT continuation here — exactly what `Root
+    /// .registerForSynchronizersUpdate`'s own `cancellable(id: state.migrationSyncGateCancelId,
+    /// cancelInFlight: true)` needs, since that subscription (SDK stream + this feed, merged) is
+    /// cancelled and re-established as one unit every time the action re-fires, so only ONE
+    /// subscriber is ever meaningfully "live" at a time.
+    private let migrationSyncGateContinuation = OSAllocatedUnfairLock<AsyncStream<Bool>.Continuation?>(initialState: nil)
+
+    /// MOB-1496 (R8-T4, #3): see `MigrationManagerClient.migrationSyncGateFeed`'s doc.
+    func migrationSyncGateFeed() -> AsyncStream<Bool> {
+        AsyncStream<Bool> { continuation in
+            migrationSyncGateContinuation.withLock { $0 = continuation }
+        }
+    }
+
+    /// MOB-1496 (R8-T4, #3): read+yield only — see `MigrationManagerClient.refreshMigrationSyncGate`'s
+    /// doc. Deliberately outside `serialExecutor` (mutates none of this class's own persisted state —
+    /// the continuation box is throwaway plumbing, not app state) and never touches `transactionGuard`
+    /// (not a broadcast/server-switch).
+    func refreshMigrationSyncGate() async {
+        let isBlocked = await sdkSynchronizer.isMigrationSyncBlocked()
+        migrationSyncGateContinuation.withLock { $0?.yield(isBlocked) }
     }
 
     /// Re-reads `getMigrationState` for EVERY candidate account (R8-T3 #17 — was selected + first
