@@ -26,10 +26,27 @@
 import Foundation
 import Testing
 import ComposableArchitecture
-@preconcurrency import ZcashLightClientKit
+@testable @preconcurrency import ZcashLightClientKit
 @testable import zodl_internal
 
 @Suite(.serialized) @MainActor struct RootMigrationRoutingTests {
+    /// R8-T5 (S4): a second account for the notification-tap account-switch tests — distinct
+    /// `idByte` from a plain `Root.State.initial` selection, mirroring `RootMigrationBackgroundTests
+    /// .walletAccount(idByte:)`'s identical fixture pattern.
+    private static func walletAccount(idByte: UInt8) -> WalletAccount {
+        WalletAccount(
+            Account(
+                id: AccountUUID(id: [UInt8](repeating: idByte, count: 16)),
+                name: "Zodl",
+                keySource: nil,
+                seedFingerprint: nil,
+                hdAccountIndex: Zip32AccountIndex(0),
+                ufvk: nil,
+                uivk: nil
+            )
+        )
+    }
+
     // MARK: - Banner tap -> .migrationCoordFlow
 
     /// Tapping the migration banner (`.home(.smartBanner(.migrationScreenRequested))`) must open
@@ -211,13 +228,15 @@ import ComposableArchitecture
                 baseNoOpDependencies(&$0)
             }
 
-            store.send(.initialization(.appDelegate(.migrationNotificationTapped)))
+            // R8-T5 (S4-c): a nil/absent payload account routes exactly as before S4.
+            store.send(.initialization(.appDelegate(.migrationNotificationTapped(accountUUID: nil))))
             await waitForRootStore { store.state.path == Root.State.Path.migrationCoordFlow }
 
             #expect(store.state.path == Root.State.Path.migrationCoordFlow)
             #expect(store.state.migrationCoordFlowState.mode == nil)
             #expect(store.state.migrationCoordFlowState.path.isEmpty)
             #expect(store.state.pendingMigrationDeepLink == false)
+            #expect(store.state.pendingMigrationDeepLinkAccountUUID == nil)
         }
     }
 
@@ -239,10 +258,13 @@ import ComposableArchitecture
                 baseNoOpDependencies(&$0)
             }
 
-            store.send(.initialization(.appDelegate(.migrationNotificationTapped)))
+            // R8-T5 (S4): the stash carries an account too — replayed below.
+            let taggedAccountUUID = Data(Self.walletAccount(idByte: 9).id.id).hexEncodedString()
+            store.send(.initialization(.appDelegate(.migrationNotificationTapped(accountUUID: taggedAccountUUID))))
             await waitForRootStore { store.state.pendingMigrationDeepLink == true }
 
             #expect(store.state.pendingMigrationDeepLink == true)
+            #expect(store.state.pendingMigrationDeepLinkAccountUUID == taggedAccountUUID)
             #expect(store.state.path == nil)
 
             store.send(.initialization(.checkBackupPhraseValidation))
@@ -250,6 +272,105 @@ import ComposableArchitecture
 
             #expect(store.state.path == Root.State.Path.migrationCoordFlow)
             #expect(store.state.pendingMigrationDeepLink == false)
+            #expect(store.state.pendingMigrationDeepLinkAccountUUID == nil)
+        }
+    }
+
+    /// R8-T5 (S4-b): a tapped notification whose payload account differs from the currently
+    /// selected one must switch FIRST — via the house account-switch action (`.home
+    /// (.walletAccountTapped(_:))`, the SAME one `WalletAccountsSheet`'s tap uses) — THEN open the
+    /// migration flow.
+    ///
+    /// This file uses a plain `Store` (not `TestStore`) throughout — per its own header doc, `Root`'s
+    /// heavy init effects make exhaustive `TestStore` assertion impractical. That same choice also
+    /// turns out to be load-bearing here for a different reason: `TestStore<State: Equatable,
+    /// Action>` requires `Root.State: Equatable`, which it is not (confirmed against HEAD — adding
+    /// that conformance is a large, unrelated change well outside this task's "notification compose
+    /// + tap routing ONLY" scope). So this test asserts the OUTCOME (both the switch and the route
+    /// landed) via the same polling idiom every other test in this file uses; the ORDER guarantee
+    /// itself is structural, not empirical — `migrationNotificationTappedRoutingEffect`
+    /// (`RootInitialization.swift`) dispatches `.home(.walletAccountTapped(_:))` and
+    /// `.initialization(.migrationNotificationRoute)` via `.concatenate(...)`, which — per
+    /// `Effect.concatenate`'s own contract — only starts the second `.send` once the first action's
+    /// reducer pass (here, the synchronous `@Shared` write) has been fully applied, verifiable by
+    /// inspection of that function.
+    @Test func migrationNotificationTappedWithDifferentAccountSwitchesBeforeRouting() async {
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let selected = Self.walletAccount(idByte: 1)
+            let target = Self.walletAccount(idByte: 2)
+
+            var initialState = Root.State.initial
+            initialState.appInitializationState = InitializationState.initialized
+            initialState.$selectedWalletAccount.withLock { $0 = selected }
+            initialState.$walletAccounts.withLock { $0 = [selected, target] }
+
+            let store = Store(initialState: initialState) {
+                Root()
+            } withDependencies: {
+                baseNoOpDependencies(&$0)
+            }
+
+            store.send(.initialization(.appDelegate(.migrationNotificationTapped(accountUUID: Data(target.id.id).hexEncodedString()))))
+            await waitForRootStore { store.state.path == Root.State.Path.migrationCoordFlow }
+
+            #expect(store.state.path == Root.State.Path.migrationCoordFlow)
+            #expect(store.state.selectedWalletAccount == target)
+        }
+    }
+
+    /// R8-T5 (S4-b, negative case): a tapped notification whose payload account MATCHES the
+    /// already-selected account must NOT dispatch a switch — routes immediately with the selection
+    /// untouched, exactly like a nil payload does.
+    @Test func migrationNotificationTappedWithSameAccountAsSelectedDoesNotSwitch() async {
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let selected = Self.walletAccount(idByte: 1)
+            var initialState = Root.State.initial
+            initialState.appInitializationState = InitializationState.initialized
+            initialState.$selectedWalletAccount.withLock { $0 = selected }
+            initialState.$walletAccounts.withLock { $0 = [selected] }
+
+            let store = Store(initialState: initialState) {
+                Root()
+            } withDependencies: {
+                baseNoOpDependencies(&$0)
+            }
+
+            store.send(.initialization(.appDelegate(.migrationNotificationTapped(accountUUID: Data(selected.id.id).hexEncodedString()))))
+            await waitForRootStore { store.state.path == Root.State.Path.migrationCoordFlow }
+
+            #expect(store.state.path == Root.State.Path.migrationCoordFlow)
+            #expect(store.state.selectedWalletAccount == selected)
+        }
+    }
+
+    /// R8-T5 (S4-c edge): a payload account that doesn't resolve to any of `walletAccounts` (stale/
+    /// removed account) must degrade exactly like an absent payload — route immediately, selection
+    /// untouched — rather than getting stuck or crashing on the lookup.
+    @Test func migrationNotificationTappedWithUnresolvableAccountRoutesWithoutSwitching() async {
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let selected = Self.walletAccount(idByte: 1)
+            var initialState = Root.State.initial
+            initialState.appInitializationState = InitializationState.initialized
+            initialState.$selectedWalletAccount.withLock { $0 = selected }
+            initialState.$walletAccounts.withLock { $0 = [selected] }
+
+            let store = Store(initialState: initialState) {
+                Root()
+            } withDependencies: {
+                baseNoOpDependencies(&$0)
+            }
+
+            store.send(.initialization(.appDelegate(.migrationNotificationTapped(accountUUID: "not-a-real-account"))))
+            await waitForRootStore { store.state.path == Root.State.Path.migrationCoordFlow }
+
+            #expect(store.state.path == Root.State.Path.migrationCoordFlow)
+            #expect(store.state.selectedWalletAccount == selected)
         }
     }
 

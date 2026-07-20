@@ -18,7 +18,7 @@
 
 import Testing
 import Foundation
-@preconcurrency import ZcashLightClientKit
+@testable @preconcurrency import ZcashLightClientKit
 @testable import zodl_internal
 
 @Suite struct MigrationCadenceTests {
@@ -188,31 +188,40 @@ import Foundation
         nextTransferReadyAtHeight: nil
     )
 
+    /// R8-T5: every `planRearm` test now needs a concrete `AccountUUID` per input (S4:
+    /// `RearmPlan.winnerAccountUUID` tracks which account contributed) — distinct `idByte`s let
+    /// multi-account tests assert WHICH account won.
+    private static func accountUUID(idByte: UInt8 = 1) -> AccountUUID {
+        AccountUUID(id: [UInt8](repeating: idByte, count: 16))
+    }
+
     @Test func emptyInputHasNoActiveRunAndNoHeight() {
         let plan = MigrationCadence.planRearm([])
 
         #expect(plan.representativeState == MigrationState.complete)
         #expect(plan.earliestNextExecutableAfterHeight == nil)
         #expect(plan.nextTransferNumber == 1)
+        #expect(plan.winnerAccountUUID == nil)
     }
 
     @Test func everyAccountCompleteOrNotStartedHasNoActiveRun() {
         let inputs = [
-            MigrationCadence.AccountRearmInput(state: MigrationState.complete, progress: nil, nextExecutableAfterHeight: nil),
-            MigrationCadence.AccountRearmInput(state: MigrationState.notStarted, progress: nil, nextExecutableAfterHeight: nil)
+            MigrationCadence.AccountRearmInput(accountUUID: Self.accountUUID(idByte: 1), state: MigrationState.complete, progress: nil, nextExecutableAfterHeight: nil),
+            MigrationCadence.AccountRearmInput(accountUUID: Self.accountUUID(idByte: 2), state: MigrationState.notStarted, progress: nil, nextExecutableAfterHeight: nil)
         ]
 
         let plan = MigrationCadence.planRearm(inputs)
 
         #expect(plan.representativeState == MigrationState.complete)
         #expect(plan.earliestNextExecutableAfterHeight == nil)
+        #expect(plan.winnerAccountUUID == nil)
     }
 
     /// `.readyToPropose`/`.inProgress`/`.requiresAttention` all count as an active run — proven here
     /// via `.readyToPropose` specifically (no height available yet, but still active).
     @Test func readyToProposeCountsAsActiveEvenWithoutAHeight() {
         let inputs = [
-            MigrationCadence.AccountRearmInput(state: MigrationState.readyToPropose, progress: nil, nextExecutableAfterHeight: nil)
+            MigrationCadence.AccountRearmInput(accountUUID: Self.accountUUID(), state: MigrationState.readyToPropose, progress: nil, nextExecutableAfterHeight: nil)
         ]
 
         let plan = MigrationCadence.planRearm(inputs)
@@ -222,8 +231,9 @@ import Foundation
     }
 
     @Test func singleActiveAccountsHeightWins() {
+        let account = Self.accountUUID()
         let inputs = [
-            MigrationCadence.AccountRearmInput(state: MigrationState.inProgress(Self.progress), progress: Self.progress, nextExecutableAfterHeight: 500)
+            MigrationCadence.AccountRearmInput(accountUUID: account, state: MigrationState.inProgress(Self.progress), progress: Self.progress, nextExecutableAfterHeight: 500)
         ]
 
         let plan = MigrationCadence.planRearm(inputs)
@@ -231,21 +241,28 @@ import Foundation
         #expect(plan.representativeState == MigrationState.inProgress(Self.progress))
         #expect(plan.earliestNextExecutableAfterHeight == 500)
         #expect(plan.nextTransferNumber == Self.progress.completedTransfers + 1)
+        #expect(plan.winnerAccountUUID == account)
     }
 
     @Test func twoActiveAccountsEarliestHeightWinsRegardlessOfInputOrder() {
         let laterProgress = MigrationProgress(completedTransfers: 5, totalTransfers: 9, remainingOrchard: Zatoshi(1), nextTransferReadyAtHeight: nil)
         let earlierProgress = MigrationProgress(completedTransfers: 2, totalTransfers: 9, remainingOrchard: Zatoshi(1), nextTransferReadyAtHeight: nil)
+        let laterAccount = Self.accountUUID(idByte: 1)
+        let earlierAccount = Self.accountUUID(idByte: 2)
 
         let inputs = [
-            MigrationCadence.AccountRearmInput(state: MigrationState.inProgress(laterProgress), progress: laterProgress, nextExecutableAfterHeight: 900),
-            MigrationCadence.AccountRearmInput(state: MigrationState.inProgress(earlierProgress), progress: earlierProgress, nextExecutableAfterHeight: 100)
+            MigrationCadence.AccountRearmInput(accountUUID: laterAccount, state: MigrationState.inProgress(laterProgress), progress: laterProgress, nextExecutableAfterHeight: 900),
+            MigrationCadence.AccountRearmInput(accountUUID: earlierAccount, state: MigrationState.inProgress(earlierProgress), progress: earlierProgress, nextExecutableAfterHeight: 100)
         ]
 
         let plan = MigrationCadence.planRearm(inputs)
 
         #expect(plan.earliestNextExecutableAfterHeight == 100)
         #expect(plan.nextTransferNumber == earlierProgress.completedTransfers + 1)
+        // R8-T5 (S4): the winner is whichever account the EARLIEST height belongs to (the account
+        // reached FIRST in the input order here is the LATER one, proving this isn't just "whoever
+        // is iterated last").
+        #expect(plan.winnerAccountUUID == earlierAccount)
     }
 
     /// The `nextExecutableAfterHeight` probe value is preferred over `progress
@@ -259,6 +276,7 @@ import Foundation
         )
         let inputs = [
             MigrationCadence.AccountRearmInput(
+                accountUUID: Self.accountUUID(),
                 state: MigrationState.inProgress(progressWithReadyHeight),
                 progress: progressWithReadyHeight,
                 nextExecutableAfterHeight: 111
@@ -280,6 +298,7 @@ import Foundation
         )
         let inputs = [
             MigrationCadence.AccountRearmInput(
+                accountUUID: Self.accountUUID(),
                 state: MigrationState.inProgress(progressWithReadyHeight),
                 progress: progressWithReadyHeight,
                 nextExecutableAfterHeight: nil
@@ -296,7 +315,7 @@ import Foundation
     /// `.inProgress` account with a progress payload carrying no ready height yet).
     @Test func activeAccountWithNeitherHeightSourceStillCountsAsActive() {
         let inputs = [
-            MigrationCadence.AccountRearmInput(state: MigrationState.inProgress(Self.progress), progress: Self.progress, nextExecutableAfterHeight: nil)
+            MigrationCadence.AccountRearmInput(accountUUID: Self.accountUUID(), state: MigrationState.inProgress(Self.progress), progress: Self.progress, nextExecutableAfterHeight: nil)
         ]
 
         let plan = MigrationCadence.planRearm(inputs)
@@ -309,8 +328,8 @@ import Foundation
     /// wins — a completed account contributes nothing.
     @Test func completeAccountBesideActiveAccountContributesNothing() {
         let inputs = [
-            MigrationCadence.AccountRearmInput(state: MigrationState.complete, progress: nil, nextExecutableAfterHeight: nil),
-            MigrationCadence.AccountRearmInput(state: MigrationState.inProgress(Self.progress), progress: Self.progress, nextExecutableAfterHeight: 250)
+            MigrationCadence.AccountRearmInput(accountUUID: Self.accountUUID(idByte: 1), state: MigrationState.complete, progress: nil, nextExecutableAfterHeight: nil),
+            MigrationCadence.AccountRearmInput(accountUUID: Self.accountUUID(idByte: 2), state: MigrationState.inProgress(Self.progress), progress: Self.progress, nextExecutableAfterHeight: 250)
         ]
 
         let plan = MigrationCadence.planRearm(inputs)
@@ -335,8 +354,10 @@ import Foundation
             remainingOrchard: Zatoshi(1_000),
             nextTransferReadyAtHeight: nil
         )
+        let account = Self.accountUUID()
         let inputs = [
             MigrationCadence.AccountRearmInput(
+                accountUUID: account,
                 state: MigrationState.inProgress(progressWithNoReadyHeight),
                 progress: progressWithNoReadyHeight,
                 nextExecutableAfterHeight: nil
@@ -348,5 +369,74 @@ import Foundation
         #expect(plan.representativeState == MigrationState.inProgress(progressWithNoReadyHeight))
         #expect(plan.earliestNextExecutableAfterHeight == nil)
         #expect(plan.nextTransferNumber == 4)
+        // R8-T5 (S4): the fallback transfer number's account is tracked too — same fallback branch.
+        #expect(plan.winnerAccountUUID == account)
+    }
+
+    // MARK: - isUnreadable (R8-T5 #8): conservative-active accounts never resolve `.complete`
+
+    /// An unreadable account beside a genuinely `.complete` account: `representativeState` must NOT
+    /// resolve `.complete` — the unreadable account's true state is unknown, so `WakeupAction
+    /// .cancelAll` must stay unreachable (mirrors the BG session tree's own `.unreadable`
+    /// semantics — `RootInitialization.isDoneClassification`'s doc). #8-a's core assertion.
+    @Test func unreadableAccountBesideCompleteAccountIsNotDone() {
+        let inputs = [
+            MigrationCadence.AccountRearmInput(accountUUID: Self.accountUUID(idByte: 1), state: MigrationState.complete, progress: nil, nextExecutableAfterHeight: nil),
+            MigrationCadence.AccountRearmInput(accountUUID: Self.accountUUID(idByte: 2), state: MigrationState.complete, progress: nil, nextExecutableAfterHeight: nil, isUnreadable: true)
+        ]
+
+        let plan = MigrationCadence.planRearm(inputs)
+
+        #expect(plan.representativeState != MigrationState.complete)
+    }
+
+    /// Every account unreadable (#8-b: the all-reads-failed case at the `arm(margin:)` level) is
+    /// STILL not done — a retry window must be armable, never a silent skip/cancel. `winnerAccountUUID`
+    /// stays nil (S4-c): there is no real account to attribute a notification to here.
+    @Test func allAccountsUnreadableIsNotDoneAndHasNoWinner() {
+        let inputs = [
+            MigrationCadence.AccountRearmInput(accountUUID: Self.accountUUID(idByte: 1), state: MigrationState.complete, progress: nil, nextExecutableAfterHeight: nil, isUnreadable: true),
+            MigrationCadence.AccountRearmInput(accountUUID: Self.accountUUID(idByte: 2), state: MigrationState.complete, progress: nil, nextExecutableAfterHeight: nil, isUnreadable: true)
+        ]
+
+        let plan = MigrationCadence.planRearm(inputs)
+
+        #expect(plan.representativeState != MigrationState.complete)
+        #expect(plan.winnerAccountUUID == nil)
+        #expect(plan.earliestNextExecutableAfterHeight == nil)
+    }
+
+    /// #8-c guard: every account GENUINELY done, with no unreadable ones at all, must still resolve
+    /// `.complete` — the fix must not block the legitimate cancelAll path.
+    @Test func everyAccountGenuinelyDoneWithNoneUnreadableStillResolvesComplete() {
+        let inputs = [
+            MigrationCadence.AccountRearmInput(accountUUID: Self.accountUUID(idByte: 1), state: MigrationState.complete, progress: nil, nextExecutableAfterHeight: nil),
+            MigrationCadence.AccountRearmInput(accountUUID: Self.accountUUID(idByte: 2), state: MigrationState.notStarted, progress: nil, nextExecutableAfterHeight: nil)
+        ]
+
+        let plan = MigrationCadence.planRearm(inputs)
+
+        #expect(plan.representativeState == MigrationState.complete)
+        #expect(plan.winnerAccountUUID == nil)
+    }
+
+    /// An unreadable account must never contribute a winner/transfer-number — only a genuinely-
+    /// readable, active account may. Guards against a mismatch (a REAL account's transfer number
+    /// attributed to the WRONG, unreadable account, or vice versa) if `isUnreadable` handling were
+    /// ever folded into the same bookkeeping the readable branch uses.
+    @Test func unreadableAccountDoesNotContributeAWinnerOrTransferNumber() {
+        let activeAccount = Self.accountUUID(idByte: 1)
+        let unreadableAccount = Self.accountUUID(idByte: 2)
+        let progress = MigrationProgress(completedTransfers: 2, totalTransfers: 9, remainingOrchard: Zatoshi(1), nextTransferReadyAtHeight: nil)
+
+        let inputs = [
+            MigrationCadence.AccountRearmInput(accountUUID: activeAccount, state: MigrationState.inProgress(progress), progress: progress, nextExecutableAfterHeight: 300),
+            MigrationCadence.AccountRearmInput(accountUUID: unreadableAccount, state: MigrationState.complete, progress: nil, nextExecutableAfterHeight: nil, isUnreadable: true)
+        ]
+
+        let plan = MigrationCadence.planRearm(inputs)
+
+        #expect(plan.winnerAccountUUID == activeAccount)
+        #expect(plan.nextTransferNumber == progress.completedTransfers + 1)
     }
 }

@@ -27,11 +27,18 @@ extension UserNotificationsClient: DependencyKey {
                     return false
                 }
             },
-            scheduleMigrationNotification: { notification, date in
+            scheduleMigrationNotification: { notification, date, accountUUID in
                 let content = UNMutableNotificationContent()
                 content.title = notification.title
                 content.body = notification.body
                 content.sound = .default
+                // R8-T5 (S4): carries the account this notification was composed for, so the tap
+                // handler (`MigrationNotificationCenterDelegate` in `AppDelegate.swift`) can read it
+                // back off `response.notification.request.content.userInfo` and route/switch to the
+                // right account instead of always resolving `selectedWalletAccount`.
+                if let accountUUID {
+                    content.userInfo = ["accountUUID": accountUUID]
+                }
 
                 let trigger: UNTimeIntervalNotificationTrigger?
                 if let date {

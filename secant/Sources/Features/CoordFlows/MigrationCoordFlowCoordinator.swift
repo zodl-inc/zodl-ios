@@ -1051,7 +1051,9 @@ extension MigrationCoordFlow {
             rows: IdentifiedArrayOf(uniqueElements: rows),
             totalDurationHours: summary.estimatedDurationHours,
             stalledNumber: (stalledRow?.index ?? 0) + 1,
-            stalledHoursAgo: stalledRow?.hoursFromNow ?? 0,
+            // R8-T5 (#13): NOT `stalledRow?.hoursFromNow` — see `liveStalledHoursAgo`'s doc for why
+            // that field always reads `0` here.
+            stalledHoursAgo: await liveStalledHoursAgo(accountUUID: accountUUID, hasStalledRow: stalledRow != nil),
             isFlowRoot: isFlowRoot
         )
         state.isSendNowDisabled = await migrationManager.sendGate() != MigrationSendGate.allowed
@@ -1063,6 +1065,38 @@ extension MigrationCoordFlow {
             from: sdkSynchronizer.migrationPrivacySyncBufferDuration()
         )
         return state
+    }
+
+    /// R8-T5 (#13): the resume screen's "was scheduled N hours ago" header / "Overdue · Nh ago" row
+    /// caption used to read `stalledRow?.hoursFromNow` — but `MigrationTransferRow.hoursFromNow` is a
+    /// FORWARD-looking, position-based ETA for FUTURE (pending) rows (`MigrationDerivations
+    /// .transferRows`: `nonSentPosition × 6`, unchanged by this fix — future-row semantics stay
+    /// exactly as they are), and is therefore `0` BY CONSTRUCTION for the first non-sent row, which
+    /// is always the STALLED (overdue) one on this screen. Reusing it here read as "0 hours ago"
+    /// forever on the real SDK path.
+    ///
+    /// The honest source: the engine's live `rescheduleOverdueMigrationTransfer` probe — the SAME
+    /// call `MigrationBGSchedulerImpl.arm`/`RootInitialization.classifyMigrationAccount` already use
+    /// for this exact transfer's `nextExecutableAfterHeight` — converted to a real moment via
+    /// `estimateTimestamp` (§8.3's existing height -> Date conversion, checkpoint-based so it
+    /// resolves fine for a PAST height), then the elapsed hours since (floored, matching
+    /// `transferRows`'s own `.sent`-row "hours ago" convention: `elapsedMinutes / 60`). Falls back to
+    /// `0` (today's behavior) when there's no stalled row, no resolvable account, no live proposal,
+    /// or no timestamp estimate — a best-effort read that must never crash or block the screen.
+    private func liveStalledHoursAgo(accountUUID: AccountUUID?, hasStalledRow: Bool) async -> Int {
+        guard hasStalledRow, let accountUUID else { return 0 }
+
+        // Double-optional flatten (mirrors `runMigrationSession`'s identical pattern in
+        // `RootInitialization.swift`): a thrown read and a genuinely-empty probe both mean "no real
+        // due data to report" here.
+        let proposalResult = try? await sdkSynchronizer.rescheduleOverdueMigrationTransfer(accountUUID)
+        guard let proposal = proposalResult ?? nil,
+              let becameDueAt = sdkSynchronizer.estimateTimestamp(proposal.nextExecutableAfterHeight) else {
+            return 0
+        }
+
+        let elapsedHours = Date().timeIntervalSince(Date(timeIntervalSince1970: becameDueAt)) / 3600
+        return max(0, Int(elapsedHours.rounded(.down)))
     }
 
     private func statusProgressState(accountUUID: AccountUUID?, isFlowRoot: Bool) async -> MigrationStatus.State {
