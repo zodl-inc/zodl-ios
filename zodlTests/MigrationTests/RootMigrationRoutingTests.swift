@@ -62,8 +62,10 @@ import ComposableArchitecture
     // MARK: - flowFinished -> path == nil
 
     /// `MigrationCoordFlow`'s `.flowFinished` (every flow-root close / terminal delegate) must
-    /// close the migration path back to Home.
+    /// close the migration path back to Home. R8-T3 (#9): also fires `clearAbandonedNetworkSnapshot`
+    /// fire-and-forget — asserted via a call-count spy, not just the path closing.
     @Test func migrationCoordFlowFinishedClosesPath() async {
+        let clearAbandonedNetworkSnapshotCalls = LockIsolated<Int>(0)
         await withDependencies {
             $0.defaultInMemoryStorage = InMemoryStorage()
         } operation: {
@@ -74,12 +76,17 @@ import ComposableArchitecture
                 Root()
             } withDependencies: {
                 baseNoOpDependencies(&$0)
+                $0.migrationManager.clearAbandonedNetworkSnapshot = { _ in
+                    clearAbandonedNetworkSnapshotCalls.withValue { $0 += 1 }
+                }
             }
 
             store.send(.migrationCoordFlow(.flowFinished))
             await waitForRootStore { store.state.path == nil }
 
             #expect(store.state.path == nil)
+            await waitForRootStore { clearAbandonedNetworkSnapshotCalls.withValue { $0 } == 1 }
+            #expect(clearAbandonedNetworkSnapshotCalls.withValue { $0 } == 1)
         }
     }
 
@@ -304,8 +311,9 @@ private func baseNoOpDependencies(_ values: inout DependencyValues) {
     values.migrationManager.setMigrationMode = { _ in }
     values.migrationManager.setManualDelivery = { _ in }
     values.migrationManager.setNetworkPrivacyOptions = { _ in }
-    values.migrationManager.acknowledgeComplete = { }
+    values.migrationManager.acknowledgeComplete = { _ in }
     values.migrationManager.reconcile = { }
+    values.migrationManager.clearAbandonedNetworkSnapshot = { _ in }
     values.migrationManager.recordSyncCompleted = { }
     values.readTransactionsStorage.resetZashi = { }
     values.sdkSynchronizer = .noOp

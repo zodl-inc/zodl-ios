@@ -27,9 +27,7 @@ import ComposableArchitecture
         MigrationNetworkSnapshot(
             useTor: false,
             syncEndpoint: MigrationNetworkSnapshot.Endpoint(host: syncHost, port: 443, secure: true),
-            syncProvider: ServerProvider.classify(host: syncHost),
             broadcastEndpoint: MigrationNetworkSnapshot.Endpoint(host: broadcastHost, port: 443, secure: true),
-            broadcastProvider: ServerProvider.classify(host: broadcastHost),
             takenAt: Date(timeIntervalSince1970: 1_700_000_000)
         )
     }
@@ -143,9 +141,7 @@ import ComposableArchitecture
         let customSnapshot = MigrationNetworkSnapshot(
             useTor: false,
             syncEndpoint: MigrationNetworkSnapshot.Endpoint(host: "myserver.example.com", port: 9067, secure: true),
-            syncProvider: ServerProvider.custom(host: "myserver.example.com"),
             broadcastEndpoint: MigrationNetworkSnapshot.Endpoint(host: "myserver.example.com", port: 9067, secure: true),
-            broadcastProvider: ServerProvider.custom(host: "myserver.example.com"),
             takenAt: Date(timeIntervalSince1970: 1_700_000_000)
         )
 
