@@ -83,8 +83,16 @@ struct MigrationManagerClient: Sendable {
     // `ensureNetworkSnapshot` when a run's snapshot is first taken — a later call does NOT alter an
     // already-active run's snapshot (see `MigrationNetworkSnapshot.useTor`'s doc).
     var setNetworkPrivacyOptions: @Sendable (_ useTor: Bool) -> Void
-    var isCompleteAcknowledged: @Sendable () -> Bool = { false }
-    var acknowledgeComplete: @Sendable () -> Void
+    // R8-T3 (S2): per-account now — a wallet-wide flag suppressed a SECOND account's own
+    // completion banner/re-entry the moment the FIRST account acknowledged, made that account's
+    // own `acknowledgeComplete` unreachable, and left its snapshot immortal. `nil` resolves the
+    // selected account, same convention as `bannerVariant`/`migrationSummary` above.
+    var isCompleteAcknowledged: @Sendable (_ accountUUID: AccountUUID?) -> Bool = { _ in false }
+    // R8-T3 (V18): async now — reads `accountUUID`'s engine state fresh and NO-OPs (schedule +
+    // snapshot INTACT, flag unset) unless it is exactly `.complete`. Pre-fix this was unconditional
+    // and destructive: a close reached while the engine was still genuinely `.inProgress` wiped the
+    // still-live run's own records.
+    var acknowledgeComplete: @Sendable (_ accountUUID: AccountUUID?) async -> Void
     // Sync<->send gate (app direction: a completed sync briefly disables migration sends). MOB-1496
     // (W3): re-keyed off observed sync completions + the SDK's own buffer duration — the OTHER
     // direction (broadcast briefly disables sync) is now enforced by the SDK itself
@@ -100,6 +108,13 @@ struct MigrationManagerClient: Sendable {
     // `MigrationSendingStore`/`MigrationNoteSplitStore` (post-broadcast) join the launch/foreground
     // ones. `= { }` is a no-op default, not a test fallback (see the `recordCommittedSchedule` note).
     var reconcile: @Sendable () async -> Void = { }
+    // R8-T3 (#9): clears `accountUUID`'s (`nil` resolves the selected account) network snapshot iff
+    // its engine state is fresh `.notStarted` with no stored schedule payload — i.e. a confirm lane
+    // that took a snapshot (every lane does, on the FIRST `migrationNetworkOptions` read, before any
+    // store/broadcast) but was abandoned before ever committing. Otherwise a no-op. Called
+    // fire-and-forget from the coordinator's `.flowFinished` handler. `= { _ in }` mirrors
+    // `reconcile`'s no-op but is not a test fallback (see the `recordCommittedSchedule` note).
+    var clearAbandonedNetworkSnapshot: @Sendable (_ accountUUID: AccountUUID?) async -> Void = { _ in }
     // Debug/testnet-only: clears every persisted migration flag this client owns (mode, manual
     // delivery, network privacy, complete-acknowledged, dust-locked) — consumed by the
     // migration SDK simulator's debug panel "Reset app migration flags" control (MOB-1480).

@@ -275,7 +275,16 @@ extension Root {
 
             case .migrationCoordFlow(.flowFinished):
                 state.path = nil
-                return .none
+                // R8-T3 (#9): fire-and-forget — every flow-root close/terminal delegate lands
+                // here, including an abandoned pre-commit confirm lane that already took a
+                // network snapshot on its first `migrationNetworkOptions` read but never got far
+                // enough to commit a schedule (or acknowledge completion). `clearAbandonedNetworkSnapshot`
+                // itself no-ops unless the selected account's engine state is genuinely
+                // `.notStarted` with no stored schedule payload, so this is safe to fire on EVERY
+                // flow close, not just an abandoned one.
+                return .run { [migrationManager, accountUUID = state.selectedWalletAccount?.id] _ in
+                    await migrationManager.clearAbandonedNetworkSnapshot(accountUUID)
+                }
 
             case .migrationCoordFlow(
                 .path(.element(id: _, action: .sending(.delegate(.viewTransaction))))

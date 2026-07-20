@@ -427,7 +427,14 @@ extension MigrationCoordFlow {
 
             case .path(.element(id: _, action: .sending(.delegate(.closed)))):
                 if state.mode == .immediate {
-                    migrationManager.acknowledgeComplete()
+                    // R8-T3 (V18): no longer acknowledges here — the engine may still be
+                    // genuinely `.inProgress` at this point (completion needs mined-confirmed
+                    // AND `orchard_spendable == 0`, not merely "the last broadcast succeeded"),
+                    // so acknowledging unconditionally on close risked wiping a still-live run's
+                    // own schedule/snapshot records. The run's completion UX now arrives via
+                    // `reconcile()` once the engine actually reports `.complete` — the
+                    // dust-over-complete branch below and the Complete screen's "Got it" remain
+                    // the two acknowledge call sites (both genuinely post-`.complete`).
                     return .send(.flowFinished)
                 }
 
@@ -435,8 +442,15 @@ extension MigrationCoordFlow {
                 // anyway") — closing it ends the flow with the same bookkeeping as "Got it".
                 let hasCompleteBeneath = state.path.contains { $0.is(\.complete) }
                 if hasCompleteBeneath {
-                    migrationManager.acknowledgeComplete()
-                    return .send(.flowFinished)
+                    // R8-T3 (V18): acknowledge is async + account-scoped now — `.merge`d with the
+                    // navigation send rather than awaited before it, so closing the flow is never
+                    // gated on the acknowledge call finishing.
+                    return .merge(
+                        .send(.flowFinished),
+                        .run { [migrationManager, accountUUID = state.selectedWalletAccount?.id] _ in
+                            await migrationManager.acknowledgeComplete(accountUUID)
+                        }
+                    )
                 }
 
                 let hasStatusBeneath = state.path.contains { $0.is(\.status) }
@@ -595,8 +609,15 @@ extension MigrationCoordFlow {
                 return .none
 
             case .path(.element(id: _, action: .complete(.delegate(.done)))):
-                migrationManager.acknowledgeComplete()
-                return .send(.flowFinished)
+                // R8-T3 (V18): async + account-scoped now, `.merge`d with the navigation send —
+                // see the `.sending(.delegate(.closed))` dust-lane branch above for the same
+                // treatment and its rationale.
+                return .merge(
+                    .send(.flowFinished),
+                    .run { [migrationManager, accountUUID = state.selectedWalletAccount?.id] _ in
+                        await migrationManager.acknowledgeComplete(accountUUID)
+                    }
+                )
 
             case .path(.element(id: _, action: .status(.delegate(.done)))),
                  .path(.element(id: _, action: .scheduled(.delegate(.done)))),

@@ -62,20 +62,80 @@ extension MigrationManagerClient: DependencyKey {
             migrationNetworkOptions: { accountUUID in await impl.migrationNetworkOptions(accountUUID: accountUUID) },
             activeNetworkSnapshots: { impl.activeNetworkSnapshots() },
             setNetworkPrivacyOptions: { impl.setNetworkPrivacyOptions(useTor: $0) },
-            isCompleteAcknowledged: { impl.gateStorage.isCompleteAcknowledged() },
-            acknowledgeComplete: { impl.acknowledgeComplete() },
+            isCompleteAcknowledged: { accountUUID in impl.isCompleteAcknowledged(accountUUID: accountUUID) },
+            acknowledgeComplete: { accountUUID in await impl.acknowledgeComplete(accountUUID: accountUUID) },
             sendGate: { await impl.sendGate() },
             recordSyncCompleted: { impl.recordSyncCompleted() },
             reconcile: { await impl.reconcile() },
+            clearAbandonedNetworkSnapshot: { accountUUID in await impl.clearAbandonedNetworkSnapshot(accountUUID: accountUUID) },
             resetPersistedFlags: { impl.resetPersistedFlags() }
         )
     }
 }
 
+/// R8-T3 (#18): a fair (FIFO) async mutex serializing `MigrationManagerImpl`'s mutating passes —
+/// `reconcile`, `recordCommittedSchedule`, `acknowledgeComplete`, `clearAbandonedNetworkSnapshot` —
+/// so a read-decide-clear span (e.g. `reconcile` observing a stale `.notStarted` state beside a
+/// persisted schedule) can never interleave with a concurrent commit (`recordCommittedSchedule`
+/// racing in from the no-split commit lane, which deliberately doesn't stop sync while it runs).
+/// Mirrors the shape of the repo's existing FIFO-mutex-actor precedent,
+/// `Dependencies/TransactionGuard/TransactionGuard.swift` — but is its OWN instance, never
+/// `@Dependency(\.transactionGuard)`: nesting that guard here would risk exactly the deadlock its
+/// own doc warns against (non-reentrant, and `MigrationManagerImpl.ensureNetworkSnapshot` already
+/// acquires it elsewhere in this same class), and it would be serializing a disjoint set of
+/// operations anyway (submission-vs-switch exclusivity, not this class's storage-mutating passes).
+///
+/// Deliberately simpler than `TransactionGuard`: `run(_:)` is non-throwing (every operation it
+/// wraps already is) and not cancellation-aware — the wrapped bodies are fast in-memory/
+/// `UserDefaults` work, never long-running network I/O, so a parked waiter's wait is bounded and
+/// `TransactionGuard`'s cancellation-safety plumbing (built for ITS network-bound use case) isn't
+/// worth mirroring here too.
+actor MigrationManagerSerialExecutor {
+    private struct Waiter {
+        let id: UUID
+        let continuation: CheckedContinuation<Void, Never>
+    }
+
+    private var isBusy = false
+    private var waiters: [Waiter] = []
+
+    /// Runs `body` with exclusive access against every other `run(_:)` call on this SAME instance —
+    /// FIFO: a caller that arrives while busy is queued and woken in arrival order. `nonisolated` so
+    /// `body` executes in the CALLER's context (never hopping onto this actor) — only the
+    /// acquire/release bookkeeping below is actor-isolated, mirroring the split between the
+    /// `TransactionGuard` actor and its non-isolated `TransactionGuardClient.withSubmission` wrapper.
+    nonisolated func run<T>(_ body: () async -> T) async -> T {
+        await acquire()
+        let result = await body()
+        await release()
+        return result
+    }
+
+    private func acquire() async {
+        guard isBusy else {
+            isBusy = true
+            return
+        }
+        let id = UUID()
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            waiters.append(Waiter(id: id, continuation: continuation))
+        }
+    }
+
+    private func release() {
+        if waiters.isEmpty {
+            isBusy = false
+        } else {
+            let next = waiters.removeFirst()
+            next.continuation.resume() // `isBusy` stays true — ownership transfers to the resumed waiter.
+        }
+    }
+}
+
 /// Composes `sdkSynchronizer` + `MigrationGateStorage` and owns the per-account `stateEvents`
 /// subjects. `@unchecked Sendable`: the only mutable state is `gateStorage`'s own
-/// `OSAllocatedUnfairLock`-protected storage plus the Combine subjects below, all of which are
-/// safe to share across isolation domains.
+/// `OSAllocatedUnfairLock`-protected storage, the `serialExecutor` actor, plus the Combine subjects
+/// below, all of which are safe to share across isolation domains.
 final class MigrationManagerImpl: @unchecked Sendable {
     @Dependency(\.sdkSynchronizer) var sdkSynchronizer
     @Dependency(\.zcashSDKEnvironment) var zcashSDKEnvironment
@@ -90,6 +150,9 @@ final class MigrationManagerImpl: @unchecked Sendable {
     let scheduleStorage: MigrationScheduleStorage
     /// MOB-1496 (W4): per-account persisted atomic network snapshot — see `MigrationSnapshotStorage`.
     let snapshotStorage: MigrationSnapshotStorage
+    /// R8-T3 (#18): serializes `reconcile`/`recordCommittedSchedule`/`acknowledgeComplete`/
+    /// `clearAbandonedNetworkSnapshot` — see `MigrationManagerSerialExecutor`'s doc.
+    let serialExecutor = MigrationManagerSerialExecutor()
 
     /// Internal (not private) with injectable storage so unit tests can exercise the real
     /// `reconcile()` against a scoped `UserDefaults` suite.
@@ -117,40 +180,70 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// (value unchanged).
     private let lastPushedHasBalance = OSAllocatedUnfairLock<[AccountUUID: Bool]>(initialState: [:])
 
+    /// R8-T3 (#23): every underlying SDK/storage read below happens exactly ONCE — the pre-fix
+    /// version read `state` via `normalizedState`'s own `migrationState` call and AGAIN inside
+    /// `migrationTransfers`'s has-schedule branch, `hasOverdue` inside `migrationTransfers` and
+    /// AGAIN directly here, `progress` inside `isNextTransferDue` (and, on the W1-fallback path,
+    /// inside `migrationTransfers` too) — PLUS an unused `hasInvalidMigrationTransfers` read whose
+    /// result fed a `MigrationDerivations.bannerVariant` parameter the function's body never
+    /// actually consulted (the `.invalidTransfer` case is decided purely from `state`'s own
+    /// pattern-match) — deleted below along with the read, rather than kept for a value nothing
+    /// uses.
     func bannerVariant(accountUUID: AccountUUID?) async -> MigrationBannerVariant? {
         guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return nil }
-        guard let state = await normalizedState(accountUUID: resolvedAccountUUID) else { return nil }
+        guard let rawState = await migrationState(accountUUID: resolvedAccountUUID) else { return nil }
 
-        let rows = await migrationTransfers(accountUUID: resolvedAccountUUID)
-        let balance = await orchardBalanceToMigrate(accountUUID: resolvedAccountUUID)
+        async let progressTask = migrationProgress(accountUUID: resolvedAccountUUID)
+        async let hasOverdueTask = hasOverdueMigrationTransfers(accountUUID: resolvedAccountUUID)
+        async let balanceTask = orchardBalanceToMigrate(accountUUID: resolvedAccountUUID)
+
+        let progress = await progressTask
+        let hasOverdue = await hasOverdueTask
+        let balance = await balanceTask
+
+        let state = normalizedState(rawState: rawState, progress: progress)
+        let rows = bannerTransferRows(resolvedAccountUUID: resolvedAccountUUID, state: state, hasOverdue: hasOverdue, progress: progress)
 
         return MigrationDerivations.bannerVariant(
             isIronwoodActivated: isIronwoodActivated(),
             state: state,
-            hasInvalid: await hasInvalidMigrationTransfers(accountUUID: resolvedAccountUUID),
-            hasOverdue: await hasOverdueMigrationTransfers(accountUUID: resolvedAccountUUID),
+            hasOverdue: hasOverdue,
             isManualDelivery: gateStorage.isManualDelivery(),
-            isNextTransferDue: await isNextTransferDue(accountUUID: resolvedAccountUUID),
+            isNextTransferDue: isNextTransferDue(progress: progress),
             orchardBalance: balance,
-            isCompleteAcknowledged: gateStorage.isCompleteAcknowledged(),
+            isCompleteAcknowledged: gateStorage.isCompleteAcknowledged(for: resolvedAccountUUID),
             transferRows: rows
         )
     }
 
+    /// R8-T3 (#23): same one-read-each treatment as `bannerVariant` above — the pre-fix version
+    /// read `progress` up to 3x (once inside `normalizedState`'s conditional branch, once directly
+    /// here, once again inside `isNextTransferDue`). Unlike `bannerVariant`'s `hasInvalid`,
+    /// `reentryRoute`'s OWN `hasInvalid` read stays: `MigrationDerivations.reentryRoute` genuinely
+    /// branches on it (row 1, `.recovery`).
     func reentryRoute() async -> MigrationReentryRoute {
         guard let accountUUID = selectedWalletAccount?.id else { return MigrationReentryRoute.entry }
 
-        let state = await normalizedState(accountUUID: accountUUID) ?? MigrationState.notStarted
-        let progress = await migrationProgress(accountUUID: accountUUID)
+        async let rawStateTask = migrationState(accountUUID: accountUUID)
+        async let progressTask = migrationProgress(accountUUID: accountUUID)
+        async let hasInvalidTask = hasInvalidMigrationTransfers(accountUUID: accountUUID)
+        async let hasOverdueTask = hasOverdueMigrationTransfers(accountUUID: accountUUID)
+
+        let rawState = await rawStateTask ?? MigrationState.notStarted
+        let progress = await progressTask
+        let hasInvalid = await hasInvalidTask
+        let hasOverdue = await hasOverdueTask
+
+        let state = normalizedState(rawState: rawState, progress: progress)
 
         return MigrationDerivations.reentryRoute(
             isIronwoodActivated: isIronwoodActivated(),
             state: state,
-            hasInvalid: await hasInvalidMigrationTransfers(accountUUID: accountUUID),
-            hasOverdue: await hasOverdueMigrationTransfers(accountUUID: accountUUID),
+            hasInvalid: hasInvalid,
+            hasOverdue: hasOverdue,
             isManualDelivery: gateStorage.isManualDelivery(),
-            isNextTransferDue: await isNextTransferDue(accountUUID: accountUUID),
-            isCompleteAcknowledged: gateStorage.isCompleteAcknowledged(),
+            isNextTransferDue: isNextTransferDue(progress: progress),
+            isCompleteAcknowledged: gateStorage.isCompleteAcknowledged(for: accountUUID),
             progress: progress
         )
     }
@@ -236,23 +329,10 @@ final class MigrationManagerImpl: @unchecked Sendable {
         guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return [] }
 
         guard let committedSchedule = scheduleStorage.committedSchedule(for: resolvedAccountUUID) else {
-            // [MOB-1496] W1 fallback: no persisted payload yet — rows are synthesized purely from
-            // `getMigrationProgress`'s counts: index < completedTransfers reads `.sent`, everything
-            // else `.pending` (no `.active`/`.overdue`/`.invalid`/`.expired` — those need per-
-            // transfer identity a persisted schedule would carry); `hoursFromNow` is a rough
-            // `(index - completed) × 6h` cadence estimate, clamped ≥ 0. `amount`/`id` are
-            // placeholders. On a missing account or any SDK-read error, `[]`.
+            // [MOB-1496] W1 fallback — see `synthesizedTransferRows`'s doc for the exact rules. On a
+            // missing account or any SDK-read error, `[]`.
             guard let progress = await migrationProgress(accountUUID: resolvedAccountUUID) else { return [] }
-
-            return (0..<progress.totalTransfers).map { index in
-                MigrationTransferRow(
-                    id: "\(index)",
-                    index: index,
-                    amount: Zatoshi.zero,
-                    status: index < progress.completedTransfers ? MigrationTransferRow.Status.sent : MigrationTransferRow.Status.pending,
-                    hoursFromNow: max(0, (index - progress.completedTransfers) * 6)
-                )
-            }
+            return Self.synthesizedTransferRows(progress: progress)
         }
 
         let state = await migrationState(accountUUID: resolvedAccountUUID) ?? MigrationState.notStarted
@@ -266,14 +346,66 @@ final class MigrationManagerImpl: @unchecked Sendable {
         )
     }
 
+    /// [MOB-1496] W1 fallback: no persisted payload yet — rows are synthesized purely from
+    /// `getMigrationProgress`'s counts: index < completedTransfers reads `.sent`, everything else
+    /// `.pending` (no `.active`/`.overdue`/`.invalid`/`.expired` — those need per-transfer identity a
+    /// persisted schedule would carry); `hoursFromNow` is a rough `(index - completed) × 6h` cadence
+    /// estimate, clamped ≥ 0. `amount`/`id` are placeholders. Shared by the public
+    /// `migrationTransfers(accountUUID:)` and `bannerVariant`'s own row derivation (R8-T3 #23),
+    /// which otherwise would have re-derived this independently after already fetching `progress`.
+    private static func synthesizedTransferRows(progress: MigrationProgress) -> [MigrationTransferRow] {
+        (0..<progress.totalTransfers).map { index in
+            MigrationTransferRow(
+                id: "\(index)",
+                index: index,
+                amount: Zatoshi.zero,
+                status: index < progress.completedTransfers ? MigrationTransferRow.Status.sent : MigrationTransferRow.Status.pending,
+                hoursFromNow: max(0, (index - progress.completedTransfers) * 6)
+            )
+        }
+    }
+
+    /// R8-T3 (#23): `bannerVariant`'s own row derivation — mirrors `migrationTransfers(accountUUID:)`'s
+    /// branching logic exactly, but takes `state`/`hasOverdue`/`progress` already fetched by the
+    /// caller instead of re-reading them (this file's public `migrationTransfers` keeps its own
+    /// independent reads unchanged; only the tiny W1-fallback synthesis is shared, via
+    /// `synthesizedTransferRows`, to avoid coupling the two methods' read patterns together).
+    private func bannerTransferRows(
+        resolvedAccountUUID: AccountUUID,
+        state: MigrationState,
+        hasOverdue: Bool,
+        progress: MigrationProgress?
+    ) -> [MigrationTransferRow] {
+        if MigrationSimulatorFlag.isEnabled && MigrationSimulatorClient.sharedEngine.isActive {
+            return MigrationSimulatorClient.sharedEngine.transferRows()
+        }
+
+        guard let committedSchedule = scheduleStorage.committedSchedule(for: resolvedAccountUUID) else {
+            guard let progress else { return [] }
+            return Self.synthesizedTransferRows(progress: progress)
+        }
+
+        return MigrationDerivations.transferRows(
+            committedSchedule: committedSchedule,
+            state: state,
+            hasOverdueMigrationTransfers: hasOverdue,
+            now: Date()
+        )
+    }
+
     /// MOB-1496 (W2): persists the just-committed schedule for `accountUUID` (`nil` resolves the
     /// selected account, same convention as `migrationSummary`/`migrationTransfers` above) — the
     /// SDK retains no proposal list post-commit, so this is the app's only record of it. Replaces
     /// any existing payload's `schedule`/`committedAt` while preserving its `sentRecords` (a
-    /// restart/re-created plan continues the same logical run).
+    /// restart/re-created plan continues the same logical run). R8-T3 (#18): serialized against
+    /// `reconcile`/`acknowledgeComplete`/`clearAbandonedNetworkSnapshot` — see
+    /// `MigrationManagerSerialExecutor`'s doc; this is the "commit" half of the TOCTOU `reconcile()`
+    /// otherwise races.
     func recordCommittedSchedule(accountUUID: AccountUUID?, schedule: MigrationSchedule) async {
         guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return }
-        scheduleStorage.recordCommittedSchedule(schedule, for: resolvedAccountUUID, now: Date())
+        await serialExecutor.run { [self] in
+            scheduleStorage.recordCommittedSchedule(schedule, for: resolvedAccountUUID, now: Date())
+        }
     }
 
     /// MOB-1496 (W2): records a successful transfer broadcast against the persisted schedule
@@ -335,25 +467,19 @@ final class MigrationManagerImpl: @unchecked Sendable {
         return MigrationNetworkPrivacyOptions(useTor: snapshot.useTor, submissionEndpoint: snapshot.broadcastEndpoint.toLightWalletEndpoint())
     }
 
-    /// MOB-1496 (W4): every persisted network snapshot across `walletAccounts`, plus the selected
-    /// account defensively (deduped) — i.e. every account with a currently-active migration run.
-    /// Drives `AutoServerSelectionLiveKey`'s pinning and `ServerSetupStore`'s manual-switch privacy
-    /// warning.
+    /// MOB-1496 (W4): every persisted network snapshot across every candidate account — i.e. every
+    /// account with a currently-active migration run. Drives `AutoServerSelectionLiveKey`'s pinning
+    /// and `ServerSetupStore`'s manual-switch privacy warning. R8-T3: sourced from
+    /// `MigrationDerivations.candidateAccountUUIDs` — this used to hand-roll its own
+    /// walletAccounts-then-selected account list (opposite order, own ad-hoc dedup), which disagreed
+    /// with `reconcile()`'s/the BG scheduler's selected-first order; nothing here depends on a
+    /// specific order (only presence), so unifying onto the shared helper is a pure simplification.
     func activeNetworkSnapshots() -> [MigrationNetworkSnapshot] {
-        var seenAccountUUIDs = Set<AccountUUID>()
-        var accountUUIDs = walletAccounts.map { $0.id }
-        if let selectedAccountUUID = selectedWalletAccount?.id {
-            accountUUIDs.append(selectedAccountUUID)
-        }
-
-        var snapshots: [MigrationNetworkSnapshot] = []
-        for accountUUID in accountUUIDs {
-            guard seenAccountUUIDs.insert(accountUUID).inserted else { continue }
-            if let snapshot = snapshotStorage.snapshot(for: accountUUID) {
-                snapshots.append(snapshot)
-            }
-        }
-        return snapshots
+        let accountUUIDs = MigrationDerivations.candidateAccountUUIDs(
+            selectedAccountUUID: selectedWalletAccount?.id,
+            walletAccounts: walletAccounts
+        )
+        return accountUUIDs.compactMap { snapshotStorage.snapshot(for: $0) }
     }
 
     /// Persists the pre-run Tor choice — consumed the next time THIS account's snapshot is first
@@ -415,13 +541,11 @@ final class MigrationManagerImpl: @unchecked Sendable {
         let isCustomServer = syncProviderIsCustom || (storedServerConfig?.isCustom ?? false)
 
         let broadcastEndpoint: LightWalletEndpoint
-        let broadcastProvider: ServerProvider
 
         if isCustomServer {
             // Michal's rule: a user-selected custom server is used for ALL operations — sync and
             // every migration broadcast — no separation.
             broadcastEndpoint = currentEndpoint
-            broadcastProvider = syncProvider
         } else {
             let network = zcashSDKEnvironment.network().networkType
             let candidates = ZcashSDKEnvironment.endpoints(for: network, skipDefault: false).filter { candidate in
@@ -435,7 +559,6 @@ final class MigrationManagerImpl: @unchecked Sendable {
                 // Testnet (single endpoint), or defensively no other-family built-in host at all —
                 // same-server fallback (the sanctioned single-server mode extends here too).
                 broadcastEndpoint = currentEndpoint
-                broadcastProvider = syncProvider
             } else {
                 // Reuse exactly the constants/shape `AutoServerSelectionLiveKey.findBestServer`'s
                 // background benchmark uses.
@@ -454,16 +577,15 @@ final class MigrationManagerImpl: @unchecked Sendable {
                     )
                     broadcastEndpoint = candidates[0]
                 }
-                broadcastProvider = ServerProvider.classify(host: broadcastEndpoint.host)
             }
         }
 
+        // R8-T3 (#22): `syncProvider`/`broadcastProvider` are computed on `MigrationNetworkSnapshot`
+        // now (from `syncEndpoint`/`broadcastEndpoint`'s own hosts) — no longer constructor args.
         return MigrationNetworkSnapshot(
             useTor: useTor,
             syncEndpoint: MigrationNetworkSnapshot.Endpoint(currentEndpoint),
-            syncProvider: syncProvider,
             broadcastEndpoint: MigrationNetworkSnapshot.Endpoint(broadcastEndpoint),
-            broadcastProvider: broadcastProvider,
             takenAt: Date()
         )
     }
@@ -488,78 +610,178 @@ final class MigrationManagerImpl: @unchecked Sendable {
         gateStorage.recordSyncCompleted(at: Date())
     }
 
-    /// Re-reads `getMigrationState` for the selected account (single-account semantics — MOB-1496
-    /// W1; a later task fans this out per-account) and, when it differs from the account, the
-    /// Keystone-vendor account too, pushing each into its `stateEvents` subject on either a state
-    /// or balance-to-migrate change (MOB-1496 W2 emit-fix — see `pushStateIfChanged`'s doc).
-    /// Also runs the stale-acknowledge reset (selected account only, since the acknowledged flag
-    /// is not yet per-account): the acknowledged flag must never suppress a *new* migration's
-    /// completion banner (reinstall, Path F) — only meaningful while state is `.complete`. Called
-    /// on every foreground entry / launch (`RootInitialization.swift`) and after a store reports a
-    /// completed migration op (`MigrationSendingStore`/`MigrationNoteSplitStore`).
+    /// Re-reads `getMigrationState` for EVERY candidate account (R8-T3 #17 — was selected + first
+    /// Keystone account only, per the doc this replaces; a Keystone-selected wallet never
+    /// reconciled its software account's stale schedule/snapshot, pinning auto-selection and
+    /// arming the ServerSetup warning indefinitely). The account set is
+    /// `MigrationDerivations.candidateAccountUUIDs` (selected first, then the rest of
+    /// `walletAccounts`, deduped) — the SAME source `activeNetworkSnapshots()`/
+    /// `resetPersistedFlags()` now also use (R8-T3: those two previously hand-rolled their own
+    /// account lists, which disagreed with each other and with this one on order/dedupe). Pushes
+    /// each account into its `stateEvents` subject on either a state or balance-to-migrate change
+    /// (MOB-1496 W2 emit-fix — see `pushStateIfChanged`'s doc).
+    ///
+    /// Also runs the stale-acknowledge reset, now PER-ACCOUNT (R8-T3 S2 — the flag itself used to
+    /// be wallet-wide, so only the selected account's reset made sense; now every account resets
+    /// its OWN flag): an account's acknowledged flag must never suppress a *new* migration's
+    /// completion banner for THAT account (reinstall, Path F, or a second logical run after
+    /// "Migrate anyway") — only meaningful while ITS OWN state is `.complete`.
+    ///
+    /// R8-T3 (#24): `orchardBalanceToMigrate` is backed by a full-wallet `getAccountsBalances()`
+    /// read — the pre-fix loop called it once PER account (N accounts -> N identical full-wallet
+    /// computations per pass). Hoisted to ONE read above the loop, indexed per account below.
+    ///
+    /// R8-T3 (#18): each account's read-state -> decide -> clear span runs under `serialExecutor`.
+    /// The pre-fix version read state, suspended on the balance read, then tested that STALE state
+    /// against a FRESHLY-read `hasStoredPayload` — a schedule committed DURING the suspension (the
+    /// no-split commit lane deliberately doesn't stop sync) could be wiped by a reconcile pass that
+    /// started before the commit but finished after it. Serializing the whole span against
+    /// `recordCommittedSchedule`/`acknowledgeComplete`/`clearAbandonedNetworkSnapshot` closes the
+    /// window: whichever gets the executor first runs to completion (including its own storage
+    /// write) before the other can begin. Called on every foreground entry / launch
+    /// (`RootInitialization.swift`) and after a store reports a completed migration op
+    /// (`MigrationSendingStore`/`MigrationNoteSplitStore`).
     func reconcile() async {
         guard isIronwoodActivated() else { return }
 
-        let selectedAccountUUID = selectedWalletAccount?.id
-        var accountsToRefresh: [AccountUUID] = []
-        if let selectedAccountUUID {
-            accountsToRefresh.append(selectedAccountUUID)
-        }
-        if let keystoneAccountUUID = walletAccounts.first(where: { $0.vendor == WalletAccount.Vendor.keystone })?.id,
-           keystoneAccountUUID != selectedAccountUUID {
-            accountsToRefresh.append(keystoneAccountUUID)
-        }
+        let accountUUIDs = MigrationDerivations.candidateAccountUUIDs(
+            selectedAccountUUID: selectedWalletAccount?.id,
+            walletAccounts: walletAccounts
+        )
+        guard !accountUUIDs.isEmpty else { return }
 
-        for accountUUID in accountsToRefresh {
-            guard let state = await migrationState(accountUUID: accountUUID) else { continue }
+        // R8-T3 (#24): ONE full-wallet balances computation for the whole pass — see this method's
+        // doc. A throw degrades to `nil`, which `reconcileOrchardBalance` below reads as `.zero` per
+        // account (same degrade-on-error precedent `orchardBalanceToMigrate` already follows).
+        let walletBalances = try? await sdkSynchronizer.getAccountsBalances()
 
-            let hasBalanceToMigrate = await orchardBalanceToMigrate(accountUUID: accountUUID) > Zatoshi.zero
-            pushStateIfChanged(state, hasBalanceToMigrate: hasBalanceToMigrate, for: accountUUID)
+        for accountUUID in accountUUIDs {
+            await serialExecutor.run { [self] in
+                guard let state = await migrationState(accountUUID: accountUUID) else { return }
 
-            if accountUUID == selectedAccountUUID && state != MigrationState.complete {
-                gateStorage.clearAcknowledgedComplete()
-            }
+                let hasBalanceToMigrate = reconcileOrchardBalance(from: walletBalances, accountUUID: accountUUID) > Zatoshi.zero
+                pushStateIfChanged(state, hasBalanceToMigrate: hasBalanceToMigrate, for: accountUUID)
 
-            // MOB-1496 (W2): a run abandoned/reset out from under a stale persisted schedule — the
-            // engine is authoritative, so `.notStarted` observed against an account that still has
-            // a stored payload means that payload no longer corresponds to anything the engine
-            // knows about (e.g. a debug reset, or a fresh install reusing a restored seed).
-            // MOB-1496 (W4): the network snapshot's lifetime is tied to the same logical run as the
-            // schedule payload — clear it beside the schedule (a later dust mini-run then takes a
-            // FRESH snapshot, which is correct).
-            if state == MigrationState.notStarted && scheduleStorage.hasStoredPayload(for: accountUUID) {
-                scheduleStorage.clear(for: accountUUID)
-                snapshotStorage.clear(for: accountUUID)
+                if state != MigrationState.complete {
+                    gateStorage.clearAcknowledgedComplete(for: accountUUID)
+                }
+
+                // MOB-1496 (W2): a run abandoned/reset out from under a stale persisted schedule —
+                // the engine is authoritative, so `.notStarted` observed against an account that
+                // still has a stored payload means that payload no longer corresponds to anything
+                // the engine knows about (e.g. a debug reset, or a fresh install reusing a restored
+                // seed). MOB-1496 (W4): the network snapshot's lifetime is tied to the same logical
+                // run as the schedule payload — clear it beside the schedule (a later dust mini-run
+                // then takes a FRESH snapshot, which is correct).
+                if state == MigrationState.notStarted && scheduleStorage.hasStoredPayload(for: accountUUID) {
+                    scheduleStorage.clear(for: accountUUID)
+                    snapshotStorage.clear(for: accountUUID)
+                }
             }
         }
     }
 
-    /// MOB-1496 (W2): bundles the existing wallet-wide acknowledge-complete flag with clearing the
-    /// SELECTED account's persisted schedule — the run the Complete screen was showing has ended,
-    /// so its committed schedule/sent records must not leak into a future run's rows (a fresh
-    /// migration, e.g. after reinstall, must start from an empty logical run). The acknowledged
-    /// flag itself stays wallet-wide (see `reconcile()`'s doc); only the schedule clear is
-    /// account-scoped here. MOB-1496 (W4): also clears the account's network snapshot — a later
-    /// "Migrate anyway" dust mini-run then takes a FRESH one.
-    func acknowledgeComplete() {
-        gateStorage.acknowledgeComplete()
-        if let accountUUID = selectedWalletAccount?.id {
-            scheduleStorage.clear(for: accountUUID)
-            snapshotStorage.clear(for: accountUUID)
+    /// R8-T3 (#24): per-account lookup against `reconcile()`'s ONE hoisted `getAccountsBalances()`
+    /// read — mirrors `orchardBalanceToMigrate`'s own derivation (including the simulator
+    /// reach-around) without re-issuing the full-wallet read itself.
+    private func reconcileOrchardBalance(from walletBalances: [AccountUUID: AccountBalance]?, accountUUID: AccountUUID) -> Zatoshi {
+        if MigrationSimulatorFlag.isEnabled && MigrationSimulatorClient.sharedEngine.isActive {
+            return MigrationSimulatorClient.sharedEngine.orchardBalance()
         }
+        guard let balance = walletBalances?[accountUUID] else { return .zero }
+        return balance.orchardBalance.total()
+    }
+
+    /// R8-T3 (V18 + S2): reads `accountUUID`'s (resolved, if `nil`, to the selected account) engine
+    /// state FRESH and NO-OPs (logging a warning) unless it is EXACTLY `.complete` — nothing is
+    /// cleared otherwise. Pre-fix this was unconditional: the immediate-mode Sending close called
+    /// it while the engine was still genuinely `.inProgress` (completion needs mined-confirmed AND
+    /// `orchard_spendable == 0`, not merely "the last transfer broadcast succeeded"), wiping the
+    /// very schedule/snapshot records the still-live run needed — `reconcile()` then cleared the
+    /// (wrongly-set) acknowledged flag on its next pass, so the completion UX resurfaced hydrated
+    /// from the now-wiped storage (a "0 transferred" fallback).
+    ///
+    /// On a genuine `.complete` read: sets the PER-ACCOUNT acknowledged flag (R8-T3 S2 — was
+    /// wallet-wide, which suppressed every OTHER account's own completion banner/re-entry the
+    /// moment ONE account acknowledged, made that other account's own `acknowledgeComplete`
+    /// unreachable, and left its snapshot immortal) and clears `accountUUID`'s schedule + snapshot
+    /// — the run the Complete screen was showing has ended, so its committed schedule/sent
+    /// records/network snapshot must not leak into a future run's rows (a fresh migration, e.g. a
+    /// later "Migrate anyway" dust mini-run, starts from an empty logical run + a FRESH snapshot).
+    ///
+    /// R8-T3 (#18): the whole read-state -> decide -> clear span runs under `serialExecutor` so it
+    /// can never interleave with a concurrent `recordCommittedSchedule`/`reconcile`/
+    /// `clearAbandonedNetworkSnapshot` for the SAME account.
+    func acknowledgeComplete(accountUUID: AccountUUID?) async {
+        guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return }
+
+        await serialExecutor.run { [self] in
+            guard let state = await migrationState(accountUUID: resolvedAccountUUID), state == MigrationState.complete else {
+                LoggerProxy.warn(
+                    "[MigrationManagerImpl] acknowledgeComplete no-op — account state is not .complete."
+                )
+                return
+            }
+
+            gateStorage.acknowledgeComplete(for: resolvedAccountUUID)
+            scheduleStorage.clear(for: resolvedAccountUUID)
+            snapshotStorage.clear(for: resolvedAccountUUID)
+        }
+    }
+
+    /// R8-T3 (#9): a confirm lane that fails/is abandoned BEFORE ever committing a schedule still
+    /// took its network snapshot on the FIRST `migrationNetworkOptions` read (every lane does, well
+    /// before any store/broadcast) — every automatic clear requires `.notStarted &&
+    /// hasStoredPayload` (this account never had a payload) or an acknowledge (nothing completed,
+    /// so it's never reached) — so an abandoned pre-commit run leaked an ACTIVE snapshot forever
+    /// (`UserDefaults`, no TTL), pinning auto-server-selection and arming the ServerSetup privacy
+    /// warning indefinitely. Called fire-and-forget from the coordinator's `.flowFinished` handler
+    /// (every flow-root close / terminal delegate) for the selected account (`nil` resolves it,
+    /// same convention as `migrationSummary`/`recordCommittedSchedule` above): reads `accountUUID`'s
+    /// engine state FRESH — `.notStarted` with no stored schedule payload means nothing was ever
+    /// committed this attempt (or the run genuinely finished/reset already) — clears its snapshot;
+    /// any other state (a real active/committed run) is a no-op. R8-T3 (#18): serialized alongside
+    /// `reconcile`/`recordCommittedSchedule`/`acknowledgeComplete` for the same TOCTOU reasons.
+    /// Deliberately self-contained (doesn't reach for anything a real run's schedule/state would
+    /// carry) so the R7 branch's provisional-snapshot machinery can subsume it on rebase.
+    func clearAbandonedNetworkSnapshot(accountUUID: AccountUUID?) async {
+        guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return }
+
+        await serialExecutor.run { [self] in
+            guard let state = await migrationState(accountUUID: resolvedAccountUUID) else { return }
+            guard state == MigrationState.notStarted, !scheduleStorage.hasStoredPayload(for: resolvedAccountUUID) else { return }
+            guard snapshotStorage.snapshot(for: resolvedAccountUUID) != nil else { return }
+
+            LoggerProxy.event("[MigrationManagerImpl] Clearing an abandoned pre-commit network snapshot.")
+            snapshotStorage.clear(for: resolvedAccountUUID)
+        }
+    }
+
+    /// R8-T3: reads `accountUUID`'s per-account acknowledged flag (`nil` resolves the selected
+    /// account, same convention as the other members here; a genuinely unresolvable account reads
+    /// as un-acknowledged rather than crashing).
+    func isCompleteAcknowledged(accountUUID: AccountUUID?) -> Bool {
+        guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return false }
+        return gateStorage.isCompleteAcknowledged(for: resolvedAccountUUID)
     }
 
     /// MOB-1480: the migration SDK simulator's debug panel "Reset app migration flags" control.
-    /// MOB-1496 (W2): also clears every known account's persisted schedule — a debug reset must
+    /// MOB-1496 (W2): also clears every candidate account's persisted schedule — a debug reset must
     /// leave no stale committed-schedule payload behind either. MOB-1496 (W4): and its network
-    /// snapshot.
+    /// snapshot. R8-T3: sourced from `MigrationDerivations.candidateAccountUUIDs` (was two separate
+    /// hand-rolled loops — `walletAccounts`, then `selectedWalletAccount` again, redundantly
+    /// re-clearing it — that disagreed with `reconcile()`'s/`activeNetworkSnapshots()`'s own
+    /// account-set logic); also now clears each candidate account's own per-account acknowledged
+    /// flag (R8-T3 S2 — the flag itself used to be wallet-wide, cleared directly by
+    /// `gateStorage.resetPersistedFlags()` alone).
     func resetPersistedFlags() {
         gateStorage.resetPersistedFlags()
-        for account in walletAccounts {
-            scheduleStorage.clear(for: account.id)
-            snapshotStorage.clear(for: account.id)
-        }
-        if let accountUUID = selectedWalletAccount?.id {
+        let accountUUIDs = MigrationDerivations.candidateAccountUUIDs(
+            selectedAccountUUID: selectedWalletAccount?.id,
+            walletAccounts: walletAccounts
+        )
+        for accountUUID in accountUUIDs {
+            gateStorage.clearAcknowledgedComplete(for: accountUUID)
             scheduleStorage.clear(for: accountUUID)
             snapshotStorage.clear(for: accountUUID)
         }
@@ -567,30 +789,32 @@ final class MigrationManagerImpl: @unchecked Sendable {
 
     /// `.requiresAttention(.syncRequiredBeforeNext)` carries no progress payload of its own, but
     /// per spec it renders identically to a plain `.inProgress(p)` banner — so it's normalized to
-    /// that shape here, using the SDK's own out-of-band `getMigrationProgress()` snapshot, before
-    /// ever reaching `MigrationDerivations` (which only needs to know about `.inProgress`). `nil`
-    /// when the state read itself fails (rather than guessing a fallback state).
-    private func normalizedState(accountUUID: AccountUUID) async -> MigrationState? {
-        guard let state = await migrationState(accountUUID: accountUUID) else { return nil }
-
-        guard case MigrationState.requiresAttention(MigrationAttentionReason.syncRequiredBeforeNext) = state,
-              let progress = await migrationProgress(accountUUID: accountUUID) else {
-            return state
+    /// that shape here from an already-fetched `rawState`/`progress` pair (R8-T3 #23: `bannerVariant`
+    /// and `reentryRoute` both fetch these once themselves now, rather than this function doing its
+    /// own redundant `migrationState`/`migrationProgress` reads). `rawState`'s own read failure is
+    /// the caller's concern (each defaults it to `.notStarted`, or short-circuits first — see
+    /// `bannerVariant`/`reentryRoute`).
+    private func normalizedState(rawState: MigrationState, progress: MigrationProgress?) -> MigrationState {
+        guard case MigrationState.requiresAttention(MigrationAttentionReason.syncRequiredBeforeNext) = rawState,
+              let progress else {
+            return rawState
         }
-
         return MigrationState.inProgress(progress)
     }
 
     /// "Next due" (manual): ready height already reached (or unknown / no progress -> not due).
-    private func isNextTransferDue(accountUUID: AccountUUID) async -> Bool {
+    /// R8-T3 (#23): takes an already-fetched `progress` instead of reading it itself — `bannerVariant`/
+    /// `reentryRoute` both already have one in hand by the time they need this.
+    private func isNextTransferDue(progress: MigrationProgress?) -> Bool {
         // MOB-1480: `nextTransferReadyAtHeight` is a synthetic (epoch-seconds) height while the
         // simulator is active, which can never compare true against the real chain's
-        // `latestBlockHeight` below — ask the engine directly instead.
+        // `latestBlockHeight` below — ask the engine directly instead (ignoring `progress`, which
+        // would carry that same synthetic value).
         if MigrationSimulatorFlag.isEnabled && MigrationSimulatorClient.sharedEngine.isActive {
             return MigrationSimulatorClient.sharedEngine.isNextTransferDue()
         }
 
-        guard let readyAtHeight = await migrationProgress(accountUUID: accountUUID)?.nextTransferReadyAtHeight else {
+        guard let readyAtHeight = progress?.nextTransferReadyAtHeight else {
             return false
         }
 
@@ -701,10 +925,17 @@ enum MigrationDerivations {
     /// the manual-ready check (mirrors `reentryRoute`'s existing `hasOverdue`-before-
     /// `isManualDelivery && isNextTransferDue` precedence), transferNumber = `completedTransfers +
     /// 1`.
+    ///
+    /// R8-T3 (#23): dropped the `hasInvalid: Bool` parameter this function used to take — the
+    /// `.invalidTransfer` case below is, and always was, decided purely by pattern-matching
+    /// `state`'s own `.requiresAttention(.invalidTransfer)` case; the separate `hasInvalid` boolean
+    /// input was never referenced in this body. Its only caller (`MigrationManagerImpl.bannerVariant`)
+    /// no longer computes it either, removing a wasted `hasInvalidMigrationTransfers` SDK read per
+    /// call. `reentryRoute` below keeps its OWN `hasInvalid` parameter — that one genuinely is
+    /// consulted (row 1, `.recovery`).
     static func bannerVariant(
         isIronwoodActivated: Bool,
         state: MigrationState,
-        hasInvalid: Bool,
         hasOverdue: Bool,
         isManualDelivery: Bool,
         isNextTransferDue: Bool,
@@ -981,9 +1212,26 @@ final class MigrationGateStorage: @unchecked Sendable {
     }
 
     private let userDefaults: UserDefaults
+    /// R8-T3 (S2): the completion-acknowledged flag is per-account now — everything else about a
+    /// migration run already is (state, schedule, snapshot), so a wallet-wide flag suppressed a
+    /// SECOND account's own completion banner/re-entry the moment the FIRST account acknowledged,
+    /// made that second account's own `acknowledgeComplete` unreachable (its call sites sit behind
+    /// the suppressed screens), and left its snapshot immortal (only `.notStarted` triggers the
+    /// automatic clear, but `.complete` is terminal). Same generic storage, same hex-key idiom as
+    /// `MigrationScheduleStorage`/`MigrationSnapshotStorage` (R8-T3 #21) — reuses the OLD wallet-wide
+    /// key string as its per-account PREFIX; the bare (unsuffixed) legacy key is simply never
+    /// written or read by this storage again (see `resetPersistedFlags()`, which still deletes the
+    /// legacy key for hygiene). No migration of the old value: the feature is unreleased
+    /// (dev/QA installs only), so "migrated on first read" is satisfied vacuously.
+    private let acknowledgedStorage: PerAccountCodableStorage<Bool>
 
     init(userDefaults: UserDefaults = .standard) {
         self.userDefaults = userDefaults
+        self.acknowledgedStorage = PerAccountCodableStorage<Bool>(
+            keyPrefix: .migrationCompleteAcknowledged,
+            corruptLogTag: "MigrationGateStorage.acknowledgedStorage",
+            userDefaults: userDefaults
+        )
     }
 
     // MARK: Gate
@@ -1057,16 +1305,17 @@ final class MigrationGateStorage: @unchecked Sendable {
         userDefaults.set(data, forKey: .migrationNetworkPrivacyOptions)
     }
 
-    func isCompleteAcknowledged() -> Bool {
-        userDefaults.bool(forKey: .migrationCompleteAcknowledged)
+    /// R8-T3 (S2): per-account now — see `acknowledgedStorage`'s doc.
+    func isCompleteAcknowledged(for accountUUID: AccountUUID) -> Bool {
+        acknowledgedStorage.read(for: accountUUID) ?? false
     }
 
-    func acknowledgeComplete() {
-        userDefaults.set(true, forKey: .migrationCompleteAcknowledged)
+    func acknowledgeComplete(for accountUUID: AccountUUID) {
+        acknowledgedStorage.write(true, for: accountUUID)
     }
 
-    func clearAcknowledgedComplete() {
-        userDefaults.set(false, forKey: .migrationCompleteAcknowledged)
+    func clearAcknowledgedComplete(for accountUUID: AccountUUID) {
+        acknowledgedStorage.clear(for: accountUUID)
     }
 
     /// MOB-1487/MOB-1496: "Lock balance" acknowledged on Migration Complete — the dust remainder is
@@ -1081,12 +1330,15 @@ final class MigrationGateStorage: @unchecked Sendable {
         userDefaults.set(isLocked, forKey: .migrationDustLocked)
     }
 
-    /// Clears every persisted migration flag this storage owns: mode, manual delivery, network
-    /// privacy, complete-acknowledged, dust-locked. Backs the migration SDK simulator's debug
-    /// panel "Reset app migration flags" control (MOB-1480). Deliberately leaves
-    /// `migrationLastSyncCompletedAt` alone: the send gate's timing window is a short-lived value,
-    /// not a durable app flag, and expires (the buffer elapses) on its own — same reasoning the
-    /// retired `migrationSyncGateUntil` followed pre-MOB-1496 (W3).
+    /// Clears every WALLET-WIDE persisted migration flag this storage owns: mode, manual delivery,
+    /// network privacy, dust-locked, PLUS the legacy (pre-R8-T3, unsuffixed) complete-acknowledged
+    /// key — dead weight now that the flag is per-account (`acknowledgedStorage`), kept here only so
+    /// no stray value lingers. The actual per-account acknowledged flags are cleared by
+    /// `MigrationManagerImpl.resetPersistedFlags()`, which knows the account set this storage does
+    /// not. Backs the migration SDK simulator's debug panel "Reset app migration flags" control
+    /// (MOB-1480). Deliberately leaves `migrationLastSyncCompletedAt` alone: the send gate's timing
+    /// window is a short-lived value, not a durable app flag, and expires (the buffer elapses) on
+    /// its own — same reasoning the retired `migrationSyncGateUntil` followed pre-MOB-1496 (W3).
     func resetPersistedFlags() {
         userDefaults.removeObject(forKey: .migrationMode)
         userDefaults.removeObject(forKey: .migrationManualDelivery)
@@ -1096,28 +1348,117 @@ final class MigrationGateStorage: @unchecked Sendable {
     }
 }
 
-// MARK: - Persistence: committed migration schedule (MOB-1496 W2)
+// MARK: - Persistence: generic per-account Codable storage (R8-T3 #21)
 
-/// Per-account `UserDefaults`-backed persistence for the confirmed migration schedule: the SDK
-/// retains no proposal list once a schedule is committed, so the app persists it here —
-/// `MigrationDerivations.transferRows`/`summary` derive rows/totals from this payload plus live SDK
-/// reads. Same house pattern as `MigrationGateStorage`: `final class`, `@unchecked Sendable` guarded
-/// by an `OSAllocatedUnfairLock` around each read-modify-write, injectable `UserDefaults` (default
-/// `.standard`) so tests can use an isolated named suite. Every method that depends on "now" takes
-/// it as a parameter, never reading `Date()` internally, matching `MigrationGateStorage`'s own
-/// testability discipline.
-final class MigrationScheduleStorage: @unchecked Sendable {
+/// Generic `UserDefaults`-backed per-account persistence — the shared shape `MigrationScheduleStorage`
+/// and `MigrationSnapshotStorage` each independently implemented before this extraction (lock, keyed
+/// read, clear, corrupt-blob self-heal, `writePayload`, hex `key(for:)`), now also reused by
+/// `MigrationGateStorage`'s per-account acknowledge flag (R8-T3 S2). `final class`, `@unchecked
+/// Sendable` guarded by an `OSAllocatedUnfairLock` around each read-modify-write, injectable
+/// `UserDefaults` (default `.standard`) so tests can use an isolated named suite. `keyPrefix` is the
+/// caller's own `SharedStateKeys` (`String`) constant; `corruptLogTag` names the caller in the
+/// self-heal log line, matching each original type's own tag.
+final class PerAccountCodableStorage<Payload: Codable & Sendable>: @unchecked Sendable {
     private let userDefaults: UserDefaults
+    private let keyPrefix: String
+    private let corruptLogTag: String
     private let lock = OSAllocatedUnfairLock(initialState: false)
 
-    init(userDefaults: UserDefaults = .standard) {
+    init(keyPrefix: String, corruptLogTag: String, userDefaults: UserDefaults = .standard) {
+        self.keyPrefix = keyPrefix
+        self.corruptLogTag = corruptLogTag
         self.userDefaults = userDefaults
+    }
+
+    /// The persisted payload for `accountUUID`, or `nil` when none exists (or the stored blob was
+    /// corrupt and just got self-healed away).
+    func read(for accountUUID: AccountUUID) -> Payload? {
+        lock.withLock { _ in readPayload(for: accountUUID) }
+    }
+
+    /// Persists `payload` for `accountUUID`, REPLACING any existing one unconditionally. Callers
+    /// needing a read-modify-write (preserve part of the existing payload, or conditionally clear)
+    /// should use `modify(for:_:)` instead — this alone is not atomic with a prior `read(for:)`.
+    func write(_ payload: Payload, for accountUUID: AccountUUID) {
+        lock.withLock { _ in writePayload(payload, for: accountUUID) }
+    }
+
+    /// Clears the persisted payload for `accountUUID`.
+    func clear(for accountUUID: AccountUUID) {
+        lock.withLock { _ in
+            userDefaults.removeObject(forKey: key(for: accountUUID))
+        }
+    }
+
+    /// Atomic read-modify-write: `body` receives the CURRENT payload (`nil` if none/corrupt) as an
+    /// `inout`, under the SAME lock acquisition the read and the eventual write both use — no
+    /// concurrent `read`/`write`/`clear`/`modify` call for this account can observe a half-updated
+    /// value or interleave between the read `body` sees and the write/clear it produces. Setting the
+    /// `inout` value to `nil` inside `body` clears the persisted payload instead of writing one.
+    func modify(for accountUUID: AccountUUID, _ body: @Sendable (inout Payload?) -> Void) {
+        lock.withLock { _ in
+            var payload = readPayload(for: accountUUID)
+            body(&payload)
+            if let payload {
+                writePayload(payload, for: accountUUID)
+            } else {
+                userDefaults.removeObject(forKey: key(for: accountUUID))
+            }
+        }
+    }
+
+    private func readPayload(for accountUUID: AccountUUID) -> Payload? {
+        let storageKey = key(for: accountUUID)
+        guard let data = userDefaults.data(forKey: storageKey) else { return nil }
+
+        guard let payload = try? JSONDecoder().decode(Payload.self, from: data) else {
+            // Self-heal: an undecodable blob would otherwise return `nil` forever while the
+            // garbage stays on disk. Delete it so the next write starts clean.
+            LoggerProxy.error("[\(corruptLogTag)] Corrupt payload — deleting the stored blob.")
+            userDefaults.removeObject(forKey: storageKey)
+            return nil
+        }
+        return payload
+    }
+
+    private func writePayload(_ payload: Payload, for accountUUID: AccountUUID) {
+        guard let data = try? JSONEncoder().encode(payload) else { return }
+        userDefaults.set(data, forKey: key(for: accountUUID))
+    }
+
+    /// Per-account key suffix: lowercase hex of the raw 16-byte UUID, reusing `Pczt`'s existing
+    /// `Data.hexEncodedString()` (`SendConfirmationStore.swift`) rather than inventing a new
+    /// encoding.
+    private func key(for accountUUID: AccountUUID) -> String {
+        "\(keyPrefix)_\(Data(accountUUID.id).hexEncodedString())"
+    }
+}
+
+// MARK: - Persistence: committed migration schedule (MOB-1496 W2)
+
+/// Per-account persistence for the confirmed migration schedule: the SDK retains no proposal list
+/// once a schedule is committed, so the app persists it here — `MigrationDerivations
+/// .transferRows`/`summary` derive rows/totals from this payload plus live SDK reads. R8-T3 (#21):
+/// now a thin wrapper over the shared `PerAccountCodableStorage` (lock, keyed read, clear,
+/// corrupt-blob self-heal all live there); this type keeps only its own domain-specific
+/// read-modify-write semantics (preserve `sentRecords` across a re-commit; append a `SentRecord` in
+/// schedule order). Every method that depends on "now" takes it as a parameter, never reading
+/// `Date()` internally, matching `MigrationGateStorage`'s own testability discipline.
+final class MigrationScheduleStorage: @unchecked Sendable {
+    private let storage: PerAccountCodableStorage<MigrationCommittedSchedule>
+
+    init(userDefaults: UserDefaults = .standard) {
+        self.storage = PerAccountCodableStorage<MigrationCommittedSchedule>(
+            keyPrefix: .migrationCommittedSchedule,
+            corruptLogTag: "MigrationScheduleStorage",
+            userDefaults: userDefaults
+        )
     }
 
     /// The persisted payload for `accountUUID`, or `nil` when none exists (fresh install mid-run,
     /// or pre-commit) — callers fall back to a progress-only derivation in that case.
     func committedSchedule(for accountUUID: AccountUUID) -> MigrationCommittedSchedule? {
-        lock.withLock { _ in readPayload(for: accountUUID) }
+        storage.read(for: accountUUID)
     }
 
     func hasStoredPayload(for accountUUID: AccountUUID) -> Bool {
@@ -1128,10 +1469,9 @@ final class MigrationScheduleStorage: @unchecked Sendable {
     /// restart/re-created plan continues the same logical run — the re-created-plan UI shows prior
     /// sent rows with checks); starts fresh with empty `sentRecords` when no payload exists yet.
     func recordCommittedSchedule(_ schedule: MigrationSchedule, for accountUUID: AccountUUID, now: Date) {
-        lock.withLock { _ in
-            let sentRecords = readPayload(for: accountUUID)?.sentRecords ?? []
-            let payload = MigrationCommittedSchedule(schedule: schedule, sentRecords: sentRecords, committedAt: now)
-            writePayload(payload, for: accountUUID)
+        storage.modify(for: accountUUID) { payload in
+            let sentRecords = payload?.sentRecords ?? []
+            payload = MigrationCommittedSchedule(schedule: schedule, sentRecords: sentRecords, committedAt: now)
         }
     }
 
@@ -1141,12 +1481,12 @@ final class MigrationScheduleStorage: @unchecked Sendable {
     /// broadcast placeholder — the broadcast landed, only the engine's own recording of it failed)
     /// persists as `nil` rather than an empty string.
     func recordTransferBroadcast(_ result: MigrationTransferResult, for accountUUID: AccountUUID, now: Date) {
-        lock.withLock { _ in
+        storage.modify(for: accountUUID) { payload in
             guard case let MigrationTransferResult.success(txId) = result else { return }
-            guard var payload = readPayload(for: accountUUID) else { return }
+            guard var current = payload else { return }
 
-            let sentTransferIds = Set(payload.sentRecords.map { $0.transferId })
-            guard let transfer = payload.schedule.transfers.first(where: { !sentTransferIds.contains($0.id) }) else { return }
+            let sentTransferIds = Set(current.sentRecords.map { $0.transferId })
+            guard let transfer = current.schedule.transfers.first(where: { !sentTransferIds.contains($0.id) }) else { return }
 
             let sentRecord = MigrationCommittedSchedule.SentRecord(
                 transferId: transfer.id,
@@ -1154,104 +1494,52 @@ final class MigrationScheduleStorage: @unchecked Sendable {
                 txId: txId.isEmpty ? nil : txId,
                 sentAt: now
             )
-            payload.sentRecords.append(sentRecord)
-            writePayload(payload, for: accountUUID)
+            current.sentRecords.append(sentRecord)
+            payload = current
         }
     }
 
     /// Clears the run: consumed by `acknowledgeComplete()`/`resetPersistedFlags()`'s run-end/reset
     /// paths, and by `reconcile()` observing a stale `.notStarted` payload.
     func clear(for accountUUID: AccountUUID) {
-        lock.withLock { _ in
-            userDefaults.removeObject(forKey: key(for: accountUUID))
-        }
-    }
-
-    private func readPayload(for accountUUID: AccountUUID) -> MigrationCommittedSchedule? {
-        let storageKey = key(for: accountUUID)
-        guard let data = userDefaults.data(forKey: storageKey) else { return nil }
-
-        guard let payload = try? JSONDecoder().decode(MigrationCommittedSchedule.self, from: data) else {
-            // Self-heal: an undecodable blob would otherwise return `nil` forever while the
-            // garbage stays on disk. Delete it so the next commit starts clean.
-            LoggerProxy.error("[MigrationScheduleStorage] Corrupt payload — deleting the stored blob.")
-            userDefaults.removeObject(forKey: storageKey)
-            return nil
-        }
-        return payload
-    }
-
-    private func writePayload(_ payload: MigrationCommittedSchedule, for accountUUID: AccountUUID) {
-        guard let data = try? JSONEncoder().encode(payload) else { return }
-        userDefaults.set(data, forKey: key(for: accountUUID))
-    }
-
-    /// Per-account key suffix: lowercase hex of the raw 16-byte UUID, reusing `Pczt`'s existing
-    /// `Data.hexEncodedString()` (`SendConfirmationStore.swift`) rather than inventing a new
-    /// encoding — nothing in this file suffixes a persistence key per-account yet.
-    private func key(for accountUUID: AccountUUID) -> String {
-        "\(String.migrationCommittedSchedule)_\(Data(accountUUID.id).hexEncodedString())"
+        storage.clear(for: accountUUID)
     }
 }
 
 // MARK: - Persistence: migration network snapshot (MOB-1496 W4)
 
-/// Per-account `UserDefaults`-backed persistence for the atomic migration network snapshot — see
-/// `MigrationNetworkSnapshot`'s doc for what it holds and why. Same house pattern as
-/// `MigrationScheduleStorage` (beside which this lives): `final class`, `@unchecked Sendable` guarded
-/// by an `OSAllocatedUnfairLock` around each read-modify-write, injectable `UserDefaults` (default
-/// `.standard`) so tests can use an isolated named suite, same per-account key suffix idiom.
+/// Per-account persistence for the atomic migration network snapshot — see `MigrationNetworkSnapshot`'s
+/// doc for what it holds and why. R8-T3 (#21): thin wrapper over the shared `PerAccountCodableStorage`
+/// (beside which this lives) — this type is now just naming/typing, no storage mechanics of its own.
 final class MigrationSnapshotStorage: @unchecked Sendable {
-    private let userDefaults: UserDefaults
-    private let lock = OSAllocatedUnfairLock(initialState: false)
+    private let storage: PerAccountCodableStorage<MigrationNetworkSnapshot>
 
     init(userDefaults: UserDefaults = .standard) {
-        self.userDefaults = userDefaults
+        self.storage = PerAccountCodableStorage<MigrationNetworkSnapshot>(
+            keyPrefix: .migrationNetworkSnapshot,
+            corruptLogTag: "MigrationSnapshotStorage",
+            userDefaults: userDefaults
+        )
     }
 
     /// The persisted snapshot for `accountUUID`, or `nil` when none exists (no active run, or a run
     /// whose snapshot was already cleared at completion).
     func snapshot(for accountUUID: AccountUUID) -> MigrationNetworkSnapshot? {
-        lock.withLock { _ in readPayload(for: accountUUID) }
+        storage.read(for: accountUUID)
     }
 
     /// Persists `snapshot` for `accountUUID`, REPLACING any existing one. Callers are responsible
     /// for the idempotent ensure-or-create semantics (`MigrationManagerImpl.ensureNetworkSnapshot`)
     /// — this storage itself is a plain, unconditional write.
     func recordSnapshot(_ snapshot: MigrationNetworkSnapshot, for accountUUID: AccountUUID) {
-        lock.withLock { _ in writePayload(snapshot, for: accountUUID) }
+        storage.write(snapshot, for: accountUUID)
     }
 
-    /// Clears the run's snapshot: consumed by the SAME three run-end paths `MigrationScheduleStorage
-    /// .clear` is (`acknowledgeComplete()`/`resetPersistedFlags()`/`reconcile()`'s stale-`.notStarted`
-    /// observation) — always alongside the schedule clear, never independently.
+    /// Clears the run's snapshot: consumed by the SAME run-end paths `MigrationScheduleStorage.clear`
+    /// is (`acknowledgeComplete()`/`resetPersistedFlags()`/`reconcile()`'s stale-`.notStarted`
+    /// observation/`clearAbandonedNetworkSnapshot()`) — always alongside the schedule clear (except
+    /// the abandon-clear, which by design has no schedule to clear — see that method's doc).
     func clear(for accountUUID: AccountUUID) {
-        lock.withLock { _ in
-            userDefaults.removeObject(forKey: key(for: accountUUID))
-        }
-    }
-
-    private func readPayload(for accountUUID: AccountUUID) -> MigrationNetworkSnapshot? {
-        let storageKey = key(for: accountUUID)
-        guard let data = userDefaults.data(forKey: storageKey) else { return nil }
-
-        guard let payload = try? JSONDecoder().decode(MigrationNetworkSnapshot.self, from: data) else {
-            // Self-heal: an undecodable blob would otherwise return `nil` forever while the
-            // garbage stays on disk. Delete it so the next commit starts clean.
-            LoggerProxy.error("[MigrationSnapshotStorage] Corrupt payload — deleting the stored blob.")
-            userDefaults.removeObject(forKey: storageKey)
-            return nil
-        }
-        return payload
-    }
-
-    private func writePayload(_ payload: MigrationNetworkSnapshot, for accountUUID: AccountUUID) {
-        guard let data = try? JSONEncoder().encode(payload) else { return }
-        userDefaults.set(data, forKey: key(for: accountUUID))
-    }
-
-    /// Per-account key suffix — same idiom as `MigrationScheduleStorage.key(for:)`.
-    private func key(for accountUUID: AccountUUID) -> String {
-        "\(String.migrationNetworkSnapshot)_\(Data(accountUUID.id).hexEncodedString())"
+        storage.clear(for: accountUUID)
     }
 }

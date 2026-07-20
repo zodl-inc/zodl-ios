@@ -140,10 +140,22 @@ struct MigrationNetworkSnapshot: Equatable, Sendable, Codable {
     /// run-end) picks up a new choice.
     let useTor: Bool
     let syncEndpoint: Endpoint
-    let syncProvider: ServerProvider
     let broadcastEndpoint: Endpoint
-    let broadcastProvider: ServerProvider
     let takenAt: Date
+
+    /// R8-T3 (#22): computed, not stored — every construction site set this to exactly
+    /// `ServerProvider.classify(host:)` of `syncEndpoint`'s own host, and both readers
+    /// (`AutoServerSelectionLiveKey`'s pinning, `ServerSetupStore`'s manual-switch privacy warning)
+    /// already compare it against a freshly-computed `classify(host:)` call — a stored, potentially
+    /// stale copy carried no information a live re-derivation didn't already have. Dropping these
+    /// two from the stored/`Codable`/memberwise-init surface also drops them from the 7 construction
+    /// sites' argument lists (both compile-time enforced: the auto-generated memberwise `init` no
+    /// longer accepts them). A legacy persisted blob encoded WITH these as stored keys still decodes
+    /// fine — `JSONDecoder` silently ignores JSON keys that aren't in the (now-shorter) synthesized
+    /// `CodingKeys`.
+    var syncProvider: ServerProvider { ServerProvider.classify(host: syncEndpoint.host) }
+    /// See `syncProvider`'s doc — same computed treatment, classifying `broadcastEndpoint`'s host.
+    var broadcastProvider: ServerProvider { ServerProvider.classify(host: broadcastEndpoint.host) }
 }
 
 /// App-persisted record of the committed migration schedule (MOB-1496 W2): the SDK retains no

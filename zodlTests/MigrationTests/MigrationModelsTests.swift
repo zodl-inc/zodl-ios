@@ -147,9 +147,7 @@ import Foundation
         let original = MigrationNetworkSnapshot(
             useTor: true,
             syncEndpoint: MigrationNetworkSnapshot.Endpoint(host: "na.zec.rocks", port: 443, secure: true),
-            syncProvider: ServerProvider.zecRocks,
             broadcastEndpoint: MigrationNetworkSnapshot.Endpoint(host: "mynode.example.com", port: 9067, secure: false),
-            broadcastProvider: ServerProvider.custom(host: "mynode.example.com"),
             takenAt: Date(timeIntervalSince1970: 1_700_000_000)
         )
 
@@ -157,6 +155,45 @@ import Foundation
         let decoded = try JSONDecoder().decode(MigrationNetworkSnapshot.self, from: data)
 
         #expect(decoded == original)
+        #expect(decoded.syncProvider == ServerProvider.zecRocks)
+        #expect(decoded.broadcastProvider == ServerProvider.custom(host: "mynode.example.com"))
+    }
+
+    /// R8-T3 (#22): `syncProvider`/`broadcastProvider` used to be STORED (constructor args, present
+    /// as their own JSON keys) — a legacy persisted blob from before this change still carries those
+    /// two extra keys. `JSONDecoder` ignores unknown keys by default, so decoding must still succeed,
+    /// with the (now-computed) provider properties matching a live `ServerProvider.classify(host:)`
+    /// of their respective endpoint — never the stale value the legacy blob happened to carry.
+    @Test func migrationNetworkSnapshotDecodesLegacyBlobWithStoredProviderKeys() throws {
+        struct LegacyMigrationNetworkSnapshot: Codable {
+            let useTor: Bool
+            let syncEndpoint: MigrationNetworkSnapshot.Endpoint
+            let syncProvider: ServerProvider
+            let broadcastEndpoint: MigrationNetworkSnapshot.Endpoint
+            let broadcastProvider: ServerProvider
+            let takenAt: Date
+        }
+
+        // Deliberately a STALE/wrong `syncProvider` value versus what `syncEndpoint`'s host would
+        // classify to — proving the decoded snapshot re-derives it live rather than ever reading
+        // back whatever this legacy blob's own (now-ignored) key happened to carry.
+        let legacy = LegacyMigrationNetworkSnapshot(
+            useTor: true,
+            syncEndpoint: MigrationNetworkSnapshot.Endpoint(host: "na.zec.rocks", port: 443, secure: true),
+            syncProvider: ServerProvider.custom(host: "stale-value-from-before-the-fix"),
+            broadcastEndpoint: MigrationNetworkSnapshot.Endpoint(host: "mynode.example.com", port: 9067, secure: false),
+            broadcastProvider: ServerProvider.custom(host: "stale-value-from-before-the-fix"),
+            takenAt: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+
+        let legacyData = try JSONEncoder().encode(legacy)
+        let decoded = try JSONDecoder().decode(MigrationNetworkSnapshot.self, from: legacyData)
+
+        #expect(decoded.useTor == true)
+        #expect(decoded.syncEndpoint.host == "na.zec.rocks")
+        #expect(decoded.broadcastEndpoint.host == "mynode.example.com")
+        #expect(decoded.takenAt == legacy.takenAt)
+        #expect(decoded.syncProvider == ServerProvider.zecRocks)
         #expect(decoded.broadcastProvider == ServerProvider.custom(host: "mynode.example.com"))
     }
 

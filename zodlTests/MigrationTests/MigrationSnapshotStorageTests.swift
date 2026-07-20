@@ -27,9 +27,7 @@ struct MigrationSnapshotStorageTests {
         MigrationNetworkSnapshot(
             useTor: useTor,
             syncEndpoint: MigrationNetworkSnapshot.Endpoint(host: syncHost, port: 443, secure: true),
-            syncProvider: ServerProvider.classify(host: syncHost),
             broadcastEndpoint: MigrationNetworkSnapshot.Endpoint(host: broadcastHost, port: 443, secure: true),
-            broadcastProvider: ServerProvider.classify(host: broadcastHost),
             takenAt: takenAt
         )
     }
