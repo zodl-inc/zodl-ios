@@ -570,8 +570,16 @@ extension MigrationCoordFlow {
                         // re-created plan funnels through unchanged).
                         await migrationManager.reconcile()
                     }
-                    let schedule = restarted ?? MigrationSchedule(transfers: [], estimatedDurationHours: 0)
-                    let planState = recreatedPlanState(schedule: schedule)
+                    // [MOB-1496] R8-T1 (S3): no silent empty-schedule fallback on a restart
+                    // failure — leave `injectedSchedule` nil so the pushed screen's own `onAppear`
+                    // falls through to a fresh `proposeMigrationTransfers` attempt (the same path a
+                    // first-run `.scheduled` plan takes: `state.injectedSchedule == nil` and
+                    // `state.rows.isEmpty`) and surfaces ITS OWN propose-failure sheet
+                    // (`failureReason == .propose`, Retry re-proposes) if that fails too.
+                    // `MigrationRecovery` (the screen this action originates from) has no failure
+                    // affordance of its own to route into — see this task's report for why this
+                    // fallthrough was chosen over adding one.
+                    let planState = recreatedPlanState(schedule: restarted)
                     await send(.pushHydratedPathState(.transferPlan(planState)))
                 }
 
@@ -946,7 +954,7 @@ extension MigrationCoordFlow {
     /// fresh `MigrationSchedule`, injected via `injectedSchedule` so the screen's own `onAppear`
     /// populates rows (no coordinator-side duplication of that row-building logic). This variant
     /// DOES sign — `requiresSigning` stays at its default `true`.
-    private func recreatedPlanState(schedule: MigrationSchedule) -> MigrationTransferPlan.State {
+    private func recreatedPlanState(schedule: MigrationSchedule?) -> MigrationTransferPlan.State {
         var state = MigrationTransferPlan.State(variant: .recreated)
         state.injectedSchedule = schedule
         return state

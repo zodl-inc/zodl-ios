@@ -11166,6 +11166,28 @@
         }
       }
     },
+    "migrationPlan.proposeFailedBody" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "We couldn't calculate your migration transfer. Your ZEC is safe — tap below to try again."
+          }
+        }
+      }
+    },
+    "migrationPlan.proposeFailedTitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn't Load Transfer"
+          }
+        }
+      }
+    },
     "migrationPlan.readyNow" : {
       "extractionState" : "manual",
       "localizations" : {

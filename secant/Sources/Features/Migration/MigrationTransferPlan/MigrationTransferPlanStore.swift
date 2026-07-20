@@ -30,6 +30,19 @@
 //  schedule's own PCZTs). `MigrationNoteSplit` itself no longer requests Keystone signing
 //  (re-entry-only now).
 //
+//  MOB-1496 (R8-T1 remediation): the software commit sequence and the Keystone PCZT-proposal fork
+//  now delegate to the shared `MigrationCommitPipeline` (finding #19 — this store and
+//  `MigrationReviewTransferStore` drove byte-identical copies of both before), always in
+//  `.scheduled` mode (every `variant` here signs a multi-transfer schedule the same way).
+//  `onAppear`'s propose and `confirmTapped`'s commit no longer silently fall back to an empty
+//  schedule on failure (finding S3): a propose failure presents the SAME failure sheet with
+//  `failureReason == .propose` (Retry re-proposes), and Confirm is guarded against a nil or
+//  zero-transfer schedule regardless of why. A landed-but-unrecorded note split
+//  (`ZcashError.migrationRecordFailedAfterBroadcast`) is treated as success rather than routed into
+//  a Retry that would re-sign a conflicting split (finding #1) — see `MigrationCommitPipeline
+//  .commitSoftware`'s doc. The Keystone fork now throws through instead of swallowing errors with
+//  `try?`, and an empty PCZT batch is also a failure (finding #4).
+//
 
 import Foundation
 import ComposableArchitecture
@@ -45,15 +58,31 @@ struct MigrationTransferPlan {
             case recreated
         }
 
+        /// MOB-1496 (R8-T1, S3): distinguishes what `isFailurePresented`'s sheet is showing, so
+        /// `retryTapped` re-attempts the right thing and the view picks the right copy. `nil` while
+        /// no failure sheet is presented.
+        enum FailureReason: Equatable {
+            /// `onAppear`'s schedule proposal threw (including when the coordinator's own upstream
+            /// recovery restart threw and left `injectedSchedule` nil) — Retry re-proposes via
+            /// `proposeMigrationTransfers`.
+            case propose
+            /// The commit itself failed (software sign+store, or the Keystone PCZT-proposal fork)
+            /// — Retry re-attempts the whole commit.
+            case commit
+        }
+
         var variant = Variant.scheduled
         var rows: IdentifiedArrayOf<MigrationTransferRow> = []
         var totalDurationHours = 0
         @Shared(.inMemory(.exchangeRate)) var currencyConversion: CurrencyConversion?
         /// Coordinator-injected schedule for recovery/reschedule variants — when set, `onAppear`
-        /// populates rows from it directly instead of calling `proposeMigrationTransfers()`.
+        /// populates rows from it directly instead of calling `proposeMigrationTransfers()`. `nil`
+        /// for a fresh entry, and also (MOB-1496 R8-T1, S3) when the coordinator's own upstream
+        /// propose (a recovery restart) failed — either way `onAppear` falls through to its own
+        /// fresh proposal, surfacing its own failure sheet if that fails too.
         var injectedSchedule: MigrationSchedule?
         /// The schedule currently backing `rows` (either `injectedSchedule` or a freshly proposed
-        /// one) — what `confirmTapped` signs and stores.
+        /// one) — what `confirmTapped` signs and stores. `nil` until a proposal succeeds.
         var schedule: MigrationSchedule?
         /// `false` for the rescheduled variant only (MOB-1466): its transfers are already signed at
         /// the original plan commit, so `confirmTapped` is a plain acknowledgment — `false` skips
@@ -62,7 +91,11 @@ struct MigrationTransferPlan {
         var requiresSigning = true
         /// MOB-1478 (W4): failure sheet for the silent note-split step, presented over this screen
         /// instead of proceeding to sign+store — mirrors `MigrationNoteSplit.State.isFailurePresented`.
+        /// MOB-1496 (R8-T1, S3): also covers a propose failure now — see `failureReason`.
         var isFailurePresented = false
+        /// MOB-1496 (R8-T1, S3): which kind of failure `isFailurePresented` is showing; see
+        /// `FailureReason`.
+        var failureReason: FailureReason?
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
 
         init(
@@ -85,14 +118,20 @@ struct MigrationTransferPlan {
         /// Signs and stores the active schedule (silently splitting first, when needed).
         case confirmTapped
         case delegate(Delegate)
-        /// MOB-1478 (W4): the silent split step failed — presents the failure sheet instead of
-        /// proceeding to sign+store.
+        /// The commit failed — presents the failure sheet instead of proceeding to sign+store.
+        /// Covers the silent note-split step (MOB-1478 W4), any other software commit failure, and
+        /// (MOB-1496 R8-T1, #4) the Keystone PCZT-proposal fork's failures.
         case noteSplitFailed
         case onAppear
-        /// Failure sheet: dismiss, then re-attempt `confirmTapped`'s whole effect from scratch.
+        /// Failure sheet: dismiss, then re-attempt the failed step from scratch — the whole commit
+        /// sequence when `failureReason == .commit` (or unset), or (MOB-1496 R8-T1, S3) a fresh
+        /// proposal when `failureReason == .propose`.
         case retryTapped
         /// `signAndStoreMigrationSchedule` completed.
         case scheduleSigned
+        /// MOB-1496 (R8-T1, S3): `proposeMigrationTransfers()` threw — presents the failure sheet;
+        /// `schedule`/`rows` are left untouched (never a silent empty-schedule fallback).
+        case transferProposalFailed
         /// `proposeMigrationTransfers()` result — populates rows/duration for a fresh entry.
         case transfersProposed(MigrationSchedule)
 
@@ -126,17 +165,32 @@ struct MigrationTransferPlan {
 
             case .cancelTapped:
                 state.isFailurePresented = false
+                state.failureReason = nil
                 return .none
 
             case .confirmTapped, .retryTapped:
                 state.isFailurePresented = false
+
+                // MOB-1496 (R8-T1, S3): a propose failure's Retry re-proposes instead of
+                // re-attempting the commit — checked FIRST, before any of the commit guards below.
+                if case .retryTapped = action, state.failureReason == State.FailureReason.propose {
+                    state.failureReason = nil
+                    return proposeEffect(accountUUID: state.selectedWalletAccount?.id)
+                }
+                state.failureReason = nil
 
                 guard state.requiresSigning else {
                     // Rescheduled variant: transfers are already signed — this is acknowledgment.
                     return .send(.delegate(.confirmed))
                 }
 
-                let schedule = state.schedule ?? MigrationSchedule(transfers: [], estimatedDurationHours: 0)
+                // MOB-1496 (R8-T1, S3): never sign/delegate for a schedule that doesn't exist yet
+                // (propose still in flight, or failed) or that legitimately came back empty — the
+                // engine's `sign_and_store_migration_schedule` deterministically refuses an empty
+                // schedule, and an absent one has nothing to sign.
+                guard let schedule = state.schedule, !schedule.transfers.isEmpty else {
+                    return .none
+                }
                 guard let account = state.selectedWalletAccount else { return .none }
 
                 guard account.vendor != WalletAccount.Vendor.keystone else {
@@ -147,35 +201,18 @@ struct MigrationTransferPlan {
 
                 return .run { send in
                     do {
-                        let needsNoteSplit = try await sdkSynchronizer.isNoteSplitNeeded(account.id)
-                        let usk = try MigrationSpendingKeyDerivation.deriveUSK(
+                        try await MigrationCommitPipeline.commitSoftware(
+                            mode: MigrationCommitMode.scheduled,
+                            schedule: schedule,
+                            account: account,
                             zip32AccountIndex: zip32AccountIndex,
+                            sdkSynchronizer: sdkSynchronizer,
+                            migrationManager: migrationManager,
                             walletStorage: walletStorage,
                             mnemonic: mnemonic,
                             derivationTool: derivationTool,
                             networkType: zcashSDKEnvironment.network().networkType
                         )
-                        if needsNoteSplit {
-                            let proposal = try await sdkSynchronizer.prepareNoteSplit(account.id)
-                            let options = await migrationManager.migrationNetworkOptions(account.id)
-                            // [MOB-1496] W3 review fix A: this silent note-split broadcast was
-                            // missed by the original stop-before-broadcast sweep (which only
-                            // covered MigrationSendingStore/MigrationNoteSplitStore) — same shared
-                            // helper, same rationale (the SDK's during-sync throw is advisory).
-                            await sdkSynchronizer.stopSyncBeforeMigrationBroadcast()
-                            let splitResult = try await sdkSynchronizer.submitNoteSplit(account.id, proposal, usk, options)
-                            guard case MigrationTransferResult.success = splitResult else {
-                                await send(.noteSplitFailed)
-                                return
-                            }
-                        }
-                        try await sdkSynchronizer.signAndStoreMigrationSchedule(account.id, schedule, usk)
-                        // [MOB-1496] W2: persist the just-committed schedule (the SDK keeps no
-                        // proposal list post-commit) and reconcile so `stateEvents` picks up the
-                        // fresh state promptly (a store completing a migration op is one of
-                        // `reconcile()`'s two triggers).
-                        await migrationManager.recordCommittedSchedule(account.id, schedule)
-                        await migrationManager.reconcile()
                         await send(.scheduleSigned)
                     } catch {
                         await send(.noteSplitFailed)
@@ -187,6 +224,7 @@ struct MigrationTransferPlan {
 
             case .noteSplitFailed:
                 state.isFailurePresented = true
+                state.failureReason = State.FailureReason.commit
                 return .none
 
             case .onAppear:
@@ -201,8 +239,6 @@ struct MigrationTransferPlan {
                     return .none
                 }
 
-                guard let accountUUID = state.selectedWalletAccount?.id else { return .none }
-
                 // `includeResidual: false` by design: the scheduled plan never folds the Orchard
                 // remainder into its own run — dust stays on the separate, post-completion
                 // "Migrate anyway" lane (`migrateMigrationDust`/the Keystone propose fork in
@@ -211,14 +247,15 @@ struct MigrationTransferPlan {
                 // `.immediate` through `MigrationReviewTransfer` instead), so
                 // `proposeMigrationTransfers` (not `proposeImmediateMigration`) is always correct
                 // here.
-                return .run { send in
-                    let schedule = (try? await sdkSynchronizer.proposeMigrationTransfers(accountUUID, false))
-                        ?? MigrationSchedule(transfers: [], estimatedDurationHours: 0)
-                    await send(.transfersProposed(schedule))
-                }
+                return proposeEffect(accountUUID: state.selectedWalletAccount?.id)
 
             case .scheduleSigned:
                 return .send(.delegate(.confirmed))
+
+            case .transferProposalFailed:
+                state.isFailurePresented = true
+                state.failureReason = State.FailureReason.propose
+                return .none
 
             case .transfersProposed(let schedule):
                 apply(schedule, to: &state)
@@ -244,17 +281,42 @@ struct MigrationTransferPlan {
     /// mechanism, including why (C-1 fix, final review R6) the split now stores BEFORE the schedule.
     /// The software path above (which routes the split through `submitNoteSplit` directly) is
     /// unaffected either way.
+    ///
+    /// MOB-1496 (R8-T1, #19/#4): now delegates to the shared `MigrationCommitPipeline
+    /// .proposeKeystoneBatch(mode: .scheduled, ...)` — every member throws through (no more `try?`
+    /// swallowing), and an empty resulting batch is ALSO a failure, so this never delegates a
+    /// silently empty/partial batch; both route to the SAME failure sheet the software fork uses,
+    /// and Retry re-runs this same propose.
     private func requestKeystoneSignature(for schedule: MigrationSchedule, account: WalletAccount) -> Effect<Action> {
         .run { send in
-            let needsNoteSplit = (try? await sdkSynchronizer.isNoteSplitNeeded(account.id)) ?? false
-            var pczts: [MigrationUnsignedTransferPczt] = []
-            if needsNoteSplit, let splitPczt = try? await sdkSynchronizer.proposeNoteSplitPCZT(account.id) {
-                pczts.append(MigrationUnsignedTransferPczt(id: "note-split", pczt: splitPczt))
+            do {
+                let pczts = try await MigrationCommitPipeline.proposeKeystoneBatch(
+                    mode: MigrationCommitMode.scheduled,
+                    schedule: schedule,
+                    account: account,
+                    sdkSynchronizer: sdkSynchronizer
+                )
+                await send(.delegate(.keystoneSignRequested(pczts)))
+            } catch {
+                await send(.noteSplitFailed)
             }
-            if let schedulePczts = try? await sdkSynchronizer.proposeMigrationPCZTs(account.id, schedule) {
-                pczts.append(contentsOf: schedulePczts)
+        }
+    }
+
+    /// MOB-1496 (R8-T1, S3): proposes a fresh schedule via `proposeMigrationTransfers` — shared by
+    /// `onAppear`'s first-run proposal and `retryTapped`'s re-proposal after a propose failure.
+    /// Throws through to `.transferProposalFailed` instead of silently falling back to an empty
+    /// schedule.
+    private func proposeEffect(accountUUID: AccountUUID?) -> Effect<Action> {
+        guard let accountUUID else { return .none }
+
+        return .run { send in
+            do {
+                let schedule = try await sdkSynchronizer.proposeMigrationTransfers(accountUUID, false)
+                await send(.transfersProposed(schedule))
+            } catch {
+                await send(.transferProposalFailed)
             }
-            await send(.delegate(.keystoneSignRequested(pczts)))
         }
     }
 

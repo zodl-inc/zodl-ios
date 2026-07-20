@@ -222,7 +222,14 @@ import ComposableArchitecture
     }
 
     @MainActor @Test func confirmTappedForManualVariantSignsAndStoresScheduleThenEmitsDelegateConfirmed() async {
-        let schedule = MigrationSchedule(transfers: [], estimatedDurationHours: 0)
+        // MOB-1496 (R8-T1, S3): non-empty — Confirm now guards against a zero-transfer schedule,
+        // so this test's actual concern (manual variant signs+stores+delegates) needs a real one.
+        let schedule = MigrationSchedule(
+            transfers: [
+                MigrationTransferProposal(id: "t0", amount: Zatoshi(500_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
+            ],
+            estimatedDurationHours: 24
+        )
         var state = MigrationTransferPlan.State(variant: .manual)
         state.schedule = schedule
         let store = TestStore(initialState: state) {
@@ -282,7 +289,15 @@ import ComposableArchitecture
 
     @MainActor @Test func confirmTappedWithKeystoneRecreatedVariantProposesPCZTsAndDelegatesKeystoneSignRequested() async {
         let proposeCalls = LockIsolated<Int>(0)
-        let schedule = MigrationSchedule(transfers: [], estimatedDurationHours: 0)
+        // MOB-1496 (R8-T1, S3): non-empty — Confirm now guards against a zero-transfer schedule
+        // (no Keystone delegate either), so this test's actual concern (recreated variant proposes
+        // PCZTs and delegates) needs a real one.
+        let schedule = MigrationSchedule(
+            transfers: [
+                MigrationTransferProposal(id: "t0", amount: Zatoshi(500_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
+            ],
+            estimatedDurationHours: 24
+        )
         let pczts: [MigrationUnsignedTransferPczt] = [MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xCC]))]
         var state = MigrationTransferPlan.State(variant: .recreated)
         state.schedule = schedule
@@ -306,7 +321,13 @@ import ComposableArchitecture
 
     @MainActor @Test func confirmTappedWithZcashAccountUsesSoftwarePathUnchanged() async {
         let proposeCalls = LockIsolated<Int>(0)
-        let schedule = MigrationSchedule(transfers: [], estimatedDurationHours: 0)
+        // MOB-1496 (R8-T1, S3): non-empty — Confirm now guards against a zero-transfer schedule.
+        let schedule = MigrationSchedule(
+            transfers: [
+                MigrationTransferProposal(id: "t0", amount: Zatoshi(500_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
+            ],
+            estimatedDurationHours: 24
+        )
         var state = MigrationTransferPlan.State(variant: .scheduled)
         state.schedule = schedule
         state.$selectedWalletAccount.withLock { $0 = walletAccount(keystone: false, idByte: 3) }
@@ -393,7 +414,13 @@ import ComposableArchitecture
 
     @MainActor @Test func confirmTappedWithNoteSplitNotNeededSkipsSplitAndSignsDirectly() async {
         let prepareCalls = LockIsolated<Int>(0)
-        let schedule = MigrationSchedule(transfers: [], estimatedDurationHours: 0)
+        // MOB-1496 (R8-T1, S3): non-empty — Confirm now guards against a zero-transfer schedule.
+        let schedule = MigrationSchedule(
+            transfers: [
+                MigrationTransferProposal(id: "t0", amount: Zatoshi(500_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
+            ],
+            estimatedDurationHours: 24
+        )
         var state = MigrationTransferPlan.State()
         state.schedule = schedule
         let store = TestStore(initialState: state) {
@@ -421,7 +448,15 @@ import ComposableArchitecture
 
     @MainActor @Test func confirmTappedWithNoteSplitFailurePresentsFailureSheetAndNeverSigns() async {
         let signCalls = LockIsolated<Int>(0)
-        let schedule = MigrationSchedule(transfers: [], estimatedDurationHours: 0)
+        // MOB-1496 (R8-T1, S3): non-empty — Confirm now guards against a zero-transfer schedule
+        // BEFORE the commit effect even runs; this test's actual concern (a genuine split failure)
+        // needs a real schedule to reach that effect at all.
+        let schedule = MigrationSchedule(
+            transfers: [
+                MigrationTransferProposal(id: "t0", amount: Zatoshi(500_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
+            ],
+            estimatedDurationHours: 24
+        )
         var state = MigrationTransferPlan.State()
         state.schedule = schedule
         let store = TestStore(initialState: state) {
@@ -437,8 +472,11 @@ import ComposableArchitecture
         }
 
         await store.send(.confirmTapped)
+        // MOB-1496 (R8-T1): `.noteSplitFailed` now also tags `failureReason` so Retry knows to
+        // re-attempt the commit (not re-propose).
         await store.receive(\.noteSplitFailed) {
             $0.isFailurePresented = true
+            $0.failureReason = MigrationTransferPlan.State.FailureReason.commit
         }
 
         #expect(signCalls.value == 0)
@@ -457,7 +495,13 @@ import ComposableArchitecture
     }
 
     @MainActor @Test func retryTappedDismissesFailureSheetAndReattemptsWholeConfirmSequence() async {
-        let schedule = MigrationSchedule(transfers: [], estimatedDurationHours: 0)
+        // MOB-1496 (R8-T1, S3): non-empty — Confirm now guards against a zero-transfer schedule.
+        let schedule = MigrationSchedule(
+            transfers: [
+                MigrationTransferProposal(id: "t0", amount: Zatoshi(500_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
+            ],
+            estimatedDurationHours: 24
+        )
         var state = MigrationTransferPlan.State()
         state.schedule = schedule
         state.isFailurePresented = true
@@ -493,7 +537,15 @@ import ComposableArchitecture
             MigrationUnsignedTransferPczt(id: "t1", pczt: Data([0xBB]))
         ]
         let expectedBatch = [MigrationUnsignedTransferPczt(id: "note-split", pczt: splitPczt)] + schedulePczts
-        let schedule = MigrationSchedule(transfers: [], estimatedDurationHours: 0)
+        // MOB-1496 (R8-T1, S3): non-empty — Confirm now guards against a zero-transfer schedule
+        // (no Keystone delegate either); this test's actual concern (split PCZT proposed first) is
+        // otherwise unaffected by the schedule's own content, which the propose mocks ignore.
+        let schedule = MigrationSchedule(
+            transfers: [
+                MigrationTransferProposal(id: "t0", amount: Zatoshi(500_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
+            ],
+            estimatedDurationHours: 24
+        )
         var state = MigrationTransferPlan.State(variant: .scheduled)
         state.schedule = schedule
         state.$selectedWalletAccount.withLock { $0 = walletAccount(keystone: true, idByte: 9) }
@@ -603,5 +655,271 @@ import ComposableArchitecture
         await store.receive(.delegate(.confirmed))
 
         #expect(stopCalls.value == 0)
+    }
+
+    // MARK: - MOB-1496 (R8-T1, S3): honest propose failures — no silent empty-schedule fallback
+
+    @MainActor @Test func onAppearWhenProposeThrowsPresentsFailureSheetLeavesScheduleNilAndConfirmSignsNothing() async {
+        struct ProposeFailure: Error { }
+        let signAndStoreCalls = LockIsolated<Int>(0)
+        let state = MigrationTransferPlan.State(variant: .scheduled)
+        let store = TestStore(initialState: state) {
+            MigrationTransferPlan()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.proposeMigrationTransfers = { _, _ in throw ProposeFailure() }
+            $0.sdkSynchronizer.signAndStoreMigrationSchedule = { _, _, _ in signAndStoreCalls.withValue { $0 += 1 } }
+        }
+
+        await store.send(.onAppear)
+        await store.receive(\.transferProposalFailed) {
+            $0.isFailurePresented = true
+            $0.failureReason = MigrationTransferPlan.State.FailureReason.propose
+        }
+
+        #expect(store.state.schedule == nil)
+        #expect(store.state.rows.isEmpty)
+
+        // Confirm must not proceed: no signAndStore reachable with a nil schedule. Tapping it also
+        // dismisses the (already showing) failure affordance, same as any other confirm/retry tap.
+        await store.send(.confirmTapped) {
+            $0.isFailurePresented = false
+            $0.failureReason = nil
+        }
+
+        #expect(signAndStoreCalls.value == 0)
+    }
+
+    @MainActor @Test func retryTappedAfterProposeFailureReProposesAndClearsFailureStateOnSuccess() async {
+        struct ProposeFailure: Error { }
+        let proposeCalls = LockIsolated<Int>(0)
+        let schedule = MigrationSchedule(
+            transfers: [
+                MigrationTransferProposal(id: "t0", amount: Zatoshi(500_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
+            ],
+            estimatedDurationHours: 24
+        )
+        let state = MigrationTransferPlan.State(variant: .scheduled)
+        let store = TestStore(initialState: state) {
+            MigrationTransferPlan()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.proposeMigrationTransfers = { _, _ in
+                let call = proposeCalls.withValue {
+                    $0 += 1
+                    return $0
+                }
+                if call == 1 {
+                    throw ProposeFailure()
+                }
+                return schedule
+            }
+        }
+
+        await store.send(.onAppear)
+        await store.receive(\.transferProposalFailed) {
+            $0.isFailurePresented = true
+            $0.failureReason = MigrationTransferPlan.State.FailureReason.propose
+        }
+
+        await store.send(.retryTapped) {
+            $0.isFailurePresented = false
+            $0.failureReason = nil
+        }
+        await store.receive(\.transfersProposed) {
+            $0.rows = [
+                MigrationTransferRow(id: "t0", index: 0, amount: Zatoshi(500_000_000), status: .active, hoursFromNow: 0)
+            ]
+            $0.totalDurationHours = 24
+            $0.schedule = schedule
+        }
+
+        #expect(proposeCalls.value == 2)
+    }
+
+    @MainActor @Test func confirmTappedWithZeroTransferScheduleNeverSigns() async {
+        let signAndStoreCalls = LockIsolated<Int>(0)
+        var state = MigrationTransferPlan.State(variant: .scheduled)
+        state.schedule = MigrationSchedule(transfers: [], estimatedDurationHours: 0)
+        let store = TestStore(initialState: state) {
+            MigrationTransferPlan()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.signAndStoreMigrationSchedule = { _, _, _ in signAndStoreCalls.withValue { $0 += 1 } }
+        }
+
+        await store.send(.confirmTapped)
+
+        #expect(signAndStoreCalls.value == 0)
+    }
+
+    @MainActor @Test func confirmTappedWithKeystoneAccountAndZeroTransferScheduleNeverDelegates() async {
+        let proposeCalls = LockIsolated<Int>(0)
+        var state = MigrationTransferPlan.State(variant: .scheduled)
+        state.schedule = MigrationSchedule(transfers: [], estimatedDurationHours: 0)
+        state.$selectedWalletAccount.withLock { $0 = walletAccount(keystone: true, idByte: 19) }
+        let store = TestStore(initialState: state) {
+            MigrationTransferPlan()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.proposeMigrationPCZTs = { _, _ in
+                proposeCalls.withValue { $0 += 1 }
+                return []
+            }
+        }
+
+        await store.send(.confirmTapped)
+
+        #expect(proposeCalls.value == 0)
+    }
+
+    // MARK: - MOB-1496 (R8-T1, #1): a landed-but-unrecorded note split is not retried with a fresh
+    // conflicting split — see this task's report for the full engine trace behind this decision.
+
+    @MainActor @Test func confirmTappedWhenSubmitNoteSplitRecordFailsAfterBroadcastProceedsToSignAndStoreSchedule() async {
+        struct RecordFailure: Error { }
+        let submitNoteSplitCalls = LockIsolated<Int>(0)
+        let signedSchedule = LockIsolated<MigrationSchedule?>(nil)
+        let recordCommittedScheduleCalls = LockIsolated<Int>(0)
+        let reconcileCalls = LockIsolated<Int>(0)
+        let schedule = MigrationSchedule(
+            transfers: [
+                MigrationTransferProposal(id: "t0", amount: Zatoshi(500_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
+            ],
+            estimatedDurationHours: 24
+        )
+        var state = MigrationTransferPlan.State()
+        state.schedule = schedule
+        let store = TestStore(initialState: state) {
+            MigrationTransferPlan()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.isNoteSplitNeeded = { _ in true }
+            $0.sdkSynchronizer.prepareNoteSplit = { _ in NoteSplitProposal(outputNotes: [Zatoshi(500_000_000)], fee: Zatoshi(100_000)) }
+            $0.sdkSynchronizer.submitNoteSplit = { _, _, _, _ in
+                submitNoteSplitCalls.withValue { $0 += 1 }
+                throw ZcashError.migrationRecordFailedAfterBroadcast(RecordFailure())
+            }
+            $0.sdkSynchronizer.signAndStoreMigrationSchedule = { _, schedule, _ in signedSchedule.setValue(schedule) }
+            $0.migrationManager.migrationNetworkOptions = { _ in Self.defaultNetworkPrivacyOptions }
+            $0.migrationManager.recordCommittedSchedule = { _, _ in recordCommittedScheduleCalls.withValue { $0 += 1 } }
+            $0.migrationManager.reconcile = { reconcileCalls.withValue { $0 += 1 } }
+            withDependenciesUSKDerivable(&$0)
+        }
+
+        await store.send(.confirmTapped)
+        await store.receive(\.scheduleSigned)
+        await store.receive(.delegate(.confirmed))
+
+        // Exactly one submit attempt — the landed-but-unrecorded outcome is NEVER retried with a
+        // fresh (conflicting) split, and the schedule IS stored (continuation (a) — see report).
+        #expect(submitNoteSplitCalls.value == 1)
+        #expect(signedSchedule.value == schedule)
+        #expect(recordCommittedScheduleCalls.value == 1)
+        #expect(reconcileCalls.value == 1)
+    }
+
+    // MARK: - MOB-1496 (R8-T1, #4): Keystone propose failures surface instead of dead-ending
+
+    @MainActor @Test func confirmTappedWithKeystoneAccountWhenIsNoteSplitNeededThrowsPresentsFailureSheetWithoutDelegating() async {
+        struct ProposeFailure: Error { }
+        let schedule = MigrationSchedule(
+            transfers: [
+                MigrationTransferProposal(id: "t0", amount: Zatoshi(500_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
+            ],
+            estimatedDurationHours: 24
+        )
+        var state = MigrationTransferPlan.State(variant: .scheduled)
+        state.schedule = schedule
+        state.$selectedWalletAccount.withLock { $0 = walletAccount(keystone: true, idByte: 20) }
+        let store = TestStore(initialState: state) {
+            MigrationTransferPlan()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.isNoteSplitNeeded = { _ in throw ProposeFailure() }
+        }
+
+        await store.send(.confirmTapped)
+        await store.receive(\.noteSplitFailed) {
+            $0.isFailurePresented = true
+            $0.failureReason = MigrationTransferPlan.State.FailureReason.commit
+        }
+    }
+
+    @MainActor @Test func confirmTappedWithKeystoneAccountWhenProposeNoteSplitPCZTThrowsPresentsFailureSheetWithoutDelegating() async {
+        struct ProposeFailure: Error { }
+        let schedule = MigrationSchedule(
+            transfers: [
+                MigrationTransferProposal(id: "t0", amount: Zatoshi(500_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
+            ],
+            estimatedDurationHours: 24
+        )
+        var state = MigrationTransferPlan.State(variant: .scheduled)
+        state.schedule = schedule
+        state.$selectedWalletAccount.withLock { $0 = walletAccount(keystone: true, idByte: 21) }
+        let store = TestStore(initialState: state) {
+            MigrationTransferPlan()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.isNoteSplitNeeded = { _ in true }
+            $0.sdkSynchronizer.proposeNoteSplitPCZT = { _ in throw ProposeFailure() }
+        }
+
+        await store.send(.confirmTapped)
+        await store.receive(\.noteSplitFailed) {
+            $0.isFailurePresented = true
+            $0.failureReason = MigrationTransferPlan.State.FailureReason.commit
+        }
+    }
+
+    @MainActor @Test func confirmTappedWithKeystoneAccountWhenProposeMigrationPCZTsThrowsPresentsFailureSheetWithoutDelegating() async {
+        struct ProposeFailure: Error { }
+        let schedule = MigrationSchedule(
+            transfers: [
+                MigrationTransferProposal(id: "t0", amount: Zatoshi(500_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
+            ],
+            estimatedDurationHours: 24
+        )
+        var state = MigrationTransferPlan.State(variant: .scheduled)
+        state.schedule = schedule
+        state.$selectedWalletAccount.withLock { $0 = walletAccount(keystone: true, idByte: 22) }
+        let store = TestStore(initialState: state) {
+            MigrationTransferPlan()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.isNoteSplitNeeded = { _ in false }
+            $0.sdkSynchronizer.proposeMigrationPCZTs = { _, _ in throw ProposeFailure() }
+        }
+
+        await store.send(.confirmTapped)
+        await store.receive(\.noteSplitFailed) {
+            $0.isFailurePresented = true
+            $0.failureReason = MigrationTransferPlan.State.FailureReason.commit
+        }
+    }
+
+    @MainActor @Test func confirmTappedWithKeystoneAccountWhenPCZTBatchComesBackEmptyPresentsFailureSheetWithoutDelegating() async {
+        let schedule = MigrationSchedule(
+            transfers: [
+                MigrationTransferProposal(id: "t0", amount: Zatoshi(500_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
+            ],
+            estimatedDurationHours: 24
+        )
+        var state = MigrationTransferPlan.State(variant: .scheduled)
+        state.schedule = schedule
+        state.$selectedWalletAccount.withLock { $0 = walletAccount(keystone: true, idByte: 23) }
+        let store = TestStore(initialState: state) {
+            MigrationTransferPlan()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.isNoteSplitNeeded = { _ in false }
+            $0.sdkSynchronizer.proposeMigrationPCZTs = { _, _ in [] }
+        }
+
+        await store.send(.confirmTapped)
+        await store.receive(\.noteSplitFailed) {
+            $0.isFailurePresented = true
+            $0.failureReason = MigrationTransferPlan.State.FailureReason.commit
+        }
     }
 }

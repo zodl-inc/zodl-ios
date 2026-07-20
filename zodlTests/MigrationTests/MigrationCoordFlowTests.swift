@@ -2017,8 +2017,12 @@ import ComposableArchitecture
         #expect(reconcileCalls.value == 1)
     }
 
-    /// A failed restart (`try?` swallows the error, falling back to an empty schedule) must not
-    /// reconcile — nothing actually changed on the engine side to observe.
+    /// A failed restart must not reconcile — nothing actually changed on the engine side to
+    /// observe. MOB-1496 (R8-T1, S3): also no longer falls back to a silent empty placeholder
+    /// schedule — `injectedSchedule` is left `nil` so the pushed `.recreated` plan's own `onAppear`
+    /// falls through to a fresh `proposeMigrationTransfers` attempt (same as a first-run
+    /// `.scheduled` plan) and surfaces its OWN propose-failure sheet if that fails too; see
+    /// `MigrationTransferPlanTests` for that fallthrough's own coverage.
     @MainActor @Test func recoveryRecreateDoesNotReconcileWhenRestartFails() async {
         struct RestartFailure: Error { }
         let reconcileCalls = LockIsolated<Int>(0)
@@ -2037,6 +2041,12 @@ import ComposableArchitecture
         await store.receive(\.pushHydratedPathState)
 
         #expect(reconcileCalls.value == 0)
+        guard case let .transferPlan(planState) = try? #require(store.state.path.last) else {
+            Issue.record("Expected .transferPlan (recreated) pushed")
+            return
+        }
+        #expect(planState.variant == MigrationTransferPlan.State.Variant.recreated)
+        #expect(planState.injectedSchedule == nil)
     }
 
     @MainActor @Test func recreatedPlanConfirmDoesSign() async {
