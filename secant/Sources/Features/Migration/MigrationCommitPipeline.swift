@@ -119,6 +119,16 @@ enum MigrationCommitPipeline {
                 } catch ZcashError.migrationRecordFailedAfterBroadcast(_) {
                     // [MOB-1496] #1: the broadcast DID land; only recording failed — fall through to
                     // sign+store below exactly as a `.success` result would. See doc above.
+                } catch {
+                    // [MOB-1496] (R8-T4, #3): the stop above did NOT lead to a successful broadcast
+                    // (either the SDK call itself threw some other error, or the guard above just
+                    // threw because the result was non-success) — the SDK only transitions its
+                    // migration-sync privacy gate on a SUCCESSFUL broadcast, so nudge Root's
+                    // app-side gate feed with a fresh read here; otherwise a stop that never got
+                    // cleared could strand sync stopped for the rest of the session (see
+                    // `MigrationManagerClient.refreshMigrationSyncGate`'s doc).
+                    await migrationManager.refreshMigrationSyncGate()
+                    throw error
                 }
             }
             try await sdkSynchronizer.signAndStoreMigrationSchedule(account.id, schedule, usk)

@@ -423,6 +423,34 @@ import ComposableArchitecture
         #expect(submitCalls.value == 0)
     }
 
+    /// MOB-1496 (R8-T4, #3): the software submit lane's own failure exit — a `.networkError` result
+    /// stopped sync for a broadcast that never reached a successful outcome, so it must nudge
+    /// Root's app-side gate feed directly (the SDK's own gate only transitions on SUCCESS).
+    @MainActor @Test func retryTappedWithFailureResultNudgesMigrationSyncGate() async {
+        let refreshMigrationSyncGateCalls = LockIsolated<Int>(0)
+        let proposal = NoteSplitProposal(outputNotes: [Zatoshi(500_000_000)], fee: Zatoshi(100_000))
+        var state = MigrationNoteSplit.State(phase: .splitting, isFailurePresented: true)
+        state.proposal = proposal
+        let store = TestStore(initialState: state) {
+            MigrationNoteSplit()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.submitNoteSplit = { _, _, _, _ in MigrationTransferResult.networkError(retryable: true) }
+            $0.migrationManager.migrationNetworkOptions = { _ in Self.defaultNetworkPrivacyOptions }
+            $0.migrationManager.refreshMigrationSyncGate = { refreshMigrationSyncGateCalls.withValue { $0 += 1 } }
+            withDependenciesUSKDerivable(&$0)
+        }
+
+        await store.send(.retryTapped) {
+            $0.isFailurePresented = false
+        }
+        await store.receive(\.splitResult) {
+            $0.isFailurePresented = true
+        }
+
+        #expect(refreshMigrationSyncGateCalls.value == 1)
+    }
+
     // MARK: - MOB-1468: Keystone note-split Retry forks on signedNoteSplitPczt
 
     /// The batch-commit-pushed variant (MOB-1496 C-1 fix, final review R6): the coordinator's store
@@ -533,6 +561,10 @@ import ComposableArchitecture
     @MainActor @Test func retryTappedTwiceAfterABroadcastFailureNeverStoresTwice() async {
         let storeCalls = LockIsolated<Int>(0)
         let broadcastCalls = LockIsolated<Int>(0)
+        // MOB-1496 (R8-T4, #3): the FIRST attempt's broadcast failure stopped sync without ever
+        // reaching a successful outcome — must nudge. The second attempt succeeds, so it must NOT
+        // nudge again.
+        let refreshMigrationSyncGateCalls = LockIsolated<Int>(0)
         let signedPczt = Data([0xCC, 0xDD])
         let state = MigrationNoteSplit.State(
             phase: .splitting,
@@ -556,6 +588,7 @@ import ComposableArchitecture
             }
             $0.migrationManager.migrationNetworkOptions = { _ in Self.defaultNetworkPrivacyOptions }
             $0.migrationManager.reconcile = { }
+            $0.migrationManager.refreshMigrationSyncGate = { refreshMigrationSyncGateCalls.withValue { $0 += 1 } }
         }
 
         // First attempt: stores (flipping splitStored) then broadcasts — the broadcast fails.
@@ -571,6 +604,7 @@ import ComposableArchitecture
 
         #expect(storeCalls.value == 1)
         #expect(broadcastCalls.value == 1)
+        #expect(refreshMigrationSyncGateCalls.value == 1)
 
         // Second attempt (user tapped Retry again): splitStored is now true — broadcast only.
         await store.send(.retryTapped) {
@@ -586,6 +620,9 @@ import ComposableArchitecture
 
         #expect(storeCalls.value == 1)
         #expect(broadcastCalls.value == 2)
+        // The second attempt succeeded — the nudge count must stay at 1 (from the first, failed
+        // attempt only).
+        #expect(refreshMigrationSyncGateCalls.value == 1)
     }
 
     @MainActor @Test func retryTappedWithNoSignedNoteSplitPcztUsesExistingSoftwareRetry() async {
@@ -651,6 +688,9 @@ import ComposableArchitecture
 
     @MainActor @Test func retryTappedWhenRecordFailsAfterBroadcastStillReportsSuccessAndReconciles() async {
         let reconcileCalls = LockIsolated<Int>(0)
+        // MOB-1496 (R8-T4, #3): the broadcast DID land here (only recording failed) — treated
+        // exactly like `.success`, so this must NOT nudge the gate feed.
+        let refreshMigrationSyncGateCalls = LockIsolated<Int>(0)
         let proposal = NoteSplitProposal(outputNotes: [Zatoshi(500_000_000)], fee: Zatoshi(100_000))
         var state = MigrationNoteSplit.State(phase: .splitting, isFailurePresented: true)
         state.proposal = proposal
@@ -663,6 +703,7 @@ import ComposableArchitecture
             }
             $0.migrationManager.migrationNetworkOptions = { _ in Self.defaultNetworkPrivacyOptions }
             $0.migrationManager.reconcile = { reconcileCalls.withValue { $0 += 1 } }
+            $0.migrationManager.refreshMigrationSyncGate = { refreshMigrationSyncGateCalls.withValue { $0 += 1 } }
             withDependenciesUSKDerivable(&$0)
         }
 
@@ -676,6 +717,7 @@ import ComposableArchitecture
 
         #expect(store.state.isFailurePresented == false)
         #expect(reconcileCalls.value == 1)
+        #expect(refreshMigrationSyncGateCalls.value == 0)
     }
 
     // MARK: - MOB-1496 (W3): stop an in-flight sync before a foreground migration broadcast
@@ -800,6 +842,9 @@ import ComposableArchitecture
     /// the unaffected SOFTWARE fork (`submitNoteSplit`, still reconciles directly — no coordinator
     /// involved there).
     @MainActor @Test func retryTappedWithSignedPcztWhenRecordFailsAfterBroadcastStillAsksCoordinatorToStore() async {
+        // MOB-1496 (R8-T4, #3): the broadcast DID land here (only recording failed) — treated
+        // exactly like `.success`, so this must NOT nudge the gate feed.
+        let refreshMigrationSyncGateCalls = LockIsolated<Int>(0)
         let signedPczt = Data([0xCC, 0xDD])
         let state = MigrationNoteSplit.State(
             phase: .splitting,
@@ -815,6 +860,7 @@ import ComposableArchitecture
                 throw ZcashError.migrationRecordFailedAfterBroadcast(NSError(domain: "test", code: 1))
             }
             $0.migrationManager.migrationNetworkOptions = { _ in Self.defaultNetworkPrivacyOptions }
+            $0.migrationManager.refreshMigrationSyncGate = { refreshMigrationSyncGateCalls.withValue { $0 += 1 } }
         }
 
         await store.send(.retryTapped) {
@@ -829,6 +875,7 @@ import ComposableArchitecture
         await store.receive(.delegate(.storeScheduleRequested))
 
         #expect(store.state.isFailurePresented == false)
+        #expect(refreshMigrationSyncGateCalls.value == 0)
     }
 
     /// While `awaitingScheduleStore` is `true` (a previous deferred-store attempt failed), a further

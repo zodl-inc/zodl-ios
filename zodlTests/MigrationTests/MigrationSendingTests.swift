@@ -456,6 +456,11 @@ import ComposableArchitecture
 
     @MainActor @Test func onAppearWithFailureResultPresentsFailureSheetAndStopsSequence() async {
         let executedCount = LockIsolated<Int>(0)
+        // MOB-1496 (R8-T4, #3): a `.networkError` result stopped sync for a broadcast that never
+        // reached a successful outcome — the SDK's own gate transitions only on SUCCESS, so this
+        // path must nudge Root's app-side gate feed directly (see
+        // `migrationManager.refreshMigrationSyncGate`'s doc).
+        let refreshMigrationSyncGateCalls = LockIsolated<Int>(0)
         let store = TestStore(initialState: MigrationSending.State(totalCount: 3)) {
             MigrationSending()
         } withDependencies: {
@@ -467,6 +472,7 @@ import ComposableArchitecture
             $0.migrationManager.migrationNetworkOptions = { _ in
                 MigrationNetworkPrivacyOptions(useTor: false, submissionEndpoint: LightWalletEndpoint(address: "", port: 0))
             }
+            $0.migrationManager.refreshMigrationSyncGate = { refreshMigrationSyncGateCalls.withValue { $0 += 1 } }
         }
 
         await store.send(.onAppear)
@@ -476,9 +482,14 @@ import ComposableArchitecture
 
         #expect(executedCount.value == 1)
         #expect(store.state.sentCount == 0)
+        #expect(refreshMigrationSyncGateCalls.value == 1)
     }
 
     @MainActor @Test func onAppearWithNilResultPresentsFailureSheet() async {
+        // MOB-1496 (R8-T4, #3): see the twin comment on
+        // `onAppearWithFailureResultPresentsFailureSheetAndStopsSequence` above — a `nil` result is
+        // the SAME "stopped sync, never broadcast successfully" shape.
+        let refreshMigrationSyncGateCalls = LockIsolated<Int>(0)
         let store = TestStore(initialState: MigrationSending.State(totalCount: 1)) {
             MigrationSending()
         } withDependencies: {
@@ -487,12 +498,39 @@ import ComposableArchitecture
             $0.migrationManager.migrationNetworkOptions = { _ in
                 MigrationNetworkPrivacyOptions(useTor: false, submissionEndpoint: LightWalletEndpoint(address: "", port: 0))
             }
+            $0.migrationManager.refreshMigrationSyncGate = { refreshMigrationSyncGateCalls.withValue { $0 += 1 } }
         }
 
         await store.send(.onAppear)
         await store.receive(\.transferResult) {
             $0.isFailurePresented = true
         }
+
+        #expect(refreshMigrationSyncGateCalls.value == 1)
+    }
+
+    /// A generic thrown error (not `ZcashError.migrationRecordFailedAfterBroadcast`) after the stop
+    /// hits the catch-all — also needs the nudge (MOB-1496 R8-T4 #3).
+    @MainActor @Test func onAppearWithThrownGenericErrorAfterStopPresentsFailureSheetAndNudgesGate() async {
+        struct SomeOtherFailure: Error { }
+        let refreshMigrationSyncGateCalls = LockIsolated<Int>(0)
+        let store = TestStore(initialState: MigrationSending.State(totalCount: 1)) {
+            MigrationSending()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in throw SomeOtherFailure() }
+            $0.migrationManager.migrationNetworkOptions = { _ in
+                MigrationNetworkPrivacyOptions(useTor: false, submissionEndpoint: LightWalletEndpoint(address: "", port: 0))
+            }
+            $0.migrationManager.refreshMigrationSyncGate = { refreshMigrationSyncGateCalls.withValue { $0 += 1 } }
+        }
+
+        await store.send(.onAppear)
+        await store.receive(\.transferResult) {
+            $0.isFailurePresented = true
+        }
+
+        #expect(refreshMigrationSyncGateCalls.value == 1)
     }
 
     // MARK: - MOB-1496: broadcast-landed-but-record-failed is treated as success, not failure
@@ -502,6 +540,10 @@ import ComposableArchitecture
         // placeholder empty txId the store falls back to (persisted as `nil`, not `""`, by
         // `MigrationScheduleStorage` — covered directly in `MigrationScheduleStorageTests`).
         let recordTransferBroadcastCalls = LockIsolated<[(AccountUUID?, MigrationTransferResult)]>([])
+        // MOB-1496 (R8-T4, #3): the broadcast DID land here (only recording failed) — this is
+        // treated exactly like a `.success` result, so it must NOT nudge the gate feed (the SDK's
+        // own gate transition already covers the resume).
+        let refreshMigrationSyncGateCalls = LockIsolated<Int>(0)
         let store = TestStore(initialState: MigrationSending.State(totalCount: 1)) {
             MigrationSending()
         } withDependencies: {
@@ -513,6 +555,7 @@ import ComposableArchitecture
                 recordTransferBroadcastCalls.withValue { $0.append((accountUUID, result)) }
             }
             $0.migrationBGScheduler.scheduleNextWindow = { }
+            $0.migrationManager.refreshMigrationSyncGate = { refreshMigrationSyncGateCalls.withValue { $0 += 1 } }
         }
 
         await store.send(.onAppear)
@@ -526,6 +569,7 @@ import ComposableArchitecture
 
         #expect(recordTransferBroadcastCalls.value.count == 1)
         #expect(recordTransferBroadcastCalls.value.first?.1 == MigrationTransferResult.success(txId: ""))
+        #expect(refreshMigrationSyncGateCalls.value == 0)
     }
 
     // MARK: - retryTapped: re-runs only the failed step
@@ -661,5 +705,28 @@ import ComposableArchitecture
         }
 
         #expect(callOrder.value == ["stop", "execute"])
+    }
+
+    /// The dust lane's own failure exit needs the SAME nudge as the scheduled lane's (MOB-1496
+    /// R8-T4 #3) — its `stopSyncBeforeMigrationBroadcast()` call site is independent of the
+    /// scheduled lane's, so it must be covered separately.
+    @MainActor @Test func onAppearWithDustLaneFailureResultPresentsFailureSheetAndNudgesGate() async {
+        let refreshMigrationSyncGateCalls = LockIsolated<Int>(0)
+        let state = MigrationSending.State(totalCount: 1, isDustLane: true)
+        let store = TestStore(initialState: state) {
+            MigrationSending()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.migrateMigrationDust = { _, _, _ in MigrationTransferResult.networkError(retryable: true) }
+            $0.migrationManager.refreshMigrationSyncGate = { refreshMigrationSyncGateCalls.withValue { $0 += 1 } }
+            withDependenciesUSKDerivable(&$0)
+        }
+
+        await store.send(.onAppear)
+        await store.receive(\.transferResult) {
+            $0.isFailurePresented = true
+        }
+
+        #expect(refreshMigrationSyncGateCalls.value == 1)
     }
 }
