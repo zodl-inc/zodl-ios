@@ -5,15 +5,23 @@
 //  Covers MOB-1497's R7-T3 failure-routing subsystem end to end on the manager side:
 //  `MigrationFailureRoutingStorage` (Dependencies/MigrationManager/MigrationManagerLiveKey.swift) —
 //  the had-broadcast flag (R14 first-run vs R15 mid-run) and the R16 per-account episode set — and
-//  `MigrationManagerImpl.routeBroadcastFailure`'s decision table over that storage plus a committed
-//  `MigrationNetworkSnapshot`. Kept in one file (rather than split further, or folded into the
-//  already-2800+-line `MigrationManagerTests.swift`) since the storage class and the routing member
-//  are one cohesive new subsystem with no other consumers yet. The pure classifier
-//  (`MigrationBroadcastFailureClass.classify`) has its own `MigrationBroadcastFailureTests`; the
-//  sanctioned `MigrationSnapshotStorage` mutations (`overrideUseTorForCommitted`/
-//  `rotateBroadcastEndpoint`/`overrideBroadcastEndpointToSyncServerForCommitted`) are pinned directly
-//  in `MigrationSnapshotStorageTests` beside that class's other tests. `.serialized`: every storage
-//  test shares the `UserDefaults` global (same reasoning as the sibling storage test files).
+//  `MigrationManagerImpl.routeBroadcastFailure`'s decision table over that storage plus the account's
+//  ACTIVE (committed-else-provisional) `MigrationNetworkSnapshot`. Kept in one file (rather than split
+//  further, or folded into the already-2800+-line `MigrationManagerTests.swift`) since the storage
+//  class and the routing member are one cohesive new subsystem with no other consumers yet. The pure
+//  classifier (`MigrationBroadcastFailureClass.classify`) has its own `MigrationBroadcastFailureTests`;
+//  the sanctioned `MigrationSnapshotStorage` mutations (`overrideUseTorOnActiveSnapshot`/
+//  `rotateBroadcastEndpoint`/`overrideBroadcastEndpointToSyncServerOnActiveSnapshot`) are pinned
+//  directly in `MigrationSnapshotStorageTests` beside that class's other tests. `.serialized`: every
+//  storage test shares the `UserDefaults` global (same reasoning as the sibling storage test files).
+//
+//  R7-review fix (Important-1): `routeBroadcastFailure` originally required a COMMITTED snapshot,
+//  which left the live Keystone note-split lane's R14/R16/R17 permanently inert — that lane broadcasts
+//  (and can fail) BEFORE its schedule/snapshot commits, by design (see
+//  `MigrationCoordFlowCoordinator.storeDeferredKeystoneSchedule`'s doc). The "routes against a
+//  PROVISIONAL-only snapshot" section below pins the fix directly against the REAL router + REAL
+//  storage (not a mock) — the store-level tests (`MigrationSendingTests`/`MigrationNoteSplitTests`)
+//  mock `routeBroadcastFailure`'s result and so cannot see this gap either way.
 //
 
 import Testing
@@ -146,23 +154,107 @@ struct MigrationFailureRoutingTests {
         }
     }
 
-    // MARK: - routeBroadcastFailure: defensive no-committed-snapshot fallback
+    // MARK: - routeBroadcastFailure: defensive no-active-snapshot fallback
 
     @Test func routeBroadcastFailureWithNoSnapshotAtAllReturnsPlainRetry() async throws {
-        try await withImpl("testRouteBroadcastFailureWithNoSnapshotAtAllReturnsPlainRetry") { impl, account, _ in
+        try await withImpl("testRouteBroadcastFailureWithNoSnapshotAtAllReturnsPlainRetry") { impl, account, storages in
             let route = await impl.routeBroadcastFailure(accountUUID: account.id, failureClass: MigrationBroadcastFailureClass.endpointUnreachable)
 
             #expect(route == MigrationBroadcastFailureRoute.plainRetry)
+            // The defensive branch must not conjure a snapshot into existence — it only ever routes
+            // against one that's already there, committed or provisional (R7-review fix, Important-1).
+            #expect(storages.snapshotStorage.snapshot(for: account.id) == nil)
         }
     }
 
-    @Test func routeBroadcastFailureWithOnlyAProvisionalSnapshotReturnsPlainRetry() async throws {
-        try await withImpl("testRouteBroadcastFailureWithOnlyAProvisionalSnapshotReturnsPlainRetry") { impl, account, storages in
+    // MARK: - R7-review fix (Important-1): routes against a snapshot that is still PROVISIONAL
+    //
+    // The live Keystone note-split lane broadcasts before its schedule (and therefore its network
+    // snapshot) commits — `MigrationCoordFlowCoordinator.storeDeferredKeystoneSchedule` defers
+    // `recordCommittedSchedule`/`markNetworkSnapshotCommitted` until AFTER the split's own broadcast
+    // succeeds (a deliberate prior-round fix, untouched here — see that method's doc). Before this
+    // fix, `routeBroadcastFailure` required a COMMITTED snapshot, so every note-split failure fell
+    // through to the defensive `.plainRetry` above and R14/R16/R17 never engaged on that lane. These
+    // pins run against the REAL router + REAL storage (never a mock) with a snapshot that is ONLY
+    // provisional — exactly the shape that lane's failures see.
+
+    /// THE pin: before the fix this returned `.plainRetry` (RED); after, `.torFirstRunChoice`.
+    @Test func routeBroadcastFailureWithOnlyAProvisionalSnapshotTorClassFirstRunReturnsTorFirstRunChoice() async throws {
+        try await withImpl("testRouteBroadcastFailureWithOnlyAProvisionalSnapshotTorClassFirstRunReturnsTorFirstRunChoice") { impl, account, storages in
             storages.snapshotStorage.recordSnapshot(Self.snapshot(committedAt: nil), for: account.id)
 
             let route = await impl.routeBroadcastFailure(accountUUID: account.id, failureClass: MigrationBroadcastFailureClass.torUnavailable)
 
-            #expect(route == MigrationBroadcastFailureRoute.plainRetry)
+            #expect(route == MigrationBroadcastFailureRoute.torFirstRunChoice)
+        }
+    }
+
+    /// Endpoint-class on a provisional-only, PROVIDER-shaped snapshot: the rotation itself must mutate
+    /// the provisional snapshot (there's no committed one to mutate instead), and — the whole point of
+    /// "active snapshot" semantics — the rotated endpoint must survive into the committed snapshot once
+    /// `markNetworkSnapshotCommitted` later stamps it (commit-on-success, T1's existing ordering,
+    /// untouched by this fix), so the NEXT transfer actually uses the rotated host.
+    @Test func routeBroadcastFailureWithOnlyAProvisionalSnapshotEndpointClassRotatesTheProvisionalAndCarriesIntoTheCommit() async throws {
+        try await withImpl("testRouteBroadcastFailureWithOnlyAProvisionalSnapshotEndpointClassRotatesTheProvisionalAndCarriesIntoTheCommit") { impl, account, storages in
+            storages.snapshotStorage.recordSnapshot(
+                Self.snapshot(useTor: true, syncHost: "zec.rocks", broadcastHost: "us.zec.stardust.rest", committedAt: nil),
+                for: account.id
+            )
+
+            let route = await withDependencies {
+                $0.zcashSDKEnvironment = .testnet
+                $0.zcashSDKEnvironment.network = { ZcashNetworkBuilder.network(for: .mainnet) }
+                $0.migrationRandomness.randomIndex = { _ in 0 }
+            } operation: {
+                await impl.routeBroadcastFailure(accountUUID: account.id, failureClass: MigrationBroadcastFailureClass.endpointUnreachable)
+            }
+
+            #expect(route == MigrationBroadcastFailureRoute.retryRotated)
+            let rotatedProvisional = try #require(storages.snapshotStorage.snapshot(for: account.id))
+            #expect(rotatedProvisional.committedAt == nil)
+            #expect(rotatedProvisional.broadcastEndpoint.host == "eu.zec.stardust.rest")
+            #expect(rotatedProvisional.broadcastProvider == ServerProvider.stardust)
+            #expect(storages.failureRoutingStorage.episodeHosts(for: account.id) == ["us.zec.stardust.rest"])
+
+            impl.markNetworkSnapshotCommitted(accountUUID: account.id)
+            let committed = try #require(storages.snapshotStorage.snapshot(for: account.id))
+            #expect(committed.committedAt != nil)
+            #expect(committed.broadcastEndpoint.host == "eu.zec.stardust.rest")
+        }
+    }
+
+    /// Endpoint-class on a provisional-only snapshot whose episode is already exhausted: routes to
+    /// `.providerExhausted` without mutating (same as the committed-snapshot case), and the R17
+    /// sync-server override — the one sanctioned mutation left — must be able to act on the
+    /// provisional snapshot too (broadcast == sync afterwards) and still reset the episode.
+    @Test func routeBroadcastFailureWithOnlyAProvisionalSnapshotEndpointClassExhaustedReturnsProviderExhaustedAndSyncOverrideMutatesTheProvisional() async throws {
+        try await withImpl("testRouteBroadcastFailureWithOnlyAProvisionalSnapshotEndpointClassExhaustedReturnsProviderExhaustedAndSyncOverrideMutatesTheProvisional") { impl, account, storages in
+            storages.snapshotStorage.recordSnapshot(
+                Self.snapshot(useTor: true, syncHost: "eu.zec.rocks", broadcastHost: "us.zec.stardust.rest", committedAt: nil),
+                for: account.id
+            )
+            storages.failureRoutingStorage.addEpisodeHost("eu.zec.stardust.rest", for: account.id)
+
+            let route = await withDependencies {
+                $0.zcashSDKEnvironment = .testnet
+                $0.zcashSDKEnvironment.network = { ZcashNetworkBuilder.network(for: .mainnet) }
+                $0.migrationRandomness.randomIndex = { _ in 0 }
+            } operation: {
+                await impl.routeBroadcastFailure(accountUUID: account.id, failureClass: MigrationBroadcastFailureClass.endpointUnreachable)
+            }
+
+            #expect(route == MigrationBroadcastFailureRoute.providerExhausted(torEnabled: true))
+            let stillProvisional = try #require(storages.snapshotStorage.snapshot(for: account.id))
+            #expect(stillProvisional.committedAt == nil)
+            #expect(stillProvisional.broadcastEndpoint.host == "us.zec.stardust.rest")
+
+            await impl.overrideBroadcastEndpointToSyncServer(accountUUID: account.id)
+
+            let overridden = try #require(storages.snapshotStorage.snapshot(for: account.id))
+            #expect(overridden.committedAt == nil)
+            #expect(overridden.broadcastEndpoint.host == "eu.zec.rocks")
+            #expect(overridden.broadcastProvider == overridden.syncProvider)
+            #expect(storages.failureRoutingStorage.episodeHosts(for: account.id).isEmpty)
         }
     }
 

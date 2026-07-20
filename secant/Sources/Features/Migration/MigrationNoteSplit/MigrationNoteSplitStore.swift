@@ -251,6 +251,8 @@ struct MigrationNoteSplit {
                 return retryEffect(state)
 
             case .proceedWithoutTorTapped:
+                // R7-review fix (Minor-3): see `MigrationSending`'s identical guard for the rationale.
+                guard state.failureKind == MigrationBroadcastFailureRoute.torFirstRunChoice else { return .none }
                 let usesFullBalanceCopy = migrationManager.migrationMode() == MigrationMode.immediate
                 state.alert = AlertState.offWarning(usesFullBalanceCopy: usesFullBalanceCopy)
                 return .none

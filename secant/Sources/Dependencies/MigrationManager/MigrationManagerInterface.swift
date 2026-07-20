@@ -143,16 +143,19 @@ struct MigrationManagerClient: Sendable {
     ) async -> MigrationBroadcastFailureRoute = { _, _ in MigrationBroadcastFailureRoute.plainRetry }
     // MOB-1497 (R7-T3, R14): the R11-warning-gated, doc-sanctioned exception to R4's run-immutability
     // for "Tor unavailable on the first broadcast of the run" — mutates ONLY `useTor` on `accountUUID`'s
-    // (`nil` resolves the selected account) COMMITTED network snapshot; endpoint/provider/takenAt/
-    // committedAt are left byte-for-byte untouched. Only ever called with `useTor: false` in the
-    // shipped app (the user's "proceed without Tor" choice after the R11 warning), but the parameter
-    // stays a `Bool` rather than a fire-and-forget "turn it off" — see
-    // `MigrationSnapshotStorage`'s new mutation method for the no-op-on-provisional-or-absent shape.
+    // (`nil` resolves the selected account) ACTIVE network snapshot (committed if one exists, else the
+    // still-provisional one — R7-review fix, Important-1: the note-split lane's R14 choice can fire
+    // against a still-provisional snapshot); endpoint/provider/takenAt/committedAt are left
+    // byte-for-byte untouched. Only ever called with `useTor: false` in the shipped app (the user's
+    // "proceed without Tor" choice after the R11 warning), but the parameter stays a `Bool` rather than
+    // a fire-and-forget "turn it off" — see `MigrationSnapshotStorage`'s new mutation method for the
+    // no-op-when-no-snapshot-at-all shape.
     // `= { _, _ in }` is a no-op default, not a test fallback.
     var overrideTorForRun: @Sendable (_ accountUUID: AccountUUID?, _ useTor: Bool) -> Void = { _, _ in }
     // MOB-1497 (R7-T3, R17): the consent-gated, doc-sanctioned sync-server fallback once every shipped
     // endpoint for the broadcast provider is unreachable — sets `accountUUID`'s (`nil` resolves the
-    // selected account) COMMITTED network snapshot's `broadcastEndpoint`/`broadcastProvider` to its OWN
+    // selected account) ACTIVE network snapshot's (committed-else-provisional — same R7-review fix as
+    // `overrideTorForRun` above) `broadcastEndpoint`/`broadcastProvider` to its OWN
     // `syncEndpoint`/`syncProvider`, and resets the R16 episode set (a fresh episode starts once the
     // user has consented to the fallback). Afterwards the snapshot is same-server by construction, so a
     // LATER endpoint-class failure takes `routeBroadcastFailure`'s same-server exemption naturally.
@@ -268,12 +271,13 @@ enum MigrationBroadcastFailureRoute: Equatable, Sendable {
     /// the SAME generic failure sheet as `.plainRetry` (the rotation itself is silent).
     case retryRotated
     /// R16's same-server exemption (identity-custom sync server, or the defensive same-server
-    /// fallback — testnet or no other built-in provider), or the defensive no-committed-snapshot
+    /// fallback — testnet or no other built-in provider), or the defensive no-active-snapshot
     /// fallback: nothing to rotate to, so R17 can never fire either. Presents the plain existing
     /// failure sheet, unchanged. No state change, no episode tracking.
     case plainRetry
     /// R17: every shipped endpoint for the broadcast provider has been tried this episode — offer
-    /// the consent-gated sync-server fallback. `torEnabled` (the committed snapshot's `useTor`)
-    /// selects which R17 warning copy applies.
+    /// the consent-gated sync-server fallback. `torEnabled` (the active snapshot's `useTor` —
+    /// committed if one exists, else the still-provisional one) selects which R17 warning copy
+    /// applies.
     case providerExhausted(torEnabled: Bool)
 }
