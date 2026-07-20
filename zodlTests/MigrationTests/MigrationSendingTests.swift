@@ -69,6 +69,9 @@ import ComposableArchitecture
         #expect(state.totalCount == 1)
         #expect(state.sentCount == 0)
         #expect(state.isDustLane == false)
+        // R7-T3 (MOB-1497)
+        #expect(state.failureKind == nil)
+        #expect(state.alert == nil)
     }
 
     @MainActor @Test func isDustLaneDefaultsFalseButCanBeSetTrueViaInit() async {
@@ -454,6 +457,9 @@ import ComposableArchitecture
 
     // MARK: - Failure / nil result: presents failure sheet, stops the sequence
 
+    /// R7-T3 (MOB-1497): `.networkError(retryable: true)` classifies as `.endpointUnreachable` — now
+    /// routed via `routeBroadcastFailure` (mocked `.plainRetry`, the least-eventful route) BEFORE the
+    /// pre-existing `.transferResult` handling, which is otherwise byte-for-byte unchanged.
     @MainActor @Test func onAppearWithFailureResultPresentsFailureSheetAndStopsSequence() async {
         let executedCount = LockIsolated<Int>(0)
         // MOB-1496 (R8-T4, #3): a `.networkError` result stopped sync for a broadcast that never
@@ -473,9 +479,13 @@ import ComposableArchitecture
                 MigrationNetworkPrivacyOptions(useTor: false, submissionEndpoint: LightWalletEndpoint(address: "", port: 0))
             }
             $0.migrationManager.refreshMigrationSyncGate = { refreshMigrationSyncGateCalls.withValue { $0 += 1 } }
+            $0.migrationManager.routeBroadcastFailure = { _, _ in MigrationBroadcastFailureRoute.plainRetry }
         }
 
         await store.send(.onAppear)
+        await store.receive(\.broadcastFailureRouted) {
+            $0.failureKind = MigrationBroadcastFailureRoute.plainRetry
+        }
         await store.receive(\.transferResult) {
             $0.isFailurePresented = true
         }
@@ -1133,5 +1143,374 @@ import ComposableArchitecture
         }
 
         #expect(sendGateCalls.value == 0)
+    }
+
+    // MARK: - R7-T3 (MOB-1497): R14 first-run Tor choice
+
+    @MainActor @Test func onAppearWithTorUnavailableFirstRunPresentsTorFirstRunChoice() async {
+        let capturedFailureClass = LockIsolated<MigrationBroadcastFailureClass?>(nil)
+        let store = TestStore(initialState: MigrationSending.State(totalCount: 1)) {
+            MigrationSending()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in throw ZcashError.migrationTorUnavailable }
+            $0.migrationManager.migrationNetworkOptions = { _ in
+                MigrationNetworkPrivacyOptions(useTor: true, submissionEndpoint: LightWalletEndpoint(address: "", port: 0))
+            }
+            $0.migrationManager.routeBroadcastFailure = { _, failureClass in
+                capturedFailureClass.setValue(failureClass)
+                return MigrationBroadcastFailureRoute.torFirstRunChoice
+            }
+        }
+
+        await store.send(.onAppear)
+        await store.receive(\.broadcastFailureRouted) {
+            $0.failureKind = MigrationBroadcastFailureRoute.torFirstRunChoice
+        }
+        await store.receive(\.transferResult) {
+            $0.isFailurePresented = true
+        }
+
+        #expect(capturedFailureClass.value == MigrationBroadcastFailureClass.torUnavailable)
+    }
+
+    @MainActor @Test func retryTappedAfterTorFirstRunChoiceKeepsTorAndReExecutesWithoutMutating() async {
+        let overrideTorCalls = LockIsolated<Int>(0)
+        var state = MigrationSending.State(isFailurePresented: true, totalCount: 1)
+        state.failureKind = MigrationBroadcastFailureRoute.torFirstRunChoice
+        let store = TestStore(initialState: state) {
+            MigrationSending()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in MigrationTransferResult.success(txId: "tx-retry") }
+            $0.migrationManager.overrideTorForRun = { _, _ in overrideTorCalls.withValue { $0 += 1 } }
+            $0.migrationManager.recordTransferBroadcast = { _, _ in }
+            $0.migrationBGScheduler.scheduleNextWindow = { }
+        }
+
+        await store.send(.retryTapped) {
+            $0.isFailurePresented = false
+            $0.failureKind = nil
+        }
+        await store.receive(\.transferResult) {
+            $0.sentCount = 1
+            $0.txId = "tx-retry"
+        }
+        await store.receive(\.allTransfersSent) {
+            $0.phase = .success
+        }
+
+        #expect(overrideTorCalls.value == 0)
+    }
+
+    @MainActor @Test func proceedWithoutTorTappedPresentsOffWarningAlertWithGradualMessageOnScheduledPath() async {
+        var state = MigrationSending.State(isFailurePresented: true)
+        state.failureKind = MigrationBroadcastFailureRoute.torFirstRunChoice
+        let store = TestStore(initialState: state) {
+            MigrationSending()
+        } withDependencies: {
+            $0.migrationManager.migrationMode = { MigrationMode.privateScheduled }
+        }
+
+        await store.send(.proceedWithoutTorTapped) {
+            $0.alert = AlertState.offWarning(usesFullBalanceCopy: false)
+        }
+    }
+
+    @MainActor @Test func proceedWithoutTorTappedPresentsOffWarningAlertWithFullMessageOnImmediatePath() async {
+        var state = MigrationSending.State(isFailurePresented: true)
+        state.failureKind = MigrationBroadcastFailureRoute.torFirstRunChoice
+        let store = TestStore(initialState: state) {
+            MigrationSending()
+        } withDependencies: {
+            $0.migrationManager.migrationMode = { MigrationMode.immediate }
+        }
+
+        await store.send(.proceedWithoutTorTapped) {
+            $0.alert = AlertState.offWarning(usesFullBalanceCopy: true)
+        }
+    }
+
+    /// Mirrors the real dispatch shape a tap on the "Proceed without Tor" `ButtonState` produces —
+    /// see `MigrationTorSheetTests.offWarningProceedTappedClearsAlertAndEmitsDelegateGotItLeavingToggleOff`'s
+    /// identical rationale.
+    @MainActor @Test func offWarningAlertProceedTappedTurnsTorOffThenRetries() async {
+        let overrideTorCalls = LockIsolated<[(AccountUUID?, Bool)]>([])
+        var state = MigrationSending.State(isFailurePresented: true, totalCount: 1)
+        state.failureKind = MigrationBroadcastFailureRoute.torFirstRunChoice
+        state.alert = AlertState.offWarning(usesFullBalanceCopy: false)
+        let store = TestStore(initialState: state) {
+            MigrationSending()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in MigrationTransferResult.success(txId: "tx-offwarn") }
+            $0.migrationManager.overrideTorForRun = { accountUUID, useTor in
+                overrideTorCalls.withValue { $0.append((accountUUID, useTor)) }
+            }
+            $0.migrationManager.recordTransferBroadcast = { _, _ in }
+            $0.migrationBGScheduler.scheduleNextWindow = { }
+        }
+
+        await store.send(.alert(.presented(.offWarningProceedTapped)))
+        await store.receive(.offWarningProceedTapped) {
+            $0.alert = nil
+            $0.isFailurePresented = false
+            $0.failureKind = nil
+        }
+        await store.receive(\.transferResult) {
+            $0.sentCount = 1
+            $0.txId = "tx-offwarn"
+        }
+        await store.receive(\.allTransfersSent) {
+            $0.phase = .success
+        }
+
+        #expect(overrideTorCalls.value.count == 1)
+        #expect(overrideTorCalls.value.first?.1 == false)
+    }
+
+    /// "Keep Tor on" — the alert's cancel-role button dispatches the bare `.alert(.dismiss)`, not a
+    /// further-wrapped action (see `AlertState.offWarning`'s `ButtonState(role: .cancel, ...)`).
+    /// Returns to the R14 sheet unchanged: nothing else mutates.
+    @MainActor @Test func alertDismissKeepsTorOnAndReturnsToTheFailureSheetWithZeroMutations() async {
+        var state = MigrationSending.State(isFailurePresented: true)
+        state.failureKind = MigrationBroadcastFailureRoute.torFirstRunChoice
+        state.alert = AlertState.offWarning(usesFullBalanceCopy: false)
+        let store = TestStore(initialState: state) {
+            MigrationSending()
+        }
+
+        await store.send(.alert(.dismiss)) {
+            $0.alert = nil
+        }
+
+        #expect(store.state.isFailurePresented == true)
+        #expect(store.state.failureKind == MigrationBroadcastFailureRoute.torFirstRunChoice)
+    }
+
+    /// Cancel keeps its existing semantics from the R14 sheet too — no mutation, migration stays
+    /// pending.
+    @MainActor @Test func cancelTappedFromTorFirstRunChoiceDismissesWithZeroMutations() async {
+        var state = MigrationSending.State(isFailurePresented: true)
+        state.failureKind = MigrationBroadcastFailureRoute.torFirstRunChoice
+        let store = TestStore(initialState: state) {
+            MigrationSending()
+        }
+
+        await store.send(.cancelTapped) {
+            $0.isFailurePresented = false
+            $0.failureKind = nil
+        }
+    }
+
+    // MARK: - R7-T3 (MOB-1497): R15 mid-run Tor hold
+
+    @MainActor @Test func onAppearWithTorUnavailableMidRunPresentsTorHold() async {
+        let store = TestStore(initialState: MigrationSending.State(totalCount: 1)) {
+            MigrationSending()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in throw ZcashError.migrationTorUnavailable }
+            $0.migrationManager.migrationNetworkOptions = { _ in
+                MigrationNetworkPrivacyOptions(useTor: true, submissionEndpoint: LightWalletEndpoint(address: "", port: 0))
+            }
+            $0.migrationManager.routeBroadcastFailure = { _, _ in MigrationBroadcastFailureRoute.torHold }
+        }
+
+        await store.send(.onAppear)
+        await store.receive(\.broadcastFailureRouted) {
+            $0.failureKind = MigrationBroadcastFailureRoute.torHold
+        }
+        await store.receive(\.transferResult) {
+            $0.isFailurePresented = true
+        }
+    }
+
+    /// R15: Retry keeps Tor — same mechanics as R14's retry (no `overrideTorForRun` call).
+    @MainActor @Test func retryTappedAfterTorHoldKeepsTorAndReExecutesWithoutMutating() async {
+        let overrideTorCalls = LockIsolated<Int>(0)
+        var state = MigrationSending.State(isFailurePresented: true, totalCount: 1)
+        state.failureKind = MigrationBroadcastFailureRoute.torHold
+        let store = TestStore(initialState: state) {
+            MigrationSending()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in MigrationTransferResult.success(txId: "tx-hold-retry") }
+            $0.migrationManager.overrideTorForRun = { _, _ in overrideTorCalls.withValue { $0 += 1 } }
+            $0.migrationManager.recordTransferBroadcast = { _, _ in }
+            $0.migrationBGScheduler.scheduleNextWindow = { }
+        }
+
+        await store.send(.retryTapped) {
+            $0.isFailurePresented = false
+            $0.failureKind = nil
+        }
+        await store.receive(\.transferResult) {
+            $0.sentCount = 1
+            $0.txId = "tx-hold-retry"
+        }
+        await store.receive(\.allTransfersSent) {
+            $0.phase = .success
+        }
+
+        #expect(overrideTorCalls.value == 0)
+    }
+
+    // MARK: - R7-T3 (MOB-1497): R16 within-provider rotation — no new UI
+
+    @MainActor @Test func onAppearWithEndpointUnreachableRotatedSetsFailureKindButKeepsGenericFailureSheet() async {
+        let store = TestStore(initialState: MigrationSending.State(totalCount: 1)) {
+            MigrationSending()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in MigrationTransferResult.networkError(retryable: true) }
+            $0.migrationManager.migrationNetworkOptions = { _ in
+                MigrationNetworkPrivacyOptions(useTor: false, submissionEndpoint: LightWalletEndpoint(address: "", port: 0))
+            }
+            $0.migrationManager.routeBroadcastFailure = { _, _ in MigrationBroadcastFailureRoute.retryRotated }
+        }
+
+        await store.send(.onAppear)
+        await store.receive(\.broadcastFailureRouted) {
+            $0.failureKind = MigrationBroadcastFailureRoute.retryRotated
+        }
+        await store.receive(\.transferResult) {
+            $0.isFailurePresented = true
+        }
+    }
+
+    /// The rotation itself already happened silently inside `routeBroadcastFailure` — retry simply
+    /// re-executes, and the execute-time `migrationNetworkOptions` read (mocked here as a sentinel)
+    /// picks up whatever the manager now returns.
+    @MainActor @Test func retryTappedAfterRotationReExecutesWithTheRotatedOptions() async {
+        let capturedOptions = LockIsolated<MigrationNetworkPrivacyOptions?>(nil)
+        let rotatedSentinel = MigrationNetworkPrivacyOptions(
+            useTor: false,
+            submissionEndpoint: LightWalletEndpoint(address: "rotated.example.com", port: 9067)
+        )
+        var state = MigrationSending.State(isFailurePresented: true, totalCount: 1)
+        state.failureKind = MigrationBroadcastFailureRoute.retryRotated
+        let store = TestStore(initialState: state) {
+            MigrationSending()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, options in
+                capturedOptions.setValue(options)
+                return MigrationTransferResult.success(txId: "tx-rotated")
+            }
+            $0.migrationManager.migrationNetworkOptions = { _ in rotatedSentinel }
+            $0.migrationManager.recordTransferBroadcast = { _, _ in }
+            $0.migrationBGScheduler.scheduleNextWindow = { }
+        }
+
+        await store.send(.retryTapped) {
+            $0.isFailurePresented = false
+            $0.failureKind = nil
+        }
+        await store.receive(\.transferResult) {
+            $0.sentCount = 1
+            $0.txId = "tx-rotated"
+        }
+        await store.receive(\.allTransfersSent) {
+            $0.phase = .success
+        }
+
+        #expect(capturedOptions.value == rotatedSentinel)
+    }
+
+    // MARK: - R7-T3 (MOB-1497): R17 provider-exhausted sync-server consent
+
+    @MainActor @Test func onAppearWithProviderExhaustedTorOnPresentsConsentVariant() async {
+        let store = TestStore(initialState: MigrationSending.State(totalCount: 1)) {
+            MigrationSending()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in MigrationTransferResult.networkError(retryable: true) }
+            $0.migrationManager.migrationNetworkOptions = { _ in
+                MigrationNetworkPrivacyOptions(useTor: true, submissionEndpoint: LightWalletEndpoint(address: "", port: 0))
+            }
+            $0.migrationManager.routeBroadcastFailure = { _, _ in MigrationBroadcastFailureRoute.providerExhausted(torEnabled: true) }
+        }
+
+        await store.send(.onAppear)
+        await store.receive(\.broadcastFailureRouted) {
+            $0.failureKind = MigrationBroadcastFailureRoute.providerExhausted(torEnabled: true)
+        }
+        await store.receive(\.transferResult) {
+            $0.isFailurePresented = true
+        }
+    }
+
+    @MainActor @Test func onAppearWithProviderExhaustedTorOffPresentsConsentVariant() async {
+        let store = TestStore(initialState: MigrationSending.State(totalCount: 1)) {
+            MigrationSending()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in MigrationTransferResult.networkError(retryable: true) }
+            $0.migrationManager.migrationNetworkOptions = { _ in
+                MigrationNetworkPrivacyOptions(useTor: false, submissionEndpoint: LightWalletEndpoint(address: "", port: 0))
+            }
+            $0.migrationManager.routeBroadcastFailure = { _, _ in MigrationBroadcastFailureRoute.providerExhausted(torEnabled: false) }
+        }
+
+        await store.send(.onAppear)
+        await store.receive(\.broadcastFailureRouted) {
+            $0.failureKind = MigrationBroadcastFailureRoute.providerExhausted(torEnabled: false)
+        }
+        await store.receive(\.transferResult) {
+            $0.isFailurePresented = true
+        }
+    }
+
+    @MainActor @Test func useSyncServerTappedOverridesThenRetriesInOrder() async {
+        let callOrder = LockIsolated<[String]>([])
+        var state = MigrationSending.State(isFailurePresented: true, totalCount: 1)
+        state.failureKind = MigrationBroadcastFailureRoute.providerExhausted(torEnabled: true)
+        let store = TestStore(initialState: state) {
+            MigrationSending()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in
+                callOrder.withValue { $0.append("execute") }
+                return MigrationTransferResult.success(txId: "tx-syncserver")
+            }
+            $0.migrationManager.overrideBroadcastEndpointToSyncServer = { _ in
+                callOrder.withValue { $0.append("override") }
+            }
+            $0.migrationManager.migrationNetworkOptions = { _ in
+                MigrationNetworkPrivacyOptions(useTor: true, submissionEndpoint: LightWalletEndpoint(address: "", port: 0))
+            }
+            $0.migrationManager.recordTransferBroadcast = { _, _ in }
+            $0.migrationBGScheduler.scheduleNextWindow = { }
+        }
+
+        await store.send(.useSyncServerTapped) {
+            $0.isFailurePresented = false
+            $0.failureKind = nil
+        }
+        await store.receive(\.transferResult) {
+            $0.sentCount = 1
+            $0.txId = "tx-syncserver"
+        }
+        await store.receive(\.allTransfersSent) {
+            $0.phase = .success
+        }
+
+        #expect(callOrder.value == ["override", "execute"])
+    }
+
+    /// "Keep waiting" reuses `cancelTapped`'s exact semantics — dismiss, nothing mutated; the next
+    /// failure re-offers the same consent surface.
+    @MainActor @Test func cancelTappedFromProviderExhaustedIsKeepWaitingWithZeroMutations() async {
+        var state = MigrationSending.State(isFailurePresented: true)
+        state.failureKind = MigrationBroadcastFailureRoute.providerExhausted(torEnabled: false)
+        let store = TestStore(initialState: state) {
+            MigrationSending()
+        }
+
+        await store.send(.cancelTapped) {
+            $0.isFailurePresented = false
+            $0.failureKind = nil
+        }
     }
 }

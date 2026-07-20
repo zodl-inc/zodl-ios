@@ -100,6 +100,15 @@ extension MigrationManagerClient: DependencyKey {
             markNetworkSnapshotCommitted: { accountUUID in impl.markNetworkSnapshotCommitted(accountUUID: accountUUID) },
             clearProvisionalNetworkSnapshot: { accountUUID in impl.clearProvisionalNetworkSnapshot(accountUUID: accountUUID) },
             activeNetworkSnapshots: { impl.activeNetworkSnapshots() },
+            routeBroadcastFailure: { accountUUID, failureClass in
+                await impl.routeBroadcastFailure(accountUUID: accountUUID, failureClass: failureClass)
+            },
+            overrideTorForRun: { accountUUID, useTor in
+                impl.overrideTorForRun(accountUUID: accountUUID, useTor: useTor)
+            },
+            overrideBroadcastEndpointToSyncServer: { accountUUID in
+                await impl.overrideBroadcastEndpointToSyncServer(accountUUID: accountUUID)
+            },
             setNetworkPrivacyOptions: { impl.setNetworkPrivacyOptions(useTor: $0) },
             isCompleteAcknowledged: { accountUUID in impl.isCompleteAcknowledged(accountUUID: accountUUID) },
             acknowledgeComplete: { accountUUID in await impl.acknowledgeComplete(accountUUID: accountUUID) },
@@ -199,16 +208,22 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// `clearAbandonedNetworkSnapshot` — see `MigrationManagerSerialExecutor`'s doc.
     let serialExecutor = MigrationManagerSerialExecutor()
 
+    /// MOB-1497 (R7-T3): per-account persisted failure-routing state (had-broadcast flag + R16
+    /// episode set) — see `MigrationFailureRoutingStorage`.
+    let failureRoutingStorage: MigrationFailureRoutingStorage
+
     /// Internal (not private) with injectable storage so unit tests can exercise the real
     /// `reconcile()` against a scoped `UserDefaults` suite.
     init(
         gateStorage: MigrationGateStorage = MigrationGateStorage(),
         scheduleStorage: MigrationScheduleStorage = MigrationScheduleStorage(),
-        snapshotStorage: MigrationSnapshotStorage = MigrationSnapshotStorage()
+        snapshotStorage: MigrationSnapshotStorage = MigrationSnapshotStorage(),
+        failureRoutingStorage: MigrationFailureRoutingStorage = MigrationFailureRoutingStorage()
     ) {
         self.gateStorage = gateStorage
         self.scheduleStorage = scheduleStorage
         self.snapshotStorage = snapshotStorage
+        self.failureRoutingStorage = failureRoutingStorage
     }
 
     /// MOB-1496: one `CurrentValueSubject` per account `stateEvents` has ever been asked about,
@@ -474,8 +489,23 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// (appends a `SentRecord` for the first not-yet-sent transfer, in schedule order); non-success
     /// results and a missing payload (nothing to append against) are both no-ops — see
     /// `MigrationScheduleStorage.recordTransferBroadcast`.
+    ///
+    /// MOB-1497 (R7-T3): this is the manager-layer chokepoint every LANDED-broadcast lane funnels
+    /// through — FG send (`MigrationSendingStore`, including the dust lane), FG note split
+    /// (`MigrationNoteSplitStore`, both the software and Keystone forks), and BG
+    /// (`RootInitialization.handleLandedBroadcast`) — so a `.success` here also marks the had-
+    /// broadcast flag (R14 first-run vs R15 mid-run) and resets the R16 episode set (a fresh episode
+    /// starts with every new transfer attempt window). A note split's own broadcast is not one of
+    /// `scheduleStorage`'s schedule transfers, but the guard inside `MigrationScheduleStorage
+    /// .recordTransferBroadcast` (no payload yet -> no-op) makes calling it from that lane harmless
+    /// today: every live note-split broadcast happens BEFORE `recordCommittedSchedule` persists this
+    /// run's schedule (see `MigrationNoteSplitStore`'s header doc) — flagged in the T3 report as a
+    /// timing-dependent assumption worth a comment here rather than a silent one.
     func recordTransferBroadcast(accountUUID: AccountUUID?, result: MigrationTransferResult) async {
         guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return }
+        if case MigrationTransferResult.success = result {
+            failureRoutingStorage.markHadBroadcast(for: resolvedAccountUUID)
+        }
         scheduleStorage.recordTransferBroadcast(result, for: resolvedAccountUUID, now: Date())
     }
 
@@ -608,6 +638,86 @@ final class MigrationManagerImpl: @unchecked Sendable {
             walletAccounts: walletAccounts
         )
         return accountUUIDs.compactMap { snapshotStorage.snapshot(for: $0) }
+    }
+
+    /// MOB-1497 (R7-T3): the failure-routing decision for a classified broadcast failure — see
+    /// `MigrationBroadcastFailureRoute`'s doc for what each case means to a caller. Storage-locked
+    /// where it touches storage: the had-broadcast flag / R16 episode set live in
+    /// `failureRoutingStorage` (read/written directly here — neither is part of the committed
+    /// snapshot); the committed snapshot's `broadcastEndpoint` is mutated ONLY via the sanctioned
+    /// `snapshotStorage.rotateBroadcastEndpoint` below.
+    ///
+    /// Decision table (normative doc R14-R17):
+    /// - No COMMITTED network snapshot for the account (defensive — should not happen for a live
+    ///   broadcast, since one is always formed/committed well before a broadcast is attempted) ->
+    ///   `.plainRetry`, logged.
+    /// - `.torUnavailable` -> `.torFirstRunChoice` (R14) when the account has never had a landed
+    ///   broadcast this run, else `.torHold` (R15). NEVER rotates or touches the episode: a Tor-class
+    ///   failure says nothing about which endpoint is reachable, so leaking a rotation decision off
+    ///   it would be wrong.
+    /// - `.endpointUnreachable` + same-server snapshot (`broadcastProvider == syncProvider` — covers
+    ///   identity-custom AND the defensive empty-candidates/testnet fallback in
+    ///   `createNetworkSnapshot`) -> `.plainRetry` (R16 exemption: nothing to rotate to, so R17 can
+    ///   never fire either). No episode tracking.
+    /// - `.endpointUnreachable` + provider snapshot: add the CURRENT `broadcastEndpoint.host` to the
+    ///   episode set, then candidates = the shipped endpoints for `broadcastProvider` (the SAME
+    ///   source `createNetworkSnapshot` draws from) minus every host tried this episode. Non-empty ->
+    ///   rotate to a uniform-random candidate (`migrationRandomness.randomIndex`, the SAME seam R7
+    ///   uses) and return `.retryRotated`. Empty (the episode now covers the whole shipped list — 5
+    ///   for P1/zecRocks, 2 for P2/stardust) -> `.providerExhausted(torEnabled:)`, WITHOUT rotating
+    ///   anything — the episode itself stays full (nothing resets it except a landed broadcast or the
+    ///   R17 sync-server override), so a REPEATED failure keeps returning `.providerExhausted`.
+    func routeBroadcastFailure(accountUUID: AccountUUID?, failureClass: MigrationBroadcastFailureClass) async -> MigrationBroadcastFailureRoute {
+        guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id,
+              let snapshot = snapshotStorage.snapshot(for: resolvedAccountUUID),
+              snapshot.committedAt != nil else {
+            LoggerProxy.warn("[MigrationManagerImpl] routeBroadcastFailure: no committed network snapshot for the account — defaulting to plainRetry.")
+            return MigrationBroadcastFailureRoute.plainRetry
+        }
+
+        switch failureClass {
+        case MigrationBroadcastFailureClass.torUnavailable:
+            let hadBroadcast = failureRoutingStorage.hadBroadcast(for: resolvedAccountUUID)
+            return hadBroadcast ? MigrationBroadcastFailureRoute.torHold : MigrationBroadcastFailureRoute.torFirstRunChoice
+
+        case MigrationBroadcastFailureClass.endpointUnreachable:
+            guard snapshot.broadcastProvider != snapshot.syncProvider else {
+                return MigrationBroadcastFailureRoute.plainRetry
+            }
+
+            let episodeHosts = Set(failureRoutingStorage.addEpisodeHost(snapshot.broadcastEndpoint.host, for: resolvedAccountUUID))
+            let network = zcashSDKEnvironment.network().networkType
+            let candidates = ZcashSDKEnvironment.endpoints(for: network, skipDefault: false).filter { candidate in
+                ServerProvider.classify(host: candidate.host) == snapshot.broadcastProvider && !episodeHosts.contains(candidate.host)
+            }
+
+            guard !candidates.isEmpty else {
+                return MigrationBroadcastFailureRoute.providerExhausted(torEnabled: snapshot.useTor)
+            }
+
+            let index = migrationRandomness.randomIndex(candidates.count)
+            let chosen = MigrationNetworkSnapshot.Endpoint(candidates[index])
+            snapshotStorage.rotateBroadcastEndpoint(to: chosen, for: resolvedAccountUUID)
+            return MigrationBroadcastFailureRoute.retryRotated
+        }
+    }
+
+    /// MOB-1497 (R7-T3, R14): see `MigrationManagerClient.overrideTorForRun`'s doc. Purely a storage
+    /// mutation (no SDK/network interaction), so — like `markNetworkSnapshotCommitted`/
+    /// `confirmProvisionalTorChoice` above — this doesn't need `transactionGuard` either.
+    func overrideTorForRun(accountUUID: AccountUUID?, useTor: Bool) {
+        guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return }
+        snapshotStorage.overrideUseTorForCommitted(useTor, for: resolvedAccountUUID)
+    }
+
+    /// MOB-1497 (R7-T3, R17): see `MigrationManagerClient.overrideBroadcastEndpointToSyncServer`'s
+    /// doc. `async` to match the client's closure shape (a future implementation detail could need
+    /// to suspend); today's body has no actual `await` — same no-network-call reasoning as the other
+    /// sanctioned mutations.
+    func overrideBroadcastEndpointToSyncServer(accountUUID: AccountUUID?) async {
+        guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return }
+        snapshotStorage.overrideBroadcastEndpointToSyncServerForCommitted(for: resolvedAccountUUID)
+        failureRoutingStorage.resetEpisode(for: resolvedAccountUUID)
     }
 
     /// Persists the pre-run Tor choice — consumed the next time THIS account's snapshot is first
@@ -903,6 +1013,10 @@ final class MigrationManagerImpl: @unchecked Sendable {
                 if state == MigrationState.notStarted && scheduleStorage.hasStoredPayload(for: accountUUID) {
                     scheduleStorage.clear(for: accountUUID)
                     snapshotStorage.clearIfCommitted(for: accountUUID)
+                    // MOB-1497 (R7-T3): the had-broadcast flag/episode's lifetime is tied to the
+                    // same logical run as the schedule payload — clear beside it (a later dust
+                    // mini-run then starts first-run-fresh, matching the snapshot's precedent).
+                    failureRoutingStorage.clear(for: accountUUID)
                 }
             }
         }
@@ -979,6 +1093,9 @@ final class MigrationManagerImpl: @unchecked Sendable {
             gateStorage.acknowledgeComplete(for: resolvedAccountUUID)
             scheduleStorage.clear(for: resolvedAccountUUID)
             snapshotStorage.clear(for: resolvedAccountUUID)
+            // MOB-1497 (R7-T3): the failure-routing state (had-broadcast flag + R16 episode)
+            // shares the run's lifetime — clear it with the run's other records.
+            failureRoutingStorage.clear(for: resolvedAccountUUID)
         }
     }
 
@@ -1033,7 +1150,8 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// MOB-1480: the migration SDK simulator's debug panel "Reset app migration flags" control.
     /// MOB-1496 (W2): also clears every candidate account's persisted schedule — a debug reset must
     /// leave no stale committed-schedule payload behind either. MOB-1496 (W4): and its network
-    /// snapshot. R8-T3: sourced from `MigrationDerivations.candidateAccountUUIDs` (was two separate
+    /// snapshot; MOB-1497 (R7-T3): and its failure-routing state (had-broadcast flag + R16
+    /// episode). R8-T3: sourced from `MigrationDerivations.candidateAccountUUIDs` (was two separate
     /// hand-rolled loops — `walletAccounts`, then `selectedWalletAccount` again, redundantly
     /// re-clearing it — that disagreed with `reconcile()`'s/`activeNetworkSnapshots()`'s own
     /// account-set logic); also now clears each candidate account's own per-account acknowledged
@@ -1052,6 +1170,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
             gateStorage.clearRemainderPending(for: accountUUID)
             scheduleStorage.clear(for: accountUUID)
             snapshotStorage.clear(for: accountUUID)
+            failureRoutingStorage.clear(for: accountUUID)
         }
     }
 
@@ -1909,23 +2028,20 @@ final class MigrationSnapshotStorage: @unchecked Sendable {
     /// should always find the provisional snapshot `formNetworkSnapshot` formed moments earlier at
     /// presentation, so reaching either branch here signals a caller ordering bug worth surfacing.
     func updateUseTorIfProvisional(_ useTor: Bool, for accountUUID: AccountUUID) {
-        lock.withLock { _ in
-            guard let existing = readPayload(for: accountUUID), existing.committedAt == nil else {
+        storage.modify(for: accountUUID) { payload in
+            guard let existing = payload, existing.committedAt == nil else {
                 LoggerProxy.warn(
                     "[MigrationSnapshotStorage] confirmProvisionalTorChoice: no provisional snapshot to update — ignoring."
                 )
                 return
             }
-            let updated = MigrationNetworkSnapshot(
+            payload = MigrationNetworkSnapshot(
                 useTor: useTor,
                 syncEndpoint: existing.syncEndpoint,
-                syncProvider: existing.syncProvider,
                 broadcastEndpoint: existing.broadcastEndpoint,
-                broadcastProvider: existing.broadcastProvider,
                 takenAt: existing.takenAt,
                 committedAt: existing.committedAt
             )
-            writePayload(updated, for: accountUUID)
         }
     }
 
@@ -1938,5 +2054,174 @@ final class MigrationSnapshotStorage: @unchecked Sendable {
             guard let existing = payload, existing.committedAt == nil else { return }
             payload = nil
         }
+    }
+
+    // MARK: - MOB-1497 (R7-T3): sanctioned COMMITTED-snapshot mutations (R14/R16/R17)
+    //
+    // The three doc-sanctioned exceptions to R4's run-immutability that a failure-routing surface
+    // may perform — see `MigrationManagerClient.overrideTorForRun`/`.overrideBroadcastEndpointTo
+    // SyncServer` and `MigrationManagerImpl.routeBroadcastFailure`'s own doc for each requirement.
+    // Same shape as `updateUseTorIfProvisional` above (atomic via the generic storage's `modify`,
+    // no-op + `LoggerProxy.warn` when there is nothing to mutate) but the CONDITION is inverted:
+    // these apply only to an already-COMMITTED snapshot (`updateUseTorIfProvisional` is the
+    // mirror-image provisional-only case) — every failure-routing surface fires mid/post-run,
+    // never before commit. (Rebased onto R8-T3: replace-with-copy now spells only the four stored
+    // fields — the providers are computed off the endpoints.)
+
+    /// R14: mutates ONLY `useTor` on `accountUUID`'s COMMITTED snapshot — the R11-warning-gated
+    /// exception to R4 for "Tor unavailable on the first broadcast of the run." Endpoint/takenAt/
+    /// committedAt are left byte-for-byte untouched. A no-op (logged) against a still-provisional
+    /// or absent snapshot.
+    func overrideUseTorForCommitted(_ useTor: Bool, for accountUUID: AccountUUID) {
+        storage.modify(for: accountUUID) { payload in
+            guard let existing = payload, existing.committedAt != nil else {
+                LoggerProxy.warn("[MigrationSnapshotStorage] overrideTorForRun: no committed snapshot to update — ignoring.")
+                return
+            }
+            payload = MigrationNetworkSnapshot(
+                useTor: useTor,
+                syncEndpoint: existing.syncEndpoint,
+                broadcastEndpoint: existing.broadcastEndpoint,
+                takenAt: existing.takenAt,
+                committedAt: existing.committedAt
+            )
+        }
+    }
+
+    /// R16: mutates ONLY `broadcastEndpoint` on `accountUUID`'s COMMITTED snapshot — the sanctioned
+    /// within-provider rotation after an unreachable broadcast endpoint. The broadcast PROVIDER is
+    /// unchanged by construction: `routeBroadcastFailure` (the sole caller) only ever offers a
+    /// same-provider candidate here (and the provider is computed off the endpoint's own host). A
+    /// no-op (logged) against a still-provisional or absent snapshot. Internal to
+    /// `routeBroadcastFailure` — deliberately not a `MigrationManagerClient` member (nothing else
+    /// in the app needs to trigger a rotation directly).
+    func rotateBroadcastEndpoint(to endpoint: MigrationNetworkSnapshot.Endpoint, for accountUUID: AccountUUID) {
+        storage.modify(for: accountUUID) { payload in
+            guard let existing = payload, existing.committedAt != nil else {
+                LoggerProxy.warn("[MigrationSnapshotStorage] rotateBroadcastEndpoint: no committed snapshot to update — ignoring.")
+                return
+            }
+            payload = MigrationNetworkSnapshot(
+                useTor: existing.useTor,
+                syncEndpoint: existing.syncEndpoint,
+                broadcastEndpoint: endpoint,
+                takenAt: existing.takenAt,
+                committedAt: existing.committedAt
+            )
+        }
+    }
+
+    /// R17: sets `broadcastEndpoint := syncEndpoint` on `accountUUID`'s COMMITTED snapshot (the
+    /// broadcast provider follows computed, becoming the sync provider) — the sanctioned
+    /// consent-gated fallback once every shipped endpoint for the broadcast provider is
+    /// unreachable. Afterwards the snapshot is same-server by construction, so a LATER
+    /// endpoint-class failure takes `routeBroadcastFailure`'s same-server exemption
+    /// (`.plainRetry`) naturally. A no-op (logged) against a still-provisional or absent snapshot.
+    /// (The episode reset this requirement also calls for lives one layer up, in
+    /// `MigrationManagerImpl.overrideBroadcastEndpointToSyncServer` — this storage type has no
+    /// knowledge of `MigrationFailureRoutingStorage`.)
+    func overrideBroadcastEndpointToSyncServerForCommitted(for accountUUID: AccountUUID) {
+        storage.modify(for: accountUUID) { payload in
+            guard let existing = payload, existing.committedAt != nil else {
+                LoggerProxy.warn("[MigrationSnapshotStorage] overrideBroadcastEndpointToSyncServer: no committed snapshot to update — ignoring.")
+                return
+            }
+            payload = MigrationNetworkSnapshot(
+                useTor: existing.useTor,
+                syncEndpoint: existing.syncEndpoint,
+                broadcastEndpoint: existing.syncEndpoint,
+                takenAt: existing.takenAt,
+                committedAt: existing.committedAt
+            )
+        }
+    }
+}
+
+// MARK: - Persistence: broadcast-failure routing state (MOB-1497, R7-T3)
+
+/// Per-account `UserDefaults`-backed persistence for `MigrationManagerImpl.routeBroadcastFailure`'s
+/// two pieces of state: the had-broadcast flag (R14 first-run vs R15 mid-run) and the broadcast-
+/// endpoint "episode" (R16's per-account set of hosts already tried since the last landed
+/// broadcast). Same house pattern as `MigrationSnapshotStorage` beside which this lives: `final
+/// class`, `@unchecked Sendable` guarded by an `OSAllocatedUnfairLock` around each read-modify-write,
+/// injectable `UserDefaults` (default `.standard`) so tests can use an isolated named suite, same
+/// per-account key suffix idiom.
+final class MigrationFailureRoutingStorage: @unchecked Sendable {
+    private let userDefaults: UserDefaults
+    private let lock = OSAllocatedUnfairLock(initialState: false)
+
+    init(userDefaults: UserDefaults = .standard) {
+        self.userDefaults = userDefaults
+    }
+
+    // MARK: Had-broadcast flag (R14/R15)
+
+    /// First-run (this run has never had a landed broadcast) ⟺ `false`.
+    func hadBroadcast(for accountUUID: AccountUUID) -> Bool {
+        lock.withLock { _ in userDefaults.bool(forKey: hadBroadcastKey(for: accountUUID)) }
+    }
+
+    /// SET on any LANDED broadcast, on every lane (FG send, note split, BG — see
+    /// `MigrationManagerImpl.recordTransferBroadcast`, the single call site). Also resets the R16
+    /// episode: a fresh episode starts with every new transfer attempt window.
+    func markHadBroadcast(for accountUUID: AccountUUID) {
+        lock.withLock { _ in
+            userDefaults.set(true, forKey: hadBroadcastKey(for: accountUUID))
+            userDefaults.removeObject(forKey: episodeKey(for: accountUUID))
+        }
+    }
+
+    /// CLEARED at the run-end trio (`MigrationManagerImpl.acknowledgeComplete`/`resetPersistedFlags`/
+    /// `reconcile`'s stale-`.notStarted` observation), beside the existing schedule/snapshot clears.
+    /// Clears both the flag and the episode.
+    func clear(for accountUUID: AccountUUID) {
+        lock.withLock { _ in
+            userDefaults.removeObject(forKey: hadBroadcastKey(for: accountUUID))
+            userDefaults.removeObject(forKey: episodeKey(for: accountUUID))
+        }
+    }
+
+    // MARK: Episode set (R16)
+
+    /// Read-only peek at the hosts tried this episode — never creates/mutates. Primarily for tests;
+    /// `routeBroadcastFailure` itself uses `addEpisodeHost(_:for:)`'s return value instead, so the
+    /// add-then-compute-candidates sequence reads one consistent snapshot of the set rather than two
+    /// separately-locked calls that could interleave with a concurrent caller for the same account.
+    func episodeHosts(for accountUUID: AccountUUID) -> [String] {
+        lock.withLock { _ in readEpisodeHosts(for: accountUUID) }
+    }
+
+    /// Adds `host` to `accountUUID`'s episode set (a no-op if already present) and returns the
+    /// resulting FULL set, in one locked read-modify-write.
+    @discardableResult
+    func addEpisodeHost(_ host: String, for accountUUID: AccountUUID) -> [String] {
+        lock.withLock { _ in
+            var hosts = readEpisodeHosts(for: accountUUID)
+            guard !hosts.contains(host) else { return hosts }
+            hosts.append(host)
+            userDefaults.set(hosts, forKey: episodeKey(for: accountUUID))
+            return hosts
+        }
+    }
+
+    /// RESET on: a landed broadcast (see `markHadBroadcast`), the R17 sync-server override
+    /// (`MigrationManagerImpl.overrideBroadcastEndpointToSyncServer`), and the run-end trio (see
+    /// `clear`).
+    func resetEpisode(for accountUUID: AccountUUID) {
+        lock.withLock { _ in userDefaults.removeObject(forKey: episodeKey(for: accountUUID)) }
+    }
+
+    private func readEpisodeHosts(for accountUUID: AccountUUID) -> [String] {
+        userDefaults.stringArray(forKey: episodeKey(for: accountUUID)) ?? []
+    }
+
+    // MARK: Keys
+
+    private func hadBroadcastKey(for accountUUID: AccountUUID) -> String {
+        "\(String.migrationHadBroadcast)_\(Data(accountUUID.id).hexEncodedString())"
+    }
+
+    private func episodeKey(for accountUUID: AccountUUID) -> String {
+        "\(String.migrationBroadcastEpisode)_\(Data(accountUUID.id).hexEncodedString())"
     }
 }
