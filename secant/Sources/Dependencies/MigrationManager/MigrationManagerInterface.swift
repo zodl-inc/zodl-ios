@@ -129,6 +129,35 @@ struct MigrationManagerClient: Sendable {
     // Drives `AutoServerSelectionLiveKey`'s pinning (auto server selection stays within an active
     // run's sync-provider family) and `ServerSetupStore`'s manual-switch privacy warning.
     var activeNetworkSnapshots: @Sendable () -> [MigrationNetworkSnapshot] = { [] }
+    // MOB-1497 (R7-T3 — failure routing, R14-R17): classifies + routes a broadcast failure for
+    // `accountUUID` (`nil` resolves the selected account, same convention as `migrationNetworkOptions`
+    // above). See `MigrationBroadcastFailureRoute`'s doc for what each outcome means to a caller, and
+    // `MigrationManagerImpl.routeBroadcastFailure` for the full R14-R17 decision table. Performs the
+    // R16 within-provider rotation itself when it returns `.retryRotated` — the ONE state change this
+    // member may make (see `MigrationSnapshotStorage.rotateBroadcastEndpoint`'s doc) — every other
+    // route makes no state change. `= { _, _ in .plainRetry }` is a required macro default (the return
+    // type is non-throwing/non-Void/non-Optional), not a test fallback (see the
+    // `recordCommittedSchedule` note above).
+    var routeBroadcastFailure: @Sendable (
+        _ accountUUID: AccountUUID?, _ failureClass: MigrationBroadcastFailureClass
+    ) async -> MigrationBroadcastFailureRoute = { _, _ in MigrationBroadcastFailureRoute.plainRetry }
+    // MOB-1497 (R7-T3, R14): the R11-warning-gated, doc-sanctioned exception to R4's run-immutability
+    // for "Tor unavailable on the first broadcast of the run" — mutates ONLY `useTor` on `accountUUID`'s
+    // (`nil` resolves the selected account) COMMITTED network snapshot; endpoint/provider/takenAt/
+    // committedAt are left byte-for-byte untouched. Only ever called with `useTor: false` in the
+    // shipped app (the user's "proceed without Tor" choice after the R11 warning), but the parameter
+    // stays a `Bool` rather than a fire-and-forget "turn it off" — see
+    // `MigrationSnapshotStorage`'s new mutation method for the no-op-on-provisional-or-absent shape.
+    // `= { _, _ in }` is a no-op default, not a test fallback.
+    var overrideTorForRun: @Sendable (_ accountUUID: AccountUUID?, _ useTor: Bool) -> Void = { _, _ in }
+    // MOB-1497 (R7-T3, R17): the consent-gated, doc-sanctioned sync-server fallback once every shipped
+    // endpoint for the broadcast provider is unreachable — sets `accountUUID`'s (`nil` resolves the
+    // selected account) COMMITTED network snapshot's `broadcastEndpoint`/`broadcastProvider` to its OWN
+    // `syncEndpoint`/`syncProvider`, and resets the R16 episode set (a fresh episode starts once the
+    // user has consented to the fallback). Afterwards the snapshot is same-server by construction, so a
+    // LATER endpoint-class failure takes `routeBroadcastFailure`'s same-server exemption naturally.
+    // `= { _ in }` is a no-op default, not a test fallback.
+    var overrideBroadcastEndpointToSyncServer: @Sendable (_ accountUUID: AccountUUID?) async -> Void = { _ in }
     // Persists the pre-run Tor choice the migration entry/Tor sheet writes. Consumed by
     // `ensureNetworkSnapshot`/`formNetworkSnapshot` when a run's snapshot is first taken — a later
     // call does NOT alter an already-active run's snapshot (see `MigrationNetworkSnapshot.useTor`'s
@@ -219,4 +248,32 @@ enum MigrationReentryRoute: Equatable, Sendable {
     case noteSplitProgress               // row 5
     case reviewManual(step: Int, total: Int)  // row 6 — manual delivery, next transfer due
     case entry                           // row 7 (notStarted / readyToPropose)
+}
+
+/// MOB-1497 (R7-T3 — failure routing): the outcome `MigrationManagerClient.routeBroadcastFailure`
+/// returns for a classified broadcast failure — which failure-routing surface (R14-R17) a foreground
+/// store should present, or (background) that a route was resolved at all (background maps every
+/// route to re-arm-only — see `RootInitialization.executeBroadcastAction`). See
+/// `MigrationManagerImpl.routeBroadcastFailure`'s doc for the full decision table.
+enum MigrationBroadcastFailureRoute: Equatable, Sendable {
+    /// R14: Tor was unavailable on the FIRST broadcast attempt of the run (no prior landed
+    /// broadcast) — offer the choice to retry (keeping Tor), proceed without it (subject to the R11
+    /// warning), or cancel. No state change.
+    case torFirstRunChoice
+    /// R15: Tor was unavailable MID-run (at least one broadcast already landed this run) — hold and
+    /// retry; never an implicit clearnet opt-out. No state change.
+    case torHold
+    /// R16: the broadcast endpoint was unreachable and a same-provider rotation to an untried
+    /// endpoint was just performed — retry re-executes against the newly-rotated endpoint. Presents
+    /// the SAME generic failure sheet as `.plainRetry` (the rotation itself is silent).
+    case retryRotated
+    /// R16's same-server exemption (identity-custom sync server, or the defensive same-server
+    /// fallback — testnet or no other built-in provider), or the defensive no-committed-snapshot
+    /// fallback: nothing to rotate to, so R17 can never fire either. Presents the plain existing
+    /// failure sheet, unchanged. No state change, no episode tracking.
+    case plainRetry
+    /// R17: every shipped endpoint for the broadcast provider has been tried this episode — offer
+    /// the consent-gated sync-server fallback. `torEnabled` (the committed snapshot's `useTor`)
+    /// selects which R17 warning copy applies.
+    case providerExhausted(torEnabled: Bool)
 }

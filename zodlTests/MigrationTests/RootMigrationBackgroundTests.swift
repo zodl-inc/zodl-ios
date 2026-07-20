@@ -2557,6 +2557,163 @@ import ComposableArchitecture
             #expect(store.state.syncDeferredByMigrationGate == false)
         }
     }
+
+    // MARK: - Branch 0 (MOB-1496): no selected account
+
+    // MARK: - Branch 1 (MOB-1483): Ironwood not yet activated
+
+    // MARK: - R7-T3 (MOB-1497): failure routing — BG maps every route to re-arm-only
+
+    /// The transport-outcome failure branch classifies + routes BEFORE its existing notification —
+    /// `.networkError(retryable: true)` reaches `routeBroadcastFailure` as `.endpointUnreachable`,
+    /// and the notification/rearm are byte-for-byte the SAME as `sendFailureNotifiesTransferWaitingAndRearms`
+    /// (which relies on `baseNoOpDependencies`' own `.plainRetry` default) — pinned here with EVERY
+    /// route explicitly, proving the outward behavior is route-agnostic.
+    @Test func networkErrorFailureRoutesAndRearmsIdenticallyRegardlessOfRoute() async {
+        let routes: [MigrationBroadcastFailureRoute] = [
+            MigrationBroadcastFailureRoute.torFirstRunChoice,
+            MigrationBroadcastFailureRoute.torHold,
+            MigrationBroadcastFailureRoute.retryRotated,
+            MigrationBroadcastFailureRoute.plainRetry,
+            MigrationBroadcastFailureRoute.providerExhausted(torEnabled: true),
+            MigrationBroadcastFailureRoute.providerExhausted(torEnabled: false)
+        ]
+
+        for (index, route) in routes.enumerated() {
+            let notifications = LockIsolated<[MigrationNotification]>([])
+            let scheduleNextWindowCalls = LockIsolated<Int>(0)
+            let completeCalls = LockIsolated<[Bool]>([])
+            let capturedFailureClass = LockIsolated<MigrationBroadcastFailureClass?>(nil)
+            let overrideBroadcastEndpointCalls = LockIsolated<Int>(0)
+            let overrideTorCalls = LockIsolated<Int>(0)
+            let progress = MigrationProgress(
+                completedTransfers: 2, totalTransfers: 6, remainingOrchard: Zatoshi(500), nextTransferReadyAtHeight: nil
+            )
+
+            await withDependencies {
+                $0.defaultInMemoryStorage = InMemoryStorage()
+            } operation: {
+                var accountState = Self.selectedAccountState()
+                // Deterministic per-account key so the 6 iterations of this loop never share
+                // persisted `@Shared` in-memory state across each other via the account identity.
+                accountState.$selectedWalletAccount.withLock { $0 = Self.walletAccount(idByte: UInt8(60 + index)) }
+
+                let store = Store(initialState: accountState) {
+                    Root()
+                } withDependencies: {
+                    baseNoOpDependencies(&$0)
+                    $0.sdkSynchronizer.getMigrationState = { _ in MigrationState.inProgress(progress) }
+                    $0.sdkSynchronizer.rescheduleOverdueMigrationTransfer = { _ in Self.proposal(nextExecutableAfterHeight: 100) }
+                    $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in MigrationTransferResult.networkError(retryable: true) }
+                    $0.sdkSynchronizer.getMigrationProgress = { _ in progress }
+                    $0.migrationBGScheduler.scheduleNextWindow = { scheduleNextWindowCalls.withValue { $0 += 1 } }
+                    $0.userNotifications.scheduleMigrationNotification = { notification, _ in
+                        notifications.withValue { $0.append(notification) }
+                    }
+                    $0.migrationManager.routeBroadcastFailure = { _, failureClass in
+                        capturedFailureClass.setValue(failureClass)
+                        return route
+                    }
+                    $0.migrationManager.overrideBroadcastEndpointToSyncServer = { _ in
+                        overrideBroadcastEndpointCalls.withValue { $0 += 1 }
+                    }
+                    $0.migrationManager.overrideTorForRun = { _, _ in overrideTorCalls.withValue { $0 += 1 } }
+                }
+
+                let handle = MigrationBGSessionHandle(rawTask: nil) { success in completeCalls.withValue { $0.append(success) } }
+                store.send(.initialization(.migrationBackgroundSession(handle)))
+                await waitForRootStore { completeCalls.withValue { !$0.isEmpty } }
+            }
+
+            #expect(capturedFailureClass.value == MigrationBroadcastFailureClass.endpointUnreachable, "route: \(route)")
+            #expect(notifications.withValue { $0 } == [MigrationNotification.transferWaiting(number: 3)], "route: \(route)")
+            #expect(scheduleNextWindowCalls.withValue { $0 } == 1, "route: \(route)")
+            #expect(completeCalls.withValue { $0 } == [true], "route: \(route)")
+            // Consent is foreground-only, always — no route ever triggers either sanctioned mutation
+            // from the BG lane.
+            #expect(overrideBroadcastEndpointCalls.withValue { $0 } == 0, "route: \(route)")
+            #expect(overrideTorCalls.withValue { $0 } == 0, "route: \(route)")
+        }
+    }
+
+    /// The GENERIC catch (any throw other than `migrationRecordFailedAfterBroadcast`) also classifies
+    /// + routes — `ZcashError.migrationTorUnavailable` reaches `routeBroadcastFailure` as
+    /// `.torUnavailable`, and the outward behavior (re-arm only, no notification — mirrors
+    /// `throwingExecuteNextPendingTransferOnlyRearmsWithoutNotifying`) is unaffected by which R14/R15
+    /// route comes back.
+    @Test func torUnavailableThrowFromBackgroundClassifiesAsTorUnavailableAndOnlyRearms() async {
+        let notifications = LockIsolated<[MigrationNotification]>([])
+        let scheduleNextWindowCalls = LockIsolated<Int>(0)
+        let completeCalls = LockIsolated<[Bool]>([])
+        let capturedFailureClass = LockIsolated<MigrationBroadcastFailureClass?>(nil)
+        let overrideTorCalls = LockIsolated<Int>(0)
+
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let store = Store(initialState: Self.selectedAccountState()) {
+                Root()
+            } withDependencies: {
+                baseNoOpDependencies(&$0)
+                $0.sdkSynchronizer.getMigrationState = { _ in MigrationState.inProgress(Self.placeholderProgress) }
+                $0.sdkSynchronizer.rescheduleOverdueMigrationTransfer = { _ in Self.proposal(nextExecutableAfterHeight: 100) }
+                $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in throw ZcashError.migrationTorUnavailable }
+                $0.migrationBGScheduler.scheduleNextWindow = { scheduleNextWindowCalls.withValue { $0 += 1 } }
+                $0.userNotifications.scheduleMigrationNotification = { notification, _ in
+                    notifications.withValue { $0.append(notification) }
+                }
+                $0.migrationManager.routeBroadcastFailure = { _, failureClass in
+                    capturedFailureClass.setValue(failureClass)
+                    return MigrationBroadcastFailureRoute.torFirstRunChoice
+                }
+                $0.migrationManager.overrideTorForRun = { _, _ in overrideTorCalls.withValue { $0 += 1 } }
+            }
+
+            let handle = MigrationBGSessionHandle(rawTask: nil) { success in completeCalls.withValue { $0.append(success) } }
+            store.send(.initialization(.migrationBackgroundSession(handle)))
+            await waitForRootStore { completeCalls.withValue { !$0.isEmpty } }
+
+            #expect(capturedFailureClass.value == MigrationBroadcastFailureClass.torUnavailable)
+            #expect(notifications.withValue { $0 }.isEmpty)
+            #expect(scheduleNextWindowCalls.withValue { $0 } == 1)
+            #expect(completeCalls.withValue { $0 } == [true])
+            #expect(overrideTorCalls.withValue { $0 } == 0)
+        }
+    }
+
+    /// A landed broadcast (`.success`, and its `migrationRecordFailedAfterBroadcast` twin) is never a
+    /// failure to route — `routeBroadcastFailure` must stay uncalled on both paths.
+    @Test func landedBroadcastNeverCallsRouteBroadcastFailure() async {
+        let routeBroadcastFailureCalls = LockIsolated<Int>(0)
+        let completeCalls = LockIsolated<[Bool]>([])
+
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let store = Store(initialState: Self.selectedAccountState()) {
+                Root()
+            } withDependencies: {
+                baseNoOpDependencies(&$0)
+                $0.sdkSynchronizer.getMigrationState = { _ in MigrationState.inProgress(Self.placeholderProgress) }
+                $0.sdkSynchronizer.rescheduleOverdueMigrationTransfer = { _ in Self.proposal(nextExecutableAfterHeight: 100) }
+                $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in MigrationTransferResult.success(txId: "tx-landed") }
+                $0.migrationManager.recordTransferBroadcast = { _, _ in }
+                $0.migrationManager.reconcile = { }
+                $0.migrationBGScheduler.scheduleNextWindow = { }
+                $0.userNotifications.scheduleMigrationNotification = { _, _ in }
+                $0.migrationManager.routeBroadcastFailure = { _, _ in
+                    routeBroadcastFailureCalls.withValue { $0 += 1 }
+                    return MigrationBroadcastFailureRoute.plainRetry
+                }
+            }
+
+            let handle = MigrationBGSessionHandle(rawTask: nil) { success in completeCalls.withValue { $0.append(success) } }
+            store.send(.initialization(.migrationBackgroundSession(handle)))
+            await waitForRootStore { completeCalls.withValue { !$0.isEmpty } }
+
+            #expect(routeBroadcastFailureCalls.withValue { $0 } == 0)
+        }
+    }
 }
 
 // MARK: - Shared dependency baseline (mirrors RootMigrationRoutingTests.swift)
@@ -2597,6 +2754,11 @@ private func baseNoOpDependencies(_ values: inout DependencyValues) {
         MigrationNetworkPrivacyOptions(useTor: false, submissionEndpoint: LightWalletEndpoint(address: "", port: 0))
     }
     values.migrationManager.activeNetworkSnapshots = { [] }
+    // R7-T3 (MOB-1497): the BG lane's outward behavior (notification + re-arm) is identical for
+    // EVERY route (see `RootInitialization.executeBroadcastAction`'s doc) — `.plainRetry` is the
+    // least-eventful default so every existing failure-path test below keeps passing unchanged.
+    // Tests that care about a SPECIFIC route (the dedicated R7-T3 section) override this locally.
+    values.migrationManager.routeBroadcastFailure = { _, _ in MigrationBroadcastFailureRoute.plainRetry }
     values.readTransactionsStorage.resetZashi = { }
     values.sdkSynchronizer = .noOp
     // MOB-1496 (fix-wave, review IMPORTANT-2): deliberately left at `.noOp`'s own bare default

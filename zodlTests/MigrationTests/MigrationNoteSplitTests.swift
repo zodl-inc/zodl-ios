@@ -355,6 +355,10 @@ import ComposableArchitecture
                 return MigrationTransferResult.success(txId: "retried-tx-id")
             }
             $0.migrationManager.migrationNetworkOptions = { _ in Self.defaultNetworkPrivacyOptions }
+            // R7-T3 (MOB-1497): a landed broadcast now also feeds the had-broadcast/episode
+            // chokepoint (`recordTransferBroadcast`) — no test value exists, so every test reaching
+            // a success/landed outcome must mock it explicitly.
+            $0.migrationManager.recordTransferBroadcast = { _, _ in }
             withDependenciesUSKDerivable(&$0)
         }
 
@@ -391,6 +395,7 @@ import ComposableArchitecture
                 return MigrationTransferResult.success(txId: "retried-tx-id")
             }
             $0.migrationManager.migrationNetworkOptions = { _ in sentinel }
+            $0.migrationManager.recordTransferBroadcast = { _, _ in }
             withDependenciesUSKDerivable(&$0)
         }
 
@@ -487,6 +492,7 @@ import ComposableArchitecture
                 return MigrationTransferResult.success(txId: "should-not-be-called")
             }
             $0.migrationManager.migrationNetworkOptions = { _ in Self.defaultNetworkPrivacyOptions }
+            $0.migrationManager.recordTransferBroadcast = { _, _ in }
         }
 
         await store.send(.retryTapped) {
@@ -535,6 +541,7 @@ import ComposableArchitecture
                 return MigrationTransferResult.success(txId: "resubmitted-tx-id")
             }
             $0.migrationManager.migrationNetworkOptions = { _ in Self.defaultNetworkPrivacyOptions }
+            $0.migrationManager.recordTransferBroadcast = { _, _ in }
         }
 
         await store.send(.retryTapped) {
@@ -593,6 +600,10 @@ import ComposableArchitecture
             $0.migrationManager.migrationNetworkOptions = { _ in Self.defaultNetworkPrivacyOptions }
             $0.migrationManager.reconcile = { }
             $0.migrationManager.refreshMigrationSyncGate = { refreshMigrationSyncGateCalls.withValue { $0 += 1 } }
+            $0.migrationManager.recordTransferBroadcast = { _, _ in }
+            // R7-T3 (MOB-1497): the first attempt's `.networkError(retryable: true)` now classifies
+            // and routes — `.plainRetry` keeps this test's own "existing generic sheet" shape.
+            $0.migrationManager.routeBroadcastFailure = { _, _ in MigrationBroadcastFailureRoute.plainRetry }
         }
 
         // First attempt: stores (flipping splitStored) then broadcasts — the broadcast fails.
@@ -601,6 +612,9 @@ import ComposableArchitecture
         }
         await store.receive(\.noteSplitStored) {
             $0.splitStored = true
+        }
+        await store.receive(\.broadcastFailureRouted) {
+            $0.failureKind = MigrationBroadcastFailureRoute.plainRetry
         }
         await store.receive(\.splitResult) {
             $0.isFailurePresented = true
@@ -613,6 +627,7 @@ import ComposableArchitecture
         // Second attempt (user tapped Retry again): splitStored is now true — broadcast only.
         await store.send(.retryTapped) {
             $0.isFailurePresented = false
+            $0.failureKind = nil
         }
         await store.receive(\.splitResult) {
             $0.txId = "resubmitted-tx-id"
@@ -650,6 +665,7 @@ import ComposableArchitecture
                 return MigrationTransferResult.success(txId: "retried-tx-id")
             }
             $0.migrationManager.migrationNetworkOptions = { _ in Self.defaultNetworkPrivacyOptions }
+            $0.migrationManager.recordTransferBroadcast = { _, _ in }
             withDependenciesUSKDerivable(&$0)
         }
 
@@ -708,6 +724,7 @@ import ComposableArchitecture
             $0.migrationManager.migrationNetworkOptions = { _ in Self.defaultNetworkPrivacyOptions }
             $0.migrationManager.reconcile = { reconcileCalls.withValue { $0 += 1 } }
             $0.migrationManager.refreshMigrationSyncGate = { refreshMigrationSyncGateCalls.withValue { $0 += 1 } }
+            $0.migrationManager.recordTransferBroadcast = { _, _ in }
             withDependenciesUSKDerivable(&$0)
         }
 
@@ -750,6 +767,7 @@ import ComposableArchitecture
                 return MigrationTransferResult.success(txId: "retried-tx-id")
             }
             $0.migrationManager.migrationNetworkOptions = { _ in Self.defaultNetworkPrivacyOptions }
+            $0.migrationManager.recordTransferBroadcast = { _, _ in }
             withDependenciesUSKDerivable(&$0)
         }
 
@@ -783,6 +801,7 @@ import ComposableArchitecture
             )
             $0.sdkSynchronizer.submitNoteSplit = { _, _, _, _ in MigrationTransferResult.success(txId: "retried-tx-id") }
             $0.migrationManager.migrationNetworkOptions = { _ in Self.defaultNetworkPrivacyOptions }
+            $0.migrationManager.recordTransferBroadcast = { _, _ in }
             withDependenciesUSKDerivable(&$0)
         }
 
@@ -821,6 +840,7 @@ import ComposableArchitecture
                 return MigrationTransferResult.success(txId: "resubmitted-tx-id")
             }
             $0.migrationManager.migrationNetworkOptions = { _ in Self.defaultNetworkPrivacyOptions }
+            $0.migrationManager.recordTransferBroadcast = { _, _ in }
         }
 
         await store.send(.retryTapped) {
@@ -865,6 +885,7 @@ import ComposableArchitecture
             }
             $0.migrationManager.migrationNetworkOptions = { _ in Self.defaultNetworkPrivacyOptions }
             $0.migrationManager.refreshMigrationSyncGate = { refreshMigrationSyncGateCalls.withValue { $0 += 1 } }
+            $0.migrationManager.recordTransferBroadcast = { _, _ in }
         }
 
         await store.send(.retryTapped) {
@@ -943,5 +964,342 @@ import ComposableArchitecture
         }
 
         #expect(store.state.awaitingScheduleStore == true)
+    }
+
+    // MARK: - R7-T3 (MOB-1497): R14 first-run Tor choice (software fork)
+
+    private func stateWithProposal(isFailurePresented: Bool = true) -> MigrationNoteSplit.State {
+        var state = MigrationNoteSplit.State(phase: .splitting, isFailurePresented: isFailurePresented)
+        state.proposal = NoteSplitProposal(outputNotes: [Zatoshi(500_000_000)], fee: Zatoshi(100_000))
+        return state
+    }
+
+    @MainActor @Test func retryTappedWithTorUnavailableFirstRunPresentsTorFirstRunChoice() async {
+        let capturedFailureClass = LockIsolated<MigrationBroadcastFailureClass?>(nil)
+        let store = TestStore(initialState: stateWithProposal(isFailurePresented: false)) {
+            MigrationNoteSplit()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.submitNoteSplit = { _, _, _, _ in throw ZcashError.migrationTorUnavailable }
+            $0.migrationManager.migrationNetworkOptions = { _ in Self.defaultNetworkPrivacyOptions }
+            $0.migrationManager.routeBroadcastFailure = { _, failureClass in
+                capturedFailureClass.setValue(failureClass)
+                return MigrationBroadcastFailureRoute.torFirstRunChoice
+            }
+            withDependenciesUSKDerivable(&$0)
+        }
+
+        await store.send(.retryTapped)
+        await store.receive(\.broadcastFailureRouted) {
+            $0.failureKind = MigrationBroadcastFailureRoute.torFirstRunChoice
+        }
+        await store.receive(\.splitResult) {
+            $0.isFailurePresented = true
+        }
+
+        #expect(capturedFailureClass.value == MigrationBroadcastFailureClass.torUnavailable)
+    }
+
+    @MainActor @Test func retryTappedAfterTorFirstRunChoiceKeepsTorAndReSubmitsWithoutMutating() async {
+        let overrideTorCalls = LockIsolated<Int>(0)
+        var state = stateWithProposal()
+        state.failureKind = MigrationBroadcastFailureRoute.torFirstRunChoice
+        let store = TestStore(initialState: state) {
+            MigrationNoteSplit()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.submitNoteSplit = { _, _, _, _ in MigrationTransferResult.success(txId: "tx-retry") }
+            $0.migrationManager.migrationNetworkOptions = { _ in Self.defaultNetworkPrivacyOptions }
+            $0.migrationManager.overrideTorForRun = { _, _ in overrideTorCalls.withValue { $0 += 1 } }
+            $0.migrationManager.recordTransferBroadcast = { _, _ in }
+            withDependenciesUSKDerivable(&$0)
+        }
+
+        await store.send(.retryTapped) {
+            $0.isFailurePresented = false
+            $0.failureKind = nil
+        }
+        await store.receive(\.splitResult) {
+            $0.txId = "tx-retry"
+        }
+
+        #expect(overrideTorCalls.value == 0)
+    }
+
+    @MainActor @Test func proceedWithoutTorTappedPresentsOffWarningAlertWithGradualMessageOnScheduledPath() async {
+        var state = stateWithProposal()
+        state.failureKind = MigrationBroadcastFailureRoute.torFirstRunChoice
+        let store = TestStore(initialState: state) {
+            MigrationNoteSplit()
+        } withDependencies: {
+            $0.migrationManager.migrationMode = { MigrationMode.privateScheduled }
+        }
+
+        await store.send(.proceedWithoutTorTapped) {
+            $0.alert = AlertState.offWarning(usesFullBalanceCopy: false)
+        }
+    }
+
+    @MainActor @Test func proceedWithoutTorTappedPresentsOffWarningAlertWithFullMessageOnImmediatePath() async {
+        var state = stateWithProposal()
+        state.failureKind = MigrationBroadcastFailureRoute.torFirstRunChoice
+        let store = TestStore(initialState: state) {
+            MigrationNoteSplit()
+        } withDependencies: {
+            $0.migrationManager.migrationMode = { MigrationMode.immediate }
+        }
+
+        await store.send(.proceedWithoutTorTapped) {
+            $0.alert = AlertState.offWarning(usesFullBalanceCopy: true)
+        }
+    }
+
+    @MainActor @Test func offWarningAlertProceedTappedTurnsTorOffThenRetries() async {
+        let overrideTorCalls = LockIsolated<[(AccountUUID?, Bool)]>([])
+        var state = stateWithProposal()
+        state.failureKind = MigrationBroadcastFailureRoute.torFirstRunChoice
+        state.alert = AlertState.offWarning(usesFullBalanceCopy: false)
+        let store = TestStore(initialState: state) {
+            MigrationNoteSplit()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.submitNoteSplit = { _, _, _, _ in MigrationTransferResult.success(txId: "tx-offwarn") }
+            $0.migrationManager.migrationNetworkOptions = { _ in Self.defaultNetworkPrivacyOptions }
+            $0.migrationManager.overrideTorForRun = { accountUUID, useTor in
+                overrideTorCalls.withValue { $0.append((accountUUID, useTor)) }
+            }
+            $0.migrationManager.recordTransferBroadcast = { _, _ in }
+            withDependenciesUSKDerivable(&$0)
+        }
+
+        await store.send(.alert(.presented(.offWarningProceedTapped)))
+        await store.receive(.offWarningProceedTapped) {
+            $0.alert = nil
+            $0.isFailurePresented = false
+            $0.failureKind = nil
+        }
+        await store.receive(\.splitResult) {
+            $0.txId = "tx-offwarn"
+        }
+
+        #expect(overrideTorCalls.value.count == 1)
+        #expect(overrideTorCalls.value.first?.1 == false)
+    }
+
+    @MainActor @Test func alertDismissKeepsTorOnAndReturnsToTheFailureSheetWithZeroMutations() async {
+        var state = stateWithProposal()
+        state.failureKind = MigrationBroadcastFailureRoute.torFirstRunChoice
+        state.alert = AlertState.offWarning(usesFullBalanceCopy: false)
+        let store = TestStore(initialState: state) {
+            MigrationNoteSplit()
+        }
+
+        await store.send(.alert(.dismiss)) {
+            $0.alert = nil
+        }
+
+        #expect(store.state.isFailurePresented == true)
+        #expect(store.state.failureKind == MigrationBroadcastFailureRoute.torFirstRunChoice)
+    }
+
+    @MainActor @Test func cancelTappedFromTorFirstRunChoiceDismissesWithZeroMutations() async {
+        var state = stateWithProposal()
+        state.failureKind = MigrationBroadcastFailureRoute.torFirstRunChoice
+        let store = TestStore(initialState: state) {
+            MigrationNoteSplit()
+        }
+
+        await store.send(.cancelTapped) {
+            $0.isFailurePresented = false
+            $0.failureKind = nil
+        }
+    }
+
+    // MARK: - R7-T3 (MOB-1497): R15 mid-run Tor hold
+
+    @MainActor @Test func retryTappedWithTorUnavailableMidRunPresentsTorHold() async {
+        let store = TestStore(initialState: stateWithProposal(isFailurePresented: false)) {
+            MigrationNoteSplit()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.submitNoteSplit = { _, _, _, _ in throw ZcashError.migrationTorUnavailable }
+            $0.migrationManager.migrationNetworkOptions = { _ in Self.defaultNetworkPrivacyOptions }
+            $0.migrationManager.routeBroadcastFailure = { _, _ in MigrationBroadcastFailureRoute.torHold }
+            withDependenciesUSKDerivable(&$0)
+        }
+
+        await store.send(.retryTapped)
+        await store.receive(\.broadcastFailureRouted) {
+            $0.failureKind = MigrationBroadcastFailureRoute.torHold
+        }
+        await store.receive(\.splitResult) {
+            $0.isFailurePresented = true
+        }
+    }
+
+    @MainActor @Test func retryTappedAfterTorHoldKeepsTorAndReSubmitsWithoutMutating() async {
+        let overrideTorCalls = LockIsolated<Int>(0)
+        var state = stateWithProposal()
+        state.failureKind = MigrationBroadcastFailureRoute.torHold
+        let store = TestStore(initialState: state) {
+            MigrationNoteSplit()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.submitNoteSplit = { _, _, _, _ in MigrationTransferResult.success(txId: "tx-hold-retry") }
+            $0.migrationManager.migrationNetworkOptions = { _ in Self.defaultNetworkPrivacyOptions }
+            $0.migrationManager.overrideTorForRun = { _, _ in overrideTorCalls.withValue { $0 += 1 } }
+            $0.migrationManager.recordTransferBroadcast = { _, _ in }
+            withDependenciesUSKDerivable(&$0)
+        }
+
+        await store.send(.retryTapped) {
+            $0.isFailurePresented = false
+            $0.failureKind = nil
+        }
+        await store.receive(\.splitResult) {
+            $0.txId = "tx-hold-retry"
+        }
+
+        #expect(overrideTorCalls.value == 0)
+    }
+
+    // MARK: - R7-T3 (MOB-1497): R16 within-provider rotation — no new UI
+
+    @MainActor @Test func retryTappedWithEndpointUnreachableRotatedSetsFailureKindButKeepsGenericFailureSheet() async {
+        let store = TestStore(initialState: stateWithProposal(isFailurePresented: false)) {
+            MigrationNoteSplit()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.submitNoteSplit = { _, _, _, _ in MigrationTransferResult.networkError(retryable: true) }
+            $0.migrationManager.migrationNetworkOptions = { _ in Self.defaultNetworkPrivacyOptions }
+            $0.migrationManager.routeBroadcastFailure = { _, _ in MigrationBroadcastFailureRoute.retryRotated }
+            withDependenciesUSKDerivable(&$0)
+        }
+
+        await store.send(.retryTapped)
+        await store.receive(\.broadcastFailureRouted) {
+            $0.failureKind = MigrationBroadcastFailureRoute.retryRotated
+        }
+        await store.receive(\.splitResult) {
+            $0.isFailurePresented = true
+        }
+    }
+
+    @MainActor @Test func retryTappedAfterRotationReSubmitsWithTheRotatedOptions() async {
+        let capturedOptions = LockIsolated<MigrationNetworkPrivacyOptions?>(nil)
+        let rotatedSentinel = MigrationNetworkPrivacyOptions(
+            useTor: false,
+            submissionEndpoint: LightWalletEndpoint(address: "rotated.example.com", port: 9067)
+        )
+        var state = stateWithProposal()
+        state.failureKind = MigrationBroadcastFailureRoute.retryRotated
+        let store = TestStore(initialState: state) {
+            MigrationNoteSplit()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.submitNoteSplit = { _, _, _, passedOptions in
+                capturedOptions.setValue(passedOptions)
+                return MigrationTransferResult.success(txId: "tx-rotated")
+            }
+            $0.migrationManager.migrationNetworkOptions = { _ in rotatedSentinel }
+            $0.migrationManager.recordTransferBroadcast = { _, _ in }
+            withDependenciesUSKDerivable(&$0)
+        }
+
+        await store.send(.retryTapped) {
+            $0.isFailurePresented = false
+            $0.failureKind = nil
+        }
+        await store.receive(\.splitResult) {
+            $0.txId = "tx-rotated"
+        }
+
+        #expect(capturedOptions.value == rotatedSentinel)
+    }
+
+    // MARK: - R7-T3 (MOB-1497): R17 provider-exhausted sync-server consent
+
+    @MainActor @Test func retryTappedWithProviderExhaustedTorOnPresentsConsentVariant() async {
+        let store = TestStore(initialState: stateWithProposal(isFailurePresented: false)) {
+            MigrationNoteSplit()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.submitNoteSplit = { _, _, _, _ in MigrationTransferResult.networkError(retryable: true) }
+            $0.migrationManager.migrationNetworkOptions = { _ in Self.defaultNetworkPrivacyOptions }
+            $0.migrationManager.routeBroadcastFailure = { _, _ in MigrationBroadcastFailureRoute.providerExhausted(torEnabled: true) }
+            withDependenciesUSKDerivable(&$0)
+        }
+
+        await store.send(.retryTapped)
+        await store.receive(\.broadcastFailureRouted) {
+            $0.failureKind = MigrationBroadcastFailureRoute.providerExhausted(torEnabled: true)
+        }
+        await store.receive(\.splitResult) {
+            $0.isFailurePresented = true
+        }
+    }
+
+    @MainActor @Test func retryTappedWithProviderExhaustedTorOffPresentsConsentVariant() async {
+        let store = TestStore(initialState: stateWithProposal(isFailurePresented: false)) {
+            MigrationNoteSplit()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.submitNoteSplit = { _, _, _, _ in MigrationTransferResult.networkError(retryable: true) }
+            $0.migrationManager.migrationNetworkOptions = { _ in Self.defaultNetworkPrivacyOptions }
+            $0.migrationManager.routeBroadcastFailure = { _, _ in MigrationBroadcastFailureRoute.providerExhausted(torEnabled: false) }
+            withDependenciesUSKDerivable(&$0)
+        }
+
+        await store.send(.retryTapped)
+        await store.receive(\.broadcastFailureRouted) {
+            $0.failureKind = MigrationBroadcastFailureRoute.providerExhausted(torEnabled: false)
+        }
+        await store.receive(\.splitResult) {
+            $0.isFailurePresented = true
+        }
+    }
+
+    @MainActor @Test func useSyncServerTappedOverridesThenRetriesInOrder() async {
+        let callOrder = LockIsolated<[String]>([])
+        var state = stateWithProposal()
+        state.failureKind = MigrationBroadcastFailureRoute.providerExhausted(torEnabled: true)
+        let store = TestStore(initialState: state) {
+            MigrationNoteSplit()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.submitNoteSplit = { _, _, _, _ in
+                callOrder.withValue { $0.append("execute") }
+                return MigrationTransferResult.success(txId: "tx-syncserver")
+            }
+            $0.migrationManager.overrideBroadcastEndpointToSyncServer = { _ in
+                callOrder.withValue { $0.append("override") }
+            }
+            $0.migrationManager.migrationNetworkOptions = { _ in Self.defaultNetworkPrivacyOptions }
+            $0.migrationManager.recordTransferBroadcast = { _, _ in }
+            withDependenciesUSKDerivable(&$0)
+        }
+
+        await store.send(.useSyncServerTapped) {
+            $0.isFailurePresented = false
+            $0.failureKind = nil
+        }
+        await store.receive(\.splitResult) {
+            $0.txId = "tx-syncserver"
+        }
+
+        #expect(callOrder.value == ["override", "execute"])
+    }
+
+    @MainActor @Test func cancelTappedFromProviderExhaustedIsKeepWaitingWithZeroMutations() async {
+        var state = stateWithProposal()
+        state.failureKind = MigrationBroadcastFailureRoute.providerExhausted(torEnabled: false)
+        let store = TestStore(initialState: state) {
+            MigrationNoteSplit()
+        }
+
+        await store.send(.cancelTapped) {
+            $0.isFailurePresented = false
+            $0.failureKind = nil
+        }
     }
 }

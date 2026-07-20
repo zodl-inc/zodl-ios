@@ -56,6 +56,14 @@ struct MigrationSending {
         var phase = Phase.sending
         /// Failure sheet presented over the sending phase.
         var isFailurePresented = false
+        /// R7-T3 (MOB-1497): the classified/routed variant of the presented failure sheet — `nil`
+        /// keeps the existing generic copy (an unclassified failure, or R16's `.retryRotated`/
+        /// `.plainRetry`, both of which reuse the existing sheet verbatim since the rotation itself
+        /// is silent). Set by `.broadcastFailureRouted`, which always arrives (when it arrives at
+        /// all) immediately before the `.transferResult` that flips `isFailurePresented` — see
+        /// `executeNextTransfer`'s doc.
+        var failureKind: MigrationBroadcastFailureRoute?
+        @Presents var alert: AlertState<Action>?
         /// The most recently broadcast transfer's tx id (wires up View Transaction).
         var txId = ""
         /// MOB-1496 (W5, ZIP-0318): informational only — `onAppear` always executes AT MOST ONE
@@ -104,12 +112,24 @@ struct MigrationSending {
         /// The screen's one transfer has been successfully broadcast (MOB-1496 W5: never more than
         /// one, regardless of `totalCount`).
         case allTransfersSent
+        case alert(PresentationAction<Action>)
         case binding(BindingAction<State>)
+        /// R7-T3 (MOB-1497, R14/R15/R16): `routeBroadcastFailure`'s resolved route for a classified
+        /// broadcast failure — sets `state.failureKind`, presented by the immediately-following
+        /// `.transferResult` (see `executeNextTransfer`'s doc). Never sent for an unclassified
+        /// failure — `failureKind` then stays `nil`, the existing generic sheet.
+        case broadcastFailureRouted(MigrationBroadcastFailureRoute)
         /// Failure sheet: dismiss (stay on screen).
         case cancelTapped
         case closeTapped
         case delegate(Delegate)
+        /// R7-T3 (R11, reused from `MigrationTorSheet`'s off-warning): the R14 sheet's "Proceed
+        /// without Tor" alert confirms — turns Tor off for the REST of this run then retries.
+        case offWarningProceedTapped
         case onAppear
+        /// R7-T3 (R14): the `.torFirstRunChoice` sheet's "Proceed without Tor" button — presents the
+        /// R11 warning alert instead of proceeding directly.
+        case proceedWithoutTorTapped
         /// Failure sheet: dismiss, then re-run the failed step.
         case retryTapped
         /// R8-T6 (send-now lane only): `stopSyncBeforeMigrationBroadcast()` + `sendGate()` result
@@ -119,6 +139,8 @@ struct MigrationSending {
         case sendNowGateResolved(MigrationSendGate)
         /// `executeNextPendingMigrationTransfer` result for the current step; `nil` on a stub/no-op.
         case transferResult(MigrationTransferResult?)
+        /// R7-T3 (R17): the `.providerExhausted` sheet's "Broadcast via sync server" button.
+        case useSyncServerTapped
         case viewTransactionTapped
         /// R8-T6: WAITING phase's Cancel affordance (also swipe-dismiss, on any surface that allows
         /// it — see this task's report). Nothing broadcasts; nudges Root's app-side gate feed to
@@ -154,11 +176,26 @@ struct MigrationSending {
                 state.phase = .success
                 return .none
 
+            case .alert(.presented(let action)):
+                return .send(action)
+
+            case .alert(.dismiss):
+                // Mirrors `MigrationCompleteStore`'s plain shape (not `MigrationTorSheetStore`'s,
+                // which additionally resets its own `isTorOn` toggle) — this screen has no toggle
+                // analog to restore; "Keep Tor on" simply returns to the R14 sheet unchanged.
+                state.alert = nil
+                return .none
+
             case .binding:
+                return .none
+
+            case .broadcastFailureRouted(let route):
+                state.failureKind = route
                 return .none
 
             case .cancelTapped:
                 state.isFailurePresented = false
+                state.failureKind = nil
                 return .none
 
             case .closeTapped:
@@ -166,6 +203,16 @@ struct MigrationSending {
 
             case .delegate:
                 return .none
+
+            case .offWarningProceedTapped:
+                state.alert = nil
+                state.isFailurePresented = false
+                state.failureKind = nil
+                let account = state.selectedWalletAccount
+                if let account {
+                    migrationManager.overrideTorForRun(account.id, false)
+                }
+                return executeNextTransfer(account: account, isDustLane: state.isDustLane)
 
             case .onAppear:
                 // R8-T6: the send-now lane routes through the gate-check/wait flow FIRST; every
@@ -176,8 +223,14 @@ struct MigrationSending {
                 }
                 return executeNextTransfer(account: state.selectedWalletAccount, isDustLane: state.isDustLane)
 
+            case .proceedWithoutTorTapped:
+                let usesFullBalanceCopy = migrationManager.migrationMode() == MigrationMode.immediate
+                state.alert = AlertState.offWarning(usesFullBalanceCopy: usesFullBalanceCopy)
+                return .none
+
             case .retryTapped:
                 state.isFailurePresented = false
+                state.failureKind = nil
                 return executeNextTransfer(account: state.selectedWalletAccount, isDustLane: state.isDustLane)
 
             case .sendNowGateResolved(let gate):
@@ -250,6 +303,16 @@ struct MigrationSending {
             case .waitFired:
                 return resolveSendGateEffect(waitId: state.cancelSendNowWaitId)
 
+            case .useSyncServerTapped:
+                state.isFailurePresented = false
+                state.failureKind = nil
+                guard let account = state.selectedWalletAccount else { return .none }
+                let isDustLane = state.isDustLane
+                return .concatenate(
+                    .run { [migrationManager] _ in await migrationManager.overrideBroadcastEndpointToSyncServer(account.id) },
+                    executeNextTransfer(account: account, isDustLane: isDustLane)
+                )
+
             case .transferResult(let result):
                 switch result {
                 case .success(let txId):
@@ -293,7 +356,10 @@ struct MigrationSending {
 
     /// The dust lane ("Migrate anyway", MOB-1487) executes the dedicated dust sweep — never
     /// `executeNextPendingMigrationTransfer`, which is the scheduled-transfer path a background
-    /// poll also drives and which must not move unconsented dust.
+    /// poll also drives and which must not move unconsented dust. This is also `migrateMigrationDust`'s
+    /// ONLY foreground executor with failure UX (R7-T3 §6 disposition): the dust lane and the
+    /// scheduled lane share this SAME `do`/`catch` below, so the classify-then-route wiring covers
+    /// both without any separate treatment.
     ///
     /// MOB-1496: `migrateMigrationDust` needs the account's USK to sign — Keystone accounts have no
     /// PCZT-based dust-sweep lane yet (the SDK's composite has no PCZT variant), so they short-
@@ -303,7 +369,24 @@ struct MigrationSending {
     /// for both vendors. `ZcashError.migrationRecordFailedAfterBroadcast` means the broadcast DID
     /// land and only recording failed (the engine self-heals later) — routed to a success-like
     /// result so the UX doesn't offer a needless retry or imply failure for something that worked;
-    /// `txId` is a placeholder (the error carries no payload to recover the real one from).
+    /// `txId` is a placeholder (the error carries no payload to recover the real one from). Untouched
+    /// by R7-T3's classification (MOB-1497): a landed broadcast is never a failure to route.
+    ///
+    /// R7-T3 (MOB-1497): every failure path below — the transport-outcome switch's failure branch AND
+    /// the generic catch — classifies (`MigrationBroadcastFailureClass.classify`) before sending its
+    /// existing outcome action. A `nil` class (an unclassified failure — `.invalidNote`/`.expired`/
+    /// `.networkError(retryable: false)`, or the "no account"/"no zip32 index" guards above, which
+    /// never reach the SDK call at all) keeps today's behavior byte-for-byte: only `.transferResult`
+    /// is sent. A non-nil class ADDITIONALLY sends `.broadcastFailureRouted(route)` FIRST — the
+    /// existing `.transferResult`/`isFailurePresented = true` handling is otherwise unchanged, so
+    /// `state.failureKind` is always set before the sheet appears.
+    ///
+    /// Deliberately NO `[migrationManager]` capture on the `.run` below (unlike the reducer's own
+    /// `.transferResult` success handler): the Keystone-dust early-return guard inside this SAME
+    /// closure must reach `send(.transferResult(nil))` without ever resolving `migrationManager` —
+    /// an explicit capture evaluates (and, in a test with no override for ANY member, traps) at
+    /// closure-CREATION time, before the guard even runs. Implicit capture defers resolution to the
+    /// first line that actually touches `migrationManager`, exactly where the guard needs it to.
     private func executeNextTransfer(account: WalletAccount?, isDustLane: Bool) -> Effect<Action> {
         guard let account else {
             return .run { send in await send(.transferResult(nil)) }
@@ -342,6 +425,10 @@ struct MigrationSending {
                     didStopSyncForBroadcast = true
                     result = try await sdkSynchronizer.executeNextPendingMigrationTransfer(account.id, options)
                 }
+                if let result, let failureClass = MigrationBroadcastFailureClass.classify(result: result) {
+                    let route = await migrationManager.routeBroadcastFailure(account.id, failureClass)
+                    await send(.broadcastFailureRouted(route))
+                }
                 await send(.transferResult(result))
                 // A `.success` result is the ONLY outcome the SDK's own gate transitions on — every
                 // other outcome (`.networkError`/`.invalidNote`/`.expired`/`nil`) stopped sync above
@@ -356,6 +443,13 @@ struct MigrationSending {
                 // so no nudge either.
                 await send(.transferResult(MigrationTransferResult.success(txId: "")))
             } catch {
+                if let failureClass = MigrationBroadcastFailureClass.classify(error: error) {
+                    let route = await migrationManager.routeBroadcastFailure(account.id, failureClass)
+                    await send(.broadcastFailureRouted(route))
+                }
+                // R8-T4 (#3) composed with R7-T3's classification above: the route drives the
+                // failure UI; the nudge independently resumes sync stopped for a broadcast that
+                // never landed (the SDK gate never transitioned).
                 if didStopSyncForBroadcast {
                     await migrationManager.refreshMigrationSyncGate()
                 }
@@ -421,5 +515,33 @@ struct MigrationSending {
     private func setSendWaitActive(_ isActive: Bool) {
         @Shared(.inMemory(.migrationSendWaitActive)) var migrationSendWaitActive: Bool = false
         $migrationSendWaitActive.withLock { $0 = isActive }
+    }
+}
+
+// MARK: - Alerts
+
+extension AlertState where Action == MigrationSending.Action {
+    /// R7-T3 (R3/R11, reused VERBATIM from `MigrationTorSheet.AlertState.offWarning` — same string
+    /// keys, same gradual/full split): presented by `.proceedWithoutTorTapped` when the R14
+    /// first-run-choice sheet's "Proceed without Tor" button is tapped. See that type's doc for the
+    /// literal copy source (the normative doc's R11 plus `Localizable.xcstrings`'s
+    /// `migrationTorSheet.offWarning.*` entries).
+    static func offWarning(usesFullBalanceCopy: Bool) -> AlertState {
+        AlertState {
+            TextState(String(localizable: .migrationTorSheetOffWarningTitle))
+        } actions: {
+            ButtonState(role: .destructive, action: .offWarningProceedTapped) {
+                TextState(String(localizable: .migrationTorSheetOffWarningProceed))
+            }
+            ButtonState(role: .cancel, action: .alert(.dismiss)) {
+                TextState(String(localizable: .migrationTorSheetOffWarningKeepOn))
+            }
+        } message: {
+            TextState(
+                usesFullBalanceCopy
+                    ? String(localizable: .migrationTorSheetOffWarningMessageFull)
+                    : String(localizable: .migrationTorSheetOffWarningMessageGradual)
+            )
+        }
     }
 }
