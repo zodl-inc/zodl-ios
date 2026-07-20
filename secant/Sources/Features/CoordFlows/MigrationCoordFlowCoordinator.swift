@@ -1077,12 +1077,31 @@ extension MigrationCoordFlow {
     ///
     /// The honest source: the engine's live `rescheduleOverdueMigrationTransfer` probe — the SAME
     /// call `MigrationBGSchedulerImpl.arm`/`RootInitialization.classifyMigrationAccount` already use
-    /// for this exact transfer's `nextExecutableAfterHeight` — converted to a real moment via
-    /// `estimateTimestamp` (§8.3's existing height -> Date conversion, checkpoint-based so it
-    /// resolves fine for a PAST height), then the elapsed hours since (floored, matching
-    /// `transferRows`'s own `.sent`-row "hours ago" convention: `elapsedMinutes / 60`). Falls back to
-    /// `0` (today's behavior) when there's no stalled row, no resolvable account, no live proposal,
-    /// or no timestamp estimate — a best-effort read that must never crash or block the screen.
+    /// for this exact transfer's `nextExecutableAfterHeight` — converted to elapsed hours via a BLOCK
+    /// DELTA against the LIVE chain tip (`latestState().latestBlockHeight`, the same synchronous,
+    /// no-await source `MigrationManagerLiveKey.isIronwoodActivated()`/`isNextTransferDue()` already
+    /// read for their own height gates), at ~75s/block, floored.
+    ///
+    /// R8-T5 review (Important-1): this used to convert the height via `estimateTimestamp` instead.
+    /// That call (`BundleCheckpointSource.estimateTimestamp`) snaps to the nearest BUNDLED CHECKPOINT
+    /// at-or-below the height, with no interpolation — bundled checkpoints are coarse (up to ~52h
+    /// spacing near the tip even when freshly shipped) and go stale between SDK releases, so once
+    /// `nextExecutableAfterHeight` runs ahead of the newest shipped checkpoint the estimate snaps
+    /// back to that stale checkpoint's time and OVERSTATES the elapsed hours — by days, in the worst
+    /// case (checkpoint time is always ≤ true block time, so the error only ever goes one way). The
+    /// two other `estimateTimestamp` callers (`MigrationBGSchedulerImpl.arm`'s window,
+    /// `RootInitialization.classifyMigrationAccount`) never surfaced this because they fold the
+    /// estimate into `max(preferredExecutableAt, now + margin)` — the `now + margin` floor masks an
+    /// under-shot estimate. This helper is the first to show the converted value RAW, as a
+    /// backward-looking "N hours ago" anchor, so the checkpoint coarseness/staleness became directly
+    /// user-visible. A block delta at a fixed ~75s/block is precise regardless of checkpoint
+    /// staleness, so it replaces `estimateTimestamp` here entirely.
+    ///
+    /// Falls back to `0` (today's behavior) when there's no stalled row, no resolvable account, no
+    /// live proposal, or the tip isn't known yet (`tip == 0`, before the first server round-trip —
+    /// same fail-safe-sentinel idiom as `isIronwoodActivated()`: an unknown tip is not a low one, so
+    /// it must not be subtracted from) — a best-effort read that must never crash or block the
+    /// screen.
     private func liveStalledHoursAgo(accountUUID: AccountUUID?, hasStalledRow: Bool) async -> Int {
         guard hasStalledRow, let accountUUID else { return 0 }
 
@@ -1090,12 +1109,15 @@ extension MigrationCoordFlow {
         // `RootInitialization.swift`): a thrown read and a genuinely-empty probe both mean "no real
         // due data to report" here.
         let proposalResult = try? await sdkSynchronizer.rescheduleOverdueMigrationTransfer(accountUUID)
-        guard let proposal = proposalResult ?? nil,
-              let becameDueAt = sdkSynchronizer.estimateTimestamp(proposal.nextExecutableAfterHeight) else {
+        guard let proposal = proposalResult ?? nil else {
             return 0
         }
 
-        let elapsedHours = Date().timeIntervalSince(Date(timeIntervalSince1970: becameDueAt)) / 3600
+        let tip = sdkSynchronizer.latestState().latestBlockHeight
+        guard tip > 0 else { return 0 }
+
+        let secondsPerBlock = 75.0
+        let elapsedHours = Double(tip - proposal.nextExecutableAfterHeight) * secondsPerBlock / 3600.0
         return max(0, Int(elapsedHours.rounded(.down)))
     }
 
