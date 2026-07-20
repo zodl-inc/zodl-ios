@@ -5,7 +5,7 @@
 //  Pure mapping from a migration background event onto the local notification's identifier/
 //  title/body (MOB-1467, feature spec §4.4). `MigrationBannerVariant`-style: no SDK dependency,
 //  no I/O — `MigrationBGSchedulerLiveKey` and `RootInitialization`'s BG session decision tree
-//  construct a case and hand it to `userNotifications.scheduleMigrationNotification(_:at:)`.
+//  construct a case and hand it to `userNotifications.scheduleMigrationNotification(_:at:accountUUID:)`.
 //  Table-tested directly (see MigrationNotificationTests).
 //
 //  Copy follows the lock-screen mocks' consistent split (MOB-1478 W9): `title` carries the

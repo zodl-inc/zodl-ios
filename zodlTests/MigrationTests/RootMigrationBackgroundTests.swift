@@ -220,7 +220,7 @@ import ComposableArchitecture
                     return nil
                 }
                 $0.migrationBGScheduler.scheduleNextWindow = { scheduleNextWindowCalls.withValue { $0 += 1 } }
-                $0.userNotifications.scheduleMigrationNotification = { notification, _ in
+                $0.userNotifications.scheduleMigrationNotification = { notification, _, _ in
                     notifications.withValue { $0.append(notification) }
                 }
             }
@@ -275,6 +275,7 @@ import ComposableArchitecture
     /// re-creates the plan, not this session.
     @Test func planBrokenViaInvalidTransfersNotifiesWithoutRearming() async {
         let notifications = LockIsolated<[MigrationNotification]>([])
+        let notifiedAccountUUIDs = LockIsolated<[String?]>([])
         let scheduleNextWindowCalls = LockIsolated<Int>(0)
         let completeCalls = LockIsolated<[Bool]>([])
 
@@ -292,8 +293,9 @@ import ComposableArchitecture
                 $0.sdkSynchronizer.getMigrationState = { _ in MigrationState.inProgress(Self.placeholderProgress) }
                 $0.sdkSynchronizer.hasInvalidMigrationTransfers = { _ in true }
                 $0.migrationBGScheduler.scheduleNextWindow = { scheduleNextWindowCalls.withValue { $0 += 1 } }
-                $0.userNotifications.scheduleMigrationNotification = { notification, date in
+                $0.userNotifications.scheduleMigrationNotification = { notification, date, accountUUID in
                     notifications.withValue { $0.append(notification) }
+                    notifiedAccountUUIDs.withValue { $0.append(accountUUID) }
                     #expect(date == nil)
                 }
             }
@@ -303,6 +305,9 @@ import ComposableArchitecture
             await waitForRootStore { completeCalls.withValue { !$0.isEmpty } }
 
             #expect(notifications.withValue { $0 } == [MigrationNotification.planNeedsUpdate])
+            // R8-T5 (S4-a): the `.planNeedsUpdate` notification is attributed to the (single, here)
+            // plan-broken account.
+            #expect(notifiedAccountUUIDs.withValue { $0 } == [Data(Self.walletAccount().id.id).hexEncodedString()])
             #expect(scheduleNextWindowCalls.withValue { $0 } == 0)
             #expect(completeCalls.withValue { $0 } == [true])
         }
@@ -325,7 +330,7 @@ import ComposableArchitecture
                 $0.sdkSynchronizer.hasInvalidMigrationTransfers = { _ in false }
                 $0.sdkSynchronizer.getMigrationState = { _ in MigrationState.requiresAttention(MigrationAttentionReason.transferExpired) }
                 $0.migrationBGScheduler.scheduleNextWindow = { scheduleNextWindowCalls.withValue { $0 += 1 } }
-                $0.userNotifications.scheduleMigrationNotification = { notification, _ in
+                $0.userNotifications.scheduleMigrationNotification = { notification, _, _ in
                     notifications.withValue { $0.append(notification) }
                 }
             }
@@ -458,6 +463,7 @@ import ComposableArchitecture
         let recordTransferBroadcastCalls = LockIsolated<[(AccountUUID?, MigrationTransferResult)]>([])
         let reconcileCalls = LockIsolated<Int>(0)
         let notifications = LockIsolated<[MigrationNotification]>([])
+        let notifiedAccountUUIDs = LockIsolated<[String?]>([])
         let scheduleNextWindowCalls = LockIsolated<Int>(0)
         let cancelAllCalls = LockIsolated<Int>(0)
         let completeCalls = LockIsolated<[Bool]>([])
@@ -488,8 +494,9 @@ import ComposableArchitecture
                 $0.migrationManager.reconcile = { reconcileCalls.withValue { $0 += 1 } }
                 $0.migrationBGScheduler.scheduleNextWindow = { scheduleNextWindowCalls.withValue { $0 += 1 } }
                 $0.migrationBGScheduler.cancelAll = { cancelAllCalls.withValue { $0 += 1 } }
-                $0.userNotifications.scheduleMigrationNotification = { notification, date in
+                $0.userNotifications.scheduleMigrationNotification = { notification, date, accountUUID in
                     notifications.withValue { $0.append(notification) }
+                    notifiedAccountUUIDs.withValue { $0.append(accountUUID) }
                     #expect(date == nil)
                 }
             }
@@ -509,6 +516,8 @@ import ComposableArchitecture
             } else {
                 Issue.record("Expected a .transferComplete notification, got \(notifications.withValue { $0 })")
             }
+            // R8-T5 (S4-a): attributed to the account whose broadcast just landed.
+            #expect(notifiedAccountUUIDs.withValue { $0 } == [Data(Self.walletAccount().id.id).hexEncodedString()])
             #expect(scheduleNextWindowCalls.withValue { $0 } == 1)
             #expect(cancelAllCalls.withValue { $0 } == 0)
             #expect(completeCalls.withValue { $0 } == [true])
@@ -563,6 +572,7 @@ import ComposableArchitecture
     /// session.
     @Test func sendSuccessToCompleteNotifiesMigrationCompleteAndCancelsAll() async {
         let notifications = LockIsolated<[MigrationNotification]>([])
+        let notifiedAccountUUIDs = LockIsolated<[String?]>([])
         let scheduleNextWindowCalls = LockIsolated<Int>(0)
         let cancelAllCalls = LockIsolated<Int>(0)
         let completeCalls = LockIsolated<[Bool]>([])
@@ -593,8 +603,9 @@ import ComposableArchitecture
                 }
                 $0.migrationBGScheduler.scheduleNextWindow = { scheduleNextWindowCalls.withValue { $0 += 1 } }
                 $0.migrationBGScheduler.cancelAll = { cancelAllCalls.withValue { $0 += 1 } }
-                $0.userNotifications.scheduleMigrationNotification = { notification, _ in
+                $0.userNotifications.scheduleMigrationNotification = { notification, _, accountUUID in
                     notifications.withValue { $0.append(notification) }
+                    notifiedAccountUUIDs.withValue { $0.append(accountUUID) }
                 }
             }
 
@@ -603,6 +614,8 @@ import ComposableArchitecture
             await waitForRootStore { completeCalls.withValue { !$0.isEmpty } }
 
             #expect(notifications.withValue { $0 } == [MigrationNotification.migrationComplete])
+            // R8-T5 (S4-a): attributed to the account whose broadcast just completed the migration.
+            #expect(notifiedAccountUUIDs.withValue { $0 } == [Data(Self.walletAccount().id.id).hexEncodedString()])
             #expect(scheduleNextWindowCalls.withValue { $0 } == 0)
             #expect(cancelAllCalls.withValue { $0 } == 1)
             #expect(completeCalls.withValue { $0 } == [true])
@@ -613,6 +626,7 @@ import ComposableArchitecture
     /// `getMigrationProgress()?.completedTransfers ?? 0` + 1 — and re-arms.
     @Test func sendFailureNotifiesTransferWaitingAndRearms() async {
         let notifications = LockIsolated<[MigrationNotification]>([])
+        let notifiedAccountUUIDs = LockIsolated<[String?]>([])
         let scheduleNextWindowCalls = LockIsolated<Int>(0)
         let completeCalls = LockIsolated<[Bool]>([])
 
@@ -640,8 +654,9 @@ import ComposableArchitecture
                 $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in MigrationTransferResult.networkError(retryable: true) }
                 $0.sdkSynchronizer.getMigrationProgress = { _ in progress }
                 $0.migrationBGScheduler.scheduleNextWindow = { scheduleNextWindowCalls.withValue { $0 += 1 } }
-                $0.userNotifications.scheduleMigrationNotification = { notification, _ in
+                $0.userNotifications.scheduleMigrationNotification = { notification, _, accountUUID in
                     notifications.withValue { $0.append(notification) }
+                    notifiedAccountUUIDs.withValue { $0.append(accountUUID) }
                 }
             }
 
@@ -650,6 +665,8 @@ import ComposableArchitecture
             await waitForRootStore { completeCalls.withValue { !$0.isEmpty } }
 
             #expect(notifications.withValue { $0 } == [MigrationNotification.transferWaiting(number: 4)])
+            // R8-T5 (S4-a): attributed to the account this failed broadcast attempt was for.
+            #expect(notifiedAccountUUIDs.withValue { $0 } == [Data(Self.walletAccount().id.id).hexEncodedString()])
             #expect(scheduleNextWindowCalls.withValue { $0 } == 1)
             #expect(completeCalls.withValue { $0 } == [true])
         }
@@ -679,7 +696,7 @@ import ComposableArchitecture
                 $0.sdkSynchronizer.rescheduleOverdueMigrationTransfer = { _ in Self.proposal(nextExecutableAfterHeight: 100) }
                 $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in nil }
                 $0.migrationBGScheduler.scheduleNextWindow = { scheduleNextWindowCalls.withValue { $0 += 1 } }
-                $0.userNotifications.scheduleMigrationNotification = { notification, _ in
+                $0.userNotifications.scheduleMigrationNotification = { notification, _, _ in
                     notifications.withValue { $0.append(notification) }
                 }
             }
@@ -720,7 +737,7 @@ import ComposableArchitecture
                 $0.sdkSynchronizer.rescheduleOverdueMigrationTransfer = { _ in Self.proposal(nextExecutableAfterHeight: 100) }
                 $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in throw SomeError() }
                 $0.migrationBGScheduler.scheduleNextWindow = { scheduleNextWindowCalls.withValue { $0 += 1 } }
-                $0.userNotifications.scheduleMigrationNotification = { notification, _ in
+                $0.userNotifications.scheduleMigrationNotification = { notification, _, _ in
                     notifications.withValue { $0.append(notification) }
                 }
             }
@@ -778,7 +795,7 @@ import ComposableArchitecture
                 $0.migrationManager.reconcile = { reconcileCalls.withValue { $0 += 1 } }
                 $0.migrationBGScheduler.scheduleNextWindow = { scheduleNextWindowCalls.withValue { $0 += 1 } }
                 $0.migrationBGScheduler.cancelAll = { cancelAllCalls.withValue { $0 += 1 } }
-                $0.userNotifications.scheduleMigrationNotification = { notification, _ in
+                $0.userNotifications.scheduleMigrationNotification = { notification, _, _ in
                     notifications.withValue { $0.append(notification) }
                 }
             }
@@ -1006,10 +1023,17 @@ import ComposableArchitecture
 
     /// One account's plan-broken state posts a single `.planNeedsUpdate` notification for the whole
     /// session, but does NOT turn the session sync-only or block a healthy account's own broadcast.
+    ///
+    /// R8-T5 (S4-a): also the key attribution test — `selected` is plan-broken, `second` is the
+    /// session's broadcast WINNER, so a naive "attribute every notification to the winner" fix
+    /// would have attached `.planNeedsUpdate` to `second` (wrong: `second` isn't the account that
+    /// needs attention). RED against a winner-only fix: `notifiedAccountUUIDs.first` would read
+    /// `second.id`'s hex string instead of `selected.id`'s.
     @Test func onePlanBrokenAndOtherDueNotifiesOnceAndStillBroadcastsTheHealthyAccount() async {
         let selected = Self.walletAccount()
         let second = Self.secondAccount()
         let notifications = LockIsolated<[MigrationNotification]>([])
+        let notifiedAccountUUIDs = LockIsolated<[String?]>([])
         let executedAccountUUIDs = LockIsolated<[AccountUUID]>([])
         let completeCalls = LockIsolated<[Bool]>([])
 
@@ -1027,8 +1051,9 @@ import ComposableArchitecture
                     executedAccountUUIDs.withValue { $0.append(accountUUID) }
                     return MigrationTransferResult.success(txId: "tx-healthy")
                 }
-                $0.userNotifications.scheduleMigrationNotification = { notification, _ in
+                $0.userNotifications.scheduleMigrationNotification = { notification, _, accountUUID in
                     notifications.withValue { $0.append(notification) }
+                    notifiedAccountUUIDs.withValue { $0.append(accountUUID) }
                 }
             }
 
@@ -1037,6 +1062,7 @@ import ComposableArchitecture
             await waitForRootStore { completeCalls.withValue { !$0.isEmpty } }
 
             #expect(notifications.withValue { $0 }.first == MigrationNotification.planNeedsUpdate)
+            #expect(notifiedAccountUUIDs.withValue { $0 }.first == Data(selected.id.id).hexEncodedString())
             #expect(executedAccountUUIDs.withValue { $0 } == [second.id])
             #expect(completeCalls.withValue { $0 } == [true])
         }
@@ -1222,7 +1248,7 @@ import ComposableArchitecture
                 $0.migrationManager.reconcile = { reconcileCalls.withValue { $0 += 1 } }
                 $0.migrationBGScheduler.scheduleNextWindow = { scheduleNextWindowCalls.withValue { $0 += 1 } }
                 $0.migrationBGScheduler.cancelAll = { cancelAllCalls.withValue { $0 += 1 } }
-                $0.userNotifications.scheduleMigrationNotification = { notification, _ in
+                $0.userNotifications.scheduleMigrationNotification = { notification, _, _ in
                     notifications.withValue { $0.append(notification) }
                 }
             }
@@ -1287,7 +1313,7 @@ import ComposableArchitecture
                 }
                 $0.migrationBGScheduler.scheduleNextWindow = { scheduleNextWindowCalls.withValue { $0 += 1 } }
                 $0.migrationBGScheduler.cancelAll = { cancelAllCalls.withValue { $0 += 1 } }
-                $0.userNotifications.scheduleMigrationNotification = { notification, _ in
+                $0.userNotifications.scheduleMigrationNotification = { notification, _, _ in
                     notifications.withValue { $0.append(notification) }
                 }
             }
@@ -2234,7 +2260,7 @@ private func baseNoOpDependencies(_ values: inout DependencyValues) {
     values.userMetadataProvider.load = { _ in }
     values.userNotifications.authorizationStatus = { .notDetermined }
     values.userNotifications.requestAuthorization = { false }
-    values.userNotifications.scheduleMigrationNotification = { _, _ in }
+    values.userNotifications.scheduleMigrationNotification = { _, _, _ in }
     values.userNotifications.cancelMigrationNotifications = { }
     values.userNotifications.clearDeliveredMigrationNotifications = { }
     values.walletStorage = .noOp
