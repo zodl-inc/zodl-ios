@@ -62,9 +62,7 @@ struct TransactionDetails {
         var messageToBeShared: String?
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
         var supportData: SupportData?
-        // Full catalog (MOB-1472) — resolves any historical/exotic swap asset for
-        // display, including assets no longer in the curated swap offering.
-        @Shared(.inMemory(.swapAssetsCatalog)) var swapAssets: IdentifiedArrayOf<SwapAsset> = []
+        @Shared(.inMemory(.swapAssets)) var swapAssets: IdentifiedArrayOf<SwapAsset> = []
         var swapAssetFailedWithRetry: Bool? = nil
         var swapDetails: SwapDetails?
         var umSwapId: UMSwapId?
@@ -327,7 +325,7 @@ struct TransactionDetails {
                 }
                 return .run { send in
                     do {
-                        let swapAssets = try await swapAndPay.swapAssetsCatalog()
+                        let swapAssets = try await swapAndPay.swapAssets()
                         await send(.swapAssetsLoaded(swapAssets))
                     } catch let error as NetworkError {
                         await send(.swapAssetsFailedWithRetry(error.allowsRetry))

@@ -167,16 +167,13 @@ struct AddressBook {
                 state.nameAlreadyExists = false
                 state.addressAlreadyExists = false
                 if !state.swapAssets.isEmpty {
-                    // Zcash is recognized automatically from the address; never offer it as a
-                    // manually-pickable contact chain (else any string could be saved as zcash).
-                    let swapChains = state.swapAssets.filter { $0.chain.lowercased() != "zec" }
-                    let uniqueByChain = Dictionary(grouping: swapChains, by: { $0.chain })
+                    let uniqueByChain = Dictionary(grouping: state.swapAssets, by: { $0.chain })
                         .compactMapValues { $0.first }
                         .values
                         .sorted(by: { $0.chainName < $1.chainName })
                     state.chains = IdentifiedArray(uniqueElements: uniqueByChain)
                 } else {
-                    state.chains = IdentifiedArray(uniqueElements: SwapAsset.curatedChains())
+                    state.chains = IdentifiedArray(uniqueElements: SwapAsset.hardcodedChains())
                 }
                 if let editId = state.editId {
                     return .concatenate(
@@ -289,11 +286,7 @@ struct AddressBook {
                 state.isNameFocused = true
                 state.isValidZcashAddress = derivationTool.isZcashAddress(state.address, zcashSDKEnvironment.network().networkType)
                 state.isEditingContactWithChain = record.chainId != nil
-                // Resolve the contact's chain from the curated picker list; if it's a
-                // chain no longer offered (MOB-1472), keep the contact's own chain so
-                // editing/saving an existing (e.g. Litecoin) contact doesn't wipe it.
                 state.selectedChain = state.chains.first { $0.chain == record.chainId }
-                    ?? record.chainId.map { SwapAsset(provider: "", chain: $0, token: "", assetId: "", usdPrice: 0, decimals: 0) }
                 return .none
 
             case .saveButtonTapped:

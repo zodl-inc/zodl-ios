@@ -6,26 +6,11 @@ directly impact users rather than highlighting other crucial architectural updat
 
 ## [Unreleased]
 
-### Fixed
-- [PRO-325] Swaps out of ZEC and CrossPays that fail on the swap provider's side now show "Swap Failed" / "Payment Failed" (with the contact-support option) instead of appearing to stay in progress forever. Long-running swaps in this direction also correctly show their processing state.
-
-## 3.7.3 build 1 (20026-07-12)
-
 ### Changed
-- [MOB-1472] The assets you can swap are now a curated set of major coins and stablecoins across the supported chains (plus swapping to ZEC), instead of the full list from the swap provider, and the address-book chain picker is limited to those chains. Existing swaps in your history (including assets no longer offered) still display normally, and existing contacts on other chains are preserved.
-
-## 3.7.2 build 1
-
-### Added
-- [MOB-1418] The Server Setup screen now explains that Automatic mode may use multiple servers to optimize performance, and points you to Manual connection mode (plus enabling Tor in Advanced Settings) if you'd prefer to reduce metadata exposure.
-
-### Changed
-- [MOB-1348] QR / payment-request (ZIP-321) codes that contain more than one recipient are now rejected instead of silently processing only the first recipient, so what you review is always exactly what gets signed.
-- [MOB-1130] The syncing widget now stays visible until the wallet is within a fixed number of blocks of the network tip, instead of hiding at a fixed percentage of total blocks. Previously, wallets with an older birthday height could stop showing the syncing status while still having a meaningful amount left to sync.
+- QR / payment-request (ZIP-321) codes that contain more than one recipient are now rejected instead of silently processing only the first recipient, so what you review is always exactly what gets signed.
 
 ### Fixed
-- [MOB-1352] Paying with Flexa now requires a ZODL (mobile) account and is blocked for Keystone (hardware) accounts, which have no on-device key to sign with. Switching accounts also ends any open Flexa session so a payment can't bind to the wrong account.
-- [MOB-1188] Disconnecting a Keystone hardware wallet no longer fails with a "couldn't be finalized" error when that account has transactions involving your other accounts.
+- Paying with Flexa now requires a Zodl (mobile) account and is blocked for Keystone (hardware) accounts, which have no on-device key to sign with. Switching accounts also ends any open Flexa session so a payment can't bind to the wrong account.
 
 ## 3.7.0 build 1
 

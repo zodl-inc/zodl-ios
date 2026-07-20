@@ -1,33 +1,6 @@
 {
     "releases": [
         {
-            "version": "3.7.3",
-            "date": "11-07-2026",
-            "timestamp": 1783775476,
-            "sections": [
-                {
-                    "title": "Cambiado:",
-                    "bulletpoints": [
-                        "Refinamos nuestra lista de criptoactivos compatibles con Swap/Pago, centrándonos en los que los usuarios realmente utilizan."
-                    ]
-                }
-            ]
-        },
-        {
-            "version": "3.7.2",
-            "date": "01-07-2026",
-            "timestamp": 1782924729,
-            "sections": [
-                {
-                    "title": "Corregido:",
-                    "bulletpoints": [
-                        "Corregimos un problema que impedía desconectar una billetera de hardware Keystone.",
-                        "Realizamos algunas mejoras de seguridad."
-                    ]
-                }
-            ]
-        },
-        {
             "version": "3.7.0",
             "date": "23-06-2026",
             "timestamp": 1782214834,

@@ -7,13 +7,12 @@ Xcode identity — no keys are stored in the repo or anywhere new.
 
 1. Ruby is pinned by `.ruby-version` (4.0.5); install it with `rbenv install` if needed.
 2. `bundle install`
-3. `brew install xcbeautify` (formats xcodebuild output, including Swift Testing results)
-4. `brew install bats-core` (only needed to run the wrapper tests)
-5. Create an App Store Connect API key (App Store Connect → Users and Access →
+3. `brew install bats-core` (only needed to run the wrapper tests)
+4. Create an App Store Connect API key (App Store Connect → Users and Access →
    Integrations), download the `.p8`, then `cp fastlane/.env.example fastlane/.env`
    and fill in `ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_FILEPATH`.
-6. Put `PartnerKeys.plist` at `secant/Resources/PartnerKeys.plist`.
-7. Ensure your Xcode matches `.xcode-version`.
+5. Put `PartnerKeys.plist` at `secant/Resources/PartnerKeys.plist`.
+6. Ensure your Xcode matches `.xcode-version`.
 
 ## Commands
 
@@ -44,14 +43,6 @@ branch), a duplicate or regressing build number (checked against the variant's
 own App Store Connect app), an unpushed ref, a missing/invalid `PartnerKeys.plist`,
 the wrong Xcode, or no distribution signing identity. Run with `--dry-run` to see
 it without building.
-
-If the project at the built ref references local Swift packages (e.g. a local
-`../ZcashLightClientKit` checkout), preflight fails when that directory is
-missing and otherwise warns with the package's git state — the build consumes
-that checkout as-is (HEAD plus any uncommitted changes), so it is not
-reproducible from this repo alone. The throwaway build worktree is created
-beside the repo precisely so those relative references resolve to the same
-directories Xcode uses.
 
 ## Notifications
 

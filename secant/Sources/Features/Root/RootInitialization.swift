@@ -401,6 +401,7 @@ extension Root {
                     .send(.batteryStateChanged),
                     .send(.observeTransactions),
                     .send(.observeShieldingProcessor),
+                    .send(.observeOrchardMigration),
                     .send(.observeTorInit),
                     .send(.refreshAutomaticServer)
                 )
