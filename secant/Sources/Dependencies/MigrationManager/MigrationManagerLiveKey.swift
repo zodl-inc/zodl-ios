@@ -45,6 +45,19 @@
 //  written default flips from `false` to `true`; the identity-custom forced-false (R2's data half)
 //  still wins over either the default or an explicit stored choice.
 //
+//  MOB-1497 (R7 adversarial-review fix, Important-1): `ensureOrCreateNetworkSnapshot` used to return
+//  ANY existing snapshot before creating, regardless of committed/provisional state — so a stale
+//  PROVISIONAL snapshot left behind by an abandoned attempt (app killed before commit, or a
+//  same-session back-and-reconfirm) would silently win over a fresh Tor choice made at a later
+//  attempt's Tor-choice step, in the worst case broadcasting over clearnet under a screen that showed
+//  Tor ON. Fixed with a `reformIfProvisional` flag threaded through `ensureOrCreateNetworkSnapshot`:
+//  `true` for `formNetworkSnapshot` (a still-provisional existing snapshot is discarded and re-formed
+//  from the current stored choice plus a fresh random roll — always safe, since nothing has broadcast
+//  against an uncommitted snapshot), `false` for `ensureNetworkSnapshot` (the broadcast-time safety
+//  net stays strictly idempotent against a provisional snapshot too, so R7's "held for the run" isn't
+//  broken for a mid-run/BG-executor caller). A COMMITTED existing snapshot is never reformed by
+//  either path.
+//
 
 import Foundation
 @preconcurrency import Combine
@@ -518,11 +531,23 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// entry chains). Shares `ensureOrCreateNetworkSnapshot`'s body with `ensureNetworkSnapshot`
     /// below, `stampCommitted: false` — a freshly created snapshot here stays PROVISIONAL
     /// (`committedAt == nil`) until `markNetworkSnapshotCommitted` stamps it at schedule-commit. A
-    /// re-entry path that never shows the Tor step never calls this, so it never forms one; if a
-    /// committed snapshot from an earlier session already exists, this naturally just returns it
-    /// (the ensure-or-create body never re-forms over an existing snapshot, committed or not).
+    /// re-entry path that never shows the Tor step never calls this, so it never forms one; if an
+    /// already-COMMITTED snapshot from an earlier session exists, this naturally just returns it
+    /// unchanged (mid-run idempotence — see the guard inside `ensureOrCreateNetworkSnapshot`).
+    ///
+    /// R7-review fix (Important-1): `reformIfProvisional: true` — a still-PROVISIONAL existing
+    /// snapshot is discarded and re-formed from the CURRENT stored Tor choice and a fresh random
+    /// roll, rather than returned as-is. Without this, a provisional snapshot left behind by an
+    /// abandoned attempt (app killed before commit, or a same-session back-and-reconfirm) has no
+    /// cleanup path other than flow teardown (`clearProvisionalNetworkSnapshot`, which only runs on
+    /// an in-app close) — so it would silently outlive the attempt that made it, and THIS run's fresh
+    /// Tor choice at the sheet would never reach the snapshot a later broadcast reads. Worst case: a
+    /// clearnet broadcast under a screen that showed Tor ON. Always safe to re-form here: nothing has
+    /// broadcast against a snapshot that hasn't committed yet (a COMMITTED existing snapshot is never
+    /// reformed — see below), so "made at migration start and held for the run" (R4/R7) attaches to
+    /// the run that is actually starting now, not to an abandoned one.
     func formNetworkSnapshot(accountUUID: AccountUUID?) async {
-        _ = await ensureOrCreateNetworkSnapshot(accountUUID: accountUUID, stampCommitted: false)
+        _ = await ensureOrCreateNetworkSnapshot(accountUUID: accountUUID, stampCommitted: false, reformIfProvisional: true)
     }
 
     /// MOB-1497: stamps `accountUUID`'s persisted network snapshot committed. A no-op when no
@@ -538,11 +563,13 @@ final class MigrationManagerImpl: @unchecked Sendable {
 
     /// MOB-1497: discards `accountUUID`'s persisted network snapshot ONLY while still provisional —
     /// a no-op against an already-committed one. Called at migration flow teardown (`RootCoordinator`'s
-    /// `migrationCoordFlow` path-clearing sites) so closing the flow without committing discards the
-    /// provisional pick; a re-entry re-forms and re-rolls. See `MigrationSnapshotStorage
-    /// .clearIfProvisional`. Complementary to R8-T3's `clearAbandonedNetworkSnapshot` (which guards
-    /// on engine `.notStarted` + no stored payload and handles COMMITTED-but-dead leftovers): this
-    /// one only ever touches a provisional pick.
+    /// `.migrationCoordFlow(.flowFinished)` path-clearing site — the flow's one teardown point; a
+    /// second call site at the Sending `.viewTransaction` delegate was removed as a dead no-op, since
+    /// reaching Sending always implies an already-committed snapshot) so closing the flow without
+    /// committing discards the provisional pick; a re-entry re-forms and re-rolls. See
+    /// `MigrationSnapshotStorage.clearIfProvisional`. Complementary to R8-T3's
+    /// `clearAbandonedNetworkSnapshot` (which guards on engine `.notStarted` + no stored payload and
+    /// handles COMMITTED-but-dead leftovers): this one only ever touches a provisional pick.
     func clearProvisionalNetworkSnapshot(accountUUID: AccountUUID?) {
         guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return }
         snapshotStorage.clearIfProvisional(for: resolvedAccountUUID)
@@ -578,33 +605,51 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// this point some other way, so a snapshot created HERE is stamped committed immediately rather
     /// than left provisional forever — this lane has no guaranteed later `recordCommittedSchedule`
     /// call to stamp it (a bare dust broadcast, for one, commits no schedule at all).
+    ///
+    /// R7-review fix (Important-1): `reformIfProvisional: false`, deliberately — UNLIKE
+    /// `formNetworkSnapshot`, this path must stay strictly idempotent against a PROVISIONAL existing
+    /// snapshot too. It is reached from a broadcast-bearing read (`migrationNetworkOptions`); a
+    /// mid-run call landing here (the BG-executor lane this safety net exists for in the first place)
+    /// must return the SAME endpoint/Tor choice a prior read already handed out, never a fresh draw —
+    /// re-rolling here would break R7's "made at migration start and held for the run."
     private func ensureNetworkSnapshot(accountUUID: AccountUUID?) async -> MigrationNetworkSnapshot {
-        await ensureOrCreateNetworkSnapshot(accountUUID: accountUUID, stampCommitted: true)
+        await ensureOrCreateNetworkSnapshot(accountUUID: accountUUID, stampCommitted: true, reformIfProvisional: false)
     }
 
     /// Idempotent ensure-or-create for `accountUUID`'s (resolved, if `nil`, to the selected account)
     /// atomic per-run network snapshot — shared body for `formNetworkSnapshot` (provisional,
-    /// `stampCommitted: false`) and `ensureNetworkSnapshot` (safety net, `stampCommitted: true`).
-    /// Returns the persisted snapshot when one already exists — REGARDLESS of `stampCommitted`; an
-    /// existing snapshot's committed state is never promoted by this method, only by
+    /// `stampCommitted: false`, `reformIfProvisional: true`) and `ensureNetworkSnapshot` (safety net,
+    /// `stampCommitted: true`, `reformIfProvisional: false`). Returns the persisted snapshot when one
+    /// already exists AND (it is already COMMITTED, or `reformIfProvisional` is false) — an existing
+    /// snapshot's committed state is never promoted by this method, only by
     /// `markNetworkSnapshotCommitted`. Otherwise creates one from the CURRENT sync endpoint/Tor
-    /// choice, persists it (stamped committed or left provisional per `stampCommitted`), and returns
-    /// it. Double-checks presence again AFTER acquiring the guard (not just before) — a concurrent
-    /// first caller for the SAME account may have already created and persisted one while this call
-    /// waited, and that one must win rather than being silently overwritten. A missing/unresolvable
-    /// account still returns SOME snapshot (the current endpoint/Tor choice, unpersisted) — every
-    /// path ends in a value, never a throw.
-    private func ensureOrCreateNetworkSnapshot(accountUUID: AccountUUID?, stampCommitted: Bool) async -> MigrationNetworkSnapshot {
+    /// choice and persists it (stamped committed or left provisional per `stampCommitted`), REPLACING
+    /// a stale existing PROVISIONAL snapshot when `reformIfProvisional` is true (see
+    /// `formNetworkSnapshot`'s doc for why that's always safe pre-broadcast). Double-checks presence
+    /// (and the same committed/reform condition) again AFTER acquiring the guard, not just before — a
+    /// concurrent first caller for the SAME account may have already created/persisted or reformed
+    /// one while this call waited, and that one must win rather than being silently overwritten. A
+    /// missing/unresolvable account still returns SOME snapshot (the current endpoint/Tor choice,
+    /// unpersisted) — every path ends in a value, never a throw.
+    private func ensureOrCreateNetworkSnapshot(
+        accountUUID: AccountUUID?,
+        stampCommitted: Bool,
+        reformIfProvisional: Bool
+    ) async -> MigrationNetworkSnapshot {
         let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id
 
-        if let resolvedAccountUUID, let existing = snapshotStorage.snapshot(for: resolvedAccountUUID) {
+        if let resolvedAccountUUID,
+           let existing = snapshotStorage.snapshot(for: resolvedAccountUUID),
+           existing.committedAt != nil || !reformIfProvisional {
             return existing
         }
 
         // DO-NOT-NEST: see `migrationNetworkOptions`'s doc — this must never run inside another
         // `withSubmission`/`switchIfIdle`/`switchWaiting`.
         let guarded = try? await transactionGuard.withSubmission { () async -> MigrationNetworkSnapshot in
-            if let resolvedAccountUUID, let existing = snapshotStorage.snapshot(for: resolvedAccountUUID) {
+            if let resolvedAccountUUID,
+               let existing = snapshotStorage.snapshot(for: resolvedAccountUUID),
+               existing.committedAt != nil || !reformIfProvisional {
                 return existing
             }
             var created = await createNetworkSnapshot()
