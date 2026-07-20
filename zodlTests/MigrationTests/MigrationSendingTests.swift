@@ -1303,6 +1303,36 @@ import ComposableArchitecture
         }
     }
 
+    /// R7-review fix (controller adjudication, Important-2 in the review): the dust "Migrate anyway"
+    /// lane shares this SAME classify+route wiring with the scheduled lane (see `executeNextTransfer`'s
+    /// doc) — with the had-broadcast flag cleared at `acknowledgeComplete` (the dust run always starts
+    /// fresh, after Complete is acknowledged), a dust Tor failure routes as first-run (R14). This is
+    /// INTENDED per the approved design's flag semantics — the run-end trio clears the flag, the dust
+    /// mini-run is a genuinely fresh run, and its R14 choice is still R11-warned before any clearnet
+    /// fallback — pinned here so the disposition is documented rather than an unpinned gap.
+    @MainActor @Test func onAppearWithDustLaneTorUnavailableRoutesAsFirstRunChoice() async {
+        let state = MigrationSending.State(totalCount: 1, isDustLane: true)
+        let store = TestStore(initialState: state) {
+            MigrationSending()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.migrateMigrationDust = { _, _, _ in throw ZcashError.migrationTorUnavailable }
+            $0.migrationManager.migrationNetworkOptions = { _ in
+                MigrationNetworkPrivacyOptions(useTor: true, submissionEndpoint: LightWalletEndpoint(address: "", port: 0))
+            }
+            $0.migrationManager.routeBroadcastFailure = { _, _ in MigrationBroadcastFailureRoute.torFirstRunChoice }
+            withDependenciesUSKDerivable(&$0)
+        }
+
+        await store.send(.onAppear)
+        await store.receive(\.broadcastFailureRouted) {
+            $0.failureKind = MigrationBroadcastFailureRoute.torFirstRunChoice
+        }
+        await store.receive(\.transferResult) {
+            $0.isFailurePresented = true
+        }
+    }
+
     // MARK: - R7-T3 (MOB-1497): R15 mid-run Tor hold
 
     @MainActor @Test func onAppearWithTorUnavailableMidRunPresentsTorHold() async {
@@ -1354,6 +1384,22 @@ import ComposableArchitecture
         }
 
         #expect(overrideTorCalls.value == 0)
+    }
+
+    /// R7-review fix (Minor-3): `.proceedWithoutTorTapped` was reachable regardless of `failureKind`
+    /// — the R11 warning alert it presents leads to a clearnet retry (`overrideTorForRun(false)`),
+    /// exactly the mid-run opt-out R15 forbids. The view never renders the button outside
+    /// `.torFirstRunChoice` (defense in depth only, per the report's own admission that this was
+    /// wrong to rely on) — this pins the reducer itself: gated to `.torFirstRunChoice`, a no-op
+    /// everywhere else. RED against the pre-fix reducer, which presented the alert unconditionally.
+    @MainActor @Test func proceedWithoutTorTappedInTorHoldStateIsANoOp() async {
+        var state = MigrationSending.State(isFailurePresented: true)
+        state.failureKind = MigrationBroadcastFailureRoute.torHold
+        let store = TestStore(initialState: state) {
+            MigrationSending()
+        }
+
+        await store.send(.proceedWithoutTorTapped)
     }
 
     // MARK: - R7-T3 (MOB-1497): R16 within-provider rotation — no new UI

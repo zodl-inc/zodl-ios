@@ -224,6 +224,12 @@ struct MigrationSending {
                 return executeNextTransfer(account: state.selectedWalletAccount, isDustLane: state.isDustLane)
 
             case .proceedWithoutTorTapped:
+                // R7-review fix (Minor-3): gated to the R14 first-run-choice variant — the alert this
+                // presents leads to a clearnet retry (`overrideTorForRun(account, false)`), which R15's
+                // mid-run hold must never offer. The view already never renders this button outside
+                // `.torFirstRunChoice`; this closes the same gap at the reducer, where it actually
+                // matters (a raw `.send`/programmatic dispatch bypasses the view entirely).
+                guard state.failureKind == MigrationBroadcastFailureRoute.torFirstRunChoice else { return .none }
                 let usesFullBalanceCopy = migrationManager.migrationMode() == MigrationMode.immediate
                 state.alert = AlertState.offWarning(usesFullBalanceCopy: usesFullBalanceCopy)
                 return .none

@@ -643,14 +643,28 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// MOB-1497 (R7-T3): the failure-routing decision for a classified broadcast failure — see
     /// `MigrationBroadcastFailureRoute`'s doc for what each case means to a caller. Storage-locked
     /// where it touches storage: the had-broadcast flag / R16 episode set live in
-    /// `failureRoutingStorage` (read/written directly here — neither is part of the committed
-    /// snapshot); the committed snapshot's `broadcastEndpoint` is mutated ONLY via the sanctioned
+    /// `failureRoutingStorage` (read/written directly here — neither is part of the network
+    /// snapshot); the snapshot's `broadcastEndpoint` is mutated ONLY via the sanctioned
     /// `snapshotStorage.rotateBroadcastEndpoint` below.
     ///
+    /// R7-review fix (Important-1): operates on the run's ACTIVE snapshot — the COMMITTED one if
+    /// present, else the still-PROVISIONAL one — rather than requiring a committed snapshot. The live
+    /// Keystone note-split lane broadcasts BEFORE its schedule (and therefore its snapshot) commits,
+    /// by design: `MigrationCoordFlowCoordinator.storeDeferredKeystoneSchedule` defers
+    /// `recordCommittedSchedule`/`markNetworkSnapshotCommitted` until AFTER the split's OWN broadcast
+    /// succeeds (see that method's doc for why — this ordering is untouched by this fix). Requiring
+    /// `committedAt != nil` here meant every note-split failure fell through to the defensive
+    /// `.plainRetry` below, so R14/R16/R17 never engaged on that lane. Since at most one snapshot is
+    /// ever persisted per account at a time (provisional XOR committed), `snapshotStorage.snapshot(for:)`
+    /// already returns whichever one is active — no extra lookup needed. A mutation applied here to a
+    /// still-provisional snapshot is carried forward automatically once `markNetworkSnapshotCommitted`
+    /// later stamps it (that stamps whatever is currently persisted, mutated or not), so a
+    /// rotated/overridden choice survives the commit.
+    ///
     /// Decision table (normative doc R14-R17):
-    /// - No COMMITTED network snapshot for the account (defensive — should not happen for a live
-    ///   broadcast, since one is always formed/committed well before a broadcast is attempted) ->
-    ///   `.plainRetry`, logged.
+    /// - NO active (committed or provisional) network snapshot for the account (defensive — should
+    ///   not happen for a live broadcast, since one is always formed well before a broadcast is
+    ///   attempted) -> `.plainRetry`, logged.
     /// - `.torUnavailable` -> `.torFirstRunChoice` (R14) when the account has never had a landed
     ///   broadcast this run, else `.torHold` (R15). NEVER rotates or touches the episode: a Tor-class
     ///   failure says nothing about which endpoint is reachable, so leaking a rotation decision off
@@ -669,9 +683,8 @@ final class MigrationManagerImpl: @unchecked Sendable {
     ///   R17 sync-server override), so a REPEATED failure keeps returning `.providerExhausted`.
     func routeBroadcastFailure(accountUUID: AccountUUID?, failureClass: MigrationBroadcastFailureClass) async -> MigrationBroadcastFailureRoute {
         guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id,
-              let snapshot = snapshotStorage.snapshot(for: resolvedAccountUUID),
-              snapshot.committedAt != nil else {
-            LoggerProxy.warn("[MigrationManagerImpl] routeBroadcastFailure: no committed network snapshot for the account — defaulting to plainRetry.")
+              let snapshot = snapshotStorage.snapshot(for: resolvedAccountUUID) else {
+            LoggerProxy.warn("[MigrationManagerImpl] routeBroadcastFailure: no active network snapshot for the account — defaulting to plainRetry.")
             return MigrationBroadcastFailureRoute.plainRetry
         }
 
@@ -705,18 +718,25 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// MOB-1497 (R7-T3, R14): see `MigrationManagerClient.overrideTorForRun`'s doc. Purely a storage
     /// mutation (no SDK/network interaction), so — like `markNetworkSnapshotCommitted`/
     /// `confirmProvisionalTorChoice` above — this doesn't need `transactionGuard` either.
+    ///
+    /// R7-review fix (Important-1): mutates the account's ACTIVE snapshot (committed-else-provisional)
+    /// — see `routeBroadcastFailure`'s doc for why (the note-split lane's R14 choice can fire against
+    /// a still-provisional snapshot).
     func overrideTorForRun(accountUUID: AccountUUID?, useTor: Bool) {
         guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return }
-        snapshotStorage.overrideUseTorForCommitted(useTor, for: resolvedAccountUUID)
+        snapshotStorage.overrideUseTorOnActiveSnapshot(useTor, for: resolvedAccountUUID)
     }
 
     /// MOB-1497 (R7-T3, R17): see `MigrationManagerClient.overrideBroadcastEndpointToSyncServer`'s
     /// doc. `async` to match the client's closure shape (a future implementation detail could need
     /// to suspend); today's body has no actual `await` — same no-network-call reasoning as the other
     /// sanctioned mutations.
+    ///
+    /// R7-review fix (Important-1): mutates the account's ACTIVE snapshot (committed-else-provisional)
+    /// — see `routeBroadcastFailure`'s doc for why.
     func overrideBroadcastEndpointToSyncServer(accountUUID: AccountUUID?) async {
         guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return }
-        snapshotStorage.overrideBroadcastEndpointToSyncServerForCommitted(for: resolvedAccountUUID)
+        snapshotStorage.overrideBroadcastEndpointToSyncServerOnActiveSnapshot(for: resolvedAccountUUID)
         failureRoutingStorage.resetEpisode(for: resolvedAccountUUID)
     }
 
@@ -2056,26 +2076,35 @@ final class MigrationSnapshotStorage: @unchecked Sendable {
         }
     }
 
-    // MARK: - MOB-1497 (R7-T3): sanctioned COMMITTED-snapshot mutations (R14/R16/R17)
+    // MARK: - MOB-1497 (R7-T3, R7-review fix Important-1): sanctioned ACTIVE-snapshot mutations
+    // (R14/R16/R17)
     //
     // The three doc-sanctioned exceptions to R4's run-immutability that a failure-routing surface
     // may perform — see `MigrationManagerClient.overrideTorForRun`/`.overrideBroadcastEndpointTo
     // SyncServer` and `MigrationManagerImpl.routeBroadcastFailure`'s own doc for each requirement.
     // Same shape as `updateUseTorIfProvisional` above (atomic via the generic storage's `modify`,
-    // no-op + `LoggerProxy.warn` when there is nothing to mutate) but the CONDITION is inverted:
-    // these apply only to an already-COMMITTED snapshot (`updateUseTorIfProvisional` is the
-    // mirror-image provisional-only case) — every failure-routing surface fires mid/post-run,
-    // never before commit. (Rebased onto R8-T3: replace-with-copy now spells only the four stored
-    // fields — the providers are computed off the endpoints.)
+    // no-op + `LoggerProxy.warn` when there is nothing to mutate), but UNLIKE it these apply to the
+    // account's ACTIVE snapshot — the COMMITTED one if present, else the still-PROVISIONAL one —
+    // rather than only ever a provisional one. (Rebased onto R8-T3: replace-with-copy now spells
+    // only the four stored fields — the providers are computed off the endpoints.)
+    //
+    // R7-review fix (Important-1): originally committed-only. That left the live Keystone note-split
+    // lane — whose broadcast (and therefore its first R14/R16/R17 failure) happens BEFORE its
+    // snapshot commits, by design — with no sanctioned mutation to apply even once
+    // `routeBroadcastFailure`'s own guard was widened; a rotation/override attempted against that
+    // lane's still-provisional snapshot would have silently no-op'd. A mutation applied here to a
+    // still-provisional snapshot is carried forward automatically: `markCommitted` above stamps
+    // whatever is CURRENTLY persisted, mutated or not, so the choice survives the commit. No-op +
+    // `LoggerProxy.warn` only when NEITHER a committed nor a provisional snapshot exists at all.
 
-    /// R14: mutates ONLY `useTor` on `accountUUID`'s COMMITTED snapshot — the R11-warning-gated
-    /// exception to R4 for "Tor unavailable on the first broadcast of the run." Endpoint/takenAt/
-    /// committedAt are left byte-for-byte untouched. A no-op (logged) against a still-provisional
-    /// or absent snapshot.
-    func overrideUseTorForCommitted(_ useTor: Bool, for accountUUID: AccountUUID) {
+    /// R14: mutates ONLY `useTor` on `accountUUID`'s ACTIVE (committed-else-provisional) snapshot —
+    /// the R11-warning-gated exception to R4 for "Tor unavailable on the first broadcast of the run."
+    /// Endpoint/takenAt/committedAt are left byte-for-byte untouched. A no-op (logged) only
+    /// when no snapshot — committed or provisional — is persisted for the account at all.
+    func overrideUseTorOnActiveSnapshot(_ useTor: Bool, for accountUUID: AccountUUID) {
         storage.modify(for: accountUUID) { payload in
-            guard let existing = payload, existing.committedAt != nil else {
-                LoggerProxy.warn("[MigrationSnapshotStorage] overrideTorForRun: no committed snapshot to update — ignoring.")
+            guard let existing = payload else {
+                LoggerProxy.warn("[MigrationSnapshotStorage] overrideTorForRun: no active snapshot to update — ignoring.")
                 return
             }
             payload = MigrationNetworkSnapshot(
@@ -2088,17 +2117,18 @@ final class MigrationSnapshotStorage: @unchecked Sendable {
         }
     }
 
-    /// R16: mutates ONLY `broadcastEndpoint` on `accountUUID`'s COMMITTED snapshot — the sanctioned
-    /// within-provider rotation after an unreachable broadcast endpoint. The broadcast PROVIDER is
-    /// unchanged by construction: `routeBroadcastFailure` (the sole caller) only ever offers a
-    /// same-provider candidate here (and the provider is computed off the endpoint's own host). A
-    /// no-op (logged) against a still-provisional or absent snapshot. Internal to
-    /// `routeBroadcastFailure` — deliberately not a `MigrationManagerClient` member (nothing else
-    /// in the app needs to trigger a rotation directly).
+    /// R16: mutates ONLY `broadcastEndpoint` on `accountUUID`'s ACTIVE (committed-else-provisional)
+    /// snapshot — the sanctioned within-provider rotation after an unreachable broadcast endpoint.
+    /// The broadcast PROVIDER is unchanged by construction: `routeBroadcastFailure` (the sole
+    /// caller) only ever offers a same-provider candidate here (and the provider is computed off
+    /// the endpoint's own host). A no-op (logged) only when no snapshot — committed or provisional
+    /// — is persisted for the account at all. Internal to `routeBroadcastFailure` — deliberately
+    /// not a `MigrationManagerClient` member (nothing else in the app needs to trigger a rotation
+    /// directly).
     func rotateBroadcastEndpoint(to endpoint: MigrationNetworkSnapshot.Endpoint, for accountUUID: AccountUUID) {
         storage.modify(for: accountUUID) { payload in
-            guard let existing = payload, existing.committedAt != nil else {
-                LoggerProxy.warn("[MigrationSnapshotStorage] rotateBroadcastEndpoint: no committed snapshot to update — ignoring.")
+            guard let existing = payload else {
+                LoggerProxy.warn("[MigrationSnapshotStorage] rotateBroadcastEndpoint: no active snapshot to update — ignoring.")
                 return
             }
             payload = MigrationNetworkSnapshot(
@@ -2111,19 +2141,19 @@ final class MigrationSnapshotStorage: @unchecked Sendable {
         }
     }
 
-    /// R17: sets `broadcastEndpoint := syncEndpoint` on `accountUUID`'s COMMITTED snapshot (the
-    /// broadcast provider follows computed, becoming the sync provider) — the sanctioned
-    /// consent-gated fallback once every shipped endpoint for the broadcast provider is
-    /// unreachable. Afterwards the snapshot is same-server by construction, so a LATER
-    /// endpoint-class failure takes `routeBroadcastFailure`'s same-server exemption
-    /// (`.plainRetry`) naturally. A no-op (logged) against a still-provisional or absent snapshot.
-    /// (The episode reset this requirement also calls for lives one layer up, in
-    /// `MigrationManagerImpl.overrideBroadcastEndpointToSyncServer` — this storage type has no
-    /// knowledge of `MigrationFailureRoutingStorage`.)
-    func overrideBroadcastEndpointToSyncServerForCommitted(for accountUUID: AccountUUID) {
+    /// R17: sets `broadcastEndpoint := syncEndpoint` on `accountUUID`'s ACTIVE
+    /// (committed-else-provisional) snapshot (the broadcast provider follows computed, becoming the
+    /// sync provider) — the sanctioned consent-gated fallback once every shipped endpoint for the
+    /// broadcast provider is unreachable. Afterwards the snapshot is same-server by construction,
+    /// so a LATER endpoint-class failure takes `routeBroadcastFailure`'s same-server exemption
+    /// (`.plainRetry`) naturally. A no-op (logged) only when no snapshot — committed or provisional
+    /// — is persisted for the account at all. (The episode reset this requirement also calls for
+    /// lives one layer up, in `MigrationManagerImpl.overrideBroadcastEndpointToSyncServer` — this
+    /// storage type has no knowledge of `MigrationFailureRoutingStorage`.)
+    func overrideBroadcastEndpointToSyncServerOnActiveSnapshot(for accountUUID: AccountUUID) {
         storage.modify(for: accountUUID) { payload in
-            guard let existing = payload, existing.committedAt != nil else {
-                LoggerProxy.warn("[MigrationSnapshotStorage] overrideBroadcastEndpointToSyncServer: no committed snapshot to update — ignoring.")
+            guard let existing = payload else {
+                LoggerProxy.warn("[MigrationSnapshotStorage] overrideBroadcastEndpointToSyncServer: no active snapshot to update — ignoring.")
                 return
             }
             payload = MigrationNetworkSnapshot(
