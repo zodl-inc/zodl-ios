@@ -93,6 +93,10 @@ extension MigrationManagerClient: DependencyKey {
             setManualDelivery: { impl.gateStorage.setManualDelivery($0) },
             migrationNetworkOptions: { accountUUID in await impl.migrationNetworkOptions(accountUUID: accountUUID) },
             formNetworkSnapshot: { accountUUID in await impl.formNetworkSnapshot(accountUUID: accountUUID) },
+            networkSnapshot: { accountUUID in await impl.networkSnapshot(accountUUID: accountUUID) },
+            confirmProvisionalTorChoice: { accountUUID, useTor in
+                impl.confirmProvisionalTorChoice(accountUUID: accountUUID, useTor: useTor)
+            },
             markNetworkSnapshotCommitted: { accountUUID in impl.markNetworkSnapshotCommitted(accountUUID: accountUUID) },
             clearProvisionalNetworkSnapshot: { accountUUID in impl.clearProvisionalNetworkSnapshot(accountUUID: accountUUID) },
             activeNetworkSnapshots: { impl.activeNetworkSnapshots() },
@@ -548,6 +552,22 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// the run that is actually starting now, not to an abandoned one.
     func formNetworkSnapshot(accountUUID: AccountUUID?) async {
         _ = await ensureOrCreateNetworkSnapshot(accountUUID: accountUUID, stampCommitted: false, reformIfProvisional: true)
+    }
+
+    /// MOB-1497 (T2): read-only peek — see `MigrationManagerClient.networkSnapshot`'s doc. Never
+    /// forms/creates; never touches `transactionGuard` (no creation can happen here, so there's
+    /// nothing to serialize against a mid-flight server switch).
+    func networkSnapshot(accountUUID: AccountUUID?) async -> MigrationNetworkSnapshot? {
+        guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return nil }
+        return snapshotStorage.snapshot(for: resolvedAccountUUID)
+    }
+
+    /// MOB-1497 (T2): see `MigrationManagerClient.confirmProvisionalTorChoice`'s doc. Purely a
+    /// storage mutation (no SDK/network interaction), so — like `markNetworkSnapshotCommitted`/
+    /// `clearProvisionalNetworkSnapshot` beside it — this doesn't need `transactionGuard` either.
+    func confirmProvisionalTorChoice(accountUUID: AccountUUID?, useTor: Bool) {
+        guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return }
+        snapshotStorage.updateUseTorIfProvisional(useTor, for: resolvedAccountUUID)
     }
 
     /// MOB-1497: stamps `accountUUID`'s persisted network snapshot committed. A no-op when no
@@ -1876,6 +1896,36 @@ final class MigrationSnapshotStorage: @unchecked Sendable {
         storage.modify(for: accountUUID) { payload in
             guard let existing = payload, existing.committedAt != nil else { return }
             payload = nil
+        }
+    }
+
+    /// MOB-1497 (T2): mutates ONLY `useTor` on `accountUUID`'s persisted snapshot, but ONLY while it
+    /// is still PROVISIONAL (`committedAt == nil`) — every other field (notably `broadcastEndpoint`)
+    /// is left byte-for-byte untouched, and nothing is re-formed/re-rolled: this REPLACES the whole
+    /// persisted value with a fresh `MigrationNetworkSnapshot` copied field-for-field from the
+    /// existing one except `useTor`, rather than mutating `useTor` in place (it stays a `let` —
+    /// unlike `committedAt`, which is the one field this type ever mutates in place). A no-op
+    /// (logged) against an already-committed snapshot or when none is persisted — a live confirm
+    /// should always find the provisional snapshot `formNetworkSnapshot` formed moments earlier at
+    /// presentation, so reaching either branch here signals a caller ordering bug worth surfacing.
+    func updateUseTorIfProvisional(_ useTor: Bool, for accountUUID: AccountUUID) {
+        lock.withLock { _ in
+            guard let existing = readPayload(for: accountUUID), existing.committedAt == nil else {
+                LoggerProxy.warn(
+                    "[MigrationSnapshotStorage] confirmProvisionalTorChoice: no provisional snapshot to update — ignoring."
+                )
+                return
+            }
+            let updated = MigrationNetworkSnapshot(
+                useTor: useTor,
+                syncEndpoint: existing.syncEndpoint,
+                syncProvider: existing.syncProvider,
+                broadcastEndpoint: existing.broadcastEndpoint,
+                broadcastProvider: existing.broadcastProvider,
+                takenAt: existing.takenAt,
+                committedAt: existing.committedAt
+            )
+            writePayload(updated, for: accountUUID)
         }
     }
 

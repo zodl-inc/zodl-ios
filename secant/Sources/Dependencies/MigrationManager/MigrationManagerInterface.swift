@@ -90,6 +90,26 @@ struct MigrationManagerClient: Sendable {
     // stamps it. `= { _ in }` is a no-op default, not a test fallback (see the
     // `recordCommittedSchedule` note above).
     var formNetworkSnapshot: @Sendable (_ accountUUID: AccountUUID?) async -> Void = { _ in }
+    // MOB-1497 (T2): read-only peek at `accountUUID`'s currently persisted network snapshot (`nil`
+    // resolves the selected account, same convention as `migrationNetworkOptions` above) — unlike
+    // `migrationNetworkOptions`/`formNetworkSnapshot`, this NEVER forms one; `nil` when none is
+    // persisted yet. R13 needs the broadcast host ON the choice surface (the Tor sheet) and on the
+    // sheet-skipped TransferPlan/ReviewTransfer footers — the coordinator reads this AFTER
+    // `formNetworkSnapshot`/the skip branch has already formed one, to thread
+    // `broadcastEndpoint.host`/`syncProvider` into that UI without re-deriving custom-server
+    // classification itself. `= { _ in nil }` is a no-op default, not a test fallback (see the
+    // `recordCommittedSchedule` note above).
+    var networkSnapshot: @Sendable (_ accountUUID: AccountUUID?) async -> MigrationNetworkSnapshot? = { _ in nil }
+    // MOB-1497 (T2): the Tor sheet's confirm calls this INSTEAD OF `formNetworkSnapshot` — forming
+    // now happens at sheet PRESENTATION (R13 needs the endpoint to exist when the sheet appears), so
+    // by confirm time the user has already been shown a specific broadcast host; the run must use
+    // exactly that host, never a fresh re-roll. Mutates ONLY `useTor` on the existing PROVISIONAL
+    // snapshot — `broadcastEndpoint`/`syncEndpoint`/`takenAt` are left byte-for-byte untouched, and
+    // nothing is re-formed. Storage-lock protected; a no-op (logged warning) when no provisional
+    // snapshot exists for the account, or it's already committed — see
+    // `MigrationSnapshotStorage.updateUseTorIfProvisional`. `= { _, _ in }` is a no-op default, not a
+    // test fallback.
+    var confirmProvisionalTorChoice: @Sendable (_ accountUUID: AccountUUID?, _ useTor: Bool) -> Void = { _, _ in }
     // MOB-1497: stamps `accountUUID`'s network snapshot committed (`nil` resolves the selected
     // account). Production has exactly ONE call site — inside `recordCommittedSchedule` itself,
     // co-located there so the two can never drift out of sync across `recordCommittedSchedule`'s
