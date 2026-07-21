@@ -32,6 +32,7 @@ public extension String {
     static let migrationManualDelivery = "sharedStateKey_migrationManualDelivery"
     static let migrationNetworkPrivacyOptions = "sharedStateKey_migrationNetworkPrivacyOptions"
     static let migrationCompleteAcknowledged = "sharedStateKey_migrationCompleteAcknowledged"
+    static let migrationRemainderPending = "sharedStateKey_migrationRemainderPending"
     static let migrationDustLocked = "sharedStateKey_migrationDustLocked"
     static let migrationLastSyncCompletedAt = "sharedStateKey_migrationLastSyncCompletedAt"
     static let migrationCommittedSchedule = "sharedStateKey_migrationCommittedSchedule"

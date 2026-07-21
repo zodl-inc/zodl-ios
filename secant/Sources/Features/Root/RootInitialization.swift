@@ -86,6 +86,8 @@ private func classifyMigrationAccount(
     }
 
     switch migrationState {
+    // `.readyToPropose` is never actually emitted by the final migration engine — kept here only
+    // for exhaustiveness / the migration SDK simulator, which still models it.
     case MigrationState.complete, MigrationState.notStarted, MigrationState.readyToPropose:
         return MigrationAccountClassification.nothingToDo(migrationState)
     default:
@@ -1721,6 +1723,20 @@ extension Root {
     /// preserving the original single-account complete->cancelAll behavior exactly. `.unreadable`
     /// never counts as done (see `isDoneClassification`), so one unreadable account blocks a
     /// premature cancelAll too.
+    ///
+    /// MOB-1496: `MigrationState.complete` is per-RUN now, never "the whole migration is done" —
+    /// the final engine caps how much a single run covers (a per-run cap, or funds arriving
+    /// mid-run), so this landed broadcast completing the STORED run may still leave more to
+    /// migrate. `isMigrationRemainderPending` below reflects the once-per-transition evaluation
+    /// `reconcile()` (just above) already ran for this exact `.complete` transition — see
+    /// `MigrationManagerImpl.evaluateMigrationRemainder`'s doc for why it runs there and not here
+    /// (a fresh propose on every landed broadcast would race a commit the user is mid-review of).
+    /// Non-empty fires `.migrationBatchComplete` instead of `.migrationComplete`; `cancelAll()`
+    /// still runs in BOTH cases — nothing is broadcastable until the user consents to a NEW run
+    /// (even one with more to migrate), and that run's own confirm/commit is what re-arms
+    /// scheduling. A `nil`-evaluated flag (the in-`reconcile()` propose itself threw) reads as
+    /// `false` and fires `.migrationComplete` — accepted, since the banner/flag both self-heal on a
+    /// later reconcile once the propose eventually succeeds.
     private static func handleLandedBroadcast(
         _ accountUUID: AccountUUID,
         _ result: MigrationTransferResult,
@@ -1728,6 +1744,10 @@ extension Root {
         dependencies: MigrationSessionDependencies
     ) async {
         await dependencies.migrationManager.recordTransferBroadcast(accountUUID, result)
+        // MOB-1496: this is also where the once-per-transition remainder evaluation runs (inside
+        // `MigrationManagerImpl.reconcile()`) — by the time this call returns,
+        // `isMigrationRemainderPending` below already reflects a fresh propose if this broadcast
+        // just moved the account into `.complete` for the first time.
         await dependencies.migrationManager.reconcile()
 
         let migrationState = try? await dependencies.sdkSynchronizer.getMigrationState(accountUUID)
@@ -1739,7 +1759,11 @@ extension Root {
         let accountUUIDString = Data(accountUUID.id).hexEncodedString()
 
         if migrationState == MigrationState.complete && everyOtherAccountDone {
-            await dependencies.userNotifications.scheduleMigrationNotification(MigrationNotification.migrationComplete, nil, accountUUIDString)
+            let remainder = dependencies.migrationManager.isMigrationRemainderPending(accountUUID)
+            let notification = remainder ? MigrationNotification.migrationBatchComplete : MigrationNotification.migrationComplete
+            await dependencies.userNotifications.scheduleMigrationNotification(notification, nil, accountUUIDString)
+            // Nothing is broadcastable until the user consents to a new run, whether or not more
+            // remains — that new run's own confirm/commit re-arms scheduling.
             await dependencies.migrationBGScheduler.cancelAll()
         } else {
             let notification = await Self.transferCompleteNotification(accountUUID: accountUUID, sdkSynchronizer: dependencies.sdkSynchronizer)

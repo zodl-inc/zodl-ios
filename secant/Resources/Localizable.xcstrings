@@ -10731,6 +10731,40 @@
         }
       }
     },
+    "migrationNotification.batchCompleteBody" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "More funds to migrate. Open ZODL to continue."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hay más fondos para migrar. Abre ZODL para continuar."
+          }
+        }
+      }
+    },
+    "migrationNotification.batchCompleteTitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Migration batch finished"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Lote de migración finalizado"
+          }
+        }
+      }
+    },
     "migrationNotification.manualTransferReadyBody" : {
       "extractionState" : "manual",
       "localizations" : {
