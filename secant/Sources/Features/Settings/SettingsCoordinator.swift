@@ -235,6 +235,9 @@ extension Settings {
                 return .none
 
             case .coinholderPollingTapped:
+                // MOB-1507: the row is hidden behind the flag; the guard keeps a stray or
+                // replayed action from opening the hidden flow.
+                guard state.featureFlags.coinholderPolling else { return .none }
                 guard let account = state.selectedWalletAccount else { return .none }
                 var votingState = VotingCoordFlow.State()
                 votingState.isKeystoneUser = state.isKeystoneAccount
