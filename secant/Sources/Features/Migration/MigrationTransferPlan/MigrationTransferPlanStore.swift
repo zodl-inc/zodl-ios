@@ -265,33 +265,35 @@ struct MigrationTransferPlan {
     }
 
     /// MOB-1468 (Keystone) `confirmTapped` fork: proposes ALL of the schedule's PCZTs — prefixed with
-    /// the note-split PCZT when needed (MOB-1478 W4), so the whole batch signs in one QR ceremony —
-    /// and hands them to the coordinator for that ONE batched QR-signing session.
+    /// any preparation (note-split) PCZTs the engine still needs (MOB-1478 W4; MOB-1496: zero, one,
+    /// or many, not just one), so the whole batch signs in one QR ceremony — and hands them to the
+    /// coordinator for that ONE batched QR-signing session.
     ///
-    /// MOB-1496: the real SDK types the note-split PCZT (`proposeNoteSplitPCZT -> Data`) and the
-    /// schedule's transfer PCZTs (`proposeMigrationPCZTs -> [MigrationUnsignedTransferPczt]`)
-    /// differently — unlike the pre-real-SDK stub, where both were the same opaque `Pczt` blob and
-    /// could be concatenated directly. The note-split PCZT is wrapped under a `"note-split"`
-    /// sentinel id so it can still ride in the same typed batch/QR ceremony. MOB-1496 (W6): on the
-    /// signed side, `MigrationCoordFlowCoordinator`'s `.scan(.foundPCZTBatch)`/`.simulateSignature`
-    /// handlers split the sentinel entry back out before storing — only the schedule's own
-    /// engine-id-paired entries reach `storeSignedMigrationTransactions`, and the sentinel routes
-    /// through the dedicated `storeSignedNoteSplit`/`broadcastStoredNoteSplit` pair instead (via the
-    /// existing `MigrationNoteSplit` resubmit lane) — see that coordinator's doc for the full
-    /// mechanism, including why (C-1 fix, final review R6) the split now stores BEFORE the schedule.
-    /// The software path above (which routes the split through `submitNoteSplit` directly) is
-    /// unaffected either way.
+    /// MOB-1496: the real SDK types preparation PCZTs (`proposeNoteSplitPCZTs ->
+    /// [MigrationUnsignedTransferPczt]`) and the schedule's transfer PCZTs (`proposeMigrationPCZTs ->
+    /// [MigrationUnsignedTransferPczt]`) the same way now, but a prep entry's engine id and a
+    /// schedule entry's engine id share the same id-space, so each prep entry is wrapped under a
+    /// `keystoneNoteSplitSentinelPrefix` + its own engine id so it can still be told apart in the same
+    /// typed batch/QR ceremony. MOB-1496 (W6): on the signed side, `MigrationCoordFlowCoordinator`'s
+    /// `.scan(.foundPCZTBatch)`/`.simulateSignature` handlers split the prefixed entries back out
+    /// (stripping the prefix) before storing — only the schedule's own engine-id-paired entries reach
+    /// `storeSignedMigrationTransactions`, and the preps route through the dedicated
+    /// `storeSignedNoteSplits`/`broadcastStoredNoteSplit` pair instead (via the existing
+    /// `MigrationNoteSplit` resubmit lane) — see that coordinator's doc for the full mechanism,
+    /// including why (C-1 fix, final review R6) the preps still store BEFORE the schedule. The
+    /// software path above (which routes the split through `submitNoteSplit` directly) is unaffected
+    /// either way.
     ///
-    /// MOB-1496 (R8-T1, #19/#4): now delegates to the shared `MigrationCommitPipeline
-    /// .proposeKeystoneBatch(mode: .scheduled, ...)` — every member throws through (no more `try?`
-    /// swallowing), and an empty resulting batch is ALSO a failure, so this never delegates a
-    /// silently empty/partial batch; both route to the SAME failure sheet the software fork uses,
-    /// and Retry re-runs this same propose.
+    /// MOB-1496 (R8-T1, #19/#4; final engine: unconditional fold): now delegates to the shared
+    /// `MigrationCommitPipeline.proposeKeystoneBatch(schedule:account:sdkSynchronizer:)` — every
+    /// member throws through (no more `try?` swallowing), and an empty resulting batch is ALSO a
+    /// failure, so this never delegates a silently empty/partial batch; both route to the SAME
+    /// failure sheet the software fork uses, and Retry re-runs this same propose. `mode` is no longer
+    /// passed — the shared pipeline folds preps unconditionally now, mode-independent.
     private func requestKeystoneSignature(for schedule: MigrationSchedule, account: WalletAccount) -> Effect<Action> {
         .run { send in
             do {
                 let pczts = try await MigrationCommitPipeline.proposeKeystoneBatch(
-                    mode: MigrationCommitMode.scheduled,
                     schedule: schedule,
                     account: account,
                     sdkSynchronizer: sdkSynchronizer

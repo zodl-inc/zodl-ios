@@ -213,6 +213,7 @@ import ComposableArchitecture
     // MARK: - MOB-1468: Keystone confirmTapped fork
 
     @MainActor @Test func confirmTappedInImmediateModeWithKeystoneAccountProposesPCZTAndDelegatesKeystoneSignRequestedWithoutSigning() async {
+        let proposeNoteSplitPCZTsCalls = LockIsolated<Int>(0)
         let proposeCalls = LockIsolated<[MigrationSchedule]>([])
         let signCalls = LockIsolated<Int>(0)
         let schedule = MigrationSchedule(
@@ -229,6 +230,14 @@ import ComposableArchitecture
             MigrationReviewTransfer()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
+            // MOB-1496 (final engine, plural preps; coverage 2): `proposeKeystoneBatch` folds this
+            // call unconditionally now, immediate mode included — an empty prep result must still
+            // yield a schedule-only batch (no throw, no injected note-split entry), proving the fold
+            // is a true no-op when the engine needs no preps.
+            $0.sdkSynchronizer.proposeNoteSplitPCZTs = { _ in
+                proposeNoteSplitPCZTsCalls.withValue { $0 += 1 }
+                return []
+            }
             $0.sdkSynchronizer.proposeMigrationPCZTs = { _, proposed in
                 proposeCalls.withValue { $0.append(proposed) }
                 return pczts
@@ -239,10 +248,11 @@ import ComposableArchitecture
         await store.send(.confirmTapped)
         await store.receive(.delegate(.keystoneSignRequested(pczts)))
 
+        #expect(proposeNoteSplitPCZTsCalls.value == 1)
         #expect(proposeCalls.value == [schedule])
         #expect(signCalls.value == 0)
-        // MOB-1496 (R8-T1, S1): the immediate Keystone lane never consults `isNoteSplitNeeded` —
-        // no stub needed/left behind for it (unlike the pre-fix version of this test).
+        // MOB-1496 (R8-T1, S1): the immediate Keystone lane never consults `isNoteSplitNeeded` (that
+        // member belongs to the SOFTWARE commit path only) — no stub needed/left behind for it.
     }
 
     @MainActor @Test func confirmTappedInImmediateModeWithZcashAccountUsesSoftwarePathUnchanged() async {
@@ -303,16 +313,18 @@ import ComposableArchitecture
         #expect(signCalls.value == 0)
     }
 
-    // MARK: - MOB-1496 (R8-T1, S1): immediate mode is split-free by engine design
+    // MARK: - MOB-1496 (R8-T1, S1): immediate mode is split-free by engine design (SOFTWARE lane only)
     //
     // The MOB-1478 (W4) "silent note split runs before sign+store" behavior these tests used to
-    // cover is GONE from immediate mode — the engine's immediate path sweeps the whole balance in
-    // one transaction by design and never expects a split; consulting `isNoteSplitNeeded` here and
-    // then signing the already-proposed immediate schedule without re-proposing would silently
-    // stage a self-conflicting pair (see `MigrationCommitPipeline.commitSoftware`'s doc). The
-    // stop-before-broadcast coverage these tests also carried is gone too — nothing in the
-    // immediate commit broadcasts anything anymore (`signAndStoreMigrationSchedule` only signs and
-    // persists locally), so there is nothing left to stop sync for at this call site.
+    // cover is GONE from immediate mode's SOFTWARE commit (`commitSoftware`) — the engine's
+    // immediate path sweeps the whole balance in one transaction by design and never expects a
+    // split; consulting `isNoteSplitNeeded` here and then signing the already-proposed immediate
+    // schedule without re-proposing would silently stage a self-conflicting pair (see
+    // `MigrationCommitPipeline.commitSoftware`'s doc). The stop-before-broadcast coverage these
+    // tests also carried is gone too — nothing in the immediate commit broadcasts anything anymore
+    // (`signAndStoreMigrationSchedule` only signs and persists locally), so there is nothing left to
+    // stop sync for at this call site. MOB-1496 (final engine): this finding does NOT extend to the
+    // Keystone PCZT-proposal fork any more — see the section below.
 
     /// Even when the engine reports a split is still needed, immediate mode must never consult
     /// `isNoteSplitNeeded`/split — it signs+stores the already-proposed immediate sweep directly.
@@ -361,11 +373,52 @@ import ComposableArchitecture
         #expect(signAndStoreCalls.value == 1)
     }
 
-    /// Keystone twin: the proposed batch must contain ONLY the schedule's own PCZT — never a
-    /// `"note-split"` sentinel entry — even when the engine reports a split is still needed.
-    @MainActor @Test func confirmTappedInImmediateModeWithKeystoneAccountNeverProposesNoteSplitPCZTEvenWhenSplitIsNeeded() async {
-        let isNoteSplitNeededCalls = LockIsolated<Int>(0)
-        let proposeNoteSplitPCZTCalls = LockIsolated<Int>(0)
+    // MARK: - MOB-1496 (final engine, plural preps; coverage 2): immediate mode's Keystone fold
+
+    /// Keystone twin — REPLACES the pre-final-engine `...NeverProposesNoteSplitPCZTEvenWhenSplitIs
+    /// Needed` test, whose premise ("immediate mode's Keystone batch never carries a note-split
+    /// entry") is now the very thing that's obsolete: the final engine's immediate flag only rewrites
+    /// transfer heights, so `MigrationCommitPipeline.proposeKeystoneBatch` folds ANY preparation
+    /// (note-split) PCZTs the engine proposes into the batch unconditionally, immediate mode
+    /// included. This never consults `isNoteSplitNeeded` (that member is unrelated to the Keystone
+    /// PCZT-propose path, in any mode) — it consults the new `proposeNoteSplitPCZTs` instead, and when
+    /// that returns a real prep, it rides the batch prefixed ahead of the schedule's own PCZT.
+    @MainActor @Test func confirmTappedInImmediateModeWithKeystoneAccountFoldsNoteSplitPrepIntoBatchWhenEngineProposesOne() async {
+        let proposeNoteSplitPCZTsCalls = LockIsolated<Int>(0)
+        let schedule = MigrationSchedule(
+            transfers: [
+                MigrationTransferProposal(id: "t0", amount: Zatoshi(1_245_800_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
+            ],
+            estimatedDurationHours: 0
+        )
+        let schedulePczts: [MigrationUnsignedTransferPczt] = [MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xEE]))]
+        let expectedBatch = [
+            MigrationUnsignedTransferPczt(id: MigrationCoordFlow.keystoneNoteSplitSentinelPrefix + "p0", pczt: Data([0x02]))
+        ] + schedulePczts
+        var state = MigrationReviewTransfer.State(mode: .immediate)
+        state.schedule = schedule
+        state.$selectedWalletAccount.withLock { $0 = walletAccount(keystone: true, idByte: 9) }
+        let store = TestStore(initialState: state) {
+            MigrationReviewTransfer()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.proposeNoteSplitPCZTs = { _ in
+                proposeNoteSplitPCZTsCalls.withValue { $0 += 1 }
+                return [MigrationUnsignedTransferPczt(id: "p0", pczt: Data([0x02]))]
+            }
+            $0.sdkSynchronizer.proposeMigrationPCZTs = { _, _ in schedulePczts }
+        }
+
+        await store.send(.confirmTapped)
+        await store.receive(.delegate(.keystoneSignRequested(expectedBatch)))
+
+        #expect(proposeNoteSplitPCZTsCalls.value == 1)
+    }
+
+    /// Empty-preps twin: an immediate-mode Keystone batch whose engine reports NO preps needed folds
+    /// down to exactly the schedule's own PCZTs — the unconditional fold is a true no-op, not a
+    /// silent failure, when there is nothing to fold in.
+    @MainActor @Test func confirmTappedInImmediateModeWithKeystoneAccountAndNoNoteSplitPrepsProposesScheduleOnlyBatch() async {
         let schedule = MigrationSchedule(
             transfers: [
                 MigrationTransferProposal(id: "t0", amount: Zatoshi(1_245_800_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
@@ -375,27 +428,44 @@ import ComposableArchitecture
         let schedulePczts: [MigrationUnsignedTransferPczt] = [MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xEE]))]
         var state = MigrationReviewTransfer.State(mode: .immediate)
         state.schedule = schedule
-        state.$selectedWalletAccount.withLock { $0 = walletAccount(keystone: true, idByte: 9) }
+        state.$selectedWalletAccount.withLock { $0 = walletAccount(keystone: true, idByte: 10) }
         let store = TestStore(initialState: state) {
             MigrationReviewTransfer()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.isNoteSplitNeeded = { _ in
-                isNoteSplitNeededCalls.withValue { $0 += 1 }
-                return true
-            }
-            $0.sdkSynchronizer.proposeNoteSplitPCZT = { _ in
-                proposeNoteSplitPCZTCalls.withValue { $0 += 1 }
-                return Data([0x02])
-            }
+            $0.sdkSynchronizer.proposeNoteSplitPCZTs = { _ in [] }
             $0.sdkSynchronizer.proposeMigrationPCZTs = { _, _ in schedulePczts }
         }
 
         await store.send(.confirmTapped)
         await store.receive(.delegate(.keystoneSignRequested(schedulePczts)))
+    }
 
-        #expect(isNoteSplitNeededCalls.value == 0)
-        #expect(proposeNoteSplitPCZTCalls.value == 0)
+    /// The new throw site the unconditional fold introduces: a failed prep propose must surface as
+    /// the same commit failure the schedule-propose throw site already does, never silently swallowed.
+    @MainActor @Test func confirmTappedInImmediateModeWithKeystoneAccountWhenProposeNoteSplitPCZTsThrowsPresentsFailureSheetWithoutDelegating() async {
+        struct ProposeFailure: Error { }
+        let schedule = MigrationSchedule(
+            transfers: [
+                MigrationTransferProposal(id: "t0", amount: Zatoshi(1_245_800_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
+            ],
+            estimatedDurationHours: 0
+        )
+        var state = MigrationReviewTransfer.State(mode: .immediate)
+        state.schedule = schedule
+        state.$selectedWalletAccount.withLock { $0 = walletAccount(keystone: true, idByte: 13) }
+        let store = TestStore(initialState: state) {
+            MigrationReviewTransfer()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.proposeNoteSplitPCZTs = { _ in throw ProposeFailure() }
+        }
+
+        await store.send(.confirmTapped)
+        await store.receive(\.noteSplitFailed) {
+            $0.isFailurePresented = true
+            $0.failureReason = MigrationReviewTransfer.State.FailureReason.commit
+        }
     }
 
     // MARK: - MOB-1496 (R8-T1, S3): honest propose failures — no silent empty-schedule fallback
@@ -590,8 +660,10 @@ import ComposableArchitecture
 
     // MARK: - MOB-1496 (R8-T1, #4): Keystone propose failures surface instead of dead-ending
     //
-    // Immediate mode's Keystone fork (post-S1) never consults `isNoteSplitNeeded`/
-    // `proposeNoteSplitPCZT`, so `proposeMigrationPCZTs` is its only throw site.
+    // Immediate mode's Keystone fork never consults `isNoteSplitNeeded` (unrelated to the PCZT
+    // propose path). MOB-1496 (final engine): it DOES now consult `proposeNoteSplitPCZTs` — see the
+    // dedicated throw-site test in the "immediate mode's Keystone fold" section above — so
+    // `proposeMigrationPCZTs` below is the SECOND throw site in this fork, not the only one.
 
     @MainActor @Test func confirmTappedInImmediateModeWithKeystoneAccountWhenProposeMigrationPCZTsThrowsPresentsFailureSheetWithoutDelegating() async {
         struct ProposeFailure: Error { }

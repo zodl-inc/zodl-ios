@@ -530,11 +530,12 @@ import ComposableArchitecture
         await store.receive(.delegate(.confirmed))
     }
 
-    // MOB-1478 (W4): the Keystone fork's batch now carries the note-split PCZT first, when needed —
-    // proved via proposal ORDER (split proposed before the schedule's own PCZTs). MOB-1496: the
-    // note-split entry now rides the batch under a `"note-split"` sentinel id (typed-payload
-    // mismatch between `proposeNoteSplitPCZT -> Data` and `proposeMigrationPCZTs ->
-    // [MigrationUnsignedTransferPczt]` — see `requestKeystoneSignature`'s doc).
+    // MOB-1478 (W4): the Keystone fork's batch now carries any preparation (note-split) PCZTs first —
+    // proved via proposal ORDER (preps proposed before the schedule's own PCZTs). MOB-1496 (final
+    // engine, plural preps): `proposeKeystoneBatch` folds `proposeNoteSplitPCZTs` unconditionally now
+    // (no more `isNoteSplitNeeded` gate on the Keystone side) — each returned prep rides the batch
+    // under a `keystoneNoteSplitSentinelPrefix` + its own engine id (typed-payload disambiguation —
+    // see `requestKeystoneSignature`'s doc).
     @MainActor @Test func confirmTappedWithKeystoneAccountAndNoteSplitNeededProposesSplitPcztBeforeSchedulePCZTs() async {
         let proposeOrder = LockIsolated<[String]>([])
         let splitPczt = Data([0x01])
@@ -542,7 +543,9 @@ import ComposableArchitecture
             MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xAA])),
             MigrationUnsignedTransferPczt(id: "t1", pczt: Data([0xBB]))
         ]
-        let expectedBatch = [MigrationUnsignedTransferPczt(id: "note-split", pczt: splitPczt)] + schedulePczts
+        let expectedBatch = [
+            MigrationUnsignedTransferPczt(id: MigrationCoordFlow.keystoneNoteSplitSentinelPrefix + "p0", pczt: splitPczt)
+        ] + schedulePczts
         // MOB-1496 (R8-T1, S3): non-empty — Confirm now guards against a zero-transfer schedule
         // (no Keystone delegate either); this test's actual concern (split PCZT proposed first) is
         // otherwise unaffected by the schedule's own content, which the propose mocks ignore.
@@ -559,10 +562,9 @@ import ComposableArchitecture
             MigrationTransferPlan()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.isNoteSplitNeeded = { _ in true }
-            $0.sdkSynchronizer.proposeNoteSplitPCZT = { _ in
+            $0.sdkSynchronizer.proposeNoteSplitPCZTs = { _ in
                 proposeOrder.withValue { $0.append("split") }
-                return splitPczt
+                return [MigrationUnsignedTransferPczt(id: "p0", pczt: splitPczt)]
             }
             $0.sdkSynchronizer.proposeMigrationPCZTs = { _, _ in
                 proposeOrder.withValue { $0.append("schedule") }
@@ -577,7 +579,7 @@ import ComposableArchitecture
         // W6 review Minor (sentinel drift guard, W7): the literal three independent sites use
         // (here, this producer, and `MigrationReviewTransferStore`'s twin) must not silently drift
         // apart — pin this producer's real, emitted id against the coordinator's own constant.
-        #expect(expectedBatch.first?.id == MigrationCoordFlow.keystoneNoteSplitSentinelId)
+        #expect(expectedBatch.first?.id == MigrationCoordFlow.keystoneNoteSplitSentinelPrefix + "p0")
     }
 
     // MARK: - MOB-1496 (W3 review fix A): stop an in-flight sync before the silent note-split broadcast
@@ -831,33 +833,15 @@ import ComposableArchitecture
     }
 
     // MARK: - MOB-1496 (R8-T1, #4): Keystone propose failures surface instead of dead-ending
+    //
+    // MOB-1496 (final engine, plural preps): the OLD `confirmTappedWithKeystoneAccountWhenIsNoteSplit
+    // NeededThrowsPresentsFailureSheetWithoutDelegating` test (mocking `isNoteSplitNeeded` to throw) is
+    // deleted rather than adapted — `proposeKeystoneBatch` no longer consults `isNoteSplitNeeded` at
+    // all (the unconditional fold below), so that scenario can no longer occur on this path; the test
+    // below (mocking the NEW first call, `proposeNoteSplitPCZTs`, to throw) is its replacement as the
+    // "first propose call in the fold fails" case.
 
-    @MainActor @Test func confirmTappedWithKeystoneAccountWhenIsNoteSplitNeededThrowsPresentsFailureSheetWithoutDelegating() async {
-        struct ProposeFailure: Error { }
-        let schedule = MigrationSchedule(
-            transfers: [
-                MigrationTransferProposal(id: "t0", amount: Zatoshi(500_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
-            ],
-            estimatedDurationHours: 24
-        )
-        var state = MigrationTransferPlan.State(variant: .scheduled)
-        state.schedule = schedule
-        state.$selectedWalletAccount.withLock { $0 = walletAccount(keystone: true, idByte: 20) }
-        let store = TestStore(initialState: state) {
-            MigrationTransferPlan()
-        } withDependencies: {
-            $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.isNoteSplitNeeded = { _ in throw ProposeFailure() }
-        }
-
-        await store.send(.confirmTapped)
-        await store.receive(\.noteSplitFailed) {
-            $0.isFailurePresented = true
-            $0.failureReason = MigrationTransferPlan.State.FailureReason.commit
-        }
-    }
-
-    @MainActor @Test func confirmTappedWithKeystoneAccountWhenProposeNoteSplitPCZTThrowsPresentsFailureSheetWithoutDelegating() async {
+    @MainActor @Test func confirmTappedWithKeystoneAccountWhenProposeNoteSplitPCZTsThrowsPresentsFailureSheetWithoutDelegating() async {
         struct ProposeFailure: Error { }
         let schedule = MigrationSchedule(
             transfers: [
@@ -872,8 +856,7 @@ import ComposableArchitecture
             MigrationTransferPlan()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.isNoteSplitNeeded = { _ in true }
-            $0.sdkSynchronizer.proposeNoteSplitPCZT = { _ in throw ProposeFailure() }
+            $0.sdkSynchronizer.proposeNoteSplitPCZTs = { _ in throw ProposeFailure() }
         }
 
         await store.send(.confirmTapped)
@@ -898,7 +881,6 @@ import ComposableArchitecture
             MigrationTransferPlan()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.isNoteSplitNeeded = { _ in false }
             $0.sdkSynchronizer.proposeMigrationPCZTs = { _, _ in throw ProposeFailure() }
         }
 
@@ -923,7 +905,6 @@ import ComposableArchitecture
             MigrationTransferPlan()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.isNoteSplitNeeded = { _ in false }
             $0.sdkSynchronizer.proposeMigrationPCZTs = { _, _ in [] }
         }
 

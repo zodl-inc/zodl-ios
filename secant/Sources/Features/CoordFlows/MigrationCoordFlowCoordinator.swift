@@ -122,6 +122,34 @@
 //  the second one popped the `.status` element the first had already landed on, dumping the user out
 //  to Entry mid-run. It now pops only when the top element is still `.sending`.
 //
+//  MOB-1496 (final engine, plural preps): the SDK's singular Keystone note-split pair
+//  (`createUnsignedNoteSplitPCZT: Data` / `storeSignedNoteSplitPCZT`) is replaced by a plural one —
+//  `createUnsignedNoteSplitPCZTs -> [MigrationUnsignedTransferPczt]` / `storeSignedNoteSplitPCZTs` —
+//  because the final engine builds N preparation transactions, not one split transaction (empty
+//  array = none needed). `keystoneNoteSplitSentinelId` (one fabricated id) becomes
+//  `keystoneNoteSplitSentinelPrefix`: each prep entry rides the batch as `prefix + <engine id>`
+//  (a genuine per-transaction id the engine itself issues now, not a fabricated placeholder).
+//  `splitKeystoneBatch` partitions by prefix instead of exact match, strips the prefix back off
+//  every prep entry, and returns `prepEntries: [MigrationSignedTransferPczt]` (was
+//  `splitEntry: MigrationSignedTransferPczt?`) alongside `scheduleEntries`; `storeKeystoneSignedBatch`
+//  keys its no-prep branch off `prepEntries.isEmpty` and stores the whole array via
+//  `storeSignedNoteSplits`. `.keystoneSigningSubmitted`'s `splitPczt: Data?` becomes
+//  `signedPreps: [MigrationSignedTransferPczt]?` (nil = no preps, kept Optional so the no-prep branch
+//  stays explicit) end to end through `resumeAfterKeystoneSigning` into `MigrationNoteSplit.State`.
+//  `MigrationCommitPipeline.proposeKeystoneBatch` folds the propose unconditionally now (no more
+//  `mode == .scheduled` gate before consulting a split) — see two engine facts that drove this: (1)
+//  the immediate flag only rewrites transfer heights, so an immediate-mode batch can carry preps too
+//  (the v1 "immediate is structurally split-free" premise is obsolete); (2) the run is created at
+//  PCZT-BUILD time (`createUnsignedNoteSplitPCZTs`/`createUnsignedMigrationTransferPCZTs`), not by
+//  either store call, superseding the C-1/C-1b narrative above insofar as it claimed the STORE was
+//  run-creating — the store ordering itself (preps before schedule) is UNCHANGED, since C-1b's
+//  phase-machine reasoning (a prep's broadcast-success record overwriting the run's phase) is
+//  independent of when the run was created. Fact (2) also means a Keystone ceremony abandoned after
+//  its batch was proposed leaves a stray non-terminal run that the engine will silently resume
+//  (serving stale, already-superseded PCZTs) on the next attempt unless explicitly cancelled — see
+//  `.keystoneScanAbandoned`'s abandon-reconciliation hook and `RootInitialization`'s external-teardown
+//  twin for the fire-and-forget `restartCurrentMigrationStep` cancel this requires.
+//
 
 import Foundation
 import ComposableArchitecture
@@ -335,18 +363,18 @@ extension MigrationCoordFlow {
                 // it now, before `resumeAfterKeystoneSigning` (triggered by
                 // `.keystoneSigningSubmitted` below) pops back up past it.
                 let schedule = pendingKeystoneSchedule(context: context, depthBelowTop: 2, state: state)
-                // [MOB-1496] W6 §1: split the re-paired batch into its note-split sentinel entry
-                // (present iff the run needed a split) and the schedule's own engine-id-paired
-                // entries — ONLY the latter are safe to hand to `storeSignedMigrationTransactions`
-                // (all-or-nothing, engine ids only; the real engine rejects a sentinel id outright —
-                // the latent break this fixes).
-                let (splitEntry, scheduleEntries) = MigrationCoordFlow.splitKeystoneBatch(signedPczts)
+                // [MOB-1496] (final engine, plural preps): split the re-paired batch into its
+                // preparation (note-split) entries — zero, one, or many — and the schedule's own
+                // engine-id-paired entries — ONLY the latter are safe to hand to
+                // `storeSignedMigrationTransactions` (all-or-nothing, engine ids only; the real
+                // engine rejects a sentinel-prefixed id outright).
+                let (prepEntries, scheduleEntries) = MigrationCoordFlow.splitKeystoneBatch(signedPczts)
 
                 return storeKeystoneSignedBatch(
                     context: context,
                     accountUUID: accountUUID,
                     schedule: schedule,
-                    splitEntry: splitEntry,
+                    prepEntries: prepEntries,
                     scheduleEntries: scheduleEntries
                 )
 
@@ -372,10 +400,11 @@ extension MigrationCoordFlow {
                 // simulator bypass never pushes `scan` — only `keystoneSign` sits above the
                 // schedule-bearing element.
                 let schedule = pendingKeystoneSchedule(context: context, depthBelowTop: 1, state: state)
-                // [MOB-1496] W6 §1: same sentinel split as the real round-trip above — the fabricated
-                // "simulated" placeholder id (used only when `signState.pczts` was itself empty)
-                // never matches the sentinel id, so it always lands in `scheduleEntries`.
-                let (splitEntry, scheduleEntries) = MigrationCoordFlow.splitKeystoneBatch(signedPczts)
+                // [MOB-1496] (final engine, plural preps): same sentinel-prefix split as the real
+                // round-trip above — the fabricated "simulated" placeholder id (used only when
+                // `signState.pczts` was itself empty) never carries the prefix, so it always lands in
+                // `scheduleEntries`.
+                let (prepEntries, scheduleEntries) = MigrationCoordFlow.splitKeystoneBatch(signedPczts)
 
                 // [MOB-1496] R8-T2 (#20): was a token-identical twin of the real round-trip's store
                 // effect above (two prior ordering fixes, C-1/C-1b, had to be applied to both in
@@ -384,14 +413,14 @@ extension MigrationCoordFlow {
                     context: context,
                     accountUUID: accountUUID,
                     schedule: schedule,
-                    splitEntry: splitEntry,
+                    prepEntries: prepEntries,
                     scheduleEntries: scheduleEntries
                 )
 
-            case .keystoneSigningSubmitted(let context, let splitPczt, let pendingScheduleStore):
+            case .keystoneSigningSubmitted(let context, let signedPreps, let pendingScheduleStore):
                 return resumeAfterKeystoneSigning(
                     context: context,
-                    splitPczt: splitPczt,
+                    signedPreps: signedPreps,
                     pendingScheduleStore: pendingScheduleStore,
                     state: &state
                 )
@@ -660,22 +689,22 @@ extension MigrationCoordFlow {
     // MARK: - Keystone signing (MOB-1468): resume after store
 
     /// Pops back to the signing-source element and either resumes whichever chain `context`
-    /// represents (no split) or routes a signed split PCZT to the note-split progress phase first
-    /// (MOB-1496 W6):
-    /// - `.planCommit`/`.immediateReview`/`.dust` with `splitPczt == nil`: identical to before —
+    /// represents (no preps) or routes the signed preparation (note-split) entries to the note-split
+    /// progress phase first (MOB-1496 W6, reshaped for the final engine's plural preps):
+    /// - `.planCommit`/`.immediateReview`/`.dust` with `signedPreps == nil`: identical to before —
     ///   `resumeCommittedMigrationChain(context:state:)` proceeds straight to the post-commit screen,
     ///   mirroring how the equivalent software `.confirmed` row would proceed.
-    /// - `splitPczt != nil`: a note-split sentinel rode the batch — pushes `MigrationNoteSplit`
-    ///   carrying the signed PCZT the SAME way the existing Keystone resubmit lane receives one
-    ///   (`State.signedNoteSplitPczt`), WITH `splitStored: true` (MOB-1496 C-1 fix: the store effect
-    ///   above already called `storeSignedNoteSplit` before this ever runs), then dispatches that
+    /// - `signedPreps != nil`: one or more sentinel-prefixed prep entries rode the batch — pushes
+    ///   `MigrationNoteSplit` carrying the signed array the SAME way the existing Keystone resubmit
+    ///   lane receives one (`State.signedNoteSplitPczt`), WITH `splitStored: true` (the store effect
+    ///   above already called `storeSignedNoteSplits` before this ever runs), then dispatches that
     ///   screen's OWN `.retryTapped` so its existing `resubmitSignedNoteSplit` effect
     ///   (`stopSyncBeforeMigrationBroadcast()` -> `broadcastStoredNoteSplit(account, options)`, no
     ///   re-store since `splitStored` is already `true`) broadcasts it with the existing
     ///   success/failure/retry UX — no new UI, no duplicated broadcast logic.
     ///   `pendingKeystoneSplitResume` stashes `context` so that screen's own `.continued` can land on
     ///   `resumeCommittedMigrationChain` too, once the broadcast is confirmed. MOB-1496 (C-1b fix,
-    ///   fix-wave 2): `pendingScheduleStore` (non-`nil` exactly when `splitPczt` is) stashes into
+    ///   fix-wave 2): `pendingScheduleStore` (non-`nil` exactly when `signedPreps` is) stashes into
     ///   `pendingKeystoneScheduleStore` alongside it — the schedule store itself is deferred to
     ///   `storeDeferredKeystoneSchedule`, triggered once that screen's broadcast succeeds.
     ///
@@ -689,7 +718,7 @@ extension MigrationCoordFlow {
     /// Clears `pendingKeystoneSigning` in every case.
     private func resumeAfterKeystoneSigning(
         context: MigrationCoordFlow.KeystoneSigningContext,
-        splitPczt: Data?,
+        signedPreps: [MigrationSignedTransferPczt]?,
         pendingScheduleStore: MigrationCoordFlow.PendingScheduleStore?,
         state: inout MigrationCoordFlow.State
     ) -> Effect<MigrationCoordFlow.Action> {
@@ -697,7 +726,7 @@ extension MigrationCoordFlow {
         let topElementIsScan = state.path.last?.is(\.scan) == true
         state.path.removeLast(topElementIsScan ? 2 : 1)
 
-        if let splitPczt {
+        if let signedPreps {
             state.pendingKeystoneSplitResume = context
             state.pendingKeystoneScheduleStore = pendingScheduleStore
             state.path.append(
@@ -705,10 +734,10 @@ extension MigrationCoordFlow {
                     MigrationNoteSplit.State(
                         phase: .splitting,
                         isFlowRoot: false,
-                        signedNoteSplitPczt: splitPczt,
-                        // MOB-1496 (C-1 fix): the store effect above already stored this split (it
+                        signedNoteSplitPczt: signedPreps,
+                        // MOB-1496 (C-1 fix): the store effect above already stored these preps (it
                         // had to, to create the run the schedule store joined) — this screen only
-                        // ever needs to (re)broadcast it, never re-store.
+                        // ever needs to (re)broadcast them, never re-store.
                         splitStored: true
                     )
                 )
@@ -787,38 +816,46 @@ extension MigrationCoordFlow {
     /// this extraction (two prior ordering fixes, C-1/C-1b — see this file's header comment — had to
     /// be applied to both in lockstep; the next such change would have silently forked them again).
     ///
-    /// No split: stores the schedule immediately, exactly as before. R8-T2 (#5 fix): success
+    /// No preps: stores the schedule immediately, exactly as before. R8-T2 (#5 fix): success
     /// bookkeeping (`.keystoneSigningSubmitted`, which drives `resumeAfterKeystoneSigning` into
     /// `recordCommittedSchedule`/`reconcile()` and, from there, `transferPlanPostConfirmChain`'s
     /// `scheduleFirstWindow()`) now fires ONLY when the store call actually succeeds — the code this
     /// replaced discarded a thrown error into a bare `Bool` (`(try? await ...) != nil`) and fired
     /// `.keystoneSigningSubmitted` regardless, landing on the terminal "Migration Scheduled" screen
     /// with nothing stored in the engine and no schedule recorded. On failure this abandons instead
-    /// (`keystoneScanAbandoned` semantics — same as a re-pair failure or the split-store failure
+    /// (`keystoneScanAbandoned` semantics — same as a re-pair failure or the prep-store failure
     /// below): `MigrationNoteSplit`, the deferred-schedule path's own store-only retry affordance
     /// (`MigrationCoordFlowCoordinator.storeDeferredKeystoneSchedule`), was investigated and rejected
-    /// as the reuse target for THIS, the no-split case — it is structurally split-specific (`Phase`
+    /// as the reuse target for THIS, the no-prep case — it is structurally split-specific (`Phase`
     /// is `.splitting`/`.confirmed` only, its Keystone retry fork always ends in
     /// `broadcastStoredNoteSplit`, and its copy is literally "Splitting Funds…"/"Split
     /// Confirmed!"/"Split Failed" — presenting any of that for a batch that was never split would
     /// misinform the user), and both its files (`MigrationNoteSplitStore`/`View`) are out of this
-    /// task's scope to extend into hosting a generic no-split retry. See this task's report for the
+    /// task's scope to extend into hosting a generic no-prep retry. See this task's report for the
     /// full reuse-vs-abandon analysis.
     ///
-    /// Split present: unchanged — stores the split first (C-1 fix: `storeSignedNoteSplit`
-    /// unconditionally starts a new engine run, so it must precede the schedule's uses-or-creates
-    /// store), abandons on ITS OWN failure (nothing stored yet, so nothing to resume), and defers the
-    /// schedule store into `pendingScheduleStore` (C-1b fix) rather than storing it here.
+    /// Preps present (one or many, MOB-1496 final engine's plural `[MigrationUnsignedTransferPczt]`
+    /// preparation transactions — superseding the pre-final-engine singular split): unchanged
+    /// ordering — stores the preps first via `storeSignedNoteSplits`, abandons on ITS OWN failure
+    /// (nothing stored yet, so nothing to resume), and defers the schedule store into
+    /// `pendingScheduleStore` (C-1b fix) rather than storing it here. NOTE: C-1's ORIGINAL premise
+    /// for storing preps first — "this store unconditionally starts a new engine run, so it must
+    /// precede the schedule's uses-or-creates store" — no longer holds under the final engine: the
+    /// run is created at PCZT-build time (`proposeNoteSplitPCZTs`, already committed long before this
+    /// store runs — see `SDKSynchronizerInterface`'s doc), and `storeSignedNoteSplits`/
+    /// `storeSignedMigrationTransactions` are now order-independent per-transaction signature
+    /// applications over that one run. What still motivates this ordering is C-1b, immediately
+    /// below: storing preps (and letting them broadcast) before the schedule is stored.
     private func storeKeystoneSignedBatch(
         context: MigrationCoordFlow.KeystoneSigningContext,
         accountUUID: AccountUUID,
         schedule: MigrationSchedule?,
-        splitEntry: MigrationSignedTransferPczt?,
+        prepEntries: [MigrationSignedTransferPczt],
         scheduleEntries: [MigrationSignedTransferPczt]
     ) -> Effect<MigrationCoordFlow.Action> {
-        .run { [sdkSynchronizer, migrationManager, context, accountUUID, schedule, splitEntry, scheduleEntries] send in
-            guard let splitEntry else {
-                // No split: store the schedule immediately. R8-T2 (#5): success bookkeeping gated on
+        .run { [sdkSynchronizer, migrationManager, context, accountUUID, schedule, prepEntries, scheduleEntries] send in
+            guard !prepEntries.isEmpty else {
+                // No preps: store the schedule immediately. R8-T2 (#5): success bookkeeping gated on
                 // the store's actual result — see this method's doc.
                 guard (try? await sdkSynchronizer.storeSignedMigrationTransactions(accountUUID, scheduleEntries)) != nil else {
                     await send(.keystoneScanAbandoned)
@@ -828,21 +865,21 @@ extension MigrationCoordFlow {
                     await migrationManager.recordCommittedSchedule(accountUUID, schedule)
                 }
                 await migrationManager.reconcile()
-                await send(.keystoneSigningSubmitted(context: context, splitPczt: nil, pendingScheduleStore: nil))
+                await send(.keystoneSigningSubmitted(context: context, signedPreps: nil, pendingScheduleStore: nil))
                 return
             }
-            // Split present (MOB-1496 C-1b fix, fix-wave 2): store ONLY the split now — it creates
-            // the engine run (`storeSignedNoteSplit`/`store_signed_note_split_pczt` unconditionally
-            // starts a new one). The already-signed schedule entries are NOT stored here any more:
-            // Step 0 of the fix-wave-2 report traced the engine's phase machine and found the
-            // split's own broadcast-success record (`record_transfer_result`, `context.rs:1299-1303`)
-            // UNCONDITIONALLY overwrites the run's phase — a schedule store performed here, before
-            // the split even broadcasts, gets clobbered the instant the broadcast lands, stranding
-            // the run at `.readyToPropose` once the split mines (`context.rs:361-378`). The schedule
-            // rides along in `pendingScheduleStore` instead, resumed by
+            // Preps present (MOB-1496 C-1b fix, fix-wave 2 — still in force under the final engine,
+            // see this method's doc): store ONLY the preps now. The already-signed schedule entries
+            // are NOT stored here any more: Step 0 of the fix-wave-2 report traced the engine's phase
+            // machine and found a prep's own broadcast-success record
+            // (`record_transfer_result`, `context.rs:1299-1303`) UNCONDITIONALLY overwrites the run's
+            // phase — a schedule store performed here, before the preps even broadcast, gets
+            // clobbered the instant a broadcast lands, stranding the run at `.readyToPropose` once
+            // the prep mines (`context.rs:361-378`). The schedule rides along in
+            // `pendingScheduleStore` instead, resumed by
             // `MigrationCoordFlowCoordinator.storeDeferredKeystoneSchedule` once the note-split
             // screen's broadcast succeeds — the earliest point the trace proved safe.
-            guard (try? await sdkSynchronizer.storeSignedNoteSplit(accountUUID, splitEntry.pczt)) != nil else {
+            guard (try? await sdkSynchronizer.storeSignedNoteSplits(accountUUID, prepEntries)) != nil else {
                 // Nothing was stored at all — abandon exactly like a re-pair failure: nothing to
                 // resume, same `keystoneScanAbandoned` semantics.
                 await send(.keystoneScanAbandoned)
@@ -856,7 +893,7 @@ extension MigrationCoordFlow {
             await send(
                 .keystoneSigningSubmitted(
                     context: context,
-                    splitPczt: splitEntry.pczt,
+                    signedPreps: prepEntries,
                     pendingScheduleStore: pendingScheduleStore
                 )
             )
@@ -896,12 +933,16 @@ extension MigrationCoordFlow {
 
     // MARK: - MOB-1496 (W6 §1/§2): Keystone batch re-pairing + sentinel split
 
-    /// The sentinel id `MigrationTransferPlanStore`/`MigrationReviewTransferStore`'s
-    /// `requestKeystoneSignature` wrap the note-split PCZT under, when a batch needs one (a
-    /// typed-payload mismatch between the split PCZT — raw `Data` — and the schedule's own
-    /// `MigrationUnsignedTransferPczt`-typed entries; see those methods' docs). Must match the
-    /// literal both producer sites use.
-    static let keystoneNoteSplitSentinelId = "note-split"
+    /// The sentinel PREFIX `MigrationCommitPipeline.proposeKeystoneBatch` wraps each preparation
+    /// (note-split) entry's engine id under, so a whole batch of preps can ride the same typed
+    /// `[MigrationUnsignedTransferPczt]` QR ceremony as the schedule's own entries while still being
+    /// distinguishable from them afterward. MOB-1496 (final engine, plural preps): superseded the
+    /// original single fabricated `"note-split"` id — the final engine's `createUnsignedNoteSplitPCZTs`
+    /// returns a real per-transaction engine id for every prep it builds (zero, one, or many), so the
+    /// app now prefixes the GENUINE id rather than inventing one from nothing. `splitKeystoneBatch`
+    /// strips this prefix back off before handing prep entries to `storeSignedNoteSplits`, which needs
+    /// their bare engine ids.
+    static let keystoneNoteSplitSentinelPrefix = "note-split#"
 
     /// MOB-1496 (W6 §2): re-pairs a scanned Keystone batch's signed bytes
     /// (`parseMigrationPCZTBatch`'s order-preserved `[Data]`) against the ORIGINAL unsigned batch's
@@ -917,16 +958,27 @@ extension MigrationCoordFlow {
         return zip(unsigned, signed).map { MigrationSignedTransferPczt(id: $0.id, pczt: $1) }
     }
 
-    /// MOB-1496 (W6 §1): splits a re-paired batch into its note-split sentinel entry (present iff the
-    /// run needed a split) and the schedule's own engine-id-paired entries — ONLY the schedule
-    /// entries are safe to hand to `storeSignedMigrationTransactions` (all-or-nothing, engine ids
-    /// only; the real engine rejects a sentinel id outright — the latent break this fixes).
+    /// MOB-1496 (final engine, plural preps): splits a re-paired batch into its preparation
+    /// (note-split) entries — present iff the run needed any, now zero-or-MANY rather than
+    /// zero-or-one — and the schedule's own engine-id-paired entries; ONLY the schedule entries are
+    /// safe to hand to `storeSignedMigrationTransactions` (all-or-nothing, engine ids only; the real
+    /// engine rejects a sentinel-prefixed id outright). Each prep entry's id is stripped back down to
+    /// its bare engine id (undoing `proposeKeystoneBatch`'s prefix-wrap) before being returned, since
+    /// `storeSignedNoteSplits` needs the id the engine itself issued, not the app-side wrapper.
     static func splitKeystoneBatch(
         _ paired: [MigrationSignedTransferPczt]
-    ) -> (splitEntry: MigrationSignedTransferPczt?, scheduleEntries: [MigrationSignedTransferPczt]) {
-        let splitEntry = paired.first { $0.id == keystoneNoteSplitSentinelId }
-        let scheduleEntries = paired.filter { $0.id != keystoneNoteSplitSentinelId }
-        return (splitEntry, scheduleEntries)
+    ) -> (prepEntries: [MigrationSignedTransferPczt], scheduleEntries: [MigrationSignedTransferPczt]) {
+        var prepEntries: [MigrationSignedTransferPczt] = []
+        var scheduleEntries: [MigrationSignedTransferPczt] = []
+        for entry in paired {
+            if entry.id.hasPrefix(keystoneNoteSplitSentinelPrefix) {
+                let engineId = String(entry.id.dropFirst(keystoneNoteSplitSentinelPrefix.count))
+                prepEntries.append(MigrationSignedTransferPczt(id: engineId, pczt: entry.pczt))
+            } else {
+                scheduleEntries.append(entry)
+            }
+        }
+        return (prepEntries, scheduleEntries)
     }
 
     // MARK: - Tor bottom sheet (MOB-1478 W2): present + confirm/dismiss

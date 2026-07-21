@@ -12,7 +12,7 @@
 //  if the split already finished before this screen mounted), and retry re-submission. Also covers
 //  MOB-1468's Keystone note-split retry fork: `retryTapped` re-broadcasts a coordinator-set
 //  `signedNoteSplitPczt` rather than re-submitting the proposal. MOB-1496 (C-1 fix, final review R6):
-//  this fork is now store-aware — `storeSignedNoteSplit` runs only when `splitStored` is still
+//  this fork is now store-aware — `storeSignedNoteSplits` runs only when `splitStored` is still
 //  `false`, then `broadcastStoredNoteSplit` always runs; `splitStored` is what the deleted
 //  `submitSignedNoteSplit` composite lacked any memory of, which is what made its own retry loop
 //  forever after a successful store.
@@ -20,6 +20,10 @@
 //  (`AccountUUID` + a derived `UnifiedSpendingKey` + `migrationManager.migrationNetworkOptions(_:)`).
 //  `.serialized`: several cases drive the process-global `@Shared(.inMemory(.selectedWalletAccount))`,
 //  and the copy action writes the shared toast.
+//  MOB-1496 (final engine, plural preps): `signedNoteSplitPczt` is `[MigrationSignedTransferPczt]?`
+//  now (was a single `Data?`) — the final engine builds N preparation transactions, not one split
+//  transaction. Fixtures below use a 1-element array (`[MigrationSignedTransferPczt(id: "p0", ...)]`)
+//  throughout, since this screen is only ever pushed with a non-empty prep batch in practice.
 //
 
 import Testing
@@ -271,7 +275,7 @@ import ComposableArchitecture
         let store = TestStore(
             initialState: MigrationNoteSplit.State(
                 phase: .splitting,
-                signedNoteSplitPczt: Data([0xCC, 0xDD]),
+                signedNoteSplitPczt: [MigrationSignedTransferPczt(id: "p0", pczt: Data([0xCC, 0xDD]))],
                 splitStored: true
             )
         ) {
@@ -454,18 +458,18 @@ import ComposableArchitecture
     // MARK: - MOB-1468: Keystone note-split Retry forks on signedNoteSplitPczt
 
     /// The batch-commit-pushed variant (MOB-1496 C-1 fix, final review R6): the coordinator's store
-    /// effect already called `storeSignedNoteSplit` before pushing this screen with
+    /// effect already called `storeSignedNoteSplits` before pushing this screen with
     /// `splitStored: true`, so `retryTapped` here — the FIRST attempt, dispatched by the coordinator
     /// itself — only ever broadcasts, never stores. This is the only live caller today.
     @MainActor @Test func retryTappedWithSignedNoteSplitPcztAndAlreadyStoredBroadcastsWithoutStoringOrResubmittingProposal() async {
         let storeSignedCalls = LockIsolated<Int>(0)
         let broadcastCalls = LockIsolated<Int>(0)
         let submitProposalCalls = LockIsolated<Int>(0)
-        let signedPczt = Data([0xCC, 0xDD])
+        let signedPreps: [MigrationSignedTransferPczt] = [MigrationSignedTransferPczt(id: "p0", pczt: Data([0xCC, 0xDD]))]
         var state = MigrationNoteSplit.State(
             phase: .splitting,
             isFailurePresented: true,
-            signedNoteSplitPczt: signedPczt,
+            signedNoteSplitPczt: signedPreps,
             splitStored: true
         )
         state.proposal = NoteSplitProposal(outputNotes: [Zatoshi(500_000_000)], fee: Zatoshi(100_000))
@@ -473,7 +477,7 @@ import ComposableArchitecture
             MigrationNoteSplit()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.storeSignedNoteSplit = { _, _ in storeSignedCalls.withValue { $0 += 1 } }
+            $0.sdkSynchronizer.storeSignedNoteSplits = { _, _ in storeSignedCalls.withValue { $0 += 1 } }
             $0.sdkSynchronizer.broadcastStoredNoteSplit = { _, _ in
                 broadcastCalls.withValue { $0 += 1 }
                 return MigrationTransferResult.success(txId: "resubmitted-tx-id")
@@ -505,25 +509,25 @@ import ComposableArchitecture
     }
 
     /// The dormant "S2-phase" fallback (`splitStored` starts `false`): `retryTapped` stores ONCE via
-    /// `storeSignedNoteSplit`, flips `splitStored` via `.noteSplitStored`, THEN broadcasts — proving
+    /// `storeSignedNoteSplits`, flips `splitStored` via `.noteSplitStored`, THEN broadcasts — proving
     /// the fork is self-sufficient even when handed an un-stored PCZT, not just when the coordinator
     /// has already stored it (the only live caller today — see the test above).
     @MainActor @Test func retryTappedWithSignedNoteSplitPcztNotYetStoredStoresThenBroadcastsInOrder() async {
         let callOrder = LockIsolated<[String]>([])
-        let storedPczts = LockIsolated<[Data]>([])
-        let signedPczt = Data([0xCC, 0xDD])
+        let storedBatches = LockIsolated<[[MigrationSignedTransferPczt]]>([])
+        let signedPreps: [MigrationSignedTransferPczt] = [MigrationSignedTransferPczt(id: "p0", pczt: Data([0xCC, 0xDD]))]
         let state = MigrationNoteSplit.State(
             phase: .splitting,
             isFailurePresented: true,
-            signedNoteSplitPczt: signedPczt,
+            signedNoteSplitPczt: signedPreps,
             splitStored: false
         )
         let store = TestStore(initialState: state) {
             MigrationNoteSplit()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.storeSignedNoteSplit = { _, pczt in
-                storedPczts.withValue { $0.append(pczt) }
+            $0.sdkSynchronizer.storeSignedNoteSplits = { _, signed in
+                storedBatches.withValue { $0.append(signed) }
                 callOrder.withValue { $0.append("store") }
             }
             $0.sdkSynchronizer.broadcastStoredNoteSplit = { _, _ in
@@ -548,7 +552,7 @@ import ComposableArchitecture
         await store.receive(.delegate(.storeScheduleRequested))
 
         #expect(callOrder.value == ["store", "broadcast"])
-        #expect(storedPczts.value == [signedPczt])
+        #expect(storedBatches.value == [signedPreps])
     }
 
     /// Retry idempotence, the S2-phase-then-retry path (MOB-1496 C-1 fix, final review R6): the FIRST
@@ -565,18 +569,18 @@ import ComposableArchitecture
         // reaching a successful outcome — must nudge. The second attempt succeeds, so it must NOT
         // nudge again.
         let refreshMigrationSyncGateCalls = LockIsolated<Int>(0)
-        let signedPczt = Data([0xCC, 0xDD])
+        let signedPreps: [MigrationSignedTransferPczt] = [MigrationSignedTransferPczt(id: "p0", pczt: Data([0xCC, 0xDD]))]
         let state = MigrationNoteSplit.State(
             phase: .splitting,
             isFailurePresented: true,
-            signedNoteSplitPczt: signedPczt,
+            signedNoteSplitPczt: signedPreps,
             splitStored: false
         )
         let store = TestStore(initialState: state) {
             MigrationNoteSplit()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.storeSignedNoteSplit = { _, _ in storeCalls.withValue { $0 += 1 } }
+            $0.sdkSynchronizer.storeSignedNoteSplits = { _, _ in storeCalls.withValue { $0 += 1 } }
             $0.sdkSynchronizer.broadcastStoredNoteSplit = { _, _ in
                 let callNumber = broadcastCalls.withValue { count -> Int in
                     count += 1
@@ -636,7 +640,7 @@ import ComposableArchitecture
             MigrationNoteSplit()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.storeSignedNoteSplit = { _, _ in storeSignedCalls.withValue { $0 += 1 } }
+            $0.sdkSynchronizer.storeSignedNoteSplits = { _, _ in storeSignedCalls.withValue { $0 += 1 } }
             $0.sdkSynchronizer.broadcastStoredNoteSplit = { _, _ in
                 broadcastStoredCalls.withValue { $0 += 1 }
                 return MigrationTransferResult.success(txId: "should-not-be-called")
@@ -668,7 +672,7 @@ import ComposableArchitecture
         let store = TestStore(
             initialState: MigrationNoteSplit.State(
                 phase: .splitting,
-                signedNoteSplitPczt: Data([0xEE]),
+                signedNoteSplitPczt: [MigrationSignedTransferPczt(id: "p0", pczt: Data([0xEE]))],
                 splitStored: true,
                 awaitingScheduleStore: true
             )
@@ -797,11 +801,11 @@ import ComposableArchitecture
     /// treatment as the software submit lane above.
     @MainActor @Test func retryTappedWithSignedPcztWhileSyncingStopsSyncBeforeResubmitting() async {
         let callOrder = LockIsolated<[String]>([])
-        let signedPczt = Data([0xCC, 0xDD])
+        let signedPreps: [MigrationSignedTransferPczt] = [MigrationSignedTransferPczt(id: "p0", pczt: Data([0xCC, 0xDD]))]
         var state = MigrationNoteSplit.State(
             phase: .splitting,
             isFailurePresented: true,
-            signedNoteSplitPczt: signedPczt,
+            signedNoteSplitPczt: signedPreps,
             splitStored: true
         )
         state.proposal = NoteSplitProposal(outputNotes: [Zatoshi(500_000_000)], fee: Zatoshi(100_000))
@@ -845,11 +849,11 @@ import ComposableArchitecture
         // MOB-1496 (R8-T4, #3): the broadcast DID land here (only recording failed) — treated
         // exactly like `.success`, so this must NOT nudge the gate feed.
         let refreshMigrationSyncGateCalls = LockIsolated<Int>(0)
-        let signedPczt = Data([0xCC, 0xDD])
+        let signedPreps: [MigrationSignedTransferPczt] = [MigrationSignedTransferPczt(id: "p0", pczt: Data([0xCC, 0xDD]))]
         let state = MigrationNoteSplit.State(
             phase: .splitting,
             isFailurePresented: true,
-            signedNoteSplitPczt: signedPczt,
+            signedNoteSplitPczt: signedPreps,
             splitStored: true
         )
         let store = TestStore(initialState: state) {
@@ -880,7 +884,7 @@ import ComposableArchitecture
 
     /// While `awaitingScheduleStore` is `true` (a previous deferred-store attempt failed), a further
     /// `retryTapped` must ask the coordinator AGAIN — never re-broadcast the already-safe split
-    /// (`broadcastStoredNoteSplit`) and never re-store it (`storeSignedNoteSplit`) or re-submit the
+    /// (`broadcastStoredNoteSplit`) and never re-store it (`storeSignedNoteSplits`) or re-submit the
     /// software proposal (`submitNoteSplit`). Counter-asserts all three SDK members stay uncalled.
     @MainActor @Test func retryTappedWhileAwaitingScheduleStoreAsksCoordinatorAgainWithoutBroadcastingOrStoring() async {
         let storeSignedCalls = LockIsolated<Int>(0)
@@ -889,7 +893,7 @@ import ComposableArchitecture
         var state = MigrationNoteSplit.State(
             phase: .splitting,
             isFailurePresented: true,
-            signedNoteSplitPczt: Data([0xCC, 0xDD]),
+            signedNoteSplitPczt: [MigrationSignedTransferPczt(id: "p0", pczt: Data([0xCC, 0xDD]))],
             splitStored: true,
             awaitingScheduleStore: true
         )
@@ -898,7 +902,7 @@ import ComposableArchitecture
             MigrationNoteSplit()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.storeSignedNoteSplit = { _, _ in storeSignedCalls.withValue { $0 += 1 } }
+            $0.sdkSynchronizer.storeSignedNoteSplits = { _, _ in storeSignedCalls.withValue { $0 += 1 } }
             $0.sdkSynchronizer.broadcastStoredNoteSplit = { _, _ in
                 broadcastCalls.withValue { $0 += 1 }
                 return MigrationTransferResult.success(txId: "should-not-be-called")
@@ -926,7 +930,7 @@ import ComposableArchitecture
         let store = TestStore(
             initialState: MigrationNoteSplit.State(
                 phase: .splitting,
-                signedNoteSplitPczt: Data([0xCC, 0xDD]),
+                signedNoteSplitPczt: [MigrationSignedTransferPczt(id: "p0", pczt: Data([0xCC, 0xDD]))],
                 splitStored: true,
                 awaitingScheduleStore: true
             )
