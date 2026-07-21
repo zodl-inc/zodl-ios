@@ -533,9 +533,13 @@ import ComposableArchitecture
                 MigrationNetworkPrivacyOptions(useTor: false, submissionEndpoint: LightWalletEndpoint(address: "", port: 0))
             }
             $0.migrationManager.refreshMigrationSyncGate = { refreshMigrationSyncGateCalls.withValue { $0 += 1 } }
+            $0.migrationManager.routeBroadcastFailure = { _, _ in MigrationBroadcastFailureRoute.plainRetry }
         }
 
         await store.send(.onAppear)
+        await store.receive(\.broadcastFailureRouted) {
+            $0.failureKind = MigrationBroadcastFailureRoute.plainRetry
+        }
         await store.receive(\.transferResult) {
             $0.isFailurePresented = true
         }
@@ -729,10 +733,14 @@ import ComposableArchitecture
             $0.sdkSynchronizer = .noOp
             $0.sdkSynchronizer.migrateMigrationDust = { _, _, _ in MigrationTransferResult.networkError(retryable: true) }
             $0.migrationManager.refreshMigrationSyncGate = { refreshMigrationSyncGateCalls.withValue { $0 += 1 } }
+            $0.migrationManager.routeBroadcastFailure = { _, _ in MigrationBroadcastFailureRoute.plainRetry }
             withDependenciesUSKDerivable(&$0)
         }
 
         await store.send(.onAppear)
+        await store.receive(\.broadcastFailureRouted) {
+            $0.failureKind = MigrationBroadcastFailureRoute.plainRetry
+        }
         await store.receive(\.transferResult) {
             $0.isFailurePresented = true
         }

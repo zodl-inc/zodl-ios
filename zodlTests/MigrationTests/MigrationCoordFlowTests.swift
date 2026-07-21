@@ -114,9 +114,7 @@ import ComposableArchitecture
         MigrationNetworkSnapshot(
             useTor: false,
             syncEndpoint: MigrationNetworkSnapshot.Endpoint(host: "na.zec.rocks", port: 443, secure: true),
-            syncProvider: ServerProvider.zecRocks,
             broadcastEndpoint: MigrationNetworkSnapshot.Endpoint(host: host, port: 443, secure: true),
-            broadcastProvider: ServerProvider.stardust,
             takenAt: Date(timeIntervalSince1970: 1_700_000_000)
         )
     }
@@ -127,9 +125,7 @@ import ComposableArchitecture
         MigrationNetworkSnapshot(
             useTor: false,
             syncEndpoint: MigrationNetworkSnapshot.Endpoint(host: host, port: 9067, secure: true),
-            syncProvider: ServerProvider.custom(host: host),
             broadcastEndpoint: MigrationNetworkSnapshot.Endpoint(host: host, port: 9067, secure: true),
-            broadcastProvider: ServerProvider.custom(host: host),
             takenAt: Date(timeIntervalSince1970: 1_700_000_000)
         )
     }
@@ -145,9 +141,7 @@ import ComposableArchitecture
         MigrationNetworkSnapshot(
             useTor: false,
             syncEndpoint: MigrationNetworkSnapshot.Endpoint(host: host, port: 443, secure: true),
-            syncProvider: ServerProvider.zecRocks,
             broadcastEndpoint: MigrationNetworkSnapshot.Endpoint(host: host, port: 443, secure: true),
-            broadcastProvider: ServerProvider.zecRocks,
             takenAt: Date(timeIntervalSince1970: 1_700_000_000)
         )
     }

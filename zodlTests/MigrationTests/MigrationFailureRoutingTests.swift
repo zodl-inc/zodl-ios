@@ -57,9 +57,7 @@ struct MigrationFailureRoutingTests {
         MigrationNetworkSnapshot(
             useTor: useTor,
             syncEndpoint: MigrationNetworkSnapshot.Endpoint(host: syncHost, port: 443, secure: true),
-            syncProvider: ServerProvider.classify(host: syncHost),
             broadcastEndpoint: MigrationNetworkSnapshot.Endpoint(host: broadcastHost, port: 443, secure: true),
-            broadcastProvider: ServerProvider.classify(host: broadcastHost),
             takenAt: takenAt,
             committedAt: committedAt
         )
@@ -696,7 +694,14 @@ struct MigrationFailureRoutingTests {
             // clear is what's actually under test here, not a leftover from the arrange step.
             storages.failureRoutingStorage.setTorHoldActive(true, for: account.id)
 
-            impl.acknowledgeComplete()
+            // R8-T3 (V18) rebase: `acknowledgeComplete` reads engine state fresh and no-ops unless
+            // it is genuinely `.complete` — stub it so the run-end clear under test actually fires.
+            await withDependencies {
+                $0.sdkSynchronizer = SDKSynchronizerClient.mocked()
+                $0.sdkSynchronizer.getMigrationState = { _ in MigrationState.complete }
+            } operation: {
+                await impl.acknowledgeComplete(accountUUID: account.id)
+            }
 
             #expect(storages.failureRoutingStorage.hadBroadcast(for: account.id) == false)
             #expect(storages.failureRoutingStorage.episodeHosts(for: account.id).isEmpty)
