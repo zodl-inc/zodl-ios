@@ -9,6 +9,13 @@
 //  optionally override Tor off, run ONE foreground broadcast attempt, and (on a Tor-class retry
 //  failure) re-arm the latch and re-present.
 //
+//  Fix-wave (final review, Important-1): also covers the two DISPATCH sites that feed
+//  `.checkMigrationTorFailurePrompt`, not just the gate reached once it's sent — the cold-launch
+//  checkpoint (`.checkBackupPhraseValidation`, which offers the prompt once Home lands with a loaded
+//  account, since the `.willEnterForeground` hook fires too early on a cold start while
+//  `selectedWalletAccount` is still nil) and the warm-foreground merge (`.willEnterForeground` itself,
+//  closing the previously-untested wiring that hangs the check off every foreground entry).
+//
 //  `.serialized` + plain `Store` (not `TestStore`) with `withDependencies` overrides and
 //  `LockIsolated` spies + polling — the same live-context idiom as `RootMigrationBackgroundTests`/
 //  `RootMigrationRoutingTests` (constructing `Root.State` reads the process-global
@@ -442,6 +449,63 @@ import ComposableArchitecture
             #expect(!store.state.isTorFailurePromptPresented)
             #expect(stopSyncCalls.withValue { $0 } == 1)
             #expect(refreshMigrationSyncGateCalls.withValue { $0 } == 1)
+        }
+    }
+
+    // MARK: - Dispatch wiring (which actions feed `.checkMigrationTorFailurePrompt`)
+
+    /// Cold-launch wiring (red-first): the launch path's "just reached Home" checkpoint
+    /// (`.checkBackupPhraseValidation`) must ALSO offer the background Tor-failure prompt. On a cold
+    /// start the `.willEnterForeground` hook fires DURING initialization, while
+    /// `selectedWalletAccount` is still nil, so its gate no-ops and nothing re-checks once Home lands
+    /// — the prompt would otherwise only appear on the NEXT warm foreground. Drives the checkpoint
+    /// with the account already loaded (as `loadedWalletAccounts` leaves it) and the account's latch
+    /// armed, and asserts the prompt presents and the once-per-foreground latch is consumed. FAILS
+    /// before the `RootInitialization` hook exists — the checkpoint dispatched no check — which is the
+    /// exact gap this fix closes.
+    @Test func coldLaunchCheckpointPresentsPromptWhenAccountLoadedAndFlagArmed() async {
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let store = Store(initialState: Self.homeState()) {
+                Root()
+            } withDependencies: {
+                baseNoOpDependencies(&$0)
+                $0.migrationManager.isPendingBackgroundTorPrompt = { _ in true }
+            }
+
+            store.send(.initialization(.checkBackupPhraseValidation))
+            await waitForRootStore { store.state.isTorFailurePromptPresented }
+
+            #expect(store.state.isTorFailurePromptPresented)
+            #expect(store.state.didOfferTorFailurePromptThisForeground)
+        }
+    }
+
+    /// Warm-foreground wiring (coverage-closing): driving the REAL `.willEnterForeground` lifecycle
+    /// action — not the internal `.checkMigrationTorFailurePrompt` directly — with the gate satisfied
+    /// must present the prompt, proving the merge that hangs `.checkMigrationTorFailurePrompt` off
+    /// every foreground entry is actually wired (the ledger's "merge untested" gap). The full-disk
+    /// mock (`baseNoOpDependencies`) makes the branch's OTHER effect (`.initialSetups` /
+    /// `.retryStart`) short-circuit at its disk guard, isolating the prompt dispatch — and
+    /// `.updateDestination` only touches `destinationState`, never `state.path`, so the gate's
+    /// path-clear check is untouched.
+    @Test func warmForegroundEntryPresentsPromptWhenGateSatisfied() async {
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let store = Store(initialState: Self.homeState()) {
+                Root()
+            } withDependencies: {
+                baseNoOpDependencies(&$0)
+                $0.migrationManager.isPendingBackgroundTorPrompt = { _ in true }
+            }
+
+            store.send(.initialization(.appDelegate(.willEnterForeground)))
+            await waitForRootStore { store.state.isTorFailurePromptPresented }
+
+            #expect(store.state.isTorFailurePromptPresented)
+            #expect(store.state.didOfferTorFailurePromptThisForeground)
         }
     }
 }
