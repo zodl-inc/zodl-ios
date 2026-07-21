@@ -2607,7 +2607,7 @@ import ComposableArchitecture
                     $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in MigrationTransferResult.networkError(retryable: true) }
                     $0.sdkSynchronizer.getMigrationProgress = { _ in progress }
                     $0.migrationBGScheduler.scheduleNextWindow = { scheduleNextWindowCalls.withValue { $0 += 1 } }
-                    $0.userNotifications.scheduleMigrationNotification = { notification, _ in
+                    $0.userNotifications.scheduleMigrationNotification = { notification, _, _ in
                         notifications.withValue { $0.append(notification) }
                     }
                     $0.migrationManager.routeBroadcastFailure = { _, failureClass in
@@ -2659,7 +2659,7 @@ import ComposableArchitecture
                 $0.sdkSynchronizer.rescheduleOverdueMigrationTransfer = { _ in Self.proposal(nextExecutableAfterHeight: 100) }
                 $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in throw ZcashError.migrationTorUnavailable }
                 $0.migrationBGScheduler.scheduleNextWindow = { scheduleNextWindowCalls.withValue { $0 += 1 } }
-                $0.userNotifications.scheduleMigrationNotification = { notification, _ in
+                $0.userNotifications.scheduleMigrationNotification = { notification, _, _ in
                     notifications.withValue { $0.append(notification) }
                 }
                 $0.migrationManager.routeBroadcastFailure = { _, failureClass in
@@ -2712,9 +2712,7 @@ import ComposableArchitecture
             MigrationNetworkSnapshot(
                 useTor: true,
                 syncEndpoint: MigrationNetworkSnapshot.Endpoint(host: "zec.rocks", port: 443, secure: true),
-                syncProvider: ServerProvider.classify(host: "zec.rocks"),
                 broadcastEndpoint: MigrationNetworkSnapshot.Endpoint(host: "us.zec.stardust.rest", port: 443, secure: true),
-                broadcastProvider: ServerProvider.classify(host: "us.zec.stardust.rest"),
                 takenAt: Date(),
                 committedAt: Date()
             ),
@@ -2769,7 +2767,7 @@ import ComposableArchitecture
                 $0.migrationManager.recordTransferBroadcast = { _, _ in }
                 $0.migrationManager.reconcile = { }
                 $0.migrationBGScheduler.scheduleNextWindow = { }
-                $0.userNotifications.scheduleMigrationNotification = { _, _ in }
+                $0.userNotifications.scheduleMigrationNotification = { _, _, _ in }
                 $0.migrationManager.routeBroadcastFailure = { _, _ in
                     routeBroadcastFailureCalls.withValue { $0 += 1 }
                     return MigrationBroadcastFailureRoute.plainRetry

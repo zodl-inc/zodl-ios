@@ -447,11 +447,15 @@ import ComposableArchitecture
             $0.sdkSynchronizer.submitNoteSplit = { _, _, _, _ in MigrationTransferResult.networkError(retryable: true) }
             $0.migrationManager.migrationNetworkOptions = { _ in Self.defaultNetworkPrivacyOptions }
             $0.migrationManager.refreshMigrationSyncGate = { refreshMigrationSyncGateCalls.withValue { $0 += 1 } }
+            $0.migrationManager.routeBroadcastFailure = { _, _ in MigrationBroadcastFailureRoute.plainRetry }
             withDependenciesUSKDerivable(&$0)
         }
 
         await store.send(.retryTapped) {
             $0.isFailurePresented = false
+        }
+        await store.receive(\.broadcastFailureRouted) {
+            $0.failureKind = MigrationBroadcastFailureRoute.plainRetry
         }
         await store.receive(\.splitResult) {
             $0.isFailurePresented = true
