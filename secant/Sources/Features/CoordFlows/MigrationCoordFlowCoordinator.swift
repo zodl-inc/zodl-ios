@@ -441,6 +441,21 @@ extension MigrationCoordFlow {
                 return .none
 
             case .keystoneScanAbandoned:
+                // MOB-1496 (abandon reconciliation): read BEFORE clearing — a live
+                // `pendingKeystoneSigning` here means a PCZT batch was already proposed for this
+                // ceremony (it's only ever set once `proposeKeystoneBatch` succeeds — see its three
+                // setters above), which means the final engine already created and persisted the
+                // WHOLE run at that point (preps and schedule transfers alike — see
+                // `SDKSynchronizerInterface.proposeNoteSplitPCZTs`'s doc). The engine always resumes a
+                // stored non-terminal run on the next attempt, ignoring any newer preview, so
+                // abandoning here without cancelling would leave that run stranded — a later re-entry
+                // would silently resume signing these same, by-then-stale PCZTs. This fires from BOTH
+                // the real round-trip's re-pair-failure guard above AND the split-store-failure branch
+                // of either Keystone store effect (including the simulator bypass) — v1 semantics hold
+                // for all of them: abandon discards everything, the user re-runs the ceremony from a
+                // fresh preview, so cancelling the stray run is correct here regardless of which path
+                // sent this action.
+                let hadPendingCeremony = state.pendingKeystoneSigning != nil
                 state.pendingKeystoneSigning = nil
                 // MOB-1496 (C-1 fix): as well as the real round-trip's re-pair-failure guard above
                 // (`.scan` always on top there — pop 2, unchanged), this now also fires from the
@@ -450,7 +465,13 @@ extension MigrationCoordFlow {
                 // check.
                 let topElementIsScan = state.path.last?.is(\.scan) == true
                 state.path.removeLast(topElementIsScan ? 2 : 1)
-                return .none
+
+                guard hadPendingCeremony, let accountUUID = state.selectedWalletAccount?.id else { return .none }
+                return .run { [sdkSynchronizer, accountUUID] _ in
+                    // Fire-and-forget: a failure here just leaves the stray run for the next attempt
+                    // to encounter (and cancel) itself, same as today.
+                    _ = try? await sdkSynchronizer.restartCurrentMigrationStep(accountUUID, false)
+                }
 
                 // MARK: - Sending
 

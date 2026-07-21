@@ -2610,6 +2610,75 @@ import ComposableArchitecture
         }
     }
 
+    // MARK: - MOB-1496 (abandon reconciliation): keystoneScanAbandoned cancels a stray engine run
+    //
+    // The final engine creates a Keystone commit's WHOLE run (preps and schedule alike) the moment
+    // its PCZTs are built (`proposeNoteSplitPCZTs`, called unconditionally by `proposeKeystoneBatch`),
+    // and always resumes a stored non-terminal run on the next attempt, ignoring any newer preview.
+    // `pendingKeystoneSigning` is only ever set once that build succeeds, so its presence when
+    // `.keystoneScanAbandoned` fires means a stray run exists and must be cancelled — otherwise a
+    // later re-entry would silently resume signing the same, by-then-stale PCZTs.
+
+    @MainActor @Test func keystoneScanAbandonedWithPendingCeremonyCancelsStrayMigrationRunExactlyOnce() async {
+        let restartCalls = LockIsolated<[(AccountUUID, Bool)]>([])
+        var state = MigrationCoordFlow.State()
+        state.pendingKeystoneSigning = .planCommit
+        state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .scheduled)))
+        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: [MigrationUnsignedTransferPczt(id: "t0", pczt: Data())])))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.restartCurrentMigrationStep = { accountUUID, includeResidual in
+                restartCalls.withValue { $0.append((accountUUID, includeResidual)) }
+                return MigrationSchedule(transfers: [], estimatedDurationHours: 0)
+            }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.keystoneScanAbandoned)
+
+        #expect(store.state.pendingKeystoneSigning == nil)
+        #expect(store.state.path.count == 1)
+        guard case .transferPlan = try? #require(store.state.path.last) else {
+            Issue.record("Expected pop back to .transferPlan (keystoneSign removed)")
+            return
+        }
+        #expect(restartCalls.value.count == 1)
+        #expect(restartCalls.value.first?.0 == Self.defaultAccount.id)
+        // `includeResidual: false` — matches `MigrationRecovery`'s `.recreate` restart, the other
+        // live caller of this member.
+        #expect(restartCalls.value.first?.1 == false)
+    }
+
+    /// Twin of the test above with NO ceremony context — abandoning a batch that was never actually
+    /// proposed (defensive; not reachable via any live `.keystoneScanAbandoned` sender today, all of
+    /// which already confirmed `pendingKeystoneSigning != nil` before sending it) must never call
+    /// `restartCurrentMigrationStep` — there is no stray run to cancel.
+    @MainActor @Test func keystoneScanAbandonedWithNoPendingCeremonyNeverCancelsMigrationRun() async {
+        let restartCalls = LockIsolated<Int>(0)
+        var state = MigrationCoordFlow.State()
+        state.pendingKeystoneSigning = nil
+        state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .scheduled)))
+        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: [MigrationUnsignedTransferPczt(id: "t0", pczt: Data())])))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.restartCurrentMigrationStep = { _, _ in
+                restartCalls.withValue { $0 += 1 }
+                return MigrationSchedule(transfers: [], estimatedDurationHours: 0)
+            }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.keystoneScanAbandoned)
+
+        #expect(store.state.pendingKeystoneSigning == nil)
+        #expect(store.state.path.count == 1)
+        #expect(restartCalls.value == 0)
+    }
+
     // MARK: - MOB-1496 (W6 §3): Keystone dust lane ("Migrate anyway" over Migration Complete)
 
     @MainActor @Test func completeMigrateAnywayWithKeystoneAccountProposesPCZTsAndPushesKeystoneSignContext() async {
