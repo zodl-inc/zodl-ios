@@ -42,4 +42,5 @@ public extension String {
     static let migrationHadBroadcast = "sharedStateKey_migrationHadBroadcast"
     static let migrationBroadcastEpisode = "sharedStateKey_migrationBroadcastEpisode"
     static let migrationTorHold = "sharedStateKey_migrationTorHold"
+    static let migrationPendingTorPrompt = "sharedStateKey_migrationPendingTorPrompt"
 }
