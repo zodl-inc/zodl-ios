@@ -195,7 +195,6 @@ struct SmartBanner {
                     state.isSyncTimedOutSheetPresented = state.isSyncTimedOut
                     state.isSyncTimedOutAutoAppeareDisabled = state.isSyncTimedOutSheetPresented
                 }
-                let migrationAccountUUID = state.selectedWalletAccount?.id
                 return .merge(
                     .publisher {
                         networkMonitor.networkMonitorStream()
@@ -210,12 +209,10 @@ struct SmartBanner {
                             .map(Action.synchronizerStateChanged)
                     }
                     .cancellable(id: state.CancelStateStreamId, cancelInFlight: true),
-                    .publisher {
-                        migrationManager.stateEvents(migrationAccountUUID)
-                            .throttle(for: .seconds(0.2), scheduler: mainQueue, latest: true)
-                            .map(Action.migrationStateChanged)
-                    }
-                    .cancellable(id: state.CancelMigrationStateStreamId, cancelInFlight: true),
+                    migrationStateStreamEffect(
+                        accountUUID: state.selectedWalletAccount?.id,
+                        cancelID: state.CancelMigrationStateStreamId
+                    ),
                     .publisher {
                         shieldingProcessor.observe()
                             .map(Action.shieldingProcessorStateChanged)
@@ -265,12 +262,32 @@ struct SmartBanner {
                 return .none
                 
             case .walletAccountChanged:
+                // MOB-1496 (R8-T7 #12): the migration `stateEvents` subscription is keyed to the
+                // account id captured at `.onAppear` — Home stays mounted across an account switch
+                // (the switcher is a sheet, so `.onAppear` never re-fires), and this action was the
+                // ONLY signal of that switch, yet it never re-pointed the subscription. The
+                // still-subscribed OLD account's subject never emits again post-switch (`reconcile()`
+                // pushes per-account subjects), so the banner silently stopped tracking migration
+                // state for the newly selected account. Cancel-then-resubscribe, concatenated (not
+                // merged) so the new subscription can't start racing the old one's teardown — a gap
+                // here would risk losing the new subject's replayed seed value. `stateEvents` returns
+                // a `CurrentValueSubject`-backed publisher, which DOES replay its current value to a
+                // fresh subscriber, so the resubscribe alone delivers the new account's latest known
+                // state without a separate manual refresh (unlike `.onAppear`'s own initial-load
+                // reads just above, which have no such replay to lean on).
                 state.remindMeShieldedPhaseCounter = 0
-                return .run { send in
-                    await send(.closeBanner(true), animation: .easeInOut(duration: Constants.easeInOutDuration))
-                    try? await mainQueue.sleep(for: .seconds(1))
-                    await send(.evaluatePriority1)
-                }
+                let newMigrationAccountUUID = state.selectedWalletAccount?.id
+                return .merge(
+                    .concatenate(
+                        .cancel(id: state.CancelMigrationStateStreamId),
+                        migrationStateStreamEffect(accountUUID: newMigrationAccountUUID, cancelID: state.CancelMigrationStateStreamId)
+                    ),
+                    .run { send in
+                        await send(.closeBanner(true), animation: .easeInOut(duration: Constants.easeInOutDuration))
+                        try? await mainQueue.sleep(for: .seconds(1))
+                        await send(.evaluatePriority1)
+                    }
+                )
 
             case .reportTapped:
                 state.isSyncTimedOutSheetPresented = false
@@ -639,6 +656,24 @@ struct SmartBanner {
                 return .none
             }
         }
+    }
+
+    // MARK: - MOB-1496 (R8-T7 #12): migration stateEvents subscription
+
+    /// The migration-trigger subscription effect, factored out so both `.onAppear` (first mount)
+    /// and `.walletAccountChanged` (re-key after an account switch) build the IDENTICAL
+    /// throttle/map pipeline over `migrationManager.stateEvents(accountUUID)` — the only thing that
+    /// differs between the two call sites is which account id and which point in the store's
+    /// lifecycle triggers it. Always registered under the SAME stable `cancelID`
+    /// (`state.CancelMigrationStateStreamId`, fixed for the life of the store), so a fresh
+    /// subscription here supersedes whatever the same id was previously bound to.
+    private func migrationStateStreamEffect(accountUUID: AccountUUID?, cancelID: UUID) -> Effect<Action> {
+        .publisher {
+            migrationManager.stateEvents(accountUUID)
+                .throttle(for: .seconds(0.2), scheduler: mainQueue, latest: true)
+                .map(Action.migrationStateChanged)
+        }
+        .cancellable(id: cancelID, cancelInFlight: true)
     }
 
     // MARK: - MOB-1483: Ironwood-activation flip (W4)

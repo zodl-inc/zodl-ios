@@ -22,9 +22,11 @@ extension AutoServerSelectionClient: DependencyKey {
             // MOB-1496 (W4): while any account has an active migration network snapshot, stay
             // within the snapshotted sync-provider family(ies) — never propose a switch that would
             // drift auto-selection away from an in-flight run's separated broadcast provider. No
-            // active snapshots -> unfiltered, byte-identical to pre-W4 behavior.
+            // active snapshots -> unfiltered, byte-identical to pre-W4 behavior. R8-T7 (#10): the
+            // predicate itself moved to the shared `MigrationServerPinning` (Models/Migration) so
+            // `ServerSetup`'s automatic Save path can apply the SAME filter.
             let snapshots = migrationManager.activeNetworkSnapshots()
-            let endpoints = allEndpoints.filter { isCandidateAllowedByMigrationPinning(host: $0.host, activeSnapshots: snapshots) }
+            let endpoints = allEndpoints.filter { MigrationServerPinning.isCandidateAllowed(host: $0.host, activeSnapshots: snapshots) }
             guard !endpoints.isEmpty else {
                 if !snapshots.isEmpty {
                     LoggerProxy.event("[AutoServerSelection] Skipped: migration pinning left no candidates")
@@ -66,7 +68,7 @@ extension AutoServerSelectionClient: DependencyKey {
             // since the candidate was benchmarked; a now-stale cross-provider candidate must be
             // dropped here, not applied.
             let snapshots = migrationManager.activeNetworkSnapshots()
-            guard isCandidateAllowedByMigrationPinning(host: candidate.host, activeSnapshots: snapshots) else {
+            guard MigrationServerPinning.isCandidateAllowed(host: candidate.host, activeSnapshots: snapshots) else {
                 LoggerProxy.event("[AutoServerSelection] Switch skipped: candidate no longer allowed by migration pinning")
                 return false
             }
@@ -90,23 +92,4 @@ extension AutoServerSelectionClient: DependencyKey {
             }
         }
     )
-}
-
-/// MOB-1496 (W4): the automatic-selection pinning predicate — shared by `findBestServer`'s
-/// candidate filter and `applySwitch`'s re-validation. `true` when NO account has an active
-/// migration network snapshot (unfiltered — byte-identical to pre-W4 behavior), or when `host`'s
-/// classified provider is a member of the snapshotted SYNC providers (rotation within an active
-/// run's own family stays allowed). That single check already keeps out any provider that is ONLY
-/// some snapshot's broadcast provider, with no separate exclusion clause needed: the custom/testnet
-/// same-server case (sync == broadcast) stays allowed because that provider IS a sync provider too.
-/// (W7 review: an earlier, separate broadcast-exclusion `guard` here was provably dead — it could
-/// never fail once the sync-provider check above had already passed — and was removed.)
-private func isCandidateAllowedByMigrationPinning(host: String, activeSnapshots: [MigrationNetworkSnapshot]) -> Bool {
-    guard !activeSnapshots.isEmpty else { return true }
-
-    let syncProviders = Set(activeSnapshots.map { $0.syncProvider })
-    let provider = ServerProvider.classify(host: host)
-
-    guard syncProviders.contains(provider) else { return false }
-    return true
 }

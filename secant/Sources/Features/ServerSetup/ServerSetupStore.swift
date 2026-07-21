@@ -284,23 +284,13 @@ struct ServerSetup {
                     let cachedRecommendation = state.recommendedSyncServer
                     return .run { send in
                         do {
-                            let best: LightWalletEndpoint
-                            if let cachedRecommendation,
-                               let cached = UserPreferencesStorage.ServerConfig.endpoint(
-                                   for: cachedRecommendation,
-                                   streamingCallTimeoutInMillis: timeout
-                               ) {
-                                best = cached
-                            } else {
-                                let ranked = await sdkSynchronizer.evaluateBestOf(
-                                    ZcashSDKEnvironment.endpoints(for: network),
-                                    Benchmark.evaluationTimeoutSeconds,
-                                    Benchmark.blocksToDownload,
-                                    1,
-                                    network
-                                )
-                                best = ranked.first ?? ZcashSDKEnvironment.defaultEndpoint(for: network)
-                            }
+                            let activeSnapshots = migrationManager.activeNetworkSnapshots()
+                            let best = await resolveAutomaticSaveEndpoint(
+                                cachedRecommendation: cachedRecommendation,
+                                network: network,
+                                timeout: timeout,
+                                activeSnapshots: activeSnapshots
+                            )
                             try await applyServerSwitch(best, automatic: true, isCustom: false, send: send)
                         } catch is CancellationError {
                             return
@@ -395,6 +385,60 @@ struct ServerSetup {
 
         try await mainQueue.sleep(for: .seconds(Benchmark.saveCompletionDelay))
         await send(.switchSucceeded(endpoint.server()))
+    }
+
+    /// MOB-1496 (R8-T7 #10): resolves the endpoint an automatic Save applies, pinned to any active
+    /// migration run's sync-provider family via the `MigrationServerPinning` predicate shared with
+    /// `AutoServerSelectionLiveKey`'s own automatic-selection loop — so a Save tap can never
+    /// silently move sync onto a run's separated BROADCAST provider (previously neither the cached
+    /// recommendation nor the fresh benchmark below consulted pinning at all).
+    ///
+    /// - A cached recommendation (`state.recommendedSyncServer`, the top of the last "Recommended
+    ///   Servers" benchmark) is used as-is ONLY when it still passes the filter; a filtered-out
+    ///   cached recommendation is discarded in favor of a fresh filtered benchmark, never applied.
+    /// - The fresh benchmark filters `ZcashSDKEnvironment.endpoints(for:)` BEFORE calling
+    ///   `evaluateBestOf` — the same filter-before-benchmark order `AutoServerSelectionLiveKey
+    ///   .findBestServer` uses.
+    /// - Empty-after-filter mirrors `findBestServer`'s "skip the round entirely" behavior (never
+    ///   falls back to an unfiltered pick, e.g. the plain default endpoint): the benchmark is
+    ///   skipped and Save resolves to the CURRENT active endpoint instead — a no-op pick
+    ///   (`applyServerSwitch` only calls `switchToEndpoint` when the resolved endpoint differs from
+    ///   current), so the mode/preference flip Save promised still commits without adopting a new,
+    ///   unpinned provider.
+    private func resolveAutomaticSaveEndpoint(
+        cachedRecommendation: String?,
+        network: NetworkType,
+        timeout: Int64,
+        activeSnapshots: [MigrationNetworkSnapshot]
+    ) async -> LightWalletEndpoint {
+        if let cachedRecommendation,
+           let cached = UserPreferencesStorage.ServerConfig.endpoint(
+               for: cachedRecommendation,
+               streamingCallTimeoutInMillis: timeout
+           ),
+           MigrationServerPinning.isCandidateAllowed(host: cached.host, activeSnapshots: activeSnapshots) {
+            return cached
+        }
+
+        let filteredEndpoints = ZcashSDKEnvironment.endpoints(for: network).filter {
+            MigrationServerPinning.isCandidateAllowed(host: $0.host, activeSnapshots: activeSnapshots)
+        }
+
+        guard !filteredEndpoints.isEmpty else {
+            if !activeSnapshots.isEmpty {
+                LoggerProxy.event("[ServerSetup] Automatic Save skipped benchmark: migration pinning left no candidates")
+            }
+            return zcashSDKEnvironment.endpoint()
+        }
+
+        let ranked = await sdkSynchronizer.evaluateBestOf(
+            filteredEndpoints,
+            Benchmark.evaluationTimeoutSeconds,
+            Benchmark.blocksToDownload,
+            1,
+            network
+        )
+        return ranked.first ?? filteredEndpoints[0]
     }
 
     /// The manual Save's actual switch effect — shared by the direct (no warning needed) path and
