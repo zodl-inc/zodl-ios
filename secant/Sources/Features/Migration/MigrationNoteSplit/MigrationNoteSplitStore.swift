@@ -395,8 +395,7 @@ struct MigrationNoteSplit {
                 // R7-T3 (MOB-1497): classify+route BEFORE sending the outcome action — a non-nil
                 // class additionally presents the matching failure-sheet variant; `.splitResult`'s
                 // own handling (below) is otherwise byte-for-byte unchanged.
-                if let failureClass = MigrationBroadcastFailureClass.classify(result: result) {
-                    let route = await migrationManager.routeBroadcastFailure(account.id, failureClass)
+                if let route = await migrationManager.routeBroadcastFailure(account.id, result: result) {
                     await send(.broadcastFailureRouted(route))
                 }
                 await send(.splitResult(result))
@@ -421,8 +420,7 @@ struct MigrationNoteSplit {
             } catch {
                 // R7-T3 (MOB-1497): classify+route the thrown error too — see the success path's
                 // comment above for the same "send route first" ordering.
-                if let failureClass = MigrationBroadcastFailureClass.classify(error: error) {
-                    let route = await migrationManager.routeBroadcastFailure(account.id, failureClass)
+                if let route = await migrationManager.routeBroadcastFailure(account.id, error: error) {
                     await send(.broadcastFailureRouted(route))
                 }
                 // R8-T4 (#3) composed with the classification: the nudge resumes sync
@@ -477,8 +475,7 @@ struct MigrationNoteSplit {
                 let result = try await sdkSynchronizer.broadcastStoredNoteSplit(account.id, options)
                 // R7-T3 (MOB-1497): see `submitNoteSplit`'s identical comment for the "route first"
                 // ordering.
-                if let failureClass = MigrationBroadcastFailureClass.classify(result: result) {
-                    let route = await migrationManager.routeBroadcastFailure(account.id, failureClass)
+                if let route = await migrationManager.routeBroadcastFailure(account.id, result: result) {
                     await send(.broadcastFailureRouted(route))
                 }
                 await send(.splitResult(result))
@@ -496,8 +493,7 @@ struct MigrationNoteSplit {
                 await migrationManager.recordTransferBroadcast(account.id, landedResult)
                 await send(.splitBroadcastSucceeded)
             } catch {
-                if let failureClass = MigrationBroadcastFailureClass.classify(error: error) {
-                    let route = await migrationManager.routeBroadcastFailure(account.id, failureClass)
+                if let route = await migrationManager.routeBroadcastFailure(account.id, error: error) {
                     await send(.broadcastFailureRouted(route))
                 }
                 // R8-T4 (#3) composed with the classification: the nudge resumes sync
