@@ -112,9 +112,9 @@ struct MigrationTorSheet {
                 return .send(action)
 
             case .alert(.dismiss):
-                // MOB-1497 (T2): "Keep Tor on" reaches here (the alert's cancel-role button dispatches
-                // the bare `.alert(.dismiss)`, not a further-wrapped action — see `AlertState
-                // .offWarning`) — force the toggle back ON so the sheet, which stays presented,
+                // MOB-1497 (T2): "Keep Tor on" reaches here (the alert's cancel-role button carries no
+                // explicit action, relying on the alert's own native dismissal — see `AlertState
+                // .migrationTorOffWarning`) — force the toggle back ON so the sheet, which stays presented,
                 // reflects the choice the user just reaffirmed rather than the OFF position that
                 // triggered the warning. No delegate: the sheet isn't resolved, it's still showing.
                 state.alert = nil
@@ -138,40 +138,13 @@ struct MigrationTorSheet {
                     return .send(.delegate(.gotIt))
                 }
                 // Provider + OFF: R3/R11 requires the explicit warning before this can take effect.
-                state.alert = AlertState.offWarning(usesFullBalanceCopy: state.usesFullBalanceCopy)
+                state.alert = AlertState.migrationTorOffWarning(usesFullBalanceCopy: state.usesFullBalanceCopy, proceedAction: .offWarningProceedTapped)
                 return .none
 
             case .offWarningProceedTapped:
                 state.alert = nil
                 return .send(.delegate(.gotIt))
             }
-        }
-    }
-}
-
-// MARK: - Alerts
-
-extension AlertState where Action == MigrationTorSheet.Action {
-    /// MOB-1497 (T2, R3/R11): presented by `gotItTapped` when a provider user confirms with the
-    /// toggle OFF. Message text is the brief's adaptation of R11's exact per-path content (gradual/
-    /// full — see the normative doc's R11 and `Localizable.xcstrings`'s `migrationTorSheet.offWarning.*`
-    /// entries for the literal copy).
-    static func offWarning(usesFullBalanceCopy: Bool) -> AlertState {
-        AlertState {
-            TextState(String(localizable: .migrationTorSheetOffWarningTitle))
-        } actions: {
-            ButtonState(role: .destructive, action: .offWarningProceedTapped) {
-                TextState(String(localizable: .migrationTorSheetOffWarningProceed))
-            }
-            ButtonState(role: .cancel, action: .alert(.dismiss)) {
-                TextState(String(localizable: .migrationTorSheetOffWarningKeepOn))
-            }
-        } message: {
-            TextState(
-                usesFullBalanceCopy
-                    ? String(localizable: .migrationTorSheetOffWarningMessageFull)
-                    : String(localizable: .migrationTorSheetOffWarningMessageGradual)
-            )
         }
     }
 }

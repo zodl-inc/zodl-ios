@@ -231,7 +231,7 @@ struct MigrationSending {
                 // matters (a raw `.send`/programmatic dispatch bypasses the view entirely).
                 guard state.failureKind == MigrationBroadcastFailureRoute.torFirstRunChoice else { return .none }
                 let usesFullBalanceCopy = migrationManager.migrationMode() == MigrationMode.immediate
-                state.alert = AlertState.offWarning(usesFullBalanceCopy: usesFullBalanceCopy)
+                state.alert = AlertState.migrationTorOffWarning(usesFullBalanceCopy: usesFullBalanceCopy, proceedAction: .offWarningProceedTapped)
                 return .none
 
             case .retryTapped:
@@ -520,33 +520,5 @@ struct MigrationSending {
     private func setSendWaitActive(_ isActive: Bool) {
         @Shared(.inMemory(.migrationSendWaitActive)) var migrationSendWaitActive: Bool = false
         $migrationSendWaitActive.withLock { $0 = isActive }
-    }
-}
-
-// MARK: - Alerts
-
-extension AlertState where Action == MigrationSending.Action {
-    /// R7-T3 (R3/R11, reused VERBATIM from `MigrationTorSheet.AlertState.offWarning` — same string
-    /// keys, same gradual/full split): presented by `.proceedWithoutTorTapped` when the R14
-    /// first-run-choice sheet's "Proceed without Tor" button is tapped. See that type's doc for the
-    /// literal copy source (the normative doc's R11 plus `Localizable.xcstrings`'s
-    /// `migrationTorSheet.offWarning.*` entries).
-    static func offWarning(usesFullBalanceCopy: Bool) -> AlertState {
-        AlertState {
-            TextState(String(localizable: .migrationTorSheetOffWarningTitle))
-        } actions: {
-            ButtonState(role: .destructive, action: .offWarningProceedTapped) {
-                TextState(String(localizable: .migrationTorSheetOffWarningProceed))
-            }
-            ButtonState(role: .cancel, action: .alert(.dismiss)) {
-                TextState(String(localizable: .migrationTorSheetOffWarningKeepOn))
-            }
-        } message: {
-            TextState(
-                usesFullBalanceCopy
-                    ? String(localizable: .migrationTorSheetOffWarningMessageFull)
-                    : String(localizable: .migrationTorSheetOffWarningMessageGradual)
-            )
-        }
     }
 }
