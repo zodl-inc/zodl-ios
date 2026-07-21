@@ -691,6 +691,11 @@ import ComposableArchitecture
         #expect(store.state.path.isEmpty)
 
         await store.send(.torSheet(.delegate(.gotIt)))
+        // R10: explicitly consume the push before asserting on `path` — after the Q3'26 sheet
+        // redesign the scoped TorSheet/Entry reducers return effects on this action path, and a
+        // non-exhaustive `finish()` no longer reliably drains the buffered `pushHydratedPathState`
+        // into state before the asserts below run. Receiving it pins the push itself, too.
+        await store.receive(\.pushHydratedPathState)
         await store.finish()
 
         #expect(store.state.isTorSheetPresented == false)
