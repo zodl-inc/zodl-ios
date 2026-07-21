@@ -282,6 +282,12 @@ extension Root {
                 // the coordinator finishes without the Sending store's own exit ever running.
                 // Called BEFORE the pop.
                 let releaseEffect = releaseSendWaitHold()
+                // MOB-1496: same "defensive, usually a no-op" reasoning as the release above, for a
+                // live Keystone signing ceremony instead of a send-wait hold — see
+                // `cancelAbandonedKeystoneMigrationRun`'s doc. Also called BEFORE the pop (though this
+                // case doesn't reset `migrationCoordFlowState` itself, reading before any mutation
+                // matches the release's own ordering).
+                let cancelEffect = cancelAbandonedKeystoneMigrationRun(state: state)
                 state.path = nil
                 // R8-T3 (#9): fire-and-forget — every flow-root close/terminal delegate lands
                 // here, including an abandoned pre-commit confirm lane that already took a
@@ -292,6 +298,7 @@ extension Root {
                 // flow close, not just an abandoned one.
                 return .merge(
                     releaseEffect,
+                    cancelEffect,
                     .run { [migrationManager, accountUUID = state.selectedWalletAccount?.id] _ in
                         await migrationManager.clearAbandonedNetworkSnapshot(accountUUID)
                     }
@@ -319,8 +326,13 @@ extension Root {
                 // the hold itself, so this is a no-op in practice; kept for the same "Root pops the
                 // flow from outside the store's own exit" reasoning as `.flowFinished` above.
                 let releaseEffect = releaseSendWaitHold()
+                // MOB-1496: same defensive reasoning for a live Keystone signing ceremony — by the
+                // `.success` phase `pendingKeystoneSigning` is already `nil` in every reachable case
+                // (the Keystone resume chain clears it well before Sending is ever pushed), so this
+                // too is a no-op in practice; kept for symmetry with `.flowFinished` above.
+                let cancelEffect = cancelAbandonedKeystoneMigrationRun(state: state)
                 state.path = nil
-                return releaseEffect
+                return .merge(releaseEffect, cancelEffect)
 
                 // MARK: - Keystone
 

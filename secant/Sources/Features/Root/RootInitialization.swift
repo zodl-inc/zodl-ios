@@ -1802,6 +1802,38 @@ extension Root {
         return .run { [migrationManager] _ in await migrationManager.refreshMigrationSyncGate() }
     }
 
+    // MARK: - MOB-1496: Keystone migration-run abandon reconciliation on external flow teardown
+
+    /// Mirrors `releaseSendWaitHold()`'s placement above for a DIFFERENT external-teardown hazard:
+    /// the final migration engine creates a Keystone commit's ENTIRE run — preparation (note-split)
+    /// transactions and the schedule's own transfers alike — the moment its PCZTs are built
+    /// (`SDKSynchronizerClient.proposeNoteSplitPCZTs`, called unconditionally by
+    /// `MigrationCommitPipeline.proposeKeystoneBatch`), and always resumes a stored non-terminal run
+    /// on the next attempt, ignoring any newer preview (see `SDKSynchronizerInterface`'s doc). If
+    /// `state.migrationCoordFlowState` is torn down here — from OUTSIDE the flow, the same class of
+    /// site `releaseSendWaitHold()` guards — while a Keystone ceremony (`pendingKeystoneSigning`) is
+    /// still live, the run it already built is left stranded: a later re-entry would silently resume
+    /// signing those same, by-then-stale PCZTs instead of proposing a fresh preview.
+    ///
+    /// `pendingKeystoneSigning` is only ever set once its PCZTs successfully built (see
+    /// `MigrationCoordFlowCoordinator`'s three setters), so its presence here is exactly "a PCZT batch
+    /// was proposed and never resolved" — cancel it via `restartCurrentMigrationStep`, discarding the
+    /// fresh schedule it returns (the user re-runs the ceremony from a fresh preview on their next
+    /// attempt — same v1 semantics as `MigrationCoordFlowCoordinator.keystoneScanAbandoned`'s in-flow
+    /// twin). Read BEFORE the caller resets/replaces `migrationCoordFlowState`. Fire-and-forget: a
+    /// failure here just leaves the stray run for the next attempt to encounter and cancel itself,
+    /// same as today.
+    func cancelAbandonedKeystoneMigrationRun(state: Root.State) -> Effect<Root.Action> {
+        guard state.migrationCoordFlowState.pendingKeystoneSigning != nil,
+              let accountUUID = state.selectedWalletAccount?.id else {
+            return .none
+        }
+
+        return .run { [sdkSynchronizer] _ in
+            _ = try? await sdkSynchronizer.restartCurrentMigrationStep(accountUUID, false)
+        }
+    }
+
     // MARK: - MOB-1467: Migration notification-tap deep link
 
     /// Exactly the SmartBanner-tap routing (`RootCoordinator`'s
@@ -1813,12 +1845,15 @@ extension Root {
     /// R8-T6 fix-wave (Critical-1): this is itself an external-teardown site (a live
     /// `.sending(.waiting)` element may be sitting under the flow state this wholesale-replaces —
     /// the migration-notification tap does not require the migration flow to be closed first) —
-    /// `releaseSendWaitHold()` runs BEFORE the reset.
+    /// `releaseSendWaitHold()` runs BEFORE the reset. MOB-1496: same reasoning applies to a live
+    /// Keystone signing ceremony — `cancelAbandonedKeystoneMigrationRun(state:)` also runs BEFORE the
+    /// reset, reading `pendingKeystoneSigning` off the ABOUT-TO-BE-DISCARDED state.
     private func openMigrationCoordFlow(state: inout Root.State) -> Effect<Root.Action> {
         let releaseEffect = releaseSendWaitHold()
+        let cancelEffect = cancelAbandonedKeystoneMigrationRun(state: state)
         state.migrationCoordFlowState = MigrationCoordFlow.State.initial
         state.path = Root.State.Path.migrationCoordFlow
-        return releaseEffect
+        return .merge(releaseEffect, cancelEffect)
     }
 
     /// R8-T5 (S4): `accountUUID` is the tapped notification's payload account (hex-encoded, matching
