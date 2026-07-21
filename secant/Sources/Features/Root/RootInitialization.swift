@@ -399,10 +399,14 @@ extension Root {
                 let clearDeliveredEffect: Effect<Action> = .run { [userNotifications] _ in
                     await userNotifications.clearDeliveredMigrationNotifications()
                 }
+                // MOB-1497 (T6): on every foreground, check whether a BACKGROUND migration broadcast
+                // failed on a Tor-class route while we were away — if so (and Home is visible),
+                // `.checkMigrationTorFailurePrompt` presents the "Couldn't Connect to Tor" sheet.
+                let torFailurePromptEffect: Effect<Action> = .send(.checkMigrationTorFailurePrompt)
                 if state.isLockedInKeychainUnavailableState || !sdkSynchronizer.latestState().syncStatus.isPrepared {
-                    return .merge(reconcileEffect, clearDeliveredEffect, .send(.initialization(.initialSetups)))
+                    return .merge(reconcileEffect, clearDeliveredEffect, .send(.initialization(.initialSetups)), torFailurePromptEffect)
                 } else {
-                    return .merge(reconcileEffect, clearDeliveredEffect, .send(.initialization(.retryStart)))
+                    return .merge(reconcileEffect, clearDeliveredEffect, .send(.initialization(.retryStart)), torFailurePromptEffect)
                 }
                 
             case .initialization(.appDelegate(.didEnterBackground)):
@@ -411,6 +415,9 @@ extension Root {
                 state.bgTask = nil
                 state.appStartState = .didEnterBackground
                 state.isLockedInKeychainUnavailableState = false
+                // MOB-1497 (T6): reset the once-per-foreground Tor-failure-prompt latch, so a prompt
+                // the user swipe-dismissed this session is offered again on the next foreground.
+                state.didOfferTorFailurePromptThisForeground = false
                 return .merge(
                     .cancel(id: state.CancelStateId),
                     .cancel(id: state.CancelTransactionsStateId)
@@ -1822,6 +1829,110 @@ extension Root {
             if didStopSyncForBroadcast {
                 await dependencies.migrationManager.refreshMigrationSyncGate()
             }
+        }
+    }
+
+    /// MOB-1497 (T6): clears the pending-prompt latch, then runs the ONE foreground broadcast attempt
+    /// both "Couldn't Connect to Tor" buttons share. Split from the two `.torFailurePrompt(.delegate)`
+    /// handlers (which differ only in whether they call `overrideTorForRun` first) so the clear +
+    /// attempt stay identical. The clear runs BEFORE the attempt — `attemptForegroundMigrationTorRetry`
+    /// re-arms it again if this retry itself fails on a Tor-class route.
+    func clearLatchAndAttemptForegroundTorRetry(_ accountUUID: AccountUUID) -> Effect<Root.Action> {
+        .run { [migrationManager, sdkSynchronizer] send in
+            await migrationManager.setPendingBackgroundTorPrompt(accountUUID, false)
+            await Self.attemptForegroundMigrationTorRetry(
+                accountUUID,
+                migrationManager: migrationManager,
+                sdkSynchronizer: sdkSynchronizer,
+                send: send
+            )
+        }
+    }
+
+    /// MOB-1497 (T6): the single foreground broadcast attempt the "Couldn't Connect to Tor" sheet's
+    /// buttons run. Deliberately NOT `executeBroadcastAction` (the BACKGROUND executor): that one
+    /// additionally schedules a local notification and re-arms the BG window on every outcome, which
+    /// have no place in a foreground attempt backed by on-screen UI (the banner reflects progress via
+    /// existing state). This shares the SAME broadcast machinery instead — the guarded
+    /// `executeNextPendingMigrationTransfer` LiveKey (the transaction guard lives INSIDE it; never
+    /// wrapped here), read against `migrationNetworkOptions` at execute time, classified through the
+    /// SAME `MigrationBroadcastFailureClass`/`routeBroadcastFailure` calls.
+    ///
+    /// Fix-wave finding (review IMPORTANT): unlike `executeBroadcastAction`, this DOES stop sync
+    /// first (`sdkSynchronizer.stopSyncBeforeMigrationBroadcast()`, idempotent — a no-op when
+    /// idle). The BG executor can skip that call only because BG sessions are exclusive (nothing
+    /// else can be syncing during one); a foreground attempt has no such guarantee — ordinary sync
+    /// may well be active when the user taps "Try Again"/"Continue Without Tor". Sync and a
+    /// migration broadcast must never share a session: the SDK's during-sync throw
+    /// (`ZcashError.migrationBroadcastDuringSync`) is only advisory/point-in-time (see
+    /// `SDKSynchronizerClient.stopSyncBeforeMigrationBroadcast()`'s own doc — "callers stop
+    /// proactively instead of relying on it"), and if it DID fire here,
+    /// `MigrationBroadcastFailureClass.classify(error:)` would map it to `.endpointUnreachable` — a
+    /// spurious endpoint rotation for what is really just a timing race, not an unreachable
+    /// endpoint. Mirrors `MigrationSendingStore.executeNextTransfer`'s identical stop-then-broadcast
+    /// shape, including its post-outcome gate nudge: a `.success` result needs nothing extra (the
+    /// SDK's own gate transition covers the resume), but any OTHER outcome — a returned failure/
+    /// `nil` result, or a thrown non-landed error — nudges `migrationManager.refreshMigrationSyncGate()`
+    /// so a stop that was never followed by a successful broadcast still resumes sync. (A landed-
+    /// but-record-failed broadcast, `ZcashError.migrationRecordFailedAfterBroadcast`, classifies as
+    /// `nil` below and is treated like a success — no re-present, no nudge either — same as the
+    /// Sending lane's own dedicated catch for that error.) Unlike the Sending lane, there is no
+    /// `didStopSyncForBroadcast` tracking flag here: that flag exists there only because an early
+    /// guard (no account / Keystone dust lane) can return before ever calling
+    /// `stopSyncBeforeMigrationBroadcast()`; this method has no such early return — the account is a
+    /// non-optional parameter — so the stop call (and thus the nudge on any non-success outcome) is
+    /// unconditional. No separate hold/fence bookkeeping is needed at this call site either:
+    /// `stopSyncBeforeMigrationBroadcast()` itself flips the shared `migrationStoppedSyncForBroadcast`
+    /// flag that `RootInitialization`'s `.migrationSyncGateChanged` handler already reads to
+    /// guarantee the resume — unlike `MigrationSendingStore`'s OWN `migrationSendWaitActive` fence,
+    /// which guards a "waiting between retries" window this single-shot attempt has no equivalent
+    /// of, and so does not apply here.
+    ///
+    /// The one foreground-specific behavior: a Tor-class route (`.torFirstRunChoice`/`.torHold`)
+    /// re-arms the per-account latch AND re-presents the sheet (via `.torFailurePromptPresentationChanged(true)`,
+    /// which bypasses the once-per-foreground gate — a failed in-sheet retry must re-prompt at once).
+    /// A returned-result failure can never be Tor-class (`MigrationBroadcastFailureClass.classify(result:)`
+    /// only yields `.endpointUnreachable`/`nil`), so only the thrown-error path can re-present —
+    /// exactly as in `executeBroadcastAction`. Non-Tor failures route through the existing machinery
+    /// (the route's own embedded rotation) and do NOT re-present; a success needs nothing extra.
+    private static func attemptForegroundMigrationTorRetry(
+        _ accountUUID: AccountUUID,
+        migrationManager: MigrationManagerClient,
+        sdkSynchronizer: SDKSynchronizerClient,
+        send: Send<Root.Action>
+    ) async {
+        let options = await migrationManager.migrationNetworkOptions(accountUUID)
+        await sdkSynchronizer.stopSyncBeforeMigrationBroadcast()
+        do {
+            let result = try await sdkSynchronizer.executeNextPendingMigrationTransfer(accountUUID, options)
+            if let result, let failureClass = MigrationBroadcastFailureClass.classify(result: result) {
+                _ = await migrationManager.routeBroadcastFailure(accountUUID, failureClass)
+            }
+            // Mirrors `MigrationSendingStore.executeNextTransfer`'s identical branch: `.success` is
+            // the only outcome the SDK's own gate transitions on — every other outcome (a returned
+            // failure or `nil`) stopped sync above without ever reaching that transition, so nudge
+            // Root's gate feed directly.
+            if case MigrationTransferResult.success? = result {
+                // no nudge — the SDK's gate transition covers the resume.
+            } else {
+                await migrationManager.refreshMigrationSyncGate()
+            }
+        } catch {
+            // A landed-but-record-failed broadcast (`ZcashError.migrationRecordFailedAfterBroadcast`)
+            // classifies as `nil` — no re-present, treated like a success (see this method's doc),
+            // and (mirroring `MigrationSendingStore`'s own dedicated catch for this same error) no
+            // gate nudge either: the broadcast landed, so the SDK's own gate transition still covers
+            // the resume.
+            guard let failureClass = MigrationBroadcastFailureClass.classify(error: error) else { return }
+            let route = await migrationManager.routeBroadcastFailure(accountUUID, failureClass)
+            if route == MigrationBroadcastFailureRoute.torFirstRunChoice || route == MigrationBroadcastFailureRoute.torHold {
+                await migrationManager.setPendingBackgroundTorPrompt(accountUUID, true)
+                await send(.torFailurePromptPresentationChanged(true))
+            }
+            // Independently resume sync that was stopped above for a broadcast that never landed
+            // (the SDK's own gate never transitioned) — the route (and any re-presented sheet)
+            // separately drives the failure UI.
+            await migrationManager.refreshMigrationSyncGate()
         }
     }
 

@@ -121,6 +121,18 @@ struct Root {
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
         var serverSetupState: ServerSetup.State
         var serverSetupViewBinding = false
+        /// MOB-1497 (T6): the "Couldn't Connect to Tor" sheet, presented over Home on the next
+        /// foreground after a BACKGROUND migration broadcast failed on a Tor-class route (the
+        /// per-account `migrationManager.isPendingBackgroundTorPrompt` latch armed by
+        /// `RootInitialization.executeBroadcastAction`). Hosted as a `zashiSheet` in `RootView`,
+        /// mirroring the `serverSetupViewBinding` cover.
+        var isTorFailurePromptPresented = false
+        var torFailurePromptState = MigrationTorFailureSheet.State()
+        /// MOB-1497 (T6): non-persisted once-per-foreground latch — set when the prompt is offered on
+        /// a foreground, reset on background entry (see `RootInitialization`'s `.willEnterForeground`/
+        /// `.didEnterBackground` hooks). Keeps a swipe-dismissed prompt from re-appearing until the
+        /// next foreground; a FAILED in-sheet retry deliberately bypasses it (re-presents at once).
+        var didOfferTorFailurePromptThisForeground = false
         var signWithKeystoneCoordFlowBinding = false
         var splashAppeared = false
         var supportData: SupportData?
@@ -281,6 +293,14 @@ struct Root {
         case addKeystoneHWWalletCoordFlow(AddKeystoneHWWalletCoordFlow.Action)
         case currencyConversionSetup(CurrencyConversionSetup.Action)
         case migrationCoordFlow(MigrationCoordFlow.Action)
+        /// MOB-1497 (T6): foreground gate check — dispatched from `.willEnterForeground` — that
+        /// presents the "Couldn't Connect to Tor" sheet iff Home is fully visible and the selected
+        /// account's background Tor-failure latch is armed.
+        case checkMigrationTorFailurePrompt
+        case torFailurePrompt(MigrationTorFailureSheet.Action)
+        /// MOB-1497 (T6): the sheet's presentation binding setter — `false` on swipe-dismiss (latch
+        /// stays armed), `true` when a failed in-sheet retry re-presents.
+        case torFailurePromptPresentationChanged(Bool)
         case receive(Receive.Action)
         case requestZecCoordFlow(RequestZecCoordFlow.Action)
         case scanCoordFlow(ScanCoordFlow.Action)
@@ -443,6 +463,10 @@ struct Root {
 
         Scope(state: \.migrationCoordFlowState, action: \.migrationCoordFlow) {
             MigrationCoordFlow()
+        }
+
+        Scope(state: \.torFailurePromptState, action: \.torFailurePrompt) {
+            MigrationTorFailureSheet()
         }
 
         Scope(state: \.transactionsCoordFlowState, action: \.transactionsCoordFlow) {
