@@ -1655,8 +1655,8 @@ extension Root {
                 }
 
             case .networkError, .invalidNote, .expired:
-                if let result, let failureClass = MigrationBroadcastFailureClass.classify(result: result) {
-                    _ = await dependencies.migrationManager.routeBroadcastFailure(winnerAccountUUID, failureClass)
+                if let result {
+                    _ = await dependencies.migrationManager.routeBroadcastFailure(winnerAccountUUID, result: result)
                 }
                 let progress = (try? await dependencies.sdkSynchronizer.getMigrationProgress(winnerAccountUUID)) ?? nil
                 let nextNumber = (progress?.completedTransfers ?? 0) + 1
@@ -1688,9 +1688,7 @@ extension Root {
             // R7-T3 (MOB-1497): classify + route the thrown error too (e.g. `migrationTorUnavailable`
             // routes as Tor-class here) — same re-arm-only outward behavior as before; the route's
             // only effect is the possible embedded rotation (see this method's own doc).
-            if let failureClass = MigrationBroadcastFailureClass.classify(error: error) {
-                _ = await dependencies.migrationManager.routeBroadcastFailure(winnerAccountUUID, failureClass)
-            }
+            _ = await dependencies.migrationManager.routeBroadcastFailure(winnerAccountUUID, error: error)
             // A throwing broadcast attempt for any OTHER reason is not itself a definite outcome to
             // notify about — treat it like the `nil` "nothing executed" case: re-arm the next
             // window and let that session's own outcome (or the engine's self-heal) settle it,
