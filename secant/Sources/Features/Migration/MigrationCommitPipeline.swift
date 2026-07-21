@@ -19,12 +19,16 @@
 //  narrow, deliberate exception inside `commitSoftware`'s `.scheduled` branch — see its doc
 //  (finding #1).
 //
-//  MOB-1496 (final engine, plural preps): finding S1 held for the SOFTWARE commit sequence
-//  (`commitSoftware`) — it still stands, unchanged, below. It does NOT hold for the Keystone
-//  PCZT-proposal fork any more: `proposeKeystoneBatch` dropped its `mode` parameter entirely and now
-//  unconditionally folds the engine's preparation (note-split) PCZTs into every batch it proposes,
-//  immediate mode included — see that function's own doc for the two engine facts that made the old
-//  "immediate is split-free" premise obsolete for this half of the pipeline.
+//  MOB-1496 (final engine, plural preps): S1's ENGINE claim ("immediate runs never split") is
+//  obsolete — the final engine's immediate flag only rewrites transfer heights, so an immediate run
+//  CAN carry preparation transactions for a large enough balance. What survives of S1 is purely
+//  structural, and only for the SOFTWARE sequence: `commitSoftware`'s `.immediate` branch still has
+//  no split-specific call to make, because `signAndStoreMigrationSchedule` signs EVERY transaction
+//  of the committed run — preps included — and any preps then broadcast through the ordinary
+//  delivery lane (`executeNextPendingMigrationTransfer` serves preps and transfers alike). The
+//  Keystone PCZT-proposal fork lost even that: `proposeKeystoneBatch` dropped its `mode` parameter
+//  entirely and now unconditionally folds the engine's preparation (note-split) PCZTs into every
+//  batch it proposes, immediate mode included — see that function's own doc.
 //
 
 import Foundation
@@ -41,10 +45,12 @@ import Foundation
 enum MigrationCommitMode: Equatable {
     /// The staggered schedule: may need a silent note split first (see `commitSoftware`).
     case scheduled
-    /// The single-transaction sweep, SOFTWARE-signing lane only: split-free by engine design (S1) —
-    /// `commitSoftware` never consults `isNoteSplitNeeded`, never splits, for this mode. Does NOT
-    /// describe the Keystone lane any more — `proposeKeystoneBatch` folds preps unconditionally,
-    /// mode-independent.
+    /// The immediate sweep, SOFTWARE-signing lane only: `commitSoftware` makes no split-specific
+    /// calls for this mode — NOT because an immediate run cannot contain preparation transactions
+    /// (under the final engine it can, for a large enough balance), but because
+    /// `signAndStoreMigrationSchedule` signs every transaction of the committed run — preps
+    /// included — and any preps ride the ordinary delivery lane from there. Does NOT describe the
+    /// Keystone lane — `proposeKeystoneBatch` folds preps unconditionally, mode-independent.
     case immediate
 }
 
@@ -179,8 +185,9 @@ enum MigrationCommitPipeline {
     /// schedule), regardless of mode — so skipping the prep propose in immediate mode wouldn't even
     /// have skipped run creation, just silently dropped preps the engine still needed signed. The fold
     /// is now unconditional and mode-independent; `mode` itself is unused here as a result (still used
-    /// by `commitSoftware`, whose `.immediate` case remains genuinely split-free — a different code
-    /// path with no PCZT propose call to fold into).
+    /// by `commitSoftware`, whose `.immediate` branch simply has no split-specific call to make —
+    /// `signAndStoreMigrationSchedule` signs the whole committed run, preps included, so there is
+    /// nothing to fold on that path — see `MigrationCommitMode.immediate`'s doc).
     ///
     /// Finding #4: every SDK member here throws through (no `try?` swallowing), and an empty
     /// resulting batch is ALSO treated as a failure — this never hands the coordinator a silently
