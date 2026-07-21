@@ -45,6 +45,19 @@
 //  `howItWorksContinuedWithTorFlagOffPresentsTorSheetAndStashesPermissionChain`, and
 //  `torSheetGotItInScheduledModeResumesPermissionChainAndPushesTransferPlan`.
 //
+//  MOB-1497 (R9-T3, finding 1): both flag-on shortcuts above (Entry `.immediate`, How This Works
+//  `.continueTapped`) were blind to identity-custom — they persisted `useTor = true` and pushed
+//  straight through even for a custom sync server, which forces clearnet at forming AND carries a
+//  nil R13 footer by construction, so the user was silently routed over clearnet with no
+//  unavailable-server notice ever shown. Both now detect identity-custom before skipping and detour
+//  to the SAME unavailable-variant sheet the flag-off branch already presents, never persisting
+//  anything on that detour (finding 6, same round: the sheet's own "Got it" persists nothing for a
+//  custom server either) — `entryChoseImmediateWithTorFlagOnAndCustomServerDetoursToTorSheet` /
+//  `...DetourThenGotItReachesReviewTransfer` and their How-This-Works twins
+//  (`howItWorksContinuedWithTorFlagOnAndCustomServerDetoursToTorSheet` /
+//  `...DetourThenGotItReachesTransferPlan`) cover the detour and its confirm continuation; the
+//  non-custom pins above are unchanged.
+//
 //  `.serialized`: every `MigrationCoordFlow.State()` carries a `MigrationEntry.State` (`entryState`),
 //  which reads the process-global `@Shared(.inMemory(.selectedWalletAccount))` on init — matching the
 //  precedent in `MigrationEntryTests`, which mutates the same key directly.
@@ -575,14 +588,60 @@ import ComposableArchitecture
         #expect(reviewState.broadcastDisclosureHost == "eu.zec.stardust.rest")
     }
 
-    /// MOB-1497 (T2, R13 skip-path footer): the custom-server twin of the test above — no
-    /// disclosure line for a custom user (their server IS the sync server), even on the skip path.
-    @MainActor @Test func entryChoseImmediateWithTorFlagOnAndCustomServerSkipBranchFooterCarriesNoHost() async {
+    /// MOB-1497 (R9-T3, finding 1): the custom-server twin of the flag-on pin above — its PREDECESSOR
+    /// (`entryChoseImmediateWithTorFlagOnAndCustomServerSkipBranchFooterCarriesNoHost`) pinned the
+    /// defect this fixes: custom + flag-on used to push Review directly, forcing clearnet with the
+    /// R13 footer nil by construction (same-server) — so an identity-custom user was routed over
+    /// clearnet with NO unavailable-server notice ever shown. Flag-on now detects identity-custom
+    /// BEFORE skipping (reusing `torSheetState`'s own `isCustomServer` classification, the SAME test
+    /// the sheet-shown path already applies) and detours to that SAME unavailable-variant sheet the
+    /// flag-OFF branch presents — never calling `setNetworkPrivacyOptions`, never pushing directly.
+    @MainActor @Test func entryChoseImmediateWithTorFlagOnAndCustomServerDetoursToTorSheet() async {
+        let setOptionsCalls = LockIsolated<[Bool]>([])
+        let formNetworkSnapshotCalls = LockIsolated<Int>(0)
         let store = TestStore(initialState: MigrationCoordFlow.State()) {
             MigrationCoordFlow()
         } withDependencies: {
             $0.migrationManager.setMigrationMode = { _ in }
-            $0.migrationManager.setNetworkPrivacyOptions = { _ in }
+            $0.migrationManager.setNetworkPrivacyOptions = { useTor in setOptionsCalls.withValue { $0.append(useTor) } }
+            $0.migrationManager.formNetworkSnapshot = { _ in formNetworkSnapshotCalls.withValue { $0 += 1 } }
+            $0.migrationManager.networkSnapshot = { _ in Self.someCustomNetworkSnapshot() }
+            $0.sdkSynchronizer = .noOp
+            $0.walletStorage = .noOp
+            $0.walletStorage.exportTorSetupFlag = { true }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.entry(.delegate(.chose(.immediate))))
+        await store.receive(\.torSheetStateReady)
+
+        #expect(store.state.isTorSheetPresented == true)
+        #expect(store.state.pendingTorDestination == MigrationCoordFlow.PendingTorDestination.reviewTransfer)
+        #expect(store.state.torSheetState.isCustomServer == true)
+        // T1's data-side R2: forced false — no toggle exists to draw ON here either.
+        #expect(store.state.torSheetState.isTorOn == false)
+        #expect(store.state.torSheetState.broadcastHost == "custom.example.org")
+        // The detour never persists a choice — finding 6 (commit 1) already made the eventual
+        // "Got it" persist nothing too; this pins that the detour itself never calls it either.
+        #expect(setOptionsCalls.value.isEmpty)
+        // Exactly one form — `torSheetState` forms once; detecting identity-custom first does NOT
+        // add a redundant second `formNetworkSnapshot` call before deciding.
+        #expect(formNetworkSnapshotCalls.value == 1)
+        // Nothing pushed yet — the sheet gates the push until confirmed, same as the flag-off path.
+        #expect(store.state.path.isEmpty)
+    }
+
+    /// MOB-1497 (R9-T3, finding 1): chains the detour above through to "Got it" — proves
+    /// `confirmTorSheet`'s existing `.reviewTransfer` destination drives the flow onward to exactly
+    /// the same screen the (pre-fix) skip would have reached, and that (finding 6) the confirm
+    /// persists nothing along the way.
+    @MainActor @Test func entryChoseImmediateWithTorFlagOnAndCustomServerDetourThenGotItReachesReviewTransfer() async {
+        let setOptionsCalls = LockIsolated<[Bool]>([])
+        let store = TestStore(initialState: MigrationCoordFlow.State()) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.migrationManager.setMigrationMode = { _ in }
+            $0.migrationManager.setNetworkPrivacyOptions = { useTor in setOptionsCalls.withValue { $0.append(useTor) } }
             $0.migrationManager.formNetworkSnapshot = { _ in }
             $0.migrationManager.networkSnapshot = { _ in Self.someCustomNetworkSnapshot() }
             $0.sdkSynchronizer = .noOp
@@ -592,12 +651,20 @@ import ComposableArchitecture
         store.exhaustivity = .off
 
         await store.send(.entry(.delegate(.chose(.immediate))))
-        await store.receive(\.pushHydratedPathState)
+        await store.receive(\.torSheetStateReady)
+        #expect(store.state.isTorSheetPresented == true)
+        #expect(store.state.path.isEmpty)
 
+        await store.send(.torSheet(.delegate(.gotIt)))
+        await store.finish()
+
+        #expect(store.state.isTorSheetPresented == false)
+        #expect(setOptionsCalls.value.isEmpty)
         guard case let .reviewTransfer(reviewState) = try? #require(store.state.path.last) else {
-            Issue.record("Expected .reviewTransfer on the path (Tor sheet skipped)")
+            Issue.record("Expected .reviewTransfer pushed on top (detour -> confirm reaches the same destination the skip would have)")
             return
         }
+        #expect(reviewState.mode == MigrationReviewTransfer.State.Mode.immediate)
         #expect(reviewState.broadcastDisclosureHost == nil)
     }
 
@@ -2211,6 +2278,86 @@ import ComposableArchitecture
         // MOB-1497 (T2, R13): sheet-skipped provider users never see the sheet's own disclosure
         // line — this screen's footer carries it instead.
         #expect(planState.broadcastDisclosureHost == "eu.zec.stardust.rest")
+    }
+
+    /// MOB-1497 (R9-T3, finding 1): the How-This-Works twin of
+    /// `entryChoseImmediateWithTorFlagOnAndCustomServerDetoursToTorSheet` — no such twin existed
+    /// before this fix (the flag-on shortcut here was equally blind to identity-custom). Same
+    /// detection/reuse, same detour to the flag-off sheet below, same "no persist" outcome.
+    @MainActor @Test func howItWorksContinuedWithTorFlagOnAndCustomServerDetoursToTorSheet() async {
+        let setOptionsCalls = LockIsolated<[Bool]>([])
+        let formNetworkSnapshotCalls = LockIsolated<Int>(0)
+        var state = MigrationCoordFlow.State()
+        state.mode = .privateScheduled
+        state.path.append(.howItWorks(MigrationHowItWorks.State()))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.walletStorage = .noOp
+            $0.walletStorage.exportTorSetupFlag = { true }
+            $0.migrationManager.setNetworkPrivacyOptions = { useTor in setOptionsCalls.withValue { $0.append(useTor) } }
+            $0.migrationManager.formNetworkSnapshot = { _ in formNetworkSnapshotCalls.withValue { $0 += 1 } }
+            $0.migrationManager.networkSnapshot = { _ in Self.someCustomNetworkSnapshot() }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 0, action: .howItWorks(.delegate(.continueTapped)))))
+        await store.receive(\.torSheetStateReady)
+
+        #expect(store.state.isTorSheetPresented == true)
+        #expect(store.state.pendingTorDestination == MigrationCoordFlow.PendingTorDestination.permissionChain)
+        #expect(store.state.torSheetState.isCustomServer == true)
+        #expect(store.state.torSheetState.isTorOn == false)
+        #expect(store.state.torSheetState.usesFullBalanceCopy == false)
+        #expect(store.state.torSheetState.broadcastHost == "custom.example.org")
+        #expect(setOptionsCalls.value.isEmpty)
+        #expect(formNetworkSnapshotCalls.value == 1)
+        // Nothing new pushed — `.howItWorks` is still the top element, same as the flag-off path.
+        guard case .howItWorks = try? #require(store.state.path.last) else {
+            Issue.record("Expected .howItWorks still on top (sheet gates the push)")
+            return
+        }
+    }
+
+    /// MOB-1497 (R9-T3, finding 1): chains the How-This-Works detour through to "Got it" — same
+    /// shape as the immediate-lane continuation test above, proving `confirmTorSheet`'s
+    /// `.permissionChain` destination reaches the same TransferPlan screen the (pre-fix) skip
+    /// would have, persisting nothing along the way (finding 6).
+    @MainActor @Test func howItWorksContinuedWithTorFlagOnAndCustomServerDetourThenGotItReachesTransferPlan() async {
+        let setOptionsCalls = LockIsolated<[Bool]>([])
+        var state = MigrationCoordFlow.State()
+        state.mode = .privateScheduled
+        state.path.append(.howItWorks(MigrationHowItWorks.State()))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.walletStorage = .noOp
+            $0.walletStorage.exportTorSetupFlag = { true }
+            $0.migrationManager.setNetworkPrivacyOptions = { useTor in setOptionsCalls.withValue { $0.append(useTor) } }
+            $0.migrationManager.formNetworkSnapshot = { _ in }
+            $0.migrationManager.networkSnapshot = { _ in Self.someCustomNetworkSnapshot() }
+            $0.migrationBGScheduler.backgroundRefreshStatus = { .available }
+            $0.userNotifications.authorizationStatus = { .authorized }
+            $0.migrationManager.isManualDelivery = { false }
+            $0.sdkSynchronizer = .noOp
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 0, action: .howItWorks(.delegate(.continueTapped)))))
+        await store.receive(\.torSheetStateReady)
+        #expect(store.state.isTorSheetPresented == true)
+
+        await store.send(.torSheet(.delegate(.gotIt)))
+        await store.receive(\.pushNextPermissionStep)
+
+        #expect(store.state.isTorSheetPresented == false)
+        #expect(setOptionsCalls.value.isEmpty)
+        guard case let .transferPlan(planState) = try? #require(store.state.path.last) else {
+            Issue.record("Expected .transferPlan pushed (detour -> confirm reaches the same destination the skip would have)")
+            return
+        }
+        #expect(planState.variant == MigrationTransferPlan.State.Variant.scheduled)
+        #expect(planState.broadcastDisclosureHost == nil)
     }
 
     @MainActor @Test func howItWorksContinuedWithTorFlagOffPresentsTorSheetAndStashesPermissionChain() async {

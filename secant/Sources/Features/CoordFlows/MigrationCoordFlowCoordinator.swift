@@ -203,6 +203,22 @@
 //  `broadcastDisclosureHost` helper `nextPermissionStepResult`/`reviewTransferImmediateState` both
 //  call). R2/R12's own unavailable-variant gate (`isCustomServer`/`isIdentityCustom`) is untouched.
 //
+//  MOB-1497 (R9-T3, findings 6+1): the flag-on skip gate the comment above calls out as untouched by
+//  fix-wave 1 IS this round's finding 1 — both flag-on shortcuts (Entry `.immediate`, How This Works
+//  `.continueTapped`) checked only `walletStorage.exportTorSetupFlag()`, persisting `useTor = true`
+//  and pushing straight through even for an identity-custom sync server: the formed snapshot forces
+//  clearnet AND the pushed screen's R13 footer is nil by construction (same-server), so those users
+//  were silently routed over clearnet with no R2/R12 unavailable notice ever shown. Both branches now
+//  call `torSheetState` unconditionally once the flag is on and branch on its own `isCustomServer`
+//  classification (the SAME test the sheet-shown path already applies, reused rather than
+//  re-derived) — identity-custom detours to that SAME unavailable-variant sheet the flag-off branch
+//  presents, never calling `setNetworkPrivacyOptions` on the detour; non-custom keeps the exact prior
+//  skip behavior. Finding 6 (fixed first, since the detour would otherwise re-expose it): the sheet's
+//  own `confirmTorSheet` no longer persists the custom sheet's forced `isTorOn == false` as the
+//  stored cross-run preference either (see that function's doc) — a circumstance of being on a
+//  custom server, not a preference, so persisting it would silently defeat the default-ON hardening
+//  (or an earlier explicit provider choice) the moment the user later switches to a provider server.
+//
 
 import Foundation
 import ComposableArchitecture
@@ -239,22 +255,42 @@ extension MigrationCoordFlow {
 
                 switch mode {
                 case .immediate:
-                    // Skip the Tor sheet iff the app-wide Tor setup flag is on — in that case
-                    // `useTor` is implicitly `true`, persisted the same way the sheet's own confirm
-                    // does (so a background send effect reads the same persisted value), and Review
-                    // is pushed directly; otherwise the sheet is shown so the user can opt in
-                    // explicitly. MOB-1497 (T1): the flag-on shortcut is a Tor-choice RESOLUTION
-                    // point exactly like the sheet's own confirm — it forms the run's (provisional)
-                    // network snapshot here too, right after the choice persists (T2: unchanged
-                    // trigger point — there's no sheet to present on this branch, so forming stays
+                    // Skip the Tor sheet iff the app-wide Tor setup flag is on AND the account's
+                    // sync server is not identity-custom. MOB-1497 (R9-T3, finding 1): a custom
+                    // server's snapshot forces clearnet AND the pushed Review screen's R13 footer is
+                    // nil by construction (same-server) — skipping straight through would silently
+                    // route those users over clearnet with no unavailable-server notice ever shown.
+                    // Detecting identity-custom needs the formed snapshot, so `torSheetState` below
+                    // is now called unconditionally once the flag is on; its `isCustomServer`
+                    // classification (the SAME test the sheet-shown path already applies, reused not
+                    // re-derived) decides the branch, and its single call forms the run's snapshot
+                    // either way (no redundant second `formNetworkSnapshot`).
+                    //
+                    // Non-custom: unchanged — `useTor` implicitly `true`, persisted the same way the
+                    // sheet's own confirm does, Review pushed directly.
+                    // Identity-custom: detours to the SAME unavailable-variant sheet the flag-OFF
+                    // branch presents, WITHOUT calling `setNetworkPrivacyOptions` (finding 6: the
+                    // custom sheet offers no choice, so persisting its forced value would silently
+                    // overwrite a real stored preference) — `confirmTorSheet`'s existing
+                    // `.reviewTransfer` destination then drives the flow onward exactly as the skip
+                    // would have.
+                    //
+                    // MOB-1497 (T1): the flag-on shortcut is a Tor-choice RESOLUTION point exactly
+                    // like the sheet's own confirm — it forms the run's (provisional) network
+                    // snapshot here too, right after the choice persists (T2: unchanged trigger
+                    // point — there's no sheet to present on the non-custom branch, so forming stays
                     // here rather than moving to presentation). T2: now awaited (not fire-and-forget)
                     // so the pushed Review Transfer's footer can carry the formed host (R13) —
                     // `formNetworkSnapshot`/the immediately-following peek are both fast, local-only
                     // calls (R7: zero network calls), so this isn't a perceptible nav delay.
                     if walletStorage.exportTorSetupFlag() == true {
-                        migrationManager.setNetworkPrivacyOptions(true)
                         return .run { [migrationManager, accountUUID = state.selectedWalletAccount?.id] send in
-                            await migrationManager.formNetworkSnapshot(accountUUID)
+                            let sheetState = await torSheetState(usesFullBalanceCopy: true, accountUUID: accountUUID)
+                            guard !sheetState.isCustomServer else {
+                                await send(.torSheetStateReady(sheetState, destination: .reviewTransfer))
+                                return
+                            }
+                            migrationManager.setNetworkPrivacyOptions(true)
                             let reviewState = await reviewTransferImmediateState(accountUUID: accountUUID)
                             await send(.pushHydratedPathState(.reviewTransfer(reviewState)))
                         }
@@ -282,10 +318,20 @@ extension MigrationCoordFlow {
                 // downstream could read it (T2: `nextPermissionStepResult`'s own `.transferPlan`
                 // branch is exactly that downstream reader now — see its doc for the R13 footer
                 // hydration).
+                //
+                // MOB-1497 (R9-T3, finding 1): the flag-on shortcut now also detects
+                // identity-custom BEFORE skipping, same reasoning/reuse as Entry `.immediate`'s
+                // twin branch above — see that branch's doc for the full rationale. A custom
+                // server detours to this same sheet (the flag-off path below), never persisting a
+                // choice (finding 6); non-custom keeps this shortcut exactly as before.
                 if walletStorage.exportTorSetupFlag() == true {
-                    migrationManager.setNetworkPrivacyOptions(true)
                     return .run { [migrationManager, accountUUID = state.selectedWalletAccount?.id] send in
-                        await migrationManager.formNetworkSnapshot(accountUUID)
+                        let sheetState = await torSheetState(usesFullBalanceCopy: false, accountUUID: accountUUID)
+                        guard !sheetState.isCustomServer else {
+                            await send(.torSheetStateReady(sheetState, destination: .permissionChain))
+                            return
+                        }
+                        migrationManager.setNetworkPrivacyOptions(true)
                         await send(.pushNextPermissionStep(await nextPermissionStepResult()))
                     }
                 }
