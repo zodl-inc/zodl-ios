@@ -17,6 +17,13 @@
 //  the footer, its `disclosureFooter` builder, and the store's `broadcastDisclosureHost` state are
 //  removed. Migration screens no longer name which server will receive transfers.
 //
+//  MOB-1497 (T7, Q3'26 canvas · 3491:11447 "Review Transfer 3 (A)"): manual mode's `description` is
+//  now the three-sentence composition `descManual + reviewAndConfirm + cannotBeUndone` rendered as a
+//  single paragraph — `cannotBeUndone`'s old separate line inside `thisTransferBlock` is dropped for
+//  manual mode accordingly. Immediate mode (`descImmediate`, frame 3485:6264) is untouched — its copy
+//  already ends with its own cannot-be-cancelled sentence. A `ZashiInfoCallout(.warning)` "Privacy
+//  Disclaimer" card now shows below `detailRows` in manual mode only, above the Confirm button.
+//
 
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
@@ -57,6 +64,11 @@ struct MigrationReviewTransferView: View {
                         }
 
                         detailRows
+
+                        if isPrivacyDisclaimerVisible {
+                            privacyDisclaimer
+                                .padding(.top, 16)
+                        }
                     }
                     .padding(.vertical, 1)
                 }
@@ -101,7 +113,13 @@ struct MigrationReviewTransferView: View {
         case .immediate:
             return String(localizable: .migrationReviewDescImmediate)
         case .manualStep:
-            return String(localizable: .migrationReviewDescManual)
+            // MOB-1497 (T7): merged into a single paragraph — descManual sets up the transfer,
+            // reviewAndConfirm prompts the confirm action, cannotBeUndone closes the warning that
+            // used to render as its own line inside `thisTransferBlock` (see that builder's comment).
+            let descManual = String(localizable: .migrationReviewDescManual)
+            let reviewAndConfirm = String(localizable: .migrationReviewReviewAndConfirm)
+            let cannotBeUndone = String(localizable: .migrationReviewCannotBeUndone)
+            return "\(descManual) \(reviewAndConfirm) \(cannotBeUndone)"
         }
     }
 
@@ -123,14 +141,12 @@ struct MigrationReviewTransferView: View {
     }
 
     @ViewBuilder private var thisTransferBlock: some View {
+        // MOB-1497 (T7): `migrationReviewCannotBeUndone` used to render here as its own line —
+        // it now folds into the top `description` paragraph instead (manual mode only), so this
+        // block is just the title above `thisTransferRow`.
         VStack(alignment: .leading, spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(localizable: .migrationReviewThisTransferTitle)
-                    .zFont(.medium, size: 14, style: Design.Text.primary)
-
-                Text(localizable: .migrationReviewCannotBeUndone)
-                    .zFont(size: 12, style: Design.Text.tertiary)
-            }
+            Text(localizable: .migrationReviewThisTransferTitle)
+                .zFont(.medium, size: 14, style: Design.Text.primary)
 
             thisTransferRow
         }
@@ -178,6 +194,22 @@ struct MigrationReviewTransferView: View {
                 rowAppereance: .bottom
             )
         }
+    }
+
+    // MARK: - Privacy disclaimer (manual mode only; MOB-1497 T7)
+
+    /// Same "manual mode only" condition as `isThisTransferVisible`, kept as its own property so the
+    /// two blocks' visibility can diverge later without an implicit coupling.
+    private var isPrivacyDisclaimerVisible: Bool {
+        store.mode != .immediate
+    }
+
+    @ViewBuilder private var privacyDisclaimer: some View {
+        ZashiInfoCallout(
+            style: .warning,
+            title: String(localizable: .migrationEntryPrivacyDisclaimerTitle),
+            body: String(localizable: .migrationReviewPrivacyDisclaimerBody)
+        )
     }
 
     // MARK: - Failure sheet (immediate mode only; MOB-1496 R8-T1 — commit or propose failure)
