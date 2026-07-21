@@ -35,6 +35,18 @@
 //  lanes are UNCHANGED — they never consulted `sendGate()` and still don't (`entersViaSendNow`
 //  defaults `false`, so `onAppear` takes the same immediate stop+broadcast path as before for them).
 //
+//  MOB-1497 (T8, Q3'26 canvas, Figma 3491:11750 vs 3485:6211): `isManualStepLane` marks the
+//  manual-delivery per-transfer lane — TransferPlan's `.manual` variant sending its first transfer
+//  right after confirm, and each later `MigrationReviewTransfer.State.Mode.manualStep` confirm
+//  sending one of the remaining transfers (both threaded by `MigrationCoordFlowCoordinator`, which
+//  is the only place that can tell the two `MigrationReviewTransfer` modes apart, since both
+//  delegate the same `.confirmed` action). Unlike `isDustLane`/`entersViaSendNow`, this flag drives
+//  no execution difference at all — `onAppear` runs the identical scheduled-transfer executor either
+//  way — it only selects the success phase's subtitle (`State.sentSubtitle`): the manual lane reads
+//  "...sent to Ironwood.", every other lane (immediate full sweep, dust "Migrate anyway", and the
+//  Status screen's "Send now" resume of an already-scheduled transfer) keeps "...migrated to
+//  Ironwood." — all of those still read as part of one larger migration run.
+//
 
 import Foundation
 import ComposableArchitecture
@@ -84,10 +96,23 @@ struct MigrationSending {
         /// `.status(.delegate(.sendNow))` push site); defaults to false so every other lane keeps
         /// today's immediate stop+broadcast behavior unchanged.
         var entersViaSendNow = false
+        /// MOB-1497 (T8, Q3'26 canvas): the manual-delivery per-transfer lane — see this file's
+        /// header doc. Coordinator-configured; defaults to false so every other lane keeps today's
+        /// "migrated" success wording (`sentSubtitle` below).
+        var isManualStepLane = false
         /// Scopes the send-now gate-check/wait effects (`.cancellable`) — fixed for this instance's
         /// lifetime, same idiom as `MigrationStatus.State.cancelStateStreamId`.
         var cancelSendNowWaitId = UUID()
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
+
+        /// MOB-1497 (T8): the success phase's subtitle localization — `isManualStepLane` reads
+        /// "...sent to Ironwood.", every other lane keeps "...migrated to Ironwood." See
+        /// `isManualStepLane`'s doc for which lanes land in each bucket.
+        var sentSubtitle: String {
+            isManualStepLane
+                ? String(localizable: .migrationSendingSentSubtitleTransfer)
+                : String(localizable: .migrationSendingSentSubtitleMigrated)
+        }
 
         init(
             phase: Phase = .sending,
@@ -96,7 +121,8 @@ struct MigrationSending {
             totalCount: Int = 1,
             sentCount: Int = 0,
             isDustLane: Bool = false,
-            entersViaSendNow: Bool = false
+            entersViaSendNow: Bool = false,
+            isManualStepLane: Bool = false
         ) {
             self.phase = phase
             self.isFailurePresented = isFailurePresented
@@ -105,6 +131,7 @@ struct MigrationSending {
             self.sentCount = sentCount
             self.isDustLane = isDustLane
             self.entersViaSendNow = entersViaSendNow
+            self.isManualStepLane = isManualStepLane
         }
     }
 
