@@ -170,6 +170,13 @@ struct SDKSynchronizerClient: Sendable {
     var rescheduleOverdueMigrationTransfer: @Sendable (AccountUUID) async throws -> MigrationTransferProposal?
     /// Re-evaluates the account's remaining spendable Orchard balance and returns a fresh schedule.
     var restartCurrentMigrationStep: @Sendable (AccountUUID, _ includeResidual: Bool) async throws -> MigrationSchedule
+    /// MOB-1511 (W2): the engine's estimate of how many migration runs ("rounds") the account's
+    /// balance needs in total. STUB — always `nil` today: the estimator
+    /// (`estimate_migration_runs` -> `MigrationRunEstimate.run_count()`) lives in
+    /// librustzcash#2714, unmerged and not yet plumbed through FFI/SDK. When it lands, swap the
+    /// live stub body for the real `Synchronizer` call; the UI already renders "Round N of M"
+    /// whenever this returns a value and "Round N" while it stays `nil`.
+    var estimateMigrationRunCount: @Sendable (AccountUUID) async throws -> Int? = { _ in nil }
     /// Re-proposes at a fresh anchor and re-signs the account's active run (needs the USK); returns
     /// the number refreshed.
     var refreshStaleMigrationTransfers: @Sendable (

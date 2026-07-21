@@ -19,5 +19,7 @@ enum AppDelegateAction: Equatable {
     /// matching every compose site's own encoding) — `nil` for a legacy/no-account payload. Read
     /// off `UNNotificationResponse.notification.request.content.userInfo` by
     /// `MigrationNotificationCenterDelegate` in `AppDelegate.swift`.
-    case migrationNotificationTapped(accountUUID: String?)
+    /// MOB-1511 (W3): `isTorFailure` marks the dedicated Tor-failure notification — its tap routes
+    /// to the Tor-failure sheet over Home instead of opening the migration flow.
+    case migrationNotificationTapped(accountUUID: String?, isTorFailure: Bool)
 }

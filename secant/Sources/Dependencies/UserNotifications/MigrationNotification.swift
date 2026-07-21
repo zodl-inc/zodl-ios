@@ -33,6 +33,10 @@ enum MigrationNotification: Equatable, Sendable {
     /// `MigrationManagerImpl.evaluateMigrationRemainder`'s doc). No payload: unlike
     /// `.transferComplete`, nothing about the NEXT run's shape is known yet at notification time.
     case migrationBatchComplete
+    /// MOB-1511 (W3, Figma 4207:8768): a background migration broadcast failed on a Tor-class
+    /// route (the same event that arms `isPendingBackgroundTorPrompt`) — generic copy per design;
+    /// the specifics live in the Tor-failure sheet its tap routes to.
+    case migrationTorFailure
 
     /// Stable, "migration."-prefixed — re-posting the same case replaces the previous pending/
     /// delivered notification (no dedup marker needed elsewhere).
@@ -50,6 +54,8 @@ enum MigrationNotification: Equatable, Sendable {
             return "\(Self.identifierPrefix)complete"
         case .migrationBatchComplete:
             return "\(Self.identifierPrefix)batchComplete"
+        case .migrationTorFailure:
+            return "\(Self.identifierPrefix)torFailure"
         }
     }
 
@@ -67,6 +73,8 @@ enum MigrationNotification: Equatable, Sendable {
             return String(localizable: .migrationNotificationMigrationCompleteTitle)
         case .migrationBatchComplete:
             return String(localizable: .migrationNotificationBatchCompleteTitle)
+        case .migrationTorFailure:
+            return String(localizable: .migrationNotificationTorFailureTitle)
         }
     }
 
@@ -96,6 +104,10 @@ enum MigrationNotification: Equatable, Sendable {
             return String(localizable: .migrationNotificationMigrationCompleteBody)
         case .migrationBatchComplete:
             return String(localizable: .migrationNotificationBatchCompleteBody)
+        case .migrationTorFailure:
+            // Deliberately the same generic "open ZODL" line the complete notification uses —
+            // per design, the notification names only the fact; the sheet carries the details.
+            return String(localizable: .migrationNotificationMigrationCompleteBody)
         }
     }
 }

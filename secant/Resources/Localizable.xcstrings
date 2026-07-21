@@ -55,6 +55,176 @@
     "%@%%" : {
 
     },
+    "migrationBanner.nextRoundInfo" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Round %1$lld · More funds to migrate"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ronda %1$lld · Más fondos para migrar"
+          }
+        }
+      }
+    },
+    "migrationBanner.nextRoundInfoTotal" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Round %1$lld of %2$lld · More funds to migrate"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ronda %1$lld de %2$lld · Más fondos para migrar"
+          }
+        }
+      }
+    },
+    "migrationBanner.progressInfoRound" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Round %1$lld · %2$lld of %3$lld transfers done · %4$lld%% complete"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ronda %1$lld · %2$lld de %3$lld transferencias hechas · %4$lld%% completado"
+          }
+        }
+      }
+    },
+    "migrationBanner.progressInfoRoundTotal" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Round %1$lld of %2$lld · %3$lld of %4$lld transfers done · %5$lld%% complete"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ronda %1$lld de %2$lld · %3$lld de %4$lld transferencias hechas · %5$lld%% completado"
+          }
+        }
+      }
+    },
+    "migrationEntry.immediateNote" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "All funds transferred in this transaction will be revealed on-chain."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Todos los fondos transferidos en esta transacción se revelarán en la cadena."
+          }
+        }
+      }
+    },
+    "migrationEntry.privacyDisclaimerTitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Privacy Disclaimer"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aviso de privacidad"
+          }
+        }
+      }
+    },
+    "migrationNotification.torFailureTitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Migration Failure"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Fallo de migración"
+          }
+        }
+      }
+    },
+    "migrationPlan.roundN" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Round %1$lld"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ronda %1$lld"
+          }
+        }
+      }
+    },
+    "migrationPlan.roundNOfM" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Round %1$lld of %2$lld"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ronda %1$lld de %2$lld"
+          }
+        }
+      }
+    },
+    "migrationStatus.done" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Done"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hecho"
+          }
+        }
+      }
+    },
     "~%@ %@" : {
       "localizations" : {
         "en" : {
@@ -10312,40 +10482,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Transferencias divididas en el tiempo · Programadas en segundo plano · Máxima privacidad"
-          }
-        }
-      }
-    },
-    "migrationEntry.privacyDisclaimerBody" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Your full balance will be revealed on-chain — crossing the pool boundary exposes the transaction amount. We recommend selecting Migrate with Privacy instead."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Tu saldo completo quedará expuesto en cadena (on-chain): cruzar el límite entre pools revela el monto de la transacción. Te recomendamos seleccionar Migrar con privacidad."
-          }
-        }
-      }
-    },
-    "migrationEntry.privacyDisclaimerTitle" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Privacy Disclaimer"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Aviso de privacidad"
           }
         }
       }

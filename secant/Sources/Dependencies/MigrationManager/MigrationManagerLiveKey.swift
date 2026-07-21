@@ -119,6 +119,7 @@ extension MigrationManagerClient: DependencyKey {
             },
             lockMigrationDust: { try await impl.lockMigrationDust(accountUUID: $0) },
             isMigrationDustLocked: { impl.isMigrationDustLocked(accountUUID: $0) },
+            migrationRoundContext: { await impl.migrationRoundContext(accountUUID: $0) },
             stateEvents: { accountUUID in impl.stateEvents(accountUUID: accountUUID) },
             migrationMode: { impl.migrationMode(accountUUID: $0) },
             setMigrationMode: { impl.setMigrationMode(accountUUID: $0, mode: $1) },
@@ -302,6 +303,8 @@ final class MigrationManagerImpl: @unchecked Sendable {
 
         let state = normalizedState(rawState: rawState, progress: progress)
         let rows = bannerTransferRows(resolvedAccountUUID: resolvedAccountUUID, state: state, hasOverdue: hasOverdue, progress: progress)
+        // MOB-1511 (W2): the multi-round context for the round-aware banner arms.
+        let roundContext = await migrationRoundContext(accountUUID: resolvedAccountUUID)
 
         return MigrationDerivations.bannerVariant(
             isIronwoodActivated: isIronwoodActivated(),
@@ -318,7 +321,9 @@ final class MigrationManagerImpl: @unchecked Sendable {
             // R7 final review, Important-1 (spec §G): threads the persisted Tor-hold indicator into
             // `.transferWaiting`'s `torHold` flag — see `MigrationFailureRoutingStorage
             // .torHoldActive`'s doc.
-            isTorHoldActive: failureRoutingStorage.torHoldActive(for: resolvedAccountUUID)
+            isTorHoldActive: failureRoutingStorage.torHoldActive(for: resolvedAccountUUID),
+            round: roundContext.round,
+            totalRounds: roundContext.totalRounds
         )
     }
 
@@ -1150,6 +1155,9 @@ final class MigrationManagerImpl: @unchecked Sendable {
                     // per-reconcile re-propose unsafe. Already-evaluated (true OR false) accounts
                     // skip straight past this, regardless of how many more reconciles run before
                     // the account eventually leaves `.complete`.
+                    // MOB-1511 (W2): the completed-rounds counter rides the SAME exactly-once gate
+                    // — one increment per run completion, however many reconciles observe it.
+                    gateStorage.incrementCompletedRounds(for: accountUUID)
                     await evaluateMigrationRemainder(for: accountUUID)
                 }
 
@@ -1204,6 +1212,18 @@ final class MigrationManagerImpl: @unchecked Sendable {
     private func evaluateMigrationRemainder(for accountUUID: AccountUUID) async {
         guard let schedule = try? await sdkSynchronizer.proposeMigrationTransfers(accountUUID, false) else { return }
         gateStorage.setRemainderPending(!schedule.transfers.isEmpty, for: accountUUID)
+    }
+
+    /// MOB-1511 (W2): the round context the multi-round labels render — the CURRENT round number
+    /// (completed runs + 1, app-persisted) plus the engine's estimated TOTAL round count, which is
+    /// `nil` until librustzcash#2714 lands and gets plumbed through the SDK (see
+    /// `SDKSynchronizerClient.estimateMigrationRunCount`'s stub doc). Cheap today (the stub answers
+    /// instantly); revisit caching only once the real estimate call exists.
+    func migrationRoundContext(accountUUID: AccountUUID?) async -> (round: Int, totalRounds: Int?) {
+        guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return (1, nil) }
+        let round = gateStorage.completedRounds(for: resolvedAccountUUID) + 1
+        let totalRounds = (try? await sdkSynchronizer.estimateMigrationRunCount(resolvedAccountUUID)) ?? nil
+        return (round, totalRounds)
     }
 
     /// R8-T3 (#24): per-account lookup against `reconcile()`'s ONE hoisted `getAccountsBalances()`
@@ -1345,6 +1365,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
             gateStorage.clearDustLocked(for: accountUUID)
             gateStorage.clearMigrationMode(for: accountUUID)
             gateStorage.clearManualDelivery(for: accountUUID)
+            gateStorage.clearCompletedRounds(for: accountUUID)
             scheduleStorage.clear(for: accountUUID)
             snapshotStorage.clear(for: accountUUID)
             failureRoutingStorage.clear(for: accountUUID)
@@ -1514,7 +1535,9 @@ enum MigrationDerivations {
         isCompleteAcknowledged: Bool,
         isMigrationRemainderPending: Bool,
         transferRows: [MigrationTransferRow],
-        isTorHoldActive: Bool = false
+        isTorHoldActive: Bool = false,
+        round: Int = 1,
+        totalRounds: Int? = nil
     ) -> MigrationBannerVariant? {
         guard isIronwoodActivated else { return nil }
 
@@ -1534,7 +1557,15 @@ enum MigrationDerivations {
             if isManualDelivery && isNextTransferDue {
                 return MigrationBannerVariant.transferReady(number: progress.completedTransfers + 1)
             }
-            return MigrationBannerVariant.inProgress(done: progress.completedTransfers, total: progress.totalTransfers)
+            // MOB-1511 (W2): the round label shows only for a genuinely multi-round migration —
+            // a later round in flight, or a known engine estimate above one.
+            let displayRound = round >= 2 || (totalRounds ?? 1) > 1 ? round : nil
+            return MigrationBannerVariant.inProgress(
+                done: progress.completedTransfers,
+                total: progress.totalTransfers,
+                round: displayRound,
+                totalRounds: displayRound != nil ? totalRounds : nil
+            )
 
         case let MigrationState.requiresAttention(reason):
             switch reason {
@@ -1561,7 +1592,9 @@ enum MigrationDerivations {
             // `MigrationManagerImpl.evaluateMigrationRemainder`'s doc) — a non-empty plan re-offers
             // the banner as `.required`, exactly like a fresh pre-run balance would, with no
             // `orchardBalance` predicate needed (the engine already said there's something there).
-            return isMigrationRemainderPending ? MigrationBannerVariant.required : nil
+            // MOB-1511 (W2): round-aware re-offer — the counter already incremented at this very
+            // completion transition, so `round` here IS the next run's number.
+            return isMigrationRemainderPending ? MigrationBannerVariant.nextRoundRequired(round: round, totalRounds: totalRounds) : nil
         }
     }
 
@@ -1820,6 +1853,9 @@ final class MigrationGateStorage: @unchecked Sendable {
     /// (`resetPersistedFlags()`), never read. No migration of the old value: the feature is
     /// unreleased (dev/QA installs only).
     private let dustLockedStorage: PerAccountCodableStorage<Bool>
+    /// MOB-1511 (W2): per-account count of COMPLETED migration runs — drives the "Round N" labels
+    /// on the transfer plan and the Home banner for multi-round (sequential-run) migrations.
+    private let completedRoundsStorage: PerAccountCodableStorage<Int>
     /// MOB-1509: per-account — two concurrently migrating accounts (software + Keystone) choose
     /// their migration mode and delivery style independently; the old wallet-wide keys let the
     /// second account's choice clobber the first's. Same legacy-key-as-prefix idiom as above.
@@ -1841,6 +1877,11 @@ final class MigrationGateStorage: @unchecked Sendable {
         self.dustLockedStorage = PerAccountCodableStorage<Bool>(
             keyPrefix: .migrationDustLocked,
             corruptLogTag: "MigrationGateStorage.dustLockedStorage",
+            userDefaults: userDefaults
+        )
+        self.completedRoundsStorage = PerAccountCodableStorage<Int>(
+            keyPrefix: .migrationCompletedRounds,
+            corruptLogTag: "MigrationGateStorage.completedRoundsStorage",
             userDefaults: userDefaults
         )
         self.modeStorage = PerAccountCodableStorage<MigrationMode>(
@@ -1992,6 +2033,22 @@ final class MigrationGateStorage: @unchecked Sendable {
 
     func clearDustLocked(for accountUUID: AccountUUID) {
         dustLockedStorage.clear(for: accountUUID)
+    }
+
+    /// MOB-1511 (W2): how many runs ("rounds") `accountUUID` has COMPLETED — incremented exactly
+    /// once per completion transition (beside `reconcile()`'s remainder evaluation, which shares
+    /// the same exactly-once gate). The user-facing round number of the run in flight is
+    /// `completedRounds + 1`.
+    func completedRounds(for accountUUID: AccountUUID) -> Int {
+        completedRoundsStorage.read(for: accountUUID) ?? 0
+    }
+
+    func incrementCompletedRounds(for accountUUID: AccountUUID) {
+        completedRoundsStorage.write(completedRounds(for: accountUUID) + 1, for: accountUUID)
+    }
+
+    func clearCompletedRounds(for accountUUID: AccountUUID) {
+        completedRoundsStorage.clear(for: accountUUID)
     }
 
     /// Clears every WALLET-WIDE persisted migration flag this storage owns: mode, manual delivery,

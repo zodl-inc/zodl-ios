@@ -112,9 +112,11 @@ import ComposableArchitecture
                 #expect(includeResidual == false)
                 return schedule
             }
+            $0.migrationManager.migrationRoundContext = { _ in (1, nil) }
         }
 
         await store.send(.onAppear)
+        await store.receive(\.roundContextLoaded)
         await store.receive(\.transfersProposed) {
             $0.rows = [
                 MigrationTransferRow(id: "t0", index: 0, amount: Zatoshi(500_000_000), status: .active, hoursFromNow: 0),
@@ -143,6 +145,7 @@ import ComposableArchitecture
                 proposeCalls.withValue { $0 += 1 }
                 return MigrationSchedule(transfers: [], estimatedDurationHours: 0)
             }
+            $0.migrationManager.migrationRoundContext = { _ in (1, nil) }
         }
 
         await store.send(.onAppear) {
@@ -152,6 +155,7 @@ import ComposableArchitecture
             $0.totalDurationHours = 12
             $0.schedule = schedule
         }
+        await store.receive(\.roundContextLoaded)
 
         #expect(proposeCalls.value == 0)
     }
@@ -175,9 +179,11 @@ import ComposableArchitecture
                 called.setValue(true)
                 return MigrationSchedule(transfers: [], estimatedDurationHours: 0)
             }
+            $0.migrationManager.migrationRoundContext = { _ in (1, nil) }
         }
 
         await store.send(.onAppear)
+        await store.receive(\.roundContextLoaded)
 
         #expect(called.value == false)
     }
@@ -794,9 +800,11 @@ import ComposableArchitecture
             $0.sdkSynchronizer = .noOp
             $0.sdkSynchronizer.proposeMigrationTransfers = { _, _ in throw ProposeFailure() }
             $0.sdkSynchronizer.signAndStoreMigrationSchedule = { _, _, _ in signAndStoreCalls.withValue { $0 += 1 } }
+            $0.migrationManager.migrationRoundContext = { _ in (1, nil) }
         }
 
         await store.send(.onAppear)
+        await store.receive(\.roundContextLoaded)
         await store.receive(\.transferProposalFailed) {
             $0.isFailurePresented = true
             $0.failureReason = MigrationTransferPlan.State.FailureReason.propose
@@ -839,9 +847,11 @@ import ComposableArchitecture
                 }
                 return schedule
             }
+            $0.migrationManager.migrationRoundContext = { _ in (1, nil) }
         }
 
         await store.send(.onAppear)
+        await store.receive(\.roundContextLoaded)
         await store.receive(\.transferProposalFailed) {
             $0.isFailurePresented = true
             $0.failureReason = MigrationTransferPlan.State.FailureReason.propose
@@ -1337,6 +1347,32 @@ import ComposableArchitecture
             $0.isFailurePresented = false
             $0.failureReason = nil
             $0.failureKind = nil
+        }
+    }
+
+    // MARK: - MOB-1511 (W2): multi-round label
+
+    /// The display rule: round 1 with no known total stays label-free; a later round (or a known
+    /// multi-round estimate) shows the label; an estimate of exactly one run clears it back off.
+    @MainActor @Test func roundContextLoadedAppliesTheDisplayRule() async {
+        let store = TestStore(initialState: MigrationTransferPlan.State()) {
+            MigrationTransferPlan()
+        }
+
+        await store.send(.roundContextLoaded(round: 1, totalRounds: nil))
+
+        await store.send(.roundContextLoaded(round: 2, totalRounds: nil)) {
+            $0.round = 2
+        }
+
+        await store.send(.roundContextLoaded(round: 1, totalRounds: 4)) {
+            $0.round = 1
+            $0.totalRounds = 4
+        }
+
+        await store.send(.roundContextLoaded(round: 1, totalRounds: 1)) {
+            $0.round = nil
+            $0.totalRounds = nil
         }
     }
 }
