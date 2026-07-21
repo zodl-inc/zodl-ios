@@ -1146,8 +1146,18 @@ extension MigrationCoordFlow {
     /// out from under them. Instead calls the new `confirmProvisionalTorChoice`, which mutates ONLY
     /// `useTor` on that already-formed provisional snapshot — skipped for an identity-custom confirm
     /// (single acknowledge CTA, no toggle value to persist that way; R2 already forced `useTor` false
-    /// at forming). `setNetworkPrivacyOptions` is unchanged, still run unconditionally (custom or
-    /// provider) so a future run's stored-choice read carries whatever the sheet showed.
+    /// at forming).
+    ///
+    /// MOB-1497 (R9-T3, finding 6): `setNetworkPrivacyOptions` is now skipped for an identity-custom
+    /// confirm too, same guard as `confirmProvisionalTorChoice` above — the custom sheet is the
+    /// informational unavailable variant (no toggle, single acknowledge CTA), so its forced
+    /// `isTorOn == false` is a circumstance of being on a custom server, not a preference the user
+    /// chose. Persisting it as the stored cross-run preference would silently overwrite an earlier
+    /// real choice (default ON, or the user's own explicit provider pick) the moment they later
+    /// switch back to a provider server — sheetless snapshot-forming lanes (e.g. the dust mini-run's
+    /// `ensureNetworkSnapshot`) read that stored value directly and would silently fall back to
+    /// clearnet with no R11 warning ever shown. The custom confirm now persists NOTHING: the stored
+    /// preference keeps whatever it already was.
     private func confirmTorSheet(state: inout MigrationCoordFlow.State) -> Effect<MigrationCoordFlow.Action> {
         guard let destination = state.pendingTorDestination else { return .none }
         state.pendingTorDestination = nil
@@ -1159,8 +1169,8 @@ extension MigrationCoordFlow {
         let showsBroadcastDisclosure = state.torSheetState.showsBroadcastDisclosure
         let accountUUID = state.selectedWalletAccount?.id
 
-        migrationManager.setNetworkPrivacyOptions(isTorOn)
         if !isCustomServer {
+            migrationManager.setNetworkPrivacyOptions(isTorOn)
             migrationManager.confirmProvisionalTorChoice(accountUUID, isTorOn)
         }
 
