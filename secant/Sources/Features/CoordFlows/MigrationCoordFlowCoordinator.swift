@@ -159,7 +159,10 @@
 //  moment the choice is made rather than later at the first broadcast-bearing read. See
 //  `MigrationManagerLiveKey.swift`'s header doc for the full snapshot-lifecycle change this is one
 //  half of (the other half — `clearProvisionalNetworkSnapshot` at flow teardown — lives in
-//  `RootCoordinator.swift`, since that is where `Root` actually pops `migrationCoordFlow`).
+//  `RootCoordinator.swift`, since that is where `Root` actually pops `migrationCoordFlow`). R9-T3:
+//  this "persists, then forms" ordering describes the shortcuts' NON-CUSTOM outcome specifically —
+//  see the R9-T3 paragraph below for the identity-custom detour finding 1 added, which persists
+//  nothing and forms only inside the sheet it presents instead.
 //
 //  MOB-1497 (T2 — sheet UX for R2/R3/R11/R12/R13): forming moves again, from confirm to PRESENTATION:
 //  - `presentTorSheet` (the old synchronous state-writer) is replaced by the async `torSheetState
@@ -174,7 +177,9 @@
 //    snapshot the user was shown, and confirm must not re-roll it out from under them. It calls the
 //    new `migrationManager.confirmProvisionalTorChoice(account, isTorOn)` instead (skipped for an
 //    identity-custom confirm, which has no toggle value to persist that way — R2 forced `useTor` false
-//    at forming already); `setNetworkPrivacyOptions` is unchanged, still run unconditionally.
+//    at forming already); `setNetworkPrivacyOptions` was originally unconditional here too — R9-T3
+//    (finding 6) gated it behind the SAME `!isCustomServer` check, so the custom confirm now persists
+//    neither (see `confirmTorSheet`'s own doc for why).
 //  - The sheet-SKIPPED shortcuts keep forming exactly where they did in T1 (unchanged trigger point),
 //    but now ALSO thread the formed host into the pushed destination's `broadcastDisclosureHost`
 //    (R13, for the sheet-skipped provider users who never see the sheet's own disclosure line) via
@@ -209,15 +214,28 @@
 //  and pushing straight through even for an identity-custom sync server: the formed snapshot forces
 //  clearnet AND the pushed screen's R13 footer is nil by construction (same-server), so those users
 //  were silently routed over clearnet with no R2/R12 unavailable notice ever shown. Both branches now
-//  call `torSheetState` unconditionally once the flag is on and branch on its own `isCustomServer`
-//  classification (the SAME test the sheet-shown path already applies, reused rather than
-//  re-derived) — identity-custom detours to that SAME unavailable-variant sheet the flag-off branch
-//  presents, never calling `setNetworkPrivacyOptions` on the detour; non-custom keeps the exact prior
-//  skip behavior. Finding 6 (fixed first, since the detour would otherwise re-expose it): the sheet's
-//  own `confirmTorSheet` no longer persists the custom sheet's forced `isTorOn == false` as the
-//  stored cross-run preference either (see that function's doc) — a circumstance of being on a
-//  custom server, not a preference, so persisting it would silently defeat the default-ON hardening
-//  (or an earlier explicit provider choice) the moment the user later switches to a provider server.
+//  check `migrationManager.isSyncServerIdentityCustom()` — a synchronous, snapshot-free read, checked
+//  BEFORE either persisting or forming — and branch: identity-custom detours to the SAME
+//  unavailable-variant sheet the flag-off branch presents (which forms its own snapshot there),
+//  never calling `setNetworkPrivacyOptions` on the detour; non-custom keeps the exact prior skip
+//  behavior (persist, then form, then push). Finding 6 (fixed first, since the detour would
+//  otherwise re-expose it): the sheet's own `confirmTorSheet` no longer persists the custom sheet's
+//  forced `isTorOn == false` as the stored cross-run preference either (see that function's doc) —
+//  a circumstance of being on a custom server, not a preference, so persisting it would silently
+//  defeat the default-ON hardening (or an earlier explicit provider choice) the moment the user
+//  later switches to a provider server.
+//
+//  MOB-1497 (R9-T3 fix, C1 — post-review): finding 1's first version detected identity-custom via
+//  `torSheetState` (forms internally) even on what was ABOUT to become the non-custom branch,
+//  inverting that branch's persist/form order against base (33e8dbaf): forming BAKES IN whatever
+//  `setNetworkPrivacyOptions` had most recently persisted (`MigrationNetworkSnapshot.useTor`'s doc —
+//  a LATER persist does not correct an already-formed snapshot), so forming before this shortcut's
+//  own persist could silently bake in a stale OFF choice left over from an earlier off-warning pick,
+//  producing a silent clearnet migration broadcast with no sheet and no warning — the exact harm
+//  class this feature exists to prevent. `isSyncServerIdentityCustom` (`MigrationManagerClient`,
+//  `MigrationManagerImpl.createNetworkSnapshot`'s own `isCustomServer` computation, exposed
+//  snapshot-free) replaces `torSheetState` as the detection call in both flag-on branches so
+//  detecting never forms; the non-custom branch is now the untouched base sequence byte-for-byte.
 //
 
 import Foundation
@@ -260,18 +278,26 @@ extension MigrationCoordFlow {
                     // server's snapshot forces clearnet AND the pushed Review screen's R13 footer is
                     // nil by construction (same-server) — skipping straight through would silently
                     // route those users over clearnet with no unavailable-server notice ever shown.
-                    // Detecting identity-custom needs the formed snapshot, so `torSheetState` below
-                    // is now called unconditionally once the flag is on; its `isCustomServer`
-                    // classification (the SAME test the sheet-shown path already applies, reused not
-                    // re-derived) decides the branch, and its single call forms the run's snapshot
-                    // either way (no redundant second `formNetworkSnapshot`).
                     //
-                    // Non-custom: unchanged — `useTor` implicitly `true`, persisted the same way the
-                    // sheet's own confirm does, Review pushed directly.
+                    // R9-T3 fix (C1): detection is `migrationManager.isSyncServerIdentityCustom()` —
+                    // a SYNCHRONOUS, snapshot-free read — checked BEFORE entering the effect at all,
+                    // deliberately NOT `torSheetState`'s own `isCustomServer` (which requires forming
+                    // first). The non-custom branch below must run `setNetworkPrivacyOptions` BEFORE
+                    // `formNetworkSnapshot`, exactly like base: forming BAKES IN whatever is
+                    // currently persisted (`MigrationNetworkSnapshot.useTor`'s doc — a later persist
+                    // does not correct an already-formed snapshot), so a first version of this fix
+                    // that detected via `torSheetState` formed before persisting and could silently
+                    // bake in a stale OFF choice from an earlier off-warning pick — the exact silent-
+                    // clearnet regression this detection avoids by never forming to decide.
+                    //
+                    // Non-custom: EXACT base sequence, byte-for-byte — `useTor` implicitly `true`,
+                    // persisted synchronously BEFORE the effect the same way the sheet's own confirm
+                    // does, THEN formed, Review pushed directly.
                     // Identity-custom: detours to the SAME unavailable-variant sheet the flag-OFF
-                    // branch presents, WITHOUT calling `setNetworkPrivacyOptions` (finding 6: the
-                    // custom sheet offers no choice, so persisting its forced value would silently
-                    // overwrite a real stored preference) — `confirmTorSheet`'s existing
+                    // branch presents (which forms its own snapshot there — that's fine, the ONE form
+                    // this branch ever does), WITHOUT calling `setNetworkPrivacyOptions` (finding 6:
+                    // the custom sheet offers no choice, so persisting its forced value would
+                    // silently overwrite a real stored preference) — `confirmTorSheet`'s existing
                     // `.reviewTransfer` destination then drives the flow onward exactly as the skip
                     // would have.
                     //
@@ -284,13 +310,15 @@ extension MigrationCoordFlow {
                     // `formNetworkSnapshot`/the immediately-following peek are both fast, local-only
                     // calls (R7: zero network calls), so this isn't a perceptible nav delay.
                     if walletStorage.exportTorSetupFlag() == true {
-                        return .run { [migrationManager, accountUUID = state.selectedWalletAccount?.id] send in
-                            let sheetState = await torSheetState(usesFullBalanceCopy: true, accountUUID: accountUUID)
-                            guard !sheetState.isCustomServer else {
+                        guard !migrationManager.isSyncServerIdentityCustom() else {
+                            return .run { [accountUUID = state.selectedWalletAccount?.id] send in
+                                let sheetState = await torSheetState(usesFullBalanceCopy: true, accountUUID: accountUUID)
                                 await send(.torSheetStateReady(sheetState, destination: .reviewTransfer))
-                                return
                             }
-                            migrationManager.setNetworkPrivacyOptions(true)
+                        }
+                        migrationManager.setNetworkPrivacyOptions(true)
+                        return .run { [migrationManager, accountUUID = state.selectedWalletAccount?.id] send in
+                            await migrationManager.formNetworkSnapshot(accountUUID)
                             let reviewState = await reviewTransferImmediateState(accountUUID: accountUUID)
                             await send(.pushHydratedPathState(.reviewTransfer(reviewState)))
                         }
@@ -321,17 +349,24 @@ extension MigrationCoordFlow {
                 //
                 // MOB-1497 (R9-T3, finding 1): the flag-on shortcut now also detects
                 // identity-custom BEFORE skipping, same reasoning/reuse as Entry `.immediate`'s
-                // twin branch above — see that branch's doc for the full rationale. A custom
-                // server detours to this same sheet (the flag-off path below), never persisting a
-                // choice (finding 6); non-custom keeps this shortcut exactly as before.
+                // twin branch above — see that branch's doc for the full rationale (R9-T3 fix, C1:
+                // detection is the synchronous, snapshot-free `migrationManager
+                // .isSyncServerIdentityCustom()`, never `torSheetState`'s own `isCustomServer` —
+                // that requires forming first, which would bake in a stale persisted Tor choice on
+                // the non-custom branch below if forming ran before this shortcut's own persist).
+                // A custom server detours to this same sheet (the flag-off path below), never
+                // persisting a choice (finding 6); non-custom keeps this shortcut EXACTLY as
+                // before — persist, then form, then push, byte-for-byte.
                 if walletStorage.exportTorSetupFlag() == true {
-                    return .run { [migrationManager, accountUUID = state.selectedWalletAccount?.id] send in
-                        let sheetState = await torSheetState(usesFullBalanceCopy: false, accountUUID: accountUUID)
-                        guard !sheetState.isCustomServer else {
+                    guard !migrationManager.isSyncServerIdentityCustom() else {
+                        return .run { [accountUUID = state.selectedWalletAccount?.id] send in
+                            let sheetState = await torSheetState(usesFullBalanceCopy: false, accountUUID: accountUUID)
                             await send(.torSheetStateReady(sheetState, destination: .permissionChain))
-                            return
                         }
-                        migrationManager.setNetworkPrivacyOptions(true)
+                    }
+                    migrationManager.setNetworkPrivacyOptions(true)
+                    return .run { [migrationManager, accountUUID = state.selectedWalletAccount?.id] send in
+                        await migrationManager.formNetworkSnapshot(accountUUID)
                         await send(.pushNextPermissionStep(await nextPermissionStepResult()))
                     }
                 }

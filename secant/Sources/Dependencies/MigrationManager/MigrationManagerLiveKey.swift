@@ -110,6 +110,7 @@ extension MigrationManagerClient: DependencyKey {
             overrideBroadcastEndpointToSyncServer: { accountUUID in
                 await impl.overrideBroadcastEndpointToSyncServer(accountUUID: accountUUID)
             },
+            isSyncServerIdentityCustom: { impl.isSyncServerIdentityCustom() },
             setNetworkPrivacyOptions: { impl.setNetworkPrivacyOptions(useTor: $0) },
             isCompleteAcknowledged: { accountUUID in impl.isCompleteAcknowledged(accountUUID: accountUUID) },
             acknowledgeComplete: { accountUUID in await impl.acknowledgeComplete(accountUUID: accountUUID) },
@@ -869,6 +870,19 @@ final class MigrationManagerImpl: @unchecked Sendable {
             fallback.committedAt = Date()
         }
         return fallback
+    }
+
+    /// MOB-1497 (R9-T3, C1 fix): see `MigrationManagerClient.isSyncServerIdentityCustom`'s doc.
+    /// Deliberately a SEPARATE, tiny computation from `createNetworkSnapshot` below rather than a
+    /// shared extraction — that function's `syncProvider` local is read a SECOND time later (the
+    /// broadcast-candidate filter), so factoring out just the `isCustomServer` half would mean
+    /// either reshaping its control flow or returning an unused value to this caller; this few-line
+    /// duplication keeps that already-reviewed, privacy-sensitive function untouched.
+    func isSyncServerIdentityCustom() -> Bool {
+        if case ServerProvider.custom = ServerProvider.classify(host: zcashSDKEnvironment.endpoint().host) {
+            return true
+        }
+        return false
     }
 
     /// The actual read+random-pick sequence for a fresh snapshot — see
