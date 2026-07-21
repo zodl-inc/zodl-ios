@@ -1320,4 +1320,90 @@ import ComposableArchitecture
             $0.failureKind = nil
         }
     }
+
+    // MARK: - R9-T4 (MOB-1497 review remediation, finding 5): pre-broadcast local failures never
+    // enter the broadcast-failure routing ladder
+
+    /// `submitNoteSplit`'s USK derivation is pre-broadcast LOCAL work — see
+    /// `MigrationSendingTests.onAppearWithDustLaneDeriveUSKFailureReportsNilResultWithoutRoutingOrNudgingOrBroadcasting`'s
+    /// identical rationale (classifiable-looking generic error, counted `routeBroadcastFailure`
+    /// stub). RED against the parent commit: today `deriveUSK`'s throw here lands inside the SAME
+    /// `do`/`catch` as the broadcast, so it WOULD route.
+    @MainActor @Test func retryTappedWithDeriveUSKFailureReportsNetworkErrorWithoutRoutingOrNudgingOrCallingSubmitNoteSplit() async {
+        let submitCalls = LockIsolated<Int>(0)
+        let routeBroadcastFailureCalls = LockIsolated<Int>(0)
+        let refreshMigrationSyncGateCalls = LockIsolated<Int>(0)
+        let store = TestStore(initialState: stateWithProposal(isFailurePresented: false)) {
+            MigrationNoteSplit()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.submitNoteSplit = { _, _, _, _ in
+                submitCalls.withValue { $0 += 1 }
+                return MigrationTransferResult.success(txId: "should-not-be-called")
+            }
+            $0.migrationManager.routeBroadcastFailure = { _, _ in
+                routeBroadcastFailureCalls.withValue { $0 += 1 }
+                return MigrationBroadcastFailureRoute.plainRetry
+            }
+            $0.migrationManager.refreshMigrationSyncGate = { refreshMigrationSyncGateCalls.withValue { $0 += 1 } }
+            withDependenciesUSKDerivable(&$0)
+            $0.derivationTool.deriveSpendingKey = { _, _, _ in throw NSError(domain: "test", code: 3) }
+        }
+
+        await store.send(.retryTapped)
+        await store.receive(\.splitResult) {
+            $0.isFailurePresented = true
+        }
+
+        #expect(submitCalls.value == 0)
+        #expect(routeBroadcastFailureCalls.value == 0)
+        #expect(refreshMigrationSyncGateCalls.value == 0)
+    }
+
+    /// `resubmitSignedNoteSplit`'s `storeSignedNoteSplit` call (made only when `splitStored == false`)
+    /// is pre-broadcast LOCAL persistence — same rationale as the derive-USK sites above. RED against
+    /// the parent commit: today this throw lands inside the SAME `do`/`catch` as
+    /// `broadcastStoredNoteSplit`, so it WOULD route.
+    @MainActor @Test func retryTappedWithSignedPcztWhenStoreSignedNoteSplitFailsReportsNetworkErrorWithoutRoutingOrNudgingOrBroadcasting() async {
+        let storeSignedCalls = LockIsolated<Int>(0)
+        let broadcastCalls = LockIsolated<Int>(0)
+        let routeBroadcastFailureCalls = LockIsolated<Int>(0)
+        let refreshMigrationSyncGateCalls = LockIsolated<Int>(0)
+        let signedPczt = Data([0xCC, 0xDD])
+        let state = MigrationNoteSplit.State(
+            phase: .splitting,
+            isFailurePresented: false,
+            signedNoteSplitPczt: signedPczt,
+            splitStored: false
+        )
+        let store = TestStore(initialState: state) {
+            MigrationNoteSplit()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.storeSignedNoteSplit = { _, _ in
+                storeSignedCalls.withValue { $0 += 1 }
+                throw NSError(domain: "test", code: 4)
+            }
+            $0.sdkSynchronizer.broadcastStoredNoteSplit = { _, _ in
+                broadcastCalls.withValue { $0 += 1 }
+                return MigrationTransferResult.success(txId: "should-not-be-called")
+            }
+            $0.migrationManager.migrationNetworkOptions = { _ in Self.defaultNetworkPrivacyOptions }
+            $0.migrationManager.routeBroadcastFailure = { _, _ in
+                routeBroadcastFailureCalls.withValue { $0 += 1 }
+                return MigrationBroadcastFailureRoute.plainRetry
+            }
+            $0.migrationManager.refreshMigrationSyncGate = { refreshMigrationSyncGateCalls.withValue { $0 += 1 } }
+        }
+
+        await store.send(.retryTapped)
+        await store.receive(\.splitResult) {
+            $0.isFailurePresented = true
+        }
+
+        #expect(storeSignedCalls.value == 1)
+        #expect(broadcastCalls.value == 0)
+        #expect(routeBroadcastFailureCalls.value == 0)
+        #expect(refreshMigrationSyncGateCalls.value == 0)
+    }
 }

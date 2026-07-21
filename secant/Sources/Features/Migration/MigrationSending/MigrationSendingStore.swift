@@ -364,8 +364,8 @@ struct MigrationSending {
     /// `executeNextPendingMigrationTransfer`, which is the scheduled-transfer path a background
     /// poll also drives and which must not move unconsented dust. This is also `migrateMigrationDust`'s
     /// ONLY foreground executor with failure UX (R7-T3 §6 disposition): the dust lane and the
-    /// scheduled lane share this SAME `do`/`catch` below, so the classify-then-route wiring covers
-    /// both without any separate treatment.
+    /// scheduled lane share this SAME broadcast `do`/`catch` below, so the classify-then-route wiring
+    /// covers both without any separate treatment.
     ///
     /// MOB-1496: `migrateMigrationDust` needs the account's USK to sign — Keystone accounts have no
     /// PCZT-based dust-sweep lane yet (the SDK's composite has no PCZT variant), so they short-
@@ -378,54 +378,83 @@ struct MigrationSending {
     /// `txId` is a placeholder (the error carries no payload to recover the real one from). Untouched
     /// by R7-T3's classification (MOB-1497): a landed broadcast is never a failure to route.
     ///
+    /// R9-T4 (MOB-1497 review remediation, finding 5): the dust lane's USK derivation is hoisted
+    /// ABOVE the broadcast `do`/`catch` below, in its own `do`/`catch` — see the hoist's inline
+    /// comment for the full rationale. A derivation failure sends the SAME `.transferResult(nil)`
+    /// the broadcast `do`/`catch`'s generic catch sends for an unrouted failure, but WITHOUT ever
+    /// calling `routeBroadcastFailure` or `refreshMigrationSyncGate`: no broadcast was attempted, so
+    /// neither applies.
+    ///
     /// R7-T3 (MOB-1497): every failure path below — the transport-outcome switch's failure branch AND
     /// the generic catch — classifies+routes (R9-T2: via `migrationManager.routeBroadcastFailure(_:
     /// result:/error:)`, the single classify -> route entry point) before sending its existing outcome
     /// action. A `nil` route (an unclassified failure — `.invalidNote`/`.expired`/
-    /// `.networkError(retryable: false)`, or the "no account"/"no zip32 index" guards above, which
-    /// never reach the SDK call at all) keeps today's behavior byte-for-byte: only `.transferResult`
-    /// is sent. A non-nil route ADDITIONALLY sends `.broadcastFailureRouted(route)` FIRST — the
-    /// existing `.transferResult`/`isFailurePresented = true` handling is otherwise unchanged, so
-    /// `state.failureKind` is always set before the sheet appears.
+    /// `.networkError(retryable: false)`, or the "no account" guard above/the Keystone-dust guard/the
+    /// hoisted derivation failure, none of which reach the SDK call at all) keeps today's behavior
+    /// byte-for-byte: only `.transferResult` is sent. A non-nil route ADDITIONALLY sends
+    /// `.broadcastFailureRouted(route)` FIRST — the existing `.transferResult`/
+    /// `isFailurePresented = true` handling is otherwise unchanged, so `state.failureKind` is always
+    /// set before the sheet appears.
     ///
     /// Deliberately NO `[migrationManager]` capture on the `.run` below (unlike the reducer's own
-    /// `.transferResult` success handler): the Keystone-dust early-return guard inside this SAME
-    /// closure must reach `send(.transferResult(nil))` without ever resolving `migrationManager` —
-    /// an explicit capture evaluates (and, in a test with no override for ANY member, traps) at
-    /// closure-CREATION time, before the guard even runs. Implicit capture defers resolution to the
-    /// first line that actually touches `migrationManager`, exactly where the guard needs it to.
+    /// `.transferResult` success handler): the Keystone-dust/hoisted-derivation early-return guards
+    /// inside this SAME closure must reach `send(.transferResult(nil))` without ever resolving
+    /// `migrationManager` — an explicit capture evaluates (and, in a test with no override for ANY
+    /// member, traps) at closure-CREATION time, before the guards even run. Implicit capture defers
+    /// resolution to the first line that actually touches `migrationManager`, exactly where the
+    /// guards need it to.
     private func executeNextTransfer(account: WalletAccount?, isDustLane: Bool) -> Effect<Action> {
         guard let account else {
             return .run { send in await send(.transferResult(nil)) }
         }
 
         return .run { send in
-            // MOB-1496 (R8-T4, #3): tracks whether `stopSyncBeforeMigrationBroadcast()` actually ran
-            // THIS attempt — only a stop that was never followed by a successful broadcast needs the
-            // nudge (see `migrationManager.refreshMigrationSyncGate`'s doc); the guards above (no
-            // account / Keystone dust lane) return before ever stopping sync, so they must not nudge.
-            var didStopSyncForBroadcast = false
-            do {
-                let result: MigrationTransferResult?
-                if isDustLane {
-                    guard account.vendor != WalletAccount.Vendor.keystone, let zip32AccountIndex = account.zip32AccountIndex else {
-                        await send(.transferResult(nil))
-                        return
-                    }
-                    let usk = try MigrationSpendingKeyDerivation.deriveUSK(
+            // R9-T4 (MOB-1497 review remediation, finding 5): the dust lane's USK derivation is
+            // pre-broadcast LOCAL work (keychain export + derivation, `MigrationSpendingKeyDerivation
+            // .deriveUSK`) — hoisted ABOVE the broadcast `do`/`catch` below so a failure here can
+            // never reach `routeBroadcastFailure`: `MigrationBroadcastFailureClass.classify(error:)`'s
+            // default arm assumes every throw it sees is a post-Tor-bootstrap connect/submit failure
+            // (see that type's doc), which a keychain/derivation error is not. `stopSyncBeforeMigrationBroadcast()`
+            // stays below, unchanged, so a hoisted failure here also never nudges
+            // `refreshMigrationSyncGate()` — sync was never stopped for this attempt.
+            let dustUSK: UnifiedSpendingKey?
+            if isDustLane {
+                guard account.vendor != WalletAccount.Vendor.keystone, let zip32AccountIndex = account.zip32AccountIndex else {
+                    await send(.transferResult(nil))
+                    return
+                }
+                do {
+                    dustUSK = try MigrationSpendingKeyDerivation.deriveUSK(
                         zip32AccountIndex: zip32AccountIndex,
                         walletStorage: walletStorage,
                         mnemonic: mnemonic,
                         derivationTool: derivationTool,
                         networkType: zcashSDKEnvironment.network().networkType
                     )
+                } catch {
+                    await send(.transferResult(nil))
+                    return
+                }
+            } else {
+                dustUSK = nil
+            }
+
+            // MOB-1496 (R8-T4, #3): tracks whether `stopSyncBeforeMigrationBroadcast()` actually ran
+            // THIS attempt — only a stop that was never followed by a successful broadcast needs the
+            // nudge (see `migrationManager.refreshMigrationSyncGate`'s doc); the guards above (no
+            // account / Keystone dust lane / hoisted USK derivation) return before ever stopping
+            // sync, so they must not nudge.
+            var didStopSyncForBroadcast = false
+            do {
+                let result: MigrationTransferResult?
+                if let dustUSK {
                     // MOB-1496 (W4): read AT EXECUTE TIME, right before the broadcast — never trust a
                     // value threaded through state, which would go stale across a re-entry (coordinator
                     // state resets on relaunch) or a long BG-window gap.
                     let options = await migrationManager.migrationNetworkOptions(account.id)
                     await sdkSynchronizer.stopSyncBeforeMigrationBroadcast()
                     didStopSyncForBroadcast = true
-                    result = try await sdkSynchronizer.migrateMigrationDust(account.id, usk, options)
+                    result = try await sdkSynchronizer.migrateMigrationDust(account.id, dustUSK, options)
                 } else {
                     let options = await migrationManager.migrationNetworkOptions(account.id)
                     await sdkSynchronizer.stopSyncBeforeMigrationBroadcast()
