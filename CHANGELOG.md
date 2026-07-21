@@ -70,6 +70,7 @@ directly impact users rather than highlighting other crucial architectural updat
 - [MOB-1496] Maintenance: the testnet migration simulator now overrides every real-SDK migration member it stands in for, including the leftover-Orchard-balance query the migration summary uses — no observable behavior change.
 - [MOB-1496] Fixed a narrower case of the "Send now" countdown syncing-paused issue: if an unrelated event had already resolved the pause flag the fix above relied on just before you left the countdown screen some other way than Cancel, syncing could still stay paused for the rest of the session. It now always resumes. Gated behind Ironwood network activation and not yet in a released build.
 - [MOB-1496] Fixed a rare background-migration race where an expiring background window could still be reused for a sync it had already wound down, risking a duplicate task-completion signal and a sync attempt inside a background window iOS no longer considered active. Gated behind Ironwood network activation and not yet in a released build.
+- [MOB-1496] Fixed Keystone hardware-wallet migration signing potentially serving a stale, already-superseded QR batch to sign after you back out of a signing session — abandoning a signing attempt now clears the way for a fresh preview on your next try. Gated behind Ironwood network activation and not yet in a released build.
 
 ## 3.7.2 build 1
 

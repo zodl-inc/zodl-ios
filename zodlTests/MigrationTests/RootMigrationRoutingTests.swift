@@ -107,6 +107,80 @@ import ComposableArchitecture
         }
     }
 
+    // MARK: - MOB-1496 (abandon reconciliation): external teardown cancels a stray Keystone run
+    //
+    // Mirrors the R8-T6 send-wait-hold release tests below for a DIFFERENT external-teardown
+    // hazard: the final migration engine creates a Keystone commit's WHOLE run (preps and schedule
+    // alike) the moment its PCZTs are built, and always resumes a stored non-terminal run on the next
+    // attempt, ignoring any newer preview. `.flowFinished` normally follows the in-flow
+    // `keystoneScanAbandoned`/resume machinery, which already clears `pendingKeystoneSigning` itself —
+    // this is a defensive counterpart for the case where Root tears the flow down from OUTSIDE the
+    // coordinator (e.g. the flow finished some other way while a ceremony was still stashed).
+
+    @Test func migrationCoordFlowFinishedWithLivePendingKeystoneSigningCancelsStrayMigrationRun() async {
+        let restartCalls = LockIsolated<[(AccountUUID, Bool)]>([])
+        let account = Self.walletAccount(idByte: 40)
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            var initialState = Root.State.initial
+            initialState.path = Root.State.Path.migrationCoordFlow
+            initialState.$selectedWalletAccount.withLock { $0 = account }
+            initialState.migrationCoordFlowState.pendingKeystoneSigning = MigrationCoordFlow.KeystoneSigningContext.planCommit
+
+            let store = Store(initialState: initialState) {
+                Root()
+            } withDependencies: {
+                baseNoOpDependencies(&$0)
+                $0.sdkSynchronizer.restartCurrentMigrationStep = { accountUUID, includeResidual in
+                    restartCalls.withValue { $0.append((accountUUID, includeResidual)) }
+                    return MigrationSchedule(transfers: [], estimatedDurationHours: 0)
+                }
+            }
+
+            store.send(.migrationCoordFlow(.flowFinished))
+            await waitForRootStore { store.state.path == nil }
+
+            #expect(store.state.path == nil)
+            await waitForRootStore { restartCalls.withValue { $0.count } == 1 }
+            #expect(restartCalls.withValue { $0.count } == 1)
+            #expect(restartCalls.withValue { $0.first?.0 } == account.id)
+            #expect(restartCalls.withValue { $0.first?.1 } == false)
+        }
+    }
+
+    /// Twin of the test above with no live ceremony (the ordinary case — `.flowFinished` following
+    /// the Sending store's own successful exit, or any other flow-root close that never touched
+    /// Keystone signing at all) — must never call `restartCurrentMigrationStep`.
+    @Test func migrationCoordFlowFinishedWithNoPendingKeystoneSigningNeverCancelsMigrationRun() async {
+        let restartCalls = LockIsolated<Int>(0)
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            var initialState = Root.State.initial
+            initialState.path = Root.State.Path.migrationCoordFlow
+            initialState.migrationCoordFlowState.pendingKeystoneSigning = nil
+
+            let store = Store(initialState: initialState) {
+                Root()
+            } withDependencies: {
+                baseNoOpDependencies(&$0)
+                $0.sdkSynchronizer.restartCurrentMigrationStep = { _, _ in
+                    restartCalls.withValue { $0 += 1 }
+                    return MigrationSchedule(transfers: [], estimatedDurationHours: 0)
+                }
+            }
+
+            store.send(.migrationCoordFlow(.flowFinished))
+            await waitForRootStore { store.state.path == nil }
+
+            #expect(store.state.path == nil)
+            // Let any async cancel effect settle before asserting its absence.
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            #expect(restartCalls.withValue { $0 } == 0)
+        }
+    }
+
     // MARK: - isSensitiveFlowActive
 
     /// Pure computed-property check: `.migrationCoordFlow` must classify as sensitive, alongside
