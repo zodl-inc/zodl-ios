@@ -495,8 +495,8 @@ import URKit
 
 @Suite(.serialized)
 struct MigrationManagerResetPersistedFlagsTests {
-    @Test func gateStorageResetPersistedFlagsClearsEveryNamedFlagButLeavesTheSyncGateWindow() throws {
-        let suiteName = "testGateStorageResetPersistedFlagsClearsEveryNamedFlagButLeavesTheSyncGateWindow"
+    @Test func gateStorageResetPersistedFlagsClearsWalletWideFlagsButLeavesPerAccountOnesAndTheSyncGateWindow() throws {
+        let suiteName = "testGateStorageResetPersistedFlagsClearsWalletWideFlagsButLeavesPerAccountOnes"
         let userDefaults = try #require(
             UserDefaults(suiteName: suiteName),
             "MigrationGateStorage: UserDefaults failed to initialize"
@@ -505,25 +505,29 @@ struct MigrationManagerResetPersistedFlagsTests {
 
         let storage = MigrationGateStorage(userDefaults: userDefaults)
         let accountUUID = AccountUUID(id: [UInt8](repeating: 1, count: 16))
-        storage.setMigrationMode(MigrationMode.immediate)
-        storage.setManualDelivery(true)
+        storage.setMigrationMode(MigrationMode.immediate, for: accountUUID)
+        storage.setManualDelivery(true, for: accountUUID)
         storage.setTorEnabledForMigration(true)
         storage.acknowledgeComplete(for: accountUUID)
-        storage.setDustLocked(true)
+        storage.setDustLocked(true, for: accountUUID)
         storage.recordSyncCompleted(at: Date())
 
         storage.resetPersistedFlags()
 
-        #expect(storage.migrationMode() == nil)
-        #expect(storage.isManualDelivery() == false)
+        // MOB-1509: mode/manual/dust-locked are per-account now (the acknowledged flag's R8-T3
+        // transition) — the storage-level reset only deletes the dead legacy wallet-wide keys, so
+        // per-account values survive; clearing them per KNOWN account is
+        // `MigrationManagerImpl.resetPersistedFlags()`'s job (see the twin test below).
+        #expect(storage.migrationMode(for: accountUUID) == MigrationMode.immediate)
+        #expect(storage.isManualDelivery(for: accountUUID) == true)
+        #expect(storage.isDustLocked(for: accountUUID) == true)
         // MOB-1497 (R1): the stored choice is genuinely gone (see the raw-key check below) — it just
         // reads back `true` now, the new never-written default, rather than `false`.
         #expect(storage.isTorEnabledForMigration() == true)
         #expect(userDefaults.data(forKey: .migrationNetworkPrivacyOptions) == nil)
-        #expect(storage.isDustLocked() == false)
         // R8-T3 (S2): the acknowledged flag is per-account now — `MigrationGateStorage
         // .resetPersistedFlags()` only clears the dead legacy (wallet-wide, unsuffixed) key; see
-        // `MigrationManagerTests.resetPersistedFlagsClearsDustLockedAlongWithEveryOtherFlag`'s
+        // `MigrationManagerTests.resetPersistedFlagsClearsWalletWideFlagsAndLeavesPerAccountFlags`'s
         // twin assertion for the full explanation.
         #expect(storage.isCompleteAcknowledged(for: accountUUID) == true)
 
@@ -545,14 +549,34 @@ struct MigrationManagerResetPersistedFlagsTests {
         )
         defer { userDefaults.removePersistentDomain(forName: suiteName) }
 
-        let storage = MigrationGateStorage(userDefaults: userDefaults)
-        storage.setMigrationMode(MigrationMode.privateScheduled)
-        storage.setManualDelivery(true)
+        // MOB-1509: mode/manual/dust are per-account — the Impl-level reset is what clears every
+        // KNOWN account's flags (the storage-level reset alone leaves them, see the test above),
+        // so a selected account must exist for the candidate set to contain it.
+        withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let storage = MigrationGateStorage(userDefaults: userDefaults)
+            let account = WalletAccount(Account(
+                id: AccountUUID(id: [UInt8](repeating: 7, count: 16)),
+                name: "Zodl",
+                keySource: nil,
+                seedFingerprint: nil,
+                hdAccountIndex: Zip32AccountIndex(0),
+                ufvk: nil,
+                uivk: nil
+            ))
+            @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
+            $selectedWalletAccount.withLock { $0 = account }
+            storage.setMigrationMode(MigrationMode.privateScheduled, for: account.id)
+            storage.setManualDelivery(true, for: account.id)
+            storage.setDustLocked(true, for: account.id)
 
-        let impl = MigrationManagerImpl(gateStorage: storage)
-        impl.resetPersistedFlags()
+            let impl = MigrationManagerImpl(gateStorage: storage)
+            impl.resetPersistedFlags()
 
-        #expect(storage.migrationMode() == nil)
-        #expect(storage.isManualDelivery() == false)
+            #expect(storage.migrationMode(for: account.id) == nil)
+            #expect(storage.isManualDelivery(for: account.id) == false)
+            #expect(storage.isDustLocked(for: account.id) == false)
+        }
     }
 }

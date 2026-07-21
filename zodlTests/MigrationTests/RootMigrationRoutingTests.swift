@@ -149,6 +149,89 @@ import ComposableArchitecture
         }
     }
 
+    /// MOB-1509: a migration notification for account B tapped while account A's Keystone ceremony
+    /// is still live must cancel the stray run on A — the ceremony's RECORDED owner — not on B,
+    /// which the tap path has already switched the selection to by the time the teardown runs.
+    @Test func crossAccountNotificationTapCancelsStrayRunOnCeremonyOwner() async {
+        let restartCalls = LockIsolated<[(AccountUUID, Bool)]>([])
+        let accountA = Self.walletAccount(idByte: 44)
+        let accountB = Self.walletAccount(idByte: 45)
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            var initialState = Root.State.initial
+            initialState.appInitializationState = InitializationState.initialized
+            initialState.path = Root.State.Path.migrationCoordFlow
+            initialState.$selectedWalletAccount.withLock { $0 = accountA }
+            initialState.$walletAccounts.withLock { $0 = [accountA, accountB] }
+            initialState.migrationCoordFlowState.pendingKeystoneSigning = MigrationCoordFlow.KeystoneSigningContext.planCommit
+            initialState.migrationCoordFlowState.pendingKeystoneSigningAccountUUID = accountA.id
+
+            let store = Store(initialState: initialState) {
+                Root()
+            } withDependencies: {
+                baseNoOpDependencies(&$0)
+                $0.sdkSynchronizer.restartCurrentMigrationStep = { accountUUID, includeResidual in
+                    restartCalls.withValue { $0.append((accountUUID, includeResidual)) }
+                    return MigrationSchedule(transfers: [], estimatedDurationHours: 0)
+                }
+            }
+
+            let accountBHex = Data(accountB.id.id).hexEncodedString()
+            store.send(.initialization(.appDelegate(.migrationNotificationTapped(accountUUID: accountBHex))))
+            await waitForRootStore { restartCalls.withValue { $0.count } >= 1 }
+            await waitForRootStore { store.state.selectedWalletAccount == accountB }
+            await waitForRootStore { store.state.path == Root.State.Path.migrationCoordFlow }
+
+            // Exactly one cancel, on the OWNER: the switch's defensive teardown fires it for A and
+            // clears the ceremony, so the flow-open's own cancel pass finds nothing left to cancel.
+            #expect(restartCalls.withValue { $0.count } == 1)
+            #expect(restartCalls.withValue { $0.first?.0 } == accountA.id)
+            #expect(restartCalls.withValue { $0.first?.1 } == false)
+            #expect(store.state.migrationCoordFlowState.pendingKeystoneSigning == nil)
+        }
+    }
+
+    /// MOB-1509 (defensive): any account switch that fires while the migration coord flow is open
+    /// tears the flow down first — cancelling a live ceremony on its recorded owner — instead of
+    /// silently repointing the flow's live handlers at the newly selected account.
+    @Test func walletAccountSwitchWithOpenMigrationFlowTearsDownAndCancelsOwnersCeremony() async {
+        let restartCalls = LockIsolated<[(AccountUUID, Bool)]>([])
+        let accountA = Self.walletAccount(idByte: 46)
+        let accountB = Self.walletAccount(idByte: 47)
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            var initialState = Root.State.initial
+            initialState.path = Root.State.Path.migrationCoordFlow
+            initialState.$selectedWalletAccount.withLock { $0 = accountA }
+            initialState.$walletAccounts.withLock { $0 = [accountA, accountB] }
+            initialState.migrationCoordFlowState.pendingKeystoneSigning = MigrationCoordFlow.KeystoneSigningContext.planCommit
+            initialState.migrationCoordFlowState.pendingKeystoneSigningAccountUUID = accountA.id
+
+            let store = Store(initialState: initialState) {
+                Root()
+            } withDependencies: {
+                baseNoOpDependencies(&$0)
+                $0.sdkSynchronizer.restartCurrentMigrationStep = { accountUUID, includeResidual in
+                    restartCalls.withValue { $0.append((accountUUID, includeResidual)) }
+                    return MigrationSchedule(transfers: [], estimatedDurationHours: 0)
+                }
+            }
+
+            store.send(.home(.walletAccountTapped(accountB)))
+            await waitForRootStore { store.state.path == nil }
+            await waitForRootStore { restartCalls.withValue { $0.count } == 1 }
+
+            #expect(store.state.selectedWalletAccount == accountB)
+            #expect(store.state.path == nil)
+            #expect(store.state.migrationCoordFlowState.pendingKeystoneSigning == nil)
+            #expect(store.state.migrationCoordFlowState.pendingKeystoneSigningAccountUUID == nil)
+            #expect(restartCalls.withValue { $0.first?.0 } == accountA.id)
+            #expect(restartCalls.withValue { $0.first?.1 } == false)
+        }
+    }
+
     /// Twin of the test above with no live ceremony (the ordinary case — `.flowFinished` following
     /// the Sending store's own successful exit, or any other flow-root close that never touched
     /// Keystone signing at all) — must never call `restartCurrentMigrationStep`.
@@ -860,9 +943,9 @@ private func baseNoOpDependencies(_ values: inout DependencyValues) {
     values.migrationBGScheduler.cancelAll = { }
     values.migrationManager.bannerVariant = { _ in nil }
     values.migrationManager.reentryRoute = { .entry }
-    values.migrationManager.migrationMode = { nil }
-    values.migrationManager.setMigrationMode = { _ in }
-    values.migrationManager.setManualDelivery = { _ in }
+    values.migrationManager.migrationMode = { _ in nil }
+    values.migrationManager.setMigrationMode = { _, _ in }
+    values.migrationManager.setManualDelivery = { _, _ in }
     values.migrationManager.setNetworkPrivacyOptions = { _ in }
     values.migrationManager.formNetworkSnapshot = { _ in }
     values.migrationManager.markNetworkSnapshotCommitted = { _ in }

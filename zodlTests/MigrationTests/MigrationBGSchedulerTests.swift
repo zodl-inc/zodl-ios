@@ -285,7 +285,7 @@ import ComposableArchitecture
             $walletAccounts.withLock { $0 = [] }
 
             await withDependencies {
-                $0.migrationManager.isManualDelivery = { true }
+                $0.migrationManager.isManualDelivery = { _ in true }
                 $0.userNotifications.scheduleMigrationNotification = { _, _, _ in scheduleCalls.withValue { $0 += 1 } }
             } operation: {
                 let impl = MigrationBGSchedulerImpl()
@@ -317,7 +317,7 @@ import ComposableArchitecture
             $walletAccounts.withLock { $0 = [selected, second] }
 
             await withDependencies {
-                $0.migrationManager.isManualDelivery = { true }
+                $0.migrationManager.isManualDelivery = { _ in true }
                 $0.sdkSynchronizer = .noOp
                 $0.sdkSynchronizer.getMigrationState = { accountUUID in
                     accountUUID == selected.id ? MigrationState.inProgress(laterProgress) : MigrationState.inProgress(earlierProgress)
@@ -370,7 +370,7 @@ import ComposableArchitecture
             $walletAccounts.withLock { $0 = [selected, second] }
 
             await withDependencies {
-                $0.migrationManager.isManualDelivery = { false }
+                $0.migrationManager.isManualDelivery = { _ in false }
                 $0.sdkSynchronizer = .noOp
                 $0.sdkSynchronizer.getMigrationState = { accountUUID in
                     accountUUID == selected.id ? MigrationState.complete : MigrationState.notStarted
@@ -411,7 +411,7 @@ import ComposableArchitecture
             $walletAccounts.withLock { $0 = [selected, second] }
 
             await withDependencies {
-                $0.migrationManager.isManualDelivery = { true }
+                $0.migrationManager.isManualDelivery = { _ in true }
                 $0.sdkSynchronizer = .noOp
                 $0.sdkSynchronizer.getMigrationState = { accountUUID in
                     if accountUUID == selected.id {
@@ -449,7 +449,7 @@ import ComposableArchitecture
             $walletAccounts.withLock { $0 = [selected] }
 
             await withDependencies {
-                $0.migrationManager.isManualDelivery = { true }
+                $0.migrationManager.isManualDelivery = { _ in true }
                 $0.sdkSynchronizer = .noOp
                 $0.sdkSynchronizer.getMigrationState = { _ in throw ArmTestReadFailure() }
                 $0.userNotifications.scheduleMigrationNotification = { _, _, _ in scheduleCalls.withValue { $0 += 1 } }

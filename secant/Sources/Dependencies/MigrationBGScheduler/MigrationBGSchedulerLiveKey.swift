@@ -142,7 +142,9 @@ final class MigrationBGSchedulerImpl: @unchecked Sendable {
 
         let action = WakeupAction.decide(
             state: plan.representativeState,
-            isManualDelivery: migrationManager.isManualDelivery(),
+            // MOB-1509: the manual-delivery flag follows the WINNING account (whose transfer this
+            // wakeup serves); nil (no winner, e.g. a sync-only wakeup) resolves the selected one.
+            isManualDelivery: migrationManager.isManualDelivery(plan.winnerAccountUUID),
             window: window,
             nextTransferNumber: plan.nextTransferNumber,
             accountUUID: winnerAccountUUIDString
