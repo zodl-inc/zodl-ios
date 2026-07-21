@@ -119,7 +119,7 @@ import ComposableArchitecture
         }
 
         await store.send(.gotItTapped) {
-            $0.alert = AlertState.offWarning(usesFullBalanceCopy: false)
+            $0.alert = AlertState.migrationTorOffWarning(usesFullBalanceCopy: false, proceedAction: .offWarningProceedTapped)
         }
     }
 
@@ -129,7 +129,7 @@ import ComposableArchitecture
         }
 
         await store.send(.gotItTapped) {
-            $0.alert = AlertState.offWarning(usesFullBalanceCopy: true)
+            $0.alert = AlertState.migrationTorOffWarning(usesFullBalanceCopy: true, proceedAction: .offWarningProceedTapped)
         }
     }
 
@@ -148,14 +148,15 @@ import ComposableArchitecture
 
     @MainActor @Test func offWarningProceedTappedClearsAlertAndEmitsDelegateGotItLeavingToggleOff() async {
         var state = MigrationTorSheet.State(isTorOn: false, usesFullBalanceCopy: false)
-        state.alert = AlertState.offWarning(usesFullBalanceCopy: false)
+        state.alert = AlertState.migrationTorOffWarning(usesFullBalanceCopy: false, proceedAction: .offWarningProceedTapped)
         let store = TestStore(initialState: state) {
             MigrationTorSheet()
         }
 
         // Mirrors the real dispatch shape a tap on the "Proceed without Tor" `ButtonState` produces
         // (`AlertState`'s SwiftUI wiring wraps the button's own action in `.alert(.presented(...))`
-        // before sending it) — see `AlertState.offWarning`'s `ButtonState(action: .offWarningProceedTapped)`.
+        // before sending it) — see `AlertState.migrationTorOffWarning`'s destructive
+        // `ButtonState(action: proceedAction)`.
         await store.send(.alert(.presented(.offWarningProceedTapped)))
         await store.receive(.offWarningProceedTapped) {
             $0.alert = nil
@@ -167,7 +168,7 @@ import ComposableArchitecture
 
     @MainActor @Test func alertDismissKeepsTorOnResetsToggleBackToOnAndEmitsNoDelegate() async {
         var state = MigrationTorSheet.State(isTorOn: false, usesFullBalanceCopy: false)
-        state.alert = AlertState.offWarning(usesFullBalanceCopy: false)
+        state.alert = AlertState.migrationTorOffWarning(usesFullBalanceCopy: false, proceedAction: .offWarningProceedTapped)
         let store = TestStore(initialState: state) {
             MigrationTorSheet()
         }

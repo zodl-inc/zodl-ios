@@ -1040,7 +1040,7 @@ import ComposableArchitecture
         }
 
         await store.send(.proceedWithoutTorTapped) {
-            $0.alert = AlertState.offWarning(usesFullBalanceCopy: false)
+            $0.alert = AlertState.migrationTorOffWarning(usesFullBalanceCopy: false, proceedAction: .offWarningProceedTapped)
         }
     }
 
@@ -1054,7 +1054,7 @@ import ComposableArchitecture
         }
 
         await store.send(.proceedWithoutTorTapped) {
-            $0.alert = AlertState.offWarning(usesFullBalanceCopy: true)
+            $0.alert = AlertState.migrationTorOffWarning(usesFullBalanceCopy: true, proceedAction: .offWarningProceedTapped)
         }
     }
 
@@ -1062,7 +1062,7 @@ import ComposableArchitecture
         let overrideTorCalls = LockIsolated<[(AccountUUID?, Bool)]>([])
         var state = stateWithProposal()
         state.failureKind = MigrationBroadcastFailureRoute.torFirstRunChoice
-        state.alert = AlertState.offWarning(usesFullBalanceCopy: false)
+        state.alert = AlertState.migrationTorOffWarning(usesFullBalanceCopy: false, proceedAction: .offWarningProceedTapped)
         let store = TestStore(initialState: state) {
             MigrationNoteSplit()
         } withDependencies: {
@@ -1093,7 +1093,7 @@ import ComposableArchitecture
     @MainActor @Test func alertDismissKeepsTorOnAndReturnsToTheFailureSheetWithZeroMutations() async {
         var state = stateWithProposal()
         state.failureKind = MigrationBroadcastFailureRoute.torFirstRunChoice
-        state.alert = AlertState.offWarning(usesFullBalanceCopy: false)
+        state.alert = AlertState.migrationTorOffWarning(usesFullBalanceCopy: false, proceedAction: .offWarningProceedTapped)
         let store = TestStore(initialState: state) {
             MigrationNoteSplit()
         }

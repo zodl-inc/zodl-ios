@@ -13,7 +13,8 @@
 //  `store.showsBroadcastDisclosure` (R7-T2 fix-wave 1, Important-1) independently gates the R13
 //  disclosure line — testnet and the defensive same-server fallback keep the toggle but must not
 //  show a "different server" claim that isn't true. The off-warning alert (R3/R11) is presented via
-//  the standard `.alert(store:)` binding — see `MigrationTorSheetStore`'s `AlertState.offWarning`.
+//  the standard `.alert(store:)` binding — see the shared `AlertState.migrationTorOffWarning`
+//  (Features/Migration/MigrationOffWarningAlert.swift).
 //
 
 import ComposableArchitecture

@@ -1221,7 +1221,7 @@ import ComposableArchitecture
         }
 
         await store.send(.proceedWithoutTorTapped) {
-            $0.alert = AlertState.offWarning(usesFullBalanceCopy: false)
+            $0.alert = AlertState.migrationTorOffWarning(usesFullBalanceCopy: false, proceedAction: .offWarningProceedTapped)
         }
     }
 
@@ -1235,7 +1235,7 @@ import ComposableArchitecture
         }
 
         await store.send(.proceedWithoutTorTapped) {
-            $0.alert = AlertState.offWarning(usesFullBalanceCopy: true)
+            $0.alert = AlertState.migrationTorOffWarning(usesFullBalanceCopy: true, proceedAction: .offWarningProceedTapped)
         }
     }
 
@@ -1246,7 +1246,7 @@ import ComposableArchitecture
         let overrideTorCalls = LockIsolated<[(AccountUUID?, Bool)]>([])
         var state = MigrationSending.State(isFailurePresented: true, totalCount: 1)
         state.failureKind = MigrationBroadcastFailureRoute.torFirstRunChoice
-        state.alert = AlertState.offWarning(usesFullBalanceCopy: false)
+        state.alert = AlertState.migrationTorOffWarning(usesFullBalanceCopy: false, proceedAction: .offWarningProceedTapped)
         let store = TestStore(initialState: state) {
             MigrationSending()
         } withDependencies: {
@@ -1277,13 +1277,14 @@ import ComposableArchitecture
         #expect(overrideTorCalls.value.first?.1 == false)
     }
 
-    /// "Keep Tor on" — the alert's cancel-role button dispatches the bare `.alert(.dismiss)`, not a
-    /// further-wrapped action (see `AlertState.offWarning`'s `ButtonState(role: .cancel, ...)`).
-    /// Returns to the R14 sheet unchanged: nothing else mutates.
+    /// "Keep Tor on" — the alert's cancel-role button carries no explicit action (see
+    /// `AlertState.migrationTorOffWarning`'s `ButtonState(role: .cancel, ...)`), so a real tap relies
+    /// on the alert's own native dismissal, which resolves to the same bare `.alert(.dismiss)`
+    /// simulated directly here. Returns to the R14 sheet unchanged: nothing else mutates.
     @MainActor @Test func alertDismissKeepsTorOnAndReturnsToTheFailureSheetWithZeroMutations() async {
         var state = MigrationSending.State(isFailurePresented: true)
         state.failureKind = MigrationBroadcastFailureRoute.torFirstRunChoice
-        state.alert = AlertState.offWarning(usesFullBalanceCopy: false)
+        state.alert = AlertState.migrationTorOffWarning(usesFullBalanceCopy: false, proceedAction: .offWarningProceedTapped)
         let store = TestStore(initialState: state) {
             MigrationSending()
         }
