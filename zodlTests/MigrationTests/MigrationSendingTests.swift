@@ -748,6 +748,47 @@ import ComposableArchitecture
         #expect(refreshMigrationSyncGateCalls.value == 1)
     }
 
+    /// R9-T4 (MOB-1497 review remediation, finding 5): the dust lane's USK derivation is pre-broadcast
+    /// LOCAL work (keychain export + derivation) — it must never reach the R16/R17 broadcast-failure
+    /// routing ladder, since no broadcast was ever attempted here. `TestFailure` is deliberately a
+    /// plain, unclassified error — exactly the shape `MigrationBroadcastFailureClass.classify(error:)`'s
+    /// default arm would turn into `.endpointUnreachable` if this reached the classifier at all; the
+    /// counted `routeBroadcastFailure` stub proves the hoist (not the classifier) is what keeps it out.
+    /// Also proves the sync-gate nudge stays silent (sync was never stopped for this attempt) and that
+    /// `migrateMigrationDust` itself never runs. RED against the parent commit: `deriveUSK`'s throw
+    /// there lands inside the SAME `do`/`catch` as the broadcast, so it WOULD route today.
+    @MainActor @Test func onAppearWithDustLaneDeriveUSKFailureReportsNilResultWithoutRoutingOrNudgingOrBroadcasting() async {
+        let migrateDustCalls = LockIsolated<Int>(0)
+        let routeBroadcastFailureCalls = LockIsolated<Int>(0)
+        let refreshMigrationSyncGateCalls = LockIsolated<Int>(0)
+        let state = MigrationSending.State(totalCount: 1, isDustLane: true)
+        let store = TestStore(initialState: state) {
+            MigrationSending()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.migrateMigrationDust = { _, _, _ in
+                migrateDustCalls.withValue { $0 += 1 }
+                return MigrationTransferResult.success(txId: "should-not-be-called")
+            }
+            $0.migrationManager.routeBroadcastFailure = { _, _ in
+                routeBroadcastFailureCalls.withValue { $0 += 1 }
+                return MigrationBroadcastFailureRoute.plainRetry
+            }
+            $0.migrationManager.refreshMigrationSyncGate = { refreshMigrationSyncGateCalls.withValue { $0 += 1 } }
+            withDependenciesUSKDerivable(&$0)
+            $0.derivationTool.deriveSpendingKey = { _, _, _ in throw TestFailure() }
+        }
+
+        await store.send(.onAppear)
+        await store.receive(\.transferResult) {
+            $0.isFailurePresented = true
+        }
+
+        #expect(migrateDustCalls.value == 0)
+        #expect(routeBroadcastFailureCalls.value == 0)
+        #expect(refreshMigrationSyncGateCalls.value == 0)
+    }
+
     // MARK: - R8-T6 (V8 fix): Send-now lane — silence-window gate-check/wait
 
     @MainActor @Test func entersViaSendNowDefaultsFalseButCanBeSetTrueViaInit() async {

@@ -377,17 +377,30 @@ struct MigrationNoteSplit {
         }
 
         return .run { [migrationManager] send in
-            // MOB-1496 (R8-T4, #3): see `MigrationSendingStore.executeNextTransfer`'s twin comment —
-            // only a stop that was never followed by a successful broadcast needs the nudge.
-            var didStopSyncForBroadcast = false
+            // R9-T4 (MOB-1497 review remediation, finding 5): USK derivation is pre-broadcast LOCAL
+            // work (keychain export + derivation) — hoisted ABOVE the broadcast `do`/`catch` below so
+            // a failure here can never reach `routeBroadcastFailure` — see
+            // `MigrationSendingStore.executeNextTransfer`'s twin comment for the full rationale. Sync
+            // is never stopped this early, so a hoisted failure here also never nudges
+            // `refreshMigrationSyncGate()`.
+            let usk: UnifiedSpendingKey
             do {
-                let usk = try MigrationSpendingKeyDerivation.deriveUSK(
+                usk = try MigrationSpendingKeyDerivation.deriveUSK(
                     zip32AccountIndex: zip32AccountIndex,
                     walletStorage: walletStorage,
                     mnemonic: mnemonic,
                     derivationTool: derivationTool,
                     networkType: zcashSDKEnvironment.network().networkType
                 )
+            } catch {
+                await send(.splitResult(MigrationTransferResult.networkError(retryable: true)))
+                return
+            }
+
+            // MOB-1496 (R8-T4, #3): see `MigrationSendingStore.executeNextTransfer`'s twin comment —
+            // only a stop that was never followed by a successful broadcast needs the nudge.
+            var didStopSyncForBroadcast = false
+            do {
                 let options = await migrationManager.migrationNetworkOptions(account.id)
                 await sdkSynchronizer.stopSyncBeforeMigrationBroadcast()
                 didStopSyncForBroadcast = true
@@ -462,14 +475,27 @@ struct MigrationNoteSplit {
 
         return .run { [migrationManager] send in
             let options = await migrationManager.migrationNetworkOptions(account.id)
+
+            // R9-T4 (MOB-1497 review remediation, finding 5): storing the signed PCZT (only when it
+            // isn't already stored) is pre-broadcast LOCAL persistence — hoisted ABOVE the broadcast
+            // `do`/`catch` below so a failure here can never reach `routeBroadcastFailure` — see
+            // `MigrationSendingStore.executeNextTransfer`'s twin comment for the full rationale. Sync
+            // is never stopped this early, so a hoisted failure here also never nudges
+            // `refreshMigrationSyncGate()`.
+            if !stored {
+                do {
+                    try await sdkSynchronizer.storeSignedNoteSplits(account.id, signed)
+                } catch {
+                    await send(.splitResult(MigrationTransferResult.networkError(retryable: true)))
+                    return
+                }
+                await send(.noteSplitStored)
+            }
+
             // MOB-1496 (R8-T4, #3): see `MigrationSendingStore.executeNextTransfer`'s twin comment —
             // only a stop that was never followed by a successful broadcast needs the nudge.
             var didStopSyncForBroadcast = false
             do {
-                if !stored {
-                    try await sdkSynchronizer.storeSignedNoteSplits(account.id, signed)
-                    await send(.noteSplitStored)
-                }
                 await sdkSynchronizer.stopSyncBeforeMigrationBroadcast()
                 didStopSyncForBroadcast = true
                 let result = try await sdkSynchronizer.broadcastStoredNoteSplit(account.id, options)
