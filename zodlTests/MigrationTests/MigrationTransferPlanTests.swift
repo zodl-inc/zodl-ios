@@ -377,6 +377,10 @@ import ComposableArchitecture
 
     @MainActor @Test func confirmTappedWithNoteSplitNeededSplitsBeforeSigningThenEmitsDelegateConfirmed() async {
         let callOrder = LockIsolated<[String]>([])
+        // R9-T2 (finding 4): the landed split's own had-broadcast recording — must fire BEFORE
+        // `signAndStoreMigrationSchedule`, or a later mid-run Tor outage would still route the R14
+        // first-run offer R15 forbids mid-run, and the R15 hold indicator would stay dark.
+        let recordTransferBroadcastCalls = LockIsolated<[(AccountUUID?, MigrationTransferResult)]>([])
         let schedule = MigrationSchedule(
             transfers: [
                 MigrationTransferProposal(id: "t0", amount: Zatoshi(500_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
@@ -402,6 +406,10 @@ import ComposableArchitecture
                 callOrder.withValue { $0.append("signAndStore") }
             }
             $0.migrationManager.migrationNetworkOptions = { _ in Self.defaultNetworkPrivacyOptions }
+            $0.migrationManager.recordTransferBroadcast = { accountUUID, result in
+                callOrder.withValue { $0.append("recordTransferBroadcast") }
+                recordTransferBroadcastCalls.withValue { $0.append((accountUUID, result)) }
+            }
             withDependenciesUSKDerivable(&$0)
         }
 
@@ -409,7 +417,9 @@ import ComposableArchitecture
         await store.receive(\.scheduleSigned)
         await store.receive(.delegate(.confirmed))
 
-        #expect(callOrder.value == ["prepare", "submit", "signAndStore"])
+        #expect(callOrder.value == ["prepare", "submit", "recordTransferBroadcast", "signAndStore"])
+        #expect(recordTransferBroadcastCalls.value.count == 1)
+        #expect(recordTransferBroadcastCalls.value.first?.1 == MigrationTransferResult.success(txId: "split-tx-id"))
     }
 
     @MainActor @Test func confirmTappedWithNoteSplitNotNeededSkipsSplitAndSignsDirectly() async {
@@ -455,6 +465,9 @@ import ComposableArchitecture
         // R9-T2 (finding 3): `.networkError(retryable: true)` is now classifiable (`.endpointUnreachable`)
         // — the pipeline classifies+routes it via commit 1's entry point before surfacing the failure.
         let routeBroadcastFailureCalls = LockIsolated<Int>(0)
+        // R9-T2 (finding 4): a genuine split FAILURE never landed — `recordTransferBroadcast` must
+        // stay uncalled (it's additive to the success/landed continuations only).
+        let recordTransferBroadcastCalls = LockIsolated<Int>(0)
         // MOB-1496 (R8-T1, S3): non-empty — Confirm now guards against a zero-transfer schedule
         // BEFORE the commit effect even runs; this test's actual concern (a genuine split failure)
         // needs a real schedule to reach that effect at all.
@@ -482,6 +495,7 @@ import ComposableArchitecture
                 routeBroadcastFailureCalls.withValue { $0 += 1 }
                 return MigrationBroadcastFailureRoute.retryRotated
             }
+            $0.migrationManager.recordTransferBroadcast = { _, _ in recordTransferBroadcastCalls.withValue { $0 += 1 } }
             withDependenciesUSKDerivable(&$0)
         }
 
@@ -501,6 +515,7 @@ import ComposableArchitecture
         #expect(signCalls.value == 0)
         #expect(refreshMigrationSyncGateCalls.value == 1)
         #expect(routeBroadcastFailureCalls.value == 1)
+        #expect(recordTransferBroadcastCalls.value == 0)
     }
 
     /// R9-T2 (finding 3): the THROWN-error twin of the result-path test above —
@@ -718,6 +733,7 @@ import ComposableArchitecture
                 callOrder.withValue { $0.append("signAndStore") }
             }
             $0.migrationManager.migrationNetworkOptions = { _ in Self.defaultNetworkPrivacyOptions }
+            $0.migrationManager.recordTransferBroadcast = { _, _ in }
             withDependenciesUSKDerivable(&$0)
         }
 
@@ -755,6 +771,7 @@ import ComposableArchitecture
             $0.sdkSynchronizer.submitNoteSplit = { _, _, _, _ in MigrationTransferResult.success(txId: "split-tx-id") }
             $0.sdkSynchronizer.signAndStoreMigrationSchedule = { _, _, _ in }
             $0.migrationManager.migrationNetworkOptions = { _ in Self.defaultNetworkPrivacyOptions }
+            $0.migrationManager.recordTransferBroadcast = { _, _ in }
             withDependenciesUSKDerivable(&$0)
         }
 
@@ -896,6 +913,11 @@ import ComposableArchitecture
         // R9-T2 (finding 3): PRESERVE THIS CARVE-OUT EXACTLY — a landed broadcast is never a failure
         // to route, so `routeBroadcastFailure` must stay uncalled on this path.
         let routeBroadcastFailureCalls = LockIsolated<Int>(0)
+        // R9-T2 (finding 4): this IS a landed split (only the engine's own recording failed) —
+        // mirrors `MigrationNoteSplitStore`'s identical `recordTransferBroadcast` call for this same
+        // carve-out, with the synthetic `.success(txId: "")` result (the error carries no payload to
+        // recover the real txId from).
+        let recordTransferBroadcastCalls = LockIsolated<[(AccountUUID?, MigrationTransferResult)]>([])
         let schedule = MigrationSchedule(
             transfers: [
                 MigrationTransferProposal(id: "t0", amount: Zatoshi(500_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
@@ -923,6 +945,9 @@ import ComposableArchitecture
                 routeBroadcastFailureCalls.withValue { $0 += 1 }
                 return MigrationBroadcastFailureRoute.plainRetry
             }
+            $0.migrationManager.recordTransferBroadcast = { accountUUID, result in
+                recordTransferBroadcastCalls.withValue { $0.append((accountUUID, result)) }
+            }
             withDependenciesUSKDerivable(&$0)
         }
 
@@ -938,6 +963,8 @@ import ComposableArchitecture
         #expect(reconcileCalls.value == 1)
         #expect(routeBroadcastFailureCalls.value == 0)
         #expect(refreshMigrationSyncGateCalls.value == 0)
+        #expect(recordTransferBroadcastCalls.value.count == 1)
+        #expect(recordTransferBroadcastCalls.value.first?.1 == MigrationTransferResult.success(txId: ""))
     }
 
     // MARK: - MOB-1496 (R8-T1, #4): Keystone propose failures surface instead of dead-ending
@@ -1219,6 +1246,7 @@ import ComposableArchitecture
             $0.migrationManager.migrationNetworkOptions = { _ in rotatedSentinel }
             $0.migrationManager.recordCommittedSchedule = { _, _ in }
             $0.migrationManager.reconcile = { }
+            $0.migrationManager.recordTransferBroadcast = { _, _ in }
             withDependenciesUSKDerivable(&$0)
         }
 

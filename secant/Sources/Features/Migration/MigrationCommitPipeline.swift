@@ -157,7 +157,11 @@ enum MigrationCommitPipeline {
                 do {
                     let splitResult = try await sdkSynchronizer.submitNoteSplit(account.id, proposal, usk, options)
                     if case MigrationTransferResult.success = splitResult {
-                        // R9-T2 (finding 4): the landed-split had-broadcast recording lands here.
+                        // R9-T2 (finding 4): the run's own had-broadcast/episode chokepoint — mirrors
+                        // `MigrationNoteSplitStore.submitNoteSplit`'s identical call. Without this, a
+                        // later mid-run Tor outage would still route the R14 first-run offer R15
+                        // forbids mid-run, and the R15 hold indicator would stay dark.
+                        await migrationManager.recordTransferBroadcast(account.id, splitResult)
                     } else {
                         // R9-T2 (finding 3): classify+route BEFORE nudging the gate — mirrors
                         // `MigrationSendingStore`/`MigrationNoteSplitStore`'s "route first" ordering.
@@ -172,8 +176,12 @@ enum MigrationCommitPipeline {
                     // sign+store below exactly as a `.success` result would. See doc above.
                     // R9-T2 (finding 3): PRESERVED EXACTLY — never routed (a landed broadcast is
                     // never a failure to route, same carve-out `MigrationSendingStore`/
-                    // `MigrationNoteSplitStore` apply), and finding 4's had-broadcast recording
-                    // lands here too.
+                    // `MigrationNoteSplitStore` apply). R9-T2 (finding 4): this IS a landed split —
+                    // the had-broadcast recording lands here too, mirrors
+                    // `MigrationNoteSplitStore.submitNoteSplit`'s identical catch clause; the
+                    // synthetic `.success(txId: "")` result matches that same mirror (the error
+                    // carries no payload to recover the real txId from).
+                    await migrationManager.recordTransferBroadcast(account.id, MigrationTransferResult.success(txId: ""))
                 } catch {
                     // [MOB-1496] (R8-T4, #3): the stop above did NOT lead to a successful broadcast
                     // (the SDK call itself threw some other error) — the SDK only transitions its
