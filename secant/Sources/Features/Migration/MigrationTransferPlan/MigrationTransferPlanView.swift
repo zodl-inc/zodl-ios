@@ -21,6 +21,12 @@
 //  hours-based caption. Variant-agnostic: any `.sent` row gets it, though only the `.recreated`
 //  variant currently has any.
 //
+//  MOB-1497 (T4, Q3'26 canvas): the R13 broadcast-server disclosure footer (added in T2 for
+//  provider users who reached this screen without seeing the Tor sheet's own disclosure line) is
+//  retired per the new designs — the footer, its `disclosureFooter` builder, and the store's
+//  `broadcastDisclosureHost` state are removed. Migration screens no longer name which server will
+//  receive transfers.
+//
 
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
@@ -52,11 +58,6 @@ struct MigrationTransferPlanView: View {
                         MigrationTransferTimeline(rows: store.rows, caption: caption(for:))
                     }
                     .padding(.vertical, 1)
-                }
-
-                if let broadcastDisclosureHost = store.broadcastDisclosureHost {
-                    disclosureFooter(host: broadcastDisclosureHost)
-                        .padding(.top, 16)
                 }
 
                 ZashiButton(String(localizable: .generalConfirm)) {
@@ -131,21 +132,6 @@ struct MigrationTransferPlanView: View {
         return store.variant == .scheduled
             ? String(localizable: .migrationPlanEtaHoursIn(hoursFromNow))
             : String(localizable: .migrationPlanEtaHours(hoursFromNow))
-    }
-
-    // MARK: - Disclosure footer (MOB-1497 T2, R13 — sheet-skipped provider users)
-
-    /// Same visual shape as `MigrationStatusView.footerNote` (info icon + tertiary caption).
-    @ViewBuilder private func disclosureFooter(host: String) -> some View {
-        HStack(alignment: .top, spacing: 8) {
-            Asset.Assets.infoOutline.image
-                .zImage(size: 16, style: Design.Text.tertiary)
-
-            Text(String(localizable: .migrationTorSheetDisclosure(host)))
-                .zFont(size: 12, style: Design.Text.tertiary)
-                .multilineTextAlignment(.leading)
-                .fixedSize(horizontal: false, vertical: true)
-        }
     }
 
     // MARK: - Failure sheet

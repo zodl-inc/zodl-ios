@@ -209,6 +209,46 @@ import ComposableArchitecture
         }
     }
 
+    // MARK: - switchServerRequested -> teardown + path == .serverSwitch
+
+    /// MOB-1497 (T4): the custom-server Tor sheet's "Switch Server" delegate reaches Root as
+    /// `.migrationCoordFlow(.switchServerRequested)`. It must run the SAME teardown as `.flowFinished`
+    /// — spied here via the same `clearProvisionalNetworkSnapshot` / `clearAbandonedNetworkSnapshot`
+    /// closures the `flowFinished` tests spy — but land on Server Setup (`path == .serverSwitch`)
+    /// instead of closing to Home.
+    @Test func migrationCoordFlowSwitchServerRequestedTearsDownAndRoutesToServerSetup() async {
+        let clearProvisionalCalls = LockIsolated<[AccountUUID?]>([])
+        let clearAbandonedNetworkSnapshotCalls = LockIsolated<Int>(0)
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            var initialState = Root.State.initial
+            initialState.path = Root.State.Path.migrationCoordFlow
+
+            let store = Store(initialState: initialState) {
+                Root()
+            } withDependencies: {
+                baseNoOpDependencies(&$0)
+                $0.migrationManager.clearProvisionalNetworkSnapshot = { accountUUID in
+                    clearProvisionalCalls.withValue { $0.append(accountUUID) }
+                }
+                $0.migrationManager.clearAbandonedNetworkSnapshot = { _ in
+                    clearAbandonedNetworkSnapshotCalls.withValue { $0 += 1 }
+                }
+            }
+
+            store.send(.migrationCoordFlow(.switchServerRequested))
+            await waitForRootStore { store.state.path == Root.State.Path.serverSwitch }
+
+            // Routed to Server Setup, not closed to Home.
+            #expect(store.state.path == Root.State.Path.serverSwitch)
+            // Same teardown as `.flowFinished`: provisional cleared once, abandoned cleared once.
+            #expect(clearProvisionalCalls.value.count == 1)
+            await waitForRootStore { clearAbandonedNetworkSnapshotCalls.withValue { $0 } == 1 }
+            #expect(clearAbandonedNetworkSnapshotCalls.withValue { $0 } == 1)
+        }
+    }
+
     // MARK: - isSensitiveFlowActive
 
     /// Pure computed-property check: `.migrationCoordFlow` must classify as sensitive, alongside
