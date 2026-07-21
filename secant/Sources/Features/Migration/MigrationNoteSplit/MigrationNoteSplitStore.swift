@@ -254,7 +254,7 @@ struct MigrationNoteSplit {
                 // R7-review fix (Minor-3): see `MigrationSending`'s identical guard for the rationale.
                 guard state.failureKind == MigrationBroadcastFailureRoute.torFirstRunChoice else { return .none }
                 let usesFullBalanceCopy = migrationManager.migrationMode() == MigrationMode.immediate
-                state.alert = AlertState.offWarning(usesFullBalanceCopy: usesFullBalanceCopy)
+                state.alert = AlertState.migrationTorOffWarning(usesFullBalanceCopy: usesFullBalanceCopy, proceedAction: .offWarningProceedTapped)
                 return .none
 
             case .onAppear:
@@ -514,31 +514,5 @@ struct MigrationNoteSplit {
                 }
         }
         .cancellable(id: cancelId, cancelInFlight: true)
-    }
-}
-
-// MARK: - Alerts
-
-extension AlertState where Action == MigrationNoteSplit.Action {
-    /// R7-T3 (R3/R11, reused VERBATIM from `MigrationTorSheet.AlertState.offWarning`) — see
-    /// `MigrationSending`'s identical `AlertState.offWarning` for the doc (same string keys, same
-    /// gradual/full split, same copy source).
-    static func offWarning(usesFullBalanceCopy: Bool) -> AlertState {
-        AlertState {
-            TextState(String(localizable: .migrationTorSheetOffWarningTitle))
-        } actions: {
-            ButtonState(role: .destructive, action: .offWarningProceedTapped) {
-                TextState(String(localizable: .migrationTorSheetOffWarningProceed))
-            }
-            ButtonState(role: .cancel, action: .alert(.dismiss)) {
-                TextState(String(localizable: .migrationTorSheetOffWarningKeepOn))
-            }
-        } message: {
-            TextState(
-                usesFullBalanceCopy
-                    ? String(localizable: .migrationTorSheetOffWarningMessageFull)
-                    : String(localizable: .migrationTorSheetOffWarningMessageGradual)
-            )
-        }
     }
 }
