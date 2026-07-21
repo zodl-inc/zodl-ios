@@ -70,6 +70,9 @@ import ComposableArchitecture
             $0.userStoredPreferences.setAutomaticServerSelection = { prefs.automatic = $0 }
             $0.userStoredPreferences.setServer = { prefs.server = $0 }
             $0.transactionGuard = .testValue
+            // R8-T7 (#10): the automatic Save path now reads migration pinning too -> no active
+            // snapshots -> the filter is a no-op (byte-identical to pre-fix behavior).
+            $0.migrationManager.activeNetworkSnapshots = { [] }
         }
         store.exhaustivity = .off
 
@@ -114,6 +117,9 @@ import ComposableArchitecture
             $0.transactionGuard = .testValue
             $0.transactionGuard.acquire = { events.withValue { $0.append("acquire") } }
             $0.transactionGuard.release = { events.withValue { $0.append("release") } }
+            // R8-T7 (#10): the automatic Save path now reads migration pinning too -> no active
+            // snapshots -> the filter is a no-op (byte-identical to pre-fix behavior).
+            $0.migrationManager.activeNetworkSnapshots = { [] }
         }
         store.exhaustivity = .off
 
@@ -219,6 +225,189 @@ import ComposableArchitecture
         #expect(!benchmarked.value, "must not re-benchmark when a fresh result already exists")
         #expect(store.state.connectionMode == .automatic)
         #expect(store.state.automaticDisplayServer == "eu.zec.rocks:443")
+    }
+
+    // MARK: - MOB-1496 (R8-T7 #10): automatic Save migration pinning
+    //
+    // Companion to `AutoServerSelectionPinningTests.swift`'s coverage of the SAME
+    // `MigrationServerPinning.isCandidateAllowed` predicate, applied here to the Settings "Save"
+    // (automatic mode) path instead of the background auto-selection loop -- pre-fix, this path
+    // consulted no pinning at all (unlike `AutoServerSelectionLiveKey`, which already filtered).
+
+    @Test func automaticSaveWithActiveSnapshotFiltersTheFreshBenchmarkAwayFromTheBroadcastProvider() async {
+        // #10-a: active snapshot (broadcast provider = stardust) + automatic Save with a fresh
+        // benchmark (no cached recommendation) -> the applied endpoint is never on that provider.
+        let prefs = Prefs()
+        let capturedCandidates = LockIsolated<[LightWalletEndpoint]>([])
+        let active = snapshot(syncHost: "na.zec.rocks", broadcastHost: "us.zec.stardust.rest")
+
+        var initial = ServerSetup.State()
+        initial.connectionMode = .automatic
+        initial.initialConnectionMode = .manual // a real change so hasChanges is true
+        initial.network = .mainnet
+        // topKServers empty -> no cached recommendation -> forces the fresh-benchmark branch.
+
+        let store = TestStore(initialState: initial) {
+            ServerSetup()
+        } withDependencies: {
+            $0.mainQueue = .immediate
+            $0.zcashSDKEnvironment = .testnet
+            $0.zcashSDKEnvironment.endpoint = {
+                LightWalletEndpoint(address: "na.zec.rocks", port: 443, secure: true, streamingCallTimeoutInMillis: 0)
+            }
+            $0.sdkSynchronizer.switchToEndpoint = { _ in }
+            $0.sdkSynchronizer.evaluateBestOf = { candidates, _, _, _, _ in
+                capturedCandidates.setValue(candidates)
+                return [LightWalletEndpoint(address: "eu.zec.rocks", port: 443, secure: true, streamingCallTimeoutInMillis: 0)]
+            }
+            $0.userStoredPreferences.setAutomaticServerSelection = { prefs.automatic = $0 }
+            $0.userStoredPreferences.setServer = { prefs.server = $0 }
+            $0.transactionGuard = .testValue
+            $0.migrationManager.activeNetworkSnapshots = { [active] }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.setServerTapped)
+        await store.receive(\.switchSucceeded)
+
+        // Only the zecRocks family reached the benchmark -- the stardust family (incl. the
+        // snapshot's OWN broadcast provider) never does.
+        let candidateHosts = Set(capturedCandidates.value.map(\.host))
+        #expect(candidateHosts == Set(["zec.rocks", "na.zec.rocks", "sa.zec.rocks", "eu.zec.rocks", "ap.zec.rocks"]))
+        #expect(prefs.server?.host == "eu.zec.rocks")
+    }
+
+    @Test func automaticSaveDiscardsACachedRecommendationOnTheBroadcastProviderAndFallsBackToAFreshFilteredBenchmark() async {
+        // #10-b: a cached recommendation sitting on the broadcast provider must not be applied --
+        // it's discarded and a fresh FILTERED benchmark runs in its place.
+        let prefs = Prefs()
+        let evaluateBestOfCalls = LockIsolated<Int>(0)
+        let capturedCandidates = LockIsolated<[LightWalletEndpoint]>([])
+        let active = snapshot(syncHost: "na.zec.rocks", broadcastHost: "us.zec.stardust.rest")
+
+        var initial = ServerSetup.State()
+        initial.connectionMode = .automatic
+        initial.initialConnectionMode = .manual
+        // The cached recommendation (topKServers.first) IS the snapshot's own broadcast provider.
+        initial.topKServers = [ZcashSDKEnvironment.Server.hardcoded("us.zec.stardust.rest:443")]
+        initial.network = .mainnet
+
+        let store = TestStore(initialState: initial) {
+            ServerSetup()
+        } withDependencies: {
+            $0.mainQueue = .immediate
+            $0.zcashSDKEnvironment = .testnet
+            $0.zcashSDKEnvironment.endpoint = {
+                LightWalletEndpoint(address: "na.zec.rocks", port: 443, secure: true, streamingCallTimeoutInMillis: 0)
+            }
+            $0.sdkSynchronizer.switchToEndpoint = { _ in }
+            $0.sdkSynchronizer.evaluateBestOf = { candidates, _, _, _, _ in
+                evaluateBestOfCalls.withValue { $0 += 1 }
+                capturedCandidates.setValue(candidates)
+                return [LightWalletEndpoint(address: "eu.zec.rocks", port: 443, secure: true, streamingCallTimeoutInMillis: 0)]
+            }
+            $0.userStoredPreferences.setAutomaticServerSelection = { prefs.automatic = $0 }
+            $0.userStoredPreferences.setServer = { prefs.server = $0 }
+            $0.transactionGuard = .testValue
+            $0.migrationManager.activeNetworkSnapshots = { [active] }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.setServerTapped)
+        await store.receive(\.switchSucceeded)
+
+        #expect(evaluateBestOfCalls.value == 1, "the filtered-out cached recommendation must trigger a fresh benchmark")
+        #expect(!capturedCandidates.value.map(\.host).contains("us.zec.stardust.rest"))
+        #expect(prefs.server?.host == "eu.zec.rocks", "must never apply the cached recommendation's broadcast-provider host")
+    }
+
+    @Test func automaticSaveWithNoActiveSnapshotsBenchmarksTheFullUnfilteredCandidateList() async {
+        // #10-c: no active snapshots -> behavior unchanged (byte-identical to pre-fix): every
+        // built-in mainnet endpoint still reaches the benchmark, exactly like
+        // `AutoServerSelectionPinningTests.findBestServerWithNoActiveSnapshotsIsUnfiltered`.
+        let prefs = Prefs()
+        let capturedCandidates = LockIsolated<[LightWalletEndpoint]>([])
+
+        var initial = ServerSetup.State()
+        initial.connectionMode = .automatic
+        initial.initialConnectionMode = .manual
+        initial.network = .mainnet
+
+        let store = TestStore(initialState: initial) {
+            ServerSetup()
+        } withDependencies: {
+            $0.mainQueue = .immediate
+            $0.zcashSDKEnvironment = .testnet
+            $0.zcashSDKEnvironment.endpoint = {
+                LightWalletEndpoint(address: "zec.rocks", port: 443, secure: true, streamingCallTimeoutInMillis: 0)
+            }
+            $0.sdkSynchronizer.switchToEndpoint = { _ in }
+            $0.sdkSynchronizer.evaluateBestOf = { candidates, _, _, _, _ in
+                capturedCandidates.setValue(candidates)
+                return [LightWalletEndpoint(address: "na.zec.rocks", port: 443, secure: true, streamingCallTimeoutInMillis: 0)]
+            }
+            $0.userStoredPreferences.setAutomaticServerSelection = { prefs.automatic = $0 }
+            $0.userStoredPreferences.setServer = { prefs.server = $0 }
+            $0.transactionGuard = .testValue
+            $0.migrationManager.activeNetworkSnapshots = { [] }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.setServerTapped)
+        await store.receive(\.switchSucceeded)
+
+        #expect(Set(capturedCandidates.value.map(\.host)) == Set([
+            "zec.rocks", "na.zec.rocks", "sa.zec.rocks", "eu.zec.rocks", "ap.zec.rocks",
+            "us.zec.stardust.rest", "eu.zec.stardust.rest"
+        ]))
+        #expect(prefs.server?.host == "na.zec.rocks")
+    }
+
+    @Test func automaticSaveWithPinningLeavingNoCandidatesSkipsTheBenchmarkAndKeepsTheCurrentServer() async {
+        // #10-d: empty-after-filter mirrors `AutoServerSelectionLiveKey.findBestServer`'s "skip the
+        // round entirely" behavior -- a fully custom-family snapshot means no built-in mainnet host
+        // ever classifies into it, so filtering empties the whole candidate list (mirrors
+        // `AutoServerSelectionPinningTests.findBestServerSkipsTheRoundEntirelyWhenPinningLeavesNoCandidates`).
+        // The benchmark must never run, and Save falls back to the CURRENT active endpoint (a no-op
+        // pick) rather than an unfiltered default -- while the automatic-mode flip Save promised
+        // still commits.
+        let prefs = Prefs()
+        let evaluateBestOfCalls = LockIsolated<Int>(0)
+        let switched = LockIsolated<LightWalletEndpoint?>(nil)
+        let active = snapshot(syncHost: "myserver.example.com", broadcastHost: "myserver.example.com")
+
+        var initial = ServerSetup.State()
+        initial.connectionMode = .automatic
+        initial.initialConnectionMode = .manual
+        initial.network = .mainnet
+
+        let store = TestStore(initialState: initial) {
+            ServerSetup()
+        } withDependencies: {
+            $0.mainQueue = .immediate
+            $0.zcashSDKEnvironment = .testnet
+            $0.zcashSDKEnvironment.endpoint = {
+                LightWalletEndpoint(address: "na.zec.rocks", port: 443, secure: true, streamingCallTimeoutInMillis: 0)
+            }
+            $0.sdkSynchronizer.switchToEndpoint = { switched.setValue($0) }
+            $0.sdkSynchronizer.evaluateBestOf = { _, _, _, _, _ in
+                evaluateBestOfCalls.withValue { $0 += 1 }
+                return [LightWalletEndpoint(address: "eu.zec.rocks", port: 443, secure: true, streamingCallTimeoutInMillis: 0)]
+            }
+            $0.userStoredPreferences.setAutomaticServerSelection = { prefs.automatic = $0 }
+            $0.userStoredPreferences.setServer = { prefs.server = $0 }
+            $0.transactionGuard = .testValue
+            $0.migrationManager.activeNetworkSnapshots = { [active] }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.setServerTapped)
+        await store.receive(\.switchSucceeded)
+
+        #expect(evaluateBestOfCalls.value == 0, "the benchmark must never run once pinning empties the candidate set")
+        #expect(switched.value == nil, "no endpoint switch -- the current server IS the mirrored fallback")
+        #expect(prefs.automatic == true, "the mode flip Save promised must still commit")
+        #expect(prefs.server?.host == "na.zec.rocks", "falls back to the CURRENT active endpoint, never an unpinned pick")
     }
 
     // MARK: - MOB-1496 (W4): manual-switch privacy warning
