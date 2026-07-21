@@ -11662,6 +11662,40 @@
         }
       }
     },
+    "migrationSending.waitingBody" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ZODL paused syncing and will send in a moment. Sending and syncing are kept apart to protect your privacy."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ZODL pausó la sincronización y enviará en un momento. El envío y la sincronización se mantienen separados para proteger tu privacidad."
+          }
+        }
+      }
+    },
+    "migrationSending.waitingTitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Preparing a private send window"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Preparando una ventana de envío privada"
+          }
+        }
+      }
+    },
     "migrationStatus.desc" : {
       "extractionState" : "manual",
       "localizations" : {

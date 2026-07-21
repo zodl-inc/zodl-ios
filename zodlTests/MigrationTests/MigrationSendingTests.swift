@@ -729,4 +729,367 @@ import ComposableArchitecture
 
         #expect(refreshMigrationSyncGateCalls.value == 1)
     }
+
+    // MARK: - R8-T6 (V8 fix): Send-now lane — silence-window gate-check/wait
+
+    @MainActor @Test func entersViaSendNowDefaultsFalseButCanBeSetTrueViaInit() async {
+        let defaultState = MigrationSending.State()
+        let sendNowState = MigrationSending.State(entersViaSendNow: true)
+
+        #expect(defaultState.entersViaSendNow == false)
+        #expect(sendNowState.entersViaSendNow == true)
+        // Unrelated defaults are untouched by the new trailing init parameter.
+        #expect(sendNowState.phase == MigrationSending.State.Phase.sending)
+    }
+
+    /// Order spy (mirrors `onAppearWhileSyncingStopsSyncBeforeExecutingScheduledTransfer`'s
+    /// idiom): `stopSyncBeforeMigrationBroadcast()` fires BEFORE `sendGate` is ever read. `isSyncing`
+    /// is call-counted (true once) so `executeNextTransfer`'s OWN later stop call (once the gate
+    /// resolves `.allowed`) is a harmless idempotent no-op rather than a second "stop" log entry.
+    @MainActor @Test func onAppearWithSendNowLaneStopsSyncBeforeReadingSendGate() async {
+        let callOrder = LockIsolated<[String]>([])
+        let isSyncingCallCount = LockIsolated<Int>(0)
+        let state = MigrationSending.State(totalCount: 1, entersViaSendNow: true)
+        let store = TestStore(initialState: state) {
+            MigrationSending()
+        } withDependencies: {
+            $0.sdkSynchronizer = SDKSynchronizerClient.mocked(
+                stop: { callOrder.withValue { $0.append("stop") } },
+                isSyncing: {
+                    isSyncingCallCount.withValue { count -> Bool in
+                        count += 1
+                        return count == 1
+                    }
+                }
+            )
+            $0.migrationManager.sendGate = {
+                callOrder.withValue { $0.append("sendGate") }
+                return .allowed
+            }
+            $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in MigrationTransferResult.success(txId: "tx-order-spy") }
+            $0.migrationManager.recordTransferBroadcast = { _, _ in }
+            $0.migrationBGScheduler.scheduleNextWindow = { }
+        }
+
+        await store.send(.onAppear)
+        await store.receive(\.sendNowGateResolved)
+        await store.receive(\.transferResult) {
+            $0.sentCount = 1
+            $0.txId = "tx-order-spy"
+        }
+        await store.receive(\.allTransfersSent) {
+            $0.phase = .success
+        }
+
+        #expect(callOrder.value == ["stop", "sendGate"])
+    }
+
+    /// `.allowed` -> broadcasts exactly as today, no WAITING phase ever shows.
+    @MainActor @Test func onAppearWithSendNowLaneAndAllowedGateBroadcastsImmediatelyWithoutWaiting() async {
+        let store = TestStore(initialState: MigrationSending.State(totalCount: 1, entersViaSendNow: true)) {
+            MigrationSending()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in MigrationTransferResult.success(txId: "tx-send-now") }
+            $0.migrationManager.sendGate = { .allowed }
+            $0.migrationManager.recordTransferBroadcast = { _, _ in }
+            $0.migrationBGScheduler.scheduleNextWindow = { }
+        }
+
+        await store.send(.onAppear)
+        await store.receive(\.sendNowGateResolved)
+        await store.receive(\.transferResult) {
+            $0.sentCount = 1
+            $0.txId = "tx-send-now"
+        }
+        await store.receive(\.allTransfersSent) {
+            $0.phase = .success
+        }
+    }
+
+    /// `.waitUntil(future)` -> enters `.waiting` with the gate's own target, and does NOT broadcast.
+    @MainActor @Test func onAppearWithSendNowLaneAndWaitUntilGateEntersWaitingWithoutBroadcasting() async {
+        @Shared(.inMemory(.migrationSendWaitActive)) var migrationSendWaitActive: Bool = false
+        $migrationSendWaitActive.withLock { $0 = false }
+
+        let clock = TestClock()
+        let executeCalls = LockIsolated<Int>(0)
+        let target = Date().addingTimeInterval(543)
+        let store = TestStore(initialState: MigrationSending.State(totalCount: 1, entersViaSendNow: true)) {
+            MigrationSending()
+        } withDependencies: {
+            $0.continuousClock = clock
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in
+                executeCalls.withValue { $0 += 1 }
+                return MigrationTransferResult.success(txId: "should-not-broadcast")
+            }
+            $0.migrationManager.sendGate = { .waitUntil(target) }
+            $0.migrationManager.refreshMigrationSyncGate = { }
+        }
+
+        await store.send(.onAppear)
+        await store.receive(\.sendNowGateResolved) {
+            $0.phase = .waiting(target: target)
+        }
+
+        #expect(executeCalls.value == 0)
+        #expect(migrationSendWaitActive == true)
+
+        // Drains the pending wait effect cleanly (a real, in-context user action).
+        await store.send(.waitCancelTapped)
+        await store.receive(.delegate(.closed))
+    }
+
+    /// Clock advance past the target -> exactly one broadcast. `sendGate` is call-counted: the
+    /// FIRST read (right after the tap) is the normal V8 shape (`.waitUntil`); the SECOND read (at
+    /// fire time, once the target has genuinely elapsed) is `.allowed` — a real gate keyed to the
+    /// SAME target would read the same way.
+    @MainActor @Test func onAppearWithSendNowLaneWaitUntilTargetElapsedBroadcastsExactlyOnce() async {
+        let clock = TestClock()
+        let executeCalls = LockIsolated<Int>(0)
+        let sendGateCallCount = LockIsolated<Int>(0)
+        let targetOffset: TimeInterval = 600
+        let target = Date().addingTimeInterval(targetOffset)
+        let store = TestStore(initialState: MigrationSending.State(totalCount: 1, entersViaSendNow: true)) {
+            MigrationSending()
+        } withDependencies: {
+            $0.continuousClock = clock
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in
+                executeCalls.withValue { $0 += 1 }
+                return MigrationTransferResult.success(txId: "tx-after-wait")
+            }
+            $0.migrationManager.sendGate = {
+                sendGateCallCount.withValue { count -> MigrationSendGate in
+                    count += 1
+                    return count == 1 ? .waitUntil(target) : .allowed
+                }
+            }
+            $0.migrationManager.recordTransferBroadcast = { _, _ in }
+            $0.migrationBGScheduler.scheduleNextWindow = { }
+        }
+
+        await store.send(.onAppear)
+        await store.receive(\.sendNowGateResolved) {
+            $0.phase = .waiting(target: target)
+        }
+
+        #expect(executeCalls.value == 0)
+
+        await clock.advance(by: .seconds(targetOffset))
+        await store.receive(\.waitFired)
+        await store.receive(\.sendNowGateResolved) {
+            $0.phase = .sending
+        }
+        await store.receive(\.transferResult) {
+            $0.sentCount = 1
+            $0.txId = "tx-after-wait"
+        }
+        await store.receive(\.allTransfersSent) {
+            $0.phase = .success
+        }
+
+        #expect(executeCalls.value == 1)
+    }
+
+    /// `.syncRequired` immediately after our own stop (a raced settle) -> a single bounded retry,
+    /// then the `.waitUntil` path with the fresh value.
+    @MainActor @Test func onAppearWithSendNowLaneSyncRequiredSettlesToWaitUntilAfterSingleRetry() async {
+        let clock = TestClock()
+        let sendGateCallCount = LockIsolated<Int>(0)
+        let target = Date().addingTimeInterval(120)
+        let store = TestStore(initialState: MigrationSending.State(totalCount: 1, entersViaSendNow: true)) {
+            MigrationSending()
+        } withDependencies: {
+            $0.continuousClock = clock
+            $0.sdkSynchronizer = .noOp
+            $0.migrationManager.sendGate = {
+                sendGateCallCount.withValue { count -> MigrationSendGate in
+                    count += 1
+                    return count == 1 ? .syncRequired : .waitUntil(target)
+                }
+            }
+            $0.migrationManager.refreshMigrationSyncGate = { }
+        }
+
+        await store.send(.onAppear)
+        // Settles the single retry delay (a fixed small duration internal to the store) — advancing
+        // generously avoids coupling this test to the exact constant.
+        await clock.advance(by: .seconds(1))
+        await store.receive(\.sendNowGateResolved) {
+            $0.phase = .waiting(target: target)
+        }
+
+        #expect(sendGateCallCount.value == 2)
+
+        await store.send(.waitCancelTapped)
+        await store.receive(.delegate(.closed))
+    }
+
+    /// A `.syncRequired` that's STILL there after the single settle retry (residual block) never
+    /// broadcasts — it falls back to a full buffer-duration wait from now, rather than spinning or
+    /// treating it as clear.
+    @MainActor @Test func onAppearWithSendNowLaneSyncRequiredPersistingAfterRetryFallsBackToBufferDurationWait() async {
+        let clock = TestClock()
+        let bufferDuration: TimeInterval = 600
+        let beforeCall = Date()
+        let store = TestStore(initialState: MigrationSending.State(totalCount: 1, entersViaSendNow: true)) {
+            MigrationSending()
+        } withDependencies: {
+            $0.continuousClock = clock
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.migrationPrivacySyncBufferDuration = { bufferDuration }
+            $0.migrationManager.sendGate = { .syncRequired }
+            $0.migrationManager.refreshMigrationSyncGate = { }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.onAppear)
+        await clock.advance(by: .seconds(1))
+        await store.receive(\.sendNowGateResolved)
+
+        guard case .waiting(let target) = store.state.phase else {
+            Issue.record("Expected .waiting phase with a buffer-duration fallback target")
+            return
+        }
+        #expect(abs(target.timeIntervalSince(beforeCall) - bufferDuration) < 5)
+
+        await store.send(.waitCancelTapped)
+        await store.receive(.delegate(.closed))
+    }
+
+    /// Fire-time re-check finding the gate STILL blocked (not `.allowed`) -> re-enters `.waiting`
+    /// against the FRESH target, never broadcasting.
+    @MainActor @Test func waitFiredWithGateStillBlockedReEntersWaitAgainstFreshTarget() async {
+        let clock = TestClock()
+        let executeCalls = LockIsolated<Int>(0)
+        let sendGateCallCount = LockIsolated<Int>(0)
+        let firstTarget = Date().addingTimeInterval(300)
+        let secondTarget = Date().addingTimeInterval(900)
+        let store = TestStore(initialState: MigrationSending.State(totalCount: 1, entersViaSendNow: true)) {
+            MigrationSending()
+        } withDependencies: {
+            $0.continuousClock = clock
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in
+                executeCalls.withValue { $0 += 1 }
+                return MigrationTransferResult.success(txId: "should-not-broadcast")
+            }
+            $0.migrationManager.sendGate = {
+                sendGateCallCount.withValue { count -> MigrationSendGate in
+                    count += 1
+                    return count == 1 ? .waitUntil(firstTarget) : .waitUntil(secondTarget)
+                }
+            }
+            $0.migrationManager.refreshMigrationSyncGate = { }
+        }
+
+        await store.send(.onAppear)
+        await store.receive(\.sendNowGateResolved) {
+            $0.phase = .waiting(target: firstTarget)
+        }
+
+        await clock.advance(by: .seconds(300))
+        await store.receive(\.waitFired)
+        await store.receive(\.sendNowGateResolved) {
+            $0.phase = .waiting(target: secondTarget)
+        }
+
+        #expect(executeCalls.value == 0)
+
+        await store.send(.waitCancelTapped)
+        await store.receive(.delegate(.closed))
+    }
+
+    /// Cancel mid-wait: nothing ever broadcasts, the gate feed is nudged to resume sync, the hold
+    /// flag clears, and it closes exactly like the success screen's Close (`.delegate(.closed)`).
+    @MainActor @Test func waitCancelTappedDuringWaitNeverBroadcastsNudgesGateClearsHoldAndClosesDelegate() async {
+        @Shared(.inMemory(.migrationSendWaitActive)) var migrationSendWaitActive: Bool = false
+        $migrationSendWaitActive.withLock { $0 = true }
+
+        let clock = TestClock()
+        let executeCalls = LockIsolated<Int>(0)
+        let refreshMigrationSyncGateCalls = LockIsolated<Int>(0)
+        var state = MigrationSending.State(totalCount: 1, entersViaSendNow: true)
+        state.phase = .waiting(target: Date().addingTimeInterval(400))
+        let store = TestStore(initialState: state) {
+            MigrationSending()
+        } withDependencies: {
+            $0.continuousClock = clock
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in
+                executeCalls.withValue { $0 += 1 }
+                return MigrationTransferResult.success(txId: "should-not-broadcast")
+            }
+            $0.migrationManager.refreshMigrationSyncGate = { refreshMigrationSyncGateCalls.withValue { $0 += 1 } }
+        }
+
+        await store.send(.waitCancelTapped)
+        await store.receive(.delegate(.closed))
+
+        #expect(executeCalls.value == 0)
+        #expect(refreshMigrationSyncGateCalls.value == 1)
+        #expect(migrationSendWaitActive == false)
+    }
+
+    // MARK: - R8-T6: dust / manual lanes unchanged (never consult sendGate, no WAITING phase)
+
+    @MainActor @Test func onAppearWithDustLaneNeverConsultsSendGateOrEntersWaiting() async {
+        let sendGateCalls = LockIsolated<Int>(0)
+        let state = MigrationSending.State(totalCount: 1, isDustLane: true)
+        let store = TestStore(initialState: state) {
+            MigrationSending()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.migrateMigrationDust = { _, _, _ in MigrationTransferResult.success(txId: "tx-dust") }
+            $0.migrationManager.recordTransferBroadcast = { _, _ in }
+            $0.migrationBGScheduler.scheduleNextWindow = { }
+            $0.migrationManager.sendGate = {
+                sendGateCalls.withValue { $0 += 1 }
+                return .waitUntil(Date().addingTimeInterval(600))
+            }
+            withDependenciesUSKDerivable(&$0)
+        }
+
+        await store.send(.onAppear)
+        await store.receive(\.transferResult) {
+            $0.sentCount = 1
+            $0.txId = "tx-dust"
+        }
+        await store.receive(\.allTransfersSent) {
+            $0.phase = .success
+        }
+
+        #expect(sendGateCalls.value == 0)
+    }
+
+    /// The default (non-dust, non-send-now) lane — immediate/manual/plan-first review, Keystone —
+    /// stays exactly as it was: never consults `sendGate()`, never shows `.waiting`.
+    @MainActor @Test func onAppearWithoutSendNowLaneNeverConsultsSendGateOrEntersWaiting() async {
+        let sendGateCalls = LockIsolated<Int>(0)
+        let store = TestStore(initialState: MigrationSending.State(totalCount: 1)) {
+            MigrationSending()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in MigrationTransferResult.success(txId: "tx-manual") }
+            $0.migrationManager.recordTransferBroadcast = { _, _ in }
+            $0.migrationBGScheduler.scheduleNextWindow = { }
+            $0.migrationManager.sendGate = {
+                sendGateCalls.withValue { $0 += 1 }
+                return .waitUntil(Date().addingTimeInterval(600))
+            }
+        }
+
+        await store.send(.onAppear)
+        await store.receive(\.transferResult) {
+            $0.sentCount = 1
+            $0.txId = "tx-manual"
+        }
+        await store.receive(\.allTransfersSent) {
+            $0.phase = .success
+        }
+
+        #expect(sendGateCalls.value == 0)
+    }
 }

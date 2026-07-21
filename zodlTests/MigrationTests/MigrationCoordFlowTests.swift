@@ -137,7 +137,6 @@ import ComposableArchitecture
             MigrationCoordFlow()
         } withDependencies: {
             $0.migrationManager.reentryRoute = { .statusProgress }
-            $0.migrationManager.sendGate = { .allowed }
             $0.sdkSynchronizer = .noOp
             // MOB-1496 (W3 review fix C): a non-10-minute value (900s = 15 min) so a field left at
             // its zero default (the "about 0 mins" footer-flash regression) would visibly fail.
@@ -244,7 +243,6 @@ import ComposableArchitecture
             MigrationCoordFlow()
         } withDependencies: {
             $0.migrationManager.reentryRoute = { .statusResume }
-            $0.migrationManager.sendGate = { .syncRequired }
             // `latestState` is a non-`@DependencyClient` `let` field (no per-field override) — replace
             // the whole client via `.mocked(...)` (same defaults as `.noOp` for every other field, per
             // `RootMigrationBackgroundTests`' identical precedent), then layer the `var` overrides below.
@@ -272,7 +270,9 @@ import ComposableArchitecture
         #expect(statusState.isFlowRoot == true)
         #expect(statusState.stalledNumber == 2)
         #expect(statusState.stalledHoursAgo == 5)
-        #expect(statusState.isSendNowDisabled == true)
+        // R8-T6: due-ness alone governs the CTA now — row "1" is `.overdue`, so it's enabled
+        // regardless of the gate (no longer consulted by this hydration path at all).
+        #expect(statusState.isSendNowDisabled == false)
         #expect(statusState.syncPrivacyBufferMinutes == 15)
     }
 
@@ -299,7 +299,6 @@ import ComposableArchitecture
             MigrationCoordFlow()
         } withDependencies: {
             $0.migrationManager.reentryRoute = { .statusResume }
-            $0.migrationManager.sendGate = { .syncRequired }
             // `.noOp`'s `latestState` already defaults to `.zero` (tip 0, pre-first-sync) — exactly
             // the case under test, so no override is needed here.
             $0.sdkSynchronizer = .noOp
@@ -340,7 +339,6 @@ import ComposableArchitecture
             MigrationCoordFlow()
         } withDependencies: {
             $0.migrationManager.reentryRoute = { .statusResume }
-            $0.migrationManager.sendGate = { .allowed }
             $0.sdkSynchronizer = .noOp
             $0.sdkSynchronizer.migrationPrivacySyncBufferDuration = { 900 }
             $0.sdkSynchronizer.rescheduleOverdueMigrationTransfer = { _ in
@@ -1949,7 +1947,6 @@ import ComposableArchitecture
         let store = TestStore(initialState: state) {
             MigrationCoordFlow()
         } withDependencies: {
-            $0.migrationManager.sendGate = { .allowed }
             $0.sdkSynchronizer = .noOp
             $0.migrationManager.migrationTransfers = { _ in rows }
             $0.migrationManager.migrationSummary = { _ in summary }
@@ -2001,6 +1998,9 @@ import ComposableArchitecture
             return
         }
         #expect(sendingState.totalCount == 1)
+        // R8-T6: the push site threads the Send-now lane context so `MigrationSendingStore` routes
+        // through the silence-window gate-check/wait flow instead of broadcasting immediately.
+        #expect(sendingState.entersViaSendNow == true)
     }
 
     @MainActor @Test func sendingClosedAfterSendNowPopsBackToStatusWithRefreshedRows() async {
