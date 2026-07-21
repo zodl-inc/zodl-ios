@@ -567,9 +567,12 @@ import ComposableArchitecture
         }
     }
 
-    /// A successful broadcast that DOES complete the migration: posts `.migrationComplete`
-    /// (never `.transferComplete`), cancels everything instead of re-arming, and completes the
-    /// session.
+    /// A successful broadcast that DOES complete the migration, with NO remainder pending (the
+    /// once-per-transition evaluation inside `reconcile()` found genuinely nothing left — see
+    /// `MigrationManagerImpl.evaluateMigrationRemainder`'s doc): posts `.migrationComplete` (never
+    /// `.transferComplete`), cancels everything instead of re-arming, and completes the session.
+    /// Its remainder-pending sibling is
+    /// `sendSuccessToCompleteWithRemainderPendingNotifiesMigrationBatchCompleteAndCancelsAll` below.
     @Test func sendSuccessToCompleteNotifiesMigrationCompleteAndCancelsAll() async {
         let notifications = LockIsolated<[MigrationNotification]>([])
         let notifiedAccountUUIDs = LockIsolated<[String?]>([])
@@ -601,6 +604,9 @@ import ComposableArchitecture
                     }
                     return call == 1 ? MigrationState.inProgress(Self.placeholderProgress) : MigrationState.complete
                 }
+                // MOB-1496: explicit (`baseNoOpDependencies` already defaults this to `false`) —
+                // pins THIS test as the remainder-false half of the completion matrix.
+                $0.migrationManager.isMigrationRemainderPending = { _ in false }
                 $0.migrationBGScheduler.scheduleNextWindow = { scheduleNextWindowCalls.withValue { $0 += 1 } }
                 $0.migrationBGScheduler.cancelAll = { cancelAllCalls.withValue { $0 += 1 } }
                 $0.userNotifications.scheduleMigrationNotification = { notification, _, accountUUID in
@@ -615,6 +621,57 @@ import ComposableArchitecture
 
             #expect(notifications.withValue { $0 } == [MigrationNotification.migrationComplete])
             // R8-T5 (S4-a): attributed to the account whose broadcast just completed the migration.
+            #expect(notifiedAccountUUIDs.withValue { $0 } == [Data(Self.walletAccount().id.id).hexEncodedString()])
+            #expect(scheduleNextWindowCalls.withValue { $0 } == 0)
+            #expect(cancelAllCalls.withValue { $0 } == 1)
+            #expect(completeCalls.withValue { $0 } == [true])
+        }
+    }
+
+    /// The remainder-pending sibling of `sendSuccessToCompleteNotifiesMigrationCompleteAndCancelsAll`
+    /// above: an otherwise IDENTICAL landed broadcast that completes the stored run, but where the
+    /// once-per-transition remainder evaluation found a genuinely non-empty fresh plan
+    /// (`isMigrationRemainderPending == true`). MOB-1496: posts `.migrationBatchComplete` instead of
+    /// `.migrationComplete` — and still `cancelAll`s (nothing is broadcastable until the user
+    /// consents to a NEW run; that run's own confirm/commit is what re-arms scheduling).
+    @Test func sendSuccessToCompleteWithRemainderPendingNotifiesMigrationBatchCompleteAndCancelsAll() async {
+        let notifications = LockIsolated<[MigrationNotification]>([])
+        let notifiedAccountUUIDs = LockIsolated<[String?]>([])
+        let scheduleNextWindowCalls = LockIsolated<Int>(0)
+        let cancelAllCalls = LockIsolated<Int>(0)
+        let completeCalls = LockIsolated<[Bool]>([])
+        let getMigrationStateCallCount = LockIsolated<Int>(0)
+
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let store = Store(initialState: Self.selectedAccountState()) {
+                Root()
+            } withDependencies: {
+                baseNoOpDependencies(&$0)
+                $0.sdkSynchronizer.rescheduleOverdueMigrationTransfer = { _ in Self.proposal(nextExecutableAfterHeight: 100) }
+                $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in MigrationTransferResult.success(txId: "tx-final") }
+                $0.sdkSynchronizer.getMigrationState = { _ in
+                    let call = getMigrationStateCallCount.withValue { count -> Int in
+                        count += 1
+                        return count
+                    }
+                    return call == 1 ? MigrationState.inProgress(Self.placeholderProgress) : MigrationState.complete
+                }
+                $0.migrationManager.isMigrationRemainderPending = { _ in true }
+                $0.migrationBGScheduler.scheduleNextWindow = { scheduleNextWindowCalls.withValue { $0 += 1 } }
+                $0.migrationBGScheduler.cancelAll = { cancelAllCalls.withValue { $0 += 1 } }
+                $0.userNotifications.scheduleMigrationNotification = { notification, _, accountUUID in
+                    notifications.withValue { $0.append(notification) }
+                    notifiedAccountUUIDs.withValue { $0.append(accountUUID) }
+                }
+            }
+
+            let handle = MigrationBGSessionHandle(rawTask: nil) { success in completeCalls.withValue { $0.append(success) } }
+            store.send(.initialization(.migrationBackgroundSession(handle)))
+            await waitForRootStore { completeCalls.withValue { !$0.isEmpty } }
+
+            #expect(notifications.withValue { $0 } == [MigrationNotification.migrationBatchComplete])
             #expect(notifiedAccountUUIDs.withValue { $0 } == [Data(Self.walletAccount().id.id).hexEncodedString()])
             #expect(scheduleNextWindowCalls.withValue { $0 } == 0)
             #expect(cancelAllCalls.withValue { $0 } == 1)
@@ -2525,6 +2582,11 @@ private func baseNoOpDependencies(_ values: inout DependencyValues) {
     values.migrationManager.setManualDelivery = { _ in }
     values.migrationManager.setNetworkPrivacyOptions = { _ in }
     values.migrationManager.acknowledgeComplete = { _ in }
+    // MOB-1496: default false — the existing single-account/multi-account "landed broadcast
+    // reaches .complete" tests below all assume the plain `.migrationComplete` notification
+    // (no remainder pending); the one test that DOES want `.migrationBatchComplete` overrides
+    // this back to `true` locally.
+    values.migrationManager.isMigrationRemainderPending = { _ in false }
     values.migrationManager.reconcile = { }
     values.migrationManager.clearAbandonedNetworkSnapshot = { _ in }
     values.migrationManager.recordSyncCompleted = { }

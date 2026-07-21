@@ -28,6 +28,7 @@ struct MigrationManagerTests {
             isNextTransferDue: false,
             orchardBalance: Zatoshi(1),
             isCompleteAcknowledged: false,
+            isMigrationRemainderPending: false,
             transferRows: []
         )
 
@@ -43,6 +44,7 @@ struct MigrationManagerTests {
             isNextTransferDue: false,
             orchardBalance: Zatoshi.zero,
             isCompleteAcknowledged: false,
+            isMigrationRemainderPending: false,
             transferRows: []
         )
 
@@ -58,6 +60,7 @@ struct MigrationManagerTests {
             isNextTransferDue: false,
             orchardBalance: Zatoshi(500),
             isCompleteAcknowledged: false,
+            isMigrationRemainderPending: false,
             transferRows: []
         )
 
@@ -73,6 +76,7 @@ struct MigrationManagerTests {
             isNextTransferDue: false,
             orchardBalance: Zatoshi.zero,
             isCompleteAcknowledged: false,
+            isMigrationRemainderPending: false,
             transferRows: []
         )
 
@@ -88,6 +92,7 @@ struct MigrationManagerTests {
             isNextTransferDue: false,
             orchardBalance: Zatoshi.zero,
             isCompleteAcknowledged: false,
+            isMigrationRemainderPending: false,
             transferRows: []
         )
 
@@ -110,6 +115,7 @@ struct MigrationManagerTests {
             isNextTransferDue: true,
             orchardBalance: Zatoshi.zero,
             isCompleteAcknowledged: false,
+            isMigrationRemainderPending: false,
             transferRows: []
         )
 
@@ -132,6 +138,7 @@ struct MigrationManagerTests {
             isNextTransferDue: false,
             orchardBalance: Zatoshi.zero,
             isCompleteAcknowledged: false,
+            isMigrationRemainderPending: false,
             transferRows: []
         )
 
@@ -154,6 +161,7 @@ struct MigrationManagerTests {
             isNextTransferDue: true,
             orchardBalance: Zatoshi.zero,
             isCompleteAcknowledged: false,
+            isMigrationRemainderPending: false,
             transferRows: []
         )
 
@@ -180,6 +188,7 @@ struct MigrationManagerTests {
             isNextTransferDue: false,
             orchardBalance: Zatoshi.zero,
             isCompleteAcknowledged: false,
+            isMigrationRemainderPending: false,
             transferRows: []
         )
 
@@ -205,6 +214,7 @@ struct MigrationManagerTests {
             isNextTransferDue: false,
             orchardBalance: Zatoshi.zero,
             isCompleteAcknowledged: false,
+            isMigrationRemainderPending: false,
             transferRows: []
         )
 
@@ -229,6 +239,7 @@ struct MigrationManagerTests {
             isNextTransferDue: true,
             orchardBalance: Zatoshi.zero,
             isCompleteAcknowledged: false,
+            isMigrationRemainderPending: false,
             transferRows: []
         )
 
@@ -246,6 +257,7 @@ struct MigrationManagerTests {
             isNextTransferDue: false,
             orchardBalance: Zatoshi(1),
             isCompleteAcknowledged: false,
+            isMigrationRemainderPending: false,
             transferRows: []
         )
 
@@ -261,6 +273,7 @@ struct MigrationManagerTests {
             isNextTransferDue: false,
             orchardBalance: Zatoshi.zero,
             isCompleteAcknowledged: false,
+            isMigrationRemainderPending: false,
             transferRows: []
         )
 
@@ -276,6 +289,7 @@ struct MigrationManagerTests {
             isNextTransferDue: false,
             orchardBalance: Zatoshi.zero,
             isCompleteAcknowledged: false,
+            isMigrationRemainderPending: false,
             transferRows: []
         )
 
@@ -299,6 +313,7 @@ struct MigrationManagerTests {
             isNextTransferDue: false,
             orchardBalance: Zatoshi.zero,
             isCompleteAcknowledged: false,
+            isMigrationRemainderPending: false,
             transferRows: rows
         )
 
@@ -319,6 +334,7 @@ struct MigrationManagerTests {
             isNextTransferDue: false,
             orchardBalance: Zatoshi.zero,
             isCompleteAcknowledged: false,
+            isMigrationRemainderPending: false,
             transferRows: rows
         )
 
@@ -334,11 +350,19 @@ struct MigrationManagerTests {
             isNextTransferDue: false,
             orchardBalance: Zatoshi.zero,
             isCompleteAcknowledged: false,
+            isMigrationRemainderPending: false,
             transferRows: []
         )
 
         #expect(variant == MigrationBannerVariant.transfersExpired(first: 1, last: 0))
     }
+
+    // MOB-1496: `.complete` is now per-RUN (the stored run is fully mined), never "the whole
+    // migration is done" — the 3-way matrix below pins the full `.complete` arm: unacknowledged
+    // always shows `.complete` regardless of any remainder verdict (the user hasn't even seen the
+    // Complete screen yet); acknowledged branches on `isMigrationRemainderPending` — no remainder
+    // -> nil (nothing left, banner gone), remainder pending -> `.required` (re-offers the banner,
+    // same variant a fresh pre-run balance would show, with no `orchardBalance` predicate needed).
 
     @Test func completeUnacknowledgedIsComplete() {
         let variant = MigrationDerivations.bannerVariant(
@@ -349,13 +373,15 @@ struct MigrationManagerTests {
             isNextTransferDue: false,
             orchardBalance: Zatoshi.zero,
             isCompleteAcknowledged: false,
+            // Irrelevant while unacknowledged — the guard short-circuits before this is read.
+            isMigrationRemainderPending: true,
             transferRows: []
         )
 
         #expect(variant == MigrationBannerVariant.complete)
     }
 
-    @Test func completeAcknowledgedIsNil() {
+    @Test func completeAcknowledgedWithNoRemainderPendingIsNil() {
         let variant = MigrationDerivations.bannerVariant(
             isIronwoodActivated: true,
             state: MigrationState.complete,
@@ -364,10 +390,29 @@ struct MigrationManagerTests {
             isNextTransferDue: false,
             orchardBalance: Zatoshi.zero,
             isCompleteAcknowledged: true,
+            isMigrationRemainderPending: false,
             transferRows: []
         )
 
         #expect(variant == nil)
+    }
+
+    @Test func completeAcknowledgedWithRemainderPendingIsRequired() {
+        let variant = MigrationDerivations.bannerVariant(
+            isIronwoodActivated: true,
+            state: MigrationState.complete,
+            hasOverdue: false,
+            isManualDelivery: false,
+            isNextTransferDue: false,
+            // A stale/irrelevant zero balance — this arm intentionally does NOT consult
+            // `orchardBalance` (the engine's own fresh propose is the source of truth here).
+            orchardBalance: Zatoshi.zero,
+            isCompleteAcknowledged: true,
+            isMigrationRemainderPending: true,
+            transferRows: []
+        )
+
+        #expect(variant == MigrationBannerVariant.required)
     }
 
     @Test func acknowledgedFlagIsIgnoredOutsideCompleteState() {
@@ -384,6 +429,7 @@ struct MigrationManagerTests {
             isNextTransferDue: false,
             orchardBalance: Zatoshi(1),
             isCompleteAcknowledged: true,
+            isMigrationRemainderPending: false,
             transferRows: []
         )
 
@@ -401,6 +447,7 @@ struct MigrationManagerTests {
             isNextTransferDue: false,
             orchardBalance: Zatoshi(1),
             isCompleteAcknowledged: false,
+            isMigrationRemainderPending: false,
             transferRows: []
         )
 
@@ -1166,6 +1213,12 @@ struct MigrationManagerTests {
     // `reconcile()` is now `async` and needs a selected account (`@Shared(.inMemory(...))`) to
     // resolve anything at all — with no Keystone account in `walletAccounts`, only that one account
     // is refreshed, keeping these tests' single-account shape.
+    //
+    // MOB-1496 (remainder): `reconcileClearsAcknowledgedFlagWhenStateIsNotComplete` below also
+    // seeds and asserts the sibling `remainderPending` clear — same transition, same
+    // `clearRemainderPending` call site right beside `clearAcknowledgedComplete` — rather than a
+    // separate parallel test. The evaluate-side of the remainder flag (setting it non-nil in the
+    // first place) has its own dedicated matrix further below.
 
     @Test func reconcileClearsAcknowledgedFlagWhenStateIsNotComplete() async throws {
         let userDefaults = try #require(
@@ -1190,6 +1243,12 @@ struct MigrationManagerTests {
         )
         storage.acknowledgeComplete(for: account.id)
         #expect(storage.isCompleteAcknowledged(for: account.id) == true)
+        // MOB-1496 (remainder): seed a prior run's remainder verdict too — leaving `.complete`
+        // must invalidate it (`clearRemainderPending`) exactly like the acknowledge flag, so a
+        // LATER completion of a new run gets its own fresh evaluation rather than inheriting this
+        // stale one.
+        storage.setRemainderPending(true, for: account.id)
+        #expect(storage.remainderPending(for: account.id) == true)
 
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
         @Shared(.inMemory(.walletAccounts)) var walletAccounts: [WalletAccount] = []
@@ -1219,6 +1278,9 @@ struct MigrationManagerTests {
         }
 
         #expect(storage.isCompleteAcknowledged(for: account.id) == false)
+        // MOB-1496 (remainder): cleared back to nil (not merely `false`) — a NEW completion later
+        // must be evaluated fresh, not read as "already evaluated, nothing pending."
+        #expect(storage.remainderPending(for: account.id) == nil)
     }
 
     @Test func reconcileKeepsAcknowledgedFlagWhenStateIsComplete() async throws {
@@ -1265,6 +1327,226 @@ struct MigrationManagerTests {
         }
 
         #expect(storage.isCompleteAcknowledged(for: account.id) == true)
+    }
+
+    // MARK: - reconcile(): once-per-transition migration-remainder evaluation (MOB-1496)
+    //
+    // `MigrationState.complete` is now per-RUN ("the stored run is fully mined"), never "nothing
+    // left to migrate" — the final engine caps how much a single run covers (a per-run cap, or
+    // funds arriving mid-run). `reconcile()` asks the engine directly, via a fresh
+    // `proposeMigrationTransfers(accountUUID, false)`, exactly ONCE per completion transition
+    // (`MigrationGateStorage.remainderPending`'s tri-state `nil` gates the evaluate) — see
+    // `MigrationManagerImpl.evaluateMigrationRemainder`'s doc for why more than once is unsafe
+    // (the SDK's plan cache would be overwritten out from under a commit the user is mid-review
+    // on, surfacing as a `migrationPlanStale` error).
+
+    @Test func reconcileWithNonEmptyFreshProposalSetsRemainderPendingTrue() async throws {
+        let userDefaults = try #require(
+            UserDefaults(suiteName: "testReconcileWithNonEmptyFreshProposalSetsRemainderPendingTrue"),
+            "MigrationGateStorage: UserDefaults failed to initialize"
+        )
+        defer {
+            userDefaults.removePersistentDomain(forName: "testReconcileWithNonEmptyFreshProposalSetsRemainderPendingTrue")
+        }
+
+        let storage = MigrationGateStorage(userDefaults: userDefaults)
+        let account = WalletAccount(
+            Account(
+                id: AccountUUID(id: [UInt8](repeating: 50, count: 16)),
+                name: "Zodl",
+                keySource: nil,
+                seedFingerprint: nil,
+                hdAccountIndex: Zip32AccountIndex(0),
+                ufvk: nil,
+                uivk: nil
+            )
+        )
+
+        @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
+        @Shared(.inMemory(.walletAccounts)) var walletAccounts: [WalletAccount] = []
+        $selectedWalletAccount.withLock { $0 = account }
+        $walletAccounts.withLock { $0 = [account] }
+
+        await withDependencies {
+            $0.sdkSynchronizer = SDKSynchronizerClient.mocked(
+                latestState: {
+                    var state = SynchronizerState.zero
+                    state.latestBlockHeight = 5_000_000
+                    return state
+                }
+            )
+            $0.sdkSynchronizer.getMigrationState = { _ in MigrationState.complete }
+            $0.sdkSynchronizer.proposeMigrationTransfers = { _, _ in
+                MigrationSchedule(
+                    transfers: [
+                        MigrationTransferProposal(id: "t0", amount: Zatoshi(100), anchorHeight: 10, nextExecutableAfterHeight: 10, expiryHeight: 20)
+                    ],
+                    estimatedDurationHours: 6
+                )
+            }
+        } operation: {
+            let impl = MigrationManagerImpl(gateStorage: storage)
+            await impl.reconcile()
+        }
+
+        #expect(storage.remainderPending(for: account.id) == true)
+    }
+
+    @Test func reconcileWithEmptyFreshProposalSetsRemainderPendingFalse() async throws {
+        let userDefaults = try #require(
+            UserDefaults(suiteName: "testReconcileWithEmptyFreshProposalSetsRemainderPendingFalse"),
+            "MigrationGateStorage: UserDefaults failed to initialize"
+        )
+        defer {
+            userDefaults.removePersistentDomain(forName: "testReconcileWithEmptyFreshProposalSetsRemainderPendingFalse")
+        }
+
+        let storage = MigrationGateStorage(userDefaults: userDefaults)
+        let account = WalletAccount(
+            Account(
+                id: AccountUUID(id: [UInt8](repeating: 51, count: 16)),
+                name: "Zodl",
+                keySource: nil,
+                seedFingerprint: nil,
+                hdAccountIndex: Zip32AccountIndex(0),
+                ufvk: nil,
+                uivk: nil
+            )
+        )
+
+        @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
+        @Shared(.inMemory(.walletAccounts)) var walletAccounts: [WalletAccount] = []
+        $selectedWalletAccount.withLock { $0 = account }
+        $walletAccounts.withLock { $0 = [account] }
+
+        await withDependencies {
+            $0.sdkSynchronizer = SDKSynchronizerClient.mocked(
+                latestState: {
+                    var state = SynchronizerState.zero
+                    state.latestBlockHeight = 5_000_000
+                    return state
+                }
+            )
+            $0.sdkSynchronizer.getMigrationState = { _ in MigrationState.complete }
+            $0.sdkSynchronizer.proposeMigrationTransfers = { _, _ in MigrationSchedule(transfers: [], estimatedDurationHours: 0) }
+        } operation: {
+            let impl = MigrationManagerImpl(gateStorage: storage)
+            await impl.reconcile()
+        }
+
+        #expect(storage.remainderPending(for: account.id) == false)
+    }
+
+    /// On a THROW, the evaluation persists NOTHING — the flag is left `nil` (not `false`) so a
+    /// LATER reconcile pass retries; a transient propose failure must never be mistaken for
+    /// "evaluated, genuinely nothing pending." `isMigrationRemainderPending` still reads `nil` as
+    /// `false` at the client-facing boundary (see that method's own doc) — asserted here too,
+    /// alongside the raw storage-level `nil`.
+    @Test func reconcileWhenFreshProposalThrowsLeavesRemainderPendingNilAndReadingItAsFalse() async throws {
+        struct SomeError: Error { }
+
+        let userDefaults = try #require(
+            UserDefaults(suiteName: "testReconcileWhenFreshProposalThrowsLeavesRemainderPendingNil"),
+            "MigrationGateStorage: UserDefaults failed to initialize"
+        )
+        defer {
+            userDefaults.removePersistentDomain(forName: "testReconcileWhenFreshProposalThrowsLeavesRemainderPendingNil")
+        }
+
+        let storage = MigrationGateStorage(userDefaults: userDefaults)
+        let account = WalletAccount(
+            Account(
+                id: AccountUUID(id: [UInt8](repeating: 52, count: 16)),
+                name: "Zodl",
+                keySource: nil,
+                seedFingerprint: nil,
+                hdAccountIndex: Zip32AccountIndex(0),
+                ufvk: nil,
+                uivk: nil
+            )
+        )
+
+        @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
+        @Shared(.inMemory(.walletAccounts)) var walletAccounts: [WalletAccount] = []
+        $selectedWalletAccount.withLock { $0 = account }
+        $walletAccounts.withLock { $0 = [account] }
+
+        let impl = MigrationManagerImpl(gateStorage: storage)
+
+        await withDependencies {
+            $0.sdkSynchronizer = SDKSynchronizerClient.mocked(
+                latestState: {
+                    var state = SynchronizerState.zero
+                    state.latestBlockHeight = 5_000_000
+                    return state
+                }
+            )
+            $0.sdkSynchronizer.getMigrationState = { _ in MigrationState.complete }
+            $0.sdkSynchronizer.proposeMigrationTransfers = { _, _ in throw SomeError() }
+        } operation: {
+            await impl.reconcile()
+        }
+
+        #expect(storage.remainderPending(for: account.id) == nil)
+        #expect(impl.isMigrationRemainderPending(accountUUID: account.id) == false)
+    }
+
+    /// The plan-cache/`migrationPlanStale` hazard `evaluateMigrationRemainder`'s doc describes: a
+    /// SECOND reconcile pass while an account is STILL `.complete` must not re-propose — the flag
+    /// (`true` OR `false`) already answers the question, and a repeated propose would overwrite the
+    /// SDK's plan cache out from under a plan the user could be mid-review of. Counts
+    /// `proposeMigrationTransfers` invocations via a `LockIsolated<Int>` spy across TWO `reconcile()`
+    /// calls with the account staying `.complete` both times.
+    @Test func reconcileDoesNotReProposeOnceRemainderPendingIsAlreadyEvaluated() async throws {
+        let userDefaults = try #require(
+            UserDefaults(suiteName: "testReconcileDoesNotReProposeOnceRemainderPendingIsAlreadyEvaluated"),
+            "MigrationGateStorage: UserDefaults failed to initialize"
+        )
+        defer {
+            userDefaults.removePersistentDomain(forName: "testReconcileDoesNotReProposeOnceRemainderPendingIsAlreadyEvaluated")
+        }
+
+        let storage = MigrationGateStorage(userDefaults: userDefaults)
+        let account = WalletAccount(
+            Account(
+                id: AccountUUID(id: [UInt8](repeating: 53, count: 16)),
+                name: "Zodl",
+                keySource: nil,
+                seedFingerprint: nil,
+                hdAccountIndex: Zip32AccountIndex(0),
+                ufvk: nil,
+                uivk: nil
+            )
+        )
+
+        @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
+        @Shared(.inMemory(.walletAccounts)) var walletAccounts: [WalletAccount] = []
+        $selectedWalletAccount.withLock { $0 = account }
+        $walletAccounts.withLock { $0 = [account] }
+
+        let proposeCalls = LockIsolated<Int>(0)
+
+        await withDependencies {
+            $0.sdkSynchronizer = SDKSynchronizerClient.mocked(
+                latestState: {
+                    var state = SynchronizerState.zero
+                    state.latestBlockHeight = 5_000_000
+                    return state
+                }
+            )
+            $0.sdkSynchronizer.getMigrationState = { _ in MigrationState.complete }
+            $0.sdkSynchronizer.proposeMigrationTransfers = { _, _ in
+                proposeCalls.withValue { $0 += 1 }
+                return MigrationSchedule(transfers: [], estimatedDurationHours: 0)
+            }
+        } operation: {
+            let impl = MigrationManagerImpl(gateStorage: storage)
+            await impl.reconcile()
+            await impl.reconcile()
+        }
+
+        #expect(proposeCalls.withValue { $0 } == 1)
+        #expect(storage.remainderPending(for: account.id) == false)
     }
 
     // MARK: - stateEvents(): emits only on a reconcile-observed change
@@ -2265,6 +2547,10 @@ struct MigrationManagerTests {
         snapshotStorage.recordSnapshot(Self.someNetworkSnapshot(), for: keystone.id)
         gateStorage.acknowledgeComplete(for: selected.id)
         gateStorage.acknowledgeComplete(for: keystone.id)
+        // MOB-1496: a debug reset must leave no stale "more to migrate" verdict behind either —
+        // same rationale, same per-account loop as the acknowledged flag above.
+        gateStorage.setRemainderPending(true, for: selected.id)
+        gateStorage.setRemainderPending(true, for: keystone.id)
 
         let impl = MigrationManagerImpl(gateStorage: gateStorage, scheduleStorage: scheduleStorage, snapshotStorage: snapshotStorage)
         impl.resetPersistedFlags()
@@ -2275,6 +2561,8 @@ struct MigrationManagerTests {
         #expect(snapshotStorage.snapshot(for: keystone.id) == nil)
         #expect(gateStorage.isCompleteAcknowledged(for: selected.id) == false)
         #expect(gateStorage.isCompleteAcknowledged(for: keystone.id) == false)
+        #expect(gateStorage.remainderPending(for: selected.id) == nil)
+        #expect(gateStorage.remainderPending(for: keystone.id) == nil)
     }
 
     // MARK: - Corrupt payload self-heal (W2 review Minor)
