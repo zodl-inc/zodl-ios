@@ -1603,6 +1603,72 @@ import ComposableArchitecture
         }
     }
 
+    // MARK: - R8 final cumulative review (Finding 2): guard the sync-only hand-off
+
+    /// `completeSyncOnlySession` sends `.migrationBackgroundSyncOnly(handle)` back into the reducer
+    /// to do its `state.bgTask` stash — but `.migrationBackgroundTaskExpired` can win the race
+    /// against that in-flight send (which survives the tree's own `.cancellable` cancellation),
+    /// completing the session FIRST via its guarded active-session branch (clearing
+    /// `activeMigrationBackgroundSessionHandle` — see `normalCompletionThenLateExpirationOnlyCompletesOnce`
+    /// above for the identical "drive the first event for real, then manually deliver the second to
+    /// represent a late arrival" technique used to simulate this deterministically). The hand-off
+    /// must then be a no-op: no `state.bgTask` adoption, no re-arm, no `.retryStart` kick, and no
+    /// second completion of any kind. FAILS against HEAD f6882a1e — the hand-off adopts/kicks
+    /// unconditionally, re-arming a SECOND time and reaching `start()`.
+    @Test func migrationBackgroundSyncOnlyGuardsAgainstAnAlreadyCompletedSession() async {
+        let completeCalls = LockIsolated<[Bool]>([])
+        let scheduleNextWindowCalls = LockIsolated<Int>(0)
+        let startCalls = LockIsolated<[Bool]>([])
+
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let handle = MigrationBGSessionHandle(rawTask: nil) { success in completeCalls.withValue { $0.append(success) } }
+
+            // As if `migrationBackgroundSessionEffect` had already stashed this handle for a
+            // genuinely mid-flight session (the real precondition for either expiration branch or
+            // the sync-only hand-off to matter at all).
+            var initialState = Self.selectedAccountState()
+            initialState.activeMigrationBackgroundSessionHandle = handle
+
+            let store = Store(initialState: initialState) {
+                Root()
+            } withDependencies: {
+                baseNoOpDependencies(&$0)
+                $0.diskSpaceChecker.hasEnoughFreeSpaceForSync = { true }
+                $0.sdkSynchronizer = SDKSynchronizerClient.mocked(
+                    latestState: { Self.preparedState },
+                    start: { _ in startCalls.withValue { $0.append(true) } }
+                )
+                $0.sdkSynchronizer.isMigrationSyncBlocked = { false }
+                $0.migrationBGScheduler.scheduleNextWindow = { scheduleNextWindowCalls.withValue { $0 += 1 } }
+            }
+
+            // `.migrationBackgroundTaskExpired` wins the race: completes the handle via the guarded
+            // ACTIVE-session branch, clears the live-session marker, re-arms once.
+            store.send(.initialization(.appDelegate(.migrationBackgroundTaskExpired)))
+            await waitForRootStore { completeCalls.withValue { !$0.isEmpty } }
+
+            #expect(completeCalls.withValue { $0 } == [false])
+            #expect(store.state.activeMigrationBackgroundSessionHandle == nil)
+            await waitForRootStore { scheduleNextWindowCalls.withValue { $0 } == 1 }
+            #expect(scheduleNextWindowCalls.withValue { $0 } == 1)
+
+            // The sync-only hand-off `completeSyncOnlySession` had already sent is delivered anyway,
+            // AFTER expiration already cleared the live-session marker.
+            store.send(.initialization(.migrationBackgroundSyncOnly(handle)))
+            // Let any (erroneous, if the guard were missing) adoption/re-arm/kick effects settle
+            // before asserting their absence — same idiom as `notificationTapTeardownWithNoHoldActiveNeverNudgesGate`
+            // in `RootMigrationRoutingTests`.
+            try? await Task.sleep(nanoseconds: 300_000_000)
+
+            // No re-arm beyond expiration's own, no `.retryStart` kick, and no second completion.
+            #expect(scheduleNextWindowCalls.withValue { $0 } == 1)
+            #expect(startCalls.withValue { $0 }.isEmpty)
+            #expect(completeCalls.withValue { $0 } == [false])
+        }
+    }
+
     // MARK: - MOB-1496 (W2): Root-level migration-reconcile triggers
 
     /// `.synchronizerStateChanged` reconciles migration state on the EDGE into `.upToDate` — a
@@ -2339,6 +2405,99 @@ import ComposableArchitecture
             #expect(reconcileCalls.withValue { $0 } == 1)
 
             $migrationSendWaitActive.withLock { $0 = false }
+        }
+    }
+
+    // MARK: - R8 final cumulative review (Finding 1): the hold-release nudge must fire unconditionally
+
+    /// Reproduces the cumulative review's stranding trace end-to-end. A live send-wait hold is up;
+    /// an UNRELATED `.migrationSyncGateChanged(false)` (e.g. a prior Send-now's SDK gate expiring
+    /// mid-wait) legitimately consumes `migrationStoppedSyncForBroadcast` via `shouldResume` and
+    /// replays `.retryStart`, which re-defers on the STILL-live hold and sets
+    /// `syncDeferredByMigrationGate`. The external teardown (`RootMigrationRoutingTests`'
+    /// `notificationTapTeardown...` tests exercise the SAME `openMigrationCoordFlow` route) then
+    /// clears the hold — with the fix, `releaseSendWaitHold()`'s nudge fires unconditionally on that
+    /// clear (independent of `migrationStoppedSyncForBroadcast`, already consumed above), its
+    /// resulting gate value reaches the merged subscription
+    /// (`migrationSyncGateFeedValueReachesMigrationSyncGateChangedAndResumesWhenBroadcastStopFlagSet`
+    /// above pins that merge itself), resumes off the still-set `syncDeferredByMigrationGate`, and
+    /// the deferred start genuinely replays. FAILS against HEAD f6882a1e — the nudge is gated on
+    /// `migrationStoppedSyncForBroadcast`, which the resume replay already consumed, so it's skipped
+    /// and NEITHER spy below is ever populated (`waitForRootStore` times out).
+    @Test func releaseSendWaitHoldNudgesUnconditionallyAfterAnUnrelatedResumeReplayConsumedTheBroadcastStopFlag() async {
+        let refreshMigrationSyncGateCalls = LockIsolated<Int>(0)
+        let startCalls = LockIsolated<[Bool]>([])
+        let seedReadCalls = LockIsolated<Int>(0)
+        let feedContinuationBox = LockIsolated<AsyncStream<Bool>.Continuation?>(nil)
+        let feedStream = AsyncStream<Bool> { continuation in
+            feedContinuationBox.setValue(continuation)
+        }
+
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            @Shared(.inMemory(.migrationSendWaitActive)) var migrationSendWaitActive: Bool = false
+            @Shared(.inMemory(.migrationStoppedSyncForBroadcast)) var migrationStoppedSyncForBroadcast: Bool = false
+            $migrationSendWaitActive.withLock { $0 = false }
+            $migrationStoppedSyncForBroadcast.withLock { $0 = false }
+
+            let store = Store(initialState: Self.selectedAccountState()) {
+                Root()
+            } withDependencies: {
+                baseNoOpDependencies(&$0)
+                $0.diskSpaceChecker.hasEnoughFreeSpaceForSync = { true }
+                $0.sdkSynchronizer = SDKSynchronizerClient.mocked(
+                    latestState: { Self.preparedState },
+                    start: { _ in startCalls.withValue { $0.append(true) } }
+                )
+                $0.sdkSynchronizer.isMigrationSyncBlocked = {
+                    seedReadCalls.withValue { $0 += 1 }
+                    return false
+                }
+                $0.migrationManager.migrationSyncGateFeed = { feedStream }
+                $0.migrationManager.refreshMigrationSyncGate = {
+                    refreshMigrationSyncGateCalls.withValue { $0 += 1 }
+                    // Mirrors production: the nudge re-reads the manager's gate and republishes it
+                    // onto the SAME feed `.registerForSynchronizersUpdate` merges below.
+                    feedContinuationBox.withValue { $0 }?.yield(false)
+                }
+            }
+
+            // Establish the merged gate subscription (SDK stream + manager feed) — mirrors a normal
+            // launch's `.retryStart` success already having registered it long before any send-wait
+            // begins. The seed read is a genuine no-op here (neither flag set yet, `false` matching
+            // `Root.State.initial`'s own `lastMigrationSyncGateBlocked` default).
+            store.send(.initialization(.registerForSynchronizersUpdate))
+            await waitForRootStore { seedReadCalls.withValue { $0 } == 1 }
+            #expect(startCalls.withValue { $0 }.isEmpty)
+
+            // WAITING active: a live send-wait hold, with sync genuinely stopped for its broadcast.
+            $migrationSendWaitActive.withLock { $0 = true }
+            $migrationStoppedSyncForBroadcast.withLock { $0 = true }
+
+            // An UNRELATED gate-false event legitimately consumes `migrationStoppedSyncForBroadcast`
+            // and replays `.retryStart`, which re-defers on the still-live hold.
+            store.send(.migrationSyncGateChanged(false))
+            await waitForRootStore { store.state.syncDeferredByMigrationGate == true }
+
+            #expect(store.state.syncDeferredByMigrationGate == true)
+            #expect(migrationStoppedSyncForBroadcast == false)
+            #expect(migrationSendWaitActive == true)
+            #expect(startCalls.withValue { $0 }.isEmpty)
+
+            // The external teardown: a migration-notification tap resets the flow via
+            // `openMigrationCoordFlow`, releasing the hold BEFORE the reset.
+            store.send(.initialization(.appDelegate(.migrationNotificationTapped(accountUUID: nil))))
+            await waitForRootStore { migrationSendWaitActive == false }
+            #expect(migrationSendWaitActive == false)
+
+            // With the fix: the nudge fires unconditionally, and the deferred start genuinely
+            // replays through the SAME merged subscription/resume machinery.
+            await waitForRootStore { refreshMigrationSyncGateCalls.withValue { $0 } == 1 }
+            #expect(refreshMigrationSyncGateCalls.withValue { $0 } == 1)
+            await waitForRootStore { startCalls.withValue { !$0.isEmpty } }
+            #expect(startCalls.withValue { $0 } == [true])
+            #expect(store.state.syncDeferredByMigrationGate == false)
         }
     }
 }
