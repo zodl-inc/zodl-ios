@@ -1217,13 +1217,19 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// (1) the coordinator's `.flowFinished` handler (`RootCoordinator.swift`, every flow-root close
     /// / terminal delegate), fire-and-forget for the selected account only (`nil` resolves it, same
     /// convention as `migrationSummary`/`recordCommittedSchedule` above) — covers a flow closed out
-    /// normally without committing. (2) app launch (`RootInitialization.swift`'s
-    /// `.clearAbandonedMigrationSnapshots`, chained after that same launch's `reconcile()` fan-out),
-    /// fanned over EVERY candidate account (`MigrationDerivations.candidateAccountUUIDs`), never
-    /// `nil` — covers a flow abandoned by killing the app mid-run, which never reaches
-    /// `.flowFinished` at all, for whichever account (not necessarily the selected one) was mid-flow
-    /// at kill time. The launch site guards on the migration flow not being open before ever calling
-    /// this (see that handler's doc) — this function itself stays unaware of either caller.
+    /// normally without committing. (2) app launch, via `RootInitialization.swift`'s
+    /// `.clearAbandonedMigrationSnapshots` action — sent from TWO points there (final-review
+    /// IMPORTANT-1), since accounts aren't necessarily in state yet at the first one:
+    /// `.initialSetups`'s reconcile-chained send (covers a WARM re-init, where accounts are already
+    /// populated from earlier in the same process) and `.loadedWalletAccounts`'s send (the one that
+    /// actually fires on a genuine COLD launch, once the SDK's own account list lands in state and
+    /// the SDK is provably prepared). Both routes fan over EVERY candidate account
+    /// (`MigrationDerivations.candidateAccountUUIDs`), never `nil` — covers a flow abandoned by
+    /// killing the app mid-run, which never reaches `.flowFinished` at all, for whichever account
+    /// (not necessarily the selected one) was mid-flow at kill time. All three call sites share the
+    /// SAME guard on the migration flow not being open before ever calling this (see
+    /// `.clearAbandonedMigrationSnapshots`'s reducer arm) — this function itself stays unaware of
+    /// any of them.
     func clearAbandonedNetworkSnapshot(accountUUID: AccountUUID?) async {
         guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return }
 

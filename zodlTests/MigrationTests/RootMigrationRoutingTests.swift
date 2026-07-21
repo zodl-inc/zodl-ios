@@ -271,12 +271,17 @@ import ComposableArchitecture
 
     // MARK: - R9-T5 (finding 7): launch-time clear of abandoned migration snapshots
 
-    /// The launch path must fan `clearAbandonedNetworkSnapshot` out over EVERY candidate account
-    /// (selected first, then the rest of `walletAccounts`, deduped — the same set `reconcile()`
-    /// itself fans over), AFTER `reconcile()` has completed. `clearAbandonedCallsHappenedAfterReconcile`
-    /// is flipped false the instant a clear call is observed with the reconcile counter still at 0,
-    /// so the ordering assertion is pinned at the moment of the call rather than inferred from
-    /// polling timing.
+    /// The WARM re-init shape: `walletAccounts`/`selectedWalletAccount` are already populated
+    /// (pre-seeded below) before `.initialSetups` fires, e.g. a `willEnterForeground` re-entry
+    /// while unprepared/locked, or a `walletConfigChanged` re-init — both re-run `.initialSetups`
+    /// later in an ALREADY-running process, not a fresh one. The launch path must fan
+    /// `clearAbandonedNetworkSnapshot` out over EVERY candidate account (selected first, then the
+    /// rest of `walletAccounts`, deduped — the same set `reconcile()` itself fans over), AFTER
+    /// `reconcile()` has completed. `clearAbandonedCallsHappenedAfterReconcile` is flipped false
+    /// the instant a clear call is observed with the reconcile counter still at 0, so the ordering
+    /// assertion is pinned at the moment of the call rather than inferred from polling timing.
+    /// Contrast with `loadedWalletAccountsClearsAbandonedSnapshotsOnAColdLaunchWhereInitialSetupsFoundNoAccountsYet`
+    /// below, which models a genuine COLD launch instead (nothing pre-seeded).
     @Test func initialSetupsClearsAbandonedSnapshotsForEveryCandidateAccountAfterReconcile() async {
         let reconcileCalls = LockIsolated<Int>(0)
         let clearAbandonedCalls = LockIsolated<[AccountUUID]>([])
@@ -316,6 +321,75 @@ import ComposableArchitecture
             #expect(reconcileCalls.withValue { $0 } == 1)
             #expect(Set(clearAbandonedCalls.value) == Set([selected.id, second.id]))
             #expect(clearAbandonedCallsHappenedAfterReconcile.value == true)
+        }
+    }
+
+    /// R9-T5 fix (final-review IMPORTANT-1): the genuine COLD-launch shape — unlike the test above,
+    /// `walletAccounts`/`selectedWalletAccount` are NOT pre-seeded before `.initialSetups` fires. A
+    /// fresh process starts both nil/empty (`Root.State.initial`'s own `@Shared` defaults); they're
+    /// populated only once `.loadedWalletAccounts` lands, dispatched from deep inside
+    /// `.initializeSDK`'s effect after `sdkSynchronizer.walletAccounts()` succeeds — i.e. well AFTER
+    /// `.initialSetups` already fired and its own `.clearAbandonedMigrationSnapshots` send found an
+    /// empty candidate list. Driving `.loadedWalletAccounts` directly afterward (mirroring the real
+    /// send `.initializeSDK`'s effect makes) is what actually fans the clear out once accounts
+    /// exist. FAILS on the pre-fix parent (a single send site chained off `.initialSetups`, which
+    /// never sees a non-empty candidate list in this shape — see IMPORTANT-1's own failure walk).
+    @Test func loadedWalletAccountsClearsAbandonedSnapshotsOnAColdLaunchWhereInitialSetupsFoundNoAccountsYet() async {
+        let reconcileCalls = LockIsolated<Int>(0)
+        let clearAbandonedCalls = LockIsolated<[AccountUUID]>([])
+
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let first = Self.walletAccount(idByte: 1)
+            let second = Self.walletAccount(idByte: 2)
+
+            // A genuine cold launch: nothing pre-seeded — `Root.State.initial` starts with no
+            // selected account and no wallet accounts, exactly like a fresh process.
+            let initialState = Root.State.initial
+
+            let store = Store(initialState: initialState) {
+                Root()
+            } withDependencies: {
+                baseNoOpDependencies(&$0)
+                $0.diskSpaceChecker.hasEnoughFreeSpaceForSync = { true }
+                $0.migrationManager.reconcile = {
+                    reconcileCalls.withValue { $0 += 1 }
+                }
+                $0.migrationManager.clearAbandonedNetworkSnapshot = { accountUUID in
+                    if let accountUUID {
+                        clearAbandonedCalls.withValue { $0.append(accountUUID) }
+                    }
+                }
+                // `.loadedWalletAccounts` (driven directly below) auto-selects the first `.zcash`
+                // vendor account when none is selected yet, which also populates
+                // `state.zashiWalletAccount` — its own returned effect then sends `.loadContacts`,
+                // which reads that account and calls this member. Not `baseNoOpDependencies`'
+                // concern (unrelated to migration); stubbed locally, matching this file's existing
+                // per-test override convention.
+                $0.addressBook.allLocalContacts = { _ in
+                    (AddressBookContacts.empty, AddressBookClient.RemoteStoreResult.success)
+                }
+            }
+
+            // Mirrors a cold `didFinishLaunching` reaching `.initialSetups` — accounts are still
+            // empty/nil at this point, so its own `.clearAbandonedMigrationSnapshots` send fans
+            // over an empty candidate list.
+            store.send(.initialization(.initialSetups))
+            await waitForRootStore { reconcileCalls.withValue { $0 } == 1 }
+            // Let the (empty-list) fan-out effect settle before checking it found nothing — same
+            // "let it settle" idiom as `clearAbandonedMigrationSnapshotsNoOpsWhileMigrationFlowIsOpen`
+            // below.
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            #expect(clearAbandonedCalls.withValue { $0 } == [])
+
+            // The SDK has now prepared and reported its account list — mirrors the real send
+            // `.initializeSDK`'s effect makes (`RootInitialization.swift`, inside
+            // `sdkSynchronizer.prepareWith`/`walletAccounts()`'s success continuation).
+            store.send(.initialization(.loadedWalletAccounts([first, second])))
+            await waitForRootStore { clearAbandonedCalls.withValue { $0.count } == 2 }
+
+            #expect(Set(clearAbandonedCalls.value) == Set([first.id, second.id]))
         }
     }
 
