@@ -10333,6 +10333,40 @@
         }
       }
     },
+    "migrationEntry.privacyDisclaimerBody" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your full balance will be revealed on-chain — crossing the pool boundary exposes the transaction amount. We recommend selecting Migrate with Privacy instead."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tu saldo completo quedará expuesto en cadena (on-chain): cruzar el límite entre pools revela el monto de la transacción. Te recomendamos seleccionar Migrar con privacidad."
+          }
+        }
+      }
+    },
+    "migrationEntry.privacyDisclaimerTitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Privacy Disclaimer"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aviso de privacidad"
+          }
+        }
+      }
+    },
     "migrationEntry.privacyTitle" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -11161,13 +11195,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "If allocated funds are spent or a scheduled transfer can no longer be sent, we'll let you know."
+            "value" : "If allocated funds are spent or any pre-signed transfer expires, we'll let you know."
           }
         },
         "es" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Si los fondos asignados se gastan o una transferencia programada ya no se puede enviar, te lo haremos saber."
+            "state" : "needs_review",
+            "value" : "Si los fondos asignados se gastan o alguna transferencia prefirmada caduca, te lo haremos saber."
           }
         }
       }
@@ -11358,6 +11392,40 @@
         }
       }
     },
+    "migrationPlan.randomizedBody" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "To reduce linkability, amounts will be randomized. Confirm once — no per-transfer prompts."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Para reducir la vinculación, los montos se aleatorizarán. Confirma una vez — sin avisos por cada transferencia."
+          }
+        }
+      }
+    },
+    "migrationPlan.randomizedTitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Amounts randomized to reduce linkability"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Montos aleatorizados para reducir la vinculación"
+          }
+        }
+      }
+    },
     "migrationPlan.readyNow" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -11388,6 +11456,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Enviado hace %1$lldh"
+          }
+        }
+      }
+    },
+    "migrationPlan.splitBalance" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Split Balance"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dividir saldo"
           }
         }
       }
@@ -11624,6 +11709,40 @@
         }
       }
     },
+    "migrationReview.privacyDisclaimerBody" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your full balance will be revealed on-chain — crossing the pool boundary exposes the transaction amount. We recommend going back and selecting Migrate with Privacy instead."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tu saldo completo quedará expuesto en cadena (on-chain): cruzar el límite entre pools revela el monto de la transacción. Te recomendamos volver atrás y seleccionar Migrar con privacidad."
+          }
+        }
+      }
+    },
+    "migrationReview.reviewAndConfirm" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Review and confirm to send the transaction."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Revisa y confirma para enviar la transacción."
+          }
+        }
+      }
+    },
     "migrationReview.sendsNow" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -11687,6 +11806,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Transfer %1$lld of %2$lld"
+          }
+        }
+      }
+    },
+    "migrationScheduled.dustBody" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "stayed in Orchard — below the transfer threshold. It will migrate in a future batch."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "permaneció en Orchard — por debajo del umbral de transferencia. Se migrará en un lote futuro."
+          }
+        }
+      }
+    },
+    "migrationScheduled.dustTitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dust balance remaining"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Saldo de polvo restante"
           }
         }
       }
@@ -11834,6 +11987,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Your ZEC was successfully migrated to Ironwood."
+          }
+        }
+      }
+    },
+    "migrationSending.sentSubtitleTransfer" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your ZEC was successfully sent to Ironwood."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tu ZEC se envió correctamente a Ironwood."
           }
         }
       }
@@ -12103,6 +12273,23 @@
         }
       }
     },
+    "migrationStatus.windowMissedBody" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Send now or reschedule to the next window."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Envía ahora o reprograma para la siguiente ventana."
+          }
+        }
+      }
+    },
     "migrationStatus.windowMissedNote" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -12120,13 +12307,104 @@
         }
       }
     },
+    "migrationStatus.windowMissedTitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transfer window missed"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ventana de transferencia perdida"
+          }
+        }
+      }
+    },
+    "migrationTorFailure.body" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "We couldn't establish a Tor connection. You can proceed without Tor protection, or cancel and try again."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "No pudimos establecer una conexión Tor. Puedes continuar sin la protección de Tor, o cancelar e intentarlo de nuevo."
+          }
+        }
+      }
+    },
+    "migrationTorFailure.risksBody" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Without Tor, your IP address is exposed to the server and could be linked to the migration amounts."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sin Tor, tu dirección IP queda expuesta al servidor y podría vincularse a los montos de la migración."
+          }
+        }
+      }
+    },
+    "migrationTorFailure.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn't Connect to Tor"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "No se pudo conectar a Tor"
+          }
+        }
+      }
+    },
+    "migrationTorFailure.tryAgain" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Try again"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Intentar de nuevo"
+          }
+        }
+      }
+    },
     "migrationTorSheet.body" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "If Tor is available in your region, we strongly recommend enabling it to prevent linking your balance to your IP address. You can also use a trusted VPN if Tor is unavailable in your region."
+            "value" : "If Tor is available in your region, we strongly recommend enabling it to prevent linking the migration amounts to your IP address. You can also use a trusted VPN if Tor is unavailable in your region."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Si Tor está disponible en tu región, te recomendamos encarecidamente activarlo para evitar vincular los montos de la migración a tu dirección IP. También puedes usar una VPN de confianza si Tor no está disponible en tu región."
           }
         }
       }
@@ -12137,7 +12415,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "If Tor is available in your region, we strongly recommend enabling it to prevent linking your full balance to your IP address. You can also use a trusted VPN if Tor is unavailable in your region."
+            "value" : "If Tor is available in your region, we strongly recommend enabling it to prevent linking your balance to your IP address. You can also use a trusted VPN if Tor is unavailable in your region."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Si Tor está disponible en tu región, te recomendamos encarecidamente activarlo para evitar vincular tu saldo a tu dirección IP. También puedes usar una VPN de confianza si Tor no está disponible en tu región."
           }
         }
       }
@@ -12160,6 +12444,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Enable Tor Protection"
+          }
+        }
+      }
+    },
+    "migrationTorSheet.continueWithoutTor" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Continue without Tor"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Continuar sin Tor"
           }
         }
       }
@@ -12266,6 +12567,74 @@
         }
       }
     },
+    "migrationTorSheet.risksBodyFull" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Without Tor, your IP address is exposed to the custom server and could be linked to your full balance."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sin Tor, tu dirección IP queda expuesta al servidor personalizado y podría vincularse a tu saldo completo."
+          }
+        }
+      }
+    },
+    "migrationTorSheet.risksBodyGradual" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Without Tor, your IP address is exposed to the custom server and could be linked to the migration amounts."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sin Tor, tu dirección IP queda expuesta al servidor personalizado y podría vincularse a los montos de la migración."
+          }
+        }
+      }
+    },
+    "migrationTorSheet.risksTitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "What are the risks?"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "¿Cuáles son los riesgos?"
+          }
+        }
+      }
+    },
+    "migrationTorSheet.switchServer" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Switch Server"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cambiar servidor"
+          }
+        }
+      }
+    },
     "migrationTorSheet.title" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -12283,13 +12652,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Tor is unavailable for your configuration. Your server (%@) will receive the migration transactions directly. It can observe your IP address and your total balance, and the total is visible on-chain regardless."
+            "value" : "The migration transaction can't be broadcast over Tor when you're using a custom server. If you continue, this transaction will be sent without Tor's IP protection."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Tor no está disponible para tu configuración. Tu servidor (%@) recibirá las transacciones de migración directamente. Puede observar tu dirección IP y tu saldo total, y el total es visible en la cadena de todos modos."
+            "value" : "La transacción de migración no se puede transmitir a través de Tor cuando usas un servidor personalizado. Si continúas, esta transacción se enviará sin la protección de IP de Tor."
           }
         }
       }
@@ -12300,13 +12669,30 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Tor is unavailable for your configuration. Your server (%@) will receive the migration transactions directly. It can observe your IP address and the migration amounts; observers of the chain alone still cannot determine your total."
+            "value" : "Migration transactions can't be broadcast over Tor when you're using a custom server. If you continue, these transactions will be sent without Tor's IP protection."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Tor no está disponible para tu configuración. Tu servidor (%@) recibirá las transacciones de migración directamente. Puede observar tu dirección IP y los montos de la migración; los observadores de la cadena por sí solos no pueden determinar tu total."
+            "value" : "Las transacciones de migración no se pueden transmitir a través de Tor cuando usas un servidor personalizado. Si continúas, estas transacciones se enviarán sin la protección de IP de Tor."
+          }
+        }
+      }
+    },
+    "migrationTorSheet.unavailableTitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your Server Doesn't Support Tor"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tu servidor no admite Tor"
           }
         }
       }
@@ -15022,6 +15408,12 @@
             "state" : "translated",
             "value" : "We recommend migrating your funds first to avoid leaking the transaction amount on-chain."
           }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Te recomendamos migrar tus fondos primero para evitar revelar el monto de la transacción en cadena."
+          }
         }
       }
     },
@@ -15032,6 +15424,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "This send requires spending Orchard funds"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Este envío requiere gastar fondos de Orchard"
           }
         }
       }
