@@ -534,6 +534,53 @@ extension Root {
                     .send(.home(.smartBanner(.closeSheetTapped)))
                 )
 
+                // MARK: - Migration Tor Failure Prompt (MOB-1497 T6)
+
+            case .checkMigrationTorFailurePrompt:
+                // Foreground gate — present the "Couldn't Connect to Tor" sheet over Home iff Home is
+                // fully visible (no Root path pushed, Server Setup cover down), nothing is already
+                // presented, it hasn't been offered yet THIS foreground, a selected account exists,
+                // and that account's BACKGROUND Tor-failure latch is armed. `isPendingBackgroundTorPrompt`
+                // is a synchronous UserDefaults read, so the whole gate resolves inline. When the gate
+                // fails for path/cover reasons the latch is left untouched (`didOffer` stays false), so
+                // a later foreground with Home visible still presents.
+                guard state.path == nil,
+                    !state.serverSetupViewBinding,
+                    !state.isTorFailurePromptPresented,
+                    !state.didOfferTorFailurePromptThisForeground,
+                    let accountUUID = state.selectedWalletAccount?.id,
+                    migrationManager.isPendingBackgroundTorPrompt(accountUUID)
+                else {
+                    return .none
+                }
+                state.didOfferTorFailurePromptThisForeground = true
+                state.torFailurePromptState = MigrationTorFailureSheet.State()
+                state.isTorFailurePromptPresented = true
+                return .none
+
+            case .torFailurePromptPresentationChanged(let isPresented):
+                // Swipe-dismiss sends `false` (the latch stays armed — the next foreground re-checks).
+                // A failed in-sheet retry sends `true` to re-present (bypassing the once-per-foreground
+                // gate deliberately — see `attemptForegroundMigrationTorRetry`).
+                state.isTorFailurePromptPresented = isPresented
+                return .none
+
+            case .torFailurePrompt(.delegate(.continueWithoutTor)):
+                // The sheet's `MigrationRisksCard` is the R15 clearnet-consent surface (no second
+                // alert): turn Tor off for the REST of this run BEFORE the attempt, then clear the
+                // latch and run one foreground broadcast.
+                state.isTorFailurePromptPresented = false
+                guard let accountUUID = state.selectedWalletAccount?.id else { return .none }
+                migrationManager.overrideTorForRun(accountUUID, false)
+                return clearLatchAndAttemptForegroundTorRetry(accountUUID)
+
+            case .torFailurePrompt(.delegate(.tryAgain)):
+                // Keeps Tor on — clear the latch and run one foreground broadcast; a Tor-class failure
+                // re-arms the latch and re-presents from inside the attempt.
+                state.isTorFailurePromptPresented = false
+                guard let accountUUID = state.selectedWalletAccount?.id else { return .none }
+                return clearLatchAndAttemptForegroundTorRetry(accountUUID)
+
             default: return .none
             }
         }
