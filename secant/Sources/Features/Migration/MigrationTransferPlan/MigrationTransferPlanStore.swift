@@ -96,6 +96,12 @@ struct MigrationTransferPlan {
         /// MOB-1496 (R8-T1, S3): which kind of failure `isFailurePresented` is showing; see
         /// `FailureReason`.
         var failureReason: FailureReason?
+        /// R9-T2 (finding 3): the classified/routed variant of a `.commit`-reason failure sheet —
+        /// see `MigrationSending.State.failureKind`'s doc for the shared shape. Always `nil` for a
+        /// `.propose` failure (never broadcast-related) and for an unclassifiable or Keystone commit
+        /// failure (today's generic copy, unchanged).
+        var failureKind: MigrationBroadcastFailureRoute?
+        @Presents var alert: AlertState<Action>?
 
         /// MOB-1497 (T2, R13): the formed snapshot's broadcast host, for provider users reached via
         /// the sheet-SKIPPED (app-wide Tor on) shortcut — those users never see the Tor sheet's own
@@ -121,7 +127,13 @@ struct MigrationTransferPlan {
     }
 
     enum Action: BindableAction, Equatable {
+        case alert(PresentationAction<Action>)
         case binding(BindingAction<State>)
+        /// R9-T2 (finding 3, R14/R15/R16): `routeBroadcastFailure`'s resolved route for a classified
+        /// scheduled-commit split failure — see `MigrationSending.Action.broadcastFailureRouted`'s
+        /// doc for the shared shape. Never sent for an unclassified failure — `failureKind` then
+        /// stays `nil`, the existing generic sheet.
+        case broadcastFailureRouted(MigrationBroadcastFailureRoute)
         /// Failure sheet: dismiss (stay on screen).
         case cancelTapped
         /// Signs and stores the active schedule (silently splitting first, when needed).
@@ -131,7 +143,14 @@ struct MigrationTransferPlan {
         /// Covers the silent note-split step (MOB-1478 W4), any other software commit failure, and
         /// (MOB-1496 R8-T1, #4) the Keystone PCZT-proposal fork's failures.
         case noteSplitFailed
+        /// R9-T2 (R11, reused from `MigrationTorSheet`'s off-warning): the R14 sheet's "Proceed
+        /// without Tor" alert confirms — turns Tor off for the REST of this run then re-attempts the
+        /// commit.
+        case offWarningProceedTapped
         case onAppear
+        /// R9-T2 (R14): the `.torFirstRunChoice` sheet's "Proceed without Tor" button — presents the
+        /// R11 warning alert instead of proceeding directly.
+        case proceedWithoutTorTapped
         /// Failure sheet: dismiss, then re-attempt the failed step from scratch — the whole commit
         /// sequence when `failureReason == .commit` (or unset), or (MOB-1496 R8-T1, S3) a fresh
         /// proposal when `failureReason == .propose`.
@@ -143,6 +162,8 @@ struct MigrationTransferPlan {
         case transferProposalFailed
         /// `proposeMigrationTransfers()` result — populates rows/duration for a fresh entry.
         case transfersProposed(MigrationSchedule)
+        /// R9-T2 (R17): the `.providerExhausted` sheet's "Broadcast via sync server" button.
+        case useSyncServerTapped
 
         enum Delegate: Equatable {
             case confirmed
@@ -169,16 +190,31 @@ struct MigrationTransferPlan {
 
         Reduce { state, action in
             switch action {
+            case .alert(.presented(let action)):
+                return .send(action)
+
+            case .alert(.dismiss):
+                // Mirrors `MigrationSendingStore`'s identical shape — this screen has no toggle
+                // analog to restore; "Keep Tor on" simply returns to the R14 sheet unchanged.
+                state.alert = nil
+                return .none
+
             case .binding:
+                return .none
+
+            case .broadcastFailureRouted(let route):
+                state.failureKind = route
                 return .none
 
             case .cancelTapped:
                 state.isFailurePresented = false
                 state.failureReason = nil
+                state.failureKind = nil
                 return .none
 
             case .confirmTapped, .retryTapped:
                 state.isFailurePresented = false
+                state.failureKind = nil
 
                 // MOB-1496 (R8-T1, S3): a propose failure's Retry re-proposes instead of
                 // re-attempting the commit — checked FIRST, before any of the commit guards below.
@@ -208,25 +244,7 @@ struct MigrationTransferPlan {
 
                 guard let zip32AccountIndex = account.zip32AccountIndex else { return .none }
 
-                return .run { send in
-                    do {
-                        try await MigrationCommitPipeline.commitSoftware(
-                            mode: MigrationCommitMode.scheduled,
-                            schedule: schedule,
-                            account: account,
-                            zip32AccountIndex: zip32AccountIndex,
-                            sdkSynchronizer: sdkSynchronizer,
-                            migrationManager: migrationManager,
-                            walletStorage: walletStorage,
-                            mnemonic: mnemonic,
-                            derivationTool: derivationTool,
-                            networkType: zcashSDKEnvironment.network().networkType
-                        )
-                        await send(.scheduleSigned)
-                    } catch {
-                        await send(.noteSplitFailed)
-                    }
-                }
+                return commitEffect(schedule: schedule, account: account, zip32AccountIndex: zip32AccountIndex)
 
             case .delegate:
                 return .none
@@ -234,6 +252,28 @@ struct MigrationTransferPlan {
             case .noteSplitFailed:
                 state.isFailurePresented = true
                 state.failureReason = State.FailureReason.commit
+                return .none
+
+            case .offWarningProceedTapped:
+                state.alert = nil
+                state.isFailurePresented = false
+                state.failureKind = nil
+                state.failureReason = nil
+                let account = state.selectedWalletAccount
+                if let account {
+                    migrationManager.overrideTorForRun(account.id, false)
+                }
+                return retryCommitEffect(state)
+
+            case .proceedWithoutTorTapped:
+                // Gated to the R14 first-run-choice variant — the alert this presents leads to a
+                // clearnet retry (`overrideTorForRun(account, false)`), which R15's mid-run hold must
+                // never offer. Mirrors `MigrationSendingStore`'s identical guard.
+                guard state.failureKind == MigrationBroadcastFailureRoute.torFirstRunChoice else { return .none }
+                // Scheduled commits are never full-balance (only the immediate lane is — this screen
+                // is only ever reached for `.privateScheduled` mode), so unlike Sending/NoteSplit this
+                // never reads `migrationManager.migrationMode()`.
+                state.alert = AlertState.migrationTorOffWarning(usesFullBalanceCopy: false, proceedAction: .offWarningProceedTapped)
                 return .none
 
             case .onAppear:
@@ -269,8 +309,68 @@ struct MigrationTransferPlan {
             case .transfersProposed(let schedule):
                 apply(schedule, to: &state)
                 return .none
+
+            case .useSyncServerTapped:
+                state.isFailurePresented = false
+                state.failureKind = nil
+                state.failureReason = nil
+                guard let account = state.selectedWalletAccount else { return .none }
+                return .concatenate(
+                    .run { [migrationManager] _ in await migrationManager.overrideBroadcastEndpointToSyncServer(account.id) },
+                    retryCommitEffect(state)
+                )
             }
         }
+    }
+
+    /// R9-T2 (finding 3): the software commit sequence `.confirmTapped`/`.retryTapped`'s fallthrough,
+    /// `.offWarningProceedTapped`, and `.useSyncServerTapped` all funnel into — classifies+routes a
+    /// scheduled-commit split failure via `MigrationCommitPipeline`'s typed
+    /// `MigrationCommitError.splitFailedRouted` before falling back to the existing generic
+    /// `.noteSplitFailed` outcome, mirroring `MigrationSendingStore`/`MigrationNoteSplitStore`'s
+    /// "route first, generic outcome second" ordering. A `nil` route (unclassifiable failure) sends
+    /// only `.noteSplitFailed` — `state.failureKind` stays `nil`, today's generic sheet.
+    private func commitEffect(schedule: MigrationSchedule, account: WalletAccount, zip32AccountIndex: Zip32AccountIndex) -> Effect<Action> {
+        .run { send in
+            do {
+                try await MigrationCommitPipeline.commitSoftware(
+                    mode: MigrationCommitMode.scheduled,
+                    schedule: schedule,
+                    account: account,
+                    zip32AccountIndex: zip32AccountIndex,
+                    sdkSynchronizer: sdkSynchronizer,
+                    migrationManager: migrationManager,
+                    walletStorage: walletStorage,
+                    mnemonic: mnemonic,
+                    derivationTool: derivationTool,
+                    networkType: zcashSDKEnvironment.network().networkType
+                )
+                await send(.scheduleSigned)
+            } catch MigrationCommitError.splitFailedRouted(let route) {
+                if let route {
+                    await send(.broadcastFailureRouted(route))
+                }
+                await send(.noteSplitFailed)
+            } catch {
+                await send(.noteSplitFailed)
+            }
+        }
+    }
+
+    /// R9-T2 (finding 3): the retry dispatch `.offWarningProceedTapped`/`.useSyncServerTapped` share —
+    /// a ROUTED failure (`failureKind != nil`) can only ever have come from the software
+    /// `commitSoftware` path (Keystone forks BEFORE ever reaching it — see `requestKeystoneSignature`
+    /// below), so this skips straight to the software guard chain without re-checking
+    /// `requiresSigning`/vendor, unlike `.confirmTapped`/`.retryTapped`'s own fuller chain. Takes a
+    /// snapshot of `State` rather than `inout`, mirroring `MigrationNoteSplitStore.retryEffect` — ONE
+    /// of the guards below failing (e.g. the account was deselected mid-flow) is a silent no-op,
+    /// mirroring `.confirmTapped`/`.retryTapped`'s own identical guards.
+    private func retryCommitEffect(_ state: State) -> Effect<Action> {
+        guard let schedule = state.schedule, !schedule.transfers.isEmpty else { return .none }
+        guard let account = state.selectedWalletAccount else { return .none }
+        guard let zip32AccountIndex = account.zip32AccountIndex else { return .none }
+
+        return commitEffect(schedule: schedule, account: account, zip32AccountIndex: zip32AccountIndex)
     }
 
     /// MOB-1468 (Keystone) `confirmTapped` fork: proposes ALL of the schedule's PCZTs — prefixed with
