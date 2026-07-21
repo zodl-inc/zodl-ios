@@ -1036,7 +1036,7 @@ import ComposableArchitecture
         let store = TestStore(initialState: state) {
             MigrationNoteSplit()
         } withDependencies: {
-            $0.migrationManager.migrationMode = { MigrationMode.privateScheduled }
+            $0.migrationManager.migrationMode = { _ in MigrationMode.privateScheduled }
         }
 
         await store.send(.proceedWithoutTorTapped) {
@@ -1050,7 +1050,7 @@ import ComposableArchitecture
         let store = TestStore(initialState: state) {
             MigrationNoteSplit()
         } withDependencies: {
-            $0.migrationManager.migrationMode = { MigrationMode.immediate }
+            $0.migrationManager.migrationMode = { _ in MigrationMode.immediate }
         }
 
         await store.send(.proceedWithoutTorTapped) {

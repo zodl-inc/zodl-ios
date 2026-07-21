@@ -129,7 +129,7 @@ struct MigrationSimulatorPanel {
                 // Every preset (not just the complete ones) aligns the manual-delivery flag — the
                 // engine itself has no notion of "manual delivery", only the panel knows which
                 // presets need it.
-                migrationManager.setManualDelivery(preset.requiresManualDelivery)
+                migrationManager.setManualDelivery(nil, preset.requiresManualDelivery)
                 return .send(.refresh)
 
             case .readoutLoaded(let readout):

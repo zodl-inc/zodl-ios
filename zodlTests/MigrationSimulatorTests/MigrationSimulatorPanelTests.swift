@@ -200,7 +200,7 @@ import ComposableArchitecture
             $0.migrationSimulator.applyPreset = { preset in
                 callLog.withValue { $0.append("applyPreset(\(preset.rawValue))") }
             }
-            $0.migrationManager.setManualDelivery = { isManual in
+            $0.migrationManager.setManualDelivery = { _, isManual in
                 callLog.withValue { $0.append("setManualDelivery(\(isManual))") }
             }
             $0.migrationSimulator.readout = { readout }
@@ -223,7 +223,7 @@ import ComposableArchitecture
         } withDependencies: {
             $0.migrationManager.resetPersistedFlags = { callLog.withValue { $0.append("resetPersistedFlags") } }
             $0.migrationSimulator.applyPreset = { _ in callLog.withValue { $0.append("applyPreset") } }
-            $0.migrationManager.setManualDelivery = { isManual in
+            $0.migrationManager.setManualDelivery = { _, isManual in
                 callLog.withValue { $0.append("setManualDelivery(\(isManual))") }
             }
             $0.migrationSimulator.readout = { readout }
@@ -246,7 +246,7 @@ import ComposableArchitecture
         } withDependencies: {
             $0.migrationManager.resetPersistedFlags = { callLog.withValue { $0.append("resetPersistedFlags") } }
             $0.migrationSimulator.applyPreset = { _ in callLog.withValue { $0.append("applyPreset") } }
-            $0.migrationManager.setManualDelivery = { isManual in
+            $0.migrationManager.setManualDelivery = { _, isManual in
                 callLog.withValue { $0.append("setManualDelivery(\(isManual))") }
             }
             $0.migrationSimulator.readout = { readout }
@@ -270,7 +270,7 @@ import ComposableArchitecture
         } withDependencies: {
             $0.migrationManager.resetPersistedFlags = { resetFlagsCalls.withValue { $0 += 1 } }
             $0.migrationSimulator.applyPreset = { _ in callLog.withValue { $0.append("applyPreset") } }
-            $0.migrationManager.setManualDelivery = { isManual in
+            $0.migrationManager.setManualDelivery = { _, isManual in
                 callLog.withValue { $0.append("setManualDelivery(\(isManual))") }
             }
             $0.migrationSimulator.readout = { readout }

@@ -473,7 +473,7 @@ import ComposableArchitecture
             $0.migrationManager.reentryRoute = { .complete }
             $0.sdkSynchronizer = .noOp
             $0.migrationManager.migrationSummary = { _ in summary }
-            $0.migrationManager.isMigrationDustLocked = { true }
+            $0.migrationManager.isMigrationDustLocked = { _ in true }
         }
         store.exhaustivity = .off
 
@@ -542,7 +542,7 @@ import ComposableArchitecture
         let store = TestStore(initialState: MigrationCoordFlow.State()) {
             MigrationCoordFlow()
         } withDependencies: {
-            $0.migrationManager.setMigrationMode = { mode in setMigrationModeCalls.withValue { $0.append(mode) } }
+            $0.migrationManager.setMigrationMode = { _, mode in setMigrationModeCalls.withValue { $0.append(mode) } }
             $0.migrationManager.setNetworkPrivacyOptions = { useTor in setOptionsCalls.withValue { $0.append(useTor) } }
             $0.migrationManager.formNetworkSnapshot = { accountUUID in formNetworkSnapshotCalls.withValue { $0.append(accountUUID) } }
             $0.sdkSynchronizer = .noOp
@@ -601,7 +601,7 @@ import ComposableArchitecture
         let store = TestStore(initialState: MigrationCoordFlow.State()) {
             MigrationCoordFlow()
         } withDependencies: {
-            $0.migrationManager.setMigrationMode = { _ in }
+            $0.migrationManager.setMigrationMode = { _, _ in }
             $0.migrationManager.isSyncServerIdentityCustom = { false }
             $0.migrationManager.setNetworkPrivacyOptions = { useTor in callLog.withValue { $0.append(.persist(useTor)) } }
             $0.migrationManager.formNetworkSnapshot = { _ in callLog.withValue { $0.append(.form) } }
@@ -636,7 +636,7 @@ import ComposableArchitecture
         let store = TestStore(initialState: MigrationCoordFlow.State()) {
             MigrationCoordFlow()
         } withDependencies: {
-            $0.migrationManager.setMigrationMode = { _ in }
+            $0.migrationManager.setMigrationMode = { _, _ in }
             $0.migrationManager.isSyncServerIdentityCustom = { true }
             $0.migrationManager.setNetworkPrivacyOptions = { useTor in setOptionsCalls.withValue { $0.append(useTor) } }
             $0.migrationManager.formNetworkSnapshot = { _ in formNetworkSnapshotCalls.withValue { $0 += 1 } }
@@ -674,7 +674,7 @@ import ComposableArchitecture
         let store = TestStore(initialState: MigrationCoordFlow.State()) {
             MigrationCoordFlow()
         } withDependencies: {
-            $0.migrationManager.setMigrationMode = { _ in }
+            $0.migrationManager.setMigrationMode = { _, _ in }
             $0.migrationManager.isSyncServerIdentityCustom = { true }
             $0.migrationManager.setNetworkPrivacyOptions = { useTor in setOptionsCalls.withValue { $0.append(useTor) } }
             $0.migrationManager.formNetworkSnapshot = { _ in }
@@ -712,7 +712,7 @@ import ComposableArchitecture
         let store = TestStore(initialState: MigrationCoordFlow.State()) {
             MigrationCoordFlow()
         } withDependencies: {
-            $0.migrationManager.setMigrationMode = { _ in }
+            $0.migrationManager.setMigrationMode = { _, _ in }
             $0.migrationManager.formNetworkSnapshot = { _ in formNetworkSnapshotCalls.withValue { $0 += 1 } }
             $0.migrationManager.networkSnapshot = { _ in Self.someProviderNetworkSnapshot() }
             $0.sdkSynchronizer = .noOp
@@ -749,7 +749,7 @@ import ComposableArchitecture
         let store = TestStore(initialState: MigrationCoordFlow.State()) {
             MigrationCoordFlow()
         } withDependencies: {
-            $0.migrationManager.setMigrationMode = { _ in }
+            $0.migrationManager.setMigrationMode = { _, _ in }
             $0.migrationManager.formNetworkSnapshot = { _ in }
             $0.migrationManager.networkSnapshot = { _ in Self.someCustomNetworkSnapshot() }
             $0.sdkSynchronizer = .noOp
@@ -782,7 +782,7 @@ import ComposableArchitecture
         let store = TestStore(initialState: MigrationCoordFlow.State()) {
             MigrationCoordFlow()
         } withDependencies: {
-            $0.migrationManager.setMigrationMode = { _ in }
+            $0.migrationManager.setMigrationMode = { _, _ in }
             $0.migrationManager.formNetworkSnapshot = { _ in }
             $0.migrationManager.networkSnapshot = { _ in Self.someSameServerProviderNetworkSnapshot() }
             $0.sdkSynchronizer = .noOp
@@ -815,7 +815,7 @@ import ComposableArchitecture
         let store = TestStore(initialState: MigrationCoordFlow.State()) {
             MigrationCoordFlow()
         } withDependencies: {
-            $0.migrationManager.setMigrationMode = { _ in }
+            $0.migrationManager.setMigrationMode = { _, _ in }
             $0.migrationManager.formNetworkSnapshot = { _ in formNetworkSnapshotCalls.withValue { $0 += 1 } }
             $0.migrationManager.networkSnapshot = { _ in Self.someProviderNetworkSnapshot() }
             $0.sdkSynchronizer = .noOp
@@ -1066,7 +1066,7 @@ import ComposableArchitecture
             $0.migrationManager.setNetworkPrivacyOptions = { useTor in setOptionsCalls.withValue { $0.append(useTor) } }
             $0.migrationManager.formNetworkSnapshot = { _ in formNetworkSnapshotCalls.withValue { $0 += 1 } }
             $0.migrationManager.confirmProvisionalTorChoice = { _, useTor in confirmProvisionalCalls.withValue { $0.append(useTor) } }
-            $0.migrationManager.isManualDelivery = { false }
+            $0.migrationManager.isManualDelivery = { _ in false }
             $0.migrationBGScheduler.backgroundRefreshStatus = { .available }
             $0.userNotifications.authorizationStatus = { .authorized }
             $0.sdkSynchronizer = .noOp
@@ -1105,7 +1105,7 @@ import ComposableArchitecture
         } withDependencies: {
             $0.migrationBGScheduler.backgroundRefreshStatus = { .available }
             $0.userNotifications.authorizationStatus = { .authorized }
-            $0.migrationManager.isManualDelivery = { true }
+            $0.migrationManager.isManualDelivery = { _ in true }
             // MOB-1497 (T2): every fresh `.transferPlan` construction reads the (non-forming) R13
             // disclosure peek now — see `nextPermissionStepResult`'s doc.
             $0.migrationManager.networkSnapshot = { _ in nil }
@@ -1191,7 +1191,9 @@ import ComposableArchitecture
     // MARK: - MOB-1468: Keystone signing — signRequested sets context + pushes keystoneSign
 
     @MainActor @Test func transferPlanKeystoneSignRequestedSetsPlanCommitContextAndPushesKeystoneSign() async {
+        let account = walletAccount(keystone: true, idByte: 21)
         var state = MigrationCoordFlow.State()
+        state.$selectedWalletAccount.withLock { $0 = account }
         state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .scheduled)))
         let store = TestStore(initialState: state) {
             MigrationCoordFlow()
@@ -1205,6 +1207,9 @@ import ComposableArchitecture
         await store.send(.path(.element(id: 0, action: .transferPlan(.delegate(.keystoneSignRequested(pczts))))))
 
         #expect(store.state.pendingKeystoneSigning == MigrationCoordFlow.KeystoneSigningContext.planCommit)
+        // MOB-1509: the ceremony's OWNER is recorded beside the context — external teardowns
+        // cancel the stranded run on this account even after the selection has moved on.
+        #expect(store.state.pendingKeystoneSigningAccountUUID == account.id)
         guard case let .keystoneSign(signState) = try? #require(store.state.path.last) else {
             Issue.record("Expected .keystoneSign pushed on top")
             return
@@ -1213,7 +1218,9 @@ import ComposableArchitecture
     }
 
     @MainActor @Test func reviewTransferKeystoneSignRequestedSetsImmediateReviewContextAndPushesKeystoneSign() async {
+        let account = walletAccount(keystone: true, idByte: 22)
         var state = MigrationCoordFlow.State()
+        state.$selectedWalletAccount.withLock { $0 = account }
         state.path.append(.reviewTransfer(MigrationReviewTransfer.State(mode: .immediate)))
         let store = TestStore(initialState: state) {
             MigrationCoordFlow()
@@ -1224,6 +1231,8 @@ import ComposableArchitecture
         await store.send(.path(.element(id: 0, action: .reviewTransfer(.delegate(.keystoneSignRequested(pczts))))))
 
         #expect(store.state.pendingKeystoneSigning == MigrationCoordFlow.KeystoneSigningContext.immediateReview)
+        // MOB-1509: owner recorded beside the context (see the planCommit twin above).
+        #expect(store.state.pendingKeystoneSigningAccountUUID == account.id)
         guard case let .keystoneSign(signState) = try? #require(store.state.path.last) else {
             Issue.record("Expected .keystoneSign pushed on top")
             return
@@ -2254,7 +2263,7 @@ import ComposableArchitecture
         let store = TestStore(initialState: MigrationCoordFlow.State()) {
             MigrationCoordFlow()
         } withDependencies: {
-            $0.migrationManager.setMigrationMode = { _ in }
+            $0.migrationManager.setMigrationMode = { _, _ in }
             $0.sdkSynchronizer = .noOp
             $0.sdkSynchronizer.isNoteSplitNeeded = { _ in true }
         }
@@ -2289,7 +2298,7 @@ import ComposableArchitecture
             $0.migrationManager.formNetworkSnapshot = { _ in formNetworkSnapshotCalls.withValue { $0 += 1 } }
             $0.migrationBGScheduler.backgroundRefreshStatus = { .available }
             $0.userNotifications.authorizationStatus = { .authorized }
-            $0.migrationManager.isManualDelivery = { false }
+            $0.migrationManager.isManualDelivery = { _ in false }
             $0.sdkSynchronizer = .noOp
         }
         store.exhaustivity = .off
@@ -2335,7 +2344,7 @@ import ComposableArchitecture
             $0.migrationManager.networkSnapshot = { _ in Self.someProviderNetworkSnapshot() }
             $0.migrationBGScheduler.backgroundRefreshStatus = { .available }
             $0.userNotifications.authorizationStatus = { .authorized }
-            $0.migrationManager.isManualDelivery = { false }
+            $0.migrationManager.isManualDelivery = { _ in false }
             $0.sdkSynchronizer = .noOp
         }
         store.exhaustivity = .off
@@ -2406,7 +2415,7 @@ import ComposableArchitecture
             $0.migrationManager.networkSnapshot = { _ in Self.someCustomNetworkSnapshot() }
             $0.migrationBGScheduler.backgroundRefreshStatus = { .available }
             $0.userNotifications.authorizationStatus = { .authorized }
-            $0.migrationManager.isManualDelivery = { false }
+            $0.migrationManager.isManualDelivery = { _ in false }
             $0.sdkSynchronizer = .noOp
         }
         store.exhaustivity = .off
@@ -2503,7 +2512,7 @@ import ComposableArchitecture
         let store = TestStore(initialState: state) {
             MigrationCoordFlow()
         } withDependencies: {
-            $0.migrationManager.setManualDelivery = { allowed in setManualDeliveryCalls.withValue { $0.append(allowed) } }
+            $0.migrationManager.setManualDelivery = { _, allowed in setManualDeliveryCalls.withValue { $0.append(allowed) } }
             $0.migrationBGScheduler.backgroundRefreshStatus = { .available }
             $0.userNotifications.authorizationStatus = { .notDetermined }
         }
@@ -2527,10 +2536,10 @@ import ComposableArchitecture
         let store = TestStore(initialState: state) {
             MigrationCoordFlow()
         } withDependencies: {
-            $0.migrationManager.setManualDelivery = { _ in }
+            $0.migrationManager.setManualDelivery = { _, _ in }
             $0.migrationBGScheduler.backgroundRefreshStatus = { .available }
             $0.userNotifications.authorizationStatus = { .notDetermined }
-            $0.migrationManager.isManualDelivery = { true }
+            $0.migrationManager.isManualDelivery = { _ in true }
         }
         store.exhaustivity = .off
 
@@ -2554,7 +2563,7 @@ import ComposableArchitecture
         } withDependencies: {
             $0.migrationBGScheduler.backgroundRefreshStatus = { .available }
             $0.userNotifications.authorizationStatus = { .authorized }
-            $0.migrationManager.isManualDelivery = { false }
+            $0.migrationManager.isManualDelivery = { _ in false }
             $0.migrationManager.networkSnapshot = { _ in nil }
             $0.sdkSynchronizer = .noOp
         }
@@ -2578,7 +2587,7 @@ import ComposableArchitecture
         } withDependencies: {
             $0.migrationBGScheduler.backgroundRefreshStatus = { .available }
             $0.userNotifications.authorizationStatus = { .denied }
-            $0.migrationManager.isManualDelivery = { false }
+            $0.migrationManager.isManualDelivery = { _ in false }
             $0.migrationManager.networkSnapshot = { _ in nil }
             $0.sdkSynchronizer = .noOp
         }
