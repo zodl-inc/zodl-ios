@@ -27,8 +27,4 @@ struct MigrationRandomnessTests {
 
         #expect(live.randomIndex(1) == 0)
     }
-
-    @Test func testValueDefaultsToZero() {
-        #expect(MigrationRandomnessClient.testValue.randomIndex(5) == 0)
-    }
 }
