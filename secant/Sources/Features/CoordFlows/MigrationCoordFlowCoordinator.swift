@@ -202,11 +202,24 @@
 //  shipped endpoint; the defensive no-other-family fallback) also sets `broadcastProvider ==
 //  syncProvider` without the snapshot being identity-custom — those users kept the toggle sheet
 //  (correctly) but saw a "different server" claim that wasn't true. The disclosure now has its own
-//  gate, `showsBroadcastDisclosure` (coordinator) / `MigrationTorSheet.State.showsBroadcastDisclosure`
-//  (sheet) — `broadcastProvider != syncProvider` — threaded alongside `broadcastHost` at every
-//  hydration site (`torSheetState`, `confirmTorSheet`'s `.reviewTransfer` case, and the shared
-//  `broadcastDisclosureHost` helper `nextPermissionStepResult`/`reviewTransferImmediateState` both
-//  call). R2/R12's own unavailable-variant gate (`isCustomServer`/`isIdentityCustom`) is untouched.
+//  gate, `showsBroadcastDisclosure` (below) — `broadcastProvider != syncProvider` — read at every
+//  hydration site (T3, below, changes WHERE that read happens for the sheet-confirmed route).
+//  R2/R12's own unavailable-variant gate (`isCustomServer`/`isIdentityCustom`) is untouched.
+//
+//  MOB-1497 (T3): the custom-server Tor sheet's redesign moves the R13 disclosure fully off the sheet
+//  itself — `MigrationTorSheet.State` drops `broadcastHost`/`showsBroadcastDisclosure` entirely (the
+//  redesigned unavailable variant has a risks card instead of a disclosure line, and the provider
+//  toggle card's own disclosure line is deleted too). `torSheetState` (presentation) correspondingly
+//  stops threading those two fields; `confirmTorSheet`'s `.reviewTransfer` case (confirmation) now
+//  re-peeks the already-formed snapshot through the shared `broadcastDisclosureHost` helper instead of
+//  reading them back off the sheet's state — the same helper `reviewTransferImmediateState`/
+//  `nextPermissionStepResult`'s `.transferPlan` branch (the sheet-SKIPPED routes) already used, so all
+//  three R13-footer hydration sites are now uniform. The TransferPlan/ReviewTransfer confirm footers
+//  themselves are unchanged (still Task 4's to rework). The sheet also gains two new custom-variant
+//  actions/delegates — `continueWithoutTorTapped` (same `.delegate(.gotIt)` contract the old
+//  custom-server "Got it" had) and `switchServerTapped` (a new `Delegate.switchServer`, produced here
+//  but not yet acted on — `.torSheet(.delegate(.switchServer))` is an explicit no-op below, wired for
+//  real in T4).
 //
 //  MOB-1497 (R9-T3, findings 6+1): the flag-on skip gate the comment above calls out as untouched by
 //  fix-wave 1 IS this round's finding 1 — both flag-on shortcuts (Entry `.immediate`, How This Works
@@ -383,6 +396,15 @@ extension MigrationCoordFlow {
 
             case .torSheet(.delegate(.gotIt)):
                 return confirmTorSheet(state: &state)
+
+            case .torSheet(.delegate(.switchServer)):
+                // MOB-1497 (T3): the custom-server variant's new "Switch Server" button — wiring the
+                // actual server switch is T4's job. The file's `default: return .none` catch-all
+                // (below) would cover this anyway (the switch isn't exhaustive over `torSheet`'s
+                // nested delegate cases), but it's spelled out explicitly so a reader doesn't have to
+                // go hunting for that to know the tap is deliberately inert for now.
+                // Wired in the next commit (T4).
+                return .none
 
             case .torSheetStateReady(let sheetState, let destination):
                 // MOB-1497 (T2): presentation-time forming/hydration resolved — actually show the
@@ -1188,19 +1210,19 @@ extension MigrationCoordFlow {
     /// MOB-1497 (T2): resolves a fully-hydrated `MigrationTorSheet.State` for a FRESH presentation —
     /// replaces the old (synchronous) `presentTorSheet`. Forms the run's (provisional) network
     /// snapshot (T1's per-presentation re-form-when-provisional rule now doubles as the
-    /// per-presentation re-roll R13's disclosure needs to be correct by construction — a fresh sheet
-    /// always shows a fresh roll), then reads it back via the non-forming `networkSnapshot` peek to
-    /// thread `broadcastEndpoint.host` and identity-custom classification — off the snapshot's OWN
+    /// per-presentation re-roll — a fresh sheet always shows a fresh roll), then reads it back via the
+    /// non-forming `networkSnapshot` peek to classify identity-custom — off the snapshot's OWN
     /// `syncProvider`, never re-derived with separate classification logic (R2/R8) — into the sheet's
     /// state. Identity-custom forces `isTorOn` false (T1 already forces the snapshot's `useTor` false
     /// for a custom server; there is no toggle to draw ON here either — see `MigrationTorSheet.State
     /// .isCustomServer`'s doc). The immediate destination gets the "your full balance" body variant;
     /// the scheduled one "your balance" — same `usesFullBalanceCopy` convention as before.
     ///
-    /// R7-T2 fix-wave 1 (Important-1): also threads `showsBroadcastDisclosure` —
-    /// `broadcastProvider != syncProvider` — so testnet and the defensive same-server fallback (both
-    /// classify as a normal, non-custom provider yet share a server) keep the toggle sheet without
-    /// the R13 disclosure line's false "different server" claim.
+    /// MOB-1497 (T3): no longer threads `broadcastEndpoint.host`/`showsBroadcastDisclosure` into the
+    /// sheet's state — the redesigned custom variant has no disclosure line of its own to feed (see
+    /// `MigrationTorSheetView`'s doc), so R13 has no reader left here. `confirmTorSheet`'s
+    /// `.reviewTransfer` case re-peeks the snapshot itself instead, through the same
+    /// `broadcastDisclosureHost` helper the sheet-SKIPPED routes already used.
     private func torSheetState(usesFullBalanceCopy: Bool, accountUUID: AccountUUID?) async -> MigrationTorSheet.State {
         await migrationManager.formNetworkSnapshot(accountUUID)
         let snapshot = await migrationManager.networkSnapshot(accountUUID)
@@ -1208,10 +1230,6 @@ extension MigrationCoordFlow {
 
         var sheetState = MigrationTorSheet.State(usesFullBalanceCopy: usesFullBalanceCopy)
         sheetState.isCustomServer = isCustomServer
-        sheetState.broadcastHost = snapshot?.broadcastEndpoint.host ?? ""
-        // R7-T2 fix-wave 1 (Important-1): the disclosure line is gated separately from the
-        // unavailable variant above — see `showsBroadcastDisclosure`'s doc below.
-        sheetState.showsBroadcastDisclosure = Self.showsBroadcastDisclosure(snapshot)
         if isCustomServer {
             sheetState.isTorOn = false
         }
@@ -1219,12 +1237,14 @@ extension MigrationCoordFlow {
     }
 
     /// "Got it" (both the toggle-ON direct path and the off-warning alert's "Proceed without Tor" —
-    /// `MigrationTorSheet` only ever emits `.delegate(.gotIt)` once the choice is fully resolved) and
-    /// swipe-to-dismiss (for every combination except the one R3/R11 newly guards — see
-    /// `torSheetPresentationChanged`'s doc) both land here: persists whatever `isTorOn` is currently
-    /// showing exactly as `MigrationNetworkPrivacyStore` did, dismisses the sheet, then resumes the
-    /// stashed destination. A no-op if nothing is pending (defensive against a stray
-    /// `torSheetPresentationChanged(false)` after "Got it" already handled it).
+    /// `MigrationTorSheet` only ever emits `.delegate(.gotIt)` once the choice is fully resolved),
+    /// the custom variant's `continueWithoutTorTapped` (MOB-1497 T3 — same `.delegate(.gotIt)`
+    /// contract the old custom-server "Got it" had), and swipe-to-dismiss (for every combination
+    /// except the one R3/R11 newly guards — see `torSheetPresentationChanged`'s doc) all land here:
+    /// persists whatever `isTorOn` is currently showing exactly as `MigrationNetworkPrivacyStore` did,
+    /// dismisses the sheet, then resumes the stashed destination. A no-op if nothing is pending
+    /// (defensive against a stray `torSheetPresentationChanged(false)` after "Got it" already handled
+    /// it).
     ///
     /// MOB-1497 (T2): does NOT call `formNetworkSnapshot` any more — presentation already formed the
     /// snapshot the user was just shown (see `torSheetState` above), and confirm must not re-roll it
@@ -1250,8 +1270,6 @@ extension MigrationCoordFlow {
 
         let isTorOn = state.torSheetState.isTorOn
         let isCustomServer = state.torSheetState.isCustomServer
-        let broadcastHost = state.torSheetState.broadcastHost
-        let showsBroadcastDisclosure = state.torSheetState.showsBroadcastDisclosure
         let accountUUID = state.selectedWalletAccount?.id
 
         if !isCustomServer {
@@ -1261,13 +1279,18 @@ extension MigrationCoordFlow {
 
         switch destination {
         case .reviewTransfer:
-            // Already known from the sheet's own (just-resolved) state — no need to re-read the
-            // snapshot; nothing has re-formed it since presentation. R7-T2 fix-wave 1 (Important-1):
-            // gated on `showsBroadcastDisclosure`, not `isCustomServer` — see that field's doc.
-            var reviewState = MigrationReviewTransfer.State(mode: .immediate)
-            reviewState.broadcastDisclosureHost = showsBroadcastDisclosure ? broadcastHost : nil
-            state.path.append(.reviewTransfer(reviewState))
-            return .none
+            // MOB-1497 (T3): `MigrationTorSheet.State` no longer carries `broadcastHost`/
+            // `showsBroadcastDisclosure` (the redesigned custom variant dropped the sheet's own
+            // disclosure line entirely) — re-peek the snapshot through the same non-forming
+            // `broadcastDisclosureHost` helper the sheet-SKIPPED routes already use, rather than
+            // reading it back off the sheet's state. Nothing has re-formed the snapshot since
+            // presentation, so this reads the identical data the old code carried through
+            // `torSheetState`, just fetched again instead of ferried.
+            return .run { [accountUUID] send in
+                var reviewState = MigrationReviewTransfer.State(mode: .immediate)
+                reviewState.broadcastDisclosureHost = await broadcastDisclosureHost(accountUUID: accountUUID)
+                await send(.pushHydratedPathState(.reviewTransfer(reviewState)))
+            }
 
         case .permissionChain:
             return .run { send in
@@ -1377,8 +1400,9 @@ extension MigrationCoordFlow {
     /// `showsBroadcastDisclosure`'s doc — covers identity-custom, testnet, and the defensive
     /// same-server fallback uniformly); `nil` otherwise or when no snapshot is persisted yet. Shared
     /// by the sheet-SKIPPED footers (`reviewTransferImmediateState` / `nextPermissionStepResult`'s
-    /// `.transferPlan` branch above) — never forms; every caller has already run `formNetworkSnapshot`
-    /// earlier in its own chain.
+    /// `.transferPlan` branch above) AND (MOB-1497 T3) the sheet-CONFIRMED footer
+    /// (`confirmTorSheet`'s `.reviewTransfer` case) — never forms; every caller has already run
+    /// `formNetworkSnapshot` earlier in its own chain.
     private func broadcastDisclosureHost(accountUUID: AccountUUID?) async -> String? {
         guard let snapshot = await migrationManager.networkSnapshot(accountUUID) else { return nil }
         guard Self.showsBroadcastDisclosure(snapshot) else { return nil }
@@ -1386,9 +1410,9 @@ extension MigrationCoordFlow {
     }
 
     /// `.reviewTransfer(mode: .immediate)`, hydrated with the R13 disclosure footer — used by the
-    /// Entry `.immediate` flag-on skip branch (the sheet-confirmed route reads the same information
-    /// straight off `state.torSheetState` instead, already known from presentation, in
-    /// `confirmTorSheet`).
+    /// Entry `.immediate` flag-on skip branch (the sheet-confirmed route hydrates its own
+    /// `MigrationReviewTransfer.State` inline, in `confirmTorSheet`'s `.reviewTransfer` case, using
+    /// the same `broadcastDisclosureHost` helper this does).
     private func reviewTransferImmediateState(accountUUID: AccountUUID?) async -> MigrationReviewTransfer.State {
         var reviewState = MigrationReviewTransfer.State(mode: .immediate)
         reviewState.broadcastDisclosureHost = await broadcastDisclosureHost(accountUUID: accountUUID)
