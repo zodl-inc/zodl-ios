@@ -774,11 +774,16 @@ import ComposableArchitecture
         #expect(reviewState.broadcastDisclosureHost == "eu.zec.stardust.rest")
     }
 
-    /// MOB-1497 (T2, R2/R12 variant matrix — "forced-false preserved through confirm"): the
-    /// identity-custom "Got it" (single acknowledge CTA, §2 of the brief) persists `setNetworkPrivacyOptions`
-    /// unconditionally (unchanged) but must NOT call `confirmProvisionalTorChoice` — there is no
-    /// toggle value to persist that way, and R2 already forced the formed snapshot's `useTor` false.
-    @MainActor @Test func torSheetGotItForCustomServerDoesNotCallConfirmProvisionalTorChoice() async {
+    /// MOB-1497 (R9-T3, finding 6): the identity-custom "Got it" (single acknowledge CTA, §2 of
+    /// the brief) now persists NOTHING — neither `setNetworkPrivacyOptions` nor
+    /// `confirmProvisionalTorChoice` — since the custom sheet offers no choice: its forced
+    /// `isTorOn == false` is a circumstance of being on a custom server, not a preference the user
+    /// picked. Persisting it would silently overwrite the stored cross-run preference (default ON,
+    /// or an earlier explicit provider choice) the moment the user later switches to a provider
+    /// server. Renamed from `torSheetGotItForCustomServerDoesNotCallConfirmProvisionalTorChoice`:
+    /// pre-fix, only `confirmProvisionalTorChoice` was skipped, while `setNetworkPrivacyOptions`
+    /// still ran and persisted the forced `false` — the exact defect this fixes.
+    @MainActor @Test func torSheetGotItForCustomServerPersistsNothing() async {
         let setOptionsCalls = LockIsolated<[Bool]>([])
         let confirmProvisionalCalls = LockIsolated<Int>(0)
         var state = MigrationCoordFlow.State()
@@ -797,7 +802,7 @@ import ComposableArchitecture
         await store.send(.torSheet(.delegate(.gotIt)))
         await store.finish()
 
-        #expect(setOptionsCalls.value == [false])
+        #expect(setOptionsCalls.value == [])
         #expect(confirmProvisionalCalls.value == 0)
         guard case let .reviewTransfer(reviewState) = try? #require(store.state.path.last) else {
             Issue.record("Expected .reviewTransfer pushed on top")
@@ -910,11 +915,15 @@ import ComposableArchitecture
         #expect(store.state.path.isEmpty)
     }
 
-    /// MOB-1497 (T2, R3/R11 swipe-dismiss decision): the identity-custom twin of the ON case above —
-    /// R12's disclosure already stood in for the warning, so a custom swipe keeps the existing
-    /// persist-and-resume semantics too (nothing to warn about; `confirmProvisionalTorChoice` is
-    /// still skipped, same as an explicit custom "Got it").
-    @MainActor @Test func torSheetSwipeDismissForCustomServerPersistsAndAdvancesWithoutConfirmProvisionalCall() async {
+    /// MOB-1497 (R9-T3, finding 6): the identity-custom twin of the ON case above — R12's
+    /// disclosure already stood in for the warning, so a custom swipe still advances exactly like
+    /// an explicit custom "Got it" (same `confirmTorSheet` path), but now persists NOTHING —
+    /// neither `setNetworkPrivacyOptions` nor `confirmProvisionalTorChoice` — same reasoning as
+    /// `torSheetGotItForCustomServerPersistsNothing`. Renamed from
+    /// `torSheetSwipeDismissForCustomServerPersistsAndAdvancesWithoutConfirmProvisionalCall`, which
+    /// pinned the pre-fix behavior of still persisting the forced `false` via
+    /// `setNetworkPrivacyOptions`.
+    @MainActor @Test func torSheetSwipeDismissForCustomServerPersistsNothingAndAdvances() async {
         let setOptionsCalls = LockIsolated<[Bool]>([])
         let confirmProvisionalCalls = LockIsolated<Int>(0)
         var state = MigrationCoordFlow.State()
@@ -933,7 +942,7 @@ import ComposableArchitecture
         await store.send(.torSheetPresentationChanged(false))
         await store.finish()
 
-        #expect(setOptionsCalls.value == [false])
+        #expect(setOptionsCalls.value == [])
         #expect(confirmProvisionalCalls.value == 0)
         guard case let .reviewTransfer(reviewState) = try? #require(store.state.path.last) else {
             Issue.record("Expected .reviewTransfer pushed on top (identity-custom swipe still advances)")
