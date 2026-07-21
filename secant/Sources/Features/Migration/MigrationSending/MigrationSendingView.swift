@@ -119,12 +119,18 @@ struct MigrationSendingView: View {
                 .zFont(size: 14, style: Design.Text.primary)
                 .multilineTextAlignment(.center)
 
-            if target > Date() {
-                Text(timerInterval: Date()...target, countsDown: true)
-                    .zFont(.semiBold, size: 20, style: Design.Text.primary)
-                    .monospacedDigit()
-                    .padding(.top, 16)
-            }
+            // R8-T6 fix-wave (Minor-2, folded): `now` bound ONCE and reused for both bounds —
+            // reading `Date()` a second time for the range's upper bound (the original shape) is a
+            // TOCTOU: if `target` fell in the gap between the two reads, `now...target` would have
+            // `lowerBound > upperBound` and trap. `now...max(now, target)` is always a valid range;
+            // a stale/past `target` just renders 0:00 — `.waitFired`'s own fresh gate re-check
+            // (fired immediately when `remaining <= 0`) remains the sole authority on what happens
+            // next, so a momentary 0:00 here is harmless.
+            let now = Date()
+            Text(timerInterval: now...max(now, target), countsDown: true)
+                .zFont(.semiBold, size: 20, style: Design.Text.primary)
+                .monospacedDigit()
+                .padding(.top, 16)
 
             ZashiButton(String(localizable: .generalCancel), type: .secondary) {
                 store.send(.waitCancelTapped)
