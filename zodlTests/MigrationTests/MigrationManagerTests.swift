@@ -3733,6 +3733,226 @@ struct MigrationManagerTests {
         #expect(gateStorage.isTorEnabledForMigration() == true)
     }
 
+    // MARK: - MOB-1497 (R9-T6, finding 8): forming no longer touches transactionGuard
+    //
+    // `ensureOrCreateNetworkSnapshot`'s create path used to serialize through the app-wide
+    // `transactionGuard` FIFO mutex — shared with `createProposedTransactions`/
+    // `createTransactionFromPCZT`/`getTreeState`/vote submission/server switches — so a fresh
+    // migration entry could queue for minutes behind an unrelated in-flight broadcast, with no
+    // spinner. Forming never touches the live synchronizer (see `migrationNetworkOptions`'s doc), so
+    // it never needed the guard. The tests below assert forming never acquires it, across both entry
+    // points (`formNetworkSnapshot`, the Tor-choice/presentation path; `migrationNetworkOptions`, the
+    // broadcast-time safety net) and both the create ("miss") and short-circuit ("hit") legs — RED
+    // against the parent commit, where every create-leg case below acquires the guard via
+    // `transactionGuard.withSubmission`.
+
+    /// Counts `acquire()` calls on a pass-through `TransactionGuardClient` (submissions/switches
+    /// still never block, matching `.testValue`) — used instead of `.testValue` itself, which has no
+    /// way to observe whether it was ever reached.
+    private static func countingTransactionGuard() -> (client: TransactionGuardClient, acquireCalls: LockIsolated<Int>) {
+        let acquireCalls = LockIsolated<Int>(0)
+        let client = TransactionGuardClient(
+            acquire: { acquireCalls.withValue { $0 += 1 } },
+            tryAcquire: { true },
+            release: { }
+        )
+        return (client, acquireCalls)
+    }
+
+    @Test func formNetworkSnapshotNeverAcquiresTheTransactionGuardWhenCreatingAFreshSnapshot() async throws {
+        let suiteName = "testFormNetworkSnapshotNeverAcquiresTheTransactionGuardWhenCreatingAFreshSnapshot"
+        let userDefaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { userDefaults.removePersistentDomain(forName: suiteName) }
+        let snapshotStorage = MigrationSnapshotStorage(userDefaults: userDefaults)
+        let account = AccountUUID(id: [UInt8](repeating: 70, count: 16))
+        let (countingGuard, acquireCalls) = Self.countingTransactionGuard()
+
+        await withDependencies {
+            $0.zcashSDKEnvironment = .testnet
+            $0.zcashSDKEnvironment.network = { ZcashNetworkBuilder.network(for: .mainnet) }
+            $0.zcashSDKEnvironment.endpoint = {
+                LightWalletEndpoint(address: "na.zec.rocks", port: 443, secure: true, streamingCallTimeoutInMillis: 0)
+            }
+            $0.migrationRandomness.randomIndex = { _ in 0 }
+            $0.transactionGuard = countingGuard
+        } operation: {
+            let impl = MigrationManagerImpl(snapshotStorage: snapshotStorage)
+            // No prior snapshot for this account — exercises the CREATE ("miss") leg.
+            await impl.formNetworkSnapshot(accountUUID: account)
+        }
+
+        #expect(acquireCalls.value == 0)
+        #expect(snapshotStorage.snapshot(for: account) != nil)
+    }
+
+    @Test func formNetworkSnapshotNeverAcquiresTheTransactionGuardWhenReformingAStaleProvisionalSnapshot() async throws {
+        let snapshotSuiteName = "testFormNetworkSnapshotNeverAcquiresTheTransactionGuardWhenReformingSnapshot"
+        let gateSuiteName = "testFormNetworkSnapshotNeverAcquiresTheTransactionGuardWhenReformingGate"
+        let snapshotUserDefaults = try #require(UserDefaults(suiteName: snapshotSuiteName))
+        let gateUserDefaults = try #require(UserDefaults(suiteName: gateSuiteName))
+        defer {
+            snapshotUserDefaults.removePersistentDomain(forName: snapshotSuiteName)
+            gateUserDefaults.removePersistentDomain(forName: gateSuiteName)
+        }
+        let snapshotStorage = MigrationSnapshotStorage(userDefaults: snapshotUserDefaults)
+        let gateStorage = MigrationGateStorage(userDefaults: gateUserDefaults)
+        let account = AccountUUID(id: [UInt8](repeating: 71, count: 16))
+        snapshotStorage.recordSnapshot(Self.someNetworkSnapshot(), for: account) // stale PROVISIONAL
+        let (countingGuard, acquireCalls) = Self.countingTransactionGuard()
+
+        await withDependencies {
+            $0.zcashSDKEnvironment = .testnet
+            $0.zcashSDKEnvironment.network = { ZcashNetworkBuilder.network(for: .mainnet) }
+            $0.zcashSDKEnvironment.endpoint = {
+                LightWalletEndpoint(address: "na.zec.rocks", port: 443, secure: true, streamingCallTimeoutInMillis: 0)
+            }
+            $0.migrationRandomness.randomIndex = { _ in 1 }
+            $0.transactionGuard = countingGuard
+        } operation: {
+            let impl = MigrationManagerImpl(gateStorage: gateStorage, snapshotStorage: snapshotStorage)
+            // `reformIfProvisional: true` discards the stale snapshot and re-forms — the REFORM
+            // ("miss") leg, not the outer short-circuit.
+            await impl.formNetworkSnapshot(accountUUID: account)
+        }
+
+        #expect(acquireCalls.value == 0)
+    }
+
+    @Test func formNetworkSnapshotNeverAcquiresTheTransactionGuardWhenACommittedSnapshotShortCircuits() async throws {
+        let suiteName = "testFormNetworkSnapshotNeverAcquiresTheTransactionGuardWhenCommittedShortCircuits"
+        let userDefaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { userDefaults.removePersistentDomain(forName: suiteName) }
+        let snapshotStorage = MigrationSnapshotStorage(userDefaults: userDefaults)
+        let account = AccountUUID(id: [UInt8](repeating: 72, count: 16))
+        snapshotStorage.recordSnapshot(Self.someNetworkSnapshot(committedAt: Date()), for: account)
+        let (countingGuard, acquireCalls) = Self.countingTransactionGuard()
+        let randomIndexCalls = LockIsolated<Int>(0)
+
+        await withDependencies {
+            $0.migrationRandomness.randomIndex = { _ in
+                randomIndexCalls.withValue { $0 += 1 }
+                return 0
+            }
+            $0.transactionGuard = countingGuard
+        } operation: {
+            let impl = MigrationManagerImpl(snapshotStorage: snapshotStorage)
+            // A COMMITTED existing snapshot short-circuits before creation is ever considered — the
+            // "hit" leg, unaffected by this fix, pinned here for completeness.
+            await impl.formNetworkSnapshot(accountUUID: account)
+        }
+
+        #expect(acquireCalls.value == 0)
+        #expect(randomIndexCalls.value == 0)
+    }
+
+    @Test func migrationNetworkOptionsNeverAcquiresTheTransactionGuardWhenCreatingAFreshSnapshot() async throws {
+        let suiteName = "testMigrationNetworkOptionsNeverAcquiresTheTransactionGuardWhenCreatingAFreshSnapshot"
+        let userDefaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { userDefaults.removePersistentDomain(forName: suiteName) }
+        let snapshotStorage = MigrationSnapshotStorage(userDefaults: userDefaults)
+        let account = AccountUUID(id: [UInt8](repeating: 73, count: 16))
+        let (countingGuard, acquireCalls) = Self.countingTransactionGuard()
+
+        await withDependencies {
+            $0.zcashSDKEnvironment = .testnet
+            $0.zcashSDKEnvironment.network = { ZcashNetworkBuilder.network(for: .mainnet) }
+            $0.zcashSDKEnvironment.endpoint = {
+                LightWalletEndpoint(address: "na.zec.rocks", port: 443, secure: true, streamingCallTimeoutInMillis: 0)
+            }
+            $0.migrationRandomness.randomIndex = { _ in 0 }
+            $0.transactionGuard = countingGuard
+        } operation: {
+            let impl = MigrationManagerImpl(snapshotStorage: snapshotStorage)
+            // The broadcast-time safety-net path, reached with nothing formed ahead of time — the
+            // CREATE ("miss") leg.
+            _ = await impl.migrationNetworkOptions(accountUUID: account)
+        }
+
+        #expect(acquireCalls.value == 0)
+        #expect(snapshotStorage.snapshot(for: account)?.committedAt != nil)
+    }
+
+    @Test func migrationNetworkOptionsNeverAcquiresTheTransactionGuardWhenAProvisionalSnapshotShortCircuits() async throws {
+        let suiteName = "testMigrationNetworkOptionsNeverAcquiresTheTransactionGuardWhenProvisionalShortCircuits"
+        let userDefaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { userDefaults.removePersistentDomain(forName: suiteName) }
+        let snapshotStorage = MigrationSnapshotStorage(userDefaults: userDefaults)
+        let account = AccountUUID(id: [UInt8](repeating: 74, count: 16))
+        snapshotStorage.recordSnapshot(Self.someNetworkSnapshot(), for: account) // already formed, still PROVISIONAL
+        let (countingGuard, acquireCalls) = Self.countingTransactionGuard()
+        let randomIndexCalls = LockIsolated<Int>(0)
+
+        await withDependencies {
+            $0.migrationRandomness.randomIndex = { _ in
+                randomIndexCalls.withValue { $0 += 1 }
+                return 0
+            }
+            $0.transactionGuard = countingGuard
+        } operation: {
+            let impl = MigrationManagerImpl(snapshotStorage: snapshotStorage)
+            // `reformIfProvisional: false` — a PROVISIONAL existing snapshot ALSO short-circuits here
+            // (the safety net's own idempotence) — the "hit" leg for this entry point.
+            _ = await impl.migrationNetworkOptions(accountUUID: account)
+        }
+
+        #expect(acquireCalls.value == 0)
+        #expect(randomIndexCalls.value == 0)
+    }
+
+    /// "Winner consistency": two concurrent broadcast-time reads for the SAME account, racing from a
+    /// cold start (nothing formed yet), must collapse onto exactly ONE stored snapshot — and BOTH
+    /// callers must receive back that SAME winning value, never a value the other racer's write has
+    /// already superseded. `migrationRandomness.randomIndex` is stubbed to hand out a DIFFERENT index
+    /// per invocation, so the two candidates genuinely differ if the race were left unclosed;
+    /// `PerAccountCodableStorage`'s per-account lock fully serializes the two `ensureOrCreate` calls
+    /// regardless of how their `createNetworkSnapshot()` reads interleave — whichever call's atomic
+    /// decide-and-write runs second always finds the first's (already-committed, since
+    /// `stampCommitted: true` on this path) write and returns it unchanged — so these assertions hold
+    /// deterministically no matter how the two tasks are actually scheduled.
+    @Test func migrationNetworkOptionsTwoConcurrentCallersForTheSameAccountCollapseOntoOneStoredWinner() async throws {
+        let suiteName = "testMigrationNetworkOptionsTwoConcurrentCallersCollapseOntoOneStoredWinner"
+        let userDefaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { userDefaults.removePersistentDomain(forName: suiteName) }
+        let snapshotStorage = MigrationSnapshotStorage(userDefaults: userDefaults)
+        let account = AccountUUID(id: [UInt8](repeating: 75, count: 16))
+        let nextDrawIndex = LockIsolated<Int>(0)
+
+        let hosts = await withDependencies {
+            $0.zcashSDKEnvironment = .testnet
+            $0.zcashSDKEnvironment.network = { ZcashNetworkBuilder.network(for: .mainnet) }
+            $0.zcashSDKEnvironment.endpoint = {
+                LightWalletEndpoint(address: "na.zec.rocks", port: 443, secure: true, streamingCallTimeoutInMillis: 0)
+            }
+            // First invocation draws index 0, second draws index 1 — the OTHER P2 (stardust) member
+            // (see `snapshotCreationP1SyncRandomIndexZeroPicksFirstP2Member`/`...OnePicksSecondP2Member`
+            // above), so the two candidates really do have different `broadcastEndpoint`s.
+            $0.migrationRandomness.randomIndex = { _ in
+                nextDrawIndex.withValue { current in
+                    let index = current
+                    current += 1
+                    return index
+                }
+            }
+            $0.transactionGuard = .testValue
+        } operation: {
+            let impl = MigrationManagerImpl(snapshotStorage: snapshotStorage)
+            return await withTaskGroup(of: String.self) { group in
+                group.addTask { await impl.migrationNetworkOptions(accountUUID: account).submissionEndpoint.host }
+                group.addTask { await impl.migrationNetworkOptions(accountUUID: account).submissionEndpoint.host }
+                var collected: [String] = []
+                for await host in group {
+                    collected.append(host)
+                }
+                return collected
+            }
+        }
+
+        #expect(hosts.count == 2)
+        #expect(hosts[0] == hosts[1])
+        let stored = try #require(snapshotStorage.snapshot(for: account))
+        #expect(hosts[0] == stored.broadcastEndpoint.host)
+    }
+
     // MARK: - MOB-1496 (W4): activeNetworkSnapshots()
 
     @Test func activeNetworkSnapshotsReturnsOnlyAccountsWithAPersistedSnapshotDedupedAcrossWalletAccountsAndSelected() throws {
