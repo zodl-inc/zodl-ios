@@ -81,8 +81,8 @@ struct MigrationTorSheetView: View {
                 : String(localizable: .migrationTorSheetBody)
         }
         return store.usesFullBalanceCopy
-            ? String(localizable: .migrationTorSheetUnavailableBodyFull(store.broadcastHost))
-            : String(localizable: .migrationTorSheetUnavailableBodyGradual(store.broadcastHost))
+            ? String(localizable: .migrationTorSheetUnavailableBodyFull)
+            : String(localizable: .migrationTorSheetUnavailableBodyGradual)
     }
 
     // MARK: - Tor badge
