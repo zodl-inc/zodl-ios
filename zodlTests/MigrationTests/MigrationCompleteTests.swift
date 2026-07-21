@@ -131,7 +131,7 @@ import ComposableArchitecture
         let store = TestStore(initialState: MigrationComplete.State(dust: Zatoshi(31_000))) {
             MigrationComplete()
         } withDependencies: {
-            $0.migrationManager.lockMigrationDust = { }
+            $0.migrationManager.lockMigrationDust = { _ in }
         }
 
         #expect(store.state.dustResolution == MigrationComplete.State.DustResolution.offered)
@@ -150,7 +150,7 @@ import ComposableArchitecture
         let store = TestStore(initialState: MigrationComplete.State(dust: Zatoshi(31_000))) {
             MigrationComplete()
         } withDependencies: {
-            $0.migrationManager.lockMigrationDust = { throw LockDustFailure() }
+            $0.migrationManager.lockMigrationDust = { _ in throw LockDustFailure() }
         }
         store.exhaustivity = .off
 

@@ -32,10 +32,23 @@ extension Root {
                 guard state.selectedWalletAccount != walletAccount else {
                     return .none
                 }
+                // MOB-1509 (defensive): no UI path reaches the switcher while a migration coord
+                // flow covers Home today, but any future dispatcher of this action would silently
+                // repoint the flow's live handlers (they read `selectedWalletAccount` fresh) at the
+                // new account mid-run. Tear the flow down first — the shared helper cancels a
+                // stranded Keystone ceremony on its recorded owner and clears the run's snapshots —
+                // then apply the switch.
+                var migrationTeardownEffect = Effect<Root.Action>.none
+                if state.path == Root.State.Path.migrationCoordFlow {
+                    migrationTeardownEffect = tearDownMigrationCoordFlow(state: &state)
+                    state.migrationCoordFlowState = MigrationCoordFlow.State.initial
+                    state.path = nil
+                }
                 state.$selectedWalletAccount.withLock { $0 = walletAccount }
                 state.homeState.transactionListState.isInvalidated = true
                 state.autoUpdateSwapCandidates.removeAll()
                 return .merge(
+                    migrationTeardownEffect,
                     .send(.home(.smartBanner(.walletAccountChanged))),
                     .send(.home(.walletBalances(.updateBalances))),
                     .send(.loadContacts),

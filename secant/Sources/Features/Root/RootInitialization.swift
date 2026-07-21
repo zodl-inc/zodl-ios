@@ -2180,9 +2180,14 @@ extension Root {
     /// twin). Read BEFORE the caller resets/replaces `migrationCoordFlowState`. Fire-and-forget: a
     /// failure here just leaves the stray run for the next attempt to encounter and cancel itself,
     /// same as today.
+    /// MOB-1509: the run is cancelled on its RECORDED owner (`pendingKeystoneSigningAccountUUID`,
+    /// stamped when the ceremony's PCZTs were built) — the cross-account notification tap switches
+    /// `selectedWalletAccount` BEFORE this runs, so re-reading the selection here would target the
+    /// wrong account's engine state. The selection is only a fallback for state predating the field.
     func cancelAbandonedKeystoneMigrationRun(state: Root.State) -> Effect<Root.Action> {
         guard state.migrationCoordFlowState.pendingKeystoneSigning != nil,
-              let accountUUID = state.selectedWalletAccount?.id else {
+              let accountUUID = state.migrationCoordFlowState.pendingKeystoneSigningAccountUUID
+                ?? state.selectedWalletAccount?.id else {
             return .none
         }
 

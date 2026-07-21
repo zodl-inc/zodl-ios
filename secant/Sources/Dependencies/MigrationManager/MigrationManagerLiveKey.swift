@@ -117,13 +117,13 @@ extension MigrationManagerClient: DependencyKey {
             recordTransferBroadcast: { accountUUID, result in
                 await impl.recordTransferBroadcast(accountUUID: accountUUID, result: result)
             },
-            lockMigrationDust: { try await impl.lockMigrationDust() },
-            isMigrationDustLocked: { impl.isMigrationDustLocked() },
+            lockMigrationDust: { try await impl.lockMigrationDust(accountUUID: $0) },
+            isMigrationDustLocked: { impl.isMigrationDustLocked(accountUUID: $0) },
             stateEvents: { accountUUID in impl.stateEvents(accountUUID: accountUUID) },
-            migrationMode: { impl.gateStorage.migrationMode() },
-            setMigrationMode: { impl.gateStorage.setMigrationMode($0) },
-            isManualDelivery: { impl.gateStorage.isManualDelivery() },
-            setManualDelivery: { impl.gateStorage.setManualDelivery($0) },
+            migrationMode: { impl.migrationMode(accountUUID: $0) },
+            setMigrationMode: { impl.setMigrationMode(accountUUID: $0, mode: $1) },
+            isManualDelivery: { impl.isManualDelivery(accountUUID: $0) },
+            setManualDelivery: { impl.setManualDelivery(accountUUID: $0, isManual: $1) },
             migrationNetworkOptions: { accountUUID in await impl.migrationNetworkOptions(accountUUID: accountUUID) },
             formNetworkSnapshot: { accountUUID in await impl.formNetworkSnapshot(accountUUID: accountUUID) },
             networkSnapshot: { accountUUID in await impl.networkSnapshot(accountUUID: accountUUID) },
@@ -307,7 +307,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
             isIronwoodActivated: isIronwoodActivated(),
             state: state,
             hasOverdue: hasOverdue,
-            isManualDelivery: gateStorage.isManualDelivery(),
+            isManualDelivery: gateStorage.isManualDelivery(for: resolvedAccountUUID),
             isNextTransferDue: isNextTransferDue(progress: progress),
             orchardBalance: balance,
             isCompleteAcknowledged: gateStorage.isCompleteAcknowledged(for: resolvedAccountUUID),
@@ -376,7 +376,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
             state: state,
             hasInvalid: hasInvalid,
             hasOverdue: hasOverdue,
-            isManualDelivery: gateStorage.isManualDelivery(),
+            isManualDelivery: gateStorage.isManualDelivery(for: accountUUID),
             isNextTransferDue: isNextTransferDue(progress: progress),
             isCompleteAcknowledged: gateStorage.isCompleteAcknowledged(for: accountUUID),
             progress: progress
@@ -586,7 +586,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// "Locking balance" in-flight state observable, matching the pre-relocation
     /// `SDKSynchronizerClient` stub. Simulator reach-around mirrors the engine's own (shorter)
     /// simulated latency, matching its pre-relocation wiring in `SDKSynchronizerClient+Simulated`.
-    func lockMigrationDust() async throws {
+    func lockMigrationDust(accountUUID: AccountUUID?) async throws {
         if MigrationSimulatorFlag.isEnabled && MigrationSimulatorClient.sharedEngine.isActive {
             try await Task.sleep(for: .seconds(0.5))
             MigrationSimulatorClient.sharedEngine.lockDust()
@@ -594,14 +594,42 @@ final class MigrationManagerImpl: @unchecked Sendable {
         }
 
         try await Task.sleep(nanoseconds: 800_000_000)
-        gateStorage.setDustLocked(true)
+        // MOB-1509: per-account — see `MigrationGateStorage.dustLockedStorage`. An unresolvable
+        // account (nothing passed, nothing selected) has no remainder to lock; storing nothing
+        // keeps the failure path identical to the pre-per-account behavior.
+        guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return }
+        gateStorage.setDustLocked(true, for: resolvedAccountUUID)
     }
 
-    func isMigrationDustLocked() -> Bool {
+    func isMigrationDustLocked(accountUUID: AccountUUID?) -> Bool {
         if MigrationSimulatorFlag.isEnabled && MigrationSimulatorClient.sharedEngine.isActive {
             return MigrationSimulatorClient.sharedEngine.isDustLocked()
         }
-        return gateStorage.isDustLocked()
+        guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return false }
+        return gateStorage.isDustLocked(for: resolvedAccountUUID)
+    }
+
+    /// MOB-1509: per-account persisted prefs (mode, manual delivery) — `nil` resolves the selected
+    /// account, same convention as `migrationSummary`/`stateEvents`. An unresolvable account reads
+    /// the defaults and writes nowhere.
+    func migrationMode(accountUUID: AccountUUID?) -> MigrationMode? {
+        guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return nil }
+        return gateStorage.migrationMode(for: resolvedAccountUUID)
+    }
+
+    func setMigrationMode(accountUUID: AccountUUID?, mode: MigrationMode) {
+        guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return }
+        gateStorage.setMigrationMode(mode, for: resolvedAccountUUID)
+    }
+
+    func isManualDelivery(accountUUID: AccountUUID?) -> Bool {
+        guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return false }
+        return gateStorage.isManualDelivery(for: resolvedAccountUUID)
+    }
+
+    func setManualDelivery(accountUUID: AccountUUID?, isManual: Bool) {
+        guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return }
+        gateStorage.setManualDelivery(isManual, for: resolvedAccountUUID)
     }
 
     /// MOB-1496: per-account replacement for the old wallet-wide `migrationStateStream`. `nil`
@@ -1314,6 +1342,9 @@ final class MigrationManagerImpl: @unchecked Sendable {
         for accountUUID in accountUUIDs {
             gateStorage.clearAcknowledgedComplete(for: accountUUID)
             gateStorage.clearRemainderPending(for: accountUUID)
+            gateStorage.clearDustLocked(for: accountUUID)
+            gateStorage.clearMigrationMode(for: accountUUID)
+            gateStorage.clearManualDelivery(for: accountUUID)
             scheduleStorage.clear(for: accountUUID)
             snapshotStorage.clear(for: accountUUID)
             failureRoutingStorage.clear(for: accountUUID)
@@ -1783,6 +1814,17 @@ final class MigrationGateStorage: @unchecked Sendable {
     /// is exactly the tri-state `remainderPending(for:)` below needs to preserve. Same generic
     /// storage / hex-key idiom as `acknowledgedStorage` beside it.
     private let remainderStorage: PerAccountCodableStorage<Bool>
+    /// MOB-1509: per-account now, like `acknowledgedStorage` beside it — the previous wallet-wide
+    /// flag let one account's "Lock balance" mark every other account's own dust remainder locked.
+    /// Same reuse-the-legacy-key-as-prefix idiom; the bare key is only ever deleted for hygiene
+    /// (`resetPersistedFlags()`), never read. No migration of the old value: the feature is
+    /// unreleased (dev/QA installs only).
+    private let dustLockedStorage: PerAccountCodableStorage<Bool>
+    /// MOB-1509: per-account — two concurrently migrating accounts (software + Keystone) choose
+    /// their migration mode and delivery style independently; the old wallet-wide keys let the
+    /// second account's choice clobber the first's. Same legacy-key-as-prefix idiom as above.
+    private let modeStorage: PerAccountCodableStorage<MigrationMode>
+    private let manualDeliveryStorage: PerAccountCodableStorage<Bool>
 
     init(userDefaults: UserDefaults = .standard) {
         self.userDefaults = userDefaults
@@ -1794,6 +1836,21 @@ final class MigrationGateStorage: @unchecked Sendable {
         self.remainderStorage = PerAccountCodableStorage<Bool>(
             keyPrefix: .migrationRemainderPending,
             corruptLogTag: "MigrationGateStorage.remainderStorage",
+            userDefaults: userDefaults
+        )
+        self.dustLockedStorage = PerAccountCodableStorage<Bool>(
+            keyPrefix: .migrationDustLocked,
+            corruptLogTag: "MigrationGateStorage.dustLockedStorage",
+            userDefaults: userDefaults
+        )
+        self.modeStorage = PerAccountCodableStorage<MigrationMode>(
+            keyPrefix: .migrationMode,
+            corruptLogTag: "MigrationGateStorage.modeStorage",
+            userDefaults: userDefaults
+        )
+        self.manualDeliveryStorage = PerAccountCodableStorage<Bool>(
+            keyPrefix: .migrationManualDelivery,
+            corruptLogTag: "MigrationGateStorage.manualDeliveryStorage",
             userDefaults: userDefaults
         )
     }
@@ -1834,21 +1891,28 @@ final class MigrationGateStorage: @unchecked Sendable {
 
     // MARK: Mode / manual delivery / network privacy / acknowledge / dust-lock
 
-    func migrationMode() -> MigrationMode? {
-        guard let rawValue = userDefaults.string(forKey: .migrationMode) else { return nil }
-        return MigrationMode(rawValue: rawValue)
+    func migrationMode(for accountUUID: AccountUUID) -> MigrationMode? {
+        modeStorage.read(for: accountUUID)
     }
 
-    func setMigrationMode(_ mode: MigrationMode) {
-        userDefaults.set(mode.rawValue, forKey: .migrationMode)
+    func setMigrationMode(_ mode: MigrationMode, for accountUUID: AccountUUID) {
+        modeStorage.write(mode, for: accountUUID)
     }
 
-    func isManualDelivery() -> Bool {
-        userDefaults.bool(forKey: .migrationManualDelivery)
+    func clearMigrationMode(for accountUUID: AccountUUID) {
+        modeStorage.clear(for: accountUUID)
     }
 
-    func setManualDelivery(_ isManual: Bool) {
-        userDefaults.set(isManual, forKey: .migrationManualDelivery)
+    func isManualDelivery(for accountUUID: AccountUUID) -> Bool {
+        manualDeliveryStorage.read(for: accountUUID) ?? false
+    }
+
+    func setManualDelivery(_ isManual: Bool, for accountUUID: AccountUUID) {
+        manualDeliveryStorage.write(isManual, for: accountUUID)
+    }
+
+    func clearManualDelivery(for accountUUID: AccountUUID) {
+        manualDeliveryStorage.clear(for: accountUUID)
     }
 
     /// Only `useTor` is persisted — see `PersistedNetworkPrivacyOptions`'s doc.
@@ -1918,12 +1982,16 @@ final class MigrationGateStorage: @unchecked Sendable {
     /// marked unspendable and the complete screen re-enters on its locked confirmation instead of
     /// re-offering resolution. Relocated here from the (inert, pre-real-SDK) `SDKSynchronizerClient`
     /// stub — this was always app-only bookkeeping, never an SDK call.
-    func isDustLocked() -> Bool {
-        userDefaults.bool(forKey: .migrationDustLocked)
+    func isDustLocked(for accountUUID: AccountUUID) -> Bool {
+        dustLockedStorage.read(for: accountUUID) ?? false
     }
 
-    func setDustLocked(_ isLocked: Bool) {
-        userDefaults.set(isLocked, forKey: .migrationDustLocked)
+    func setDustLocked(_ isLocked: Bool, for accountUUID: AccountUUID) {
+        dustLockedStorage.write(isLocked, for: accountUUID)
+    }
+
+    func clearDustLocked(for accountUUID: AccountUUID) {
+        dustLockedStorage.clear(for: accountUUID)
     }
 
     /// Clears every WALLET-WIDE persisted migration flag this storage owns: mode, manual delivery,

@@ -9,6 +9,7 @@ directly impact users rather than highlighting other crucial architectural updat
 ### Changed
 - [MOB-1507] Temporarily hidden the Beta: Coinholder Polling option in Settings behind a feature flag. Nothing was removed — the feature can be re-enabled by flipping the flag.
 - [MOB-1508] The "Find out more" link on the Move to Ironwood screen now opens the migration support article in the browser. Gated behind Ironwood network activation and not yet in a released build.
+- [MOB-1509] Running the ZODL software wallet and a Keystone wallet migration in parallel is now fully independent: each account keeps its own migration mode, delivery style, and locked-dust state, and switching wallets always shows the selected account's migration UI. Gated behind Ironwood network activation and not yet in a released build.
 
 ### Added
 - [MOB-1458] The app now builds against the Ironwood-capable Zcash SDK (local development path) and can sync with the new Slipstream engine, selected by a feature flag that is on by default on this line. Funds in the Ironwood pool are counted in all shielded balances (spendable, pending, and total).

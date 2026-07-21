@@ -3222,9 +3222,9 @@ private func baseNoOpDependencies(_ values: inout DependencyValues) {
     values.migrationManager.bannerVariant = { _ in nil }
     values.migrationManager.isIronwoodActivated = { true }
     values.migrationManager.reentryRoute = { .entry }
-    values.migrationManager.migrationMode = { nil }
-    values.migrationManager.setMigrationMode = { _ in }
-    values.migrationManager.setManualDelivery = { _ in }
+    values.migrationManager.migrationMode = { _ in nil }
+    values.migrationManager.setMigrationMode = { _, _ in }
+    values.migrationManager.setManualDelivery = { _, _ in }
     values.migrationManager.setNetworkPrivacyOptions = { _ in }
     values.migrationManager.formNetworkSnapshot = { _ in }
     values.migrationManager.markNetworkSnapshotCommitted = { _ in }
