@@ -241,6 +241,7 @@ struct MigrationManagerTests {
             isNextTransferDue: false,
             orchardBalance: Zatoshi.zero,
             isCompleteAcknowledged: false,
+            isMigrationRemainderPending: false,
             transferRows: [],
             isTorHoldActive: true
         )
