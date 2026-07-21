@@ -550,6 +550,46 @@ struct MigrationManagerTests {
         #expect(variant == MigrationBannerVariant.transferWaiting(number: 3, torHold: false))
     }
 
+    // MARK: - Pending background Tor prompt (MOB-1497 T5)
+    //
+    // The manager-facing API T6 reads on foreground. These pin the real `MigrationManagerImpl` methods
+    // (which `MigrationManagerClient.isPendingBackgroundTorPrompt`/`setPendingBackgroundTorPrompt` wire
+    // to) against a real, isolated `MigrationFailureRoutingStorage` — set/get round-trip, the
+    // false-write clear T6 uses on user resolution, and per-account isolation.
+
+    @Test func setPendingBackgroundTorPromptRoundTripsThroughTheImpl() throws {
+        let routingSuiteName = "testSetPendingBackgroundTorPromptRoundTripsThroughTheImpl"
+        let routingUserDefaults = try #require(UserDefaults(suiteName: routingSuiteName))
+        defer { routingUserDefaults.removePersistentDomain(forName: routingSuiteName) }
+        let failureRoutingStorage = MigrationFailureRoutingStorage(userDefaults: routingUserDefaults)
+        let account = AccountUUID(id: [UInt8](repeating: 52, count: 16))
+        let impl = MigrationManagerImpl(failureRoutingStorage: failureRoutingStorage)
+
+        #expect(impl.isPendingBackgroundTorPrompt(accountUUID: account) == false)
+
+        impl.setPendingBackgroundTorPrompt(accountUUID: account, isPending: true)
+        #expect(impl.isPendingBackgroundTorPrompt(accountUUID: account) == true)
+
+        // The clear T6 issues on user resolution.
+        impl.setPendingBackgroundTorPrompt(accountUUID: account, isPending: false)
+        #expect(impl.isPendingBackgroundTorPrompt(accountUUID: account) == false)
+    }
+
+    @Test func pendingBackgroundTorPromptIsIsolatedPerAccount() throws {
+        let routingSuiteName = "testPendingBackgroundTorPromptIsIsolatedPerAccount"
+        let routingUserDefaults = try #require(UserDefaults(suiteName: routingSuiteName))
+        defer { routingUserDefaults.removePersistentDomain(forName: routingSuiteName) }
+        let failureRoutingStorage = MigrationFailureRoutingStorage(userDefaults: routingUserDefaults)
+        let accountA = AccountUUID(id: [UInt8](repeating: 53, count: 16))
+        let accountB = AccountUUID(id: [UInt8](repeating: 54, count: 16))
+        let impl = MigrationManagerImpl(failureRoutingStorage: failureRoutingStorage)
+
+        impl.setPendingBackgroundTorPrompt(accountUUID: accountA, isPending: true)
+
+        #expect(impl.isPendingBackgroundTorPrompt(accountUUID: accountA) == true)
+        #expect(impl.isPendingBackgroundTorPrompt(accountUUID: accountB) == false)
+    }
+
     // MARK: - reentryRoute
 
     @Test func hasInvalidTransfersWinsOverEverythingElse() {

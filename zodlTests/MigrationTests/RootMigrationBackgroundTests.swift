@@ -2748,6 +2748,201 @@ import ComposableArchitecture
         #expect(failureRoutingStorage.torHoldActive(for: account.id) == true)
     }
 
+    // MARK: - MOB-1497 (T5): the BG lane arms the per-account pending-Tor-prompt latch on a Tor-class
+    // route — read on foreground by T6 to surface the "Couldn't Connect to Tor" sheet over Home.
+
+    /// A BACKGROUND broadcast that fails on a Tor-class route MID-run (a broadcast already landed, so
+    /// the failure routes R15 `.torHold`) must persist the per-account latch through
+    /// `executeBroadcastAction`. Wired to a REAL `MigrationManagerImpl` (isolated storages) — both
+    /// `routeBroadcastFailure` (computes the real route) and `setPendingBackgroundTorPrompt` (persists
+    /// the real latch) go through it — since the arming lives in the executor's own body reacting to
+    /// the returned route.
+    @Test func backgroundTorClassMidRunFailureArmsThePendingTorPromptThroughExecuteBroadcastAction() async throws {
+        let account = Self.walletAccount(idByte: 78)
+        let routingSuite = "testBackgroundTorClassMidRunFailureArmsThePendingTorPrompt_routing"
+        let snapshotSuite = "testBackgroundTorClassMidRunFailureArmsThePendingTorPrompt_snapshot"
+        let routingUserDefaults = try #require(UserDefaults(suiteName: routingSuite))
+        let snapshotUserDefaults = try #require(UserDefaults(suiteName: snapshotSuite))
+        defer {
+            routingUserDefaults.removePersistentDomain(forName: routingSuite)
+            snapshotUserDefaults.removePersistentDomain(forName: snapshotSuite)
+        }
+
+        let failureRoutingStorage = MigrationFailureRoutingStorage(userDefaults: routingUserDefaults)
+        let snapshotStorage = MigrationSnapshotStorage(userDefaults: snapshotUserDefaults)
+        // Mid-run: a broadcast already landed this run, so a Tor-class failure routes `.torHold` (R15).
+        failureRoutingStorage.markHadBroadcast(for: account.id)
+        snapshotStorage.recordSnapshot(
+            MigrationNetworkSnapshot(
+                useTor: true,
+                syncEndpoint: MigrationNetworkSnapshot.Endpoint(host: "zec.rocks", port: 443, secure: true),
+                broadcastEndpoint: MigrationNetworkSnapshot.Endpoint(host: "us.zec.stardust.rest", port: 443, secure: true),
+                takenAt: Date(),
+                committedAt: Date()
+            ),
+            for: account.id
+        )
+        let realImpl = MigrationManagerImpl(snapshotStorage: snapshotStorage, failureRoutingStorage: failureRoutingStorage)
+
+        var accountState = Self.selectedAccountState()
+        accountState.$selectedWalletAccount.withLock { $0 = account }
+        let completeCalls = LockIsolated<[Bool]>([])
+
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let store = Store(initialState: accountState) {
+                Root()
+            } withDependencies: {
+                baseNoOpDependencies(&$0)
+                $0.sdkSynchronizer.getMigrationState = { _ in MigrationState.inProgress(Self.placeholderProgress) }
+                $0.sdkSynchronizer.rescheduleOverdueMigrationTransfer = { _ in Self.proposal(nextExecutableAfterHeight: 100) }
+                $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in throw ZcashError.migrationTorUnavailable }
+                $0.migrationManager.routeBroadcastFailure = { accountUUID, failureClass in
+                    await realImpl.routeBroadcastFailure(accountUUID: accountUUID, failureClass: failureClass)
+                }
+                $0.migrationManager.setPendingBackgroundTorPrompt = { accountUUID, isPending in
+                    realImpl.setPendingBackgroundTorPrompt(accountUUID: accountUUID, isPending: isPending)
+                }
+            }
+
+            let handle = MigrationBGSessionHandle(rawTask: nil) { success in completeCalls.withValue { $0.append(success) } }
+            store.send(.initialization(.migrationBackgroundSession(handle)))
+            await waitForRootStore { completeCalls.withValue { !$0.isEmpty } }
+        }
+
+        #expect(completeCalls.withValue { $0 } == [true])
+        #expect(failureRoutingStorage.pendingBackgroundTorPrompt(for: account.id) == true)
+    }
+
+    /// T5 arms on BOTH Tor-class routes: a FIRST-run Tor failure (no landed broadcast yet, so the
+    /// failure routes R14 `.torFirstRunChoice`) leaves the run just as stalled on Tor with no
+    /// foreground UI shown, so it must arm the latch too. Same real-impl wiring as the mid-run twin.
+    @Test func backgroundTorClassFirstRunFailureArmsThePendingTorPromptThroughExecuteBroadcastAction() async throws {
+        let account = Self.walletAccount(idByte: 79)
+        let routingSuite = "testBackgroundTorClassFirstRunFailureArmsThePendingTorPrompt_routing"
+        let snapshotSuite = "testBackgroundTorClassFirstRunFailureArmsThePendingTorPrompt_snapshot"
+        let routingUserDefaults = try #require(UserDefaults(suiteName: routingSuite))
+        let snapshotUserDefaults = try #require(UserDefaults(suiteName: snapshotSuite))
+        defer {
+            routingUserDefaults.removePersistentDomain(forName: routingSuite)
+            snapshotUserDefaults.removePersistentDomain(forName: snapshotSuite)
+        }
+
+        let failureRoutingStorage = MigrationFailureRoutingStorage(userDefaults: routingUserDefaults)
+        let snapshotStorage = MigrationSnapshotStorage(userDefaults: snapshotUserDefaults)
+        // First-run: NO prior landed broadcast, so a Tor-class failure routes `.torFirstRunChoice` (R14).
+        snapshotStorage.recordSnapshot(
+            MigrationNetworkSnapshot(
+                useTor: true,
+                syncEndpoint: MigrationNetworkSnapshot.Endpoint(host: "zec.rocks", port: 443, secure: true),
+                broadcastEndpoint: MigrationNetworkSnapshot.Endpoint(host: "us.zec.stardust.rest", port: 443, secure: true),
+                takenAt: Date(),
+                committedAt: Date()
+            ),
+            for: account.id
+        )
+        let realImpl = MigrationManagerImpl(snapshotStorage: snapshotStorage, failureRoutingStorage: failureRoutingStorage)
+
+        var accountState = Self.selectedAccountState()
+        accountState.$selectedWalletAccount.withLock { $0 = account }
+        let completeCalls = LockIsolated<[Bool]>([])
+
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let store = Store(initialState: accountState) {
+                Root()
+            } withDependencies: {
+                baseNoOpDependencies(&$0)
+                $0.sdkSynchronizer.getMigrationState = { _ in MigrationState.inProgress(Self.placeholderProgress) }
+                $0.sdkSynchronizer.rescheduleOverdueMigrationTransfer = { _ in Self.proposal(nextExecutableAfterHeight: 100) }
+                $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in throw ZcashError.migrationTorUnavailable }
+                $0.migrationManager.routeBroadcastFailure = { accountUUID, failureClass in
+                    await realImpl.routeBroadcastFailure(accountUUID: accountUUID, failureClass: failureClass)
+                }
+                $0.migrationManager.setPendingBackgroundTorPrompt = { accountUUID, isPending in
+                    realImpl.setPendingBackgroundTorPrompt(accountUUID: accountUUID, isPending: isPending)
+                }
+            }
+
+            let handle = MigrationBGSessionHandle(rawTask: nil) { success in completeCalls.withValue { $0.append(success) } }
+            store.send(.initialization(.migrationBackgroundSession(handle)))
+            await waitForRootStore { completeCalls.withValue { !$0.isEmpty } }
+        }
+
+        #expect(completeCalls.withValue { $0 } == [true])
+        #expect(failureRoutingStorage.pendingBackgroundTorPrompt(for: account.id) == true)
+    }
+
+    /// The catch-path route discriminator is strict: a NON-Tor route (here `.retryRotated`, from an
+    /// endpoint-class throw) must NOT arm the latch — only `.torFirstRunChoice`/`.torHold` do. Spies on
+    /// `setPendingBackgroundTorPrompt` to prove it is never called.
+    @Test func backgroundNonTorRouteFromAThrowDoesNotArmThePendingTorPrompt() async {
+        struct SomeError: Error { }
+        let setPendingCalls = LockIsolated<[(AccountUUID, Bool)]>([])
+        let completeCalls = LockIsolated<[Bool]>([])
+
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let store = Store(initialState: Self.selectedAccountState()) {
+                Root()
+            } withDependencies: {
+                baseNoOpDependencies(&$0)
+                $0.sdkSynchronizer.getMigrationState = { _ in MigrationState.inProgress(Self.placeholderProgress) }
+                $0.sdkSynchronizer.rescheduleOverdueMigrationTransfer = { _ in Self.proposal(nextExecutableAfterHeight: 100) }
+                $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in throw SomeError() }
+                $0.migrationManager.routeBroadcastFailure = { _, _ in MigrationBroadcastFailureRoute.retryRotated }
+                $0.migrationManager.setPendingBackgroundTorPrompt = { accountUUID, isPending in
+                    setPendingCalls.withValue { $0.append((accountUUID, isPending)) }
+                }
+            }
+
+            let handle = MigrationBGSessionHandle(rawTask: nil) { success in completeCalls.withValue { $0.append(success) } }
+            store.send(.initialization(.migrationBackgroundSession(handle)))
+            await waitForRootStore { completeCalls.withValue { !$0.isEmpty } }
+        }
+
+        #expect(completeCalls.withValue { $0 } == [true])
+        #expect(setPendingCalls.withValue { $0 }.isEmpty)
+    }
+
+    /// The endpoint-class RESULT path (a `.networkError` return, not a throw) can never yield a Tor
+    /// route (`MigrationBroadcastFailureClass.classify(result:)` only ever produces
+    /// `.endpointUnreachable`), so it must never arm the latch either. Spies to prove no call.
+    @Test func backgroundNetworkErrorResultDoesNotArmThePendingTorPrompt() async {
+        let setPendingCalls = LockIsolated<[(AccountUUID, Bool)]>([])
+        let completeCalls = LockIsolated<[Bool]>([])
+        let progress = MigrationProgress(
+            completedTransfers: 1, totalTransfers: 6, remainingOrchard: Zatoshi(500), nextTransferReadyAtHeight: nil
+        )
+
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let store = Store(initialState: Self.selectedAccountState()) {
+                Root()
+            } withDependencies: {
+                baseNoOpDependencies(&$0)
+                $0.sdkSynchronizer.getMigrationState = { _ in MigrationState.inProgress(progress) }
+                $0.sdkSynchronizer.rescheduleOverdueMigrationTransfer = { _ in Self.proposal(nextExecutableAfterHeight: 100) }
+                $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in MigrationTransferResult.networkError(retryable: true) }
+                $0.sdkSynchronizer.getMigrationProgress = { _ in progress }
+                $0.migrationManager.setPendingBackgroundTorPrompt = { accountUUID, isPending in
+                    setPendingCalls.withValue { $0.append((accountUUID, isPending)) }
+                }
+            }
+
+            let handle = MigrationBGSessionHandle(rawTask: nil) { success in completeCalls.withValue { $0.append(success) } }
+            store.send(.initialization(.migrationBackgroundSession(handle)))
+            await waitForRootStore { completeCalls.withValue { !$0.isEmpty } }
+        }
+
+        #expect(completeCalls.withValue { $0 } == [true])
+        #expect(setPendingCalls.withValue { $0 }.isEmpty)
+    }
+
     /// A landed broadcast (`.success`, and its `migrationRecordFailedAfterBroadcast` twin) is never a
     /// failure to route — `routeBroadcastFailure` must stay uncalled on both paths.
     @Test func landedBroadcastNeverCallsRouteBroadcastFailure() async {
@@ -3057,6 +3252,11 @@ private func baseNoOpDependencies(_ values: inout DependencyValues) {
     // least-eventful default so every existing failure-path test below keeps passing unchanged.
     // Tests that care about a SPECIFIC route (the dedicated R7-T3 section) override this locally.
     values.migrationManager.routeBroadcastFailure = { _, _ in MigrationBroadcastFailureRoute.plainRetry }
+    // MOB-1497 (T5): the BG lane arms this per-account latch on a Tor-class route (see
+    // `RootInitialization.executeBroadcastAction`). These are live-context `Store` tests, so an
+    // un-overridden member hits the live impl (real `UserDefaults`) — baseline it to a no-op so only
+    // the dedicated T5 tests below observe it (they override it locally, to a spy or the real impl).
+    values.migrationManager.setPendingBackgroundTorPrompt = { _, _ in }
     values.readTransactionsStorage.resetZashi = { }
     values.sdkSynchronizer = .noOp
     // MOB-1496 (fix-wave, review IMPORTANT-2): deliberately left at `.noOp`'s own bare default
