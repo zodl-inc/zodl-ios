@@ -89,14 +89,6 @@ import ComposableArchitecture
         await store.receive(.delegate(.chose(.immediate)))
     }
 
-    @MainActor @Test func findOutMoreTappedProducesNoStateChangeOrEffects() async {
-        let store = TestStore(initialState: MigrationEntry.State()) {
-            MigrationEntry()
-        }
-
-        await store.send(.findOutMoreTapped)
-    }
-
     @MainActor @Test func delegateActionProducesNoStateChangeOrEffects() async {
         let store = TestStore(initialState: MigrationEntry.State()) {
             MigrationEntry()
@@ -140,5 +132,21 @@ import ComposableArchitecture
         await store.receive(\.balanceLoaded) {
             $0.orchardBalance = Zatoshi(1_245_800_000)
         }
+    }
+
+    @MainActor @Test func findOutMoreOpensSupportArticle() async {
+        let opened = LockIsolated<[URL]>([])
+        let store = TestStore(initialState: MigrationEntry.State()) {
+            MigrationEntry()
+        } withDependencies: {
+            $0.openURL = OpenURLEffect { url in
+                opened.withValue { $0.append(url) }
+                return true
+            }
+        }
+
+        await store.send(.findOutMoreTapped)
+        await store.finish()
+        #expect(opened.value == [URL(string: "https://support.zodl.com/article/42-moving-your-funds-to-ironwood")])
     }
 }
