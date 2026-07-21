@@ -1185,15 +1185,25 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// hasStoredPayload` (this account never had a payload) or an acknowledge (nothing completed,
     /// so it's never reached) — so an abandoned pre-commit run leaked an ACTIVE snapshot forever
     /// (`UserDefaults`, no TTL), pinning auto-server-selection and arming the ServerSetup privacy
-    /// warning indefinitely. Called fire-and-forget from the coordinator's `.flowFinished` handler
-    /// (every flow-root close / terminal delegate) for the selected account (`nil` resolves it,
-    /// same convention as `migrationSummary`/`recordCommittedSchedule` above): reads `accountUUID`'s
-    /// engine state FRESH — `.notStarted` with no stored schedule payload means nothing was ever
-    /// committed this attempt (or the run genuinely finished/reset already) — clears its snapshot;
-    /// any other state (a real active/committed run) is a no-op. R8-T3 (#18): serialized alongside
-    /// `reconcile`/`recordCommittedSchedule`/`acknowledgeComplete` for the same TOCTOU reasons.
-    /// Deliberately self-contained (doesn't reach for anything a real run's schedule/state would
-    /// carry) so the R7 branch's provisional-snapshot machinery can subsume it on rebase.
+    /// warning indefinitely. Reads `accountUUID`'s engine state FRESH — `.notStarted` with no
+    /// stored schedule payload means nothing was ever committed this attempt (or the run genuinely
+    /// finished/reset already) — clears its snapshot; any other state (a real active/committed run)
+    /// is a no-op. R8-T3 (#18): serialized alongside `reconcile`/`recordCommittedSchedule`/
+    /// `acknowledgeComplete` for the same TOCTOU reasons. Deliberately self-contained (doesn't reach
+    /// for anything a real run's schedule/state would carry) so the R7 branch's provisional-snapshot
+    /// machinery can subsume it on rebase.
+    ///
+    /// Two sanctioned production call sites (R9-T5, finding 7 — the fix that added the second one):
+    /// (1) the coordinator's `.flowFinished` handler (`RootCoordinator.swift`, every flow-root close
+    /// / terminal delegate), fire-and-forget for the selected account only (`nil` resolves it, same
+    /// convention as `migrationSummary`/`recordCommittedSchedule` above) — covers a flow closed out
+    /// normally without committing. (2) app launch (`RootInitialization.swift`'s
+    /// `.clearAbandonedMigrationSnapshots`, chained after that same launch's `reconcile()` fan-out),
+    /// fanned over EVERY candidate account (`MigrationDerivations.candidateAccountUUIDs`), never
+    /// `nil` — covers a flow abandoned by killing the app mid-run, which never reaches
+    /// `.flowFinished` at all, for whichever account (not necessarily the selected one) was mid-flow
+    /// at kill time. The launch site guards on the migration flow not being open before ever calling
+    /// this (see that handler's doc) — this function itself stays unaware of either caller.
     func clearAbandonedNetworkSnapshot(accountUUID: AccountUUID?) async {
         guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return }
 

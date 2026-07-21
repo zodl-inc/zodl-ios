@@ -306,6 +306,14 @@ extension Root {
         case checkRestoreWalletFlag(SyncStatus)
         case checkWalletInitialization
         case checkWalletConfig
+        /// R9-T5 (finding 7): the launch-side trigger for `migrationManager
+        /// .clearAbandonedNetworkSnapshot(_:)` — sent from `.initialSetups`'s reconcile effect once
+        /// `migrationManager.reconcile()` completes, so a pre-commit snapshot abandoned by killing
+        /// the app mid-flow (which never reaches `.migrationCoordFlow(.flowFinished)`, the only
+        /// OTHER trigger — see `RootCoordinator`) is still cleared on the next cold launch instead
+        /// of surviving forever. See this action's reducer arm for the flow-open guard and why it's
+        /// needed.
+        case clearAbandonedMigrationSnapshots
         case initializeSDK(WalletInitMode)
         case staleWalletDatabaseHealed
         case presentStaleWalletHealedAlert
@@ -853,9 +861,47 @@ extension Root {
                     // MOB-1466: reconcile migration state once per launch — off the hot path
                     // (`migrationManager.reconcile()` is idempotent), so it never blocks or
                     // reorders the existing wallet-initialization sequence below.
-                    .run { [migrationManager] _ in await migrationManager.reconcile() },
+                    // R9-T5 (finding 7): `.clearAbandonedMigrationSnapshots` is chained AFTER
+                    // reconcile completes, in this SAME effect, rather than `.merge`d alongside it —
+                    // reconcile's own stale-`.notStarted` clear (`clearIfCommitted`) is deliberately
+                    // provisional-safe, so ordering doesn't matter for correctness against IT, but
+                    // running the abandoned-snapshot fan-out as a distinct step keeps this effect's
+                    // shape self-documenting as "reconcile, then a second, unrelated cleanup pass."
+                    .run { [migrationManager] send in
+                        await migrationManager.reconcile()
+                        await send(.initialization(.clearAbandonedMigrationSnapshots))
+                    },
                     .send(.initialization(.checkWalletInitialization))
                 )
+
+            case .initialization(.clearAbandonedMigrationSnapshots):
+                // R9-T5 (finding 7): GUARDED on the migration flow NOT being open — a cold launch
+                // via a migration-notification tap can push `.migrationCoordFlow` open DURING
+                // initialization (see `.migrationNotificationTapped`'s stash-and-replay above,
+                // and `.migrationNotificationRoute`'s own dispatch chain), racing this launch-side
+                // clear against a freshly-formed provisional snapshot; without this guard, the
+                // clear could win that race and wipe the snapshot out from under the user after the
+                // Tor sheet has already displayed its endpoint (an R13 violation on confirm). `state
+                // .path == .migrationCoordFlow` is the same presence check `RootCoordinator`'s own
+                // teardown sites key off (set at every "open the flow" site, cleared by
+                // `.flowFinished`/the Sending-delegate flow-close case) — checked here purely to
+                // close the LAUNCH-side race. The residual window — the flow opens WHILE a clear is
+                // already in flight — is the same accepted window `.migrationCoordFlow
+                // (.flowFinished)`'s own fire-and-forget clear already lives with (see that case's
+                // doc): human-speed flow entry makes it practically unreachable in practice.
+                guard state.path != Root.State.Path.migrationCoordFlow else { return .none }
+
+                // Same candidate-account list `reconcile()` (just completed) fans out over —
+                // selected account first, then the rest of `walletAccounts`, deduped.
+                let accountUUIDs = MigrationDerivations.candidateAccountUUIDs(
+                    selectedAccountUUID: state.selectedWalletAccount?.id,
+                    walletAccounts: state.walletAccounts
+                )
+                return .run { [migrationManager, accountUUIDs] _ in
+                    for accountUUID in accountUUIDs {
+                        await migrationManager.clearAbandonedNetworkSnapshot(accountUUID)
+                    }
+                }
 
                 /// Evaluate the wallet's state based on keychain keys and database files presence
             case .initialization(.checkWalletInitialization):
