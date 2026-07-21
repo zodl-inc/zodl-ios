@@ -588,14 +588,54 @@ import ComposableArchitecture
         #expect(reviewState.broadcastDisclosureHost == "eu.zec.stardust.rest")
     }
 
+    /// MOB-1497 (R9-T3 fix, C1 — RED-FIRST ORDER PIN): the non-custom flag-on path must persist
+    /// `setNetworkPrivacyOptions(true)` STRICTLY BEFORE `formNetworkSnapshot` — forming bakes in
+    /// whatever is currently persisted (`MigrationNetworkSnapshot.useTor`'s doc: a LATER persist does
+    /// NOT correct an already-formed snapshot), so a version that detected identity-custom by forming
+    /// first (via `torSheetState`) could silently bake in a stale persisted OFF choice left over from
+    /// an earlier off-warning pick — a silent clearnet migration broadcast with no sheet and no
+    /// warning, the exact regression review C1 caught. The pin above
+    /// (`entryChoseImmediateWithTorFlagOnSkipsTorSheetAndPushesReview`) cannot catch this: it only
+    /// observes each call happened once, never their RELATIVE order. A single shared call-log both
+    /// stubs append to pins the order itself.
+    @MainActor @Test func entryChoseImmediateWithTorFlagOnAndNonCustomServerPersistsBeforeForming() async {
+        enum CallLogEntry: Equatable {
+            case persist(Bool)
+            case form
+        }
+        let callLog = LockIsolated<[CallLogEntry]>([])
+        let store = TestStore(initialState: MigrationCoordFlow.State()) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.migrationManager.setMigrationMode = { _ in }
+            $0.migrationManager.isSyncServerIdentityCustom = { false }
+            $0.migrationManager.setNetworkPrivacyOptions = { useTor in callLog.withValue { $0.append(.persist(useTor)) } }
+            $0.migrationManager.formNetworkSnapshot = { _ in callLog.withValue { $0.append(.form) } }
+            $0.migrationManager.networkSnapshot = { _ in Self.someProviderNetworkSnapshot() }
+            $0.sdkSynchronizer = .noOp
+            $0.walletStorage = .noOp
+            $0.walletStorage.exportTorSetupFlag = { true }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.entry(.delegate(.chose(.immediate))))
+        await store.receive(\.pushHydratedPathState)
+
+        #expect(callLog.value == [CallLogEntry.persist(true), CallLogEntry.form])
+    }
+
     /// MOB-1497 (R9-T3, finding 1): the custom-server twin of the flag-on pin above — its PREDECESSOR
     /// (`entryChoseImmediateWithTorFlagOnAndCustomServerSkipBranchFooterCarriesNoHost`) pinned the
     /// defect this fixes: custom + flag-on used to push Review directly, forcing clearnet with the
     /// R13 footer nil by construction (same-server) — so an identity-custom user was routed over
     /// clearnet with NO unavailable-server notice ever shown. Flag-on now detects identity-custom
-    /// BEFORE skipping (reusing `torSheetState`'s own `isCustomServer` classification, the SAME test
-    /// the sheet-shown path already applies) and detours to that SAME unavailable-variant sheet the
-    /// flag-OFF branch presents — never calling `setNetworkPrivacyOptions`, never pushing directly.
+    /// BEFORE skipping via the synchronous, snapshot-free `migrationManager
+    /// .isSyncServerIdentityCustom()` (R9-T3 C1 fix — NOT `torSheetState`'s own `isCustomServer`,
+    /// which requires forming first) and detours to that SAME unavailable-variant sheet the flag-OFF
+    /// branch presents — never calling `setNetworkPrivacyOptions`, never pushing directly. `torSheetState`
+    /// is still exercised here too, but only AFTER the detour decision, to build the sheet's own
+    /// contents (host/toggle state) — hence `networkSnapshot` is still mocked as a custom snapshot
+    /// alongside the new outer gate, so both agree on the same (consistent) custom-server account.
     @MainActor @Test func entryChoseImmediateWithTorFlagOnAndCustomServerDetoursToTorSheet() async {
         let setOptionsCalls = LockIsolated<[Bool]>([])
         let formNetworkSnapshotCalls = LockIsolated<Int>(0)
@@ -603,6 +643,7 @@ import ComposableArchitecture
             MigrationCoordFlow()
         } withDependencies: {
             $0.migrationManager.setMigrationMode = { _ in }
+            $0.migrationManager.isSyncServerIdentityCustom = { true }
             $0.migrationManager.setNetworkPrivacyOptions = { useTor in setOptionsCalls.withValue { $0.append(useTor) } }
             $0.migrationManager.formNetworkSnapshot = { _ in formNetworkSnapshotCalls.withValue { $0 += 1 } }
             $0.migrationManager.networkSnapshot = { _ in Self.someCustomNetworkSnapshot() }
@@ -624,8 +665,8 @@ import ComposableArchitecture
         // The detour never persists a choice — finding 6 (commit 1) already made the eventual
         // "Got it" persist nothing too; this pins that the detour itself never calls it either.
         #expect(setOptionsCalls.value.isEmpty)
-        // Exactly one form — `torSheetState` forms once; detecting identity-custom first does NOT
-        // add a redundant second `formNetworkSnapshot` call before deciding.
+        // Exactly one form — the outer detection gate never forms at all (C1 fix); `torSheetState`
+        // forms once, to build the sheet's own contents once we already know to detour.
         #expect(formNetworkSnapshotCalls.value == 1)
         // Nothing pushed yet — the sheet gates the push until confirmed, same as the flag-off path.
         #expect(store.state.path.isEmpty)
@@ -641,6 +682,7 @@ import ComposableArchitecture
             MigrationCoordFlow()
         } withDependencies: {
             $0.migrationManager.setMigrationMode = { _ in }
+            $0.migrationManager.isSyncServerIdentityCustom = { true }
             $0.migrationManager.setNetworkPrivacyOptions = { useTor in setOptionsCalls.withValue { $0.append(useTor) } }
             $0.migrationManager.formNetworkSnapshot = { _ in }
             $0.migrationManager.networkSnapshot = { _ in Self.someCustomNetworkSnapshot() }
@@ -2280,10 +2322,47 @@ import ComposableArchitecture
         #expect(planState.broadcastDisclosureHost == "eu.zec.stardust.rest")
     }
 
+    /// MOB-1497 (R9-T3 fix, C1 — RED-FIRST ORDER PIN): the How-This-Works twin of
+    /// `entryChoseImmediateWithTorFlagOnAndNonCustomServerPersistsBeforeForming` — same shared
+    /// call-log technique, same assertion (persist strictly precedes form on the non-custom flag-on
+    /// path), same underlying regression this pins against. See that test's doc for the full
+    /// rationale.
+    @MainActor @Test func howItWorksContinuedWithTorFlagOnAndNonCustomServerPersistsBeforeForming() async {
+        enum CallLogEntry: Equatable {
+            case persist(Bool)
+            case form
+        }
+        let callLog = LockIsolated<[CallLogEntry]>([])
+        var state = MigrationCoordFlow.State()
+        state.mode = .privateScheduled
+        state.path.append(.howItWorks(MigrationHowItWorks.State()))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.walletStorage = .noOp
+            $0.walletStorage.exportTorSetupFlag = { true }
+            $0.migrationManager.isSyncServerIdentityCustom = { false }
+            $0.migrationManager.setNetworkPrivacyOptions = { useTor in callLog.withValue { $0.append(.persist(useTor)) } }
+            $0.migrationManager.formNetworkSnapshot = { _ in callLog.withValue { $0.append(.form) } }
+            $0.migrationManager.networkSnapshot = { _ in Self.someProviderNetworkSnapshot() }
+            $0.migrationBGScheduler.backgroundRefreshStatus = { .available }
+            $0.userNotifications.authorizationStatus = { .authorized }
+            $0.migrationManager.isManualDelivery = { false }
+            $0.sdkSynchronizer = .noOp
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 0, action: .howItWorks(.delegate(.continueTapped)))))
+        await store.receive(\.pushNextPermissionStep)
+
+        #expect(callLog.value == [CallLogEntry.persist(true), CallLogEntry.form])
+    }
+
     /// MOB-1497 (R9-T3, finding 1): the How-This-Works twin of
     /// `entryChoseImmediateWithTorFlagOnAndCustomServerDetoursToTorSheet` — no such twin existed
     /// before this fix (the flag-on shortcut here was equally blind to identity-custom). Same
-    /// detection/reuse, same detour to the flag-off sheet below, same "no persist" outcome.
+    /// detection/reuse (the synchronous, snapshot-free `migrationManager.isSyncServerIdentityCustom()`
+    /// — R9-T3 C1 fix), same detour to the flag-off sheet below, same "no persist" outcome.
     @MainActor @Test func howItWorksContinuedWithTorFlagOnAndCustomServerDetoursToTorSheet() async {
         let setOptionsCalls = LockIsolated<[Bool]>([])
         let formNetworkSnapshotCalls = LockIsolated<Int>(0)
@@ -2295,6 +2374,7 @@ import ComposableArchitecture
         } withDependencies: {
             $0.walletStorage = .noOp
             $0.walletStorage.exportTorSetupFlag = { true }
+            $0.migrationManager.isSyncServerIdentityCustom = { true }
             $0.migrationManager.setNetworkPrivacyOptions = { useTor in setOptionsCalls.withValue { $0.append(useTor) } }
             $0.migrationManager.formNetworkSnapshot = { _ in formNetworkSnapshotCalls.withValue { $0 += 1 } }
             $0.migrationManager.networkSnapshot = { _ in Self.someCustomNetworkSnapshot() }
@@ -2333,6 +2413,7 @@ import ComposableArchitecture
         } withDependencies: {
             $0.walletStorage = .noOp
             $0.walletStorage.exportTorSetupFlag = { true }
+            $0.migrationManager.isSyncServerIdentityCustom = { true }
             $0.migrationManager.setNetworkPrivacyOptions = { useTor in setOptionsCalls.withValue { $0.append(useTor) } }
             $0.migrationManager.formNetworkSnapshot = { _ in }
             $0.migrationManager.networkSnapshot = { _ in Self.someCustomNetworkSnapshot() }
