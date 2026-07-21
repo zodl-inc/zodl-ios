@@ -68,6 +68,28 @@ struct MigrationCoordFlowView: View {
             ) {
                 MigrationTorSheetView(store: store.scope(state: \.torSheetState, action: \.torSheet))
             }
+            // MOB-1510: the Keystone minimum-firmware gate — `KeystoneFirmwareUpdateContent` is the
+            // same illustration/title/body `KeystoneFirmwareUpdateView` shows on the send-side
+            // coordinators' full-screen path push; there is no `SendConfirmation` in this flow to
+            // scope that view's store from, so the content is presented directly here instead,
+            // mirroring the Tor sheet's own coordinator-owned-sheet idiom above.
+            .zashiSheet(
+                isPresented: Binding(
+                    get: { store.isKeystoneFirmwareUpdatePresented },
+                    set: { store.send(.keystoneFirmwareUpdatePresentationChanged($0)) }
+                )
+            ) {
+                VStack(spacing: 0) {
+                    KeystoneFirmwareUpdateContent(detectedVersion: store.detectedKeystoneFirmware)
+                        .padding(.top, 24)
+
+                    ZashiButton(String(localizable: .keystoneFirmwareUpdateClose)) {
+                        store.send(.keystoneFirmwareUpdatePresentationChanged(false))
+                    }
+                    .padding(.top, 32)
+                    .padding(.bottom, Design.Spacing.sheetBottomSpace)
+                }
+            }
         }
         .applyScreenBackground()
         .onAppear {
