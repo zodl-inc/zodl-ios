@@ -263,6 +263,14 @@
 //    classifier) is the only snapshot reader left. The TransferPlan/ReviewTransfer footers and the
 //    `migrationTorSheet.disclosure` string go with them.
 //
+//  MOB-1497 (T8, Q3'26 canvas): threads the new `MigrationSending.State.isManualStepLane` discriminator
+//  at its two production sources — `transferPlanPostConfirmChain`'s `.manual` case (the manual-delivery
+//  run's first transfer) and the `.reviewTransfer(.delegate(.confirmed))` case (every later manual-step
+//  confirm, told apart from an immediate-mode confirm by peeking the `MigrationReviewTransfer` element
+//  still on top of the path). See `MigrationSendingStore.swift`'s header doc for why this needed a new
+//  field at all — the two modes converge on the identical `.confirmed` delegate, so nothing upstream of
+//  this coordinator can tell them apart.
+//
 
 import Foundation
 import ComposableArchitecture
@@ -533,7 +541,18 @@ extension MigrationCoordFlow {
                 // MARK: - ReviewTransfer
 
             case .path(.element(id: _, action: .reviewTransfer(.delegate(.confirmed)))):
-                let sendingState = MigrationSending.State(totalCount: 1)
+                // MOB-1497 (T8, Q3'26 canvas): both `MigrationReviewTransfer.State.Mode` cases
+                // delegate this SAME `.confirmed` action, so the element still on top of the path
+                // (peeked BEFORE the push below — `StackState.append` never pops) is the only place
+                // left to tell a manual-step confirm (one of several hand-walked transfers) apart
+                // from an immediate one-shot sweep, to select the pushed screen's success wording.
+                let isManualStepLane: Bool
+                if case .reviewTransfer(let reviewState) = state.path.last, case .manualStep = reviewState.mode {
+                    isManualStepLane = true
+                } else {
+                    isManualStepLane = false
+                }
+                let sendingState = MigrationSending.State(totalCount: 1, isManualStepLane: isManualStepLane)
                 state.path.append(.sending(sendingState))
                 return .none
 
@@ -919,7 +938,10 @@ extension MigrationCoordFlow {
         case .scheduled, .recreated:
             state.path.append(.scheduled(MigrationScheduled.State()))
         case .manual:
-            let sendingState = MigrationSending.State(totalCount: 1)
+            // MOB-1497 (T8, Q3'26 canvas): the manual-delivery run's FIRST transfer — same "sent"
+            // success wording as every subsequent manual-step confirm (see the
+            // `.reviewTransfer(.delegate(.confirmed))` case above).
+            let sendingState = MigrationSending.State(totalCount: 1, isManualStepLane: true)
             state.path.append(.sending(sendingState))
         }
         return .run { [migrationBGScheduler] _ in await migrationBGScheduler.scheduleFirstWindow() }

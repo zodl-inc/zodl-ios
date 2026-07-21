@@ -19,6 +19,16 @@
 //  default, matching the Figma Icon Buttons component's 16px glyph in a 24px frame). `.active`'s
 //  fill/number-color tokens and `.warning`'s construction are unchanged.
 //
+//  MOB-1497 (T8, Q3'26 canvas, Figma 4207:7394 / dark 4207:7555): adds `.neutral` — a precondition
+//  step that's ready to run as part of confirming but hasn't happened yet (MigrationTransferPlan's
+//  pre-confirmation "Split Balance" row), rendered as an adaptive circle + inverse checkmark instead
+//  of a fixed color. Reuses the EXACT `Design.Surfaces.bgAlt` (circle) / `Design.Surfaces.bgPrimary`
+//  (checkmark) pairing `MigrationCompleteView.dustResolutionBadge` already ships — see that view's
+//  MOB-1494 (W5) header doc for the dark-mode inversion this mirrors (`bgAlt` is obsidian-on-light /
+//  bone-on-dark, `bgPrimary` is bone-on-light / midnight-on-dark, so the pair inverts together
+//  across color schemes with no fixed hex). `.sent`'s green check stays reserved for steps that have
+//  genuinely completed — never used for a merely-ready precondition.
+//
 
 import SwiftUI
 
@@ -32,6 +42,9 @@ struct MigrationStepBadge: View {
         case pending
         /// Needs attention — amber filled exclamation (invalid/expired timeline rows).
         case warning
+        /// MOB-1497 (T8): a precondition step that's ready to run as part of confirming, but hasn't
+        /// happened yet — adaptive neutral circle + inverse checkmark. See this file's header doc.
+        case neutral
     }
 
     @Environment(\.colorScheme) private var colorScheme
@@ -59,6 +72,10 @@ struct MigrationStepBadge: View {
                 Circle().fill(Design.Utility.WarningYellow._500.color(colorScheme))
                 Asset.Assets.Icons.alertCircle.image
                     .zImage(size: 12, color: .white)
+            case .neutral:
+                Circle().fill(Design.Surfaces.bgAlt.color(colorScheme))
+                Asset.Assets.check.image
+                    .zImage(size: size * 2 / 3, style: Design.Surfaces.bgPrimary)
             }
 
             // MOB-1487: 2pt white ring on every state — a "cutout" against the connector line
@@ -78,6 +95,7 @@ struct MigrationStepBadge: View {
         MigrationStepBadge(number: 2, style: .active)
         MigrationStepBadge(number: 3, style: .pending)
         MigrationStepBadge(number: 4, style: .warning)
+        MigrationStepBadge(number: 5, style: .neutral)
     }
     .padding()
 }

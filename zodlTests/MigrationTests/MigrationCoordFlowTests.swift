@@ -1139,6 +1139,50 @@ import ComposableArchitecture
         #expect(sendingState.totalCount == 1)
     }
 
+    /// MOB-1497 (T8, fix-wave 1, review Finding 1 — Important): the coordinator threading of
+    /// `MigrationSending.State.isManualStepLane` (added in T8) was untested beyond the state-level
+    /// `sentSubtitle` mapping — an inverted peek in the `.reviewTransfer(.delegate(.confirmed))`
+    /// handler below would have slipped through unnoticed. Manual-lane half of the pair: a
+    /// `.manualStep` review confirm must push `.sending` with `isManualStepLane == true`.
+    @MainActor @Test func reviewTransferConfirmedWithManualStepModePushesSendingWithIsManualStepLaneTrue() async {
+        var state = MigrationCoordFlow.State()
+        state.mode = .privateScheduled
+        state.path.append(.reviewTransfer(MigrationReviewTransfer.State(mode: .manualStep(number: 2, total: 5))))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 0, action: .reviewTransfer(.delegate(.confirmed)))))
+
+        guard case let .sending(sendingState) = try? #require(store.state.path.last) else {
+            Issue.record("Expected .sending pushed on top")
+            return
+        }
+        #expect(sendingState.isManualStepLane == true)
+    }
+
+    /// Immediate-lane counterpart of the test above — the SAME peek (`state.path.last`'s
+    /// `MigrationReviewTransfer.State.Mode`) must resolve `false` for an `.immediate` review confirm,
+    /// keeping the one-shot-sweep lane on the "migrated" success wording.
+    @MainActor @Test func reviewTransferConfirmedWithImmediateModePushesSendingWithIsManualStepLaneFalse() async {
+        var state = MigrationCoordFlow.State()
+        state.mode = .immediate
+        state.path.append(.reviewTransfer(MigrationReviewTransfer.State(mode: .immediate)))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 0, action: .reviewTransfer(.delegate(.confirmed)))))
+
+        guard case let .sending(sendingState) = try? #require(store.state.path.last) else {
+            Issue.record("Expected .sending pushed on top")
+            return
+        }
+        #expect(sendingState.isManualStepLane == false)
+    }
+
     // MARK: - MOB-1468: Keystone signing — signRequested sets context + pushes keystoneSign
 
     @MainActor @Test func transferPlanKeystoneSignRequestedSetsPlanCommitContextAndPushesKeystoneSign() async {

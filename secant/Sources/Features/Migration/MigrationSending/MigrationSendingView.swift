@@ -11,6 +11,12 @@
 //  shows the same "migrated" subtitles (the canvas dropped the "sent" wording), so the view has
 //  no per-lane copy switching any more.
 //
+//  MOB-1497 (T8, Q3'26 canvas): per-lane copy switching is back for exactly one string — the
+//  success subtitle now reads `store.sentSubtitle` (`MigrationSending.State`'s own selection
+//  between the "sent"/"migrated" wording, keyed off `isManualStepLane`) instead of the hardcoded
+//  `migrationSendingSentSubtitleMigrated` key. The title stays the unconditional "Sent!"
+//  (`migrationSendingSentTitle`) in every lane.
+//
 //  R8-T6: a third phase, `.waiting(target:)`, appears only on the Status screen's "Send now" lane
 //  (`entersViaSendNow`) — the app-side privacy gate wasn't clear yet, so sync is held stopped and
 //  the screen counts down to `target` instead of showing the sending animation. A live countdown
@@ -160,7 +166,7 @@ struct MigrationSendingView: View {
                 .zFont(.semiBold, size: 28, style: Design.Text.primary)
                 .padding(.top, 16)
 
-            Text(localizable: .migrationSendingSentSubtitleMigrated)
+            Text(store.sentSubtitle)
                 .zFont(size: 14, style: Design.Text.primary)
                 .multilineTextAlignment(.center)
                 .lineSpacing(1.5)

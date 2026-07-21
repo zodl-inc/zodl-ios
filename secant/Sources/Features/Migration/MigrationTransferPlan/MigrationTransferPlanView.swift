@@ -27,6 +27,15 @@
 //  `broadcastDisclosureHost` state are removed. Migration screens no longer name which server will
 //  receive transfers.
 //
+//  MOB-1497 (T8, Q3'26 canvas, Figma 4207:7394): the MOB-1487 removal above turns out not to be
+//  final — the Q3'26 canvas REINSTATES a footer between the list and Confirm, just with new copy
+//  and a richer shape: `ZashiInfoCallout(style: .plain, ...)` ("Amounts randomized to reduce
+//  linkability" / "...Confirm once — no per-transfer prompts.") replaces the old single-line
+//  `migrationPlanRandomizedNote` row (whose key was already removed with it, so there's nothing to
+//  orphan here). Also opts the shared timeline into `usesNeutralCheckForReadyFirstStep` — this
+//  screen's row 0 ("Split Balance") shows the new neutral check while `.active`/not yet sent; the
+//  Status screen deliberately does not opt in (see `MigrationTransferTimeline`'s header doc).
+//
 
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
@@ -55,10 +64,17 @@ struct MigrationTransferPlanView: View {
                             .fixedSize(horizontal: false, vertical: true)
                             .padding(.bottom, 24)
 
-                        MigrationTransferTimeline(rows: store.rows, caption: caption(for:))
+                        MigrationTransferTimeline(
+                            rows: store.rows,
+                            caption: caption(for:),
+                            usesNeutralCheckForReadyFirstStep: true
+                        )
                     }
                     .padding(.vertical, 1)
                 }
+
+                randomizedFooter
+                    .padding(.top, 16)
 
                 ZashiButton(String(localizable: .generalConfirm)) {
                     store.send(.confirmTapped)
@@ -132,6 +148,17 @@ struct MigrationTransferPlanView: View {
         return store.variant == .scheduled
             ? String(localizable: .migrationPlanEtaHoursIn(hoursFromNow))
             : String(localizable: .migrationPlanEtaHours(hoursFromNow))
+    }
+
+    // MARK: - Randomized-amounts footer (MOB-1497 T8)
+
+    /// Reinstates the footer MOB-1487 removed — see this file's header doc.
+    @ViewBuilder private var randomizedFooter: some View {
+        ZashiInfoCallout(
+            style: .plain,
+            title: String(localizable: .migrationPlanRandomizedTitle),
+            body: String(localizable: .migrationPlanRandomizedBody)
+        )
     }
 
     // MARK: - Failure sheet

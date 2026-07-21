@@ -15,6 +15,18 @@
 //  and `isBroadcasting` ("Sending now") ahead of the `.active` ETA caption — both fall back to
 //  today's copy when unset/false.
 //
+//  MOB-1497 (T8, Q3'26 canvas, Figma 3480:7638): a new `.plain` `ZashiInfoCallout`
+//  ("Transfer window missed" / "Send now or reschedule to the next window.") renders below the
+//  timeline, above the pre-existing Tor-hold/footer notes, whenever `store.presentation == .resume`
+//  — the same gate those two already use. State mapping: `.resume` is the ONLY presentation that
+//  shows the Reschedule/Send-now buttons and is entered specifically because an `.overdue` row
+//  exists (`reentryRoute`/`isSendNowDisabled`'s shared due-ness signal), so the canvas's "B8 Resume
+//  Migration" and "B10 progress-with-overdue" frames both land on this one store state — there is no
+//  separate state to split them across. This stays true whether or not `isRescheduling` is set (the
+//  existing footer/Tor-hold notes don't gate on it either), so the new callout doesn't either. It is
+//  purely additive: `windowMissedNote` (the existing "Sending now will delay…" footer) keeps its
+//  copy, position, and gate unchanged.
+//
 
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
@@ -53,6 +65,8 @@ struct MigrationStatusView: View {
 
                 if store.presentation == .resume {
                     VStack(alignment: .leading, spacing: 8) {
+                        windowMissedCallout
+
                         if store.isTorHoldActive {
                             torHoldNote
                         }
@@ -129,6 +143,17 @@ struct MigrationStatusView: View {
                 ? String(localizable: .migrationPlanEtaFirst)
                 : String(localizable: .migrationPlanEtaHours(row.hoursFromNow))
         }
+    }
+
+    // MARK: - Window-missed callout (MOB-1497 T8)
+
+    /// See this file's header doc for the `.resume`-only state mapping.
+    @ViewBuilder private var windowMissedCallout: some View {
+        ZashiInfoCallout(
+            style: .plain,
+            title: String(localizable: .migrationStatusWindowMissedTitle),
+            body: String(localizable: .migrationStatusWindowMissedBody)
+        )
     }
 
     // MARK: - Tor-hold note
