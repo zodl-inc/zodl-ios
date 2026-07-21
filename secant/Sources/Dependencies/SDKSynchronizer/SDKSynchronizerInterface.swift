@@ -188,17 +188,31 @@ struct SDKSynchronizerClient: Sendable {
         AccountUUID, UnifiedSpendingKey, MigrationNetworkPrivacyOptions
     ) async throws -> MigrationTransferResult?
     // Keystone (PCZT)
-    var proposeNoteSplitPCZT: @Sendable (AccountUUID) async throws -> Data
-    /// Stores a Keystone-signed note-split PCZT — thin wrap of `storeSignedNoteSplitPCZT(accountUUID:_:)`,
-    /// discarding the returned `PreparedMigrationTransfer`. MOB-1496 (C-1 fix): this is the
-    /// RUN-CREATING store — the engine's `store_signed_note_split_pczt` unconditionally starts a new
-    /// run — so it MUST be called before `storeSignedMigrationTransactions` for the same commit: that
-    /// member uses-or-creates the active run, and the engine always treats the newest non-terminal run
-    /// as active, so storing the split AFTER the schedule would create a second run that shadows the
-    /// first forever, permanently stranding whatever the schedule store just committed. NOT
-    /// guard-wrapped: local store, no broadcast — same reasoning as `storeSignedMigrationTransactions`.
-    var storeSignedNoteSplit: @Sendable (AccountUUID, Data) async throws -> Void
-    /// Broadcasts the Keystone note-split already stored via `storeSignedNoteSplit`, through
+    /// Builds the account's whole previewed Keystone migration commit UNSIGNED and returns the
+    /// preparation (note-split) subset for the signing ceremony — empty when no preps are needed.
+    /// MOB-1496 (final engine): this is the RUN-CREATING call — the engine commits the previewed
+    /// plan (every transaction in the run, preps AND the schedule's own transfers, not just the
+    /// subset returned here) the moment it's called, and always resumes a stored non-terminal run on
+    /// the next attempt, ignoring any newer preview. A ceremony abandoned after this call must
+    /// explicitly cancel the run it just created (`restartCurrentMigrationStep`) or a later re-entry
+    /// will silently resume signing these same, by-then-stale PCZTs instead of proposing a fresh one.
+    var proposeNoteSplitPCZTs: @Sendable (AccountUUID) async throws -> [MigrationUnsignedTransferPczt]
+    /// Stores Keystone-signed note-split preparation PCZTs — thin wrap of
+    /// `storeSignedNoteSplitPCZTs(accountUUID:_:)`, discarding the returned
+    /// `PreparedMigrationTransfer` (a storage receipt with a zeroed txid — the broadcastable value
+    /// comes from `broadcastStoredNoteSplit`). All-or-nothing: every signed PCZT in the array is
+    /// applied together. MOB-1496 (final engine): the old singular pair's C-1/C-1b run-shadowing
+    /// hazard — "this store unconditionally starts a new run, so it MUST precede
+    /// `storeSignedMigrationTransactions` or a shadow run strands the schedule" — is GONE: the run is
+    /// created at PCZT-build time (`proposeNoteSplitPCZTs`, above), the engine refuses to double-commit
+    /// a run, and this store and `storeSignedMigrationTransactions` are now order-independent
+    /// per-transaction signature applications over the SAME already-created run. NOTE: the app still
+    /// stores these preps before broadcasting them (`broadcastStoredNoteSplit`) — the resume/retry lane
+    /// depends on stored-before-broadcast — but that ordering is an app-side choice now, not an engine
+    /// requirement. NOT guard-wrapped: local store, no broadcast — same reasoning as
+    /// `storeSignedMigrationTransactions`.
+    var storeSignedNoteSplits: @Sendable (AccountUUID, [MigrationSignedTransferPczt]) async throws -> Void
+    /// Broadcasts the Keystone note-split preps already stored via `storeSignedNoteSplits`, through
     /// `executeNextPendingMigrationTransfer`. Idempotent by construction — a retry simply re-asks the
     /// engine what's next-due, never re-stores — unlike the deleted `submitSignedNoteSplit` composite
     /// this pair replaces, whose retry re-ran the (by-then-already-consumed) store and threw. Guard-

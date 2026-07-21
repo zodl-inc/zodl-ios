@@ -500,7 +500,11 @@ import ComposableArchitecture
 
         #expect(batchA == batchB)
         #expect(batchA.allSatisfy { !$0.pczt.isEmpty })
-        #expect(!engine.fabricateNoteSplitPCZT().isEmpty)
+        // MOB-1496 (final engine, plural preps): the simulator always fabricates exactly one
+        // preparation entry, shaped like a genuine engine response (`[MigrationUnsignedTransferPczt]`).
+        let noteSplitPCZTs = engine.fabricateNoteSplitPCZTs()
+        #expect(noteSplitPCZTs.count == 1)
+        #expect(!(noteSplitPCZTs.first?.pczt.isEmpty ?? true))
     }
 
     @Test func storeSignedBatchRecordsCount() async {
@@ -522,7 +526,10 @@ import ComposableArchitecture
         let engine = makeEngine()
         let expectedProposal = await engine.prepareSplit()
 
-        let pczt = engine.fabricateNoteSplitPCZT()
+        // MOB-1496 (final engine, plural preps): `submitSignedSplit`'s own `pczt` param has always
+        // been ignored (it re-derives the deterministic split from `prepareSplit()`), so any one of
+        // the fabricated prep's bytes exercises the same path.
+        let pczt = engine.fabricateNoteSplitPCZTs().first?.pczt ?? Data()
         let result = await engine.submitSignedSplit(pczt)
 
         guard case MigrationTransferResult.success = result else {

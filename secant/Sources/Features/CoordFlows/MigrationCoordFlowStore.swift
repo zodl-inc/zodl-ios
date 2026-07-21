@@ -82,6 +82,18 @@
 //  re-broadcasts the already-safe split, only the store itself retries). No-split batches (including
 //  the Keystone dust lane) are unaffected — the schedule store still runs immediately, as before.
 //
+//  MOB-1496 (final engine, plural preps): the SDK replaced the singular Keystone note-split pair with
+//  a plural one — the final engine builds N preparation transactions, not one split transaction (see
+//  `MigrationCoordFlowCoordinator.swift`'s header for the full reshape and the two engine facts behind
+//  it). `PendingScheduleStore`/`KeystoneSigningContext` are unaffected — only the prep payload
+//  pluralizes: `keystoneSigningSubmitted`'s `splitPczt: Data?` becomes
+//  `signedPreps: [MigrationSignedTransferPczt]?`, and `MigrationNoteSplit.State.signedNoteSplitPczt`
+//  (referenced by this file's C-1/C-1b notes above as a single `Data`) is the same array type. The
+//  C-1/C-1b store-ordering fixes above stay in force verbatim under the final engine — only their
+//  claim that the split's OWN store is what creates the engine run no longer holds (the run is
+//  created earlier, at PCZT-build time); see `storeKeystoneSignedBatch`'s doc for the corrected
+//  account.
+//
 
 import SwiftUI
 import ComposableArchitecture
@@ -221,23 +233,25 @@ struct MigrationCoordFlow {
         /// Internal: MOB-1468 Keystone `scan(.foundPCZTBatch)` finished storing the signed PCZTs
         /// (`storeSignedMigrationTransactions`, `Void`-returning) — pops `scan`+`keystoneSign` and
         /// resumes the chain `context` represents. MOB-1478 (W4): the stored batch now always
-        /// includes the note-split PCZT first when `isNoteSplitNeeded()` — there's no separate
+        /// includes the note-split PCZT(s) first when the engine needs any — there's no separate
         /// per-source result to carry any more (the old `.noteSplit` context's `TransferResult`/
-        /// signed-PCZT payload is gone along with that context). MOB-1496 (W6): `splitPczt` is the
-        /// sentinel entry's PCZT bytes, split out of the batch and stored separately (via
-        /// `storeSignedNoteSplit`, BEFORE `storeSignedMigrationTransactions` — C-1 fix, final review
-        /// R6) — `nil` when the run needed no split, or when the SPLIT store failed (that failure
+        /// signed-PCZT payload is gone along with that context). MOB-1496 (final engine, plural
+        /// preps): `signedPreps` is the sentinel-prefixed entries' signed bytes — zero, one, or many
+        /// — split out of the batch (ids stripped back to their bare engine form) and stored
+        /// separately (via `storeSignedNoteSplits`, BEFORE `storeSignedMigrationTransactions` — C-1
+        /// fix, still the ordering under the final engine, see `storeKeystoneSignedBatch`'s doc for
+        /// why) — `nil` when the run needed no preps, or when the PREP store failed (that failure
         /// takes an earlier, separate abandon path — see the `.run` effects in
         /// `MigrationCoordFlowCoordinator`) — non-`nil` routes to the note-split screen instead of
         /// resuming the schedule/review chain immediately (see `resumeAfterKeystoneSigning`).
         /// MOB-1496 (C-1b fix, fix-wave 2): `pendingScheduleStore` carries the already-signed
-        /// schedule entries when (and only when) `splitPczt != nil` — the schedule is no longer
-        /// stored inline here; it rides along to be stored once the split's broadcast succeeds (see
-        /// this file's header comment). `nil` for a no-split batch, whose schedule already stored
+        /// schedule entries when (and only when) `signedPreps != nil` — the schedule is no longer
+        /// stored inline here; it rides along to be stored once the preps' broadcast succeeds (see
+        /// this file's header comment). `nil` for a no-prep batch, whose schedule already stored
         /// immediately, unchanged.
         case keystoneSigningSubmitted(
             context: KeystoneSigningContext,
-            splitPczt: Data?,
+            signedPreps: [MigrationSignedTransferPczt]?,
             pendingScheduleStore: PendingScheduleStore?
         )
         /// Internal: MOB-1496 (W6 §3) — the Keystone dust lane's upfront propose

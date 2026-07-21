@@ -301,6 +301,14 @@ enum MigrationSimulatorEngineDerivations {
         "xfer-\(index)"
     }
 
+    /// MOB-1496 (final engine, plural preps): a fabricated ENGINE-style id for a simulated
+    /// preparation (note-split) transaction — mirrors `makeTransferId`'s scheme so the simulator's
+    /// fabricated preps look like genuine engine ids, the same way a real `createUnsignedNoteSplitPCZTs`
+    /// response would, rather than an app-invented sentinel.
+    static func makeNoteSplitId(index: Int) -> String {
+        "split-\(index)"
+    }
+
     static func makeTxId(prefix: String, discriminator: String) -> String {
         "tx-\(prefix)-\(discriminator)"
     }

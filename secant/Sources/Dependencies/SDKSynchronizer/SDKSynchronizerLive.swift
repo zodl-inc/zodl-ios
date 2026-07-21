@@ -313,11 +313,11 @@ extension SDKSynchronizerClient: DependencyKey {
             // same `withSubmission` pattern as `createAndSubmitProposedTransactions` — so a
             // `switchTo(endpoint:)` can never overlap a migration broadcast. Every other member
             // here is read-only/non-broadcast and stays unguarded; `storeSignedMigrationTransactions`/
-            // `storeSignedNoteSplit` (Keystone/PCZT path) are local storage, not a broadcast, so they
-            // stay unguarded too — `storeSignedNoteSplit` in particular MUST run before
-            // `storeSignedMigrationTransactions` for the same Keystone commit, since it is what
-            // creates the engine run the schedule store then joins (MOB-1496 C-1 fix — see
-            // `SDKSynchronizerInterface`'s doc on both members for the engine citation).
+            // `storeSignedNoteSplits` (Keystone/PCZT path) are local storage, not a broadcast, so they
+            // stay unguarded too. Final engine: the run is created at PCZT-build time
+            // (`proposeNoteSplitPCZTs`, below) — these two stores are order-independent
+            // per-transaction signature applications over that same already-created run, not a
+            // sequencing hazard (see `SDKSynchronizerInterface`'s doc on both members).
             getMigrationState: { accountUUID in
                 try await synchronizer.migrationState(accountUUID: accountUUID)
             },
@@ -413,13 +413,14 @@ extension SDKSynchronizerClient: DependencyKey {
                     return try await synchronizer.executeNextPendingMigrationTransfer(accountUUID: accountUUID, options: options)
                 }
             },
-            proposeNoteSplitPCZT: { accountUUID in
-                try await synchronizer.createUnsignedNoteSplitPCZT(accountUUID: accountUUID)
+            proposeNoteSplitPCZTs: { accountUUID in
+                try await synchronizer.createUnsignedNoteSplitPCZTs(accountUUID: accountUUID)
             },
-            storeSignedNoteSplit: { accountUUID, pczt in
-                // Run-creating store (MOB-1496 C-1 fix) — see `SDKSynchronizerInterface`'s doc for
-                // why this must precede `storeSignedMigrationTransactions` for the same commit.
-                _ = try await synchronizer.storeSignedNoteSplitPCZT(accountUUID: accountUUID, pczt)
+            storeSignedNoteSplits: { accountUUID, signed in
+                // Run-creating call moved to `createUnsignedNoteSplitPCZTs` above (final engine) —
+                // see `SDKSynchronizerInterface`'s doc: this store and `storeSignedMigrationTransactions`
+                // are order-independent per-transaction signature applications now.
+                _ = try await synchronizer.storeSignedNoteSplitPCZTs(accountUUID: accountUUID, signed)
             },
             broadcastStoredNoteSplit: { accountUUID, options in
                 @Dependency(\.transactionGuard) var transactionGuard
