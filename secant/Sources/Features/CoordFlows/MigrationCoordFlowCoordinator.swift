@@ -308,7 +308,11 @@ extension MigrationCoordFlow {
                     // here rather than moving to presentation). T2: now awaited (not fire-and-forget)
                     // so the pushed Review Transfer's footer can carry the formed host (R13) —
                     // `formNetworkSnapshot`/the immediately-following peek are both fast, local-only
-                    // calls (R7: zero network calls), so this isn't a perceptible nav delay.
+                    // calls (R7: zero network calls), so this isn't a perceptible nav delay. R9-T6
+                    // (finding 8): this claim now actually holds under contention too — forming no
+                    // longer serializes through the app-wide `transactionGuard`, so it can no longer
+                    // queue for minutes behind an unrelated in-flight broadcast the way it used to
+                    // (see `MigrationManagerLiveKey.swift`'s `migrationNetworkOptions` doc).
                     if walletStorage.exportTorSetupFlag() == true {
                         guard !migrationManager.isSyncServerIdentityCustom() else {
                             return .run { [accountUUID = state.selectedWalletAccount?.id] send in
