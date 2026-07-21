@@ -1360,7 +1360,7 @@ import ComposableArchitecture
         #expect(refreshMigrationSyncGateCalls.value == 0)
     }
 
-    /// `resubmitSignedNoteSplit`'s `storeSignedNoteSplit` call (made only when `splitStored == false`)
+    /// `resubmitSignedNoteSplit`'s `storeSignedNoteSplits` call (made only when `splitStored == false`)
     /// is pre-broadcast LOCAL persistence — same rationale as the derive-USK sites above. RED against
     /// the parent commit: today this throw lands inside the SAME `do`/`catch` as
     /// `broadcastStoredNoteSplit`, so it WOULD route.
@@ -1369,18 +1369,18 @@ import ComposableArchitecture
         let broadcastCalls = LockIsolated<Int>(0)
         let routeBroadcastFailureCalls = LockIsolated<Int>(0)
         let refreshMigrationSyncGateCalls = LockIsolated<Int>(0)
-        let signedPczt = Data([0xCC, 0xDD])
+        let signedPreps = [MigrationSignedTransferPczt(id: "p0", pczt: Data([0xCC, 0xDD]))]
         let state = MigrationNoteSplit.State(
             phase: .splitting,
             isFailurePresented: false,
-            signedNoteSplitPczt: signedPczt,
+            signedNoteSplitPczt: signedPreps,
             splitStored: false
         )
         let store = TestStore(initialState: state) {
             MigrationNoteSplit()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.storeSignedNoteSplit = { _, _ in
+            $0.sdkSynchronizer.storeSignedNoteSplits = { _, _ in
                 storeSignedCalls.withValue { $0 += 1 }
                 throw NSError(domain: "test", code: 4)
             }
