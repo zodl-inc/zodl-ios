@@ -33,6 +33,8 @@ struct SignWithKeystoneCoordFlowView: View {
                 .navigationBarHidden(true)
             } destination: { store in
                 switch store.case {
+                case let .keystoneFirmwareUpdate(store):
+                    KeystoneFirmwareUpdateView(store: store)
                 case let .preSendingFailure(store):
                     PreSendingFailureView(store: store, tokenName: tokenName)
                 case let .scan(store):
