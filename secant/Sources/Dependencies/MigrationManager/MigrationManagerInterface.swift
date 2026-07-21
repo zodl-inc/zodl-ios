@@ -93,6 +93,20 @@ struct MigrationManagerClient: Sendable {
     // and destructive: a close reached while the engine was still genuinely `.inProgress` wiped the
     // still-live run's own records.
     var acknowledgeComplete: @Sendable (_ accountUUID: AccountUUID?) async -> Void
+    // MOB-1496: `MigrationState.complete` is now PER-RUN ("the stored run is fully mined"), never
+    // "nothing left to migrate" — the final engine caps how much a single run covers (a per-run
+    // cap, or funds arriving mid-run), so a `.complete` account may still have more to migrate.
+    // Sync read of a persisted, per-account flag (`nil` resolves the selected account, same
+    // convention as `isCompleteAcknowledged` above): `true` only when a completed evaluation found
+    // a genuinely non-empty fresh plan; unevaluated (`nil`, internally) or a genuinely empty plan
+    // both read as `false` here — this member never distinguishes the two. No public "evaluate"
+    // member exists — the evaluation itself (a fresh, plan-cache-overwriting
+    // `proposeMigrationTransfers`) is internal to `reconcile()`, and runs AT MOST ONCE per
+    // completion transition (see `MigrationManagerImpl.evaluateMigrationRemainder`'s doc for why:
+    // `proposeMigrationTransfers` overwrites the SDK's plan cache, and a later commit must match
+    // the LATEST propose — evaluating on every reconcile could invalidate a plan the user is
+    // mid-review of, turning its commit into a `migrationPlanStale` error).
+    var isMigrationRemainderPending: @Sendable (_ accountUUID: AccountUUID?) -> Bool = { _ in false }
     // Sync<->send gate (app direction: a completed sync briefly disables migration sends). MOB-1496
     // (W3): re-keyed off observed sync completions + the SDK's own buffer duration — the OTHER
     // direction (broadcast briefly disables sync) is now enforced by the SDK itself

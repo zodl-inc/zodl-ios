@@ -64,6 +64,7 @@ extension MigrationManagerClient: DependencyKey {
             setNetworkPrivacyOptions: { impl.setNetworkPrivacyOptions(useTor: $0) },
             isCompleteAcknowledged: { accountUUID in impl.isCompleteAcknowledged(accountUUID: accountUUID) },
             acknowledgeComplete: { accountUUID in await impl.acknowledgeComplete(accountUUID: accountUUID) },
+            isMigrationRemainderPending: { accountUUID in impl.isMigrationRemainderPending(accountUUID: accountUUID) },
             sendGate: { await impl.sendGate() },
             recordSyncCompleted: { impl.recordSyncCompleted() },
             migrationSyncGateFeed: { impl.migrationSyncGateFeed() },
@@ -214,6 +215,9 @@ final class MigrationManagerImpl: @unchecked Sendable {
             isNextTransferDue: isNextTransferDue(progress: progress),
             orchardBalance: balance,
             isCompleteAcknowledged: gateStorage.isCompleteAcknowledged(for: resolvedAccountUUID),
+            // MOB-1496: nil (never evaluated) reads as `false` here, same "not known to be
+            // pending" convention `MigrationManagerImpl.isMigrationRemainderPending` uses.
+            isMigrationRemainderPending: gateStorage.remainderPending(for: resolvedAccountUUID) ?? false,
             transferRows: rows
         )
     }
@@ -669,6 +673,14 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// write) before the other can begin. Called on every foreground entry / launch
     /// (`RootInitialization.swift`) and after a store reports a completed migration op
     /// (`MigrationSendingStore`/`MigrationNoteSplitStore`).
+    ///
+    /// MOB-1496: also runs the once-per-completion-transition migration-remainder evaluation —
+    /// `MigrationState.complete` is per-RUN now (the stored run is fully mined), never "nothing
+    /// left to migrate," so an account freshly observed `.complete` with no remainder verdict yet
+    /// (`remainderPending(for:) == nil`) gets ONE `evaluateMigrationRemainder` call. See that
+    /// method's doc for why this must not run on every pass. Leaving `.complete` clears the verdict
+    /// (`clearRemainderPending`, right beside the existing acknowledge-clear below) so the NEXT
+    /// completion of a later run gets its own fresh evaluation.
     func reconcile() async {
         guard isIronwoodActivated() else { return }
 
@@ -692,6 +704,17 @@ final class MigrationManagerImpl: @unchecked Sendable {
 
                 if state != MigrationState.complete {
                     gateStorage.clearAcknowledgedComplete(for: accountUUID)
+                    // MOB-1496: leaving `.complete` invalidates any remainder verdict from the run
+                    // that just ended — the next time this account reaches `.complete` (this run
+                    // continuing, or a later one) must be evaluated fresh, not inherit a stale flag.
+                    gateStorage.clearRemainderPending(for: accountUUID)
+                } else if gateStorage.remainderPending(for: accountUUID) == nil {
+                    // MOB-1496: evaluate EXACTLY ONCE per completion transition — see
+                    // `evaluateMigrationRemainder`'s doc for the plan-cache hazard that makes a
+                    // per-reconcile re-propose unsafe. Already-evaluated (true OR false) accounts
+                    // skip straight past this, regardless of how many more reconciles run before
+                    // the account eventually leaves `.complete`.
+                    await evaluateMigrationRemainder(for: accountUUID)
                 }
 
                 // MOB-1496 (W2): a run abandoned/reset out from under a stale persisted schedule —
@@ -707,6 +730,32 @@ final class MigrationManagerImpl: @unchecked Sendable {
                 }
             }
         }
+    }
+
+    /// MOB-1496: asks the engine directly whether anything remains for `accountUUID` beyond the run
+    /// that just reached `.complete` — a fresh, non-committing `proposeMigrationTransfers(_, false)`;
+    /// an empty schedule means genuinely done, a non-empty one means more remains (surfaced via
+    /// `bannerVariant`'s `.complete` arm as `MigrationBannerVariant.required`, and via the BG
+    /// session's `handleLandedBroadcast` as a `.migrationBatchComplete` notification instead of
+    /// `.migrationComplete`).
+    ///
+    /// CRITICAL — why `reconcile()`'s caller only invokes this ONCE per completion transition
+    /// (gated on `remainderPending(for:) == nil`), never on every reconcile pass:
+    /// `proposeMigrationTransfers` OVERWRITES the SDK's own plan cache, and a later commit must
+    /// match the LATEST propose. If this ran again while the user were mid-review of an EARLIER
+    /// propose from this same evaluation (e.g. deciding on the Migration Complete screen whether to
+    /// migrate a residual), that in-flight plan would be invalidated out from under them and its
+    /// eventual commit would fail with `migrationPlanStale`. Gating on the persisted tri-state flag
+    /// (`nil` = never evaluated since the last non-`.complete` state) makes this call genuinely
+    /// once-per-transition regardless of how many more times `reconcile()` itself runs before the
+    /// account eventually leaves `.complete` again.
+    ///
+    /// On a THROW, persists NOTHING — the flag is left `nil` so a LATER reconcile pass retries
+    /// (self-healing: a transient propose failure must not wrongly freeze the flag at a stale
+    /// value, and must not be mistaken for "evaluated, genuinely nothing pending").
+    private func evaluateMigrationRemainder(for accountUUID: AccountUUID) async {
+        guard let schedule = try? await sdkSynchronizer.proposeMigrationTransfers(accountUUID, false) else { return }
+        gateStorage.setRemainderPending(!schedule.transfers.isEmpty, for: accountUUID)
     }
 
     /// R8-T3 (#24): per-account lookup against `reconcile()`'s ONE hoisted `getAccountsBalances()`
@@ -793,6 +842,18 @@ final class MigrationManagerImpl: @unchecked Sendable {
         return gateStorage.isCompleteAcknowledged(for: resolvedAccountUUID)
     }
 
+    /// MOB-1496: reads `accountUUID`'s persisted remainder flag (`nil` resolves the selected
+    /// account, same convention as `isCompleteAcknowledged` above; a genuinely unresolvable account
+    /// reads as `false` rather than crashing). The tri-state `nil` (never evaluated since the last
+    /// completion transition) is flattened to `false` HERE, at the client-facing boundary — the
+    /// storage layer (`MigrationGateStorage.remainderPending(for:)`) keeps the raw `Bool?` so
+    /// `reconcile()` can tell "never evaluated" apart from "evaluated, genuinely empty." See
+    /// `evaluateMigrationRemainder`'s doc for how/when the flag actually gets set.
+    func isMigrationRemainderPending(accountUUID: AccountUUID?) -> Bool {
+        guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return false }
+        return gateStorage.remainderPending(for: resolvedAccountUUID) ?? false
+    }
+
     /// MOB-1480: the migration SDK simulator's debug panel "Reset app migration flags" control.
     /// MOB-1496 (W2): also clears every candidate account's persisted schedule — a debug reset must
     /// leave no stale committed-schedule payload behind either. MOB-1496 (W4): and its network
@@ -801,7 +862,9 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// re-clearing it — that disagreed with `reconcile()`'s/`activeNetworkSnapshots()`'s own
     /// account-set logic); also now clears each candidate account's own per-account acknowledged
     /// flag (R8-T3 S2 — the flag itself used to be wallet-wide, cleared directly by
-    /// `gateStorage.resetPersistedFlags()` alone).
+    /// `gateStorage.resetPersistedFlags()` alone). MOB-1496: also clears each candidate account's
+    /// own per-account remainder verdict — same rationale as the acknowledged flag, since a debug
+    /// reset must leave no stale "more to migrate" verdict behind either.
     func resetPersistedFlags() {
         gateStorage.resetPersistedFlags()
         let accountUUIDs = MigrationDerivations.candidateAccountUUIDs(
@@ -810,6 +873,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
         )
         for accountUUID in accountUUIDs {
             gateStorage.clearAcknowledgedComplete(for: accountUUID)
+            gateStorage.clearRemainderPending(for: accountUUID)
             scheduleStorage.clear(for: accountUUID)
             snapshotStorage.clear(for: accountUUID)
         }
@@ -821,7 +885,10 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// and `reentryRoute` both fetch these once themselves now, rather than this function doing its
     /// own redundant `migrationState`/`migrationProgress` reads). `rawState`'s own read failure is
     /// the caller's concern (each defaults it to `.notStarted`, or short-circuits first — see
-    /// `bannerVariant`/`reentryRoute`).
+    /// `bannerVariant`/`reentryRoute`). MOB-1496: `.syncRequiredBeforeNext` itself is never actually
+    /// emitted by the final migration engine either — this normalization is kept purely for
+    /// exhaustiveness (and the migration SDK simulator, which still models the reason) rather than
+    /// any real-engine behavior it needs to cover.
     private func normalizedState(rawState: MigrationState, progress: MigrationProgress?) -> MigrationState {
         guard case MigrationState.requiresAttention(MigrationAttentionReason.syncRequiredBeforeNext) = rawState,
               let progress else {
@@ -969,11 +1036,14 @@ enum MigrationDerivations {
         isNextTransferDue: Bool,
         orchardBalance: Zatoshi,
         isCompleteAcknowledged: Bool,
+        isMigrationRemainderPending: Bool,
         transferRows: [MigrationTransferRow]
     ) -> MigrationBannerVariant? {
         guard isIronwoodActivated else { return nil }
 
         switch state {
+        // `.readyToPropose` is never actually emitted by the final migration engine — kept here
+        // only for exhaustiveness / the migration SDK simulator, which still models it.
         case MigrationState.notStarted, MigrationState.readyToPropose:
             return orchardBalance > Zatoshi.zero ? MigrationBannerVariant.required : nil
 
@@ -1000,12 +1070,21 @@ enum MigrationDerivations {
 
             case MigrationAttentionReason.syncRequiredBeforeNext:
                 // Normalized to `.inProgress` by the LiveKey before this function is ever called
-                // with this state — this branch only exists so the switch stays exhaustive.
+                // with this state — this branch only exists so the switch stays exhaustive. (Never
+                // actually emitted by the final migration engine either — see `normalizedState`'s
+                // doc — so in production this arm is unreachable, not merely pre-empted.)
                 return nil
             }
 
         case MigrationState.complete:
-            return isCompleteAcknowledged ? nil : MigrationBannerVariant.complete
+            guard isCompleteAcknowledged else { return MigrationBannerVariant.complete }
+            // MOB-1496: `.complete` is per-RUN now — the engine may still have more to migrate (a
+            // per-run cap, or funds arriving mid-run). `isMigrationRemainderPending` reflects the
+            // ONE fresh `proposeMigrationTransfers` this completion transition ever gets (see
+            // `MigrationManagerImpl.evaluateMigrationRemainder`'s doc) — a non-empty plan re-offers
+            // the banner as `.required`, exactly like a fresh pre-run balance would, with no
+            // `orchardBalance` predicate needed (the engine already said there's something there).
+            return isMigrationRemainderPending ? MigrationBannerVariant.required : nil
         }
     }
 
@@ -1252,12 +1331,23 @@ final class MigrationGateStorage: @unchecked Sendable {
     /// legacy key for hygiene). No migration of the old value: the feature is unreleased
     /// (dev/QA installs only), so "migrated on first read" is satisfied vacuously.
     private let acknowledgedStorage: PerAccountCodableStorage<Bool>
+    /// MOB-1496: per-account, tri-state migration-remainder verdict — `nil` (no persisted payload)
+    /// means "never evaluated since the account last left `.complete`"; `PerAccountCodableStorage
+    /// .read(for:)` already returns the raw `Bool?` (no `?? false` folded in at this layer), which
+    /// is exactly the tri-state `remainderPending(for:)` below needs to preserve. Same generic
+    /// storage / hex-key idiom as `acknowledgedStorage` beside it.
+    private let remainderStorage: PerAccountCodableStorage<Bool>
 
     init(userDefaults: UserDefaults = .standard) {
         self.userDefaults = userDefaults
         self.acknowledgedStorage = PerAccountCodableStorage<Bool>(
             keyPrefix: .migrationCompleteAcknowledged,
             corruptLogTag: "MigrationGateStorage.acknowledgedStorage",
+            userDefaults: userDefaults
+        )
+        self.remainderStorage = PerAccountCodableStorage<Bool>(
+            keyPrefix: .migrationRemainderPending,
+            corruptLogTag: "MigrationGateStorage.remainderStorage",
             userDefaults: userDefaults
         )
     }
@@ -1344,6 +1434,31 @@ final class MigrationGateStorage: @unchecked Sendable {
 
     func clearAcknowledgedComplete(for accountUUID: AccountUUID) {
         acknowledgedStorage.clear(for: accountUUID)
+    }
+
+    /// MOB-1496: the raw tri-state verdict — `nil` when never evaluated since `accountUUID` last
+    /// left `.complete` (deliberately NOT folded to `?? false` here; `reconcile()`'s
+    /// evaluate-exactly-once gate and `MigrationManagerImpl.isMigrationRemainderPending`'s
+    /// client-facing `false` fallback both need to tell "never evaluated" apart from "evaluated,
+    /// genuinely nothing pending" — folding it away at this layer would erase that distinction for
+    /// everyone downstream).
+    func remainderPending(for accountUUID: AccountUUID) -> Bool? {
+        remainderStorage.read(for: accountUUID)
+    }
+
+    /// Persists a completed evaluation's verdict — see `MigrationManagerImpl
+    /// .evaluateMigrationRemainder`'s doc for the ONE call site that invokes this (and why only
+    /// once per completion transition).
+    func setRemainderPending(_ pending: Bool, for accountUUID: AccountUUID) {
+        remainderStorage.write(pending, for: accountUUID)
+    }
+
+    /// Invalidates the verdict — called the moment `accountUUID` leaves `.complete` (right beside
+    /// `clearAcknowledgedComplete` in `reconcile()`), so the NEXT time it reaches `.complete` (this
+    /// run continuing, or a later logical run) gets its own fresh evaluation rather than inheriting
+    /// a stale one.
+    func clearRemainderPending(for accountUUID: AccountUUID) {
+        remainderStorage.clear(for: accountUUID)
     }
 
     /// MOB-1487/MOB-1496: "Lock balance" acknowledged on Migration Complete — the dust remainder is

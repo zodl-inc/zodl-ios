@@ -27,6 +27,12 @@ enum MigrationNotification: Equatable, Sendable {
     case planNeedsUpdate                 // covers BOTH matrix rows 3+4 (identical copy)
     case manualTransferReady(number: Int)
     case migrationComplete
+    /// MOB-1496: fired instead of `.migrationComplete` when the stored run's `.complete` (per-run
+    /// now, not "nothing left to migrate" — the final engine caps how much a single run covers)
+    /// turned out to still have a non-empty fresh plan behind it (see
+    /// `MigrationManagerImpl.evaluateMigrationRemainder`'s doc). No payload: unlike
+    /// `.transferComplete`, nothing about the NEXT run's shape is known yet at notification time.
+    case migrationBatchComplete
 
     /// Stable, "migration."-prefixed — re-posting the same case replaces the previous pending/
     /// delivered notification (no dedup marker needed elsewhere).
@@ -42,6 +48,8 @@ enum MigrationNotification: Equatable, Sendable {
             return "\(Self.identifierPrefix)manualTransferReady"
         case .migrationComplete:
             return "\(Self.identifierPrefix)complete"
+        case .migrationBatchComplete:
+            return "\(Self.identifierPrefix)batchComplete"
         }
     }
 
@@ -57,6 +65,8 @@ enum MigrationNotification: Equatable, Sendable {
             return String(localizable: .migrationNotificationManualTransferReadyTitle(number))
         case .migrationComplete:
             return String(localizable: .migrationNotificationMigrationCompleteTitle)
+        case .migrationBatchComplete:
+            return String(localizable: .migrationNotificationBatchCompleteTitle)
         }
     }
 
@@ -84,6 +94,8 @@ enum MigrationNotification: Equatable, Sendable {
             return String(localizable: .migrationNotificationManualTransferReadyBody)
         case .migrationComplete:
             return String(localizable: .migrationNotificationMigrationCompleteBody)
+        case .migrationBatchComplete:
+            return String(localizable: .migrationNotificationBatchCompleteBody)
         }
     }
 }

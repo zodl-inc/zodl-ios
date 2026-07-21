@@ -804,6 +804,9 @@ import ComposableArchitecture
             isNextTransferDue: isNextTransferDue,
             orchardBalance: engine.orchardBalance(),
             isCompleteAcknowledged: false,
+            // MOB-1496: the simulator has no concept of a per-run migration remainder — this
+            // helper never exercises the `.complete` + acknowledged path, so `false` is inert here.
+            isMigrationRemainderPending: false,
             transferRows: engine.transferRows()
         )
     }
