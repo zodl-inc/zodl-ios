@@ -19,6 +19,13 @@
 //  narrow, deliberate exception inside `commitSoftware`'s `.scheduled` branch — see its doc
 //  (finding #1).
 //
+//  MOB-1496 (final engine, plural preps): finding S1 held for the SOFTWARE commit sequence
+//  (`commitSoftware`) — it still stands, unchanged, below. It does NOT hold for the Keystone
+//  PCZT-proposal fork any more: `proposeKeystoneBatch` dropped its `mode` parameter entirely and now
+//  unconditionally folds the engine's preparation (note-split) PCZTs into every batch it proposes,
+//  immediate mode included — see that function's own doc for the two engine facts that made the old
+//  "immediate is split-free" premise obsolete for this half of the pipeline.
+//
 
 import Foundation
 @preconcurrency import ZcashLightClientKit
@@ -27,12 +34,17 @@ import Foundation
 /// `.scheduled` regardless of its own `scheduled`/`manual`/`recreated` variant — all three sign a
 /// multi-transfer schedule the same way) or the single immediate sweep
 /// (`MigrationReviewTransferStore`'s `.immediate` mode; its `.manualStep` mode never reaches these
-/// helpers — that transfer was already signed at plan commit).
+/// helpers — that transfer was already signed at plan commit). MOB-1496 (final engine): only
+/// `commitSoftware` (the software-signing lane) still branches on this — `proposeKeystoneBatch` (the
+/// Keystone PCZT-proposal lane) dropped its `mode` parameter, since its old immediate-mode special
+/// case is obsolete; see that function's doc.
 enum MigrationCommitMode: Equatable {
     /// The staggered schedule: may need a silent note split first (see `commitSoftware`).
     case scheduled
-    /// The single-transaction sweep: split-free by engine design (S1) — never consults
-    /// `isNoteSplitNeeded`, never splits.
+    /// The single-transaction sweep, SOFTWARE-signing lane only: split-free by engine design (S1) —
+    /// `commitSoftware` never consults `isNoteSplitNeeded`, never splits, for this mode. Does NOT
+    /// describe the Keystone lane any more — `proposeKeystoneBatch` folds preps unconditionally,
+    /// mode-independent.
     case immediate
 }
 
@@ -151,37 +163,46 @@ enum MigrationCommitPipeline {
         await migrationManager.reconcile()
     }
 
-    /// Proposes the Keystone-signing PCZT batch for `schedule`, external-signer path: `.scheduled`
-    /// mode prepends the note-split PCZT under the coordinator's `"note-split"` sentinel id first
-    /// when the engine still needs a split (`MigrationCoordFlowCoordinator`'s `.scan(.foundPCZTBatch)`
-    /// / `.simulateSignature` handlers split it back out before storing — see
-    /// `MigrationCoordFlow.keystoneNoteSplitSentinelId`'s doc); `.immediate` mode never consults
-    /// `isNoteSplitNeeded` and proposes the schedule's own PCZTs only (S1 — split-free by design).
+    /// Proposes the Keystone-signing PCZT batch for `schedule`, external-signer path: unconditionally
+    /// proposes the engine's preparation (note-split) PCZTs first — the final engine builds N
+    /// preparation transactions, not one split transaction, and returns the (possibly empty) prep
+    /// subset from that same call — then prepends any of them, each wrapped under the coordinator's
+    /// `keystoneNoteSplitSentinelPrefix` + its own engine id (`MigrationCoordFlowCoordinator`'s
+    /// `.scan(.foundPCZTBatch)` / `.simulateSignature` handlers split them back out and strip the
+    /// prefix before storing — see `MigrationCoordFlow.keystoneNoteSplitSentinelPrefix`'s doc), ahead
+    /// of the schedule's own PCZTs.
+    ///
+    /// MOB-1496 (final engine): the OLD `mode == .scheduled` gate — "only consult a split in scheduled
+    /// mode; immediate is split-free by engine design (S1)" — is deleted. Two engine facts made that
+    /// premise obsolete: the immediate flag only rewrites transfer heights, so an immediate-mode batch
+    /// CAN carry preps too, and the run is created the moment this call builds ANY PCZTs (preps or
+    /// schedule), regardless of mode — so skipping the prep propose in immediate mode wouldn't even
+    /// have skipped run creation, just silently dropped preps the engine still needed signed. The fold
+    /// is now unconditional and mode-independent; `mode` itself is unused here as a result (still used
+    /// by `commitSoftware`, whose `.immediate` case remains genuinely split-free — a different code
+    /// path with no PCZT propose call to fold into).
     ///
     /// Finding #4: every SDK member here throws through (no `try?` swallowing), and an empty
     /// resulting batch is ALSO treated as a failure — this never hands the coordinator a silently
     /// empty or partial batch that would stage a dead-end Keystone signing session.
     ///
     /// - Throws: `MigrationCommitError.emptyPcztBatch` when the proposed batch has nothing in it;
-    ///   otherwise propagates whatever the underlying SDK calls throw. Callers map ANY throw here to
+    ///   otherwise propagates whatever the underlying SDK calls throw (including a failed prep
+    ///   propose — a new throw site under the unconditional fold). Callers map ANY throw here to
     ///   their existing commit-failure surface (Retry re-runs this same propose).
     static func proposeKeystoneBatch(
-        mode: MigrationCommitMode,
         schedule: MigrationSchedule,
         account: WalletAccount,
         sdkSynchronizer: SDKSynchronizerClient
     ) async throws -> [MigrationUnsignedTransferPczt] {
         var pczts: [MigrationUnsignedTransferPczt] = []
 
-        if mode == .scheduled {
-            let needsNoteSplit = try await sdkSynchronizer.isNoteSplitNeeded(account.id)
-            if needsNoteSplit {
-                let splitPczt = try await sdkSynchronizer.proposeNoteSplitPCZT(account.id)
-                pczts.append(
-                    MigrationUnsignedTransferPczt(id: MigrationCoordFlow.keystoneNoteSplitSentinelId, pczt: splitPczt)
-                )
+        let preps = try await sdkSynchronizer.proposeNoteSplitPCZTs(account.id)
+        pczts.append(
+            contentsOf: preps.map {
+                MigrationUnsignedTransferPczt(id: MigrationCoordFlow.keystoneNoteSplitSentinelPrefix + $0.id, pczt: $0.pczt)
             }
-        }
+        )
 
         let schedulePczts = try await sdkSynchronizer.proposeMigrationPCZTs(account.id, schedule)
         pczts.append(contentsOf: schedulePczts)

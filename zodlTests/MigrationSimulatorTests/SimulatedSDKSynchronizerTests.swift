@@ -56,6 +56,9 @@ import URKit
         static let migrationSchedule = MigrationSchedule(transfers: [], estimatedDurationHours: -1)
         static let transferResult = MigrationTransferResult.invalidNote
         static let pczt: Data = Data([0xFF])
+        // MOB-1496 (final engine, plural preps): the sentinel fallback for `proposeNoteSplitPCZTs`,
+        // now array-returning — reuses `pczt`'s bytes so it stays recognizably "obviously fake".
+        static let noteSplitPCZTs: [MigrationUnsignedTransferPczt] = [MigrationUnsignedTransferPczt(id: "sentinel-split", pczt: pczt)]
         static let unsignedBatch: [MigrationUnsignedTransferPczt] = [MigrationUnsignedTransferPczt(id: "sentinel", pczt: Data([0xFF]))]
         static let parsedBatch: [Data] = [Data([0xAB, 0xCD])]
         static let estimatedTimestamp: TimeInterval = 999_999
@@ -136,7 +139,7 @@ import URKit
             counters.migrateMigrationDust.withValue { $0 += 1 }
             return SentinelValues.transferResult
         }
-        client.proposeNoteSplitPCZT = { _ in SentinelValues.pczt }
+        client.proposeNoteSplitPCZTs = { _ in SentinelValues.noteSplitPCZTs }
         client.proposeMigrationPCZTs = { _, _ in
             counters.proposeMigrationPCZTs.withValue { $0 += 1 }
             return SentinelValues.unsignedBatch
@@ -371,9 +374,10 @@ import URKit
         engine.setActive(true) // the fresh-seed default is inactive (opt-in simulation)
         client.applySimulatedMigration(engine: engine)
 
-        let noteSplitPCZT = try await client.proposeNoteSplitPCZT(Self.accountUUID)
-        #expect(!noteSplitPCZT.isEmpty)
-        #expect(noteSplitPCZT != SentinelValues.pczt)
+        let noteSplitPCZTs = try await client.proposeNoteSplitPCZTs(Self.accountUUID)
+        #expect(noteSplitPCZTs.count == 1)
+        #expect(!(noteSplitPCZTs.first?.pczt.isEmpty ?? true))
+        #expect(noteSplitPCZTs != SentinelValues.noteSplitPCZTs)
 
         let schedule = try await client.proposeImmediateMigration(Self.accountUUID)
         let batch = try await client.proposeMigrationPCZTs(Self.accountUUID, schedule)
@@ -382,7 +386,7 @@ import URKit
         #expect(counters.proposeMigrationPCZTs.value == 0)
 
         // Active + recognized fabricated-format header -> returns the whole batch as one element.
-        let fabricated = engine.fabricateNoteSplitPCZT()
+        let fabricated = engine.fabricateNoteSplitPCZTs().first?.pczt ?? Data()
         #expect(client.parseMigrationPCZTBatch(fabricated) == [fabricated])
         #expect(counters.parseMigrationPCZTBatch.value == 0)
 
@@ -394,8 +398,8 @@ import URKit
         // Inactive: every member above falls back to the sentinel.
         engine.setActive(false)
 
-        let inactiveNoteSplitPCZT = try await client.proposeNoteSplitPCZT(Self.accountUUID)
-        #expect(inactiveNoteSplitPCZT == SentinelValues.pczt)
+        let inactiveNoteSplitPCZTs = try await client.proposeNoteSplitPCZTs(Self.accountUUID)
+        #expect(inactiveNoteSplitPCZTs == SentinelValues.noteSplitPCZTs)
 
         let inactiveBatch = try await client.proposeMigrationPCZTs(Self.accountUUID, schedule)
         #expect(inactiveBatch == SentinelValues.unsignedBatch)

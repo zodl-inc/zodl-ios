@@ -38,6 +38,18 @@
 //  The Keystone fork now throws through instead of swallowing errors with `try?`, and an empty PCZT
 //  batch is also a failure (finding #4).
 //
+//  MOB-1496 (final engine, plural preps): the paragraph above's "immediate mode's commit is now
+//  split-free" still holds for the SOFTWARE commit (`commitSoftware`'s `.immediate` case) but no
+//  longer for the Keystone PCZT-proposal fork (`requestKeystoneSignature` below) — the final engine's
+//  immediate flag only rewrites transfer heights, so an immediate-mode Keystone batch CAN carry
+//  preparation (note-split) PCZTs now; `MigrationCommitPipeline.proposeKeystoneBatch` folds them in
+//  unconditionally, mode-independent (no more `mode` parameter at all). The 4 members named above
+//  (`isNoteSplitNeeded`/`prepareNoteSplit`/`submitNoteSplit`/`stopSyncBeforeMigrationBroadcast`) are
+//  still never called by the Keystone fork — it calls the new, distinct `proposeNoteSplitPCZTs`
+//  instead, whose (possibly empty) prep subset is stored and broadcast entirely differently (see
+//  `requestKeystoneSignature`'s own doc, and `MigrationCoordFlowCoordinator`'s Keystone-signing
+//  section for the store/broadcast/resume mechanism).
+//
 
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
@@ -249,21 +261,26 @@ struct MigrationReviewTransfer {
     /// MOB-1468 (Keystone) `confirmTapped` fork: proposes the immediate-mode schedule's PCZT and
     /// hands the batch to the coordinator for QR signing.
     ///
-    /// MOB-1496 (R8-T1, S1): never prefixed with a note-split PCZT and never consults
-    /// `isNoteSplitNeeded` — the immediate lane is split-free by engine design
-    /// (`propose_immediate_migration_transfers`, "skipping the split entirely"); doing so here would
-    /// stage a self-conflicting pair in the same signing batch, mirroring the software fork's S1 fix.
+    /// MOB-1496 (final engine): UNLIKE the software fork above (`commitSoftware`'s `.immediate` case,
+    /// still genuinely split-free — S1 stands for that lane), this Keystone fork's batch CAN now
+    /// carry preparation (note-split) PCZTs prefixed ahead of the schedule's own — the R8-T1 (S1) "the
+    /// immediate lane is split-free by engine design" premise this comment used to document was
+    /// specific to the OLD singular-split API's `isNoteSplitNeeded`/immediate-mode gate, which
+    /// `MigrationCommitPipeline.proposeKeystoneBatch` no longer has: the final engine's immediate flag
+    /// only rewrites transfer heights, so an immediate-mode PCZT build can legitimately include preps
+    /// too, and skipping them here would silently hand the signing device a batch missing
+    /// transactions the engine's run already needs signed.
     ///
-    /// MOB-1496 (R8-T1, #19/#4): delegates to the shared `MigrationCommitPipeline
-    /// .proposeKeystoneBatch(mode: .immediate, ...)` — every member throws through (no more `try?`
-    /// swallowing), and an empty resulting batch is ALSO a failure, so this never delegates a
-    /// silently empty/partial batch; both route to the SAME failure sheet the software fork uses,
-    /// and Retry re-runs this same propose.
+    /// MOB-1496 (R8-T1, #19/#4; final engine: unconditional fold): delegates to the shared
+    /// `MigrationCommitPipeline.proposeKeystoneBatch(schedule:account:sdkSynchronizer:)` — every
+    /// member throws through (no more `try?` swallowing), and an empty resulting batch is ALSO a
+    /// failure, so this never delegates a silently empty/partial batch; both route to the SAME
+    /// failure sheet the software fork uses, and Retry re-runs this same propose. `mode` is no longer
+    /// passed — the shared pipeline folds preps unconditionally now, mode-independent.
     private func requestKeystoneSignature(for schedule: MigrationSchedule, account: WalletAccount) -> Effect<Action> {
         .run { send in
             do {
                 let pczts = try await MigrationCommitPipeline.proposeKeystoneBatch(
-                    mode: MigrationCommitMode.immediate,
                     schedule: schedule,
                     account: account,
                     sdkSynchronizer: sdkSynchronizer

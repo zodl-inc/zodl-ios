@@ -22,14 +22,17 @@
 //  MOB-1468 (Keystone): once split signing folded into `MigrationTransferPlan`'s batch (MOB-1478 W4),
 //  this screen no longer requests Keystone signing itself. MOB-1496 (W6) reintroduced a coordinator
 //  path that DOES set `signedNoteSplitPczt` — `MigrationCoordFlowCoordinator.resumeAfterKeystoneSigning`
-//  pushes this screen mid-Keystone-commit to broadcast a just-signed split, dispatching `.retryTapped`
-//  itself as the first attempt. MOB-1496 (C-1 fix, final review R6): that push now also sets
-//  `splitStored: true` (the coordinator's own store effect already called `storeSignedNoteSplit`
-//  before pushing this screen — see that effect's doc for why the store must run there, not here), so
-//  `retryTapped`'s Keystone fork only ever (re)broadcasts for this, the only live caller today. The
-//  fork's store-then-broadcast fallback (`splitStored == false`) is kept dormant rather than deleted —
-//  same reasoning as the failure sheet above — so a future caller that hands over an un-stored PCZT
-//  has somewhere to plug in.
+//  pushes this screen mid-Keystone-commit to broadcast just-signed preparation (note-split) PCZTs,
+//  dispatching `.retryTapped` itself as the first attempt. MOB-1496 (C-1 fix, final review R6): that
+//  push now also sets `splitStored: true` (the coordinator's own store effect already called
+//  `storeSignedNoteSplits` before pushing this screen — see that effect's doc for why the store must
+//  run there, not here), so `retryTapped`'s Keystone fork only ever (re)broadcasts for this, the only
+//  live caller today. The fork's store-then-broadcast fallback (`splitStored == false`) is kept
+//  dormant rather than deleted — same reasoning as the failure sheet above — so a future caller that
+//  hands over an un-stored batch has somewhere to plug in. MOB-1496 (final engine, plural preps):
+//  `signedNoteSplitPczt` carries the whole preparation batch now — `[MigrationSignedTransferPczt]`
+//  (zero-or-many preps, though this screen is only ever pushed with a non-empty one), not a single
+//  `Data` blob — since the final engine builds N preparation transactions, not one split transaction.
 //
 //  MOB-1496 (C-1b fix, final review R6 fix-wave 2): the coordinator no longer stores this commit's
 //  schedule before pushing this screen — Step 0 of the fix-wave-2 report traced the engine's phase
@@ -75,16 +78,19 @@ struct MigrationNoteSplit {
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
         @Shared(.inMemory(.toast)) var toast: Toast.Edge? = nil
         /// MOB-1468 (Keystone): set by the coordinator once a QR round-trip signs the note-split
-        /// PCZT. Non-`nil` forks `retryTapped` onto the Keystone lane (`storeSignedNoteSplit`/
-        /// `broadcastStoredNoteSplit`) instead of the software `submitNoteSplit` re-preparation.
-        /// Cleared once `.splitConfirmed` lands.
-        var signedNoteSplitPczt: Data?
+        /// preparation PCZT(s). Non-`nil` forks `retryTapped` onto the Keystone lane
+        /// (`storeSignedNoteSplits`/`broadcastStoredNoteSplit`) instead of the software
+        /// `submitNoteSplit` re-preparation. Cleared once `.splitConfirmed` lands. MOB-1496 (final
+        /// engine, plural preps): the whole preparation batch — `[MigrationSignedTransferPczt]`, zero-
+        /// or-many, though this screen is only ever pushed with a non-empty one — not a single `Data`
+        /// blob.
+        var signedNoteSplitPczt: [MigrationSignedTransferPczt]?
         /// MOB-1496 (C-1 fix, final review R6): true once `signedNoteSplitPczt` is durably stored in
         /// the migration engine — `retryTapped`'s Keystone fork then only (re)broadcasts
         /// (`broadcastStoredNoteSplit`), never re-stores. The coordinator's batch-commit push
         /// (the only live caller today) always sets this `true` — its own store effect already
-        /// called `storeSignedNoteSplit` before pushing this screen. `false` (the default) makes the
-        /// fork self-sufficient for a hypothetical future caller that hands over an un-stored PCZT:
+        /// called `storeSignedNoteSplits` before pushing this screen. `false` (the default) makes the
+        /// fork self-sufficient for a hypothetical future caller that hands over an un-stored batch:
         /// its first `retryTapped` stores once, flips this via `.noteSplitStored`, then broadcasts;
         /// every later retry (after e.g. a broadcast-only failure) skips straight to broadcasting.
         /// Cleared once `.splitConfirmed` lands, alongside `signedNoteSplitPczt`.
@@ -104,7 +110,7 @@ struct MigrationNoteSplit {
             txId: String = "",
             isFailurePresented: Bool = false,
             isFlowRoot: Bool = false,
-            signedNoteSplitPczt: Data? = nil,
+            signedNoteSplitPczt: [MigrationSignedTransferPczt]? = nil,
             splitStored: Bool = false,
             awaitingScheduleStore: Bool = false
         ) {
@@ -135,7 +141,7 @@ struct MigrationNoteSplit {
         /// Failure sheet: dismiss, then re-submit the stored proposal (or, on the Keystone fork,
         /// (re)store/broadcast the signed PCZT — see `signedNoteSplitPczt`/`splitStored`).
         case retryTapped
-        /// MOB-1496 (C-1 fix, final review R6): the Keystone fork's `storeSignedNoteSplit` call
+        /// MOB-1496 (C-1 fix, final review R6): the Keystone fork's `storeSignedNoteSplits` call
         /// succeeded — flips `state.splitStored` so a LATER retry (e.g. after a broadcast-only
         /// failure) skips straight to `broadcastStoredNoteSplit` instead of re-storing.
         case noteSplitStored
@@ -335,19 +341,21 @@ struct MigrationNoteSplit {
         }
     }
 
-    /// MOB-1468 (Keystone) `retryTapped` fork: re-broadcasts a Keystone-signed split PCZT instead of
-    /// re-preparing/resubmitting the software proposal. MOB-1496 (C-1 fix, final review R6):
-    /// store-aware — `stored` is `state.splitStored` at the point `retryTapped` fired. The
-    /// coordinator's batch-commit push (the only live caller today) always arrives with
-    /// `stored == true` (its own store effect already called `storeSignedNoteSplit`, which MUST run
+    /// MOB-1468 (Keystone) `retryTapped` fork: re-broadcasts Keystone-signed preparation (note-split)
+    /// PCZTs instead of re-preparing/resubmitting the software proposal. MOB-1496 (C-1 fix, final
+    /// review R6): store-aware — `stored` is `state.splitStored` at the point `retryTapped` fired.
+    /// The coordinator's batch-commit push (the only live caller today) always arrives with
+    /// `stored == true` (its own store effect already called `storeSignedNoteSplits`, which runs
     /// before the schedule store — see that effect's doc for why), so every attempt here is
     /// `broadcastStoredNoteSplit` only, which is idempotent by construction (a retry just re-asks the
     /// engine what's next-due, never re-stores) — unlike the old `submitSignedNoteSplit` composite
     /// this replaces, whose retry re-ran the by-then-already-consumed store and threw forever. Kept
-    /// general — store once via `storeSignedNoteSplit` THEN broadcast when `stored` is `false`,
+    /// general — store once via `storeSignedNoteSplits` THEN broadcast when `stored` is `false`,
     /// flipping `state.splitStored` via `.noteSplitStored` so a LATER retry (e.g. after a
     /// broadcast-only failure) never re-stores — so this lane is self-sufficient for a hypothetical
-    /// future caller that hands over an un-stored PCZT.
+    /// future caller that hands over an un-stored batch. MOB-1496 (final engine, plural preps):
+    /// `signed` is the whole preparation batch now — `[MigrationSignedTransferPczt]` — not a single
+    /// `Data` blob, since the final engine builds N preparation transactions.
     ///
     /// MOB-1496 (C-1b fix, fix-wave 2): a successful broadcast (including the landed-but-
     /// record-failed success-like case) sends `.splitBroadcastSucceeded` instead of reconciling
@@ -355,7 +363,7 @@ struct MigrationNoteSplit {
     /// signed entries) and runs its OWN `reconcile()` once that store settles; reconciling here too
     /// would be premature (the run's phase hasn't reached `BroadcastScheduled` yet at this point) and
     /// is no longer this lane's responsibility.
-    private func resubmitSignedNoteSplit(_ pczt: Data, stored: Bool, account: WalletAccount?) -> Effect<Action> {
+    private func resubmitSignedNoteSplit(_ signed: [MigrationSignedTransferPczt], stored: Bool, account: WalletAccount?) -> Effect<Action> {
         guard let account else {
             return .run { send in await send(.splitResult(MigrationTransferResult.networkError(retryable: true))) }
         }
@@ -367,7 +375,7 @@ struct MigrationNoteSplit {
             var didStopSyncForBroadcast = false
             do {
                 if !stored {
-                    try await sdkSynchronizer.storeSignedNoteSplit(account.id, pczt)
+                    try await sdkSynchronizer.storeSignedNoteSplits(account.id, signed)
                     await send(.noteSplitStored)
                 }
                 await sdkSynchronizer.stopSyncBeforeMigrationBroadcast()

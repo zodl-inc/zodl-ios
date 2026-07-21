@@ -349,9 +349,22 @@ final class MigrationSimulatorEngine: @unchecked Sendable {
 
     // MARK: - Keystone (PCZT)
 
-    func fabricateNoteSplitPCZT() -> Data {
+    /// MOB-1496 (final engine, plural preps): fabricates the simulator's one-and-only preparation
+    /// (note-split) entry as a genuine `MigrationUnsignedTransferPczt` — an engine-style id
+    /// (`MigrationSimulatorEngineDerivations.makeNoteSplitId`) paired with the same deterministic
+    /// fabricated bytes the pre-plural version returned bare. Superseded the singular
+    /// `fabricateNoteSplitPCZT() -> Data` this replaces: the final engine returns a
+    /// `[MigrationUnsignedTransferPczt]` prep subset (empty when none are needed) rather than one raw
+    /// blob, so the simulator's fabrication mirrors that shape — always exactly one element, since the
+    /// simulator only ever models a single split.
+    func fabricateNoteSplitPCZTs() -> [MigrationUnsignedTransferPczt] {
         let balance = orchardBalance()
-        return MigrationSimulatorEngineDerivations.fabricatePczt(index: -1, amount: balance)
+        return [
+            MigrationUnsignedTransferPczt(
+                id: MigrationSimulatorEngineDerivations.makeNoteSplitId(index: 0),
+                pczt: MigrationSimulatorEngineDerivations.fabricatePczt(index: -1, amount: balance)
+            )
+        ]
     }
 
     func fabricateMigrationPCZTs(_ schedule: MigrationSchedule) -> [MigrationUnsignedTransferPczt] {

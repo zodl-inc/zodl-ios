@@ -99,10 +99,13 @@ extension SDKSynchronizerClient {
         // parameter has always been ignored (it re-derives the deterministic split from
         // `prepareSplit()`), so moving the ENTIRE call into `broadcastStoredNoteSplit` below —
         // passing `Data()` — reproduces byte-identical panel/engine behavior to the old composite.
-        let originalStoreSignedNoteSplit = self.storeSignedNoteSplit
-        self.storeSignedNoteSplit = { accountUUID, pczt in
+        // MOB-1496 (final engine, plural preps): `storeSignedNoteSplits` takes the whole
+        // `[MigrationSignedTransferPczt]` batch now — still just a pass-through/no-op here for the
+        // same reason (nothing to shadow, nothing to store).
+        let originalStoreSignedNoteSplits = self.storeSignedNoteSplits
+        self.storeSignedNoteSplits = { accountUUID, signed in
             if !engine.isActive {
-                try await originalStoreSignedNoteSplit(accountUUID, pczt)
+                try await originalStoreSignedNoteSplits(accountUUID, signed)
             }
         }
 
@@ -253,12 +256,12 @@ extension SDKSynchronizerClient {
     // MARK: - Keystone / PCZT (spec §5.2 "Keystone" rows + §7)
 
     private mutating func applySimulatedKeystone(engine: MigrationSimulatorEngine) {
-        let originalProposeNoteSplitPCZT = self.proposeNoteSplitPCZT
-        self.proposeNoteSplitPCZT = { accountUUID in
+        let originalProposeNoteSplitPCZTs = self.proposeNoteSplitPCZTs
+        self.proposeNoteSplitPCZTs = { accountUUID in
             if engine.isActive {
-                return engine.fabricateNoteSplitPCZT()
+                return engine.fabricateNoteSplitPCZTs()
             } else {
-                return try await originalProposeNoteSplitPCZT(accountUUID)
+                return try await originalProposeNoteSplitPCZTs(accountUUID)
             }
         }
 
