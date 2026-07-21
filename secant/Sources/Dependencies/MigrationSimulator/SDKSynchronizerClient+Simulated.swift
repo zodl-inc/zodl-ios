@@ -139,6 +139,29 @@ extension SDKSynchronizerClient {
             }
         }
 
+        // R8-T7 (#15): the one member this file's header claims to wire for "every migration-surface
+        // member" but didn't — falling through to the real SDK while the simulator is active.
+        // Latent today only because this override's sole real consumer,
+        // `MigrationManagerLiveKey.migrationSummary(accountUUID:)`, has its OWN simulator
+        // reach-around that short-circuits to `engine.summary()` before ever reaching
+        // `sdkSynchronizer.residualAfterMigration` — but wrong the day a consumer calls this member
+        // directly. Mirrors `engine.summary().dust` exactly (the SAME dust figure `migrationSummary`
+        // already surfaces today through its own reach-around, so a consumer that switches from that
+        // reach-around to this member sees byte-identical numbers) — the engine's `dustRemainder` is
+        // only ever seeded non-zero by the `.complete`/`.completeWithDust` presets, both of which
+        // also set `state = .complete` in the same branch, so `summary()`'s `isComplete` gate never
+        // actually differs from the raw remainder in any reachable engine state. "Nil when there is
+        // none" (the real member's own doc) maps zero dust to `nil`, not `Zatoshi.zero`.
+        let originalResidualAfterMigration = self.residualAfterMigration
+        self.residualAfterMigration = { accountUUID in
+            if engine.isActive {
+                let dust = engine.summary().dust
+                return dust.amount > 0 ? dust : nil
+            } else {
+                return try await originalResidualAfterMigration(accountUUID)
+            }
+        }
+
         let originalSignAndStoreMigrationSchedule = self.signAndStoreMigrationSchedule
         self.signAndStoreMigrationSchedule = { accountUUID, schedule, usk in
             if engine.isActive {

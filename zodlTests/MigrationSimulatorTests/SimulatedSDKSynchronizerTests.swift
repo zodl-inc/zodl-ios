@@ -59,6 +59,9 @@ import URKit
         static let unsignedBatch: [MigrationUnsignedTransferPczt] = [MigrationUnsignedTransferPczt(id: "sentinel", pczt: Data([0xFF]))]
         static let parsedBatch: [Data] = [Data([0xAB, 0xCD])]
         static let estimatedTimestamp: TimeInterval = 999_999
+        // R8-T7 (#15): an obviously-fake amount no seeded/preset engine dust figure would coincide
+        // with (`.completeWithDust`'s own dust is 800_000 zatoshi -- see that test below).
+        static let residualAfterMigration = Zatoshi(123_456_789)
     }
 
     /// One call counter per sentinel closure — see the file header for why this is the primary
@@ -68,6 +71,7 @@ import URKit
         let isNoteSplitNeeded = LockIsolated<Int>(0)
         let proposeMigrationTransfers = LockIsolated<Int>(0)
         let proposeImmediateMigration = LockIsolated<Int>(0)
+        let residualAfterMigration = LockIsolated<Int>(0)
         let signAndStoreMigrationSchedule = LockIsolated<Int>(0)
         let executeNextPendingMigrationTransfer = LockIsolated<Int>(0)
         let migrateMigrationDust = LockIsolated<Int>(0)
@@ -116,6 +120,10 @@ import URKit
         client.proposeImmediateMigration = { _ in
             counters.proposeImmediateMigration.withValue { $0 += 1 }
             return SentinelValues.migrationSchedule
+        }
+        client.residualAfterMigration = { _ in
+            counters.residualAfterMigration.withValue { $0 += 1 }
+            return SentinelValues.residualAfterMigration
         }
         client.signAndStoreMigrationSchedule = { _, _, _ in
             counters.signAndStoreMigrationSchedule.withValue { $0 += 1 }
@@ -212,6 +220,53 @@ import URKit
         let inactiveSchedule = try await client.proposeMigrationTransfers(Self.accountUUID, false)
         #expect(inactiveSchedule == SentinelValues.migrationSchedule)
         #expect(counters.proposeMigrationTransfers.value == 1)
+    }
+
+    // MARK: - residualAfterMigration (R8-T7 #15)
+    //
+    // Pre-fix, this member had no override at all in `SDKSynchronizerClient+Simulated.swift` --
+    // the one gap in the file's own "wires every migration-surface member" claim -- so it fell
+    // through to the real SDK even while the simulator was active. Mirrors `engine.summary().dust`
+    // (see that override's doc comment for why this is the exact right engine surface to mirror),
+    // seeded via the SAME `.completeWithDust` preset the dust-resolution tests below already use.
+
+    @Test func residualAfterMigrationRoutesThroughEngineWhenActiveAndFallsBackWhenInactive() async throws {
+        let counters = CallCounters()
+        var client = makeBaseClient(counters)
+        let engine = MigrationSimulatorEngine(store: MigrationSimulatorStateStore.ephemeral())
+        engine.setActive(true) // the fresh-seed default is inactive (opt-in simulation)
+        client.applySimulatedMigration(engine: engine)
+
+        engine.applyPreset(SimulatorPreset.completeWithDust)
+        #expect(engine.readout().dustRemainder.amount > 0)
+
+        // Active: reads the engine's own dust figure, never the sentinel.
+        let residual = try await client.residualAfterMigration(Self.accountUUID)
+        #expect(residual == engine.readout().dustRemainder)
+        #expect(residual != SentinelValues.residualAfterMigration)
+        #expect(counters.residualAfterMigration.value == 0)
+
+        // Inactive: falls back to the sentinel original.
+        engine.setActive(false)
+        let inactiveResidual = try await client.residualAfterMigration(Self.accountUUID)
+        #expect(inactiveResidual == SentinelValues.residualAfterMigration)
+        #expect(counters.residualAfterMigration.value == 1)
+    }
+
+    /// Mirrors the real member's own doc contract ("`nil` when there is none") -- a fresh engine
+    /// has no dust remainder yet, so this must read as absent (`nil`), never a fabricated
+    /// `Zatoshi.zero`.
+    @Test func residualAfterMigrationWithNoDustReturnsNilWhenActive() async throws {
+        let counters = CallCounters()
+        var client = makeBaseClient(counters)
+        let engine = MigrationSimulatorEngine(store: MigrationSimulatorStateStore.ephemeral())
+        engine.setActive(true)
+        client.applySimulatedMigration(engine: engine)
+
+        let residual = try await client.residualAfterMigration(Self.accountUUID)
+
+        #expect(residual == nil)
+        #expect(counters.residualAfterMigration.value == 0)
     }
 
     // MARK: - proposeImmediateMigration -> signAndStore -> executeNext round trip

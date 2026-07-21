@@ -158,6 +158,28 @@ struct MigrationNetworkSnapshot: Equatable, Sendable, Codable {
     var broadcastProvider: ServerProvider { ServerProvider.classify(host: broadcastEndpoint.host) }
 }
 
+/// MOB-1496 (W4; extracted R8-T7 #10): shared active-snapshot pinning predicate for automatic
+/// server selection. `true` when NO account has an active migration network snapshot (unfiltered —
+/// every candidate stays eligible, byte-identical to pre-W4 behavior), or when `host`'s classified
+/// provider is a member of the snapshotted SYNC providers (rotation within an active run's own
+/// family stays allowed). That single check already keeps out any provider that is ONLY some
+/// snapshot's broadcast provider, with no separate exclusion clause needed: the custom/testnet
+/// same-server case (sync == broadcast) stays allowed because that provider IS a sync provider too.
+///
+/// Single source of truth for the two independent automatic-selection entry points that must never
+/// let a switch land on an in-flight migration run's separated broadcast provider:
+/// `AutoServerSelectionLiveKey`'s own automatic-selection loop (`findBestServer`/`applySwitch`,
+/// where this predicate originated as a private, file-local copy — W4) and `ServerSetup`'s
+/// automatic Save path (R8-T7 #10, which had no filter of its own at all before this).
+enum MigrationServerPinning {
+    static func isCandidateAllowed(host: String, activeSnapshots: [MigrationNetworkSnapshot]) -> Bool {
+        guard !activeSnapshots.isEmpty else { return true }
+
+        let syncProviders = Set(activeSnapshots.map { $0.syncProvider })
+        return syncProviders.contains(ServerProvider.classify(host: host))
+    }
+}
+
 /// App-persisted record of the committed migration schedule (MOB-1496 W2): the SDK retains no
 /// proposal list once a schedule is committed, so this is the app's only record of it — the
 /// payload `migrationSummary`/`migrationTransfers` derive rows/totals from. Not part of the SDK
