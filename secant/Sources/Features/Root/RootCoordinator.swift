@@ -274,6 +274,14 @@ extension Root {
                 )
 
             case .migrationCoordFlow(.flowFinished):
+                // R8-T6 fix-wave (Critical-1): a defensive release — `.flowFinished` normally
+                // follows the Sending store's own exit (which already clears the hold itself), so
+                // this is a no-op in that ordinary case. But `.flowFinished` is also the Root-side
+                // terminal signal for every OTHER flow-root close (recovery/scheduled/reviewTransfer/
+                // complete's own delegates — see the cases below), so this closes any path where
+                // the coordinator finishes without the Sending store's own exit ever running.
+                // Called BEFORE the pop.
+                let releaseEffect = releaseSendWaitHold()
                 state.path = nil
                 // R8-T3 (#9): fire-and-forget — every flow-root close/terminal delegate lands
                 // here, including an abandoned pre-commit confirm lane that already took a
@@ -282,9 +290,12 @@ extension Root {
                 // itself no-ops unless the selected account's engine state is genuinely
                 // `.notStarted` with no stored schedule payload, so this is safe to fire on EVERY
                 // flow close, not just an abandoned one.
-                return .run { [migrationManager, accountUUID = state.selectedWalletAccount?.id] _ in
-                    await migrationManager.clearAbandonedNetworkSnapshot(accountUUID)
-                }
+                return .merge(
+                    releaseEffect,
+                    .run { [migrationManager, accountUUID = state.selectedWalletAccount?.id] _ in
+                        await migrationManager.clearAbandonedNetworkSnapshot(accountUUID)
+                    }
+                )
 
             case .migrationCoordFlow(
                 .path(.element(id: _, action: .sending(.delegate(.viewTransaction))))
@@ -301,8 +312,15 @@ extension Root {
                 // back in yet. Treat View Transaction as a flow close rather than a broken/empty
                 // detail screen until a by-txid lookup exists.
                 // TODO: [MOB-1458] route to transaction detail once a by-txid transaction lookup exists
+                //
+                // R8-T6 fix-wave (Critical-1): also a defensive release (BEFORE the pop) — `View
+                // Transaction` only ever renders once the Sending screen has already reached
+                // `.success`, by which point `.sendNowGateResolved(.allowed)` has already cleared
+                // the hold itself, so this is a no-op in practice; kept for the same "Root pops the
+                // flow from outside the store's own exit" reasoning as `.flowFinished` above.
+                let releaseEffect = releaseSendWaitHold()
                 state.path = nil
-                return .none
+                return releaseEffect
 
                 // MARK: - Keystone
 

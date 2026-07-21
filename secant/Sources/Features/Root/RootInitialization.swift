@@ -532,8 +532,7 @@ extension Root {
             case .initialization(.migrationNotificationRoute):
                 // R8-T5 (S4): see `migrationNotificationTappedRoutingEffect`'s doc — reached only
                 // after the account-switch effect it dispatched ahead of this has completed.
-                openMigrationCoordFlow(state: &state)
-                return .none
+                return openMigrationCoordFlow(state: &state)
 
             case .synchronizerStateChanged(let latestState):
                 let snapshot = SyncStatusSnapshot.snapshotFor(state: latestState.data.syncStatus)
@@ -1711,6 +1710,38 @@ extension Root {
         )
     }
 
+    // MARK: - R8-T6 fix-wave (Critical-1): send-wait hold release on external flow teardown
+
+    /// `migrationSendWaitActive` (the `.retryStart` fence flag set/cleared around
+    /// `MigrationSendingStore`'s send-now WAITING phase — see the `.retryStart` proactive check
+    /// above) is a process-global `@Shared(.inMemory(...))`. The ONLY clears that flag from
+    /// INSIDE the flow are `MigrationSendingStore`'s own `.sendNowGateResolved(.allowed)` and
+    /// `.waitCancelTapped` handlers — both require the `.sending(.waiting)` element to still be
+    /// alive and to run its own exit. An external teardown (Root discarding/replacing the
+    /// migration flow's state from OUTSIDE that store — e.g. a migration-notification tap
+    /// resetting the flow via `openMigrationCoordFlow` below, or the flow being popped out from
+    /// under it) bypasses those exits entirely: the flag is stranded `true` forever, and every
+    /// future `.retryStart` silently re-defers (permanent silent sync stop — see this fix-wave's
+    /// report for the full trace).
+    ///
+    /// Called at every such external-teardown site, BEFORE the reset/pop itself. Safe to call
+    /// unconditionally: a no-op (no nudge) when the flag isn't set. When it IS set, clears it and
+    /// — only when `migrationStoppedSyncForBroadcast` is ALSO set (sync was genuinely stopped for
+    /// a broadcast that never happened) — fires the SAME `refreshMigrationSyncGate()` nudge
+    /// `.waitCancelTapped` already uses, so the existing `.migrationSyncGateChanged` resume
+    /// machinery (above) restarts sync exactly as if the user had tapped Cancel themselves.
+    func releaseSendWaitHold() -> Effect<Root.Action> {
+        @Shared(.inMemory(.migrationSendWaitActive)) var migrationSendWaitActive: Bool = false
+        guard migrationSendWaitActive else { return .none }
+
+        $migrationSendWaitActive.withLock { $0 = false }
+
+        @Shared(.inMemory(.migrationStoppedSyncForBroadcast)) var migrationStoppedSyncForBroadcast: Bool = false
+        guard migrationStoppedSyncForBroadcast else { return .none }
+
+        return .run { [migrationManager] _ in await migrationManager.refreshMigrationSyncGate() }
+    }
+
     // MARK: - MOB-1467: Migration notification-tap deep link
 
     /// Exactly the SmartBanner-tap routing (`RootCoordinator`'s
@@ -1718,9 +1749,16 @@ extension Root {
     /// path. Shared by the immediate (Home already up) and deferred (fired from
     /// `checkBackupPhraseValidation` once initialization reaches Home) call sites, and by
     /// `.migrationNotificationRoute` below.
-    private func openMigrationCoordFlow(state: inout Root.State) {
+    ///
+    /// R8-T6 fix-wave (Critical-1): this is itself an external-teardown site (a live
+    /// `.sending(.waiting)` element may be sitting under the flow state this wholesale-replaces —
+    /// the migration-notification tap does not require the migration flow to be closed first) —
+    /// `releaseSendWaitHold()` runs BEFORE the reset.
+    private func openMigrationCoordFlow(state: inout Root.State) -> Effect<Root.Action> {
+        let releaseEffect = releaseSendWaitHold()
         state.migrationCoordFlowState = MigrationCoordFlow.State.initial
         state.path = Root.State.Path.migrationCoordFlow
+        return releaseEffect
     }
 
     /// R8-T5 (S4): `accountUUID` is the tapped notification's payload account (hex-encoded, matching
@@ -1749,7 +1787,6 @@ extension Root {
             )
         }
 
-        openMigrationCoordFlow(state: &state)
-        return .none
+        return openMigrationCoordFlow(state: &state)
     }
 }

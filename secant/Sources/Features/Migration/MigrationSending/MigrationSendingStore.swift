@@ -196,7 +196,24 @@ struct MigrationSending {
                 case .allowed:
                     state.phase = .sending
                     setSendWaitActive(false)
-                    return executeNextTransfer(account: state.selectedWalletAccount, isDustLane: false)
+
+                    guard let account = state.selectedWalletAccount else {
+                        // R8-T6 fix-wave (Minor-1): unlike every other lane's nil-account guard
+                        // (which never stops sync before reaching it), the send-now lane already
+                        // stopped sync back in `resolveSendGate()`, before this action was ever
+                        // dispatched — so bailing here without a nudge would leave sync stopped
+                        // with nothing left to resume it (the hold is already clear above, so it's
+                        // not FENCED, but nothing proactively kicks a resume either). Mirrors
+                        // `.waitCancelTapped`'s exact clear-then-nudge treatment, minus the
+                        // navigation `.delegate(.closed)` send — this still surfaces the ordinary
+                        // failure sheet via `.transferResult(nil)` rather than closing the screen.
+                        return .concatenate(
+                            .run { [migrationManager] _ in await migrationManager.refreshMigrationSyncGate() },
+                            .run { send in await send(.transferResult(nil)) }
+                        )
+                    }
+
+                    return executeNextTransfer(account: account, isDustLane: false)
 
                 case .waitUntil(let target):
                     if isFireTimeReEntry {
