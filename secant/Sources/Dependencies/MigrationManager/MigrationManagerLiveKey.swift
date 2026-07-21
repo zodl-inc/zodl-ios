@@ -58,6 +58,32 @@
 //  broken for a mid-run/BG-executor caller). A COMMITTED existing snapshot is never reformed by
 //  either path.
 //
+//  MOB-1497 (R9-T6, finding 8): `ensureOrCreateNetworkSnapshot`'s create path no longer takes
+//  `transactionGuard` — the app-wide FIFO mutex shared with `createProposedTransactions`/
+//  `createTransactionFromPCZT`/`getTreeState`/vote submission/server switches. Forming was queueing
+//  behind whatever ELSE happened to be broadcasting (another account's Tor bootstrap + submit, for
+//  one) for no reason: forming never touches the live synchronizer. Its reads/writes are
+//  `zcashSDKEnvironment.endpoint()` (UserDefaults-backed), the migration gate's Tor flag
+//  (UserDefaults, self-locked), `migrationRandomness.randomIndex` (pure), and `snapshotStorage`
+//  (every call atomic under its own `OSAllocatedUnfairLock`) — the hazard the guard exists for
+//  (`switchTo(endpoint:)` tearing down the synchronizer under an in-flight broadcast) cannot reach
+//  any of that. The routing layer's own snapshot mutations (`rotateBroadcastEndpoint`,
+//  `overrideUseTorOnActiveSnapshot`, `overrideBroadcastEndpointToSyncServerOnActiveSnapshot`) were
+//  already guard-free by this same reasoning — forming was the odd one out. `MigrationManagerImpl`
+//  no longer holds a `transactionGuard` dependency at all.
+//
+//  The ONE thing the guard incidentally provided — closing the "check absent -> create -> write"
+//  race between two concurrent formers for the SAME account — is re-closed at the storage layer:
+//  `MigrationSnapshotStorage.ensureOrCreate(candidate:reformIfProvisional:for:)` folds the decide-
+//  and-write into ONE `PerAccountCodableStorage.modify` closure. The caller computes the candidate
+//  snapshot (the only `await`s — endpoint/Tor-flag/random-pick reads) BEFORE calling in, since
+//  `modify`'s closure is synchronous; `ensureOrCreate` then re-checks the SAME reuse condition
+//  (`existing.committedAt != nil || !reformIfProvisional`) against whatever is ACTUALLY persisted
+//  at the instant its lock is held — a competing former's already-written value wins if it
+//  satisfies the condition, this call's candidate otherwise — and returns whichever one is now
+//  actually stored. Every caller therefore gets back a value consistent with storage, never a
+//  value a concurrent write has already superseded.
+//
 
 import Foundation
 @preconcurrency import Combine
@@ -133,10 +159,11 @@ extension MigrationManagerClient: DependencyKey {
 /// racing in from the no-split commit lane, which deliberately doesn't stop sync while it runs).
 /// Mirrors the shape of the repo's existing FIFO-mutex-actor precedent,
 /// `Dependencies/TransactionGuard/TransactionGuard.swift` — but is its OWN instance, never
-/// `@Dependency(\.transactionGuard)`: nesting that guard here would risk exactly the deadlock its
-/// own doc warns against (non-reentrant, and `MigrationManagerImpl.ensureNetworkSnapshot` already
-/// acquires it elsewhere in this same class), and it would be serializing a disjoint set of
+/// `@Dependency(\.transactionGuard)`: `TransactionGuard` is non-reentrant (nesting it would risk
+/// exactly the deadlock its own doc warns against), and it would be serializing a disjoint set of
 /// operations anyway (submission-vs-switch exclusivity, not this class's storage-mutating passes).
+/// MOB-1497 (R9-T6): `MigrationManagerImpl` no longer holds a `transactionGuard` dependency at all
+/// — see `MigrationManagerImpl.migrationNetworkOptions`'s doc.
 ///
 /// Deliberately simpler than `TransactionGuard`: `run(_:)` is non-throwing (every operation it
 /// wraps already is) and not cancellation-aware — the wrapped bodies are fast in-memory/
@@ -192,7 +219,6 @@ actor MigrationManagerSerialExecutor {
 final class MigrationManagerImpl: @unchecked Sendable {
     @Dependency(\.sdkSynchronizer) var sdkSynchronizer
     @Dependency(\.zcashSDKEnvironment) var zcashSDKEnvironment
-    @Dependency(\.transactionGuard) var transactionGuard
     // MOB-1497 (R7): the uniform-random broadcast-endpoint pick's test-controllable randomness seam
     // — see `MigrationRandomnessInterface.swift`'s doc for why this exists instead of a raw
     // `RandomNumberGenerator`.
@@ -562,14 +588,17 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// `MigrationNetworkPrivacyOptions`. See `MigrationManagerClient.migrationNetworkOptions`'s doc
     /// for the full contract (idempotent, never throws).
     ///
-    /// DO-NOT-NEST WARNING: internally serializes creation against a mid-flight server switch via
-    /// `transactionGuard.withSubmission` — `TransactionGuard` is NON-REENTRANT (a nested
-    /// `withSubmission`/`switchIfIdle`/`switchWaiting` deadlocks: the inner `acquire()` waits forever
-    /// for a `release()` that can only happen after the inner call itself returns). NEVER call this
-    /// from inside another `withSubmission`/`switchIfIdle`/`switchWaiting` block — in particular,
-    /// never from inside `SDKSynchronizerLive`'s own guarded closures. Every call site in this
-    /// codebase reads options in the store/effect BEFORE invoking the broadcast client member (which
-    /// takes the guard internally in ITS OWN LiveKey), never from after/inside it.
+    /// MOB-1497 (R9-T6, finding 8): safe to call from ANYWHERE, including from inside another
+    /// dependency's `transactionGuard.withSubmission`/`switchIfIdle`/`switchWaiting` block — forming
+    /// (`ensureOrCreateNetworkSnapshot` below) no longer touches `transactionGuard` at all, and never
+    /// actually needed to: it reads/writes only `zcashSDKEnvironment.endpoint()` (UserDefaults-
+    /// backed), the migration gate's Tor flag (UserDefaults, self-locked), `migrationRandomness
+    /// .randomIndex` (pure), and `snapshotStorage` (atomic under its own `OSAllocatedUnfairLock`) —
+    /// never the live synchronizer, so the hazard the guard exists for (`switchTo(endpoint:)`
+    /// tearing down the synchronizer under an in-flight broadcast) cannot touch it. The one thing
+    /// the guard incidentally provided — closing the "check absent -> create -> write" race between
+    /// two concurrent formers for the SAME account — is now closed at the storage layer instead; see
+    /// `ensureOrCreateNetworkSnapshot`'s doc.
     func migrationNetworkOptions(accountUUID: AccountUUID?) async -> MigrationNetworkPrivacyOptions {
         let snapshot = await ensureNetworkSnapshot(accountUUID: accountUUID)
         return MigrationNetworkPrivacyOptions(useTor: snapshot.useTor, submissionEndpoint: snapshot.broadcastEndpoint.toLightWalletEndpoint())
@@ -822,12 +851,21 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// `markNetworkSnapshotCommitted`. Otherwise creates one from the CURRENT sync endpoint/Tor
     /// choice and persists it (stamped committed or left provisional per `stampCommitted`), REPLACING
     /// a stale existing PROVISIONAL snapshot when `reformIfProvisional` is true (see
-    /// `formNetworkSnapshot`'s doc for why that's always safe pre-broadcast). Double-checks presence
-    /// (and the same committed/reform condition) again AFTER acquiring the guard, not just before — a
-    /// concurrent first caller for the SAME account may have already created/persisted or reformed
-    /// one while this call waited, and that one must win rather than being silently overwritten. A
-    /// missing/unresolvable account still returns SOME snapshot (the current endpoint/Tor choice,
-    /// unpersisted) — every path ends in a value, never a throw.
+    /// `formNetworkSnapshot`'s doc for why that's always safe pre-broadcast). A missing/unresolvable
+    /// account still returns SOME snapshot (the current endpoint/Tor choice, unpersisted) — every
+    /// path ends in a value, never a throw.
+    ///
+    /// MOB-1497 (R9-T6, finding 8): no `transactionGuard` acquisition here any more — see
+    /// `migrationNetworkOptions`'s doc for why forming never needed it. `createNetworkSnapshot()`
+    /// (the only `await` this needs — endpoint/Tor-flag/random-pick reads) runs unguarded, OUTSIDE
+    /// any lock; the race that used to require a guard's double-check-after-acquire (two concurrent
+    /// callers for the SAME account both observing "no reusable snapshot" above, both computing a
+    /// candidate) is now closed at the storage layer — `MigrationSnapshotStorage.ensureOrCreate`
+    /// re-checks the SAME reuse condition against whatever is ACTUALLY persisted at the instant its
+    /// `PerAccountCodableStorage` lock is held, and returns whichever value wins (a concurrent
+    /// former's already-persisted write if it satisfies the condition, this call's own candidate
+    /// otherwise) — so the value returned here always matches what is actually stored, never a value
+    /// some other racing call has already superseded.
     private func ensureOrCreateNetworkSnapshot(
         accountUUID: AccountUUID?,
         stampCommitted: Bool,
@@ -841,35 +879,16 @@ final class MigrationManagerImpl: @unchecked Sendable {
             return existing
         }
 
-        // DO-NOT-NEST: see `migrationNetworkOptions`'s doc — this must never run inside another
-        // `withSubmission`/`switchIfIdle`/`switchWaiting`.
-        let guarded = try? await transactionGuard.withSubmission { () async -> MigrationNetworkSnapshot in
-            if let resolvedAccountUUID,
-               let existing = snapshotStorage.snapshot(for: resolvedAccountUUID),
-               existing.committedAt != nil || !reformIfProvisional {
-                return existing
-            }
-            var created = await createNetworkSnapshot()
-            if stampCommitted {
-                created.committedAt = Date()
-            }
-            if let resolvedAccountUUID {
-                snapshotStorage.recordSnapshot(created, for: resolvedAccountUUID)
-            }
-            return created
+        var candidate = await createNetworkSnapshot()
+        if stampCommitted {
+            candidate.committedAt = Date()
         }
 
-        // `withSubmission` only throws on task cancellation (`acquire()`'s `CancellationError`) — the
-        // closure body above never throws. Even a cancelled guard acquisition must still end in SOME
-        // snapshot (never a throw) — fall back to an unguarded, unpersisted read.
-        if let guarded {
-            return guarded
+        guard let resolvedAccountUUID else {
+            return candidate
         }
-        var fallback = await createNetworkSnapshot()
-        if stampCommitted {
-            fallback.committedAt = Date()
-        }
-        return fallback
+
+        return snapshotStorage.ensureOrCreate(candidate: candidate, reformIfProvisional: reformIfProvisional, for: resolvedAccountUUID)
     }
 
     /// MOB-1497 (R9-T3, C1 fix): see `MigrationManagerClient.isSyncServerIdentityCustom`'s doc.
@@ -886,9 +905,10 @@ final class MigrationManagerImpl: @unchecked Sendable {
     }
 
     /// The actual read+random-pick sequence for a fresh snapshot — see
-    /// `ensureOrCreateNetworkSnapshot`'s doc for the guard this always runs inside. Never throws;
-    /// every path ends in a snapshot, always freshly PROVISIONAL (`committedAt == nil` — the caller
-    /// stamps it when `stampCommitted` is set). MOB-1497 (R7): makes ZERO network calls — no
+    /// `ensureOrCreateNetworkSnapshot`'s doc for the caller that awaits this (MOB-1497 R9-T6:
+    /// unguarded — this runs BEFORE the atomic storage decide-and-write, never inside it). Never
+    /// throws; every path ends in a snapshot, always freshly PROVISIONAL (`committedAt == nil` — the
+    /// caller stamps it when `stampCommitted` is set). MOB-1497 (R7): makes ZERO network calls — no
     /// benchmark, no clearnet pre-probe.
     private func createNetworkSnapshot() async -> MigrationNetworkSnapshot {
         let currentEndpoint = zcashSDKEnvironment.endpoint()
@@ -1935,15 +1955,26 @@ final class PerAccountCodableStorage<Payload: Codable & Sendable>: @unchecked Se
     /// concurrent `read`/`write`/`clear`/`modify` call for this account can observe a half-updated
     /// value or interleave between the read `body` sees and the write/clear it produces. Setting the
     /// `inout` value to `nil` inside `body` clears the persisted payload instead of writing one.
-    func modify(for accountUUID: AccountUUID, _ body: @Sendable (inout Payload?) -> Void) {
+    ///
+    /// `body` may return a value, propagated back through `modify` itself — MOB-1497 (R9-T6): lets
+    /// a caller (`MigrationSnapshotStorage.ensureOrCreate`) report which value it decided on
+    /// (existing vs. a freshly-written candidate) from INSIDE the same atomic section, without
+    /// capturing an outer `var` into the `@Sendable` closure (the Swift 6 concurrency checker
+    /// disallows mutating a captured `var` from inside a `@Sendable` closure even when, as here,
+    /// the closure is actually invoked synchronously and non-escaping). Every pre-existing call
+    /// site's closure has no `return <value>` statement, so `T` continues to infer as `Void` for
+    /// them — this is a purely additive, backward-compatible signature widening.
+    @discardableResult
+    func modify<T: Sendable>(for accountUUID: AccountUUID, _ body: @Sendable (inout Payload?) -> T) -> T {
         lock.withLock { _ in
             var payload = readPayload(for: accountUUID)
-            body(&payload)
+            let result = body(&payload)
             if let payload {
                 writePayload(payload, for: accountUUID)
             } else {
                 userDefaults.removeObject(forKey: key(for: accountUUID))
             }
+            return result
         }
     }
 
@@ -2068,11 +2099,43 @@ final class MigrationSnapshotStorage: @unchecked Sendable {
         storage.read(for: accountUUID)
     }
 
-    /// Persists `snapshot` for `accountUUID`, REPLACING any existing one. Callers are responsible
-    /// for the idempotent ensure-or-create semantics (`MigrationManagerImpl.ensureNetworkSnapshot`)
-    /// — this storage itself is a plain, unconditional write.
+    /// Persists `snapshot` for `accountUUID`, REPLACING any existing one unconditionally — a plain
+    /// write with no reuse/atomicity semantics of its own. MOB-1497 (R9-T6): `MigrationManagerImpl`'s
+    /// ensure-or-create callers go through `ensureOrCreate(candidate:reformIfProvisional:for:)` below
+    /// instead, which performs the atomic decide-and-write; this remains the raw primitive (used
+    /// directly by tests to seed a starting snapshot).
     func recordSnapshot(_ snapshot: MigrationNetworkSnapshot, for accountUUID: AccountUUID) {
         storage.write(snapshot, for: accountUUID)
+    }
+
+    /// MOB-1497 (R9-T6, finding 8): atomic ensure-or-create for
+    /// `MigrationManagerImpl.ensureOrCreateNetworkSnapshot`'s create path — closes the "check absent
+    /// -> create -> write" race between two concurrent formers for the SAME account now that forming
+    /// no longer serializes through `transactionGuard` (see that method's doc for why it never
+    /// actually needed to). `candidate` is computed by the CALLER before this call (the `await`s on
+    /// `zcashSDKEnvironment`/`migrationRandomness` must not run inside `PerAccountCodableStorage`'s
+    /// synchronous `modify` closure — this method's own body never awaits anything); already stamped
+    /// committed by the caller when `stampCommitted` applies. This method's body is the ONE atomic
+    /// decide-and-write: it RE-CHECKS the exact same reuse condition
+    /// `ensureOrCreateNetworkSnapshot` already checked before computing `candidate` — existing
+    /// `committedAt != nil`, or `reformIfProvisional` is false — against whatever is ACTUALLY
+    /// persisted at the instant the lock is held, not the (possibly now-stale) read that motivated
+    /// computing `candidate` in the first place. A competing former that already wrote AND satisfies
+    /// the condition wins: `candidate` is discarded and the existing payload is kept, untouched.
+    /// Otherwise `candidate` is written. Either way, returns whatever ends up persisted — never an
+    /// unstored `candidate` a concurrent write has already superseded.
+    func ensureOrCreate(
+        candidate: MigrationNetworkSnapshot,
+        reformIfProvisional: Bool,
+        for accountUUID: AccountUUID
+    ) -> MigrationNetworkSnapshot {
+        storage.modify(for: accountUUID) { payload in
+            if let existing = payload, existing.committedAt != nil || !reformIfProvisional {
+                return existing
+            }
+            payload = candidate
+            return candidate
+        }
     }
 
     /// Clears the run's snapshot: consumed by the SAME run-end paths `MigrationScheduleStorage.clear`

@@ -83,6 +83,74 @@ struct MigrationSnapshotStorageTests {
         }
     }
 
+    // MARK: - MOB-1497 (R9-T6, finding 8): ensureOrCreate — atomic decide-and-write for the create
+    // path. `MigrationManagerImpl.ensureOrCreateNetworkSnapshot`'s create path no longer serializes
+    // through `transactionGuard` (see that method's doc) — the race-closing atomicity a concurrent
+    // "check absent -> create -> write" needs now lives entirely in this method instead. These pin
+    // its decision table directly, independent of the higher-level `MigrationManagerTests` coverage
+    // that exercises it through `formNetworkSnapshot`/`migrationNetworkOptions`.
+
+    @Test func ensureOrCreateWritesAndReturnsTheCandidateWhenNoSnapshotExists() throws {
+        try withStorage("testEnsureOrCreateWritesAndReturnsTheCandidateWhenNoSnapshotExists") { storage in
+            let accountUUID = Self.accountUUID(28)
+            let candidate = Self.snapshot(syncHost: "na.zec.rocks")
+
+            let result = storage.ensureOrCreate(candidate: candidate, reformIfProvisional: true, for: accountUUID)
+
+            #expect(result == candidate)
+            #expect(storage.snapshot(for: accountUUID) == candidate)
+        }
+    }
+
+    /// A committed snapshot is never reformed, even when the caller asks for reform — mirrors
+    /// `formNetworkSnapshotReturnsACommittedSnapshotUnchangedEvenWhenTheStoredChoiceDiffers` in
+    /// `MigrationManagerTests`, pinned here directly at the storage layer too.
+    @Test func ensureOrCreateKeepsAnExistingCommittedSnapshotEvenWhenReformIfProvisionalIsTrue() throws {
+        try withStorage("testEnsureOrCreateKeepsAnExistingCommittedSnapshotEvenWhenReformIfProvisionalIsTrue") { storage in
+            let accountUUID = Self.accountUUID(29)
+            let existing = Self.snapshot(syncHost: "zec.rocks", committedAt: Date(timeIntervalSince1970: 1_000_000))
+            storage.recordSnapshot(existing, for: accountUUID)
+            let candidate = Self.snapshot(syncHost: "na.zec.rocks")
+
+            let result = storage.ensureOrCreate(candidate: candidate, reformIfProvisional: true, for: accountUUID)
+
+            #expect(result == existing)
+            #expect(storage.snapshot(for: accountUUID) == existing)
+        }
+    }
+
+    /// `formNetworkSnapshot`'s own reform rule: a still-provisional existing snapshot is discarded
+    /// for the fresh candidate when the caller asks for reform.
+    @Test func ensureOrCreateOverwritesAProvisionalSnapshotWithTheCandidateWhenReformIfProvisionalIsTrue() throws {
+        try withStorage("testEnsureOrCreateOverwritesAProvisionalSnapshotWithTheCandidateWhenReformIfProvisionalIsTrue") { storage in
+            let accountUUID = Self.accountUUID(30)
+            let existing = Self.snapshot(syncHost: "zec.rocks")
+            storage.recordSnapshot(existing, for: accountUUID)
+            let candidate = Self.snapshot(syncHost: "na.zec.rocks")
+
+            let result = storage.ensureOrCreate(candidate: candidate, reformIfProvisional: true, for: accountUUID)
+
+            #expect(result == candidate)
+            #expect(storage.snapshot(for: accountUUID) == candidate)
+        }
+    }
+
+    /// `ensureNetworkSnapshot`'s safety-net rule: stays idempotent against a provisional existing
+    /// snapshot too when the caller does not ask for reform.
+    @Test func ensureOrCreateKeepsAnExistingProvisionalSnapshotWhenReformIfProvisionalIsFalse() throws {
+        try withStorage("testEnsureOrCreateKeepsAnExistingProvisionalSnapshotWhenReformIfProvisionalIsFalse") { storage in
+            let accountUUID = Self.accountUUID(31)
+            let existing = Self.snapshot(syncHost: "zec.rocks")
+            storage.recordSnapshot(existing, for: accountUUID)
+            let candidate = Self.snapshot(syncHost: "na.zec.rocks")
+
+            let result = storage.ensureOrCreate(candidate: candidate, reformIfProvisional: false, for: accountUUID)
+
+            #expect(result == existing)
+            #expect(storage.snapshot(for: accountUUID) == existing)
+        }
+    }
+
     // MARK: - Round-trip: clear + per-account isolation
 
     @Test func clearRemovesTheSnapshot() throws {
