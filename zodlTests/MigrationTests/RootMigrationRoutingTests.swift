@@ -269,6 +269,90 @@ import ComposableArchitecture
         }
     }
 
+    // MARK: - R9-T5 (finding 7): launch-time clear of abandoned migration snapshots
+
+    /// The launch path must fan `clearAbandonedNetworkSnapshot` out over EVERY candidate account
+    /// (selected first, then the rest of `walletAccounts`, deduped — the same set `reconcile()`
+    /// itself fans over), AFTER `reconcile()` has completed. `clearAbandonedCallsHappenedAfterReconcile`
+    /// is flipped false the instant a clear call is observed with the reconcile counter still at 0,
+    /// so the ordering assertion is pinned at the moment of the call rather than inferred from
+    /// polling timing.
+    @Test func initialSetupsClearsAbandonedSnapshotsForEveryCandidateAccountAfterReconcile() async {
+        let reconcileCalls = LockIsolated<Int>(0)
+        let clearAbandonedCalls = LockIsolated<[AccountUUID]>([])
+        let clearAbandonedCallsHappenedAfterReconcile = LockIsolated<Bool>(true)
+
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let selected = Self.walletAccount(idByte: 1)
+            let second = Self.walletAccount(idByte: 2)
+
+            let initialState = Root.State.initial
+            initialState.$selectedWalletAccount.withLock { $0 = selected }
+            initialState.$walletAccounts.withLock { $0 = [selected, second] }
+
+            let store = Store(initialState: initialState) {
+                Root()
+            } withDependencies: {
+                baseNoOpDependencies(&$0)
+                $0.diskSpaceChecker.hasEnoughFreeSpaceForSync = { true }
+                $0.migrationManager.reconcile = {
+                    reconcileCalls.withValue { $0 += 1 }
+                }
+                $0.migrationManager.clearAbandonedNetworkSnapshot = { accountUUID in
+                    if reconcileCalls.withValue({ $0 }) == 0 {
+                        clearAbandonedCallsHappenedAfterReconcile.withValue { $0 = false }
+                    }
+                    if let accountUUID {
+                        clearAbandonedCalls.withValue { $0.append(accountUUID) }
+                    }
+                }
+            }
+
+            store.send(.initialization(.initialSetups))
+            await waitForRootStore { clearAbandonedCalls.withValue { $0.count } == 2 }
+
+            #expect(reconcileCalls.withValue { $0 } == 1)
+            #expect(Set(clearAbandonedCalls.value) == Set([selected.id, second.id]))
+            #expect(clearAbandonedCallsHappenedAfterReconcile.value == true)
+        }
+    }
+
+    /// Guard: when the migration flow is open (`state.path == .migrationCoordFlow`) at the moment
+    /// `.clearAbandonedMigrationSnapshots` fires, it must NOT call `clearAbandonedNetworkSnapshot`
+    /// at all — see that action's reducer-arm doc for the launch-side race (a migration-notification
+    /// tap opening the flow mid-cold-start) this guard closes. Sent directly rather than via
+    /// `.initialSetups` to isolate the guard from the rest of the launch chain.
+    @Test func clearAbandonedMigrationSnapshotsNoOpsWhileMigrationFlowIsOpen() async {
+        let clearAbandonedCalls = LockIsolated<Int>(0)
+
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            var initialState = Root.State.initial
+            initialState.path = Root.State.Path.migrationCoordFlow
+            initialState.$selectedWalletAccount.withLock { $0 = Self.walletAccount(idByte: 1) }
+
+            let store = Store(initialState: initialState) {
+                Root()
+            } withDependencies: {
+                baseNoOpDependencies(&$0)
+                $0.migrationManager.clearAbandonedNetworkSnapshot = { _ in
+                    clearAbandonedCalls.withValue { $0 += 1 }
+                }
+            }
+
+            store.send(.initialization(.clearAbandonedMigrationSnapshots))
+            // Let any (wrongly-fired) effect settle before asserting its absence — same idiom as
+            // `notificationTapTeardownWithNoHoldActiveNeverNudgesGate` above.
+            try? await Task.sleep(nanoseconds: 300_000_000)
+
+            #expect(store.state.path == Root.State.Path.migrationCoordFlow)
+            #expect(clearAbandonedCalls.withValue { $0 } == 0)
+        }
+    }
+
     // MARK: - View Transaction (Sending delegate)
 
     /// The migration Sending screen's `.viewTransaction` delegate carries only a bare
