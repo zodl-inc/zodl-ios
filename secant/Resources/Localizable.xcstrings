@@ -10231,23 +10231,6 @@
         }
       }
     },
-    "migrationEntry.disclaimerDesc" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "All funds transferred in this transaction will be revealed on-chain."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Tu saldo completo quedará expuesto en cadena (on-chain): cruzar el límite entre pools revela el monto de la transacción. Te recomendamos seleccionar Migrar con privacidad."
-          }
-        }
-      }
-    },
     "migrationEntry.findOutMore" : {
       "extractionState" : "manual",
       "localizations" : {
