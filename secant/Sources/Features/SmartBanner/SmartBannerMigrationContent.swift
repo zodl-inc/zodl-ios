@@ -14,7 +14,13 @@ import ComposableArchitecture
 enum MigrationBannerVariant: Equatable {
     case required
     case splitting
-    case inProgress(done: Int, total: Int)
+    /// MOB-1511 (W2): `round`/`totalRounds` carry the multi-round context — non-nil only when the
+    /// display rule says a round label belongs on the banner (round ≥ 2, or a known total > 1);
+    /// `totalRounds` additionally needs the SDK estimate (stubbed nil until librustzcash#2714).
+    case inProgress(done: Int, total: Int, round: Int?, totalRounds: Int?)
+    /// MOB-1511 (W2): the post-completion "more funds to migrate" re-offer, round-aware — replaces
+    /// the plain `.required` reuse for an acknowledged completion with a pending remainder.
+    case nextRoundRequired(round: Int, totalRounds: Int?)
     /// R7 final review, Important-1 (spec §G): `torHold` is true iff the wait is Tor-caused — the
     /// account's persisted Tor-hold indicator (`MigrationManagerClient.routeBroadcastFailure`
     /// maintains it; `MigrationManagerImpl.bannerVariant` threads it through). Carries a
@@ -28,7 +34,7 @@ enum MigrationBannerVariant: Equatable {
 
     var title: String {
         switch self {
-        case .required, .splitting:
+        case .required, .splitting, .nextRoundRequired:
             return String(localizable: .migrationBannerRequiredTitle)
         case .inProgress:
             return String(localizable: .migrationBannerProgressTitle)
@@ -51,8 +57,19 @@ enum MigrationBannerVariant: Equatable {
             return String(localizable: .migrationBannerRequiredInfo)
         case .splitting:
             return String(localizable: .migrationBannerSplittingInfo)
-        case .inProgress(let done, let total):
+        case .inProgress(let done, let total, let round, let totalRounds):
+            if let round {
+                if let totalRounds {
+                    return String(localizable: .migrationBannerProgressInfoRoundTotal(round, totalRounds, done, total, percent ?? 0))
+                }
+                return String(localizable: .migrationBannerProgressInfoRound(round, done, total, percent ?? 0))
+            }
             return String(localizable: .migrationBannerProgressInfo(done, total, percent ?? 0))
+        case .nextRoundRequired(let round, let totalRounds):
+            if let totalRounds {
+                return String(localizable: .migrationBannerNextRoundInfoTotal(round, totalRounds))
+            }
+            return String(localizable: .migrationBannerNextRoundInfo(round))
         case .transferWaiting(_, let torHold):
             return torHold
                 ? String(localizable: .migrationFailureTorHoldBannerInfo)
@@ -79,7 +96,7 @@ enum MigrationBannerVariant: Equatable {
     }
 
     var percent: Int? {
-        guard case let .inProgress(done, total) = self else {
+        guard case let .inProgress(done, total, _, _) = self else {
             return nil
         }
         return Int((Double(done) / Double(max(total, 1)) * 100).rounded())
@@ -143,7 +160,7 @@ struct MigrationBannerContentView: View {
 
     @ViewBuilder private func migrationIcon() -> some View {
         switch variant {
-        case .required, .splitting:
+        case .required, .splitting, .nextRoundRequired:
             Asset.Assets.Icons.coinsSwap.image
                 .zImage(size: 20, color: titleStyle)
         case .inProgress:

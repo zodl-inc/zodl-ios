@@ -178,7 +178,7 @@ import ComposableArchitecture
             }
 
             let accountBHex = Data(accountB.id.id).hexEncodedString()
-            store.send(.initialization(.appDelegate(.migrationNotificationTapped(accountUUID: accountBHex))))
+            store.send(.initialization(.appDelegate(.migrationNotificationTapped(accountUUID: accountBHex, isTorFailure: false))))
             await waitForRootStore { restartCalls.withValue { $0.count } >= 1 }
             await waitForRootStore { store.state.selectedWalletAccount == accountB }
             await waitForRootStore { store.state.path == Root.State.Path.migrationCoordFlow }
@@ -229,6 +229,38 @@ import ComposableArchitecture
             #expect(store.state.migrationCoordFlowState.pendingKeystoneSigningAccountUUID == nil)
             #expect(restartCalls.withValue { $0.first?.0 } == accountA.id)
             #expect(restartCalls.withValue { $0.first?.1 } == false)
+        }
+    }
+
+    /// MOB-1511 (W3): the Tor-failure notification's tap switches to the tapped account and
+    /// surfaces the Tor-failure sheet over Home — it must NOT open the migration coord flow.
+    @Test func torFailureNotificationTapChecksPromptInsteadOfOpeningFlow() async {
+        let accountA = Self.walletAccount(idByte: 48)
+        let accountB = Self.walletAccount(idByte: 49)
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            var initialState = Root.State.initial
+            initialState.appInitializationState = InitializationState.initialized
+            initialState.$selectedWalletAccount.withLock { $0 = accountA }
+            initialState.$walletAccounts.withLock { $0 = [accountA, accountB] }
+
+            let store = Store(initialState: initialState) {
+                Root()
+            } withDependencies: {
+                baseNoOpDependencies(&$0)
+                // The tapped account's background latch is armed — the check pass must present.
+                $0.migrationManager.isPendingBackgroundTorPrompt = { _ in true }
+            }
+
+            let accountBHex = Data(accountB.id.id).hexEncodedString()
+            store.send(.initialization(.appDelegate(.migrationNotificationTapped(accountUUID: accountBHex, isTorFailure: true))))
+            await waitForRootStore { store.state.selectedWalletAccount == accountB }
+            await waitForRootStore { store.state.isTorFailurePromptPresented }
+
+            #expect(store.state.selectedWalletAccount == accountB)
+            #expect(store.state.isTorFailurePromptPresented)
+            #expect(store.state.path == nil)
         }
     }
 
@@ -612,7 +644,7 @@ import ComposableArchitecture
             }
 
             // R8-T5 (S4-c): a nil/absent payload account routes exactly as before S4.
-            store.send(.initialization(.appDelegate(.migrationNotificationTapped(accountUUID: nil))))
+            store.send(.initialization(.appDelegate(.migrationNotificationTapped(accountUUID: nil, isTorFailure: false))))
             await waitForRootStore { store.state.path == Root.State.Path.migrationCoordFlow }
 
             #expect(store.state.path == Root.State.Path.migrationCoordFlow)
@@ -643,7 +675,7 @@ import ComposableArchitecture
 
             // R8-T5 (S4): the stash carries an account too — replayed below.
             let taggedAccountUUID = Data(Self.walletAccount(idByte: 9).id.id).hexEncodedString()
-            store.send(.initialization(.appDelegate(.migrationNotificationTapped(accountUUID: taggedAccountUUID))))
+            store.send(.initialization(.appDelegate(.migrationNotificationTapped(accountUUID: taggedAccountUUID, isTorFailure: false))))
             await waitForRootStore { store.state.pendingMigrationDeepLink == true }
 
             #expect(store.state.pendingMigrationDeepLink == true)
@@ -695,7 +727,7 @@ import ComposableArchitecture
                 baseNoOpDependencies(&$0)
             }
 
-            store.send(.initialization(.appDelegate(.migrationNotificationTapped(accountUUID: Data(target.id.id).hexEncodedString()))))
+            store.send(.initialization(.appDelegate(.migrationNotificationTapped(accountUUID: Data(target.id.id).hexEncodedString(), isTorFailure: false))))
             await waitForRootStore { store.state.path == Root.State.Path.migrationCoordFlow }
 
             #expect(store.state.path == Root.State.Path.migrationCoordFlow)
@@ -722,7 +754,7 @@ import ComposableArchitecture
                 baseNoOpDependencies(&$0)
             }
 
-            store.send(.initialization(.appDelegate(.migrationNotificationTapped(accountUUID: Data(selected.id.id).hexEncodedString()))))
+            store.send(.initialization(.appDelegate(.migrationNotificationTapped(accountUUID: Data(selected.id.id).hexEncodedString(), isTorFailure: false))))
             await waitForRootStore { store.state.path == Root.State.Path.migrationCoordFlow }
 
             #expect(store.state.path == Root.State.Path.migrationCoordFlow)
@@ -749,7 +781,7 @@ import ComposableArchitecture
                 baseNoOpDependencies(&$0)
             }
 
-            store.send(.initialization(.appDelegate(.migrationNotificationTapped(accountUUID: "not-a-real-account"))))
+            store.send(.initialization(.appDelegate(.migrationNotificationTapped(accountUUID: "not-a-real-account", isTorFailure: false))))
             await waitForRootStore { store.state.path == Root.State.Path.migrationCoordFlow }
 
             #expect(store.state.path == Root.State.Path.migrationCoordFlow)
@@ -854,7 +886,7 @@ import ComposableArchitecture
             #expect(migrationSendWaitActive == true)
 
             // The notification-tap teardown route.
-            store.send(.initialization(.appDelegate(.migrationNotificationTapped(accountUUID: nil))))
+            store.send(.initialization(.appDelegate(.migrationNotificationTapped(accountUUID: nil, isTorFailure: false))))
             await waitForRootStore { store.state.migrationCoordFlowState.path.isEmpty }
 
             #expect(store.state.path == Root.State.Path.migrationCoordFlow)
@@ -906,7 +938,7 @@ import ComposableArchitecture
                 }
             }
 
-            store.send(.initialization(.appDelegate(.migrationNotificationTapped(accountUUID: nil))))
+            store.send(.initialization(.appDelegate(.migrationNotificationTapped(accountUUID: nil, isTorFailure: false))))
             await waitForRootStore { store.state.migrationCoordFlowState.path.isEmpty }
 
             #expect(store.state.path == Root.State.Path.migrationCoordFlow)

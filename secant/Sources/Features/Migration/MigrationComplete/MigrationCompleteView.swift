@@ -198,8 +198,10 @@ struct MigrationCompleteView: View {
                             .stroke(Design.Surfaces.bgPrimary.color(colorScheme), lineWidth: 2)
                     }
                     .overlay {
+                        // MOB-1511 (W5 audit): the MOB-1494 de-hardcoding pass covered the ring and
+                        // the coinsSwap glyph but missed this checkmark — same token now.
                         Asset.Assets.check.image
-                            .zImage(size: 12, color: .white)
+                            .zImage(size: 12, style: Design.Surfaces.bgPrimary)
                     }
             }
     }
@@ -326,10 +328,11 @@ struct MigrationCompleteView: View {
         }
     }
 
-    // `ZashiButton`'s `Type` enum has no per-instance color hook, so this reproduces the same
-    // custom hybrid the permission screens' Skip button uses (MigrationNotificationsView /
-    // MigrationBackgroundDeliveryView, MOB-1478 W8): `Destructive1` background fill with the
-    // warning label/border colors swapped in.
+    // `ZashiButton`'s `Type` enum has no per-instance color hook, so this hand-builds the warning
+    // button. MOB-1511 (W5 audit): the fill moves off `Destructive1.bg` (the ErrorRed ramp — a
+    // stale copy of a hybrid the permission screens' Skip button has since dropped) onto the same
+    // `WarningYellow._50` every sibling warning surface uses (MigrationNotificationsView's Skip,
+    // SendFormView's Orchard warning).
     @ViewBuilder private var migrateAnywayButton: some View {
         Button {
             store.send(.migrateAnywayTapped)
@@ -343,7 +346,7 @@ struct MigrationCompleteView: View {
                 .frame(maxWidth: .infinity)
                 .background {
                     RoundedRectangle(cornerRadius: Design.Radius._xl)
-                        .fill(Design.Btns.Destructive1.bg.color(colorScheme))
+                        .fill(Design.Utility.WarningYellow._50.color(colorScheme))
                         .overlay {
                             RoundedRectangle(cornerRadius: Design.Radius._xl)
                                 .stroke(Design.Utility.WarningYellow._300.color(colorScheme), lineWidth: 1)

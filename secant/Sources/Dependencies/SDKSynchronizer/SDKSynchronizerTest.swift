@@ -111,6 +111,9 @@ extension SDKSynchronizerClient: TestDependencyKey {
             "\(Self.self).restartCurrentMigrationStep",
             placeholder: MigrationSchedule(transfers: [], estimatedDurationHours: 0)
         ),
+        // MOB-1511 (W2): the live value is itself a nil stub (pending librustzcash#2714), so the
+        // test value answers nil quietly rather than flagging unimplemented.
+        estimateMigrationRunCount: { _ in nil },
         refreshStaleMigrationTransfers: unimplemented("\(Self.self).refreshStaleMigrationTransfers", placeholder: 0),
         sendRequiresOrchardFunds: unimplemented("\(Self.self).sendRequiresOrchardFunds", placeholder: false),
         migrateMigrationDust: unimplemented("\(Self.self).migrateMigrationDust", placeholder: nil),
@@ -196,6 +199,7 @@ extension SDKSynchronizerClient {
         hasInvalidMigrationTransfers: { _ in false },
         rescheduleOverdueMigrationTransfer: { _ in nil },
         restartCurrentMigrationStep: { _, _ in MigrationSchedule(transfers: [], estimatedDurationHours: 0) },
+        estimateMigrationRunCount: { _ in nil },
         refreshStaleMigrationTransfers: { _, _, _ in 0 },
         sendRequiresOrchardFunds: { _, _ in false },
         migrateMigrationDust: { _, _, _ in nil },
@@ -408,6 +412,7 @@ extension SDKSynchronizerClient {
             hasInvalidMigrationTransfers: { _ in false },
             rescheduleOverdueMigrationTransfer: { _ in nil },
             restartCurrentMigrationStep: { _, _ in MigrationSchedule(transfers: [], estimatedDurationHours: 0) },
+            estimateMigrationRunCount: { _ in nil },
             refreshStaleMigrationTransfers: { _, _, _ in 0 },
             sendRequiresOrchardFunds: { _, _ in false },
             migrateMigrationDust: { _, _, _ in nil },

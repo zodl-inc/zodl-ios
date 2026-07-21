@@ -199,6 +199,16 @@ import Foundation
         #expect(notification.body == "More funds to migrate. Open ZODL to continue.")
     }
 
+    /// MOB-1511 (W3, Figma 4207:8768): the Tor-failure notification — generic copy per design (the
+    /// sheet its tap routes to carries the specifics), body shared with the complete notification.
+    @Test func torFailureIdentifierTitleAndBody() {
+        let notification = MigrationNotification.migrationTorFailure
+
+        #expect(notification.identifier == "migration.torFailure")
+        #expect(notification.title == "Migration Failure")
+        #expect(notification.body == "Open ZODL to review the details.")
+    }
+
     // MARK: - Equatable
 
     @Test func transferCompleteIsEquatableByAllPayloadFields() {
