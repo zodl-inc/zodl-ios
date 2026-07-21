@@ -11,6 +11,12 @@
 //  shows the same "migrated" subtitles (the canvas dropped the "sent" wording), so the view has
 //  no per-lane copy switching any more.
 //
+//  R8-T6: a third phase, `.waiting(target:)`, appears only on the Status screen's "Send now" lane
+//  (`entersViaSendNow`) — the app-side privacy gate wasn't clear yet, so sync is held stopped and
+//  the screen counts down to `target` instead of showing the sending animation. A live countdown
+//  (`Text(timerInterval:)`, native SwiftUI — no store-side ticking) plus a Cancel affordance that
+//  resumes sync without sending anything.
+//
 
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
@@ -53,6 +59,11 @@ struct MigrationSendingView: View {
                 .screenHorizontalPadding()
                 .applyScreenBackground()
 
+        case .waiting(let target):
+            waitingContent(target: target)
+                .screenHorizontalPadding()
+                .applyScreenBackground()
+
         case .success:
             successContent
                 .padding(.vertical, 1)
@@ -80,6 +91,45 @@ struct MigrationSendingView: View {
             Text(localizable: .migrationSendingSubtitleMigrated)
                 .zFont(size: 14, style: Design.Text.primary)
                 .multilineTextAlignment(.center)
+        }
+    }
+
+    // MARK: - Waiting (R8-T6)
+
+    /// Reuses `sendingContent`'s layout shape (same Lottie, title-then-subtitle) with the
+    /// silence-window copy, a live countdown, and a Cancel affordance. `Text(timerInterval:)` is
+    /// native SwiftUI — it live-updates on its own, so no store-side per-second ticking is needed;
+    /// the store only needs to know WHEN to fire (`MigrationSending`'s clock-driven wait effect).
+    @ViewBuilder private func waitingContent(target: Date) -> some View {
+        VStack(spacing: 0) {
+            LottieView(
+                animation:
+                    .named(colorScheme == .light ? Constants.lottieNameLight : Constants.lottieNameDark)
+            )
+            .resizable()
+            .looping()
+            .frame(width: 170, height: 170)
+
+            Text(localizable: .migrationSendingWaitingTitle)
+                .zFont(.semiBold, size: 28, style: Design.Text.primary)
+                .multilineTextAlignment(.center)
+                .padding(.top, 16)
+
+            Text(localizable: .migrationSendingWaitingBody)
+                .zFont(size: 14, style: Design.Text.primary)
+                .multilineTextAlignment(.center)
+
+            if target > Date() {
+                Text(timerInterval: Date()...target, countsDown: true)
+                    .zFont(.semiBold, size: 20, style: Design.Text.primary)
+                    .monospacedDigit()
+                    .padding(.top, 16)
+            }
+
+            ZashiButton(String(localizable: .generalCancel), type: .secondary) {
+                store.send(.waitCancelTapped)
+            }
+            .padding(.top, 24)
         }
     }
 
@@ -167,6 +217,21 @@ struct MigrationSendingView: View {
         MigrationSendingView(
             store: StoreOf<MigrationSending>(
                 initialState: MigrationSending.State(phase: .sending)
+            ) {
+                MigrationSending()
+            }
+        )
+    }
+}
+
+#Preview("Waiting (R8-T6)") {
+    NavigationView {
+        MigrationSendingView(
+            store: StoreOf<MigrationSending>(
+                initialState: MigrationSending.State(
+                    phase: .waiting(target: Date().addingTimeInterval(582)),
+                    entersViaSendNow: true
+                )
             ) {
                 MigrationSending()
             }

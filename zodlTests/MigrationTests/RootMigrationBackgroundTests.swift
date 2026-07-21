@@ -2214,6 +2214,133 @@ import ComposableArchitecture
             #expect(migrationStoppedSyncForBroadcast == false)
         }
     }
+
+    // MARK: - R8-T6 (V8 fix, MANDATORY TRACE fence): the send-wait hold
+
+    /// `.retryStart`'s NEW proactive section (ahead of the SDK gate check): `migrationSendWaitActive`
+    /// set -> deferred the SAME silent way as the SDK gate (`syncDeferredByMigrationGate`), `start`
+    /// never fires, no alert. `isMigrationSyncBlocked` is pinned `false` so ONLY the hold flag could
+    /// be causing the defer, isolating this fence from the pre-existing SDK-gate check beside it.
+    @Test func retryStartDefersWhenMigrationSendWaitActiveWithoutCallingStartOrAlerting() async {
+        let startCalls = LockIsolated<[Bool]>([])
+
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            @Shared(.inMemory(.migrationSendWaitActive)) var migrationSendWaitActive: Bool = false
+            $migrationSendWaitActive.withLock { $0 = true }
+
+            let store = Store(initialState: Self.selectedAccountState()) {
+                Root()
+            } withDependencies: {
+                baseNoOpDependencies(&$0)
+                $0.diskSpaceChecker.hasEnoughFreeSpaceForSync = { true }
+                $0.sdkSynchronizer = SDKSynchronizerClient.mocked(
+                    latestState: { Self.preparedState },
+                    start: { _ in startCalls.withValue { $0.append(true) } }
+                )
+                $0.sdkSynchronizer.isMigrationSyncBlocked = { false }
+            }
+
+            store.send(.initialization(.retryStart))
+            await waitForRootStore { store.state.syncDeferredByMigrationGate }
+
+            #expect(startCalls.withValue { $0 }.isEmpty)
+            #expect(store.state.alert == nil)
+            #expect(store.state.syncDeferredByMigrationGate == true)
+
+            $migrationSendWaitActive.withLock { $0 = false }
+        }
+    }
+
+    /// Resume: the hold clears, then a `.migrationSyncGateChanged(false)` reaches Root (exactly the
+    /// shape `MigrationSendingStore.waitCancelTapped`'s `refreshMigrationSyncGate()` nudge produces,
+    /// per the feed-merge mechanism `migrationSyncGateFeedValueReachesMigrationSyncGateChangedAndResumesWhenBroadcastStopFlagSet`
+    /// above already pins) — `.retryStart` replays and, with the hold now clear AND the SDK gate
+    /// open, runs the normal chain all the way to `start`, exactly once.
+    @Test func migrationSendWaitActiveClearedThenGateChangeResumesADeferredStartExactlyOnce() async {
+        let startCalls = LockIsolated<[Bool]>([])
+
+        var initialState = Self.selectedAccountState()
+        // As if an earlier `.retryStart` had already deferred while the hold was active (the
+        // realistic precondition for a deferred start to exist at all).
+        initialState.syncDeferredByMigrationGate = true
+        initialState.lastMigrationSyncGateBlocked = true
+
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            @Shared(.inMemory(.migrationSendWaitActive)) var migrationSendWaitActive: Bool = false
+            // Cancel/broadcast-start already cleared the hold before this event arrives — mirrors
+            // `MigrationSendingStore.setSendWaitActive(false)` running BEFORE its nudge call.
+            $migrationSendWaitActive.withLock { $0 = false }
+
+            let store = Store(initialState: initialState) {
+                Root()
+            } withDependencies: {
+                baseNoOpDependencies(&$0)
+                $0.diskSpaceChecker.hasEnoughFreeSpaceForSync = { true }
+                $0.sdkSynchronizer = SDKSynchronizerClient.mocked(
+                    latestState: { Self.preparedState },
+                    start: { _ in startCalls.withValue { $0.append(true) } }
+                )
+                $0.sdkSynchronizer.isMigrationSyncBlocked = { false }
+            }
+
+            store.send(.migrationSyncGateChanged(false))
+            await waitForRootStore { startCalls.withValue { !$0.isEmpty } }
+
+            #expect(startCalls.withValue { $0 } == [true])
+            #expect(store.state.syncDeferredByMigrationGate == false)
+        }
+    }
+
+    /// Guard against loops: a `.migrationSyncGateChanged(false)` replays `.retryStart`, but the hold
+    /// is STILL active (a race / the nudge arrived ahead of the hold actually clearing) — `.retryStart`'s
+    /// own fresh re-check just re-defers, `start` never fires, and nothing here re-sends
+    /// `.migrationSyncGateChanged` on its own, so there's no runaway loop. Mirrors
+    /// `stillBlockedReEntryReDefersWithoutLooping`'s identical proof for the SDK gate above.
+    @Test func stillHeldReEntryReDefersWithoutLooping() async {
+        let startCalls = LockIsolated<[Bool]>([])
+        let reconcileCalls = LockIsolated<Int>(0)
+
+        var initialState = Self.selectedAccountState()
+        initialState.syncDeferredByMigrationGate = true
+        initialState.lastMigrationSyncGateBlocked = true
+
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            @Shared(.inMemory(.migrationSendWaitActive)) var migrationSendWaitActive: Bool = false
+            $migrationSendWaitActive.withLock { $0 = true }
+
+            let store = Store(initialState: initialState) {
+                Root()
+            } withDependencies: {
+                baseNoOpDependencies(&$0)
+                $0.diskSpaceChecker.hasEnoughFreeSpaceForSync = { true }
+                $0.sdkSynchronizer = SDKSynchronizerClient.mocked(
+                    latestState: { Self.preparedState },
+                    start: { _ in startCalls.withValue { $0.append(true) } }
+                )
+                // The SDK's own gate reads OPEN here — proves the re-defer is coming from the hold
+                // flag specifically, not a coincidental SDK-gate block.
+                $0.sdkSynchronizer.isMigrationSyncBlocked = { false }
+                $0.migrationManager.reconcile = { reconcileCalls.withValue { $0 += 1 } }
+            }
+
+            store.send(.migrationSyncGateChanged(false))
+            await waitForRootStore { reconcileCalls.withValue { $0 } == 1 }
+            // Let any further (erroneous, if a loop existed) effects settle.
+            try? await Task.sleep(nanoseconds: 300_000_000)
+
+            #expect(startCalls.withValue { $0 }.isEmpty)
+            #expect(store.state.syncDeferredByMigrationGate == true)
+            #expect(reconcileCalls.withValue { $0 } == 1)
+
+            $migrationSendWaitActive.withLock { $0 = false }
+        }
+    }
 }
 
 // MARK: - Shared dependency baseline (mirrors RootMigrationRoutingTests.swift)

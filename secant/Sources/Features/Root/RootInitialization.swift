@@ -333,6 +333,10 @@ extension Root {
         /// MOB-1496 (W3): `.retryStart`'s `.run` effect can't mutate `state` directly — sent back
         /// into the reducer (proactively, before ever calling `start`, or reactively after `start`
         /// throws `ZcashError.migrationSyncBlocked`) to set `state.syncDeferredByMigrationGate`.
+        /// R8-T6: also sent for the SAME reason when a Send-now silence-window wait's own hold flag
+        /// (`migrationSendWaitActive`) is set — one flag/replay path safely covers both "sync must
+        /// stay stopped" reasons, since `.retryStart`'s own re-check at replay time re-validates
+        /// BOTH conditions fresh regardless of which one caused the original defer.
         case migrationSyncDeferredByGate
         case resetZashi
         case resetZashiRequest(Bool)
@@ -694,6 +698,25 @@ extension Root {
                     return .none
                 }
                 return .run { [state] send in
+                    // R8-T6: a Send-now silence-window wait (`MigrationSendingStore`) holds sync
+                    // stopped WITHOUT ever touching the SDK's OWN migration-blocked flag below — no
+                    // broadcast has been attempted yet, so there's nothing for `isMigrationSyncBlocked()`
+                    // to report, and this check would otherwise sail straight through and restart
+                    // sync mid-wait. Checked first, ahead of any SDK round-trip, so a live wait can
+                    // never lose a race to a slow gate read. Deferred the SAME silent way as the SDK
+                    // gate check below — reusing `.migrationSyncDeferredByGate`/
+                    // `syncDeferredByMigrationGate` rather than a parallel flag/action: the replay
+                    // this needs is EXACTLY `.migrationSyncGateChanged`'s existing resume path
+                    // (below), fired once `MigrationSendingStore`'s cancel/broadcast-start path
+                    // clears the hold and calls `migrationManager.refreshMigrationSyncGate()`. A
+                    // stale replay (the hold still set somehow) just re-defers here — no new loop
+                    // risk, mirroring `stillBlockedReEntryReDefersWithoutLooping`'s existing proof
+                    // for the SDK gate below.
+                    @Shared(.inMemory(.migrationSendWaitActive)) var migrationSendWaitActive: Bool = false
+                    if migrationSendWaitActive {
+                        await send(.initialization(.migrationSyncDeferredByGate))
+                        return
+                    }
                     // MOB-1496 (W3): proactive half of the SDK's post-broadcast privacy gate —
                     // checked before ever calling `start`, so a still-blocked window never even
                     // attempts it: no error, no alert, nothing downstream of a successful start

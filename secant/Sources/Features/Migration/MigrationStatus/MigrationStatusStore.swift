@@ -4,9 +4,8 @@
 //
 //  "Migration Progress" / "Resume Migration" / "Re-scheduling…" screen (MOB-1464, Figma S10 ·
 //  progress 2709:3350 / resume 2696:7133 / re-scheduling 2840:3656). `onAppear` loads rows/summary
-//  via `migrationTransfers()`/`migrationSummary()`, derives `isSendNowDisabled` from
-//  `manager.sendGate()`, and subscribes `migrationManager.stateEvents(_:)` to refresh rows live
-//  (MOB-1466).
+//  via `migrationTransfers()`/`migrationSummary()` and subscribes `migrationManager.stateEvents(_:)`
+//  to refresh rows live (MOB-1466).
 //  When this screen is a flow re-entry root (`isFlowRoot`), its back control closes the flow
 //  (`.done`) instead of popping — every other delegate is consumed by
 //  `MigrationCoordFlowCoordinator` (MOB-1466).
@@ -19,6 +18,16 @@
 //  reschedule + background-window scheduling) still runs in `MigrationCoordFlowCoordinator`, which
 //  today pushes a fresh `TransferPlan` screen on completion instead — wiring it to send
 //  `rescheduleCompleted` here is a later phase.
+//
+//  R8-T6 (V8 fix): the Send-now CTA no longer consults `manager.sendGate()` — the 600s app-side
+//  sync<->send privacy gate re-arms on EVERY sync completion, and the SDK re-emits a syncing-
+//  >upToDate edge every ~10-30s while foregrounded, so the gate was almost never `.allowed` in
+//  normal use (chicken-and-egg: sync only stops AFTER a "Send now" tap). `isSendNowDisabled` is now
+//  computed straight off `rows` — an `.overdue` row is the SAME "there's a stalled transfer" signal
+//  `reentryRoute`/`statusResumeState` already use to route to this screen's `.resume` presentation
+//  in the first place, so due-ness alone (not the gate) governs the CTA. The gate is still
+//  enforced — just later, inside `MigrationSendingStore`'s Send-now lane, which shows a
+//  silence-window wait (stop sync -> countdown -> broadcast) instead of leaving the CTA disabled.
 //
 
 import Foundation
@@ -50,8 +59,6 @@ struct MigrationStatus {
         /// True when this screen is the coordinator's re-entry root (both presentations) — its back
         /// control then closes the flow instead of popping.
         var isFlowRoot = false
-        /// Send-now CTA disabled per `manager.sendGate()` (`.syncRequired`/`.waitUntil` -> disabled).
-        var isSendNowDisabled = false
         /// MOB-1496 (W3): the SDK's post-broadcast privacy buffer
         /// (`sdkSynchronizer.migrationPrivacySyncBufferDuration()`), rounded to whole minutes —
         /// threads the resume footer's "…about %1$lld mins…" copy (`migrationStatusWindowMissedNote`)
@@ -62,6 +69,16 @@ struct MigrationStatus {
 
         var remainingCount: Int {
             rows.filter { $0.status != .sent }.count
+        }
+
+        /// R8-T6 (V8 fix): due-ness alone governs the Send-now CTA now — an `.overdue` row is the
+        /// SAME signal `reentryRoute`'s `hasOverdue` check already uses to route to this screen's
+        /// `.resume` presentation, so this stays consistent with "why am I even seeing this button"
+        /// without a separate gate consult (see this file's header doc for the full V8 writeup).
+        /// Computed off `rows` (same idiom as `remainingCount` above) rather than stored, so it
+        /// can never go stale between a `statusLoaded`/`migrationStateChanged` refresh and a read.
+        var isSendNowDisabled: Bool {
+            !rows.contains { $0.status == MigrationTransferRow.Status.overdue }
         }
 
         init(
@@ -89,7 +106,7 @@ struct MigrationStatus {
         /// Progress CTA and the X close.
         case gotItTapped
         case delegate(Delegate)
-        /// `migrationManager.stateEvents(_:)` ticked — reloads rows/summary/gate.
+        /// `migrationManager.stateEvents(_:)` ticked — reloads rows/summary.
         case migrationStateChanged
         case onAppear
         /// Public: the coordinator's reschedule effect (SDK reschedule + first-window scheduling)
@@ -100,12 +117,12 @@ struct MigrationStatus {
         case rescheduleCompleted(rows: [MigrationTransferRow], totalDurationHours: Int)
         case rescheduleTapped
         case sendNowTapped
-        /// `migrationTransfers()` + `migrationSummary()` + `manager.sendGate()` +
-        /// `sdkSynchronizer.migrationPrivacySyncBufferDuration()` result.
+        /// `migrationTransfers()` + `migrationSummary()` + `sdkSynchronizer
+        /// .migrationPrivacySyncBufferDuration()` result. R8-T6: no longer carries a gate reading —
+        /// `isSendNowDisabled` is derived from `rows` itself (see `State.isSendNowDisabled`'s doc).
         case statusLoaded(
             rows: [MigrationTransferRow],
             totalDurationHours: Int,
-            isSendNowDisabled: Bool,
             syncPrivacyBufferMinutes: Int
         )
 
@@ -164,10 +181,9 @@ struct MigrationStatus {
             case .sendNowTapped:
                 return .send(.delegate(.sendNow))
 
-            case .statusLoaded(let rows, let totalDurationHours, let isSendNowDisabled, let syncPrivacyBufferMinutes):
+            case .statusLoaded(let rows, let totalDurationHours, let syncPrivacyBufferMinutes):
                 state.rows = IdentifiedArrayOf(uniqueElements: rows)
                 state.totalDurationHours = totalDurationHours
-                state.isSendNowDisabled = isSendNowDisabled
                 state.syncPrivacyBufferMinutes = syncPrivacyBufferMinutes
                 return .none
             }
@@ -178,7 +194,6 @@ struct MigrationStatus {
         .run { send in
             let rows = await migrationManager.migrationTransfers(accountUUID)
             let summary = await migrationManager.migrationSummary(accountUUID)
-            let isSendNowDisabled = await migrationManager.sendGate() != MigrationSendGate.allowed
             let syncPrivacyBufferMinutes = MigrationStatus.syncPrivacyBufferMinutes(
                 from: sdkSynchronizer.migrationPrivacySyncBufferDuration()
             )
@@ -186,7 +201,6 @@ struct MigrationStatus {
                 .statusLoaded(
                     rows: rows,
                     totalDurationHours: summary.estimatedDurationHours,
-                    isSendNowDisabled: isSendNowDisabled,
                     syncPrivacyBufferMinutes: syncPrivacyBufferMinutes
                 )
             )
