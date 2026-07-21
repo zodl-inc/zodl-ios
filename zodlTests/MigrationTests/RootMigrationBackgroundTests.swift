@@ -2544,7 +2544,7 @@ import ComposableArchitecture
 
             // The external teardown: a migration-notification tap resets the flow via
             // `openMigrationCoordFlow`, releasing the hold BEFORE the reset.
-            store.send(.initialization(.appDelegate(.migrationNotificationTapped(accountUUID: nil))))
+            store.send(.initialization(.appDelegate(.migrationNotificationTapped(accountUUID: nil, isTorFailure: false))))
             await waitForRootStore { migrationSendWaitActive == false }
             #expect(migrationSendWaitActive == false)
 

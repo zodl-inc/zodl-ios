@@ -42,6 +42,9 @@ struct MigrationTransferTimeline: View {
     /// MOB-1497 (T8): opts row 0 into the neutral "ready, not yet done" check while `.active`. See
     /// this file's header doc.
     var usesNeutralCheckForReadyFirstStep = false
+    /// MOB-1511 (W4): per-row caption tone — `nil` keeps the historical tertiary everywhere;
+    /// `MigrationStatusView` uses it to render the completed Split Balance row's "Done" in green.
+    var captionStyle: ((MigrationTransferRow) -> Colorable)?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -102,7 +105,7 @@ struct MigrationTransferTimeline: View {
                 .frame(width: 60, height: 16)
         } else {
             Text(caption(row))
-                .zFont(size: 12, style: Design.Text.tertiary)
+                .zFont(size: 12, style: captionStyle?(row) ?? Design.Text.tertiary)
         }
     }
 

@@ -247,8 +247,10 @@ final class MigrationNotificationCenterDelegate: NSObject, UNUserNotificationCen
             // for a legacy/no-account payload, in which case routing falls back to today's
             // behavior (resolves whatever's currently selected).
             let accountUUID = response.notification.request.content.userInfo["accountUUID"] as? String
+            // MOB-1511 (W3): the Tor-failure notification routes to the failure sheet, not the flow.
+            let isTorFailure = response.notification.request.identifier == MigrationNotification.migrationTorFailure.identifier
             DispatchQueue.main.async {
-                rootStore?.send(.initialization(.appDelegate(.migrationNotificationTapped(accountUUID: accountUUID))))
+                rootStore?.send(.initialization(.appDelegate(.migrationNotificationTapped(accountUUID: accountUUID, isTorFailure: isTorFailure))))
             }
         }
 

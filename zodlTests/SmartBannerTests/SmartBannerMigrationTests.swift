@@ -252,13 +252,13 @@ import ComposableArchitecture
         state.priorityContent = .priorityMigration
         state.priorityContentRequested = .priorityMigration
         state.isOpen = true
-        state.migrationBannerVariant = MigrationBannerVariant.inProgress(done: 2, total: 5)
+        state.migrationBannerVariant = MigrationBannerVariant.inProgress(done: 2, total: 5, round: nil, totalRounds: nil)
         let store = TestStore(initialState: state) {
             SmartBanner()
         } withDependencies: {
             $0.migrationManager.bannerVariant = { accountUUID in
                 #expect(accountUUID == account.id)
-                return MigrationBannerVariant.inProgress(done: 3, total: 5)
+                return MigrationBannerVariant.inProgress(done: 3, total: 5, round: nil, totalRounds: nil)
             }
         }
 
@@ -271,7 +271,7 @@ import ComposableArchitecture
             )
         )))
         await store.receive(\.migrationVariantUpdated) {
-            $0.migrationBannerVariant = MigrationBannerVariant.inProgress(done: 3, total: 5)
+            $0.migrationBannerVariant = MigrationBannerVariant.inProgress(done: 3, total: 5, round: nil, totalRounds: nil)
         }
         // No `.triggerPriority`/`.closeAndCleanupBanner` follow-up — content re-renders live from
         // the state mutation alone, banner stays open on the same priority.

@@ -58,6 +58,9 @@ struct MigrationStepBadge: View {
             switch style {
             case .sent:
                 Circle().fill(Design.Utility.SuccessGreen._500.color(colorScheme))
+                // MOB-1511 (W5 audit): `.sent`/`.warning` glyphs stay literal white deliberately —
+                // their backing circles (`SuccessGreen._500`/`WarningYellow._500`) render the same
+                // in both schemes, so a scheme-aware token would resolve to white anyway.
                 Asset.Assets.check.image
                     .zImage(size: size * 2 / 3, color: .white)
             case .active:

@@ -57,7 +57,14 @@ struct MigrationStatusView: View {
                         MigrationTransferTimeline(
                             rows: store.rows,
                             caption: caption(for:),
-                            skeletonPendingCaptions: store.isRescheduling
+                            skeletonPendingCaptions: store.isRescheduling,
+                            captionStyle: { row in
+                                // MOB-1511 (W4): the Split Balance row's "Done" renders green,
+                                // matching its check badge; every other caption keeps the default.
+                                row.index == 0 && row.status == .sent
+                                    ? Design.Utility.SuccessGreen._600 as Colorable
+                                    : Design.Text.tertiary
+                            }
                         )
                     }
                     .padding(.vertical, 1)
@@ -121,6 +128,12 @@ struct MigrationStatusView: View {
     // MARK: - Caption
 
     private func caption(for row: MigrationTransferRow) -> String {
+        // MOB-1511 (W4, Figma 3480:7638): the completed Split Balance row reads "Done" (green, via
+        // `captionStyle` below) instead of a sent-ago timestamp — split completion is a state, not
+        // an event the user tracks by time.
+        if row.index == 0, row.status == .sent {
+            return String(localizable: .migrationStatusDone)
+        }
         switch row.status {
         case .sent:
             if let sentMinutesAgo = row.sentMinutesAgo {
