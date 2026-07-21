@@ -42,7 +42,13 @@ struct MigrationSendingView: View {
             content
                 .navigationBarBackButtonHidden()
                 .zashiSheet(isPresented: $store.isFailurePresented) {
-                    failureSheetContent
+                    MigrationBroadcastFailureSheetView(
+                        failureKind: store.failureKind,
+                        cancelTapped: { store.send(.cancelTapped) },
+                        proceedWithoutTorTapped: { store.send(.proceedWithoutTorTapped) },
+                        retryTapped: { store.send(.retryTapped) },
+                        useSyncServerTapped: { store.send(.useSyncServerTapped) }
+                    )
                 }
                 .alert($store.scope(state: \.alert, action: \.alert))
         }
@@ -175,110 +181,6 @@ struct MigrationSendingView: View {
                 store.send(.closeTapped)
             }
             .padding(.bottom, 24)
-        }
-    }
-
-    // MARK: - Failure sheet
-
-    /// R7-T3 (MOB-1497, R14-R17): title/body/buttons vary with `store.failureKind` — `nil`,
-    /// `.retryRotated`, and `.plainRetry` all render the SAME existing generic content (R16's
-    /// rotation is silent; an unclassified failure is unchanged). Flagged for a product/design pass
-    /// (no Figma exists for this section) — copy source is the R7-T3 brief's §8.
-    @ViewBuilder private var failureSheetContent: some View {
-        VStack(spacing: 0) {
-            Asset.Assets.Icons.alertOutline.image
-                .zImage(size: 20, style: Design.Utility.ErrorRed._500)
-                .background {
-                    Circle()
-                        .fill(Design.Utility.ErrorRed._100.color(colorScheme))
-                        .frame(width: 44, height: 44)
-                }
-                .padding(.top, 48)
-
-            Text(failureSheetTitle)
-                .zFont(.semiBold, size: 20, style: Design.Text.primary)
-                .multilineTextAlignment(.center)
-                .padding(.top, 16)
-                .padding(.bottom, 12)
-
-            Text(failureSheetBody)
-                .zFont(size: 14, style: Design.Text.tertiary)
-                .fixedSize(horizontal: false, vertical: true)
-                .multilineTextAlignment(.center)
-                .lineSpacing(2)
-                .padding(.bottom, 32)
-
-            failureSheetButtons
-        }
-    }
-
-    private var failureSheetTitle: String {
-        switch store.failureKind {
-        case .torFirstRunChoice:
-            return String(localizable: .migrationFailureTorFirstRunTitle)
-        case .torHold:
-            return String(localizable: .migrationFailureTorHoldTitle)
-        case .providerExhausted:
-            return String(localizable: .migrationFailureProviderExhaustedTitle)
-        case .retryRotated, .plainRetry, nil:
-            return String(localizable: .migrationNoteSplitFailedTitle)
-        }
-    }
-
-    private var failureSheetBody: String {
-        switch store.failureKind {
-        case .torFirstRunChoice:
-            return String(localizable: .migrationFailureTorFirstRunBody)
-        case .torHold:
-            return String(localizable: .migrationFailureTorHoldBody)
-        case .providerExhausted(let torEnabled):
-            return torEnabled
-                ? String(localizable: .migrationFailureProviderExhaustedBodyTorOn)
-                : String(localizable: .migrationFailureProviderExhaustedBodyTorOff)
-        case .retryRotated, .plainRetry, nil:
-            return String(localizable: .migrationNoteSplitFailedBody)
-        }
-    }
-
-    @ViewBuilder private var failureSheetButtons: some View {
-        switch store.failureKind {
-        case .torFirstRunChoice:
-            ZashiButton(String(localizable: .generalCancel), type: .secondary) {
-                store.send(.cancelTapped)
-            }
-            .padding(.bottom, 12)
-
-            ZashiButton(String(localizable: .migrationTorSheetOffWarningProceed), type: .secondary) {
-                store.send(.proceedWithoutTorTapped)
-            }
-            .padding(.bottom, 12)
-
-            ZashiButton(String(localizable: .migrationNoteSplitRetry)) {
-                store.send(.retryTapped)
-            }
-            .padding(.bottom, Design.Spacing.sheetBottomSpace)
-
-        case .providerExhausted:
-            ZashiButton(String(localizable: .migrationFailureProviderExhaustedKeepWaiting), type: .secondary) {
-                store.send(.cancelTapped)
-            }
-            .padding(.bottom, 12)
-
-            ZashiButton(String(localizable: .migrationFailureProviderExhaustedUseSyncServer)) {
-                store.send(.useSyncServerTapped)
-            }
-            .padding(.bottom, Design.Spacing.sheetBottomSpace)
-
-        case .torHold, .retryRotated, .plainRetry, nil:
-            ZashiButton(String(localizable: .generalCancel), type: .secondary) {
-                store.send(.cancelTapped)
-            }
-            .padding(.bottom, 12)
-
-            ZashiButton(String(localizable: .migrationNoteSplitRetry)) {
-                store.send(.retryTapped)
-            }
-            .padding(.bottom, Design.Spacing.sheetBottomSpace)
         }
     }
 }
