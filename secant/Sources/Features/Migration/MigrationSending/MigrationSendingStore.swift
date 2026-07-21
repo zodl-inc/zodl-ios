@@ -379,11 +379,12 @@ struct MigrationSending {
     /// by R7-T3's classification (MOB-1497): a landed broadcast is never a failure to route.
     ///
     /// R7-T3 (MOB-1497): every failure path below — the transport-outcome switch's failure branch AND
-    /// the generic catch — classifies (`MigrationBroadcastFailureClass.classify`) before sending its
-    /// existing outcome action. A `nil` class (an unclassified failure — `.invalidNote`/`.expired`/
+    /// the generic catch — classifies+routes (R9-T2: via `migrationManager.routeBroadcastFailure(_:
+    /// result:/error:)`, the single classify -> route entry point) before sending its existing outcome
+    /// action. A `nil` route (an unclassified failure — `.invalidNote`/`.expired`/
     /// `.networkError(retryable: false)`, or the "no account"/"no zip32 index" guards above, which
     /// never reach the SDK call at all) keeps today's behavior byte-for-byte: only `.transferResult`
-    /// is sent. A non-nil class ADDITIONALLY sends `.broadcastFailureRouted(route)` FIRST — the
+    /// is sent. A non-nil route ADDITIONALLY sends `.broadcastFailureRouted(route)` FIRST — the
     /// existing `.transferResult`/`isFailurePresented = true` handling is otherwise unchanged, so
     /// `state.failureKind` is always set before the sheet appears.
     ///
@@ -431,8 +432,7 @@ struct MigrationSending {
                     didStopSyncForBroadcast = true
                     result = try await sdkSynchronizer.executeNextPendingMigrationTransfer(account.id, options)
                 }
-                if let result, let failureClass = MigrationBroadcastFailureClass.classify(result: result) {
-                    let route = await migrationManager.routeBroadcastFailure(account.id, failureClass)
+                if let result, let route = await migrationManager.routeBroadcastFailure(account.id, result: result) {
                     await send(.broadcastFailureRouted(route))
                 }
                 await send(.transferResult(result))
@@ -449,8 +449,7 @@ struct MigrationSending {
                 // so no nudge either.
                 await send(.transferResult(MigrationTransferResult.success(txId: "")))
             } catch {
-                if let failureClass = MigrationBroadcastFailureClass.classify(error: error) {
-                    let route = await migrationManager.routeBroadcastFailure(account.id, failureClass)
+                if let route = await migrationManager.routeBroadcastFailure(account.id, error: error) {
                     await send(.broadcastFailureRouted(route))
                 }
                 // R8-T4 (#3) composed with R7-T3's classification above: the route drives the
