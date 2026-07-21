@@ -306,13 +306,19 @@ extension Root {
         case checkRestoreWalletFlag(SyncStatus)
         case checkWalletInitialization
         case checkWalletConfig
-        /// R9-T5 (finding 7): the launch-side trigger for `migrationManager
-        /// .clearAbandonedNetworkSnapshot(_:)` — sent from `.initialSetups`'s reconcile effect once
-        /// `migrationManager.reconcile()` completes, so a pre-commit snapshot abandoned by killing
-        /// the app mid-flow (which never reaches `.migrationCoordFlow(.flowFinished)`, the only
-        /// OTHER trigger — see `RootCoordinator`) is still cleared on the next cold launch instead
-        /// of surviving forever. See this action's reducer arm for the flow-open guard and why it's
-        /// needed.
+        /// R9-T5 (finding 7): the trigger for `migrationManager.clearAbandonedNetworkSnapshot(_:)`
+        /// — a pre-commit snapshot abandoned by killing the app mid-flow (which never reaches
+        /// `.migrationCoordFlow(.flowFinished)`, the only OTHER trigger — see `RootCoordinator`)
+        /// would otherwise survive forever instead of being cleared. Sent from TWO sites, both
+        /// needed (final-review IMPORTANT-1): (1) `.initialSetups`'s reconcile effect, once
+        /// `migrationManager.reconcile()` completes — covers a WARM re-init
+        /// (`willEnterForeground` unprepared/locked, `walletConfigChanged` re-entry) where accounts
+        /// are already populated from earlier in this same process; (2) `.loadedWalletAccounts`,
+        /// once the SDK's own account list lands in state — the site that actually fires on a
+        /// genuine COLD launch, since `.initialSetups` runs long before accounts exist or the SDK
+        /// is prepared there (see that send site's doc for the empty-candidate-list/unprepared-SDK
+        /// walk). Both sites share the SAME flow-open guard on this action's reducer arm below —
+        /// see there for why it's needed.
         case clearAbandonedMigrationSnapshots
         case initializeSDK(WalletInitMode)
         case staleWalletDatabaseHealed
@@ -866,6 +872,17 @@ extension Root {
                     // provisional-safe, so ordering doesn't matter for correctness against IT, but
                     // running the abandoned-snapshot fan-out as a distinct step keeps this effect's
                     // shape self-documenting as "reconcile, then a second, unrelated cleanup pass."
+                    // Final-review IMPORTANT-1: on a genuine COLD launch this particular send is a
+                    // near-total no-op — `state.selectedWalletAccount`/`state.walletAccounts` (both
+                    // `@Shared(.inMemory)`) are still nil/empty this early, populated only later by
+                    // `.loadedWalletAccounts` (dispatched from inside `.initializeSDK`, after
+                    // `sdkSynchronizer.walletAccounts()` succeeds) — so the fan-out below iterates
+                    // an empty list, and even a non-empty list would find the manager's own
+                    // `migrationState` read nil pre-prepare. `.loadedWalletAccounts`'s OWN send of
+                    // this same action (see its case below) is what actually clears an abandoned
+                    // snapshot on a cold launch; THIS site earns its keep on the WARM re-init paths
+                    // (`willEnterForeground` unprepared/locked, `walletConfigChanged`) where accounts
+                    // are already populated from earlier in this same process.
                     .run { [migrationManager] send in
                         await migrationManager.reconcile()
                         await send(.initialization(.clearAbandonedMigrationSnapshots))
@@ -887,11 +904,17 @@ extension Root {
                 // close the LAUNCH-side race. The residual window — the flow opens WHILE a clear is
                 // already in flight — is the same accepted window `.migrationCoordFlow
                 // (.flowFinished)`'s own fire-and-forget clear already lives with (see that case's
-                // doc): human-speed flow entry makes it practically unreachable in practice.
+                // doc): human-speed flow entry makes it practically unreachable in practice. This
+                // ONE handler is shared by BOTH send sites (`.initialSetups` and
+                // `.loadedWalletAccounts` — see this action's case doc) — the guard is evaluated
+                // identically regardless of which one fired it; the notification-tap race is if
+                // anything MORE relevant at the `.loadedWalletAccounts` send, since it fires later
+                // in the cold-launch sequence, giving a stashed notification tap more time to have
+                // already replayed and opened the flow by then.
                 guard state.path != Root.State.Path.migrationCoordFlow else { return .none }
 
-                // Same candidate-account list `reconcile()` (just completed) fans out over —
-                // selected account first, then the rest of `walletAccounts`, deduped.
+                // Same candidate-account list `reconcile()` itself uses — selected account first,
+                // then the rest of `walletAccounts`, deduped.
                 let accountUUIDs = MigrationDerivations.candidateAccountUUIDs(
                     selectedAccountUUID: state.selectedWalletAccount?.id,
                     walletAccounts: state.walletAccounts
@@ -1149,7 +1172,21 @@ extension Root {
                 return .merge(
                     .send(.loadContacts),
                     .send(.loadUserMetadata),
-                    .send(.loadSwapAPIAccess)
+                    .send(.loadSwapAPIAccess),
+                    // R9-T5 fix (final-review IMPORTANT-1): the trigger that actually clears an
+                    // abandoned snapshot on a genuine COLD launch — `.initialSetups`'s own send
+                    // (chained after `reconcile()`) fires long before this point, when
+                    // `walletAccounts`/`selectedWalletAccount` are still empty/nil and the SDK
+                    // isn't prepared yet, so it fans over an empty candidate list and no-ops (see
+                    // that send site's doc). HERE both are populated just above AND the SDK is
+                    // provably prepared (this handler only runs after `sdkSynchronizer
+                    // .walletAccounts()` succeeded). Safe to double-fire alongside `.initialSetups`'s
+                    // send on the WARM re-init paths where accounts were already populated from
+                    // earlier in this same process: the shared handler's flow-open guard,
+                    // `clearAbandonedNetworkSnapshot`'s own idempotent no-op (nothing left to clear
+                    // the second time), and the manager's serial executor make a repeat call
+                    // harmless.
+                    .send(.initialization(.clearAbandonedMigrationSnapshots))
                 )
 
             case .resolveMetadataEncryptionKeys:
