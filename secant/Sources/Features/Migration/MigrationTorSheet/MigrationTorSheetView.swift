@@ -47,7 +47,11 @@ struct MigrationTorSheetView: View {
 
                 if !store.isCustomServer {
                     toggleCard
-                        .padding(.bottom, 12)
+                        // R9-F11: the 32pt gap before the button lives on the disclosure line when it
+                        // renders; when `showsBroadcastDisclosure` is false (testnet single-endpoint,
+                        // same-server fallback) there's no disclosure line to carry it, so the toggle
+                        // card itself must supply the full 32pt instead of its usual 12pt.
+                        .padding(.bottom, store.showsBroadcastDisclosure ? 12 : 32)
 
                     if store.showsBroadcastDisclosure {
                         disclosureLine
