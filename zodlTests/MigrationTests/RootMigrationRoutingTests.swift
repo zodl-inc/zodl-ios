@@ -401,6 +401,138 @@ import ComposableArchitecture
             #expect(clearDeliveredCalls.withValue { $0 } == 1)
         }
     }
+
+    // MARK: - R8-T6 fix-wave (Critical-1): external teardown must release the send-wait hold
+
+    /// C1-a (red-first): a live `.sending(.waiting)` element — its hold flag set via
+    /// `MigrationSendingStore`'s OWN real `onAppear` -> `.sendNowGateResolved(.waitUntil(...))`
+    /// path, not a hand-poked `@Shared` write — sits on the migration path when a migration
+    /// notification tap arrives. The SAME notification-tap teardown route
+    /// `migrationNotificationTappedOnInitializedStateRoutesImmediately` above exercises
+    /// (`migrationNotificationTapped` -> `openMigrationCoordFlow`) must release the leaked hold:
+    /// the flag clears, `refreshMigrationSyncGate()` fires (identical semantics to the store's own
+    /// Cancel), and a SUBSEQUENT `.retryStart` is no longer fenced. FAILS against HEAD 1c828465 —
+    /// `openMigrationCoordFlow` resets the flow with no flag release, so the flag stays stranded
+    /// true and the following `.retryStart` silently re-defers forever.
+    @Test func notificationTapTeardownReleasesLiveSendWaitHoldAndUnfencesRetryStart() async {
+        let refreshMigrationSyncGateCalls = LockIsolated<Int>(0)
+        let startCalls = LockIsolated<[Bool]>([])
+
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            @Shared(.inMemory(.migrationSendWaitActive)) var migrationSendWaitActive: Bool = false
+            $migrationSendWaitActive.withLock { $0 = false }
+
+            let target = Date().addingTimeInterval(600)
+            let preparedState: SynchronizerState = {
+                var state = SynchronizerState.zero
+                state.syncStatus = SyncStatus.upToDate
+                return state
+            }()
+
+            var initialState = Root.State.initial
+            initialState.appInitializationState = InitializationState.initialized
+            initialState.path = Root.State.Path.migrationCoordFlow
+            initialState.migrationCoordFlowState.path.append(
+                .sending(MigrationSending.State(totalCount: 1, entersViaSendNow: true))
+            )
+
+            let sendingId = try? #require(initialState.migrationCoordFlowState.path.ids.last)
+            guard let sendingId else {
+                Issue.record("Expected a sending element id on the migration path")
+                return
+            }
+
+            let clock = TestClock()
+            let store = Store(initialState: initialState) {
+                Root()
+            } withDependencies: {
+                baseNoOpDependencies(&$0)
+                $0.continuousClock = clock
+                $0.diskSpaceChecker.hasEnoughFreeSpaceForSync = { true }
+                $0.migrationManager.sendGate = { .waitUntil(target) }
+                $0.migrationManager.refreshMigrationSyncGate = {
+                    refreshMigrationSyncGateCalls.withValue { $0 += 1 }
+                }
+                $0.sdkSynchronizer = SDKSynchronizerClient.mocked(
+                    latestState: { preparedState },
+                    start: { _ in startCalls.withValue { $0.append(true) } },
+                    isSyncing: { true }
+                )
+                $0.sdkSynchronizer.isMigrationSyncBlocked = { false }
+            }
+
+            // Drive the REAL Sending store's onAppear: it stops sync, reads the gate
+            // (`.waitUntil`), enters `.waiting`, and sets the hold flag via its own
+            // `setSendWaitActive(true)` — the store's real path, not a hand-poked flag.
+            store.send(.migrationCoordFlow(.path(.element(id: sendingId, action: .sending(.onAppear)))))
+            await waitForRootStore { migrationSendWaitActive == true }
+            #expect(migrationSendWaitActive == true)
+
+            // The notification-tap teardown route.
+            store.send(.initialization(.appDelegate(.migrationNotificationTapped(accountUUID: nil))))
+            await waitForRootStore { store.state.migrationCoordFlowState.path.isEmpty }
+
+            #expect(store.state.path == Root.State.Path.migrationCoordFlow)
+            #expect(store.state.migrationCoordFlowState.path.isEmpty)
+            await waitForRootStore { migrationSendWaitActive == false }
+            #expect(migrationSendWaitActive == false)
+            await waitForRootStore { refreshMigrationSyncGateCalls.withValue { $0 } == 1 }
+            #expect(refreshMigrationSyncGateCalls.withValue { $0 } == 1)
+
+            // A subsequent `.retryStart` must no longer be fenced — start proceeds. (Not pinned to
+            // exactly one call: `migrationStoppedSyncForBroadcast` is still `true` here — nothing
+            // in this fix clears it, by design, matching `.waitCancelTapped`'s own semantics — so
+            // this successful `.retryStart`'s OWN `.registerForSynchronizersUpdate` seed-reads
+            // `isMigrationSyncBlocked()` and, seeing it still set, legitimately replays a resume
+            // once more via the PRE-EXISTING `.migrationSyncGateChanged` mechanism above; that
+            // second start is orthogonal to this fix and out of scope here — what matters is that
+            // the fence no longer silently swallows the trigger.)
+            store.send(.initialization(.retryStart))
+            await waitForRootStore { startCalls.withValue { !$0.isEmpty } }
+            #expect(startCalls.withValue { !$0.isEmpty })
+        }
+    }
+
+    /// C1-b: the SAME teardown route with the hold flag NOT set — the release helper must be a
+    /// pure no-op (no nudge call). Guards against a naive implementation that nudges
+    /// unconditionally on every teardown regardless of whether a hold was ever live.
+    @Test func notificationTapTeardownWithNoHoldActiveNeverNudgesGate() async {
+        let refreshMigrationSyncGateCalls = LockIsolated<Int>(0)
+
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            @Shared(.inMemory(.migrationSendWaitActive)) var migrationSendWaitActive: Bool = false
+            $migrationSendWaitActive.withLock { $0 = false }
+
+            var initialState = Root.State.initial
+            initialState.appInitializationState = InitializationState.initialized
+            // Poison the pre-existing flow state so the reset itself is still observable, same as
+            // `migrationNotificationTappedOnInitializedStateRoutesImmediately` above.
+            initialState.migrationCoordFlowState.mode = MigrationMode.immediate
+            initialState.migrationCoordFlowState.path.append(.complete(MigrationComplete.State()))
+
+            let store = Store(initialState: initialState) {
+                Root()
+            } withDependencies: {
+                baseNoOpDependencies(&$0)
+                $0.migrationManager.refreshMigrationSyncGate = {
+                    refreshMigrationSyncGateCalls.withValue { $0 += 1 }
+                }
+            }
+
+            store.send(.initialization(.appDelegate(.migrationNotificationTapped(accountUUID: nil))))
+            await waitForRootStore { store.state.migrationCoordFlowState.path.isEmpty }
+
+            #expect(store.state.path == Root.State.Path.migrationCoordFlow)
+            #expect(migrationSendWaitActive == false)
+            // Let any async nudge effect settle before asserting its absence.
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            #expect(refreshMigrationSyncGateCalls.withValue { $0 } == 0)
+        }
+    }
 }
 
 // MARK: - Shared dependency baseline

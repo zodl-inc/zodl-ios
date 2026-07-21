@@ -73,6 +73,7 @@ directly impact users rather than highlighting other crucial architectural updat
 - [MOB-1496] Fixed migration notifications opening whichever account happened to be selected rather than the account they were actually about — tapping a migration notification now switches to that account first, so the migration screen shows the right amounts and status. Gated behind Ironwood network activation and not yet in a released build.
 - [MOB-1496] Fixed the migration status screen's "was scheduled" header and stalled-transfer caption always reading "0 hours ago" for an overdue transfer — they now show the real elapsed time since it became due. Gated behind Ironwood network activation and not yet in a released build.
 - [MOB-1496] "Send now" works again — it now pauses syncing and sends inside a private window (with a countdown) instead of being permanently disabled by the privacy gate. Gated behind Ironwood network activation and not yet in a released build.
+- [MOB-1496] Fixed "Send now"'s private countdown window leaving syncing paused for the rest of the session if you left that screen some other way than Cancel or letting it finish — for example tapping a migration notification while the countdown was running. Syncing now resumes correctly either way. Gated behind Ironwood network activation and not yet in a released build.
 
 ## 3.7.2 build 1
 

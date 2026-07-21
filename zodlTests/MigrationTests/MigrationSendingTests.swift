@@ -1033,6 +1033,48 @@ import ComposableArchitecture
         #expect(migrationSendWaitActive == false)
     }
 
+    // MARK: - R8-T6 fix-wave (Minor-1, folded): `.allowed` + nil account must still nudge
+
+    /// M1-a: `.sendNowGateResolved(.allowed)` resolving with a nil selected account (the send-now
+    /// lane already stopped sync in `resolveSendGate()`, unlike every other lane's structurally-
+    /// safe nil-account guard, which never stops sync before its own nil check) must not leave
+    /// sync stopped with no resume nudge — every other send-now exit (broadcast/waitUntil/
+    /// syncRequired/cancel) either broadcasts or nudges. Mirrors `.waitCancelTapped`'s exact
+    /// clear-then-nudge treatment, minus the navigation `.delegate(.closed)` send (this still
+    /// surfaces the ordinary failure sheet instead of closing the screen).
+    @MainActor @Test func sendNowGateResolvedAllowedWithNilAccountNudgesGateClearsHoldAndPresentsFailureWithoutBroadcasting() async {
+        @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
+        $selectedWalletAccount.withLock { $0 = nil }
+        @Shared(.inMemory(.migrationSendWaitActive)) var migrationSendWaitActive: Bool = false
+        $migrationSendWaitActive.withLock { $0 = true }
+
+        let executeCalls = LockIsolated<Int>(0)
+        let refreshMigrationSyncGateCalls = LockIsolated<Int>(0)
+        var state = MigrationSending.State(totalCount: 1, entersViaSendNow: true)
+        state.phase = .waiting(target: Date().addingTimeInterval(120))
+        let store = TestStore(initialState: state) {
+            MigrationSending()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in
+                executeCalls.withValue { $0 += 1 }
+                return MigrationTransferResult.success(txId: "should-not-broadcast")
+            }
+            $0.migrationManager.refreshMigrationSyncGate = { refreshMigrationSyncGateCalls.withValue { $0 += 1 } }
+        }
+
+        await store.send(.sendNowGateResolved(.allowed)) {
+            $0.phase = .sending
+        }
+        await store.receive(\.transferResult) {
+            $0.isFailurePresented = true
+        }
+
+        #expect(executeCalls.value == 0)
+        #expect(refreshMigrationSyncGateCalls.value == 1)
+        #expect(migrationSendWaitActive == false)
+    }
+
     // MARK: - R8-T6: dust / manual lanes unchanged (never consult sendGate, no WAITING phase)
 
     @MainActor @Test func onAppearWithDustLaneNeverConsultsSendGateOrEntersWaiting() async {
