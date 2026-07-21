@@ -1650,19 +1650,54 @@ extension Root {
     /// session's `migrationNetworkOptions` read picks up the newly-rotated endpoint. The one-
     /// broadcast-per-session invariant is untouched: this call site never retries within the same
     /// session regardless of route.
+    ///
+    /// R9-T7 (MOB-1497 review remediation, finding 9): this was the ONE broadcast lane that never
+    /// called `sdkSynchronizer.stopSyncBeforeMigrationBroadcast()` first — it relied on the SDK's own
+    /// during-sync throw (`ZcashError.migrationBroadcastDuringSync`) instead, which is only
+    /// advisory/point-in-time (see that method's doc) and never itself resumes sync afterward. An
+    /// overlap with an independently-scheduled sync (this app registers three separate
+    /// `BGTaskScheduler` tasks, and a foreground sync also qualifies) used to fall through the
+    /// generic `catch` below, where the OLD default-arm classification would misreport it as
+    /// `.endpointUnreachable` and pollute the persisted R16 rotation episode with a healthy endpoint.
+    /// Fixed in two halves: (1) below, mirroring `MigrationSendingStore.executeNextTransfer`'s
+    /// `didStopSyncForBroadcast` bookkeeping exactly — stop sync immediately before the broadcast
+    /// call, and nudge `refreshMigrationSyncGate()` afterward on every outcome that did NOT land
+    /// (the SDK's own gate transition covers a landed broadcast's resume, exactly like Sending);
+    /// (2) `MigrationBroadcastFailureClass.classify(error:)` now carves `migrationBroadcastDuringSync`
+    /// out to `nil` regardless of lane, so even a race that slips between this stop and the SDK's own
+    /// attempt (the guard is still only point-in-time) can never rotate/exhaust — see that method's
+    /// doc. Outcome table (stopped/nudged — identical shape to Sending's, since this lane has no
+    /// earlier guard that could skip the stop):
+    ///   - `.success` (landed): stopped, NOT nudged.
+    ///   - `.networkError`/`.invalidNote`/`.expired`: stopped, nudged.
+    ///   - `nil` (nothing due): stopped, nudged.
+    ///   - catch `migrationRecordFailedAfterBroadcast` (landed): stopped, NOT nudged.
+    ///   - catch anything else (incl. Tor-unavailable, and — post carve-out — the nil-classified
+    ///     during-sync race): stopped, nudged.
     private static func executeBroadcastAction(
         _ winnerAccountUUID: AccountUUID,
         classifications: [(accountUUID: AccountUUID, classification: MigrationAccountClassification)],
         dependencies: MigrationSessionDependencies
     ) async {
         let options = await dependencies.migrationManager.migrationNetworkOptions(winnerAccountUUID)
+        // R9-T7: tracks whether `stopSyncBeforeMigrationBroadcast()` ran THIS attempt — declared
+        // outside the `do` so the `catch` clauses below can read it too (mirrors
+        // `MigrationSendingStore.executeNextTransfer`'s identical `var` exactly). Nothing here can
+        // return before reaching the call (the winning account is already resolved by the planner
+        // before this function runs, unlike Sending's no-account/Keystone-dust/USK-derivation
+        // guards), so it is unconditionally `true` once the `do` block is entered — tracked the same
+        // way regardless, so the nudge checks below read identically at both call sites.
+        var didStopSyncForBroadcast = false
         do {
+            await dependencies.sdkSynchronizer.stopSyncBeforeMigrationBroadcast()
+            didStopSyncForBroadcast = true
             let result = try await dependencies.sdkSynchronizer.executeNextPendingMigrationTransfer(winnerAccountUUID, options)
 
             switch result {
             case .success:
                 // [MOB-1496] W2: persist the sent record + reconcile (this op's success is one of
-                // `reconcile()`'s triggers).
+                // `reconcile()`'s triggers). R9-T7: no nudge — the SDK's own gate transition on a
+                // successful broadcast already covers the resume (mirrors Sending's `.success` case).
                 if let result {
                     await handleLandedBroadcast(winnerAccountUUID, result, classifications: classifications, dependencies: dependencies)
                 }
@@ -1680,9 +1715,19 @@ extension Root {
                     Data(winnerAccountUUID.id).hexEncodedString()
                 )
                 await dependencies.migrationBGScheduler.scheduleNextWindow()
+                // R9-T7: not landed — the stop above was never followed by a successful broadcast,
+                // so nudge Root's gate feed directly (mirrors Sending's identical non-success nudge).
+                if didStopSyncForBroadcast {
+                    await dependencies.migrationManager.refreshMigrationSyncGate()
+                }
 
             case nil:
                 await dependencies.migrationBGScheduler.scheduleNextWindow()
+                // R9-T7: nothing was due, but the stop above still ran — nudge exactly like
+                // Sending's own `nil`-result case.
+                if didStopSyncForBroadcast {
+                    await dependencies.migrationManager.refreshMigrationSyncGate()
+                }
             }
         } catch ZcashError.migrationRecordFailedAfterBroadcast(_) {
             // [MOB-1496] The broadcast DID land; only the engine's own recording of it failed —
@@ -1690,7 +1735,8 @@ extension Root {
             // (`MigrationScheduleStorage` maps an empty string to `nil`). The BG session must not
             // re-send (this isn't a networkError) and must not skip the notification/re-arm a
             // landed transfer deserves. Mirrors `MigrationSendingStore`/`MigrationNoteSplitStore`'s
-            // identical foreground rationale for this same error.
+            // identical foreground rationale for this same error. R9-T7: landed, so no nudge either
+            // — matches Sending's identical catch clause (which never even checks the flag).
             await handleLandedBroadcast(
                 winnerAccountUUID,
                 MigrationTransferResult.success(txId: ""),
@@ -1700,7 +1746,11 @@ extension Root {
         } catch {
             // R7-T3 (MOB-1497): classify + route the thrown error too (e.g. `migrationTorUnavailable`
             // routes as Tor-class here) — same re-arm-only outward behavior as before; the route's
-            // only effect is the possible embedded rotation (see this method's own doc).
+            // only effect is the possible embedded rotation (see this method's own doc). R9-T7: a
+            // `ZcashError.migrationBroadcastDuringSync` race (the stop above narrows this window but
+            // the guard stays only point-in-time) now classifies to `nil` here — see
+            // `MigrationBroadcastFailureClass.classify(error:)`'s dedicated carve-out — so it never
+            // reaches `routeBroadcastFailure`'s stateful routing at all.
             _ = await dependencies.migrationManager.routeBroadcastFailure(winnerAccountUUID, error: error)
             // A throwing broadcast attempt for any OTHER reason is not itself a definite outcome to
             // notify about — treat it like the `nil` "nothing executed" case: re-arm the next
@@ -1708,6 +1758,12 @@ extension Root {
             // without a possibly-wrong notification.
             LoggerProxy.error("BGTask migration session: executeNextPendingMigrationTransfer failed \(error)")
             await dependencies.migrationBGScheduler.scheduleNextWindow()
+            // R9-T7: not landed — nudge exactly like Sending's own generic-catch nudge. Fires here
+            // too for the nil-classified during-sync race above: the stop still ran and this attempt
+            // still never landed, so sync must still resume.
+            if didStopSyncForBroadcast {
+                await dependencies.migrationManager.refreshMigrationSyncGate()
+            }
         }
     }
 

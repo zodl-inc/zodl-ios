@@ -6,11 +6,12 @@
 //  broadcast-routing requirements round — "failure routing"). Pure, dependency-free: given the
 //  error/result a broadcast call produced, says whether it is Tor-class or endpoint-class per the
 //  normative doc's R14-R17, or `nil` when it isn't a routing-relevant failure at all (a landed
-//  broadcast whose recording merely failed, or a transport outcome the app already handles as a
-//  plain retry). `MigrationManagerClient.routeBroadcastFailure` is the only consumer that turns a
-//  non-nil class into a stateful decision — this type itself holds no state and makes no calls.
-//  Mirrors `ServerProvider.classify(host:)`'s shape: a `static func classify` living directly on the
-//  type it classifies into.
+//  broadcast whose recording merely failed, a pre-flight during-sync rejection nothing was ever
+//  attempted for — R9-T7, finding 9 — or a transport outcome the app already handles as a plain
+//  retry). `MigrationManagerClient.routeBroadcastFailure` is the only consumer that turns a non-nil
+//  class into a stateful decision — this type itself holds no state and makes no calls. Mirrors
+//  `ServerProvider.classify(host:)`'s shape: a `static func classify` living directly on the type it
+//  classifies into.
 //
 //  TAXONOMY FACT (accepted, not a gap — see the normative doc's R14-R17): with Tor ON, an endpoint
 //  that is simply unreachable ALSO surfaces as `ZcashError.migrationTorUnavailable`. The SDK's
@@ -49,16 +50,28 @@ enum MigrationBroadcastFailureClass: Equatable, Sendable {
     ///   success-like handling (see `MigrationSendingStore`/`MigrationNoteSplitStore`/
     ///   `RootInitialization`'s identical dedicated `catch` clauses for this case) and this
     ///   classifier must never swallow that distinction.
-    /// - anything else -> `.endpointUnreachable`: every other throw from a broadcast call is, by
-    ///   construction, a post-Tor-bootstrap connect/submit failure (see the taxonomy fact above for
-    ///   why an unreachable endpoint under Tor surfaces as `.migrationTorUnavailable` instead, and so
-    ///   never reaches this branch).
+    /// - R9-T7 (MOB-1497 review remediation, finding 9): `ZcashError.migrationBroadcastDuringSync`
+    ///   (ZRUST0126) -> `nil`: a pure pre-flight rejection — the SDK throws this as the literal
+    ///   first statement of every broadcast entry point when the synchronizer is `.syncing`, before
+    ///   any host/network work at all (see `SDKSynchronizerClient.stopSyncBeforeMigrationBroadcast()`'s
+    ///   doc). Every broadcast lane now stops sync first specifically to avoid this, but the guard is
+    ///   only advisory/point-in-time (a race can still land between a lane's own stop and the SDK's
+    ///   actual attempt) — categorically NOT an endpoint failure, so it must never rotate/consume an
+    ///   R16 retry or count toward R17 exhaustion; retrying is free (nothing was ever attempted).
+    /// - anything else -> `.endpointUnreachable`: every other throw from a broadcast call — i.e.
+    ///   everything that ISN'T one of the three explicit carve-outs above — is, by construction, a
+    ///   post-Tor-bootstrap connect/submit failure (see the taxonomy fact above for why an
+    ///   unreachable endpoint under Tor surfaces as `.migrationTorUnavailable` instead, and so never
+    ///   reaches this branch).
     static func classify(error: Error) -> MigrationBroadcastFailureClass? {
         switch error {
         case ZcashError.migrationTorUnavailable:
             return MigrationBroadcastFailureClass.torUnavailable
 
         case ZcashError.migrationRecordFailedAfterBroadcast(_):
+            return nil
+
+        case ZcashError.migrationBroadcastDuringSync:
             return nil
 
         default:

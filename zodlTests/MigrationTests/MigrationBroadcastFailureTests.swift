@@ -33,13 +33,27 @@ import Foundation
         #expect(result == nil)
     }
 
+    /// R9-T7 (MOB-1497 review remediation, finding 9): a pure pre-flight rejection — the SDK throws
+    /// this as the literal first statement of every broadcast entry point when the synchronizer is
+    /// `.syncing`, before any host/network work at all — so it must never be swallowed into a
+    /// routable `.endpointUnreachable` (which would pollute the persisted R16 rotation episode with a
+    /// healthy endpoint over a mere overlap with an independently-scheduled sync). Defense in depth
+    /// for the BG lane's own stop-before-broadcast fix (`RootInitialization.executeBroadcastAction`):
+    /// the guard stays only advisory/point-in-time, so a race can still slip between a lane's stop
+    /// and the SDK's actual attempt.
+    @Test func migrationBroadcastDuringSyncClassifiesAsNil() {
+        let result = MigrationBroadcastFailureClass.classify(error: ZcashError.migrationBroadcastDuringSync)
+
+        #expect(result == nil)
+    }
+
     @Test func anyOtherThrownErrorClassifiesAsEndpointUnreachable() {
         let result = MigrationBroadcastFailureClass.classify(error: SomeOtherError())
 
         #expect(result == MigrationBroadcastFailureClass.endpointUnreachable)
     }
 
-    /// A DIFFERENT `ZcashError` case (neither of the two this classifier special-cases) still falls
+    /// A DIFFERENT `ZcashError` case (none of the ones this classifier special-cases) still falls
     /// through to the generic "any other error from a broadcast call" bucket.
     @Test func unrelatedZcashErrorCaseClassifiesAsEndpointUnreachable() {
         let result = MigrationBroadcastFailureClass.classify(error: ZcashError.migrationSyncBlocked)
