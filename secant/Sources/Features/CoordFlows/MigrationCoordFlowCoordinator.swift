@@ -502,8 +502,14 @@ extension MigrationCoordFlow {
                 // (W5, ZIP-0318 MUST: at most one broadcast per screen regardless of how many
                 // transfers are overdue). The cap is the contract now, so this no longer needs to
                 // read `migrationTransfers` at all.
+                // R8-T6: `entersViaSendNow` threads the lane context so `MigrationSendingStore`
+                // routes `onAppear` through the silence-window gate-check/wait flow instead of the
+                // immediate stop+broadcast every other lane still uses (dust, immediate/manual/
+                // plan-first review, Keystone) — those never consulted `sendGate()` and still don't.
                 return .run { send in
-                    await send(.pushHydratedPathState(.sending(MigrationSending.State(totalCount: 1))))
+                    await send(
+                        .pushHydratedPathState(.sending(MigrationSending.State(totalCount: 1, entersViaSendNow: true)))
+                    )
                 }
 
             case .path(.element(id: let id, action: .status(.delegate(.reschedule)))):
@@ -1056,11 +1062,12 @@ extension MigrationCoordFlow {
             stalledHoursAgo: await liveStalledHoursAgo(accountUUID: accountUUID, hasStalledRow: stalledRow != nil),
             isFlowRoot: isFlowRoot
         )
-        state.isSendNowDisabled = await migrationManager.sendGate() != MigrationSendGate.allowed
-        // [MOB-1496] W3 review fix C: hydrated here the same way `isSendNowDisabled` is, right
-        // above — otherwise the footer briefly reads "about 0 mins" for a frame at re-entry, before
-        // `onAppear`'s own `.statusLoaded` lands (`.resume` is the only presentation that renders
-        // it). Same shared formula `MigrationStatusStore.loadStatus` uses, so the two can't drift.
+        // [MOB-1496] W3 review fix C: hydrated here (not left to `onAppear`'s own `.statusLoaded`)
+        // so the footer doesn't briefly read "about 0 mins" for a frame at re-entry (`.resume` is
+        // the only presentation that renders it). Same shared formula `MigrationStatusStore
+        // .loadStatus` uses, so the two can't drift. R8-T6: `isSendNowDisabled` no longer needs a
+        // twin hydration here — it's computed straight off `state.rows` (already set above), which
+        // this constructor call already populated.
         state.syncPrivacyBufferMinutes = MigrationStatus.syncPrivacyBufferMinutes(
             from: sdkSynchronizer.migrationPrivacySyncBufferDuration()
         )
@@ -1130,10 +1137,9 @@ extension MigrationCoordFlow {
             totalDurationHours: summary.estimatedDurationHours,
             isFlowRoot: isFlowRoot
         )
-        state.isSendNowDisabled = await migrationManager.sendGate() != MigrationSendGate.allowed
         // [MOB-1496] W3 review fix C: see `statusResumeState`'s twin hydration above — this
         // presentation doesn't render the footer today, but hydrating both builders identically
-        // (matching `isSendNowDisabled`'s own precedent) keeps them from drifting if that changes.
+        // keeps them from drifting if that changes.
         state.syncPrivacyBufferMinutes = MigrationStatus.syncPrivacyBufferMinutes(
             from: sdkSynchronizer.migrationPrivacySyncBufferDuration()
         )

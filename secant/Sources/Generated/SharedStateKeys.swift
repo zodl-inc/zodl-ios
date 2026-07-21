@@ -37,4 +37,5 @@ public extension String {
     static let migrationCommittedSchedule = "sharedStateKey_migrationCommittedSchedule"
     static let migrationStoppedSyncForBroadcast = "sharedStateKey_migrationStoppedSyncForBroadcast"
     static let migrationNetworkSnapshot = "sharedStateKey_migrationNetworkSnapshot"
+    static let migrationSendWaitActive = "sharedStateKey_migrationSendWaitActive"
 }
