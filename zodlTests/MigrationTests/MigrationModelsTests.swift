@@ -231,9 +231,7 @@ import Foundation
         let snapshot = MigrationNetworkSnapshot(
             useTor: true,
             syncEndpoint: MigrationNetworkSnapshot.Endpoint(host: "na.zec.rocks", port: 443, secure: true),
-            syncProvider: ServerProvider.zecRocks,
             broadcastEndpoint: MigrationNetworkSnapshot.Endpoint(host: "us.zec.stardust.rest", port: 443, secure: true),
-            broadcastProvider: ServerProvider.stardust,
             takenAt: Date(timeIntervalSince1970: 1_700_000_000)
         )
 
@@ -244,9 +242,7 @@ import Foundation
         let original = MigrationNetworkSnapshot(
             useTor: true,
             syncEndpoint: MigrationNetworkSnapshot.Endpoint(host: "na.zec.rocks", port: 443, secure: true),
-            syncProvider: ServerProvider.zecRocks,
             broadcastEndpoint: MigrationNetworkSnapshot.Endpoint(host: "us.zec.stardust.rest", port: 443, secure: true),
-            broadcastProvider: ServerProvider.stardust,
             takenAt: Date(timeIntervalSince1970: 1_700_000_000),
             committedAt: Date(timeIntervalSince1970: 1_700_000_500)
         )
@@ -268,9 +264,7 @@ import Foundation
         let committed = MigrationNetworkSnapshot(
             useTor: true,
             syncEndpoint: MigrationNetworkSnapshot.Endpoint(host: "na.zec.rocks", port: 443, secure: true),
-            syncProvider: ServerProvider.zecRocks,
             broadcastEndpoint: MigrationNetworkSnapshot.Endpoint(host: "us.zec.stardust.rest", port: 443, secure: true),
-            broadcastProvider: ServerProvider.stardust,
             takenAt: Date(timeIntervalSince1970: 1_700_000_000),
             committedAt: Date(timeIntervalSince1970: 1_700_000_500)
         )

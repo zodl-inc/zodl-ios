@@ -236,7 +236,6 @@ struct MigrationManagerTests {
         let variant = MigrationDerivations.bannerVariant(
             isIronwoodActivated: true,
             state: MigrationState.inProgress(progress),
-            hasInvalid: false,
             hasOverdue: true,
             isManualDelivery: false,
             isNextTransferDue: false,
@@ -2078,7 +2077,10 @@ struct MigrationManagerTests {
             estimatedDurationHours: 6
         )
         scheduleStorage.recordCommittedSchedule(schedule, for: softwareAccount.id, now: Date())
-        snapshotStorage.recordSnapshot(Self.someNetworkSnapshot(), for: softwareAccount.id)
+        // MOB-1497 rebase: COMMITTED, not provisional — `reconcile()`'s stale-`.notStarted` clear
+        // deliberately spares a provisional snapshot now (`clearIfCommitted`), so the stale-cleanup
+        // this test pins must arrange the committed shape it actually targets.
+        snapshotStorage.recordSnapshot(Self.someNetworkSnapshot(committedAt: Date(timeIntervalSince1970: 1_650_000_000)), for: softwareAccount.id)
 
         await withDependencies {
             $0.sdkSynchronizer = SDKSynchronizerClient.mocked(
@@ -3519,9 +3521,7 @@ struct MigrationManagerTests {
         let onExisting = MigrationNetworkSnapshot(
             useTor: true,
             syncEndpoint: base.syncEndpoint,
-            syncProvider: base.syncProvider,
             broadcastEndpoint: base.broadcastEndpoint,
-            broadcastProvider: base.broadcastProvider,
             takenAt: base.takenAt
         )
         snapshotStorage.recordSnapshot(onExisting, for: account)
