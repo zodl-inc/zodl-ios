@@ -447,6 +447,18 @@ extension Root {
                 return migrationBackgroundSessionEffect(state: &state, handle: handle)
 
             case .initialization(.migrationBackgroundSyncOnly(let handle)):
+                // R8 final cumulative review (Finding 2): `completeSyncOnlySession` sends this
+                // hand-off back into the reducer — but `.migrationBackgroundTaskExpired` can win the
+                // race and complete the session FIRST (its guarded active-session branch clears
+                // `activeMigrationBackgroundSessionHandle` — see that action's doc) while this send
+                // is already in flight and survives the tree's own cancellation. Guard on the SAME
+                // live-session marker before adopting anything: `nil` means expiration already
+                // completed/re-armed this session, so adopting `handle` into `state.bgTask` here
+                // would resurrect a task iOS already considers done (risking a second
+                // `setTaskCompleted` on it from a later completion path) and kick a sync start
+                // inside a dead BG window.
+                guard state.activeMigrationBackgroundSessionHandle != nil else { return .none }
+
                 // Sync-only session: never broadcasts. Re-arm up front, then reuse the
                 // `power_wifi_sync` handler's own sync-kick verbatim (`state.bgTask` + `.retryStart`)
                 // — `synchronizerStateChanged` completes `state.bgTask` on
@@ -1759,18 +1771,33 @@ extension Root {
     ///
     /// Called at every such external-teardown site, BEFORE the reset/pop itself. Safe to call
     /// unconditionally: a no-op (no nudge) when the flag isn't set. When it IS set, clears it and
-    /// — only when `migrationStoppedSyncForBroadcast` is ALSO set (sync was genuinely stopped for
-    /// a broadcast that never happened) — fires the SAME `refreshMigrationSyncGate()` nudge
-    /// `.waitCancelTapped` already uses, so the existing `.migrationSyncGateChanged` resume
-    /// machinery (above) restarts sync exactly as if the user had tapped Cancel themselves.
+    /// ALWAYS fires the SAME `refreshMigrationSyncGate()` nudge `.waitCancelTapped` already uses,
+    /// so the existing `.migrationSyncGateChanged` resume machinery (above) restarts sync exactly
+    /// as if the user had tapped Cancel themselves.
+    ///
+    /// R8 final cumulative review (Finding 1): the nudge used to be gated on
+    /// `migrationStoppedSyncForBroadcast` ALSO being set — but that flag can be legitimately
+    /// consumed WHILE the hold is still live: an UNRELATED `.migrationSyncGateChanged(false)`
+    /// (e.g. a different lane's failure nudge, or a prior broadcast's SDK gate expiring mid-wait)
+    /// satisfies `shouldResume` purely off `migrationStoppedSyncForBroadcast`, clears THAT flag,
+    /// and replays `.retryStart` — which re-defers on the still-live hold and sets
+    /// `syncDeferredByMigrationGate`. A helper that only nudges when `migrationStoppedSyncForBroadcast`
+    /// is (still) set would then find it already `false` and skip the nudge — stranding
+    /// `syncDeferredByMigrationGate` with no future `.migrationSyncGateChanged` arrival left to
+    /// consume it (sync stays stopped until the next foreground event). The nudge is now
+    /// unconditional on clearing a LIVE hold, independent of either flag's value: it re-pushes the
+    /// current gate reading, and `.migrationSyncGateChanged`'s `shouldResume` already handles BOTH
+    /// `syncDeferredByMigrationGate` and `migrationStoppedSyncForBroadcast` — whichever (if either)
+    /// is actually stranded gets consumed by this one nudge. A spurious nudge when NEITHER flag is
+    /// stranded is a genuine no-op: with no real SDK gate transition (`isGenuineChange` false) and
+    /// both flags already clear (`shouldResume` false), `.migrationSyncGateChanged`'s own guard
+    /// (`isGenuineChange || shouldResume`) returns `.none` before touching any state — so this can
+    /// never manufacture a spurious resume/reconcile out of nothing.
     func releaseSendWaitHold() -> Effect<Root.Action> {
         @Shared(.inMemory(.migrationSendWaitActive)) var migrationSendWaitActive: Bool = false
         guard migrationSendWaitActive else { return .none }
 
         $migrationSendWaitActive.withLock { $0 = false }
-
-        @Shared(.inMemory(.migrationStoppedSyncForBroadcast)) var migrationStoppedSyncForBroadcast: Bool = false
-        guard migrationStoppedSyncForBroadcast else { return .none }
 
         return .run { [migrationManager] _ in await migrationManager.refreshMigrationSyncGate() }
     }
