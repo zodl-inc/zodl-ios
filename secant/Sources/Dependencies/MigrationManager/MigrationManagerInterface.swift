@@ -171,6 +171,22 @@ struct MigrationManagerClient: Sendable {
     // LATER endpoint-class failure takes `routeBroadcastFailure`'s same-server exemption naturally.
     // `= { _ in }` is a no-op default, not a test fallback.
     var overrideBroadcastEndpointToSyncServer: @Sendable (_ accountUUID: AccountUUID?) async -> Void = { _ in }
+    // MOB-1497 (R9-T3, C1 fix): identity-custom classification for the account's CURRENTLY
+    // CONFIGURED sync endpoint — the exact same classification `MigrationManagerImpl
+    // .createNetworkSnapshot` computes internally when building a fresh snapshot, but with NO
+    // snapshot storage read/write and no forming, so a caller can decide whether to persist + form
+    // (non-custom) or detour straight to the sheet (custom) BEFORE either happens. This exists
+    // because detecting via `formNetworkSnapshot` + a peek (the way the Tor sheet's own
+    // presentation-time detection works) is unsafe for the flag-on skip branches:
+    // `setNetworkPrivacyOptions` below must run BEFORE `formNetworkSnapshot` for the non-custom
+    // outcome (see that member's doc — a later persist does not correct an already-formed
+    // snapshot's baked-in `useTor`), so detection here must never form. `= { false }` (not custom)
+    // is a DELIBERATE safe default (unlike most `= { ... }` defaults in this file, which exist only
+    // because the macro requires a literal and production always overrides via `live()`) — an
+    // unstubbed test or preview reads "not custom", matching the coordinator's own
+    // `isIdentityCustom(nil)` nil-snapshot default and every existing non-custom flag-on test's
+    // expectations without needing to know this member exists.
+    var isSyncServerIdentityCustom: @Sendable () -> Bool = { false }
     // Persists the pre-run Tor choice the migration entry/Tor sheet writes. Consumed by
     // `ensureNetworkSnapshot`/`formNetworkSnapshot` when a run's snapshot is first taken — a later
     // call does NOT alter an already-active run's snapshot (see `MigrationNetworkSnapshot.useTor`'s
