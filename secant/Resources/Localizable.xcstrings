@@ -12516,23 +12516,6 @@
         }
       }
     },
-    "migrationTorSheet.disclosure" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Migration transfers will be sent to %@ — a different server than the one you sync with."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Las transferencias de migración se enviarán a %@, un servidor diferente al que usas para sincronizar."
-          }
-        }
-      }
-    },
     "migrationTorSheet.offWarning.keepOn" : {
       "extractionState" : "manual",
       "localizations" : {

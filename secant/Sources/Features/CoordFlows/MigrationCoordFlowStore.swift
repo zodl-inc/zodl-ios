@@ -104,6 +104,14 @@
 //  to flip `useTor` on the ALREADY-formed provisional snapshot without touching its endpoint. See
 //  `MigrationCoordFlowCoordinator.swift`'s header doc for the full routing detail.
 //
+//  MOB-1497 (T4, Q3'26 canvas): the custom-server Tor sheet's "Switch Server" is wired up — a new
+//  `switchServerRequested` action (sibling of `flowFinished`) that the coordinator emits after
+//  dismissing the sheet, persisting nothing for the abandoned attempt; `Root` tears the flow down
+//  exactly as `flowFinished` does and opens Server Setup. The R13 broadcast-server disclosure is
+//  also fully retired: the sheet-skipped/confirmed footers on Transfer Plan / Review Transfer and
+//  their `broadcastDisclosureHost` state are gone, so the coordinator no longer threads a host or
+//  peeks the snapshot for one.
+//
 
 import SwiftUI
 import ComposableArchitecture
@@ -223,6 +231,12 @@ struct MigrationCoordFlow {
     enum Action {
         case entry(MigrationEntry.Action)
         case flowFinished
+        /// MOB-1497 (T4): the custom-server Tor sheet's "Switch Server" — a sibling terminal signal
+        /// to `flowFinished`, emitted by the coordinator (`.torSheet(.delegate(.switchServer))`)
+        /// after it dismisses the sheet and clears `pendingTorDestination`. Persists NOTHING for the
+        /// abandoned attempt (the run's snapshot stays provisional); `Root` runs the SAME teardown
+        /// as `flowFinished` and then routes to Server Setup instead of closing to Home.
+        case switchServerRequested
         case onAppear
         case path(StackActionOf<Path>)
         /// Internal: the async re-entry/permission-step helper resolved the next screen to push

@@ -12,6 +12,11 @@
 //  presents the same Cancel/Retry bottom sheet `MigrationNoteSplit` uses (this screen had no failure
 //  path before).
 //
+//  MOB-1497 (T4, Q3'26 canvas): the R13 broadcast-server disclosure footer (added in T2 for the
+//  immediate mode, whether the Tor sheet was skipped or confirmed) is retired per the new designs —
+//  the footer, its `disclosureFooter` builder, and the store's `broadcastDisclosureHost` state are
+//  removed. Migration screens no longer name which server will receive transfers.
+//
 
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
@@ -54,11 +59,6 @@ struct MigrationReviewTransferView: View {
                         detailRows
                     }
                     .padding(.vertical, 1)
-                }
-
-                if let broadcastDisclosureHost = store.broadcastDisclosureHost {
-                    disclosureFooter(host: broadcastDisclosureHost)
-                        .padding(.top, 16)
                 }
 
                 ZashiButton(String(localizable: .generalConfirm)) {
@@ -177,21 +177,6 @@ struct MigrationReviewTransferView: View {
                 value: "\(store.fee.decimalString()) ZEC",
                 rowAppereance: .bottom
             )
-        }
-    }
-
-    // MARK: - Disclosure footer (MOB-1497 T2, R13 — sheet-skipped/sheet-confirmed provider users)
-
-    /// Same visual shape as `MigrationStatusView.footerNote` / `MigrationTransferPlanView`'s twin.
-    @ViewBuilder private func disclosureFooter(host: String) -> some View {
-        HStack(alignment: .top, spacing: 8) {
-            Asset.Assets.infoOutline.image
-                .zImage(size: 16, style: Design.Text.tertiary)
-
-            Text(String(localizable: .migrationTorSheetDisclosure(host)))
-                .zFont(size: 12, style: Design.Text.tertiary)
-                .multilineTextAlignment(.leading)
-                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
