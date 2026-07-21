@@ -49,8 +49,8 @@ struct MigrationSendingView: View {
                         retryTapped: { store.send(.retryTapped) },
                         useSyncServerTapped: { store.send(.useSyncServerTapped) }
                     )
+                    .alert($store.scope(state: \.alert, action: \.alert))
                 }
-                .alert($store.scope(state: \.alert, action: \.alert))
         }
         .onAppear {
             store.send(.onAppear)
