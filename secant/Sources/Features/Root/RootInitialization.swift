@@ -1711,6 +1711,12 @@ extension Root {
     ///   - catch `migrationRecordFailedAfterBroadcast` (landed): stopped, NOT nudged.
     ///   - catch anything else (incl. Tor-unavailable, and — post carve-out — the nil-classified
     ///     during-sync race): stopped, nudged.
+    ///
+    /// T5 (MOB-1497): additionally, because this executor is BACKGROUND-only, a Tor-class route
+    /// (R14/R15) here arms the per-account "pending background Tor prompt" flag
+    /// (`migrationManager.setPendingBackgroundTorPrompt`) so T6 can surface a "Couldn't Connect to Tor"
+    /// sheet over Home on the next foreground — see the `catch` clause's own comment for why arming
+    /// lives here and not in the shared `routeBroadcastFailure`.
     private static func executeBroadcastAction(
         _ winnerAccountUUID: AccountUUID,
         classifications: [(accountUUID: AccountUUID, classification: MigrationAccountClassification)],
@@ -1785,10 +1791,25 @@ extension Root {
             // routes as Tor-class here) — same re-arm-only outward behavior as before; the route's
             // only effect is the possible embedded rotation (see this method's own doc). R9-T7: a
             // `ZcashError.migrationBroadcastDuringSync` race (the stop above narrows this window but
-            // the guard stays only point-in-time) now classifies to `nil` here — see
-            // `MigrationBroadcastFailureClass.classify(error:)`'s dedicated carve-out — so it never
-            // reaches `routeBroadcastFailure`'s stateful routing at all.
-            _ = await dependencies.migrationManager.routeBroadcastFailure(winnerAccountUUID, error: error)
+            // the guard stays only point-in-time) classifies to `nil` inside the
+            // `routeBroadcastFailure(_:error:)` overload — see `MigrationBroadcastFailureClass
+            // .classify(error:)`'s dedicated carve-out — so it never reaches the stateful routing
+            // (nor the prompt latch below) at all.
+            // T5 (MOB-1497): this executor is BACKGROUND-only — its single caller is
+            // `runMigrationSession`'s `.broadcast` case, never a foreground path (foreground broadcasts
+            // call `routeBroadcastFailure` directly from `MigrationSending`/`MigrationNoteSplitStore`).
+            // So a Tor-class route HERE (R14 `.torFirstRunChoice` / R15 `.torHold`) latches the
+            // per-account "pending background Tor prompt" flag for T6 to surface over Home on the next
+            // foreground — arming it at THIS BG call site (rather than inside the shared
+            // `routeBroadcastFailure`) is what keeps foreground failures, which have their own on-screen
+            // UI, from ever arming it. The `.networkError`/`.invalidNote`/`.expired` result path above
+            // can only ever classify as `.endpointUnreachable` (never a Tor route — see
+            // `MigrationBroadcastFailureClass.classify(result:)`), so this thrown-error path is the only
+            // place the flag can be armed.
+            let route = await dependencies.migrationManager.routeBroadcastFailure(winnerAccountUUID, error: error)
+            if route == MigrationBroadcastFailureRoute.torFirstRunChoice || route == MigrationBroadcastFailureRoute.torHold {
+                await dependencies.migrationManager.setPendingBackgroundTorPrompt(winnerAccountUUID, true)
+            }
             // A throwing broadcast attempt for any OTHER reason is not itself a definite outcome to
             // notify about — treat it like the `nil` "nothing executed" case: re-arm the next
             // window and let that session's own outcome (or the engine's self-heal) settle it,
