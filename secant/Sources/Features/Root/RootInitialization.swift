@@ -1209,6 +1209,24 @@ extension Root {
                     if let pendingMigrationBackgroundSession {
                         await send(.initialization(.migrationBackgroundSession(pendingMigrationBackgroundSession)))
                     }
+                    // MOB-1497 (T6): cold-launch counterpart to the `.willEnterForeground`
+                    // Tor-failure-prompt hook. On a cold start the foreground notification that
+                    // normally carries `.checkMigrationTorFailurePrompt` fires DURING initialization,
+                    // while `selectedWalletAccount` (in-memory `@Shared`) is still nil — so that
+                    // dispatch's gate no-ops and nothing re-checks once Home lands, leaving the prompt
+                    // to only appear on the NEXT warm foreground. This checkpoint is the launch path's
+                    // "just reached Home" point (the same one the deep-link / background-session
+                    // replays above ride): it runs exactly once per cold launch, AFTER
+                    // `loadedWalletAccounts` populated the account, and only when Home is actually shown
+                    // (`!isAtDeeplinkWarningScreen`) and no migration-notification tap is claiming this
+                    // launch (`!hasPendingMigrationDeepLink`, which routes INTO the migration flow
+                    // instead — that explicit tap wins, and the prompt waits for the next foreground).
+                    // The once-per-foreground latch (`didOfferTorFailurePromptThisForeground`, reset on
+                    // `.didEnterBackground`) dedupes against a later same-session `.willEnterForeground`,
+                    // so a prompt is offered at most once per foreground regardless of which hook fires.
+                    if !isAtDeeplinkWarningScreen && !hasPendingMigrationDeepLink {
+                        await send(.checkMigrationTorFailurePrompt)
+                    }
                 }
                 .cancellable(id: state.CancelId, cancelInFlight: true)
                 
