@@ -79,7 +79,22 @@ extension SignWithKeystoneCoordFlow {
                     }
                 }
                 return .none
-                
+
+            // MOB-1510: `sendConfirmationState` lives at the flow's root here (no `.confirmWithKeystone`
+            // path element in this coordinator — the root screen already IS the Keystone confirm
+            // screen), so this arrives as a root-level `.sendConfirmation` action rather than a
+            // `.path(...)`-wrapped one, unlike the other 3 send-side coordinators.
+            case .sendConfirmation(.keystoneFirmwareUpdateRequired):
+                state.path.append(.keystoneFirmwareUpdate(state.sendConfirmationState))
+                return .none
+
+            // Close: there is no `.confirmWithKeystone` path element to pop back to (the root
+            // screen already is one) — clear the whole path, landing back on the root
+            // `SignWithKeystoneView`, ready for a fresh `getSignatureTapped` once firmware is updated.
+            case .path(.element(id: _, action: .keystoneFirmwareUpdate(.keystoneFirmwareUpdateCloseTapped))):
+                state.path.removeAll()
+                return .none
+
             default: return .none
             }
         }

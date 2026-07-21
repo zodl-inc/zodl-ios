@@ -9357,6 +9357,74 @@
         }
       }
     },
+    "keystone.firmwareUpdate.body" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your Keystone's firmware (%1$@) is below the minimum supported version (%2$@). Update your device's firmware, then try again."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "El firmware de tu Keystone (%1$@) está por debajo de la versión mínima admitida (%2$@). Actualiza el firmware de tu dispositivo y vuelve a intentarlo."
+          }
+        }
+      }
+    },
+    "keystone.firmwareUpdate.close" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Close"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cerrar"
+          }
+        }
+      }
+    },
+    "keystone.firmwareUpdate.legacyBody" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your Keystone's firmware is too old to report its version and is below the minimum supported version (%1$@). Update your device's firmware, then try again."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "El firmware de tu Keystone es demasiado antiguo para informar su versión y está por debajo de la versión mínima admitida (%1$@). Actualiza el firmware de tu dispositivo y vuelve a intentarlo."
+          }
+        }
+      }
+    },
+    "keystone.firmwareUpdate.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Keystone Firmware Update Required"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Actualización de Firmware de Keystone Requerida"
+          }
+        }
+      }
+    },
     "keystone.scanInfo" : {
       "extractionState" : "manual",
       "localizations" : {
