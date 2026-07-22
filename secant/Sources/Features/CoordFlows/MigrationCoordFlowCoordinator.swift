@@ -557,7 +557,7 @@ extension MigrationCoordFlow {
                     return .send(.flowFinished)
                 }
 
-                return transferPlanPostConfirmChain(variant: planState.variant, state: &state)
+                return transferPlanPostConfirmChain(variant: planState.variant, schedule: planState.schedule, state: &state)
 
                 // MARK: - ReviewTransfer
 
@@ -1033,26 +1033,63 @@ extension MigrationCoordFlow {
 
     // MARK: - TransferPlan: shared post-confirm chain (software `.confirmed` + Keystone `planCommit`)
 
-    /// Scheduled/recreated push `.scheduled`; manual pushes `.sending` (totalCount 1, current
-    /// network-privacy options) — then schedules the first background window either way. Shared by
+    /// Scheduled/recreated hydrate + push `.scheduled` (MOB-1458 W-E — an async peek is needed to
+    /// hydrate, so this follows the `pushHydratedPathState` idiom rather than appending
+    /// synchronously); manual pushes `.sending` (totalCount 1, current network-privacy options)
+    /// synchronously, unchanged. Either way, schedules the first background window after. Shared by
     /// the software `TransferPlan.delegate(.confirmed)` row and the Keystone `planCommit` resume
     /// (`resumeAfterKeystoneSigning`), which both reach this point with a signed+stored schedule
-    /// (and, when needed, an already-signed+submitted note split — MOB-1478 W4).
+    /// (and, when needed, an already-signed+submitted note split — MOB-1478 W4). `schedule` is the
+    /// same one just signed+recorded (`recordCommittedSchedule` always runs before this chain, on
+    /// every lane — see `scheduledState`'s doc for how it combines with the manager's summary).
     private func transferPlanPostConfirmChain(
         variant: MigrationTransferPlan.State.Variant,
+        schedule: MigrationSchedule?,
         state: inout MigrationCoordFlow.State
     ) -> Effect<MigrationCoordFlow.Action> {
         switch variant {
         case .scheduled, .recreated:
-            state.path.append(.scheduled(MigrationScheduled.State()))
+            let accountUUID = state.selectedWalletAccount?.id
+            return .run { [migrationBGScheduler, accountUUID, schedule] send in
+                await send(.pushHydratedPathState(.scheduled(await scheduledState(accountUUID: accountUUID, schedule: schedule))))
+                await migrationBGScheduler.scheduleFirstWindow()
+            }
         case .manual:
             // MOB-1497 (T8, Q3'26 canvas): the manual-delivery run's FIRST transfer — same "sent"
             // success wording as every subsequent manual-step confirm (see the
             // `.reviewTransfer(.delegate(.confirmed))` case above).
             let sendingState = MigrationSending.State(totalCount: 1, isManualStepLane: true)
             state.path.append(.sending(sendingState))
+            return .run { [migrationBGScheduler] _ in await migrationBGScheduler.scheduleFirstWindow() }
         }
-        return .run { [migrationBGScheduler] _ in await migrationBGScheduler.scheduleFirstWindow() }
+    }
+
+    /// MOB-1458 (W-E): hydrates `MigrationScheduled.State` from the manager's summary PLUS the
+    /// just-committed `schedule` in scope. `totalAmount`/`sentCount`/`totalCount` are cumulative
+    /// across the whole logical run (not just this commit): `summary.transfersSent`/`transfersTotal`
+    /// already fold in the persisted `sentRecords` from any PRIOR schedule the same run committed
+    /// (`MigrationScheduleStorage.recordCommittedSchedule`'s "preserves sentRecords" doc), so a
+    /// `.recreated` re-entry (some transfers already broadcast under an earlier schedule for this
+    /// run) reports the WHOLE run's numbers — consistent with those cumulative counts, not just the
+    /// fresh schedule's own. `totalAmount` mirrors that: `summary.transferred` (already-sent value)
+    /// plus `schedule`'s own (not-yet-sent) transfer sum. For a genuinely fresh `.scheduled` commit
+    /// `transferred`/`transfersSent` are naturally `.zero`/`0` (nothing persisted sent yet), so this
+    /// collapses to exactly the new schedule's own totals — matching the B9 canvas's "Transfers 0
+    /// of 6". `durationHours`/`dustAmount` come straight from the summary: `estimatedDurationHours`
+    /// is the fresh schedule's own remaining-time estimate; `dust` rides the SDK's stored-plan
+    /// residual (non-terminal migration state, so `residualAfterMigration` returns the STORED
+    /// value, not a live replan — verified against `rust/src/migration.rs`), which is final/stable
+    /// at this moment, not a value that can silently change while this screen is up.
+    private func scheduledState(accountUUID: AccountUUID?, schedule: MigrationSchedule?) async -> MigrationScheduled.State {
+        let summary = await migrationManager.migrationSummary(accountUUID)
+        let newScheduleAmount = schedule?.transfers.reduce(Zatoshi.zero) { $0 + $1.amount } ?? Zatoshi.zero
+        return MigrationScheduled.State(
+            totalAmount: summary.transferred + newScheduleAmount,
+            sentCount: summary.transfersSent,
+            totalCount: summary.transfersTotal,
+            durationHours: summary.estimatedDurationHours,
+            dustAmount: summary.dust
+        )
     }
 
     // MARK: - Keystone signing (MOB-1468): resume after store
@@ -1161,7 +1198,7 @@ extension MigrationCoordFlow {
         switch context {
         case .planCommit:
             guard case let .transferPlan(planState) = state.path.last else { return .none }
-            return transferPlanPostConfirmChain(variant: planState.variant, state: &state)
+            return transferPlanPostConfirmChain(variant: planState.variant, schedule: planState.schedule, state: &state)
 
         case .immediateReview:
             // MOB-1513/MOB-1496 (W-B): unreachable in practice — `submitImmediateKeystoneTransaction`
