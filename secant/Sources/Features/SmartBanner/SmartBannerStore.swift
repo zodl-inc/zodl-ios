@@ -745,7 +745,26 @@ struct SmartBanner {
                 // a final low-remainder update) and spuriously re-show the banner.
                 state.lastKnownBlocksRemaining = -1
                 if state.priorityContent == .priority3 || state.priorityContent == .priority45 || state.priorityContent == .priority4 {
-                    return .send(.closeAndCleanupBanner)
+                    // MOB-1513 (Defect B): closing here used to leave the slot empty with NO
+                    // re-evaluation — on an Ironwood-migration account this let currency-conversion
+                    // (priority8) claim the banner before migration ever got a chance to (the next
+                    // consideration of migration was whatever reactive `stateEvents` push or
+                    // foreground reconcile happened to come along later, if at all). Send the
+                    // migration re-check from a SINGLE `.run` that awaits the close directly
+                    // (`.closeBanner(true)`, not `.closeAndCleanupBanner`) before reading
+                    // `migrationManager.bannerVariant` fresh — mirroring `.migrationVariantUpdated`'s
+                    // own nil-variant close-and-continue branch just above, and for the SAME reason
+                    // its doc comment gives: `.closeAndCleanupBanner` wraps its send in its own
+                    // `.run`, which only SCHEDULES that nested effect rather than awaiting it, so a
+                    // second `await send(...)` right after it would race the close instead of running
+                    // after it settles. Idempotent and non-racing with a later `reconcile()` push:
+                    // both funnel through the same `.migrationVariantUpdated` handler and the same
+                    // rank-guarded `openBannerRequest`, so whichever lands first wins and the other
+                    // is a no-op (identical variant re-read, or a rejected equal/lower-ranked retrigger).
+                    return .run { [accountUUID = state.selectedWalletAccount?.id] send in
+                        await send(.closeBanner(true), animation: .easeInOut(duration: Constants.easeInOutDuration))
+                        await send(.migrationVariantUpdated(migrationManager.bannerVariant(accountUUID)))
+                    }
                 }
             case .error, .unprepared:
                 if state.lastKnownErrorMessage != snapshot.message {

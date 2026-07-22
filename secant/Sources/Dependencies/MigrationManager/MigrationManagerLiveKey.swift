@@ -1209,6 +1209,37 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// On a THROW, persists NOTHING — the flag is left `nil` so a LATER reconcile pass retries
     /// (self-healing: a transient propose failure must not wrongly freeze the flag at a stale
     /// value, and must not be mistaken for "evaluated, genuinely nothing pending").
+    ///
+    /// MOB-1513 (H3, verified-but-not-guarded): the "once per transition" gate above is confirmed —
+    /// this is called ONLY when `state == .complete` AND `remainderPending(for:) == nil`, never on
+    /// every `reconcile()` pass. But `reconcile()` itself is called from many, unrelated places —
+    /// `RootInitialization.swift` (foreground entry, `.retryStart`, the BG session's
+    /// `handleLandedBroadcast`, `.migrationSyncGateChanged`), `MigrationCoordFlowCoordinator.swift`
+    /// (right after a schedule/note-split store, ×3), `MigrationCommitPipeline.swift`,
+    /// `MigrationSendingStore.swift`, `MigrationNoteSplitStore.swift` — none of which know whether
+    /// SOME OTHER account's flow currently has an uncommitted `proposeMigrationTransfers` result on
+    /// screen. `reconcile()` walks EVERY candidate account each time it runs, so the one guaranteed
+    /// call this gate allows can still land while the user is reviewing a plan for the SAME account
+    /// that reached `.complete` — e.g. "Migrate Anyway" (`MigrationCoordFlowCoordinator
+    /// .migrateAnyway`/`MigrationComplete`'s `dustResolution`), whose visibility is driven by
+    /// `migrationSummary`'s OWN independent residual read (`scheduleStorage`/
+    /// `residualAfterMigration`), NOT by this method's `remainderPending` flag — so a user can reach
+    /// and act on that screen (kicking off its OWN fresh propose) before this evaluation has run even
+    /// once. If BOTH proposes are in flight for the same account, whichever lands second wins the
+    /// SDK's plan cache and the other's eventual commit fails `migrationPlanStale`.
+    ///
+    /// No guard was added for this: there is no existing "a migration screen that depends on a
+    /// held propose is on screen for account X" signal on this manager, and building one correctly
+    /// needs more than a flag flipped by `MigrationCoordFlowCoordinator`'s `.onAppear`/`.flowFinished`
+    /// — the AUTHORITATIVE open/close signal is `Root.State.path == .migrationCoordFlow`, owned by
+    /// `RootCoordinator.swift`, which closes it from THREE distinct sites (`.flowFinished`,
+    /// `.switchServerRequested`, and the defensive inline teardown inside `.home
+    /// (.walletAccountTapped)`) — missing any one of them would leave the flag stuck `true`,
+    /// permanently blocking this account's remainder evaluation (and therefore its "Migrate Anyway"/
+    /// batch-complete-vs-complete banner accuracy) until the app relaunches, which is a worse failure
+    /// mode than the rare race this would guard against. Flagged here as an accepted, documented
+    /// follow-up rather than adding that cross-file plumbing now — see this task's report for the
+    /// full reasoning.
     private func evaluateMigrationRemainder(for accountUUID: AccountUUID) async {
         guard let schedule = try? await sdkSynchronizer.proposeMigrationTransfers(accountUUID, false) else { return }
         gateStorage.setRemainderPending(!schedule.transfers.isEmpty, for: accountUUID)

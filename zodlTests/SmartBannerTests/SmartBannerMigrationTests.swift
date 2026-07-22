@@ -146,6 +146,55 @@ import ComposableArchitecture
         }
     }
 
+    /// MOB-1513: preemption regression — currency-conversion (priority8, the exact priority Defect
+    /// A/B let win incorrectly) showing when a reactive migration-state change comes in must still
+    /// be replaced by the migration banner, exactly like priority3/priority9 above. This behavior
+    /// predates MOB-1513 (the rank guard in `openBannerRequest` is untouched by either fix) — this
+    /// pins it specifically for priority8 so a future change can't silently regress the one priority
+    /// this bug was actually about.
+    @MainActor @Test func migrationStateChangedReplacesAShowingPriority8Banner() async {
+        let account = walletAccount(idByte: 13)
+        var state = SmartBanner.State()
+        state.$selectedWalletAccount.withLock { $0 = account }
+        state.priorityContent = .priority8
+        state.priorityContentRequested = .priority8
+        state.isOpen = true
+        let store = TestStore(initialState: state) {
+            SmartBanner()
+        } withDependencies: {
+            $0.migrationManager.bannerVariant = { accountUUID in
+                #expect(accountUUID == account.id)
+                // `.complete`, not the `State()` default (`.required`), so the assignment below is
+                // an observable change — same idiom as the other tests in this file.
+                return MigrationBannerVariant.complete
+            }
+        }
+        store.dependencies.mainQueue = .immediate
+
+        await store.send(.migrationStateChanged(MigrationState.inProgress(
+            MigrationProgress(completedTransfers: 0, totalTransfers: 3, remainingOrchard: Zatoshi.zero, nextTransferReadyAtHeight: nil)
+        )))
+        await store.receive(\.migrationVariantUpdated) {
+            $0.migrationBannerVariant = MigrationBannerVariant.complete
+        }
+        await store.receive(\.triggerPriority) {
+            $0.priorityContentRequested = .priorityMigration
+        }
+        // priorityMigration.rank (1.5) < priority8.rank (9) — allowed; banner is open, so it closes
+        // (non-clean) first, then re-requests, then re-opens with the new priority.
+        await store.receive(\.openBannerRequest)
+        await store.receive(\.closeBanner) {
+            $0.isOpen = false
+        }
+        await store.receive(\.openBannerRequest) {
+            $0.priorityContent = .priorityMigration
+        }
+        await store.receive(\.openBanner) {
+            $0.delay = 1.0
+            $0.isOpen = true
+        }
+    }
+
     @MainActor @Test func priority3RequestIsRejectedWhileMigrationShows() async {
         var state = SmartBanner.State()
         state.priorityContent = .priorityMigration
@@ -349,6 +398,112 @@ import ComposableArchitecture
         // Nil while some other priority (not migration) is showing: nothing else happens.
         #expect(store.state.priorityContent == .priority6)
         #expect(store.state.isOpen)
+    }
+
+    // MARK: - Reactive trigger: sync reaching upToDate re-checks migration (MOB-1513 Defect B)
+    //
+    // `syncStatusChangedEffect`'s `.upToDate` branch used to close the restoring/syncing banner via
+    // `.closeAndCleanupBanner` with NO re-evaluation, leaving the slot empty for whatever OTHER
+    // trigger happened to come along next — on an Ironwood-migration account with no OTHER reactive
+    // push arriving promptly, currency-conversion could claim the empty slot first. This test is red
+    // before the fix (the old code sends only `.closeAndCleanupBanner` -> `.closeBanner`, and stops —
+    // `store.receive(\.migrationVariantUpdated)` below would never be produced, failing the test's
+    // exhaustive-mode "unasserted action" check) and green after it.
+
+    @MainActor @Test func syncReachingUpToDateWhileRestoringBannerShowingReChecksMigration() async {
+        let account = walletAccount(idByte: 33)
+        var state = SmartBanner.State()
+        state.$selectedWalletAccount.withLock { $0 = account }
+        state.priorityContent = .priority3
+        state.priorityContentRequested = .priority3
+        state.isOpen = true
+        state.lastKnownBlocksRemaining = 5_000
+        let store = TestStore(initialState: state) {
+            SmartBanner()
+        } withDependencies: {
+            $0.migrationManager.isIronwoodActivated = { false }
+            $0.migrationManager.bannerVariant = { accountUUID in
+                #expect(accountUUID == account.id)
+                // `.complete`, not the `State()` default (`.required`), so the assignment below is
+                // an observable change — same idiom as the other tests in this file.
+                return MigrationBannerVariant.complete
+            }
+        }
+        store.dependencies.mainQueue = .immediate
+
+        var upToDateState = SynchronizerState.zero
+        upToDateState.syncStatus = SyncStatus.upToDate
+
+        await store.send(.synchronizerStateChanged(upToDateState.redacted)) {
+            // `ironwoodActivationFlipEffect`'s first-ever observation (untouched by this fix).
+            $0.lastObservedIronwoodActivation = false
+            // `syncStatusChangedEffect`'s own synchronous mutations, ahead of the `.upToDate` branch
+            // under test (also untouched by this fix).
+            $0.isSyncTimedOutAutoAppeareDisabled = false
+            $0.lastKnownBlocksRemaining = -1
+            $0.synchronizerStatusSnapshot = SyncStatusSnapshot.snapshotFor(state: SyncStatus.upToDate)
+        }
+        // The close (`.closeBanner(true)`, not `.closeAndCleanupBanner` — see the fix's doc comment
+        // for why that distinction matters for sequencing).
+        await store.receive(\.closeBanner) {
+            $0.isOpen = false
+            $0.priorityContentRequested = nil
+            $0.priorityContent = nil
+        }
+        await store.receive(\.openBannerRequest)
+        // The migration re-check this fix adds, awaited strictly AFTER the close settles.
+        await store.receive(\.migrationVariantUpdated) {
+            $0.migrationBannerVariant = MigrationBannerVariant.complete
+        }
+        await store.receive(\.triggerPriority) {
+            $0.priorityContentRequested = .priorityMigration
+        }
+        await store.receive(\.openBannerRequest) {
+            $0.priorityContent = .priorityMigration
+        }
+        await store.receive(\.openBanner) {
+            $0.delay = 1.0
+            $0.isOpen = true
+        }
+    }
+
+    /// Companion to the test above: with no migration pending (`bannerVariant` nil), the same
+    /// `.upToDate` transition must still close the restoring banner and leave the slot empty —
+    /// the re-check must not conjure a banner out of nothing.
+    @MainActor @Test func syncReachingUpToDateWithNoMigrationPendingLeavesSlotEmpty() async {
+        var state = SmartBanner.State()
+        state.priorityContent = .priority4
+        state.priorityContentRequested = .priority4
+        state.isOpen = true
+        state.lastKnownBlocksRemaining = 5_000
+        let store = TestStore(initialState: state) {
+            SmartBanner()
+        } withDependencies: {
+            $0.migrationManager.isIronwoodActivated = { false }
+            $0.migrationManager.bannerVariant = { _ in nil }
+        }
+        store.dependencies.mainQueue = .immediate
+
+        var upToDateState = SynchronizerState.zero
+        upToDateState.syncStatus = SyncStatus.upToDate
+
+        await store.send(.synchronizerStateChanged(upToDateState.redacted)) {
+            $0.lastObservedIronwoodActivation = false
+            $0.isSyncTimedOutAutoAppeareDisabled = false
+            $0.lastKnownBlocksRemaining = -1
+            $0.synchronizerStatusSnapshot = SyncStatusSnapshot.snapshotFor(state: SyncStatus.upToDate)
+        }
+        await store.receive(\.closeBanner) {
+            $0.isOpen = false
+            $0.priorityContentRequested = nil
+            $0.priorityContent = nil
+        }
+        await store.receive(\.openBannerRequest)
+        await store.receive(\.migrationVariantUpdated)
+        // Nil variant while nothing is showing (the close just above already cleared the slot):
+        // nothing else happens — the slot stays empty.
+        #expect(store.state.priorityContent == nil)
+        #expect(!store.state.isOpen)
     }
 
     // MARK: - Reactive trigger: Ironwood-activation flip (MOB-1483)
