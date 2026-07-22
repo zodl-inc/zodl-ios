@@ -65,6 +65,7 @@
 
 import Testing
 import Foundation
+@preconcurrency import Combine
 import ComposableArchitecture
 @testable @preconcurrency import ZcashLightClientKit
 @testable import zodl_internal
@@ -1834,8 +1835,9 @@ import ComposableArchitecture
     /// A kick BROADCAST failure is silent (B4 controller resolution 3): the user stays on B9
     /// Migration Scheduled with no failure UI, the deferred schedule store never even runs (C-1b:
     /// it needs a landed prep broadcast first), and the entries stay stashed in
-    /// `pendingKeystoneScheduleStore`. The run reads `splitPendingConfirmation` engine-side, so the
-    /// progress banner/route reflect it and BG windows retry the prep naturally.
+    /// `pendingKeystoneScheduleStore`. B4 fix wave: the kick makes its bounded attempts (3, spaced
+    /// via the injected clock) and then ARMS the state-event re-arm (`.firstDeliveryKickFailed`) so
+    /// the store still happens later — see the dedicated re-arm test below.
     @MainActor @Test func firstDeliveryKickBroadcastFailureLeavesScheduleStashedAndIsSilent() async {
         let scheduleStoreCalls = LockIsolated<Int>(0)
         let recordCommittedScheduleCalls = LockIsolated<Int>(0)
@@ -1855,6 +1857,7 @@ import ComposableArchitecture
         let store = TestStore(initialState: state) {
             MigrationCoordFlow()
         } withDependencies: {
+            $0.continuousClock = ImmediateClock()
             $0.sdkSynchronizer = .noOp
             $0.sdkSynchronizer.storeSignedNoteSplits = { _, _ in }
             $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, _ in scheduleStoreCalls.withValue { $0 += 1 } }
@@ -1870,20 +1873,25 @@ import ComposableArchitecture
                 return MigrationBroadcastFailureRoute.plainRetry
             }
             $0.migrationManager.refreshMigrationSyncGate = { refreshGateCalls.withValue { $0 += 1 } }
+            // The armed re-arm subscribes here — a completed-empty stream keeps this test focused
+            // on the kick's own attempts (the re-arm's resolution has its own test below).
+            $0.migrationManager.stateEvents = { _ in Empty().eraseToAnyPublisher() }
         }
         store.exhaustivity = .off
 
         await store.send(.path(.element(id: 2, action: .scan(.foundPCZTBatch(signed)))))
         await store.receive(\.keystoneSigningSubmitted)
         await store.receive(\.pushHydratedPathState)
+        // B4 fix wave: exhausting the bounded attempts arms the state-event re-arm.
+        await store.receive(\.firstDeliveryKickFailed)
         await store.finish()
 
         #expect(scheduleStoreCalls.value == 0)
         #expect(recordCommittedScheduleCalls.value == 0)
-        // Classified + routed for R16 rotation/Tor-hold bookkeeping (same silent treatment as the
-        // BG-window lane), and the stopped sync is nudged back.
-        #expect(routeCalls.value == 1)
-        #expect(refreshGateCalls.value == 1)
+        // Classified + routed ONCE PER ATTEMPT for R16 rotation/Tor-hold bookkeeping (same silent
+        // treatment as the BG-window lane), and the stopped sync is nudged back each time.
+        #expect(routeCalls.value == MigrationCoordFlow.firstDeliveryKickMaxAttempts)
+        #expect(refreshGateCalls.value == MigrationCoordFlow.firstDeliveryKickMaxAttempts)
         #expect(store.state.pendingKeystoneScheduleStore != nil)
         guard case .scheduled = try? #require(store.state.path.last) else {
             Issue.record("Expected the user to stay on .scheduled — a kick failure has NO UI")
@@ -1893,10 +1901,16 @@ import ComposableArchitecture
 
     /// A kick DEFERRED-STORE failure (the prep broadcast landed, then
     /// `storeSignedMigrationTransactions` threw) also stays silent and keeps the entries stashed —
-    /// nothing records, `.deferredKeystoneScheduleStored` never fires.
+    /// nothing records, `.deferredKeystoneScheduleStored` never fires. B4 fix wave: the later
+    /// bounded attempts hit the `nil`-with-pending-store arm (the prep already landed, so next-due
+    /// is exhausted) and retry the STORE only — never a second broadcast — before arming the
+    /// re-arm.
     @MainActor @Test func firstDeliveryKickDeferredStoreFailureKeepsScheduleStashed() async {
         struct StoreFailure: Error { }
         let recordCommittedScheduleCalls = LockIsolated<Int>(0)
+        let executeCalls = LockIsolated<Int>(0)
+        let scheduleStoreCalls = LockIsolated<Int>(0)
+        let recordTransferBroadcastCalls = LockIsolated<Int>(0)
         let unsigned: [MigrationUnsignedTransferPczt] = [
             MigrationUnsignedTransferPczt(id: "note-split#p0", pczt: Data([0x01])),
             MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xAA]))
@@ -1911,30 +1925,318 @@ import ComposableArchitecture
         let store = TestStore(initialState: state) {
             MigrationCoordFlow()
         } withDependencies: {
+            $0.continuousClock = ImmediateClock()
             $0.sdkSynchronizer = .noOp
             $0.sdkSynchronizer.storeSignedNoteSplits = { _, _ in }
-            $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, _ in throw StoreFailure() }
-            $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in MigrationTransferResult.success(txId: "prep-tx") }
+            $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, _ in
+                scheduleStoreCalls.withValue { $0 += 1 }
+                throw StoreFailure()
+            }
+            // Realistic engine shape: the first attempt lands the prep; every later probe answers
+            // `nil` (the landed prep is recorded, nothing else is due yet).
+            $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in
+                let call = executeCalls.withValue {
+                    $0 += 1
+                    return $0
+                }
+                return call == 1 ? MigrationTransferResult.success(txId: "prep-tx") : nil
+            }
             $0.migrationBGScheduler.scheduleFirstWindow = { }
             $0.migrationManager.reconcile = { }
-            $0.migrationManager.recordTransferBroadcast = { _, _ in }
+            $0.migrationManager.recordTransferBroadcast = { _, _ in recordTransferBroadcastCalls.withValue { $0 += 1 } }
             $0.migrationManager.recordCommittedSchedule = { _, _ in recordCommittedScheduleCalls.withValue { $0 += 1 } }
             $0.migrationManager.migrationSummary = { _ in MigrationSummary.zero }
             $0.migrationManager.migrationNetworkOptions = { _ in Self.defaultNetworkPrivacyOptions }
+            $0.migrationManager.refreshMigrationSyncGate = { }
+            $0.migrationManager.stateEvents = { _ in Empty().eraseToAnyPublisher() }
         }
         store.exhaustivity = .off
 
         await store.send(.path(.element(id: 2, action: .scan(.foundPCZTBatch(signed)))))
         await store.receive(\.keystoneSigningSubmitted)
         await store.receive(\.pushHydratedPathState)
+        await store.receive(\.firstDeliveryKickFailed)
         await store.finish()
 
         #expect(recordCommittedScheduleCalls.value == 0)
+        // One store attempt per kick attempt — but only ONE broadcast ever landed/recorded; the
+        // later attempts retried the store via the `nil` arm, never re-broadcasting.
+        #expect(scheduleStoreCalls.value == MigrationCoordFlow.firstDeliveryKickMaxAttempts)
+        #expect(recordTransferBroadcastCalls.value == 1)
         #expect(store.state.pendingKeystoneScheduleStore != nil)
         guard case .scheduled = try? #require(store.state.path.last) else {
             Issue.record("Expected the user to stay on .scheduled — a kick store failure has NO UI")
             return
         }
+    }
+
+    /// B4 fix wave: a TRANSIENT broadcast failure (e.g. a Tor bootstrap flake right at confirm
+    /// time — the same network leg behind the original freeze) resolves within the kick's own
+    /// bounded attempts: attempt 1 fails, attempt 2 lands the prep and runs the deferred store.
+    @MainActor @Test func firstDeliveryKickTransientBroadcastFailureRetriesWithinKickAndResolves() async {
+        let executeCalls = LockIsolated<Int>(0)
+        let scheduleStoreCalls = LockIsolated<Int>(0)
+        let unsigned: [MigrationUnsignedTransferPczt] = [
+            MigrationUnsignedTransferPczt(id: "note-split#p0", pczt: Data([0x01])),
+            MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xAA]))
+        ]
+        // MOB-1510: see `Self.validKeystoneFirmwareStamp`'s doc.
+        let signed: [Data] = [Data([0x01, 0x99]) + Self.validKeystoneFirmwareStamp, Data([0xAA, 0x99]) + Self.validKeystoneFirmwareStamp]
+        var state = MigrationCoordFlow.State()
+        state.pendingKeystoneSigning = .planCommit
+        state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .scheduled)))
+        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: unsigned)))
+        state.path.append(.scan(Scan.State.initial))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.continuousClock = ImmediateClock()
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.storeSignedNoteSplits = { _, _ in }
+            $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, _ in scheduleStoreCalls.withValue { $0 += 1 } }
+            $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in
+                let call = executeCalls.withValue {
+                    $0 += 1
+                    return $0
+                }
+                return call == 1 ? MigrationTransferResult.networkError(retryable: true) : MigrationTransferResult.success(txId: "prep-tx")
+            }
+            $0.migrationBGScheduler.scheduleFirstWindow = { }
+            $0.migrationManager.reconcile = { }
+            $0.migrationManager.recordTransferBroadcast = { _, _ in }
+            $0.migrationManager.recordCommittedSchedule = { _, _ in }
+            $0.migrationManager.migrationSummary = { _ in MigrationSummary.zero }
+            $0.migrationManager.migrationNetworkOptions = { _ in Self.defaultNetworkPrivacyOptions }
+            $0.migrationManager.routeBroadcastFailure = { _, _ in MigrationBroadcastFailureRoute.plainRetry }
+            $0.migrationManager.refreshMigrationSyncGate = { }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 2, action: .scan(.foundPCZTBatch(signed)))))
+        await store.receive(\.keystoneSigningSubmitted)
+        await store.receive(\.pushHydratedPathState)
+        await store.receive(\.deferredKeystoneScheduleStored)
+
+        #expect(executeCalls.value == 2)
+        #expect(scheduleStoreCalls.value == 1)
+        #expect(store.state.pendingKeystoneScheduleStore == nil)
+    }
+
+    /// B4 fix wave, THE STRANDING REGRESSION PIN: a kick whose bounded attempts ALL fail must not
+    /// orphan the deferred store — `.firstDeliveryKickFailed` arms a state-event re-arm whose
+    /// payload rides the effect (not state), and a LATER `stateEvents` emission (here: the prep
+    /// mined after a BG-window lane broadcast it, flipping the run to `.inProgress`) triggers one
+    /// silent resolve: the next-due probe answers `nil` (the prep already landed), so the deferred
+    /// store finally runs and `.deferredKeystoneScheduleStored` releases the stash.
+    @MainActor @Test func firstDeliveryKickExhaustedRearmResolvesOnALaterStateEvent() async {
+        let executeCalls = LockIsolated<Int>(0)
+        let scheduleStoreCalls = LockIsolated<[[MigrationSignedTransferPczt]]>([])
+        let recordCommittedScheduleCalls = LockIsolated<[MigrationSchedule]>([])
+        let broadcastAvailable = LockIsolated<Bool>(false)
+        let stateSubject = PassthroughSubject<MigrationState, Never>()
+        let unsigned: [MigrationUnsignedTransferPczt] = [
+            MigrationUnsignedTransferPczt(id: "note-split#p0", pczt: Data([0x01])),
+            MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xAA]))
+        ]
+        // MOB-1510: see `Self.validKeystoneFirmwareStamp`'s doc.
+        let signed: [Data] = [Data([0x01, 0x99]) + Self.validKeystoneFirmwareStamp, Data([0xAA, 0x99]) + Self.validKeystoneFirmwareStamp]
+        let schedule = MigrationSchedule(
+            transfers: [MigrationTransferProposal(id: "t0", amount: Zatoshi(500_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)],
+            estimatedDurationHours: 24
+        )
+        var planState = MigrationTransferPlan.State(variant: .scheduled)
+        planState.schedule = schedule
+        var state = MigrationCoordFlow.State()
+        state.pendingKeystoneSigning = .planCommit
+        state.path.append(.transferPlan(planState))
+        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: unsigned)))
+        state.path.append(.scan(Scan.State.initial))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.continuousClock = ImmediateClock()
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.storeSignedNoteSplits = { _, _ in }
+            $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, stored in
+                scheduleStoreCalls.withValue { $0.append(stored) }
+            }
+            // Kick phase: the network is down, every attempt fails. Re-arm phase (the test flips
+            // `broadcastAvailable` after the kick exhausts): a BG-window lane has landed the prep
+            // meanwhile, so the probe answers `nil`.
+            $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in
+                executeCalls.withValue { $0 += 1 }
+                if broadcastAvailable.value {
+                    return nil
+                }
+                return MigrationTransferResult.networkError(retryable: true)
+            }
+            $0.migrationBGScheduler.scheduleFirstWindow = { }
+            $0.migrationManager.reconcile = { }
+            $0.migrationManager.recordTransferBroadcast = { _, _ in }
+            $0.migrationManager.recordCommittedSchedule = { _, schedule in
+                recordCommittedScheduleCalls.withValue { $0.append(schedule) }
+            }
+            $0.migrationManager.migrationSummary = { _ in MigrationSummary.zero }
+            $0.migrationManager.migrationNetworkOptions = { _ in Self.defaultNetworkPrivacyOptions }
+            $0.migrationManager.routeBroadcastFailure = { _, _ in MigrationBroadcastFailureRoute.plainRetry }
+            $0.migrationManager.refreshMigrationSyncGate = { }
+            $0.migrationManager.stateEvents = { _ in stateSubject.eraseToAnyPublisher() }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 2, action: .scan(.foundPCZTBatch(signed)))))
+        await store.receive(\.keystoneSigningSubmitted)
+        await store.receive(\.pushHydratedPathState)
+        await store.receive(\.firstDeliveryKickFailed)
+        #expect(executeCalls.value == MigrationCoordFlow.firstDeliveryKickMaxAttempts)
+        #expect(scheduleStoreCalls.value.isEmpty)
+        #expect(store.state.pendingKeystoneScheduleStore != nil)
+
+        // A BG-window broadcast lands the prep while this coordinator wasn't looking; it later
+        // mines and a reconcile emits the state change.
+        broadcastAvailable.setValue(true)
+        let progress = MigrationProgress(completedTransfers: 0, totalTransfers: 1, remainingOrchard: Zatoshi(500_000_000), nextTransferReadyAtHeight: nil)
+        stateSubject.send(MigrationState.inProgress(progress))
+
+        await store.receive(\.deferredKeystoneScheduleResolveDue)
+        await store.receive(\.deferredKeystoneScheduleStored)
+
+        #expect(scheduleStoreCalls.value == [[MigrationSignedTransferPczt(id: "t0", pczt: Data([0xAA, 0x99]) + Self.validKeystoneFirmwareStamp)]])
+        #expect(recordCommittedScheduleCalls.value == [schedule])
+        #expect(store.state.pendingKeystoneScheduleStore == nil)
+    }
+
+    /// B4 fix wave (coverage gap): the `.manual` variant's kick arm — a Keystone MANUAL commit with
+    /// preps pushes Sending (that screen keeps owning the manual lane's own delivery) AND fires the
+    /// kick, since only the kick holds the deferred schedule store.
+    @MainActor @Test func keystoneSigningSubmittedForManualVariantPushesSendingAndKickRunsDeferredStore() async {
+        let executeCalls = LockIsolated<Int>(0)
+        let scheduleStoreCalls = LockIsolated<Int>(0)
+        let schedule = MigrationSchedule(
+            transfers: [MigrationTransferProposal(id: "t0", amount: Zatoshi(500_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)],
+            estimatedDurationHours: 24
+        )
+        var planState = MigrationTransferPlan.State(variant: .manual)
+        planState.schedule = schedule
+        var state = MigrationCoordFlow.State()
+        state.pendingKeystoneSigning = .planCommit
+        state.path.append(.transferPlan(planState))
+        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: [MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xAA]))])))
+        let pending = MigrationCoordFlow.PendingScheduleStore(
+            accountUUID: Self.defaultAccount.id,
+            scheduleEntries: [MigrationSignedTransferPczt(id: "t0", pczt: Data([0xAA, 0x99]))],
+            schedule: schedule
+        )
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.continuousClock = ImmediateClock()
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, _ in scheduleStoreCalls.withValue { $0 += 1 } }
+            $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in
+                executeCalls.withValue { $0 += 1 }
+                return MigrationTransferResult.success(txId: "prep-tx")
+            }
+            $0.migrationBGScheduler.scheduleFirstWindow = { }
+            $0.migrationManager.reconcile = { }
+            $0.migrationManager.recordTransferBroadcast = { _, _ in }
+            $0.migrationManager.recordCommittedSchedule = { _, _ in }
+            $0.migrationManager.migrationNetworkOptions = { _ in Self.defaultNetworkPrivacyOptions }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.keystoneSigningSubmitted(context: .planCommit, pendingScheduleStore: pending))
+        await store.receive(\.deferredKeystoneScheduleStored)
+
+        #expect(executeCalls.value == 1)
+        #expect(scheduleStoreCalls.value == 1)
+        #expect(store.state.pendingKeystoneScheduleStore == nil)
+        guard case let .sending(sendingState) = try? #require(store.state.path.last) else {
+            Issue.record("Expected .sending pushed for the manual variant")
+            return
+        }
+        #expect(sendingState.isManualStepLane == true)
+        guard case .transferPlan = try? #require(store.state.path[id: 0]) else {
+            Issue.record("Expected .transferPlan retained at the bottom")
+            return
+        }
+    }
+
+    /// B4 fix wave (coverage gap): pins `deferredScheduledState`'s numbers for the Keystone
+    /// deferred-store window — schedule-derived fields come from the IN-HAND schedule (duration,
+    /// total = prior sent + schedule count, amount = prior transferred + schedule sum) and
+    /// `dustAmount` from the LIVE stored-run residual, never from the summary's (deliberately
+    /// poisoned here) schedule-derived fields, which would read the previous payload or the
+    /// degraded progress-only fallback in this window.
+    @MainActor @Test func foundPCZTBatchWithNoteSplitSentinelHydratesScheduledFromDeferredNumbers() async throws {
+        let unsigned: [MigrationUnsignedTransferPczt] = [
+            MigrationUnsignedTransferPczt(id: "note-split#p0", pczt: Data([0x01])),
+            MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xAA])),
+            MigrationUnsignedTransferPczt(id: "t1", pczt: Data([0xBB]))
+        ]
+        // MOB-1510: see `Self.validKeystoneFirmwareStamp`'s doc.
+        let signed: [Data] = [
+            Data([0x01, 0x99]) + Self.validKeystoneFirmwareStamp,
+            Data([0xAA, 0x99]) + Self.validKeystoneFirmwareStamp,
+            Data([0xBB, 0x99]) + Self.validKeystoneFirmwareStamp
+        ]
+        let schedule = MigrationSchedule(
+            transfers: [
+                MigrationTransferProposal(id: "t0", amount: Zatoshi(500_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200),
+                MigrationTransferProposal(id: "t1", amount: Zatoshi(300_000_000), anchorHeight: 100, nextExecutableAfterHeight: 150, expiryHeight: 250)
+            ],
+            estimatedDurationHours: 30
+        )
+        var planState = MigrationTransferPlan.State(variant: .scheduled)
+        planState.schedule = schedule
+        var state = MigrationCoordFlow.State()
+        state.pendingKeystoneSigning = .planCommit
+        state.path.append(.transferPlan(planState))
+        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: unsigned)))
+        state.path.append(.scan(Scan.State.initial))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.continuousClock = ImmediateClock()
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.storeSignedNoteSplits = { _, _ in }
+            $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, _ in }
+            $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in MigrationTransferResult.success(txId: "prep-tx") }
+            // The stored-run residual the deferred hydration must prefer.
+            $0.sdkSynchronizer.residualAfterMigration = { _ in Zatoshi(31_000) }
+            $0.migrationBGScheduler.scheduleFirstWindow = { }
+            $0.migrationManager.reconcile = { }
+            $0.migrationManager.recordTransferBroadcast = { _, _ in }
+            $0.migrationManager.recordCommittedSchedule = { _, _ in }
+            $0.migrationManager.migrationNetworkOptions = { _ in Self.defaultNetworkPrivacyOptions }
+            $0.migrationManager.migrationSummary = { _ in
+                MigrationSummary(
+                    // Prior-run bookkeeping (a `.recreated` re-commit): USED.
+                    transferred: Zatoshi(600_000_000),
+                    // Schedule-derived fields of the PRE-record payload: poisoned — must NOT leak in.
+                    dust: Zatoshi(555),
+                    transfersSent: 2,
+                    transfersTotal: 99,
+                    estimatedDurationHours: 77
+                )
+            }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 2, action: .scan(.foundPCZTBatch(signed)))))
+        await store.receive(\.keystoneSigningSubmitted)
+        await store.receive(\.pushHydratedPathState)
+        await store.receive(\.deferredKeystoneScheduleStored)
+
+        guard case let .scheduled(scheduledState) = try? #require(store.state.path.last) else {
+            Issue.record("Expected .scheduled pushed")
+            return
+        }
+        #expect(scheduledState.totalAmount == Zatoshi(1_400_000_000))
+        #expect(scheduledState.sentCount == 2)
+        #expect(scheduledState.totalCount == 4)
+        #expect(scheduledState.durationHours == 30)
+        #expect(scheduledState.dustAmount == Zatoshi(31_000))
     }
 
     // MARK: - MOB-1496 (C-1 fix, final review R6): split-store failure abandons the session

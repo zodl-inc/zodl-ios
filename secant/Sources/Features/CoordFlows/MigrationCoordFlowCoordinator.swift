@@ -493,10 +493,38 @@ extension MigrationCoordFlow {
                 return confirmTorSheet(state: &state)
 
                 // MOB-1513 (B4): the first-delivery kick's deferred Keystone schedule store landed —
-                // the entries are durably in the engine now, so the stash can be released.
+                // the entries are durably in the engine now, so the stash can be released and any
+                // armed state-event re-arm cancelled (a no-op when none is armed — the happy path).
             case .deferredKeystoneScheduleStored:
                 state.pendingKeystoneScheduleStore = nil
-                return .none
+                return .cancel(id: MigrationCoordFlow.CancelID.deferredScheduleStoreRearm)
+
+                // MOB-1513 (B4 fix wave): the kick exhausted its bounded attempts with the deferred
+                // store still pending — arm the SILENT state-event re-arm. Payload rides the action/
+                // effect (never re-read from state): this flow is a permanent `Scope` child of Root,
+                // so the subscription survives a flow close (teardown resets STATE only) and the
+                // store still happens once a prep broadcast lands, whoever lands it.
+                // `cancelInFlight: true` keeps at most one re-arm alive.
+            case .firstDeliveryKickFailed(let pendingScheduleStore, let accountUUID):
+                return .publisher {
+                    migrationManager.stateEvents(accountUUID)
+                        .map { _ in
+                            MigrationCoordFlow.Action.deferredKeystoneScheduleResolveDue(
+                                pendingScheduleStore: pendingScheduleStore,
+                                accountUUID: accountUUID
+                            )
+                        }
+                }
+                .cancellable(id: MigrationCoordFlow.CancelID.deferredScheduleStoreRearm, cancelInFlight: true)
+
+            case .deferredKeystoneScheduleResolveDue(let pendingScheduleStore, let accountUUID):
+                return .run { send in
+                    await resolveDeferredScheduleStore(
+                        accountUUID: accountUUID,
+                        pendingScheduleStore: pendingScheduleStore,
+                        send: send
+                    )
+                }
 
                 // MARK: - BackgroundDelivery
 
@@ -1120,65 +1148,117 @@ extension MigrationCoordFlow {
     /// proves at broadcast — the one-time Orchard proving-key build happens HERE, off the confirm
     /// tap, not under it — is retry-idempotent, and is per-account single-flight SDK-side; the
     /// transaction guard lives inside its LiveKey, never wrapped here). Stop-sync first, exactly
-    /// like every other broadcast lane; nothing due (`nil`) is a valid, silent no-op.
+    /// like every other broadcast lane.
     ///
-    /// Outcomes (all SILENT — B4 controller resolution 3: broadcast failure needs NO UI; the run
-    /// stays `splitPendingConfirmation` engine-side, the progress banner/route reflect it, and BG
-    /// windows + foreground reconcile retry preps naturally):
+    /// Per-attempt outcomes (all SILENT — B4 controller resolution 3: broadcast failure needs NO
+    /// UI; the run stays `splitPendingConfirmation` engine-side, the progress banner/route reflect
+    /// it, and BG windows + foreground reconcile retry preps naturally):
     /// - Landed (`.success`, or the landed-but-record-failed
     ///   `ZcashError.migrationRecordFailedAfterBroadcast`): `recordTransferBroadcast` (the
     ///   had-broadcast/episode chokepoint — its prep-phase guard keeps a prep out of the schedule's
-    ///   sent records), then the deferred Keystone schedule store when one is pending (see
-    ///   `finishLandedFirstDelivery`), then `reconcile()` so the banner/status pick the fresh state
-    ///   up promptly.
+    ///   sent records), then the deferred Keystone schedule store when one is pending, then
+    ///   `reconcile()` so the banner/status pick the fresh state up promptly.
+    /// - `nil` (nothing due) with NO pending store: a valid, silent no-op (e.g. a no-split
+    ///   schedule whose first transfer isn't due yet) — nudge the gate only.
+    /// - `nil` WITH a pending store: a prep broadcast has necessarily ALREADY landed — the stash
+    ///   only exists for a preps-carrying run whose first prep is due immediately, so an exhausted
+    ///   next-due means every currently-due prep is broadcast-recorded (possibly by a concurrent
+    ///   BG-window lane; the SDK's single-flight typically answers `nil` exactly then). That is the
+    ///   C-1b-safe point, so run the deferred store now (also how a retry attempt resolves a store
+    ///   that failed after an earlier attempt's landed broadcast).
     /// - Failure result / thrown error: classify+route (`routeBroadcastFailure` — R16
     ///   rotation/Tor-hold bookkeeping only, same re-arm-only treatment as the BG lane; the
     ///   background Tor prompt latch stays BG-lane-only) and nudge `refreshMigrationSyncGate()`
     ///   (the stop above was never followed by a landed broadcast).
-    /// - `nil` (nothing due — e.g. a no-split schedule whose first transfer isn't due yet): nudge
-    ///   the gate only.
     ///
-    /// KNOWN, ACCEPTED loss window (same class as the pre-B4 "Splitting Funds" handshake, which
-    /// held `pendingKeystoneScheduleStore` in memory across its retry sheet): a Keystone deferred
-    /// store that never gets to run (kick broadcast fails and the user closes the flow, or the app
-    /// dies mid-kick) loses the in-memory signed schedule entries — the run's transfers then can't
-    /// deliver and the existing recovery flow (restart + fresh ceremony) is the way out. Pre-B4 the
-    /// user could reach the identical loss by backing out of the failed "Splitting Funds" screen.
+    /// MOB-1513 (B4 fix wave) — a Keystone deferred store must NEVER be stranded by one flaky
+    /// attempt (the pre-fix one-shot kick was: a Tor bootstrap flake at confirm time left the stash
+    /// unread forever while BG windows later broadcast the prep WITHOUT the store, stranding the
+    /// run once it mined). Two silent recovery layers when `pendingScheduleStore != nil`:
+    /// 1. Bounded in-kick retries: up to `firstDeliveryKickMaxAttempts` attempts,
+    ///    `firstDeliveryKickRetryDelay` apart (covers the transient confirm-time flake). The
+    ///    software lane keeps its single attempt — the engine holds everything it needs and BG
+    ///    windows retry preps naturally there.
+    /// 2. State-event re-arm: exhausting the attempts sends `.firstDeliveryKickFailed`, which
+    ///    subscribes to `migrationManager.stateEvents` and runs one `resolveDeferredScheduleStore`
+    ///    per emission (see that method's doc) until the store lands.
+    ///
+    /// Lifecycle (corrected in review): `MigrationCoordFlow` is a permanent `Scope` child of Root
+    /// (`RootStore.swift`), NOT a dismissable presentation — closing the flow ("Got it",
+    /// `.flowFinished`) resets coordinator STATE and runs Root's cleanup effects, but cancels no
+    /// in-flight effects. This kick, the re-arm subscription, and their captured
+    /// `pendingScheduleStore` payloads therefore run to completion after a close by design (which
+    /// is also why the payload always rides closures/actions and is never re-read from state).
+    /// The remaining ACCEPTED loss window is app death while the store is still pending (the stash
+    /// is in-memory only, per the plan's no-new-persistence constraint) — the existing recovery
+    /// flow (restart + fresh ceremony) is the way out, same as pre-B4's force-quit window.
     private func runFirstDeliveryKick(
         accountUUID: AccountUUID?,
         pendingScheduleStore: MigrationCoordFlow.PendingScheduleStore?,
         send: Send<MigrationCoordFlow.Action>
     ) async {
         guard let accountUUID else { return }
+        let maxAttempts = pendingScheduleStore != nil ? Self.firstDeliveryKickMaxAttempts : 1
+        for attempt in 1...maxAttempts {
+            let resolved = await attemptFirstDelivery(
+                accountUUID: accountUUID,
+                pendingScheduleStore: pendingScheduleStore,
+                send: send
+            )
+            if resolved { return }
+            guard attempt < maxAttempts else { break }
+            try? await clock.sleep(for: Self.firstDeliveryKickRetryDelay)
+        }
+        if let pendingScheduleStore {
+            await send(.firstDeliveryKickFailed(pendingScheduleStore: pendingScheduleStore, accountUUID: accountUUID))
+        }
+    }
+
+    /// MOB-1513 (B4 fix wave): one attempt of the first-delivery kick — see `runFirstDeliveryKick`'s
+    /// doc for the outcome table. Returns `true` when the kick's job is done (broadcast landed and
+    /// any pending store resolved, or nothing was due and no store was pending), `false` when a
+    /// retry could still help (broadcast failed, or a landed broadcast's deferred store failed —
+    /// the next attempt's `nil` arm retries the store without re-broadcasting).
+    private func attemptFirstDelivery(
+        accountUUID: AccountUUID,
+        pendingScheduleStore: MigrationCoordFlow.PendingScheduleStore?,
+        send: Send<MigrationCoordFlow.Action>
+    ) async -> Bool {
         let options = await migrationManager.migrationNetworkOptions(accountUUID)
         await sdkSynchronizer.stopSyncBeforeMigrationBroadcast()
         do {
             let result = try await sdkSynchronizer.executeNextPendingMigrationTransfer(accountUUID, options)
             switch result {
-            case .success:
-                if let result {
-                    await finishLandedFirstDelivery(
+            case .some(let result):
+                if case MigrationTransferResult.success = result {
+                    return await finishLandedFirstDelivery(
                         accountUUID: accountUUID,
                         result: result,
                         pendingScheduleStore: pendingScheduleStore,
                         send: send
                     )
                 }
-
-            case .networkError, .invalidNote, .expired:
-                if let result {
-                    _ = await migrationManager.routeBroadcastFailure(accountUUID, result: result)
-                }
+                _ = await migrationManager.routeBroadcastFailure(accountUUID, result: result)
                 await migrationManager.refreshMigrationSyncGate()
+                return false
 
             case nil:
+                guard let pendingScheduleStore else {
+                    await migrationManager.refreshMigrationSyncGate()
+                    return true
+                }
+                // A prep broadcast already landed (see the `nil`-with-pending-store outcome in
+                // `runFirstDeliveryKick`'s doc) — run the deferred store now. The stop above was
+                // not followed by a landed broadcast in THIS attempt, so still nudge the gate.
+                let resolved = await resolvePendingScheduleStore(pendingScheduleStore, send: send)
                 await migrationManager.refreshMigrationSyncGate()
+                return resolved
             }
         } catch ZcashError.migrationRecordFailedAfterBroadcast {
             // The broadcast DID land; only the engine's own recording of it failed — same
             // landed-broadcast continuation as `.success`, with the empty-txId placeholder every
             // other lane uses for this error.
-            await finishLandedFirstDelivery(
+            return await finishLandedFirstDelivery(
                 accountUUID: accountUUID,
                 result: MigrationTransferResult.success(txId: ""),
                 pendingScheduleStore: pendingScheduleStore,
@@ -1187,6 +1267,7 @@ extension MigrationCoordFlow {
         } catch {
             _ = await migrationManager.routeBroadcastFailure(accountUUID, error: error)
             await migrationManager.refreshMigrationSyncGate()
+            return false
         }
     }
 
@@ -1194,30 +1275,63 @@ extension MigrationCoordFlow {
     /// the pre-B4 order — record before the deferred store), then — MOB-1496 C-1b, re-homed — the
     /// deferred Keystone schedule store `storeKeystoneSignedBatch` stashed: the prep broadcast just
     /// landed, which is the earliest point the C-1b trace proved safe to store the schedule.
-    /// Success releases the stash via `.deferredKeystoneScheduleStored`; a store failure keeps it
-    /// (silent — see `runFirstDeliveryKick`'s doc) and deliberately skips `reconcile()` too,
-    /// mirroring the pre-B4 handshake's "no premature reconcile before the schedule store settles".
+    /// Returns whether the kick's job is fully done — `false` only when the deferred store failed
+    /// (kept silent; the retry/re-arm layers retry the store, never the already-landed broadcast).
     private func finishLandedFirstDelivery(
         accountUUID: AccountUUID,
         result: MigrationTransferResult,
         pendingScheduleStore: MigrationCoordFlow.PendingScheduleStore?,
         send: Send<MigrationCoordFlow.Action>
-    ) async {
+    ) async -> Bool {
         await migrationManager.recordTransferBroadcast(accountUUID, result)
 
         guard let pendingScheduleStore else {
             await migrationManager.reconcile()
-            return
+            return true
         }
 
+        return await resolvePendingScheduleStore(pendingScheduleStore, send: send)
+    }
+
+    /// The deferred Keystone schedule store itself (`storeSignedMigrationTransactions` ->
+    /// `recordCommittedSchedule` -> `reconcile` -> release the stash via
+    /// `.deferredKeystoneScheduleStored`). A store failure returns `false` with NOTHING recorded and
+    /// no reconcile — mirroring the pre-B4 handshake's "no premature reconcile before the schedule
+    /// store settles" — leaving the retry/re-arm layers to try again.
+    private func resolvePendingScheduleStore(
+        _ pendingScheduleStore: MigrationCoordFlow.PendingScheduleStore,
+        send: Send<MigrationCoordFlow.Action>
+    ) async -> Bool {
         guard (try? await sdkSynchronizer.storeSignedMigrationTransactions(pendingScheduleStore.accountUUID, pendingScheduleStore.scheduleEntries)) != nil else {
-            return
+            return false
         }
         if let schedule = pendingScheduleStore.schedule {
             await migrationManager.recordCommittedSchedule(pendingScheduleStore.accountUUID, schedule)
         }
         await migrationManager.reconcile()
         await send(.deferredKeystoneScheduleStored)
+        return true
+    }
+
+    /// MOB-1513 (B4 fix wave): one silent resolve attempt per `stateEvents` emission while the
+    /// re-arm is active (`.firstDeliveryKickFailed` armed it after the kick's bounded attempts
+    /// exhausted). Runs the SAME single attempt the kick does — probe the next-due lane, store on a
+    /// landed or exhausted outcome, stay silent on failure — so whichever lane lands the prep (a
+    /// BG-window broadcast, this probe itself once the network recovers, or foreground reconcile
+    /// observing the mined prep and emitting the state change that triggered this) leads to the
+    /// deferred store, which cancels the re-arm via `.deferredKeystoneScheduleStored`. Emissions
+    /// are change-driven and rare (`pushStateIfChanged`), so per-event single attempts stay cheap;
+    /// `stateEvents` replays the current value on subscribe, which doubles as one immediate retry.
+    private func resolveDeferredScheduleStore(
+        accountUUID: AccountUUID,
+        pendingScheduleStore: MigrationCoordFlow.PendingScheduleStore,
+        send: Send<MigrationCoordFlow.Action>
+    ) async {
+        _ = await attemptFirstDelivery(
+            accountUUID: accountUUID,
+            pendingScheduleStore: pendingScheduleStore,
+            send: send
+        )
     }
 
     // MARK: - Keystone signing (MOB-1468): resume after store
@@ -1456,6 +1570,25 @@ extension MigrationCoordFlow {
     /// strips this prefix back off before handing prep entries to `storeSignedNoteSplits`, which needs
     /// their bare engine ids.
     static let keystoneNoteSplitSentinelPrefix = "note-split#"
+
+    // MARK: - MOB-1513 (B4 fix wave): first-delivery kick retry knobs + re-arm cancellation
+
+    /// Effect-cancellation ids for the coordinator's own long-lived effects.
+    enum CancelID {
+        /// The state-event re-arm `.firstDeliveryKickFailed` starts — cancelled by
+        /// `.deferredKeystoneScheduleStored` once the deferred store lands.
+        case deferredScheduleStoreRearm
+    }
+
+    /// Total broadcast attempts one kick makes when a Keystone deferred schedule store is pending
+    /// (the software lane keeps a single attempt — see `runFirstDeliveryKick`'s doc). Three covers
+    /// the transient confirm-time Tor/network flake without turning the kick into a long-running
+    /// poller — the state-event re-arm takes over after that.
+    static let firstDeliveryKickMaxAttempts = 3
+
+    /// Pause between the kick's bounded attempts — long enough for a Tor bootstrap flake to clear,
+    /// short enough that a healthy retry still lands "immediately" in product terms.
+    static let firstDeliveryKickRetryDelay = Duration.seconds(15)
 
     /// MOB-1496 (W6 §2): re-pairs a scanned Keystone batch's signed bytes
     /// (`parseMigrationPCZTBatch`'s order-preserved `[Data]`) against the ORIGINAL unsigned batch's

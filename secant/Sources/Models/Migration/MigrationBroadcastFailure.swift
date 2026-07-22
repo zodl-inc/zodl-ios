@@ -41,8 +41,8 @@ enum MigrationBroadcastFailureClass: Equatable, Sendable {
     case endpointUnreachable
 
     /// Classifies a THROWN error from a broadcast call (`executeNextPendingMigrationTransfer`,
-    /// `executeNextPendingMigrationTransfer`, `createAndSubmitProposedTransactions`/
-    /// `createPCZTFromProposal` — `SDKSynchronizerInterface.swift:137-206`).
+    /// `createAndSubmitProposedTransactions`/`createAndSubmitTransactionFromPCZT` —
+    /// `SDKSynchronizerInterface.swift`).
     ///
     /// - `ZcashError.migrationTorUnavailable` -> `.torUnavailable`.
     /// - `ZcashError.migrationRecordFailedAfterBroadcast` -> `nil`: the broadcast LANDED and only
