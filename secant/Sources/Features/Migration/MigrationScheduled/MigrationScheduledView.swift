@@ -2,9 +2,13 @@
 //  MigrationScheduledView.swift
 //  zodl
 //
-//  "Migration Scheduled" screen (MOB-1463, Figma S9 · 2630:11282). Visually complete per Figma;
-//  all summary fields are placeholders — wiring the real data lands in MOB-1466. The `doneTapped`
-//  delegate is emitted but consumed by nobody yet.
+//  "Migration Scheduled" screen (MOB-1463, Figma S9 · 2630:11282). The summary fields are hydrated
+//  by the coordinator at push time (MOB-1458 W-E — see `MigrationScheduledStore.swift`'s header).
+//  The `doneTapped` delegate is emitted and consumed by `MigrationCoordFlowCoordinator` (MOB-1466).
+//
+//  MOB-1458 (W-E, Figma 3480:7631): the "Dust balance remaining" card below the summary rows,
+//  shown whenever `store.hasDust` — deliberately milder, informational copy than `MigrationComplete`'s
+//  own dust card (which owns the lock/migrate-anyway *decision*); the two are NOT unified.
 //
 
 import ComposableArchitecture
@@ -40,6 +44,11 @@ struct MigrationScheduledView: View {
 
                 summaryCard
                     .padding(.top, 24)
+
+                if store.hasDust {
+                    dustCard
+                        .padding(.top, 16)
+                }
 
                 Spacer()
 
@@ -88,11 +97,40 @@ struct MigrationScheduledView: View {
             )
         }
     }
+
+    // MARK: - Dust card (MOB-1458 W-E, Figma 3480:7631)
+
+    @ViewBuilder private var dustCard: some View {
+        ZashiInfoCallout(
+            style: .filled,
+            title: String(localizable: .migrationScheduledDustTitle),
+            body: String(localizable: .migrationScheduledDustBody),
+            boldBodyPrefix: "\(store.dustAmount.decimalString()) ZEC "
+        )
+    }
 }
 
 // MARK: - Previews
 
 #Preview {
+    NavigationView {
+        MigrationScheduledView(
+            store: StoreOf<MigrationScheduled>(
+                initialState: MigrationScheduled.State(
+                    totalAmount: Zatoshi(1_245_800_000),
+                    sentCount: 0,
+                    totalCount: 5,
+                    durationHours: 24,
+                    dustAmount: Zatoshi(31_000)
+                )
+            ) {
+                MigrationScheduled()
+            }
+        )
+    }
+}
+
+#Preview("No dust") {
     NavigationView {
         MigrationScheduledView(
             store: StoreOf<MigrationScheduled>(

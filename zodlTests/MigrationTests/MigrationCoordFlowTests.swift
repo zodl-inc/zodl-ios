@@ -1394,11 +1394,20 @@ import ComposableArchitecture
             // before any of its members can run in a test context (this fixture's `.transferPlan`
             // carries no `.schedule`, so `recordCommittedSchedule` itself is never reached).
             $0.migrationManager.reconcile = { }
+            // MOB-1458 (W-E): the post-commit chain now hydrates `.scheduled` via
+            // `migrationManager.migrationSummary` before pushing — harmless zero, unasserted here
+            // (this test is about the Keystone store/pop/push plumbing, not the hydrated numbers;
+            // see `MigrationScheduled`-hydration tests below for those).
+            $0.migrationManager.migrationSummary = { _ in MigrationSummary.zero }
         }
         store.exhaustivity = .off
 
         await store.send(.path(.element(id: 2, action: .scan(.foundPCZTBatch(signed)))))
         await store.receive(\.keystoneSigningSubmitted)
+        // MOB-1458 (W-E): the post-commit `.scheduled` push is now hydrated (an async peek), so it
+        // lands via its own `pushHydratedPathState` action rather than synchronously inside the
+        // `keystoneSigningSubmitted` handler — see `transferPlanPostConfirmChain`'s doc.
+        await store.receive(\.pushHydratedPathState)
 
         #expect(callOrder.value == ["store", "scheduleFirstWindow"])
         #expect(store.state.pendingKeystoneSigning == nil)
@@ -1995,6 +2004,9 @@ import ComposableArchitecture
             $0.migrationBGScheduler.scheduleFirstWindow = { }
             $0.migrationManager.reconcile = { }
             $0.migrationManager.migrationNetworkOptions = { _ in Self.defaultNetworkPrivacyOptions }
+            // MOB-1458 (W-E): the post-commit chain now hydrates `.scheduled` via
+            // `migrationManager.migrationSummary` before pushing — harmless zero, unasserted here.
+            $0.migrationManager.migrationSummary = { _ in MigrationSummary.zero }
         }
         store.exhaustivity = .off
 
@@ -2027,6 +2039,9 @@ import ComposableArchitecture
         // element is a TCA "missing element" runtime error), so a second receive is expected here.
         await store.send(.path(.element(id: noteSplitId, action: .noteSplit(.delegate(.continued)))))
         await store.receive(\.keystoneSplitResumeContinued)
+        // MOB-1458 (W-E): see `transferPlanPostConfirmChain`'s doc — the `.scheduled` push is now
+        // hydrated (an async peek), landing via its own action rather than synchronously here.
+        await store.receive(\.pushHydratedPathState)
 
         #expect(store.state.pendingKeystoneSplitResume == nil)
         guard case .scheduled = try? #require(store.state.path.last) else {
@@ -2073,11 +2088,17 @@ import ComposableArchitecture
             $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, _ in }
             $0.migrationBGScheduler.scheduleFirstWindow = { }
             $0.migrationManager.reconcile = { }
+            // MOB-1458 (W-E): the post-commit chain now hydrates `.scheduled` via
+            // `migrationManager.migrationSummary` before pushing — harmless zero, unasserted here.
+            $0.migrationManager.migrationSummary = { _ in MigrationSummary.zero }
         }
         store.exhaustivity = .off
 
         await store.send(.path(.element(id: 2, action: .scan(.foundPCZTBatch(signed)))))
         await store.receive(\.keystoneSigningSubmitted)
+        // MOB-1458 (W-E): see `transferPlanPostConfirmChain`'s doc — the `.scheduled` push is now
+        // hydrated (an async peek), landing via its own action rather than synchronously here.
+        await store.receive(\.pushHydratedPathState)
 
         #expect(store.state.pendingKeystoneSplitResume == nil)
         guard case .scheduled = try? #require(store.state.path.last) else {
@@ -2745,10 +2766,17 @@ import ComposableArchitecture
         } withDependencies: {
             $0.migrationBGScheduler.scheduleFirstWindow = { scheduleFirstWindowCalls.withValue { $0 += 1 } }
             $0.migrationManager.formNetworkSnapshot = { _ in formNetworkSnapshotCalls.withValue { $0 += 1 } }
+            // MOB-1458 (W-E): the post-commit chain now hydrates `.scheduled` via
+            // `migrationManager.migrationSummary` before pushing — harmless zero, unasserted here
+            // (see the dedicated hydration tests below for the actual numbers).
+            $0.migrationManager.migrationSummary = { _ in MigrationSummary.zero }
         }
         store.exhaustivity = .off
 
         await store.send(.path(.element(id: 0, action: .transferPlan(.delegate(.confirmed)))))
+        // MOB-1458 (W-E): the `.scheduled` push is now hydrated (an async peek), landing via its
+        // own `pushHydratedPathState` action — see `transferPlanPostConfirmChain`'s doc.
+        await store.receive(\.pushHydratedPathState)
         await store.finish()
 
         #expect(scheduleFirstWindowCalls.value == 1)
@@ -2762,6 +2790,101 @@ import ComposableArchitecture
             Issue.record("Expected .scheduled pushed")
             return
         }
+    }
+
+    // MARK: - MOB-1458 (W-E): plan confirm -> Scheduled hydration
+
+    /// A genuinely fresh `.scheduled` commit: `migrationManager.migrationSummary` reports nothing
+    /// sent yet (a fresh schedule has no prior `sentRecords`), so the pushed state's numbers
+    /// collapse to exactly the just-committed schedule's own totals — matching the B9 canvas's
+    /// "Transfers 0 of 6".
+    @MainActor @Test func transferPlanConfirmedInScheduledVariantHydratesScheduledStateFromCommittedScheduleAndSummary() async throws {
+        let schedule = MigrationSchedule(
+            transfers: [
+                MigrationTransferProposal(id: "t0", amount: Zatoshi(500_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200),
+                MigrationTransferProposal(id: "t1", amount: Zatoshi(300_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
+            ],
+            estimatedDurationHours: 30
+        )
+        var planState = MigrationTransferPlan.State(variant: .scheduled)
+        planState.schedule = schedule
+        var state = MigrationCoordFlow.State()
+        state.path.append(.transferPlan(planState))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.migrationBGScheduler.scheduleFirstWindow = { }
+            $0.migrationManager.migrationSummary = { _ in
+                MigrationSummary(
+                    transferred: Zatoshi.zero,
+                    dust: Zatoshi(31_000),
+                    transfersSent: 0,
+                    transfersTotal: 2,
+                    estimatedDurationHours: 30
+                )
+            }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 0, action: .transferPlan(.delegate(.confirmed)))))
+        await store.receive(\.pushHydratedPathState)
+
+        guard case let .scheduled(scheduledState) = try? #require(store.state.path.last) else {
+            Issue.record("Expected .scheduled pushed")
+            return
+        }
+        #expect(scheduledState.totalAmount == Zatoshi(800_000_000))
+        #expect(scheduledState.sentCount == 0)
+        #expect(scheduledState.totalCount == 2)
+        #expect(scheduledState.durationHours == 30)
+        #expect(scheduledState.dustAmount == Zatoshi(31_000))
+    }
+
+    /// `.recreated`: some transfers already broadcast under a PRIOR schedule for this same logical
+    /// run (`summary.transferred`/`transfersSent` fold in the persisted `sentRecords`, which survive
+    /// a restart per `MigrationScheduleStorage.recordCommittedSchedule`'s doc) — the pushed state
+    /// must report the WHOLE run's cumulative numbers, not just the fresh schedule's own.
+    @MainActor @Test func transferPlanConfirmedInRecreatedVariantHydratesScheduledStateWithCumulativeSentCount() async throws {
+        let schedule = MigrationSchedule(
+            transfers: [
+                MigrationTransferProposal(id: "t2", amount: Zatoshi(200_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
+            ],
+            estimatedDurationHours: 12
+        )
+        var planState = MigrationTransferPlan.State(variant: .recreated)
+        planState.schedule = schedule
+        var state = MigrationCoordFlow.State()
+        state.path.append(.transferPlan(planState))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.migrationBGScheduler.scheduleFirstWindow = { }
+            $0.migrationManager.migrationSummary = { _ in
+                MigrationSummary(
+                    transferred: Zatoshi(600_000_000),
+                    dust: Zatoshi.zero,
+                    transfersSent: 2,
+                    transfersTotal: 3,
+                    estimatedDurationHours: 12
+                )
+            }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 0, action: .transferPlan(.delegate(.confirmed)))))
+        await store.receive(\.pushHydratedPathState)
+
+        guard case let .scheduled(scheduledState) = try? #require(store.state.path.last) else {
+            Issue.record("Expected .scheduled pushed")
+            return
+        }
+        // 600M already sent under the prior schedule + 200M in the fresh recreated schedule = 800M
+        // cumulative, consistent with the cumulative "2 of 3" transfer count below.
+        #expect(scheduledState.totalAmount == Zatoshi(800_000_000))
+        #expect(scheduledState.sentCount == 2)
+        #expect(scheduledState.totalCount == 3)
+        #expect(scheduledState.durationHours == 12)
+        #expect(scheduledState.dustAmount == Zatoshi.zero)
     }
 
     @MainActor @Test func scheduledDoneFinishesFlow() async {
@@ -3512,6 +3635,9 @@ import ComposableArchitecture
             $0.migrationBGScheduler.scheduleFirstWindow = { }
             // MOB-1496 (W2): see `foundPCZTBatchForPlanCommitContextStoresPopsAndPushesScheduledForScheduledVariant`'s comment.
             $0.migrationManager.reconcile = { }
+            // MOB-1458 (W-E): the post-commit chain now hydrates `.scheduled` via
+            // `migrationManager.migrationSummary` before pushing — harmless zero, unasserted here.
+            $0.migrationManager.migrationSummary = { _ in MigrationSummary.zero }
         }
         store.exhaustivity = .off
 
@@ -3522,6 +3648,9 @@ import ComposableArchitecture
         // session that could legitimately fail to decode.
         await store.send(.path(.element(id: 1, action: .keystoneSign(.delegate(.simulateSignature)))))
         await store.receive(\.keystoneSigningSubmitted)
+        // MOB-1458 (W-E): see `transferPlanPostConfirmChain`'s doc — the `.scheduled` push is now
+        // hydrated (an async peek), landing via its own action rather than synchronously here.
+        await store.receive(\.pushHydratedPathState)
 
         #expect(storeCalls.value == [[MigrationSignedTransferPczt(id: "simulated", pczt: Data())]])
         #expect(store.state.pendingKeystoneSigning == nil)
@@ -3724,6 +3853,9 @@ import ComposableArchitecture
             $0.migrationBGScheduler.scheduleFirstWindow = { }
             $0.migrationManager.reconcile = { }
             $0.migrationManager.recordCommittedSchedule = { _, schedule in recordCommittedScheduleCalls.withValue { $0.append(schedule) } }
+            // MOB-1458 (W-E): the post-commit chain now hydrates `.scheduled` via
+            // `migrationManager.migrationSummary` before pushing — harmless zero, unasserted here.
+            $0.migrationManager.migrationSummary = { _ in MigrationSummary.zero }
         }
         store.exhaustivity = .off
 
@@ -3777,6 +3909,9 @@ import ComposableArchitecture
         }
         await store.send(.path(.element(id: scanId, action: .scan(.foundPCZTBatch(signed)))))
         await store.receive(\.keystoneSigningSubmitted)
+        // MOB-1458 (W-E): see `transferPlanPostConfirmChain`'s doc — the `.scheduled` push is now
+        // hydrated (an async peek), landing via its own action rather than synchronously here.
+        await store.receive(\.pushHydratedPathState)
 
         #expect(storeCalls.value == [expectedStored])
         #expect(recordCommittedScheduleCalls.value == [restartedSchedule])
