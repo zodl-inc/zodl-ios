@@ -115,7 +115,21 @@ extension Root {
                     state.$transactions.withLock {
                         $0 = identifiedArray
                     }
-                    return .send(.home(.smartBanner(.evaluatePriority6)))
+                    // MOB-1513 (Defect A): re-entering at `.evaluatePriority6` skipped
+                    // `.evaluatePriorityMigration` entirely (it is only reachable from
+                    // `.evaluatePriority2` in the walk — see `SmartBannerStore.swift:446-565`), so a
+                    // restored transaction history landing while the banner slot was empty (the
+                    // "Restoring" banner having just cleared) let currency-conversion (priority8)
+                    // claim the slot ahead of a pending Ironwood migration banner (rank 1.5, meant to
+                    // outrank everything below priority2). Entering at `.evaluatePriorityMigration`
+                    // instead walks migration -> 3 -> 4 -> 45 -> 5 -> 6 -> 7 -> 75 -> 8 -> 9 — a
+                    // superset of the old behavior: the intermediate restoring/syncing checks are
+                    // pure re-evaluations (safe to run redundantly from any entry point — they're
+                    // exercised from `.evaluatePriority1`/`.evaluatePriority2`/activation-flip/
+                    // foreground-reentry too) that simply fall through once idle, and the
+                    // rank-guarded `openBannerRequest` makes a lower-priority trigger from them a
+                    // no-op whenever migration already claimed the slot earlier in the same walk.
+                    return .send(.home(.smartBanner(.evaluatePriorityMigration)))
                 }
                 return .none
 
