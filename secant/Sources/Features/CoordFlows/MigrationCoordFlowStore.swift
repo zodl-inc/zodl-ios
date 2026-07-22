@@ -175,7 +175,6 @@ struct MigrationCoordFlow {
         case complete(MigrationComplete)
         case howItWorks(MigrationHowItWorks)
         case keystoneSign(MigrationKeystoneSign)
-        case noteSplit(MigrationNoteSplit)
         case notifications(MigrationNotifications)
         case recovery(MigrationRecovery)
         case reviewTransfer(MigrationReviewTransfer)

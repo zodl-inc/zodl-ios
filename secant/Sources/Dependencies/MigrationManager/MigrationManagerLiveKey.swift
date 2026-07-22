@@ -1707,7 +1707,21 @@ enum MigrationDerivations {
             return orchardBalance > Zatoshi.zero ? MigrationBannerVariant.required : nil
 
         case MigrationState.splitPendingConfirmation:
-            return MigrationBannerVariant.splitting
+            // MOB-1513 (B4): a committed run whose preps haven't all mined reads as PROGRESS — the
+            // run IS running (the old `.splitting` variant shared the literal "Migration Required"
+            // title, exactly QA's post-confirm confusion). Counts derive from the same row list B10
+            // renders (sent count / total — normally "0 of N" right after confirm; a `.recreated`
+            // re-commit keeps its preserved prior-sent rows cumulative). The engine's own
+            // `progress` isn't carried by this state, and the synthesized-row fallback already
+            // covers the committed-but-app-record-failed edge with progress-derived rows.
+            let doneRows = transferRows.filter { $0.status == MigrationTransferRow.Status.sent }.count
+            let splitDisplayRound = round >= 2 || (totalRounds ?? 1) > 1 ? round : nil
+            return MigrationBannerVariant.inProgress(
+                done: doneRows,
+                total: transferRows.count,
+                round: splitDisplayRound,
+                totalRounds: splitDisplayRound != nil ? totalRounds : nil
+            )
 
         case let MigrationState.inProgress(progress):
             if hasOverdue {
@@ -1794,7 +1808,9 @@ enum MigrationDerivations {
         }
 
         if case MigrationState.splitPendingConfirmation = state {
-            return MigrationReentryRoute.noteSplitProgress
+            // MOB-1513 (B4): the split phase re-enters on B10 Migration Progress — the "Splitting
+            // Funds" screen (and its dedicated route) no longer exist.
+            return MigrationReentryRoute.statusProgress
         }
 
         return MigrationReentryRoute.entry

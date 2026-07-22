@@ -691,8 +691,11 @@ import ComposableArchitecture
         let engine = makeEngine()
         engine.applyPreset(SimulatorPreset.splitting)
 
-        #expect(bannerVariant(for: engine) == MigrationBannerVariant.splitting)
-        #expect(reentryRoute(for: engine) == MigrationReentryRoute.noteSplitProgress)
+        // MOB-1513 (B4): the split phase reads as PROGRESS now (the `.splitting` banner variant and
+        // the `noteSplitProgress` re-entry route are gone with the "Splitting Funds" screen). The
+        // simulator's splitting preset has no transfers seeded, so the ring reads 0 of 0.
+        #expect(bannerVariant(for: engine) == MigrationBannerVariant.inProgress(done: 0, total: 0, round: nil, totalRounds: nil))
+        #expect(reentryRoute(for: engine) == MigrationReentryRoute.statusProgress)
     }
 
     @Test func readyToProposePresetMatchesDerivationTable() {

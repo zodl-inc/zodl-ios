@@ -13,7 +13,6 @@ import ComposableArchitecture
 
 enum MigrationBannerVariant: Equatable {
     case required
-    case splitting
     /// MOB-1511 (W2): `round`/`totalRounds` carry the multi-round context — non-nil only when the
     /// display rule says a round label belongs on the banner (round ≥ 2, or a known total > 1);
     /// `totalRounds` additionally needs the SDK estimate (stubbed nil until librustzcash#2714).
@@ -34,7 +33,7 @@ enum MigrationBannerVariant: Equatable {
 
     var title: String {
         switch self {
-        case .required, .splitting, .nextRoundRequired:
+        case .required, .nextRoundRequired:
             return String(localizable: .migrationBannerRequiredTitle)
         case .inProgress:
             return String(localizable: .migrationBannerProgressTitle)
@@ -55,8 +54,6 @@ enum MigrationBannerVariant: Equatable {
         switch self {
         case .required:
             return String(localizable: .migrationBannerRequiredInfo)
-        case .splitting:
-            return String(localizable: .migrationBannerSplittingInfo)
         case .inProgress(let done, let total, let round, let totalRounds):
             if let round {
                 if let totalRounds {
@@ -160,7 +157,7 @@ struct MigrationBannerContentView: View {
 
     @ViewBuilder private func migrationIcon() -> some View {
         switch variant {
-        case .required, .splitting, .nextRoundRequired:
+        case .required, .nextRoundRequired:
             Asset.Assets.Icons.coinsSwap.image
                 .zImage(size: 20, color: titleStyle)
         case .inProgress:

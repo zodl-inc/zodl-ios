@@ -85,7 +85,6 @@ extension SDKSynchronizerClient: TestDependencyKey {
             "\(Self.self).prepareNoteSplit",
             placeholder: NoteSplitProposal(outputNotes: [], fee: Zatoshi.zero)
         ),
-        submitNoteSplit: unimplemented("\(Self.self).submitNoteSplit", placeholder: .success(txId: "")),
         proposeMigrationTransfers: unimplemented(
             "\(Self.self).proposeMigrationTransfers",
             placeholder: MigrationSchedule(transfers: [], estimatedDurationHours: 0)
@@ -121,7 +120,6 @@ extension SDKSynchronizerClient: TestDependencyKey {
         sendRequiresOrchardFunds: unimplemented("\(Self.self).sendRequiresOrchardFunds", placeholder: false),
         proposeNoteSplitPCZTs: unimplemented("\(Self.self).proposeNoteSplitPCZTs", placeholder: []),
         storeSignedNoteSplits: unimplemented("\(Self.self).storeSignedNoteSplits"),
-        broadcastStoredNoteSplit: unimplemented("\(Self.self).broadcastStoredNoteSplit", placeholder: .success(txId: "")),
         proposeMigrationPCZTs: unimplemented("\(Self.self).proposeMigrationPCZTs", placeholder: []),
         storeSignedMigrationTransactions: unimplemented("\(Self.self).storeSignedMigrationTransactions"),
         urEncoderForMigrationPCZTBatch: unimplemented("\(Self.self).urEncoderForMigrationPCZTBatch", placeholder: nil),
@@ -187,7 +185,6 @@ extension SDKSynchronizerClient {
         getMigrationProgress: { _ in nil },
         isNoteSplitNeeded: { _ in false },
         prepareNoteSplit: { _ in NoteSplitProposal(outputNotes: [], fee: Zatoshi.zero) },
-        submitNoteSplit: { _, _, _, _ in MigrationTransferResult.success(txId: "") },
         proposeMigrationTransfers: { _, _ in MigrationSchedule(transfers: [], estimatedDurationHours: 0) },
         proposeImmediateMigration: { _ in ImmediateMigrationProposal(proposal: .testOnlyFakeProposal(totalFee: 0), amount: Zatoshi.zero, fee: Zatoshi.zero) },
         recordImmediateMigration: { _, _ in },
@@ -209,7 +206,6 @@ extension SDKSynchronizerClient {
         sendRequiresOrchardFunds: { _, _ in false },
         proposeNoteSplitPCZTs: { _ in [] },
         storeSignedNoteSplits: { _, _ in },
-        broadcastStoredNoteSplit: { _, _ in MigrationTransferResult.success(txId: "") },
         proposeMigrationPCZTs: { _, _ in [] },
         storeSignedMigrationTransactions: { _, _ in },
         urEncoderForMigrationPCZTBatch: { _ in nil },
@@ -402,7 +398,6 @@ extension SDKSynchronizerClient {
             getMigrationProgress: { _ in nil },
             isNoteSplitNeeded: { _ in false },
             prepareNoteSplit: { _ in NoteSplitProposal(outputNotes: [], fee: Zatoshi.zero) },
-            submitNoteSplit: { _, _, _, _ in MigrationTransferResult.success(txId: "") },
             proposeMigrationTransfers: { _, _ in MigrationSchedule(transfers: [], estimatedDurationHours: 0) },
             proposeImmediateMigration: { _ in ImmediateMigrationProposal(proposal: .testOnlyFakeProposal(totalFee: 0), amount: Zatoshi.zero, fee: Zatoshi.zero) },
             recordImmediateMigration: { _, _ in },
@@ -424,7 +419,6 @@ extension SDKSynchronizerClient {
             sendRequiresOrchardFunds: { _, _ in false },
             proposeNoteSplitPCZTs: { _ in [] },
             storeSignedNoteSplits: { _, _ in },
-            broadcastStoredNoteSplit: { _, _ in MigrationTransferResult.success(txId: "") },
             proposeMigrationPCZTs: { _, _ in [] },
             storeSignedMigrationTransactions: { _, _ in },
             urEncoderForMigrationPCZTBatch: urEncoderForMigrationPCZTBatch,

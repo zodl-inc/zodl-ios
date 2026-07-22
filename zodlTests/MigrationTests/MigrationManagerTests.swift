@@ -83,7 +83,11 @@ struct MigrationManagerTests {
         #expect(variant == nil)
     }
 
-    @Test func splitPendingConfirmationIsSplitting() {
+    /// MOB-1513 (B4): a committed run whose preps haven't all mined yet reads as PROGRESS ("0 of N"
+    /// ring), never the old "Migration Required"-titled `.splitting` variant — the run IS running,
+    /// and "Required" post-confirm was exactly QA's confusion. Counts derive from the row list
+    /// (sent count / total), the same rows B10 renders.
+    @Test func splitPendingConfirmationIsInProgressZeroOfN() {
         let variant = MigrationDerivations.bannerVariant(
             isIronwoodActivated: true,
             state: MigrationState.splitPendingConfirmation,
@@ -93,10 +97,38 @@ struct MigrationManagerTests {
             orchardBalance: Zatoshi.zero,
             isCompleteAcknowledged: false,
             isMigrationRemainderPending: false,
-            transferRows: []
+            transferRows: [
+                MigrationTransferRow(id: "t0", index: 0, amount: Zatoshi(100), status: .active, hoursFromNow: 0),
+                MigrationTransferRow(id: "t1", index: 1, amount: Zatoshi(100), status: .pending, hoursFromNow: 6),
+                MigrationTransferRow(id: "t2", index: 2, amount: Zatoshi(100), status: .pending, hoursFromNow: 12)
+            ]
         )
 
-        #expect(variant == MigrationBannerVariant.splitting)
+        #expect(variant == MigrationBannerVariant.inProgress(done: 0, total: 3, round: nil, totalRounds: nil))
+    }
+
+    /// MOB-1513 (B4): a `.recreated` run re-committed mid-way (prior sent rows preserved) keeps its
+    /// cumulative counts on the progress banner during the fresh commit's split phase.
+    @Test func splitPendingConfirmationWithPriorSentRowsKeepsCumulativeProgressCounts() {
+        let variant = MigrationDerivations.bannerVariant(
+            isIronwoodActivated: true,
+            state: MigrationState.splitPendingConfirmation,
+            hasOverdue: false,
+            isManualDelivery: false,
+            isNextTransferDue: false,
+            orchardBalance: Zatoshi.zero,
+            isCompleteAcknowledged: false,
+            isMigrationRemainderPending: false,
+            transferRows: [
+                MigrationTransferRow(id: "old0", index: 0, amount: Zatoshi(100), status: .sent, hoursFromNow: 6),
+                MigrationTransferRow(id: "t0", index: 1, amount: Zatoshi(100), status: .active, hoursFromNow: 0),
+                MigrationTransferRow(id: "t1", index: 2, amount: Zatoshi(100), status: .pending, hoursFromNow: 6)
+            ],
+            round: 2,
+            totalRounds: 3
+        )
+
+        #expect(variant == MigrationBannerVariant.inProgress(done: 1, total: 3, round: 2, totalRounds: 3))
     }
 
     @Test func inProgressManualAndDueIsTransferReady() {
@@ -906,7 +938,9 @@ struct MigrationManagerTests {
         #expect(route == MigrationReentryRoute.entry)
     }
 
-    @Test func splitPendingConfirmationIsNoteSplitProgress() {
+    /// MOB-1513 (B4): re-entry during the split phase lands on B10 Migration Progress — the
+    /// "Splitting Funds" screen (and its `noteSplitProgress` route) no longer exist.
+    @Test func splitPendingConfirmationIsStatusProgress() {
         let route = MigrationDerivations.reentryRoute(
             isIronwoodActivated: true,
             state: MigrationState.splitPendingConfirmation,
@@ -918,7 +952,7 @@ struct MigrationManagerTests {
             progress: nil
         )
 
-        #expect(route == MigrationReentryRoute.noteSplitProgress)
+        #expect(route == MigrationReentryRoute.statusProgress)
     }
 
     @Test func notStartedIsEntry() {
@@ -1042,7 +1076,7 @@ struct MigrationManagerTests {
                 expected: MigrationReentryRoute.complete
             ),
             Row(
-                name: "6: noteSplitProgress",
+                name: "6: split phase -> statusProgress (MOB-1513 B4)",
                 isIronwoodActivated: true,
                 hasInvalid: false,
                 hasOverdue: false,
@@ -1050,7 +1084,7 @@ struct MigrationManagerTests {
                 isNextTransferDue: false,
                 isCompleteAcknowledged: false,
                 state: MigrationState.splitPendingConfirmation,
-                expected: MigrationReentryRoute.noteSplitProgress
+                expected: MigrationReentryRoute.statusProgress
             ),
             Row(
                 name: "7: entry",

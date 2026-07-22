@@ -337,9 +337,8 @@ enum MigrationSendGate: Equatable, Sendable {
 enum MigrationReentryRoute: Equatable, Sendable {
     case recovery(isExpired: Bool)       // §4.3 row 1 — variant from MigrationAttentionReason (.transferExpired → true, else false)
     case statusResume                    // row 2
-    case statusProgress                  // row 3
+    case statusProgress                  // row 3 — also the split phase (MOB-1513 B4: the old row-5 `noteSplitProgress` route is retired with the "Splitting Funds" screen)
     case complete                        // row 4 (unacknowledged)
-    case noteSplitProgress               // row 5
     case reviewManual(step: Int, total: Int)  // row 6 — manual delivery, next transfer due
     case entry                           // row 7 (notStarted / readyToPropose)
 }

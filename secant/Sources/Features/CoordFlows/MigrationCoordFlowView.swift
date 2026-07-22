@@ -40,8 +40,6 @@ struct MigrationCoordFlowView: View {
                     MigrationHowItWorksView(store: store)
                 case let .keystoneSign(store):
                     MigrationKeystoneSignView(store: store)
-                case let .noteSplit(store):
-                    MigrationNoteSplitView(store: store)
                 case let .notifications(store):
                     MigrationNotificationsView(store: store)
                 case let .recovery(store):

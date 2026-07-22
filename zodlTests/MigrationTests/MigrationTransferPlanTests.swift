@@ -428,10 +428,6 @@ import ComposableArchitecture
                 callOrder.withValue { $0.append("prepare") }
                 return NoteSplitProposal(outputNotes: [Zatoshi(500_000_000)], fee: Zatoshi(100_000))
             }
-            $0.sdkSynchronizer.submitNoteSplit = { _, _, _, _ in
-                callOrder.withValue { $0.append("submit") }
-                return MigrationTransferResult.success(txId: "split-tx-id")
-            }
             $0.sdkSynchronizer.signAndStoreMigrationSchedule = { _, _, _ in
                 callOrder.withValue { $0.append("signAndStore") }
             }
