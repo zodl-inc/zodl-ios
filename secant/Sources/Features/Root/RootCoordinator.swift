@@ -337,6 +337,12 @@ extension Root {
                 // (the Keystone resume chain clears it well before Sending is ever pushed), so this
                 // too is a no-op in practice; kept for symmetry with `.flowFinished` above.
                 let cancelEffect = cancelAbandonedKeystoneMigrationRun(state: state)
+                // MOB-1513 (H3 guard): this close site does NOT route through
+                // `tearDownMigrationCoordFlow` (unlike the provisional-snapshot clear, disarming the
+                // H3 signal is NOT a dead no-op here — nothing else on this path does it), so it
+                // must disarm independently, reading the recorded owner BEFORE `state.path = nil`
+                // below — or the flag would strand permanently true for this account until relaunch.
+                migrationManager.setMigrationFlowPresented(state.migrationCoordFlowState.presentedMigrationFlowAccountUUID, false)
                 state.path = nil
                 return .merge(releaseEffect, cancelEffect)
 
@@ -604,11 +610,19 @@ extension Root {
     /// `.migrationCoordFlow(.switchServerRequested)` (which then routes to Server Setup) so the two
     /// stay in lockstep. Does NOT touch `state.path` — each caller sets its own destination after.
     ///
-    /// The three effects, in order:
+    /// The effects, in order:
     /// - `releaseSendWaitHold()`: a defensive release — normally a no-op (the Sending store's own
     ///   exit already clears the hold), but every flow-root close lands here, so this covers any
     ///   path where the coordinator finishes without that exit running. Read here, BEFORE the caller
     ///   repoints `state.path`.
+    /// - MOB-1513 (H3 guard): disarms `migrationManager.setMigrationFlowPresented` for the account
+    ///   THIS flow instance recorded as its owner at `.onAppear`
+    ///   (`state.migrationCoordFlowState.presentedMigrationFlowAccountUUID`) — never whatever
+    ///   `state.selectedWalletAccount` reads at THIS moment, which the `.home(.walletAccountTapped)`
+    ///   caller below is (defensively) about to repoint at a DIFFERENT account. Read BEFORE the
+    ///   callers reset/replace `migrationCoordFlowState`, same ordering `cancelEffect` below already
+    ///   relies on. See `MigrationManagerImpl.presentedFlowAccountUUIDs`'s doc for the full
+    ///   arm/disarm site list this is one of (this helper covers three of the four).
     /// - `clearProvisionalNetworkSnapshot(nil)`: discards the account's network snapshot iff it is
     ///   still PROVISIONAL (never committed to a schedule this run); a no-op against an
     ///   already-committed one, which stays until its own run-end clear. `nil` resolves the selected
@@ -625,6 +639,7 @@ extension Root {
         // BEFORE the callers reset/replace `migrationCoordFlowState`; see
         // `cancelAbandonedKeystoneMigrationRun`'s doc.
         let cancelEffect = cancelAbandonedKeystoneMigrationRun(state: state)
+        migrationManager.setMigrationFlowPresented(state.migrationCoordFlowState.presentedMigrationFlowAccountUUID, false)
         migrationManager.clearProvisionalNetworkSnapshot(nil)
         return .merge(
             releaseEffect,

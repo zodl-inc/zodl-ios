@@ -169,17 +169,55 @@ import ComposableArchitecture
 
     // MARK: - Re-entry: .onAppear with empty path
 
+    /// MOB-1513 (H3 guard): genuine flow start (`state.path.isEmpty`) synchronously records the
+    /// selected account as this instance's owner (`presentedMigrationFlowAccountUUID`) and arms
+    /// `migrationManager.setMigrationFlowPresented` for it — BEFORE the async re-entry lookup even
+    /// resolves. Exhaustive `TestStore` (no `exhaustivity = .off`), so the state assertion below
+    /// also proves this is the ONLY synchronous mutation `.onAppear` makes here.
     @MainActor @Test func onAppearWithEntryRouteAppendsNothing() async {
+        let setMigrationFlowPresentedCalls = LockIsolated<[(AccountUUID?, Bool)]>([])
         let store = TestStore(initialState: MigrationCoordFlow.State()) {
             MigrationCoordFlow()
         } withDependencies: {
             $0.migrationManager.reentryRoute = { .entry }
+            $0.migrationManager.setMigrationFlowPresented = { accountUUID, isPresented in
+                setMigrationFlowPresentedCalls.withValue { $0.append((accountUUID, isPresented)) }
+            }
         }
 
-        await store.send(.onAppear)
+        await store.send(.onAppear) {
+            $0.presentedMigrationFlowAccountUUID = Self.defaultAccount.id
+        }
         await store.receive(\.pushNextPermissionStep)
 
         #expect(store.state.path.isEmpty)
+        #expect(setMigrationFlowPresentedCalls.value.count == 1)
+        #expect(setMigrationFlowPresentedCalls.value.first?.0 == Self.defaultAccount.id)
+        #expect(setMigrationFlowPresentedCalls.value.first?.1 == true)
+    }
+
+    /// Twin of the test above for the OTHER branch of the `state.path.isEmpty` guard: a re-entry
+    /// that finds the path already non-empty (mid-flow, e.g. process death mid-run re-showing the
+    /// same screen) returns `.none` before ever reaching the H3-guard wiring — no recording, no
+    /// arming. Confirms the signal only ever arms at a GENUINE flow start, never on every
+    /// `.onAppear` delivery.
+    @MainActor @Test func onAppearWithNonEmptyPathDoesNotArmMigrationFlowPresentedSignal() async {
+        let setMigrationFlowPresentedCalls = LockIsolated<[(AccountUUID?, Bool)]>([])
+        var initialState = MigrationCoordFlow.State()
+        initialState.path.append(.status(MigrationStatus.State(isFlowRoot: true)))
+
+        let store = TestStore(initialState: initialState) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.migrationManager.setMigrationFlowPresented = { accountUUID, isPresented in
+                setMigrationFlowPresentedCalls.withValue { $0.append((accountUUID, isPresented)) }
+            }
+        }
+
+        await store.send(.onAppear)
+
+        #expect(setMigrationFlowPresentedCalls.value.isEmpty)
+        #expect(store.state.presentedMigrationFlowAccountUUID == nil)
     }
 
     @MainActor @Test func onAppearWithStatusProgressRouteAppendsFlowRootStatusScreen() async {
