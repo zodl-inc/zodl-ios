@@ -257,7 +257,7 @@ struct MigrationSending {
                 // `.torFirstRunChoice`; this closes the same gap at the reducer, where it actually
                 // matters (a raw `.send`/programmatic dispatch bypasses the view entirely).
                 guard state.failureKind == MigrationBroadcastFailureRoute.torFirstRunChoice else { return .none }
-                let usesFullBalanceCopy = migrationManager.migrationMode() == MigrationMode.immediate
+                let usesFullBalanceCopy = migrationManager.migrationMode(state.selectedWalletAccount?.id) == MigrationMode.immediate
                 state.alert = AlertState.migrationTorOffWarning(usesFullBalanceCopy: usesFullBalanceCopy, proceedAction: .offWarningProceedTapped)
                 return .none
 

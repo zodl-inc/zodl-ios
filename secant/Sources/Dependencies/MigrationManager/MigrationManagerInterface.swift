@@ -52,18 +52,22 @@ struct MigrationManagerClient: Sendable {
     // through to their LIVE impl, not these no-ops.
     var recordCommittedSchedule: @Sendable (_ accountUUID: AccountUUID?, _ schedule: MigrationSchedule) async -> Void = { _, _ in }
     var recordTransferBroadcast: @Sendable (_ accountUUID: AccountUUID?, _ result: MigrationTransferResult) async -> Void = { _, _ in }
-    // Dust resolution (MOB-1487/MOB-1496: relocated — app persistence, not SDK calls).
-    var lockMigrationDust: @Sendable () async throws -> Void
-    var isMigrationDustLocked: @Sendable () -> Bool = { false }
+    // Dust resolution (MOB-1487/MOB-1496: relocated — app persistence, not SDK calls). MOB-1509:
+    // per-account (`nil` resolves the selected account) — two parallel migrations must not share
+    // one lock verdict.
+    var lockMigrationDust: @Sendable (_ accountUUID: AccountUUID?) async throws -> Void
+    var isMigrationDustLocked: @Sendable (_ accountUUID: AccountUUID?) -> Bool = { _ in false }
     // Per-account migration-state stream (MOB-1496: relocated from SDKSynchronizerClient's
     // `migrationStateStream`) — emits on `reconcile()` and whenever a store reports a completed
     // migration op. `nil` accountUUID resolves the selected account internally.
     var stateEvents: @Sendable (_ accountUUID: AccountUUID?) -> AnyPublisher<MigrationState, Never> = { _ in Empty().eraseToAnyPublisher() }
-    // Persistence (UserDefaults-backed; keys in SharedStateKeys.swift)
-    var migrationMode: @Sendable () -> MigrationMode?
-    var setMigrationMode: @Sendable (MigrationMode) -> Void
-    var isManualDelivery: @Sendable () -> Bool = { false }
-    var setManualDelivery: @Sendable (Bool) -> Void
+    // Persistence (UserDefaults-backed; keys in SharedStateKeys.swift). MOB-1509: mode and manual
+    // delivery are per-account (`nil` resolves the selected account) — concurrently migrating
+    // accounts choose independently.
+    var migrationMode: @Sendable (_ accountUUID: AccountUUID?) -> MigrationMode?
+    var setMigrationMode: @Sendable (_ accountUUID: AccountUUID?, _ mode: MigrationMode) -> Void
+    var isManualDelivery: @Sendable (_ accountUUID: AccountUUID?) -> Bool = { _ in false }
+    var setManualDelivery: @Sendable (_ accountUUID: AccountUUID?, _ isManual: Bool) -> Void
     // MOB-1496 (W4): ensure-or-read the run's atomic network snapshot (Tor + sync provider/endpoint +
     // broadcast provider/endpoint — see `MigrationNetworkSnapshot`) for `accountUUID` (`nil` resolves
     // the selected account, same convention as `migrationSummary`/`migrationTransfers` above), mapped

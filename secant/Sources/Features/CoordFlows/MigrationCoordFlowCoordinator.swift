@@ -303,7 +303,7 @@ extension MigrationCoordFlow {
 
             case .entry(.delegate(.chose(let mode))):
                 state.mode = mode
-                migrationManager.setMigrationMode(mode)
+                migrationManager.setMigrationMode(state.selectedWalletAccount?.id, mode)
 
                 switch mode {
                 case .immediate:
@@ -510,7 +510,7 @@ extension MigrationCoordFlow {
 
             case .path(.element(id: _, action: .backgroundDelivery(.delegate(.continued(let backgroundAllowed))))):
                 if !backgroundAllowed {
-                    migrationManager.setManualDelivery(true)
+                    migrationManager.setManualDelivery(state.selectedWalletAccount?.id, true)
                 }
                 return .run { send in
                     await send(.pushNextPermissionStep(await nextPermissionStepResult()))
@@ -560,11 +560,13 @@ extension MigrationCoordFlow {
 
             case .path(.element(id: _, action: .transferPlan(.delegate(.keystoneSignRequested(let pczts))))):
                 state.pendingKeystoneSigning = .planCommit
+                state.pendingKeystoneSigningAccountUUID = state.selectedWalletAccount?.id
                 state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: pczts)))
                 return .none
 
             case .path(.element(id: _, action: .reviewTransfer(.delegate(.keystoneSignRequested(let pczts))))):
                 state.pendingKeystoneSigning = .immediateReview
+                state.pendingKeystoneSigningAccountUUID = state.selectedWalletAccount?.id
                 state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: pczts)))
                 return .none
 
@@ -674,6 +676,7 @@ extension MigrationCoordFlow {
 
             case .keystoneSignRejected:
                 state.pendingKeystoneSigning = nil
+                state.pendingKeystoneSigningAccountUUID = nil
                 let _ = state.path.popLast()
                 return .none
 
@@ -694,6 +697,7 @@ extension MigrationCoordFlow {
                 // sent this action.
                 let hadPendingCeremony = state.pendingKeystoneSigning != nil
                 state.pendingKeystoneSigning = nil
+                state.pendingKeystoneSigningAccountUUID = nil
                 // MOB-1496 (C-1 fix): as well as the real round-trip's re-pair-failure guard above
                 // (`.scan` always on top there — pop 2, unchanged), this now also fires from the
                 // split-store-failure branch of EITHER Keystone store effect above, including the
@@ -898,6 +902,7 @@ extension MigrationCoordFlow {
                 // the existing Keystone signing context/machinery (scan -> re-pair -> store) handles
                 // it uniformly alongside the schedule/review lanes.
                 state.pendingKeystoneSigning = .dust(schedule)
+                state.pendingKeystoneSigningAccountUUID = state.selectedWalletAccount?.id
                 state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: pczts)))
                 return .none
 
@@ -984,6 +989,7 @@ extension MigrationCoordFlow {
         state: inout MigrationCoordFlow.State
     ) -> Effect<MigrationCoordFlow.Action> {
         state.pendingKeystoneSigning = nil
+        state.pendingKeystoneSigningAccountUUID = nil
         let topElementIsScan = state.path.last?.is(\.scan) == true
         state.path.removeLast(topElementIsScan ? 2 : 1)
 
@@ -1379,7 +1385,7 @@ extension MigrationCoordFlow {
         if await userNotifications.authorizationStatus() == .notDetermined {
             // MOB-1478 (W8): mirrors `freshPlanVariant()`'s ternary — today `.manual` was
             // unreachable since this always defaulted to `.scheduled`.
-            let variant: MigrationNotifications.State.Variant = migrationManager.isManualDelivery() ? .manual : .scheduled
+            let variant: MigrationNotifications.State.Variant = migrationManager.isManualDelivery(nil) ? .manual : .scheduled
             return MigrationCoordFlow.PermissionStepResult(pathState: .notifications(MigrationNotifications.State(variant: variant)))
         }
 
@@ -1391,7 +1397,7 @@ extension MigrationCoordFlow {
     /// Fresh-entry plan variant: manual delivery (background delivery declined) shows the manual
     /// copy and its confirm sends the first transfer now (§6.3); otherwise the scheduled variant.
     private func freshPlanVariant() -> MigrationTransferPlan.State.Variant {
-        migrationManager.isManualDelivery() ? .manual : .scheduled
+        migrationManager.isManualDelivery(nil) ? .manual : .scheduled
     }
 
     // MARK: - MOB-1497 (T2): identity-custom classification
@@ -1550,7 +1556,7 @@ extension MigrationCoordFlow {
             isFlowRoot: isFlowRoot,
             // MOB-1487: a previously locked remainder re-enters on the locked confirmation
             // instead of re-offering resolution (offered/none derive from `dust` otherwise).
-            dustResolution: migrationManager.isMigrationDustLocked()
+            dustResolution: migrationManager.isMigrationDustLocked(accountUUID)
                 ? MigrationComplete.State.DustResolution.locked
                 : nil
         )

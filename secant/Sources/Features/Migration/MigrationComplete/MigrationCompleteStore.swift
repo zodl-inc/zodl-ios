@@ -129,7 +129,9 @@ struct MigrationComplete {
                 state.dustResolution = .locking
                 return .run { send in
                     do {
-                        try await migrationManager.lockMigrationDust()
+                        // MOB-1509: nil resolves the selected account — the Complete screen only
+                        // ever shows for the selected account's own migration.
+                        try await migrationManager.lockMigrationDust(nil)
                         await send(.lockDustSucceeded)
                     } catch {
                         await send(.lockDustFailed(error.toZcashError()))

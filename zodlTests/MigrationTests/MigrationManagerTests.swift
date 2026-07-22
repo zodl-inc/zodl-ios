@@ -1215,14 +1215,23 @@ struct MigrationManagerTests {
         defer { userDefaults.removePersistentDomain(forName: "testMigrationModePersistenceRoundTrip") }
 
         let storage = MigrationGateStorage(userDefaults: userDefaults)
+        let accountA = AccountUUID(id: [UInt8](repeating: 1, count: 16))
+        let accountB = AccountUUID(id: [UInt8](repeating: 2, count: 16))
 
-        #expect(storage.migrationMode() == nil)
+        #expect(storage.migrationMode(for: accountA) == nil)
 
-        storage.setMigrationMode(MigrationMode.immediate)
-        #expect(storage.migrationMode() == MigrationMode.immediate)
+        storage.setMigrationMode(MigrationMode.immediate, for: accountA)
+        #expect(storage.migrationMode(for: accountA) == MigrationMode.immediate)
+        // MOB-1509: per-account isolation — A's choice must never leak into B's.
+        #expect(storage.migrationMode(for: accountB) == nil)
 
-        storage.setMigrationMode(MigrationMode.privateScheduled)
-        #expect(storage.migrationMode() == MigrationMode.privateScheduled)
+        storage.setMigrationMode(MigrationMode.privateScheduled, for: accountB)
+        #expect(storage.migrationMode(for: accountA) == MigrationMode.immediate)
+        #expect(storage.migrationMode(for: accountB) == MigrationMode.privateScheduled)
+
+        storage.clearMigrationMode(for: accountA)
+        #expect(storage.migrationMode(for: accountA) == nil)
+        #expect(storage.migrationMode(for: accountB) == MigrationMode.privateScheduled)
     }
 
     @Test func manualDeliveryPersistenceRoundTrip() throws {
@@ -1233,14 +1242,22 @@ struct MigrationManagerTests {
         defer { userDefaults.removePersistentDomain(forName: "testManualDeliveryPersistenceRoundTrip") }
 
         let storage = MigrationGateStorage(userDefaults: userDefaults)
+        let accountA = AccountUUID(id: [UInt8](repeating: 1, count: 16))
+        let accountB = AccountUUID(id: [UInt8](repeating: 2, count: 16))
 
-        #expect(storage.isManualDelivery() == false)
+        #expect(storage.isManualDelivery(for: accountA) == false)
 
-        storage.setManualDelivery(true)
-        #expect(storage.isManualDelivery() == true)
+        storage.setManualDelivery(true, for: accountA)
+        #expect(storage.isManualDelivery(for: accountA) == true)
+        // MOB-1509: per-account isolation — A's delivery style must never leak into B's.
+        #expect(storage.isManualDelivery(for: accountB) == false)
 
-        storage.setManualDelivery(false)
-        #expect(storage.isManualDelivery() == false)
+        storage.setManualDelivery(false, for: accountA)
+        #expect(storage.isManualDelivery(for: accountA) == false)
+
+        storage.setManualDelivery(true, for: accountB)
+        storage.clearManualDelivery(for: accountB)
+        #expect(storage.isManualDelivery(for: accountB) == false)
     }
 
     /// MOB-1496: the SDK's `MigrationNetworkPrivacyOptions` isn't `Codable` (it carries a
@@ -1277,43 +1294,54 @@ struct MigrationManagerTests {
         defer { userDefaults.removePersistentDomain(forName: "testDustLockedPersistenceRoundTrip") }
 
         let storage = MigrationGateStorage(userDefaults: userDefaults)
+        let accountA = AccountUUID(id: [UInt8](repeating: 1, count: 16))
+        let accountB = AccountUUID(id: [UInt8](repeating: 2, count: 16))
 
-        #expect(storage.isDustLocked() == false)
+        #expect(storage.isDustLocked(for: accountA) == false)
 
-        storage.setDustLocked(true)
-        #expect(storage.isDustLocked() == true)
+        storage.setDustLocked(true, for: accountA)
+        #expect(storage.isDustLocked(for: accountA) == true)
+        // MOB-1509: per-account isolation — A locking its remainder must never mark B's locked.
+        #expect(storage.isDustLocked(for: accountB) == false)
 
-        storage.setDustLocked(false)
-        #expect(storage.isDustLocked() == false)
+        storage.setDustLocked(false, for: accountA)
+        #expect(storage.isDustLocked(for: accountA) == false)
+
+        storage.setDustLocked(true, for: accountB)
+        storage.clearDustLocked(for: accountB)
+        #expect(storage.isDustLocked(for: accountB) == false)
     }
 
-    @Test func resetPersistedFlagsClearsDustLockedAlongWithEveryOtherFlag() throws {
+    @Test func resetPersistedFlagsClearsWalletWideFlagsAndLeavesPerAccountFlags() throws {
         let userDefaults = try #require(
-            UserDefaults(suiteName: "testResetPersistedFlagsClearsDustLockedAlongWithEveryOtherFlag"),
+            UserDefaults(suiteName: "testResetPersistedFlagsClearsWalletWideFlagsAndLeavesPerAccountFlags"),
             "MigrationGateStorage: UserDefaults failed to initialize"
         )
         defer {
-            userDefaults.removePersistentDomain(forName: "testResetPersistedFlagsClearsDustLockedAlongWithEveryOtherFlag")
+            userDefaults.removePersistentDomain(forName: "testResetPersistedFlagsClearsWalletWideFlagsAndLeavesPerAccountFlags")
         }
 
         let storage = MigrationGateStorage(userDefaults: userDefaults)
         let accountUUID = AccountUUID(id: [UInt8](repeating: 1, count: 16))
-        storage.setMigrationMode(MigrationMode.immediate)
-        storage.setManualDelivery(true)
+        storage.setMigrationMode(MigrationMode.immediate, for: accountUUID)
+        storage.setManualDelivery(true, for: accountUUID)
         storage.setTorEnabledForMigration(true)
         storage.acknowledgeComplete(for: accountUUID)
-        storage.setDustLocked(true)
+        storage.setDustLocked(true, for: accountUUID)
         storage.recordSyncCompleted(at: Date(timeIntervalSince1970: 5_000_000))
 
         storage.resetPersistedFlags()
 
-        #expect(storage.migrationMode() == nil)
-        #expect(storage.isManualDelivery() == false)
+        // MOB-1509: mode/manual/dust-locked are per-account now (same transition the acknowledged
+        // flag went through in R8-T3) — the storage-level reset only deletes the dead legacy
+        // wallet-wide keys, so every per-account value survives it.
+        #expect(storage.migrationMode(for: accountUUID) == MigrationMode.immediate)
+        #expect(storage.isManualDelivery(for: accountUUID) == true)
+        #expect(storage.isDustLocked(for: accountUUID) == true)
         // MOB-1497 (R1): the stored choice is genuinely gone (see the raw-key check below) — it just
         // reads back `true` now, the new never-written default, rather than `false`.
         #expect(storage.isTorEnabledForMigration() == true)
         #expect(userDefaults.data(forKey: .migrationNetworkPrivacyOptions) == nil)
-        #expect(storage.isDustLocked() == false)
         // R8-T3 (S2): the acknowledged flag is per-account now — `MigrationGateStorage
         // .resetPersistedFlags()` only clears the dead legacy (wallet-wide, unsuffixed) key.
         // Clearing every KNOWN account's own flag is `MigrationManagerImpl.resetPersistedFlags()`'s

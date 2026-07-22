@@ -187,6 +187,11 @@ struct MigrationCoordFlow {
         /// cleared once the QR round-trip resolves (either resumed via `foundPCZTBatch` or backed
         /// out via `.rejected`).
         var pendingKeystoneSigning: KeystoneSigningContext?
+        /// MOB-1509: the account that OWNS the pending ceremony — recorded beside
+        /// `pendingKeystoneSigning` at its three setters and cleared with it, so an external
+        /// teardown that runs AFTER an account switch (the cross-account notification tap) still
+        /// cancels the stranded run on the account that built it, not the newly selected one.
+        var pendingKeystoneSigningAccountUUID: AccountUUID?
         /// MOB-1478 (W2): the Tor bottom sheet's own state — always present (not optional), toggled
         /// on screen via `isTorSheetPresented`, mirroring the `ServerSetup`/`serverSetupViewBinding`
         /// precedent in `Root` rather than an `@Presents`/`ifLet` destination (there's exactly one
