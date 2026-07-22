@@ -4,51 +4,46 @@
 //
 //  "Review Transfer" screen (MOB-1463, Figma S7 · immediate 2867:5924 / manual "3 of 5" 2729:8544,
 //  equivalent to frame 2712:7779 which fails to render via MCP). Final confirmation before a
-//  migration transfer is sent — either the single immediate transfer, or one step of a scheduled
-//  plan. Immediate mode proposes its own single-transfer schedule on `onAppear` (for Amount/Fee) and
-//  signs+stores it on confirm before delegating; manual step has its data injected by the
-//  coordinator (no propose) and confirm delegates directly — the transfer was already signed at plan
-//  commit. When the manual-step variant is a flow re-entry root (`isFlowRoot`), its back control
-//  closes the flow via a new `.closed` delegate instead of popping — reusing `.confirmed` for a
-//  back-tap would incorrectly signal the transfer was confirmed (MOB-1466). Both delegates are
-//  consumed by `MigrationCoordFlowCoordinator` (MOB-1466).
+//  migration transfer is sent — either the single immediate sweep, or one step of a scheduled plan.
+//  Manual step has its data injected by the coordinator (no propose) and confirm delegates directly —
+//  the transfer was already signed at plan commit. When the manual-step variant is a flow re-entry
+//  root (`isFlowRoot`), its back control closes the flow via a `.closed` delegate instead of popping —
+//  reusing `.confirmed` for a back-tap would incorrectly signal the transfer was confirmed (MOB-1466).
+//  Both delegates are consumed by `MigrationCoordFlowCoordinator` (MOB-1466).
 //
-//  MOB-1468 (Keystone): a Keystone-vendor account in immediate mode forks `confirmTapped` — instead
-//  of signing+storing `state.schedule` locally (the same schedule `onAppear` proposed via
-//  `proposeImmediateMigration()` for Amount/Fee), it proposes that schedule's PCZT
-//  (`proposeMigrationPCZTs(schedule)`) and delegates `.keystoneSignRequested(pczts)` for the
-//  coordinator to route through `MigrationKeystoneSign` + `Scan`. The manual-step path (transfers
-//  already signed at plan commit) is unchanged — `signAndStoreMigrationSchedule` never runs there.
+//  MOB-1513 (Lane A2 — send-max immediate migration): immediate mode used to propose+display an
+//  ENGINE-HELD, single-transfer `MigrationSchedule` (`proposeImmediateMigration() ->
+//  MigrationSchedule`), sign+store it HERE via `signAndStoreMigrationSchedule` before delegating, and
+//  broadcast it LATER, on the Sending screen, via `executeNextPendingMigrationTransfer` — despite the
+//  screen's own historical doc already claiming "single-transfer engine semantics", that schedule was
+//  in fact just an engine-internal implementation detail with its own plan-cache/run bookkeeping. That
+//  claim is genuinely true now, via the real SDK's send-max surface:
+//  `proposeImmediateMigration(accountUUID:)` returns an ORDINARY, engine-external
+//  `ImmediateMigrationProposal` — a send-max transaction that, by construction, is always exactly one
+//  transaction (`Proposal.transactionCount() == 1`), with no engine plan cache behind it to go stale.
+//  `onAppear` proposes it ONCE (cache guard: a re-appearance with an already-populated
+//  `immediateProposal` never re-proposes — mirrors `MigrationTransferPlanStore`'s injected-schedule/
+//  hydrated-rows guard) and displays its `amount`/`fee` directly (no more hardcoded standard-fee
+//  placeholder or `transfers.first?.amount` read — the proposal's own fields are the real, deterministic
+//  values). `confirmTapped`'s SOFTWARE branch has no local commit step left at all: there is nothing to
+//  sign+store ahead of a broadcast that only ever happens once, when the actual USK-signing submit
+//  runs — it just delegates `.confirmed`, and the coordinator threads `immediateProposal` into the
+//  pushed `MigrationSending.State`, whose `onAppear` now performs the genuine create+sign+submit for
+//  this lane (see that store's doc). An explicit Retry (after a propose failure) may still re-propose;
+//  a commit failure's Retry re-attempts with the SAME already-fetched proposal (no re-propose needed —
+//  there is no plan-cache staleness to worry about).
 //
-//  MOB-1496 (R8-T1 remediation, finding S1): immediate mode's commit is now split-free, matching the
-//  engine's own design (`propose_immediate_migration_transfers` sweeps the whole balance in one
-//  transaction, "skipping the split entirely"). The MOB-1478 (W4) silent-split step described below
-//  is GONE from this screen — consulting `isNoteSplitNeeded()` here and then signing the
-//  already-proposed immediate schedule without re-proposing would silently stage a self-conflicting
-//  pair (the wallet DB never re-scans the split mid-flow, sync being stopped) that a later broadcast
-//  rejects. The software commit and the Keystone PCZT-proposal fork now delegate to the shared
-//  `MigrationCommitPipeline` (finding #19 — this store and `MigrationTransferPlanStore` drove
-//  byte-identical copies of both before) in `.immediate` mode, which never calls
-//  `isNoteSplitNeeded`/`prepareNoteSplit`/`submitNoteSplit`/`stopSyncBeforeMigrationBroadcast` — that
-//  stop existed only to guard the split's own broadcast, and nothing in the immediate commit
-//  broadcasts anything (`signAndStoreMigrationSchedule` only signs and persists locally). `onAppear`'s
-//  propose and `confirmTapped`'s commit no longer silently fall back to an empty schedule on failure
-//  (finding S3): a propose failure presents the failure sheet with `failureReason == .propose` (Retry
-//  re-proposes), and Confirm is guarded against a nil or zero-transfer schedule regardless of why.
-//  The Keystone fork now throws through instead of swallowing errors with `try?`, and an empty PCZT
-//  batch is also a failure (finding #4).
-//
-//  MOB-1496 (final engine, plural preps): the paragraph above's "immediate mode's commit is now
-//  split-free" still holds for the SOFTWARE commit (`commitSoftware`'s `.immediate` case) but no
-//  longer for the Keystone PCZT-proposal fork (`requestKeystoneSignature` below) — the final engine's
-//  immediate flag only rewrites transfer heights, so an immediate-mode Keystone batch CAN carry
-//  preparation (note-split) PCZTs now; `MigrationCommitPipeline.proposeKeystoneBatch` folds them in
-//  unconditionally, mode-independent (no more `mode` parameter at all). The 4 members named above
-//  (`isNoteSplitNeeded`/`prepareNoteSplit`/`submitNoteSplit`/`stopSyncBeforeMigrationBroadcast`) are
-//  still never called by the Keystone fork — it calls the new, distinct `proposeNoteSplitPCZTs`
-//  instead, whose (possibly empty) prep subset is stored and broadcast entirely differently (see
-//  `requestKeystoneSignature`'s own doc, and `MigrationCoordFlowCoordinator`'s Keystone-signing
-//  section for the store/broadcast/resume mechanism).
+//  MOB-1468 (Keystone): a Keystone-vendor account in immediate mode forks `confirmTapped` — instead of
+//  falling through to the plain `.confirmed` delegate above, it proposes the `ImmediateMigrationProposal`'s
+//  single PCZT via `createPCZTFromProposal(accountUUID:proposal:)` (MOB-1513: the SAME ordinary-send
+//  PCZT builder used elsewhere, not the engine's schedule-based `proposeMigrationPCZTs` this fork used
+//  to call) wrapped as a one-element Keystone signing batch, and delegates
+//  `.keystoneSignRequested([pczt])` for the coordinator to route through `MigrationKeystoneSign` +
+//  `Scan`. The coordinator's own dedicated post-signing step
+//  (`MigrationCoordFlowCoordinator.submitImmediateKeystoneTransaction`) adds proofs and submits once the
+//  signature comes back — see that function's doc for why the Keystone lane's actual broadcast can't
+//  defer to the Sending screen the way the software lane's does. The manual-step path (transfers
+//  already signed at plan commit) is unchanged — no PCZT is ever proposed there.
 //
 
 import ComposableArchitecture
@@ -63,38 +58,35 @@ struct MigrationReviewTransfer {
             case manualStep(number: Int, total: Int)
         }
 
-        /// MOB-1496 (R8-T1, S3): distinguishes what `isFailurePresented`'s sheet is showing, so
-        /// `retryTapped` re-attempts the right thing and the view picks the right copy. `nil` while
-        /// no failure sheet is presented.
+        /// Distinguishes what `isFailurePresented`'s sheet is showing, so `retryTapped` re-attempts
+        /// the right thing and the view picks the right copy. `nil` while no failure sheet is
+        /// presented.
         enum FailureReason: Equatable {
-            /// `onAppear`'s single-transfer schedule proposal threw — Retry re-proposes via
+            /// `onAppear`'s `ImmediateMigrationProposal` propose threw — Retry re-proposes via
             /// `proposeImmediateMigration`.
             case propose
-            /// The commit itself failed (software sign+store, or the Keystone PCZT-proposal fork)
-            /// — Retry re-attempts the whole commit.
+            /// The commit itself failed (software submit, or the Keystone PCZT-proposal fork) —
+            /// Retry re-attempts the whole commit.
             case commit
         }
-
-        /// Standard ZIP-317 marginal fee shown throughout the app (`Zatoshi(100_000)` precedent —
-        /// migration schedules don't carry a fee field of their own).
-        fileprivate static let standardFee = Zatoshi(100_000)
 
         var mode = Mode.immediate
         var amount = Zatoshi.zero
         var fee = Zatoshi.zero
-        /// Immediate mode: the single-transfer schedule proposed on `onAppear`, signed+stored on
-        /// confirm. `nil` in manual-step mode (nothing to propose or sign here), and (MOB-1496
-        /// R8-T1, S3) also `nil` in immediate mode until a proposal succeeds.
-        var schedule: MigrationSchedule?
+        /// MOB-1513: immediate mode's send-max proposal, fetched on `onAppear` and displayed as
+        /// `amount`/`fee` — the actual create+sign+submit happens later, on the Sending screen
+        /// (software) or in the coordinator's post-Keystone-signing step, both of which need this
+        /// same proposal threaded through. `nil` in manual-step mode (nothing to propose here), and
+        /// in immediate mode until a proposal succeeds — also the `onAppear` cache guard: non-`nil`
+        /// means "already proposed, don't propose again."
+        var immediateProposal: ImmediateMigrationProposal?
         /// True when the manual-step variant is the coordinator's re-entry root — its back control
         /// then closes the flow instead of popping.
         var isFlowRoot = false
-        /// MOB-1478 (W4): failure sheet, presented instead of proceeding to sign+store — mirrors
-        /// `MigrationNoteSplit.State.isFailurePresented`. MOB-1496 (R8-T1, S3): also covers a
-        /// propose failure now — see `failureReason`.
+        /// Failure sheet, presented instead of proceeding. Covers a propose failure (immediate mode
+        /// only) and a commit failure (software submit, or the Keystone PCZT-proposal fork).
         var isFailurePresented = false
-        /// MOB-1496 (R8-T1, S3): which kind of failure `isFailurePresented` is showing; see
-        /// `FailureReason`.
+        /// Which kind of failure `isFailurePresented` is showing; see `FailureReason`.
         var failureReason: FailureReason?
 
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
@@ -118,46 +110,45 @@ struct MigrationReviewTransfer {
         case cancelTapped
         /// Flow-root back control (manual step only): closes the flow instead of popping.
         case closeTapped
-        /// Immediate mode signs+stores the schedule before delegating (MOB-1496 R8-T1, S1:
-        /// split-free — the engine's immediate path never expects a split); manual step delegates
-        /// directly.
+        /// MOB-1513: immediate mode delegates `.confirmed` directly — the actual create+sign+submit
+        /// happens on the Sending screen (software) or was already handled by the coordinator's
+        /// post-Keystone-signing step before this action even fires (Keystone). Manual step also
+        /// delegates directly (transfer already signed at plan commit).
         case confirmTapped
         case delegate(Delegate)
         /// The commit failed — presents the failure sheet instead of proceeding. Covers any
-        /// software commit failure and (MOB-1496 R8-T1, #4) the Keystone PCZT-proposal fork's
-        /// failures.
+        /// software commit failure and the Keystone PCZT-proposal fork's failures.
         case noteSplitFailed
-        /// Immediate mode only: proposes a single-transfer schedule for Amount/Fee display.
+        /// Immediate mode only: proposes the send-max proposal for Amount/Fee display.
         case onAppear
         /// Failure sheet: dismiss, then re-attempt the failed step from scratch — the whole commit
-        /// sequence when `failureReason == .commit` (or unset), or (MOB-1496 R8-T1, S3) a fresh
-        /// proposal when `failureReason == .propose`.
+        /// sequence when `failureReason == .commit` (or unset), or a fresh proposal when
+        /// `failureReason == .propose`.
         case retryTapped
-        /// `signAndStoreMigrationSchedule` completed (immediate mode only).
-        case scheduleSigned
-        /// MOB-1496 (R8-T1, S3): `proposeImmediateMigration()` threw — presents the failure sheet;
-        /// `schedule` is left untouched (never a silent empty-schedule fallback).
+        /// MOB-1513: `proposeImmediateMigration()` threw — presents the failure sheet;
+        /// `immediateProposal` is left untouched (never a silent placeholder fallback).
         case transferProposalFailed
-        /// `proposeImmediateMigration()` result (immediate mode only).
-        case transferProposed(MigrationSchedule)
+        /// MOB-1513: `proposeImmediateMigration()` result (immediate mode only).
+        case transferProposed(ImmediateMigrationProposal)
 
         enum Delegate: Equatable {
             case closed
             case confirmed
-            /// MOB-1468 (Keystone): the immediate-mode schedule's PCZT was proposed and needs QR
+            /// MOB-1468 (Keystone): the immediate-mode proposal's PCZT was proposed and needs QR
             /// signing — a single-element array, the shared shape across the Keystone signing
-            /// sources so the coordinator can treat them symmetrically. MOB-1496 (R8-T1, S1): never
-            /// prefixed with a note-split PCZT — the immediate lane is split-free by engine design.
+            /// sources so the coordinator can treat them symmetrically.
             case keystoneSignRequested([MigrationUnsignedTransferPczt])
         }
     }
 
-    @Dependency(\.derivationTool) var derivationTool
-    @Dependency(\.migrationManager) var migrationManager
-    @Dependency(\.mnemonic) var mnemonic
+    /// MOB-1513: the sentinel id the immediate lane's single Keystone-signing PCZT rides under — it
+    /// carries no engine-issued id (unlike the schedule/prep PCZTs `proposeKeystoneBatch` builds),
+    /// since `createPCZTFromProposal` is the ordinary-send PCZT builder, not an engine call. Never
+    /// looked up by id anywhere downstream — the coordinator's post-signing step reads the batch's
+    /// single entry positionally (`.first`), matching the batch's guaranteed one-element shape.
+    static let immediateKeystonePcztId = "immediate"
+
     @Dependency(\.sdkSynchronizer) var sdkSynchronizer
-    @Dependency(\.walletStorage) var walletStorage
-    @Dependency(\.zcashSDKEnvironment) var zcashSDKEnvironment
 
     init() { }
 
@@ -180,8 +171,8 @@ struct MigrationReviewTransfer {
             case .confirmTapped, .retryTapped:
                 state.isFailurePresented = false
 
-                // MOB-1496 (R8-T1, S3): a propose failure's Retry re-proposes instead of
-                // re-attempting the commit — checked FIRST, before any of the commit guards below.
+                // MOB-1513: a propose failure's Retry re-proposes instead of re-attempting the
+                // commit — checked FIRST, before any of the commit guards below.
                 if case .retryTapped = action, state.failureReason == State.FailureReason.propose {
                     state.failureReason = nil
                     return proposeEffect(accountUUID: state.selectedWalletAccount?.id)
@@ -194,41 +185,23 @@ struct MigrationReviewTransfer {
                     return .send(.delegate(.confirmed))
                 }
 
-                // MOB-1496 (R8-T1, S3): never sign/delegate for a schedule that doesn't exist yet
-                // (propose still in flight, or failed) or that legitimately came back empty —
-                // deliberately a SEPARATE guard from the mode check above, so a nil/empty schedule
-                // in immediate mode returns `.none` (stay put) rather than falling into the manual
-                // step's "already signed, just acknowledge" delegate.
-                guard let schedule = state.schedule, !schedule.transfers.isEmpty else {
+                // MOB-1513: never delegate for a proposal that doesn't exist yet (propose still in
+                // flight, or failed) — deliberately a SEPARATE guard from the mode check above, so a
+                // nil proposal in immediate mode returns `.none` (stay put) rather than falling into
+                // the manual step's "already signed, just acknowledge" delegate.
+                guard let proposal = state.immediateProposal else {
                     return .none
                 }
                 guard let account = state.selectedWalletAccount else { return .none }
 
                 guard account.vendor != WalletAccount.Vendor.keystone else {
-                    return requestKeystoneSignature(for: schedule, account: account)
+                    return requestKeystoneSignature(for: proposal, account: account)
                 }
 
-                guard let zip32AccountIndex = account.zip32AccountIndex else { return .none }
-
-                return .run { send in
-                    do {
-                        try await MigrationCommitPipeline.commitSoftware(
-                            mode: MigrationCommitMode.immediate,
-                            schedule: schedule,
-                            account: account,
-                            zip32AccountIndex: zip32AccountIndex,
-                            sdkSynchronizer: sdkSynchronizer,
-                            migrationManager: migrationManager,
-                            walletStorage: walletStorage,
-                            mnemonic: mnemonic,
-                            derivationTool: derivationTool,
-                            networkType: zcashSDKEnvironment.network().networkType
-                        )
-                        await send(.scheduleSigned)
-                    } catch {
-                        await send(.noteSplitFailed)
-                    }
-                }
+                // MOB-1513: nothing left to pre-commit locally for the software lane — the actual
+                // create+sign+submit happens on the Sending screen, which the coordinator threads
+                // `immediateProposal` into.
+                return .send(.delegate(.confirmed))
 
             case .delegate:
                 return .none
@@ -240,70 +213,54 @@ struct MigrationReviewTransfer {
 
             case .onAppear:
                 guard case .immediate = state.mode else { return .none }
+                // MOB-1513: cache guard — an already-populated proposal (a re-appearance, e.g. after
+                // backgrounding) is never re-proposed. `retryTapped`'s explicit propose-failure branch
+                // above is the only other place that calls `proposeEffect`.
+                guard state.immediateProposal == nil else { return .none }
                 return proposeEffect(accountUUID: state.selectedWalletAccount?.id)
-
-            case .scheduleSigned:
-                return .send(.delegate(.confirmed))
 
             case .transferProposalFailed:
                 state.isFailurePresented = true
                 state.failureReason = State.FailureReason.propose
                 return .none
 
-            case .transferProposed(let schedule):
-                state.schedule = schedule
-                state.amount = schedule.transfers.first?.amount ?? Zatoshi.zero
-                state.fee = State.standardFee
+            case .transferProposed(let proposal):
+                state.immediateProposal = proposal
+                state.amount = proposal.amount
+                state.fee = proposal.fee
                 return .none
             }
         }
     }
 
-    /// MOB-1468 (Keystone) `confirmTapped` fork: proposes the immediate-mode schedule's PCZT and
-    /// hands the batch to the coordinator for QR signing.
-    ///
-    /// MOB-1496 (final engine): UNLIKE the software fork above (`commitSoftware`'s `.immediate` case,
-    /// still genuinely split-free — S1 stands for that lane), this Keystone fork's batch CAN now
-    /// carry preparation (note-split) PCZTs prefixed ahead of the schedule's own — the R8-T1 (S1) "the
-    /// immediate lane is split-free by engine design" premise this comment used to document was
-    /// specific to the OLD singular-split API's `isNoteSplitNeeded`/immediate-mode gate, which
-    /// `MigrationCommitPipeline.proposeKeystoneBatch` no longer has: the final engine's immediate flag
-    /// only rewrites transfer heights, so an immediate-mode PCZT build can legitimately include preps
-    /// too, and skipping them here would silently hand the signing device a batch missing
-    /// transactions the engine's run already needs signed.
-    ///
-    /// MOB-1496 (R8-T1, #19/#4; final engine: unconditional fold): delegates to the shared
-    /// `MigrationCommitPipeline.proposeKeystoneBatch(schedule:account:sdkSynchronizer:)` — every
-    /// member throws through (no more `try?` swallowing), and an empty resulting batch is ALSO a
-    /// failure, so this never delegates a silently empty/partial batch; both route to the SAME
-    /// failure sheet the software fork uses, and Retry re-runs this same propose. `mode` is no longer
-    /// passed — the shared pipeline folds preps unconditionally now, mode-independent.
-    private func requestKeystoneSignature(for schedule: MigrationSchedule, account: WalletAccount) -> Effect<Action> {
+    /// MOB-1468 (Keystone) `confirmTapped` fork: proposes the immediate proposal's single PCZT via
+    /// `createPCZTFromProposal` (MOB-1513: the ordinary-send PCZT builder — the proposal is
+    /// engine-external, so there is no schedule for the engine's `proposeMigrationPCZTs`/
+    /// `proposeNoteSplitPCZTs` machinery to build a batch from; a send-max sweep also never needs a
+    /// note split of its own) and hands the resulting one-element batch to the coordinator for QR
+    /// signing.
+    private func requestKeystoneSignature(for proposal: ImmediateMigrationProposal, account: WalletAccount) -> Effect<Action> {
         .run { send in
             do {
-                let pczts = try await MigrationCommitPipeline.proposeKeystoneBatch(
-                    schedule: schedule,
-                    account: account,
-                    sdkSynchronizer: sdkSynchronizer
-                )
-                await send(.delegate(.keystoneSignRequested(pczts)))
+                let pczt = try await sdkSynchronizer.createPCZTFromProposal(account.id, proposal.proposal)
+                await send(.delegate(.keystoneSignRequested([MigrationUnsignedTransferPczt(id: Self.immediateKeystonePcztId, pczt: pczt)])))
             } catch {
                 await send(.noteSplitFailed)
             }
         }
     }
 
-    /// MOB-1496 (R8-T1, S3): proposes a fresh single-transfer schedule via `proposeImmediateMigration`
-    /// — shared by `onAppear`'s first-run proposal and `retryTapped`'s re-proposal after a propose
-    /// failure. Throws through to `.transferProposalFailed` instead of silently falling back to an
-    /// empty schedule.
+    /// MOB-1513: proposes a fresh `ImmediateMigrationProposal` via `proposeImmediateMigration` —
+    /// shared by `onAppear`'s first-run proposal and `retryTapped`'s re-proposal after a propose
+    /// failure. Throws through to `.transferProposalFailed` instead of silently falling back to a
+    /// placeholder proposal.
     private func proposeEffect(accountUUID: AccountUUID?) -> Effect<Action> {
         guard let accountUUID else { return .none }
 
         return .run { send in
             do {
-                let schedule = try await sdkSynchronizer.proposeImmediateMigration(accountUUID)
-                await send(.transferProposed(schedule))
+                let proposal = try await sdkSynchronizer.proposeImmediateMigration(accountUUID)
+                await send(.transferProposed(proposal))
             } catch {
                 await send(.transferProposalFailed)
             }

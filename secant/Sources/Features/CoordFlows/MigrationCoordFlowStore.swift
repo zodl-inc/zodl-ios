@@ -299,6 +299,14 @@ struct MigrationCoordFlow {
             signedPreps: [MigrationSignedTransferPczt]?,
             pendingScheduleStore: PendingScheduleStore?
         )
+        /// MOB-1513: the immediate lane's Keystone post-signing submit
+        /// (`MigrationCommitPipeline.commitImmediateKeystone`, dispatched from
+        /// `submitImmediateKeystoneTransaction`) succeeded — pops back to the signing source exactly
+        /// like `resumeAfterKeystoneSigning`'s no-preps branch, but pushes `MigrationSending.State`
+        /// ALREADY in `.success` phase with the real txid (the broadcast already happened here, not
+        /// on that screen's `onAppear` — see `submitImmediateKeystoneTransaction`'s doc for why the
+        /// Keystone lane can't defer to the Sending screen the way the software lane does).
+        case keystoneImmediateSubmitted(txId: String)
         /// Internal: MOB-1496 (W6 §3) — the Keystone dust lane's upfront propose
         /// (`.complete(.delegate(.migrateAnyway))`'s Keystone fork) came back with a non-empty
         /// schedule and its PCZTs — pushes the existing Keystone signing context as a batch-of-1 (no

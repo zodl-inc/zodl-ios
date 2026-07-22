@@ -54,6 +54,13 @@ import URKit
     private enum SentinelValues {
         static let migrationState = MigrationState.complete
         static let migrationSchedule = MigrationSchedule(transfers: [], estimatedDurationHours: -1)
+        // MOB-1513: distinct from `migrationSchedule` — `proposeImmediateMigration` now returns the
+        // real SDK's `ImmediateMigrationProposal`, not a `MigrationSchedule`.
+        static let immediateMigrationProposal = ImmediateMigrationProposal(
+            proposal: .testOnlyFakeProposal(totalFee: 999),
+            amount: Zatoshi(-1),
+            fee: Zatoshi(-1)
+        )
         static let transferResult = MigrationTransferResult.invalidNote
         static let pczt: Data = Data([0xFF])
         // MOB-1496 (final engine, plural preps): the sentinel fallback for `proposeNoteSplitPCZTs`,
@@ -122,7 +129,7 @@ import URKit
         }
         client.proposeImmediateMigration = { _ in
             counters.proposeImmediateMigration.withValue { $0 += 1 }
-            return SentinelValues.migrationSchedule
+            return SentinelValues.immediateMigrationProposal
         }
         client.residualAfterMigration = { _ in
             counters.residualAfterMigration.withValue { $0 += 1 }
@@ -272,46 +279,45 @@ import URKit
         #expect(counters.residualAfterMigration.value == 0)
     }
 
-    // MARK: - proposeImmediateMigration -> signAndStore -> executeNext round trip
+    // MARK: - proposeImmediateMigration
 
-    @Test func proposeImmediateSignAndStoreExecuteNextRoundTrip() async throws {
+    /// MOB-1513: the real surface's `proposeImmediateMigration` returns an `ImmediateMigrationProposal`
+    /// now (an ordinary send-max proposal, executed via `createAndSubmitProposedTransactions`/
+    /// `createPCZTFromProposal` like any other transfer) instead of a `MigrationSchedule` signed+
+    /// stored in the engine and later broadcast via `executeNextPendingMigrationTransfer`. The
+    /// simulator has no fake for either of those general-purpose broadcast members (they're shared
+    /// with ordinary sends, outside this file's migration-only override surface), so this test only
+    /// covers what the simulator DOES fake — the proposal itself — and no longer exercises a
+    /// sign+store+execute continuation, which is dead for immediate mode under the real contract.
+    /// NOTE (known gap, flagged for follow-up rather than fixed here — out of MOB-1513's scope): with
+    /// the simulator active, the real UI's immediate-mode Confirm would still call the REAL
+    /// `createAndSubmitProposedTransactions`/`createPCZTFromProposal` against this fabricated
+    /// `.testOnlyFakeProposal`, which throws by design (see that factory's own doc) — so end-to-end
+    /// QA of the immediate lane through the simulator panel does not yet work past this propose step.
+    @Test func proposeImmediateMigrationReturnsEngineDerivedProposalWhenActiveAndSentinelWhenInactive() async throws {
         let counters = CallCounters()
         var client = makeBaseClient(counters)
         let engine = MigrationSimulatorEngine(store: MigrationSimulatorStateStore.ephemeral())
         engine.setActive(true) // the fresh-seed default is inactive (opt-in simulation)
         client.applySimulatedMigration(engine: engine)
 
-        let schedule = try await client.proposeImmediateMigration(Self.accountUUID)
-        #expect(schedule != SentinelValues.migrationSchedule)
-        #expect(schedule.transfers.count == 1)
+        let proposal = try await client.proposeImmediateMigration(Self.accountUUID)
+        #expect(proposal != SentinelValues.immediateMigrationProposal)
+        #expect(proposal.amount.amount > 0)
         #expect(counters.proposeImmediateMigration.value == 0)
 
-        try await client.signAndStoreMigrationSchedule(Self.accountUUID, schedule, try usk())
-        #expect(counters.signAndStoreMigrationSchedule.value == 0)
+        // Same seeded snapshot, read again directly — `propose()` is a pure read over persisted
+        // state (unlike `signAndStore`/`executeNext`, which mutate it), so a second, independent call
+        // must agree with what the override derived the proposal's `amount` from.
+        let expectedSchedule = await engine.propose()
+        #expect(proposal.amount == expectedSchedule.transfers.first?.amount)
 
-        let result = try await client.executeNextPendingMigrationTransfer(Self.accountUUID, Self.networkPrivacy)
-        #expect(counters.executeNextPendingMigrationTransfer.value == 0)
-        guard case .some(MigrationTransferResult.success) = result else {
-            Issue.record("Expected the immediate-mode transfer to be due right away and succeed")
-            return
-        }
-
-        #expect(engine.transferRows().count == 1)
-        #expect(engine.transferRows().first?.status == MigrationTransferRow.Status.sent)
-
-        // Inactive: every member above falls back to the sentinel.
+        // Inactive: falls back to the sentinel.
         engine.setActive(false)
 
-        let inactiveSchedule = try await client.proposeImmediateMigration(Self.accountUUID)
-        #expect(inactiveSchedule == SentinelValues.migrationSchedule)
+        let inactiveProposal = try await client.proposeImmediateMigration(Self.accountUUID)
+        #expect(inactiveProposal == SentinelValues.immediateMigrationProposal)
         #expect(counters.proposeImmediateMigration.value == 1)
-
-        try await client.signAndStoreMigrationSchedule(Self.accountUUID, inactiveSchedule, try usk())
-        #expect(counters.signAndStoreMigrationSchedule.value == 1)
-
-        let inactiveResult = try await client.executeNextPendingMigrationTransfer(Self.accountUUID, Self.networkPrivacy)
-        #expect(inactiveResult == SentinelValues.transferResult)
-        #expect(counters.executeNextPendingMigrationTransfer.value == 1)
     }
 
     // MARK: - Dust resolution (MOB-1487 software composite; MOB-1496 W6 §4 simulator seam)
@@ -379,7 +385,12 @@ import URKit
         #expect(!(noteSplitPCZTs.first?.pczt.isEmpty ?? true))
         #expect(noteSplitPCZTs != SentinelValues.noteSplitPCZTs)
 
-        let schedule = try await client.proposeImmediateMigration(Self.accountUUID)
+        // MOB-1513: `proposeImmediateMigration` no longer returns a `MigrationSchedule` (it returns
+        // the real SDK's `ImmediateMigrationProposal` now) — `proposeMigrationTransfers` is still a
+        // schedule source and is simulated the same way (`engine.propose()` when active), so it
+        // stands in here purely as a batch-fabrication fixture; the counter check below is identical
+        // either way.
+        let schedule = try await client.proposeMigrationTransfers(Self.accountUUID, false)
         let batch = try await client.proposeMigrationPCZTs(Self.accountUUID, schedule)
         #expect(!batch.isEmpty)
         #expect(batch.allSatisfy { !$0.pczt.isEmpty })
