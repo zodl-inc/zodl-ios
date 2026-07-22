@@ -113,6 +113,7 @@ directly impact users rather than highlighting other crucial architectural updat
 - [MOB-1496] Fixed Keystone hardware-wallet migration signing potentially serving a stale, already-superseded QR batch to sign after you back out of a signing session — abandoning a signing attempt now clears the way for a fresh preview on your next try. Gated behind Ironwood network activation and not yet in a released build.
 - [MOB-1513] Fixed the Ironwood migration banner losing to the currency-conversion prompt right after a wallet restore, or right after the initial sync finishes — the migration banner is now checked first in both cases, so a pending migration always appears before other Home banners once one is due. Gated behind Ironwood network activation and not yet in a released build.
 - [MOB-1513] Fixed a rare Ironwood migration race where a background check could invalidate a migration plan you were actively reviewing (for example, the Migration Complete screen's "Migrate anyway" choice), causing your eventual confirm to fail. Gated behind Ironwood network activation and not yet in a released build.
+- [MOB-1513] Fixed the Migrate Immediately review screen showing a placeholder amount and a fixed fee instead of what your sweep would actually send — it now shows the real, deterministic amount and fee for your account's balance, and completes in exactly one transaction as intended. Gated behind Ironwood network activation and not yet in a released build.
 
 ## 3.7.2 build 1
 

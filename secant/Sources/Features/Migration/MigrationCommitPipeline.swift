@@ -6,66 +6,55 @@
 //  finding #19): `MigrationTransferPlanStore` (scheduled/manual/recreated plans) and
 //  `MigrationReviewTransferStore` (the immediate single-sweep transfer) each drove an independent,
 //  byte-identical ~35-line software commit sequence and ~12-line Keystone PCZT-proposal fork —
-//  extracted here, parameterized by an EXPLICIT `MigrationCommitMode` so the two lanes' real
-//  divergence (finding S1: the immediate lane is split-free by engine design; see
-//  `zcash_pool_migration::MigrationContext::propose_immediate_migration_transfers`'s doc, "sweeping
-//  the whole balance in a single transaction right away, skipping the split entirely") is expressed
-//  structurally — a `switch`/`if` over `mode`, not a boolean the two call sites could drift back
-//  apart on the way the pre-extraction duplication already had (a prior fix sweep missed one twin
-//  once).
+//  extracted here.
 //
 //  Both entry points below THROW rather than swallow (finding #4): callers map ANY thrown error to
 //  their existing commit-failure surface (`.noteSplitFailed` / `isFailurePresented`), with one
-//  narrow, deliberate exception inside `commitSoftware`'s `.scheduled` branch — see its doc
-//  (finding #1).
+//  narrow, deliberate exception inside `commitSoftware`'s split step — see its doc (finding #1).
 //
-//  MOB-1496 (final engine, plural preps): S1's ENGINE claim ("immediate runs never split") is
-//  obsolete — the final engine's immediate flag only rewrites transfer heights, so an immediate run
-//  CAN carry preparation transactions for a large enough balance. What survives of S1 is purely
-//  structural, and only for the SOFTWARE sequence: `commitSoftware`'s `.immediate` branch still has
-//  no split-specific call to make, because `signAndStoreMigrationSchedule` signs EVERY transaction
-//  of the committed run — preps included — and any preps then broadcast through the ordinary
-//  delivery lane (`executeNextPendingMigrationTransfer` serves preps and transfers alike). The
-//  Keystone PCZT-proposal fork lost even that: `proposeKeystoneBatch` dropped its `mode` parameter
-//  entirely and now unconditionally folds the engine's preparation (note-split) PCZTs into every
-//  batch it proposes, immediate mode included — see that function's own doc.
+//  R9-T2 (MOB-1497 review remediation, finding 3): `commitSoftware` now classifies+routes a genuine
+//  silent-split broadcast failure (via commit 1's single classify -> route entry point,
+//  `MigrationManagerClient.routeBroadcastFailure(_:result:/error:)`) instead of surfacing a flat
+//  `.splitNotSuccessful` — see `MigrationCommitError.splitFailedRouted`'s doc. The landed-but-
+//  unrecorded carve-out (`ZcashError.migrationRecordFailedAfterBroadcast`, finding #1 above) is
+//  UNCHANGED: still never routed, still falls through to sign+store.
 //
-//  R9-T2 (MOB-1497 review remediation, finding 3): `commitSoftware`'s `.scheduled` branch now
-//  classifies+routes a genuine silent-split broadcast failure (via commit 1's single classify ->
-//  route entry point, `MigrationManagerClient.routeBroadcastFailure(_:result:/error:)`) instead of
-//  surfacing a flat `.splitNotSuccessful` — see `MigrationCommitError.splitFailedRouted`'s doc. The
-//  landed-but-unrecorded carve-out (`ZcashError.migrationRecordFailedAfterBroadcast`, finding #1
-//  above) is UNCHANGED: still never routed, still falls through to sign+store.
+//  MOB-1513 (Lane A2 — send-max immediate migration): the OLD `.immediate` lane above signed+stored
+//  an engine-held, single-transfer `MigrationSchedule` here and broadcast it LATER via
+//  `MigrationSendingStore`'s `executeNextPendingMigrationTransfer` (the schedule/dust lanes' own
+//  delivery mechanism) — `commitSoftware`'s old `MigrationCommitMode.immediate` branch and
+//  `MigrationCommitMode` itself are DELETED along with it (the immediate lane is the ONLY caller
+//  that ever passed `.immediate`, and `commitSoftware` is `.scheduled`-only now, so the parameter
+//  was pure dead weight). The immediate lane's `ImmediateMigrationProposal` (`Synchronizer
+//  .proposeImmediateMigration(accountUUID:)`) is an ORDINARY, engine-external proposal instead — no
+//  plan-cache staleness, no engine-held schedule to sign+store ahead of time. Two new entry points
+//  cover it end to end, mirroring `commitSoftware`/`proposeKeystoneBatch`'s software/Keystone split:
+//  - `commitImmediateSoftware`: the actual create+sign+submit (`createAndSubmitProposedTransactions`,
+//    already transaction-guarded in `SDKSynchronizerLive`) — called from `MigrationSendingStore
+//    .executeNextTransfer`'s immediate-lane branch (the Sending screen's `onAppear` is genuinely
+//    where the FIRST and ONLY broadcast attempt happens now, same as every other lane; Review's own
+//    confirm has nothing left to pre-commit for the software path).
+//  - `commitImmediateKeystone`: the post-signing add-proofs + submit
+//    (`createAndSubmitTransactionFromPCZT`) — called from `MigrationCoordFlowCoordinator`'s
+//    dedicated immediate-Keystone post-scan step, since a Keystone PCZT can only be finalized once,
+//    right after the QR round-trip returns a signature — there is no engine-side "store now,
+//    broadcast whenever the Sending screen next appears" indirection available for a proposal that
+//    was never stored in the engine to begin with.
+//  Both throw on a non-`.success` submit outcome (`MigrationCommitError.immediateSubmitNotSuccessful`)
+//  WITHOUT calling `recordImmediateMigration` — never record a sweep that never broadcast. Both treat
+//  a `recordImmediateMigration` failure AFTER a successful submit as non-fatal (mirrors the
+//  landed-but-unrecorded philosophy above): the broadcast already landed, so a bookkeeping-only
+//  failure must never be reported as a submit failure.
 //
 
 import Foundation
 @preconcurrency import ZcashLightClientKit
 
-/// Which commit lane is running: the staggered schedule (`MigrationTransferPlanStore`, always
-/// `.scheduled` regardless of its own `scheduled`/`manual`/`recreated` variant — all three sign a
-/// multi-transfer schedule the same way) or the single immediate sweep
-/// (`MigrationReviewTransferStore`'s `.immediate` mode; its `.manualStep` mode never reaches these
-/// helpers — that transfer was already signed at plan commit). MOB-1496 (final engine): only
-/// `commitSoftware` (the software-signing lane) still branches on this — `proposeKeystoneBatch` (the
-/// Keystone PCZT-proposal lane) dropped its `mode` parameter, since its old immediate-mode special
-/// case is obsolete; see that function's doc.
-enum MigrationCommitMode: Equatable {
-    /// The staggered schedule: may need a silent note split first (see `commitSoftware`).
-    case scheduled
-    /// The immediate sweep, SOFTWARE-signing lane only: `commitSoftware` makes no split-specific
-    /// calls for this mode — NOT because an immediate run cannot contain preparation transactions
-    /// (under the final engine it can, for a large enough balance), but because
-    /// `signAndStoreMigrationSchedule` signs every transaction of the committed run — preps
-    /// included — and any preps ride the ordinary delivery lane from there. Does NOT describe the
-    /// Keystone lane — `proposeKeystoneBatch` folds preps unconditionally, mode-independent.
-    case immediate
-}
-
 /// Failures `MigrationCommitPipeline`'s own logic raises, distinct from whatever the underlying SDK
 /// calls throw — callers that don't care about the payload can still map ANY of these to the same
 /// commit-failure surface, exactly as before.
 enum MigrationCommitError: Error, Equatable {
-    /// `.scheduled` mode's silent split genuinely did not succeed — a non-`.success` broadcast
+    /// The scheduled lane's silent split genuinely did not succeed — a non-`.success` broadcast
     /// result, or a thrown error, that is also not the landed-but-unrecorded case `commitSoftware`
     /// treats as success (see its doc). R9-T2 (finding 3): carries the classified+routed outcome
     /// (`MigrationManagerClient.routeBroadcastFailure(_:result:/error:)`, commit 1's entry point) —
@@ -79,6 +68,10 @@ enum MigrationCommitError: Error, Equatable {
     case splitFailedRouted(MigrationBroadcastFailureRoute?)
     /// The proposed Keystone PCZT batch came back empty — nothing to hand to the signing device.
     case emptyPcztBatch
+    /// MOB-1513: an immediate-lane submit (`createAndSubmitProposedTransactions`/
+    /// `createAndSubmitTransactionFromPCZT`) came back as anything other than `.success` — no txid to
+    /// record, no partial state to clean up (nothing was stored anywhere by this pipeline).
+    case immediateSubmitNotSuccessful
 }
 
 /// Shared commit-lane pipelines for the migration flow's software- and Keystone-signing paths (see
@@ -89,31 +82,27 @@ enum MigrationCommitPipeline {
     /// needs one (mirrors the pre-extraction inline sequence exactly), then
     /// `signAndStoreMigrationSchedule` -> `recordCommittedSchedule` -> `reconcile`.
     ///
-    /// `.immediate` mode never consults `isNoteSplitNeeded` / calls `prepareNoteSplit` /
-    /// `submitNoteSplit`, and never stops sync for a broadcast that no longer happens here (S1):
-    /// the engine's immediate path sweeps the current spendable balance in one transaction by
-    /// design (`propose_immediate_migration_transfers`, "skipping the split entirely"). Silently
-    /// splitting first would spend the same pre-split notes the immediate sweep's own PCZT is about
-    /// to reference (the wallet DB never re-scans the split mid-flow, sync being stopped), signing a
-    /// self-conflicting pair — `signAndStore` would typically still succeed locally, silently
-    /// storing a double-spending sweep that a later broadcast rejects.
+    /// A `ZcashError.migrationRecordFailedAfterBroadcast` thrown by `submitNoteSplit` means the
+    /// split's broadcast DID land on the network and only the engine's own bookkeeping of that fact
+    /// failed to persist — treated as landed (mirrors `MigrationNoteSplitStore` /
+    /// `MigrationSendingStore` / `RootInitialization`'s identical rationale for the same error) and
+    /// the pipeline falls through to `signAndStoreMigrationSchedule` exactly as a `.success` result
+    /// would, rather than surfacing a failure whose Retry would freshly sign a conflicting split over
+    /// the just-spent notes. NEVER re-runs `prepareNoteSplit` / `submitNoteSplit` for this error —
+    /// `sign_and_store_migration_schedule` reuses the run by id regardless of its phase
+    /// (`preparing_denominations` or `waiting_denom_confirmations` — the only two phases this leaves
+    /// the run in — both map to the same public `MigrationState.splitPendingConfirmation`, and
+    /// `migration_state()`'s reconciliation explicitly self-heals a `preparing_denominations` run once
+    /// its prep transaction mines, "so a broadcast whose result wasn't recorded still advances").
     ///
-    /// `.scheduled` mode (finding #1): a `ZcashError.migrationRecordFailedAfterBroadcast` thrown by
-    /// `submitNoteSplit` means the split's broadcast DID land on the network and only the engine's
-    /// own bookkeeping of that fact failed to persist — treated as landed (mirrors
-    /// `MigrationNoteSplitStore` / `MigrationSendingStore` / `RootInitialization`'s identical
-    /// rationale for the same error) and the pipeline falls through to `signAndStoreMigrationSchedule`
-    /// exactly as a `.success` result would, rather than surfacing a failure whose Retry would
-    /// freshly sign a conflicting split over the just-spent notes. NEVER re-runs `prepareNoteSplit` /
-    /// `submitNoteSplit` for this error — `sign_and_store_migration_schedule` reuses the run by id
-    /// regardless of its phase (`preparing_denominations` or `waiting_denom_confirmations` — the
-    /// only two phases this leaves the run in — both map to the same public
-    /// `MigrationState.splitPendingConfirmation`, and `migration_state()`'s reconciliation
-    /// explicitly self-heals a `preparing_denominations` run once its prep transaction mines,
-    /// "so a broadcast whose result wasn't recorded still advances").
+    /// MOB-1513: this is the STAGGERED-SCHEDULE lane only now (`MigrationTransferPlanStore`'s
+    /// `scheduled`/`manual`/`recreated` variants — all three sign a multi-transfer schedule the same
+    /// way). The immediate single-sweep lane (`MigrationReviewTransferStore`'s `.immediate` mode) no
+    /// longer calls this at all — see `commitImmediateSoftware`/`commitImmediateKeystone` below and
+    /// this file's header doc for why.
     ///
-    /// - Throws: `MigrationCommitError.splitFailedRouted(route)` when `.scheduled` mode's split
-    ///   broadcast genuinely failed (any non-success result, or a thrown error other than
+    /// - Throws: `MigrationCommitError.splitFailedRouted(route)` when the split broadcast genuinely
+    ///   failed (any non-success result, or a thrown error other than
     ///   `ZcashError.migrationRecordFailedAfterBroadcast`) — `route` is the classified+routed outcome
     ///   (R9-T2, via `MigrationManagerClient.routeBroadcastFailure(_:result:/error:)`), `nil` when the
     ///   failure wasn't classifiable. Otherwise propagates whatever the USK derivation or underlying
@@ -121,7 +110,6 @@ enum MigrationCommitPipeline {
     ///   `MigrationCommitError.splitFailedRouted` payload additionally tells them which R14-R17
     ///   surface (or the generic one, for a `nil` route) to present.
     static func commitSoftware(
-        mode: MigrationCommitMode,
         schedule: MigrationSchedule,
         account: WalletAccount,
         zip32AccountIndex: Zip32AccountIndex,
@@ -132,90 +120,160 @@ enum MigrationCommitPipeline {
         derivationTool: DerivationToolClient,
         networkType: NetworkType
     ) async throws {
-        switch mode {
-        case .scheduled:
-            let needsNoteSplit = try await sdkSynchronizer.isNoteSplitNeeded(account.id)
-            let usk = try MigrationSpendingKeyDerivation.deriveUSK(
-                zip32AccountIndex: zip32AccountIndex,
-                walletStorage: walletStorage,
-                mnemonic: mnemonic,
-                derivationTool: derivationTool,
-                networkType: networkType
-            )
-            if needsNoteSplit {
-                let proposal = try await sdkSynchronizer.prepareNoteSplit(account.id)
-                let options = await migrationManager.migrationNetworkOptions(account.id)
-                // [MOB-1496] W3 review fix A: stop an in-flight sync before this silent note-split
-                // broadcast — the SDK's during-sync throw is advisory, so callers stop proactively.
-                await sdkSynchronizer.stopSyncBeforeMigrationBroadcast()
-                // R9-T2 (finding 3): computed instead of thrown-then-recaught within this SAME
-                // `do`/`catch` — a `throw` from inside the `do` block below would otherwise fall
-                // into the generic `catch` clause too and get classified a SECOND time (as an
-                // `.endpointUnreachable` default, since it isn't `ZcashError`), double-routing
-                // against the live impl's rotation/episode bookkeeping.
-                var splitFailure: MigrationCommitError?
-                do {
-                    let splitResult = try await sdkSynchronizer.submitNoteSplit(account.id, proposal, usk, options)
-                    if case MigrationTransferResult.success = splitResult {
-                        // R9-T2 (finding 4): the run's own had-broadcast/episode chokepoint — mirrors
-                        // `MigrationNoteSplitStore.submitNoteSplit`'s identical call. Without this, a
-                        // later mid-run Tor outage would still route the R14 first-run offer R15
-                        // forbids mid-run, and the R15 hold indicator would stay dark.
-                        await migrationManager.recordTransferBroadcast(account.id, splitResult)
-                    } else {
-                        // R9-T2 (finding 3): classify+route BEFORE nudging the gate — mirrors
-                        // `MigrationSendingStore`/`MigrationNoteSplitStore`'s "route first" ordering.
-                        // A `nil` route (unclassifiable result) is a valid payload: the caller's
-                        // existing generic failure surface applies unchanged.
-                        let route = await migrationManager.routeBroadcastFailure(account.id, result: splitResult)
-                        await migrationManager.refreshMigrationSyncGate()
-                        splitFailure = MigrationCommitError.splitFailedRouted(route)
-                    }
-                } catch ZcashError.migrationRecordFailedAfterBroadcast(_) {
-                    // [MOB-1496] #1: the broadcast DID land; only recording failed — fall through to
-                    // sign+store below exactly as a `.success` result would. See doc above.
-                    // R9-T2 (finding 3): PRESERVED EXACTLY — never routed (a landed broadcast is
-                    // never a failure to route, same carve-out `MigrationSendingStore`/
-                    // `MigrationNoteSplitStore` apply). R9-T2 (finding 4): this IS a landed split —
-                    // the had-broadcast recording lands here too, mirrors
-                    // `MigrationNoteSplitStore.submitNoteSplit`'s identical catch clause; the
-                    // synthetic `.success(txId: "")` result matches that same mirror (the error
-                    // carries no payload to recover the real txId from).
-                    await migrationManager.recordTransferBroadcast(account.id, MigrationTransferResult.success(txId: ""))
-                } catch {
-                    // [MOB-1496] (R8-T4, #3): the stop above did NOT lead to a successful broadcast
-                    // (the SDK call itself threw some other error) — the SDK only transitions its
-                    // migration-sync privacy gate on a SUCCESSFUL broadcast, so nudge Root's
-                    // app-side gate feed with a fresh read here; otherwise a stop that never got
-                    // cleared could strand sync stopped for the rest of the session (see
-                    // `MigrationManagerClient.refreshMigrationSyncGate`'s doc). R9-T2 (finding 3):
-                    // classify+route the thrown error too, same "route first" ordering as above.
-                    let route = await migrationManager.routeBroadcastFailure(account.id, error: error)
+        let needsNoteSplit = try await sdkSynchronizer.isNoteSplitNeeded(account.id)
+        let usk = try MigrationSpendingKeyDerivation.deriveUSK(
+            zip32AccountIndex: zip32AccountIndex,
+            walletStorage: walletStorage,
+            mnemonic: mnemonic,
+            derivationTool: derivationTool,
+            networkType: networkType
+        )
+        if needsNoteSplit {
+            let proposal = try await sdkSynchronizer.prepareNoteSplit(account.id)
+            let options = await migrationManager.migrationNetworkOptions(account.id)
+            // [MOB-1496] W3 review fix A: stop an in-flight sync before this silent note-split
+            // broadcast — the SDK's during-sync throw is advisory, so callers stop proactively.
+            await sdkSynchronizer.stopSyncBeforeMigrationBroadcast()
+            // R9-T2 (finding 3): computed instead of thrown-then-recaught within this SAME
+            // `do`/`catch` — a `throw` from inside the `do` block below would otherwise fall
+            // into the generic `catch` clause too and get classified a SECOND time (as an
+            // `.endpointUnreachable` default, since it isn't `ZcashError`), double-routing
+            // against the live impl's rotation/episode bookkeeping.
+            var splitFailure: MigrationCommitError?
+            do {
+                let splitResult = try await sdkSynchronizer.submitNoteSplit(account.id, proposal, usk, options)
+                if case MigrationTransferResult.success = splitResult {
+                    // R9-T2 (finding 4): the run's own had-broadcast/episode chokepoint — mirrors
+                    // `MigrationNoteSplitStore.submitNoteSplit`'s identical call. Without this, a
+                    // later mid-run Tor outage would still route the R14 first-run offer R15
+                    // forbids mid-run, and the R15 hold indicator would stay dark.
+                    await migrationManager.recordTransferBroadcast(account.id, splitResult)
+                } else {
+                    // R9-T2 (finding 3): classify+route BEFORE nudging the gate — mirrors
+                    // `MigrationSendingStore`/`MigrationNoteSplitStore`'s "route first" ordering.
+                    // A `nil` route (unclassifiable result) is a valid payload: the caller's
+                    // existing generic failure surface applies unchanged.
+                    let route = await migrationManager.routeBroadcastFailure(account.id, result: splitResult)
                     await migrationManager.refreshMigrationSyncGate()
                     splitFailure = MigrationCommitError.splitFailedRouted(route)
                 }
-                if let splitFailure {
-                    throw splitFailure
-                }
+            } catch ZcashError.migrationRecordFailedAfterBroadcast(_) {
+                // [MOB-1496] #1: the broadcast DID land; only recording failed — fall through to
+                // sign+store below exactly as a `.success` result would. See doc above.
+                // R9-T2 (finding 3): PRESERVED EXACTLY — never routed (a landed broadcast is
+                // never a failure to route, same carve-out `MigrationSendingStore`/
+                // `MigrationNoteSplitStore` apply). R9-T2 (finding 4): this IS a landed split —
+                // the had-broadcast recording lands here too, mirrors
+                // `MigrationNoteSplitStore.submitNoteSplit`'s identical catch clause; the
+                // synthetic `.success(txId: "")` result matches that same mirror (the error
+                // carries no payload to recover the real txId from).
+                await migrationManager.recordTransferBroadcast(account.id, MigrationTransferResult.success(txId: ""))
+            } catch {
+                // [MOB-1496] (R8-T4, #3): the stop above did NOT lead to a successful broadcast
+                // (the SDK call itself threw some other error) — the SDK only transitions its
+                // migration-sync privacy gate on a SUCCESSFUL broadcast, so nudge Root's
+                // app-side gate feed with a fresh read here; otherwise a stop that never got
+                // cleared could strand sync stopped for the rest of the session (see
+                // `MigrationManagerClient.refreshMigrationSyncGate`'s doc). R9-T2 (finding 3):
+                // classify+route the thrown error too, same "route first" ordering as above.
+                let route = await migrationManager.routeBroadcastFailure(account.id, error: error)
+                await migrationManager.refreshMigrationSyncGate()
+                splitFailure = MigrationCommitError.splitFailedRouted(route)
             }
-            try await sdkSynchronizer.signAndStoreMigrationSchedule(account.id, schedule, usk)
-
-        case .immediate:
-            let usk = try MigrationSpendingKeyDerivation.deriveUSK(
-                zip32AccountIndex: zip32AccountIndex,
-                walletStorage: walletStorage,
-                mnemonic: mnemonic,
-                derivationTool: derivationTool,
-                networkType: networkType
-            )
-            try await sdkSynchronizer.signAndStoreMigrationSchedule(account.id, schedule, usk)
+            if let splitFailure {
+                throw splitFailure
+            }
         }
+        try await sdkSynchronizer.signAndStoreMigrationSchedule(account.id, schedule, usk)
 
         // [MOB-1496] W2: persist the just-committed schedule (the SDK keeps no proposal list
         // post-commit) and reconcile so `stateEvents` picks up the fresh state promptly (a store
         // completing a migration op is one of `reconcile()`'s two triggers).
         await migrationManager.recordCommittedSchedule(account.id, schedule)
         await migrationManager.reconcile()
+    }
+
+    // MARK: - MOB-1513: immediate lane (send-max `ImmediateMigrationProposal`)
+
+    /// The immediate lane's software (USK-signing) submit: derives no new state ahead of time — the
+    /// proposal is already in hand, so this IS the whole commit. `createAndSubmitProposedTransactions`
+    /// signs and broadcasts in one call (already transaction-guarded in `SDKSynchronizerLive`, so this
+    /// never wraps its own guard). On a genuine `.success`, collects the (single, by construction —
+    /// a send-max proposal always produces exactly one transaction) txid and calls
+    /// `recordImmediateMigration` before returning it — a `recordImmediateMigration` failure AFTER a
+    /// successful submit is bookkeeping-only and never turns a landed broadcast into a reported
+    /// failure (mirrors `commitSoftware`'s landed-but-unrecorded philosophy above). On any other
+    /// submit outcome, throws `MigrationCommitError.immediateSubmitNotSuccessful` WITHOUT recording
+    /// anything — callers map this like any other thrown error to their existing failure surface.
+    ///
+    /// - Returns: the broadcast transaction's id, in the SDK's display-hex form (`TxId`/
+    ///   `toHexStringTxId()` convention) — the same shape `MigrationTransferResult.success(txId:)`
+    ///   and `MigrationSending.State.txId` already use everywhere else in this flow.
+    static func commitImmediateSoftware(
+        proposal: ImmediateMigrationProposal,
+        usk: UnifiedSpendingKey,
+        accountUUID: AccountUUID,
+        sdkSynchronizer: SDKSynchronizerClient
+    ) async throws -> String {
+        let result = try await sdkSynchronizer.createAndSubmitProposedTransactions(proposal.proposal, usk)
+        guard case let .success(txIds) = result, let displayTxId = txIds.first else {
+            throw MigrationCommitError.immediateSubmitNotSuccessful
+        }
+        await recordImmediateMigrationBestEffort(accountUUID: accountUUID, displayTxId: displayTxId, sdkSynchronizer: sdkSynchronizer)
+        return displayTxId
+    }
+
+    /// The immediate lane's Keystone post-signing submit — called once the QR round-trip returns a
+    /// signature for the single PCZT `MigrationReviewTransferStore`'s Keystone fork proposed via
+    /// `createPCZTFromProposal(accountUUID:proposal:)` (an ORDINARY, unproven PCZT — unlike the
+    /// engine's own migration PCZTs, which arrive proven-but-unsigned already; this one still needs
+    /// `addProofsToPCZT` before it can be combined with the externally-obtained signature). Unlike
+    /// the software lane, this can't defer to the Sending screen's `onAppear`: a Keystone PCZT can
+    /// only be finalized once, right here, immediately after the signature comes back — there is no
+    /// engine-held "signed and stored, broadcast whenever" state for a proposal the engine never
+    /// held in the first place. `createAndSubmitTransactionFromPCZT` is already transaction-guarded
+    /// in `SDKSynchronizerLive`. Same throw/record semantics as `commitImmediateSoftware`.
+    static func commitImmediateKeystone(
+        unsignedPczt: Data,
+        signedPczt: Data,
+        accountUUID: AccountUUID,
+        sdkSynchronizer: SDKSynchronizerClient
+    ) async throws -> String {
+        let provenPczt = try await sdkSynchronizer.addProofsToPCZT(unsignedPczt)
+        let result = try await sdkSynchronizer.createAndSubmitTransactionFromPCZT(provenPczt, signedPczt)
+        guard case let .success(txIds) = result, let displayTxId = txIds.first else {
+            throw MigrationCommitError.immediateSubmitNotSuccessful
+        }
+        await recordImmediateMigrationBestEffort(accountUUID: accountUUID, displayTxId: displayTxId, sdkSynchronizer: sdkSynchronizer)
+        return displayTxId
+    }
+
+    /// Shared by both immediate submit paths above: the broadcast already landed by the time this
+    /// runs (a `displayTxId` in hand), so a `recordImmediateMigration` failure here is bookkeeping
+    /// only — logged, never thrown, never turning an already-successful broadcast into a reported
+    /// failure (same "landed but unrecorded is still success" precedent `commitSoftware`'s
+    /// `ZcashError.migrationRecordFailedAfterBroadcast` catch applies above).
+    private static func recordImmediateMigrationBestEffort(
+        accountUUID: AccountUUID,
+        displayTxId: String,
+        sdkSynchronizer: SDKSynchronizerClient
+    ) async {
+        do {
+            try await sdkSynchronizer.recordImmediateMigration(accountUUID, rawTxId(fromDisplayHex: displayTxId))
+        } catch {
+            LoggerProxy.error("[MOB-1513] recordImmediateMigration failed after a successful broadcast (txid \(displayTxId)): \(error)")
+        }
+    }
+
+    /// Inverts `Data.toHexStringTxId()` (SDK, `Extensions/Data+Zcash.swift`): that display
+    /// convention reverses the txid's bytes and THEN hex-encodes them, so recovering the raw/
+    /// internal-order `Data` `recordImmediateMigration(accountUUID:txid:)` requires (matching
+    /// `TxId.id`) means hex-decoding first and reversing the decoded bytes back — hex-decoding alone
+    /// would silently hand the SDK a byte-reversed txid. See `Synchronizer.recordImmediateMigration`'s
+    /// own doc for the identical warning from the SDK side. `Data(hexString:)` is the app-wide hex
+    /// decoder already used by `VotingCryptoClientLiveKey.swift`.
+    private static func rawTxId(fromDisplayHex hex: String) -> Data {
+        Data(Data(hexString: hex).reversed())
     }
 
     /// Proposes the Keystone-signing PCZT batch for `schedule`, external-signer path: unconditionally
@@ -227,16 +285,14 @@ enum MigrationCommitPipeline {
     /// prefix before storing — see `MigrationCoordFlow.keystoneNoteSplitSentinelPrefix`'s doc), ahead
     /// of the schedule's own PCZTs.
     ///
-    /// MOB-1496 (final engine): the OLD `mode == .scheduled` gate — "only consult a split in scheduled
-    /// mode; immediate is split-free by engine design (S1)" — is deleted. Two engine facts made that
-    /// premise obsolete: the immediate flag only rewrites transfer heights, so an immediate-mode batch
-    /// CAN carry preps too, and the run is created the moment this call builds ANY PCZTs (preps or
-    /// schedule), regardless of mode — so skipping the prep propose in immediate mode wouldn't even
-    /// have skipped run creation, just silently dropped preps the engine still needed signed. The fold
-    /// is now unconditional and mode-independent; `mode` itself is unused here as a result (still used
-    /// by `commitSoftware`, whose `.immediate` branch simply has no split-specific call to make —
-    /// `signAndStoreMigrationSchedule` signs the whole committed run, preps included, so there is
-    /// nothing to fold on that path — see `MigrationCommitMode.immediate`'s doc).
+    /// MOB-1513: `MigrationTransferPlanStore`'s Keystone fork (the staggered-schedule lane,
+    /// `KeystoneSigningContext.planCommit`) is the ONLY caller now — `MigrationReviewTransferStore`'s
+    /// immediate-mode Keystone fork proposes its single `ImmediateMigrationProposal`'s PCZT directly
+    /// via `createPCZTFromProposal(accountUUID:proposal:)` instead (an ordinary, engine-external
+    /// proposal has no engine-held schedule for this function's `proposeNoteSplitPCZTs`/
+    /// `proposeMigrationPCZTs` machinery to build a batch from) — see
+    /// `MigrationCoordFlowCoordinator.submitImmediateKeystoneTransaction`'s doc for that lane's own
+    /// post-signing step.
     ///
     /// Finding #4: every SDK member here throws through (no `try?` swallowing), and an empty
     /// resulting batch is ALSO treated as a failure — this never hands the coordinator a silently

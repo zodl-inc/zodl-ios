@@ -136,7 +136,18 @@ extension SDKSynchronizerClient {
         self.proposeImmediateMigration = { accountUUID in
             if engine.isActive {
                 engine.selectMode(MigrationMode.immediate)
-                return await engine.propose()
+                // MOB-1513: the real surface returns an `ImmediateMigrationProposal` (an ordinary
+                // send-max proposal) instead of a `MigrationSchedule` now. The engine has no genuine
+                // `FfiProposal` to build a real `Proposal` from, so this fabricates one via
+                // `.testOnlyFakeProposal` (explicitly test/QA-only, matching the spirit of this whole
+                // simulator) — harmless here since the simulator also never reaches the real
+                // broadcast/Keystone-ceremony machinery that would try to execute it for real. Amount
+                // is the single simulated transfer's value (the whole Orchard balance, pre-fee, per
+                // `propose()`'s `.immediate` branch below); fee is the same standard ZIP-317 marginal
+                // fee the pre-existing simulated UI used.
+                let schedule = await engine.propose()
+                let amount = schedule.transfers.first?.amount ?? Zatoshi.zero
+                return ImmediateMigrationProposal(proposal: .testOnlyFakeProposal(totalFee: 100_000), amount: amount, fee: Zatoshi(100_000))
             } else {
                 return try await originalProposeImmediateMigration(accountUUID)
             }

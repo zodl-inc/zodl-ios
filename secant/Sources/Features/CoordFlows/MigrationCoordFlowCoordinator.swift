@@ -555,13 +555,31 @@ extension MigrationCoordFlow {
                 // (peeked BEFORE the push below — `StackState.append` never pops) is the only place
                 // left to tell a manual-step confirm (one of several hand-walked transfers) apart
                 // from an immediate one-shot sweep, to select the pushed screen's success wording.
+                //
+                // MOB-1513: this confirm only ever fires for a SOFTWARE account — a Keystone
+                // immediate-mode confirm forks to `requestKeystoneSignature` instead (never
+                // `.confirmed`), so `reviewState.immediateProposal` is threaded here unconditionally
+                // for the non-manual-step branch: it is guaranteed populated (the guard chain in
+                // `MigrationReviewTransferStore.confirmTapped` never reaches this delegate with a nil
+                // proposal) and `nil` is impossible for a Keystone account by construction. `keep 1`:
+                // a send-max proposal is a single transaction BY CONSTRUCTION
+                // (`Proposal.transactionCount() == 1`) — not an artifact of the old engine schedule
+                // this replaced, which merely happened to also be one transfer.
                 let isManualStepLane: Bool
+                var immediateProposal: ImmediateMigrationProposal?
                 if case .reviewTransfer(let reviewState) = state.path.last, case .manualStep = reviewState.mode {
                     isManualStepLane = true
                 } else {
                     isManualStepLane = false
+                    if case .reviewTransfer(let reviewState) = state.path.last {
+                        immediateProposal = reviewState.immediateProposal
+                    }
                 }
-                let sendingState = MigrationSending.State(totalCount: 1, isManualStepLane: isManualStepLane)
+                let sendingState = MigrationSending.State(
+                    totalCount: 1,
+                    isManualStepLane: isManualStepLane,
+                    immediateProposal: immediateProposal
+                )
                 state.path.append(.sending(sendingState))
                 return .none
 
@@ -622,6 +640,17 @@ extension MigrationCoordFlow {
                     return .send(.keystoneScanAbandoned)
                 }
 
+                // MOB-1513: the immediate lane diverges entirely from here on — no engine schedule to
+                // read, no store step at all (nothing was ever proposed through the engine). See
+                // `submitImmediateKeystoneTransaction`'s doc.
+                if case .immediateReview = context {
+                    return submitImmediateKeystoneTransaction(
+                        accountUUID: accountUUID,
+                        unsignedPczt: signState.pczts.first?.pczt ?? Data(),
+                        signedPczt: signedPczts.first?.pczt ?? Data()
+                    )
+                }
+
                 // [MOB-1496] W2: the schedule that was just signed lives on the `.transferPlan`/
                 // `.reviewTransfer` element still beneath `keystoneSign`+`scan` on the path (or, for
                 // the dust lane, directly on `context` — see `pendingKeystoneSchedule`'s doc) — read
@@ -661,6 +690,16 @@ extension MigrationCoordFlow {
                 let signedPczts: [MigrationSignedTransferPczt] = signState.pczts.isEmpty
                     ? [MigrationSignedTransferPczt(id: "simulated", pczt: Data())]
                     : signState.pczts.map { MigrationSignedTransferPczt(id: $0.id, pczt: $0.pczt) }
+
+                // MOB-1513: same immediate-lane divergence as the real round-trip above.
+                if case .immediateReview = context {
+                    return submitImmediateKeystoneTransaction(
+                        accountUUID: accountUUID,
+                        unsignedPczt: signState.pczts.first?.pczt ?? Data(),
+                        signedPczt: signedPczts.first?.pczt ?? Data()
+                    )
+                }
+
                 // [MOB-1496] W2: same schedule lookup as the real round-trip above, but the
                 // simulator bypass never pushes `scan` — only `keystoneSign` sits above the
                 // schedule-bearing element.
@@ -689,6 +728,17 @@ extension MigrationCoordFlow {
                     pendingScheduleStore: pendingScheduleStore,
                     state: &state
                 )
+
+            case .keystoneImmediateSubmitted(let txId):
+                // MOB-1513: same pop/clear shape as `resumeAfterKeystoneSigning`'s own first four
+                // lines (duplicated rather than shared — this lane's completion diverges immediately
+                // after: `.success` phase with a known txid, not a resume into `resumeCommittedMigrationChain`).
+                state.pendingKeystoneSigning = nil
+                state.pendingKeystoneSigningAccountUUID = nil
+                let topElementIsScan = state.path.last?.is(\.scan) == true
+                state.path.removeLast(topElementIsScan ? 2 : 1)
+                state.path.append(.sending(MigrationSending.State(phase: .success, txId: txId, totalCount: 1)))
+                return .none
 
             case .path(.element(id: _, action: .keystoneSign(.delegate(.rejected)))):
                 // No-partial-storage invariant: nothing was stored — just pop back to the signing
@@ -1096,6 +1146,14 @@ extension MigrationCoordFlow {
             return transferPlanPostConfirmChain(variant: planState.variant, state: &state)
 
         case .immediateReview:
+            // MOB-1513: unreachable in practice — `submitImmediateKeystoneTransaction` intercepts
+            // `.immediateReview` at BOTH of `resumeAfterKeystoneSigning`'s callers (the real
+            // `.scan(.foundPCZTBatch)` round-trip and the `.simulateSignature` bypass) before either
+            // ever reaches this function, and the immediate lane's single ordinary-send PCZT
+            // (`createPCZTFromProposal`) never carries note-split preps for the split-routing branch
+            // above to route here either. Kept only for this switch's exhaustiveness; if it ever DID
+            // run, it would incorrectly push a fresh `.sending` broadcast attempt for a transaction
+            // `submitImmediateKeystoneTransaction` already submitted.
             let sendingState = MigrationSending.State(totalCount: 1)
             state.path.append(.sending(sendingState))
             return .none
@@ -1202,18 +1260,71 @@ extension MigrationCoordFlow {
         }
     }
 
+    // MARK: - MOB-1513: Keystone signing — immediate lane's post-signing submit
+
+    /// The immediate lane's Keystone post-signing step — intercepted BEFORE `storeKeystoneSignedBatch`
+    /// at both call sites above (the real `.scan(.foundPCZTBatch)` round-trip and the
+    /// `.simulateSignature` bypass), since it diverges from `storeKeystoneSignedBatch`'s
+    /// schedule-store semantics entirely: an `ImmediateMigrationProposal` is engine-external, so there
+    /// is no `MigrationSchedule` to store and no engine run this ceremony ever created (`proposeKeystoneBatch`,
+    /// `storeSignedMigrationTransactions`, and the whole "run created at PCZT-build time" story this
+    /// file's header documents at length are ALL specific to the engine's own schedule/prep machinery
+    /// — `createPCZTFromProposal` never touches any of it). Instead, the signed PCZT is proved and
+    /// broadcast RIGHT HERE via `MigrationCommitPipeline.commitImmediateKeystone` (guarded
+    /// `createAndSubmitTransactionFromPCZT`) — unlike the software lane, a Keystone-signed PCZT can
+    /// only be finalized once, immediately after the signature comes back; there is no engine-held
+    /// "signed and stored, broadcast whenever the Sending screen next appears" indirection available
+    /// for a proposal the engine never held to begin with.
+    ///
+    /// On success, `.keystoneImmediateSubmitted(txId:)` pops back exactly like a no-preps
+    /// `resumeAfterKeystoneSigning` would, then pushes `MigrationSending.State` ALREADY in `.success`
+    /// phase with the real txid — the broadcast already happened here, so there is nothing left for
+    /// that screen's `onAppear` to (re-)execute. `totalCount: 1`/success semantics otherwise match the
+    /// software lane's identically (see `MigrationSendingStore`'s header doc).
+    ///
+    /// On failure, reuses `keystoneScanAbandoned`'s existing pop/cleanup exactly as a re-pair or
+    /// firmware-gate failure would: nothing else to resume, a fresh confirm re-proposes and re-signs
+    /// from scratch. This is a deliberate simplification over a "retry just the broadcast" lane (which
+    /// would need to persist the already-signed PCZT bytes across a retry, infrastructure this ceremony
+    /// doesn't have for a proposal the engine never stored) — flagged in this task's report.
+    private func submitImmediateKeystoneTransaction(
+        accountUUID: AccountUUID,
+        unsignedPczt: Data,
+        signedPczt: Data
+    ) -> Effect<MigrationCoordFlow.Action> {
+        .run { [sdkSynchronizer, accountUUID, unsignedPczt, signedPczt] send in
+            do {
+                let txId = try await MigrationCommitPipeline.commitImmediateKeystone(
+                    unsignedPczt: unsignedPczt,
+                    signedPczt: signedPczt,
+                    accountUUID: accountUUID,
+                    sdkSynchronizer: sdkSynchronizer
+                )
+                await send(.keystoneImmediateSubmitted(txId: txId))
+            } catch {
+                await send(.keystoneScanAbandoned)
+            }
+        }
+    }
+
     // MARK: - MOB-1496 (W2): schedule lookup for the Keystone store-success write point
 
-    /// Locates the `MigrationSchedule` that was signed for `context`, read off the `.transferPlan`/
-    /// `.reviewTransfer` element still beneath `keystoneSign` (+ `scan`, on the real round-trip) at
-    /// the point the signed PCZTs are about to be stored — `depthBelowTop` is how many elements sit
-    /// above it on the path (2 for the real scan round-trip: `scan` + `keystoneSign`; 1 for the
-    /// simulator bypass, which never pushes `scan`) — mirrors how `signState.pczts` above reads the
-    /// unsigned batch off the same stack position. `nil` when that element carries no schedule of
-    /// its own (a fixture/test state that never populated one) — the caller then skips
-    /// `recordCommittedSchedule` rather than persisting nothing. MOB-1496 (W6 §3): `.dust` carries
-    /// its schedule directly on the context instead — the coordinator proposed it itself
-    /// (`.keystoneDustPCZTsProposed`), so there is no path element to peek at all.
+    /// Locates the `MigrationSchedule` that was signed for `context`, read off the `.transferPlan`
+    /// element still beneath `keystoneSign` (+ `scan`, on the real round-trip) at the point the signed
+    /// PCZTs are about to be stored — `depthBelowTop` is how many elements sit above it on the path (2
+    /// for the real scan round-trip: `scan` + `keystoneSign`; 1 for the simulator bypass, which never
+    /// pushes `scan`) — mirrors how `signState.pczts` above reads the unsigned batch off the same
+    /// stack position. `nil` when that element carries no schedule of its own (a fixture/test state
+    /// that never populated one) — the caller then skips `recordCommittedSchedule` rather than
+    /// persisting nothing. MOB-1496 (W6 §3): `.dust` carries its schedule directly on the context
+    /// instead — the coordinator proposed it itself (`.keystoneDustPCZTsProposed`), so there is no path
+    /// element to peek at all.
+    ///
+    /// MOB-1513: `.immediateReview` always returns `nil` now — `MigrationReviewTransfer.State` dropped
+    /// its `schedule` field entirely (the immediate lane's `ImmediateMigrationProposal` carries no
+    /// engine schedule to record). This branch is unreachable in practice — both call sites above
+    /// intercept `.immediateReview` via `submitImmediateKeystoneTransaction` before ever reaching this
+    /// function — but stays for the switch's exhaustiveness.
     private func pendingKeystoneSchedule(
         context: MigrationCoordFlow.KeystoneSigningContext,
         depthBelowTop: Int,
@@ -1225,8 +1336,7 @@ extension MigrationCoordFlow {
             return planState.schedule
 
         case .immediateReview:
-            guard case let .reviewTransfer(reviewState)? = state.path.dropLast(depthBelowTop).last else { return nil }
-            return reviewState.schedule
+            return nil
 
         case .dust(let schedule):
             return schedule
@@ -1623,8 +1733,10 @@ extension MigrationCoordFlow {
         return MigrationReviewTransfer.State(
             mode: .manualStep(number: step, total: total),
             amount: nextRow?.amount ?? Zatoshi.zero,
-            // Standard ZIP-317 marginal fee (`MigrationReviewTransfer.State.standardFee`'s value —
-            // that constant is `fileprivate` to its own file, so it's mirrored here literally).
+            // Standard ZIP-317 marginal fee — the manual per-step review has no proposal object of
+            // its own to read a fee from (unlike MOB-1513's immediate lane, whose
+            // `ImmediateMigrationProposal.fee` is the real thing), so this literal mirrors the
+            // precedent used throughout the migration flow for a single-transfer fee display.
             fee: Zatoshi(100_000),
             isFlowRoot: isFlowRoot
         )
