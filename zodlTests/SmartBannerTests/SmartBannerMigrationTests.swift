@@ -5,13 +5,22 @@
 //  MOB-1466: covers the `priorityMigration` wiring added to `SmartBannerStore.swift` — the
 //  `PriorityContent.rank` ordering (below priority1/priority2, above everything else), the
 //  `.evaluatePriorityMigration` walk step slotted between priority2 and priority3, the
-//  `migrationStateStream()` reactive trigger (`.migrationStateChanged`/`.migrationVariantUpdated`),
-//  and the `.migrationScreenRequested` tap leaf action. `.serialized`: state touches the
+//  reactive trigger (`.migrationStateChanged`/`.migrationVariantUpdated` — MOB-1496: fed by
+//  `migrationManager.stateEvents()` now, not the SDK's old wallet-wide `migrationStateStream()`,
+//  though most of this file drives `.migrationStateChanged` directly and so is unaffected by that
+//  swap), and the `.migrationScreenRequested` tap leaf action. `.serialized`: state touches the
 //  process-global `@Shared(.inMemory(.selectedWalletAccount))`.
+//
+//  R8-T7 (#12) addition: "Subscription re-keying on account switch" below is the one section that
+//  DOES exercise the actual `stateEvents` publisher wiring (not just `.migrationStateChanged` sent
+//  directly) — the bug was in the subscription lifecycle itself (`.onAppear` binds to whichever
+//  account was selected at mount; `.walletAccountChanged` never cancelled/re-subscribed), which a
+//  test that only ever sends `.migrationStateChanged` by hand structurally cannot see.
 //
 
 import Testing
 import Foundation
+@preconcurrency import Combine
 import ComposableArchitecture
 @testable @preconcurrency import ZcashLightClientKit
 @testable import zodl_internal
@@ -488,6 +497,101 @@ import ComposableArchitecture
         }
 
         await store.send(.synchronizerStateChanged(SynchronizerState.zero.redacted))
+    }
+
+    // MARK: - Subscription re-keying on account switch (R8-T7 #12)
+    //
+    // Pre-fix, `.walletAccountChanged` never touched `CancelMigrationStateStreamId` at all -- the
+    // `stateEvents` subscription stayed bound to whichever account was selected at `.onAppear`
+    // forever (Home never re-appears across an account switch; the switcher is a sheet). This is
+    // the one test in the file that drives the REAL `migrationManager.stateEvents` publisher (via a
+    // `PassthroughSubject` test double per account) rather than sending `.migrationStateChanged`
+    // directly, so it's the only one that can actually see a subscription-lifecycle bug. Two
+    // independent signals distinguish "re-subscribed correctly" from "still on the old account":
+    // (1) `requestedAccountUUIDs` -- which account ids `stateEvents` was actually invoked with, in
+    // order, proving a SECOND subscription request happened after the switch, not just the first at
+    // onAppear; (2) `subjectADeliveries`/`subjectBDeliveries` -- `.handleEvents(receiveOutput:)`
+    // counters spliced directly into each account's publisher, incremented synchronously by Combine
+    // only when a value actually reaches a LIVE subscriber. (2) is deliberately independent of
+    // `migrationManager.bannerVariant`/the priority walk (both of which `.walletAccountChanged`'s
+    // OWN close-and-re-walk effect also exercises, unrelated to the subscription itself) so it can't
+    // be confused by that unrelated cascade.
+
+    @MainActor @Test func migrationStateStreamSubscriptionReKeysToTheNewAccountOnWalletAccountChanged() async {
+        let accountA = walletAccount(idByte: 20)
+        let accountB = walletAccount(idByte: 21)
+        let subjectA = PassthroughSubject<MigrationState, Never>()
+        let subjectB = PassthroughSubject<MigrationState, Never>()
+        let subjectADeliveries = LockIsolated<Int>(0)
+        let subjectBDeliveries = LockIsolated<Int>(0)
+        let requestedAccountUUIDs = LockIsolated<[AccountUUID?]>([])
+
+        var state = SmartBanner.State()
+        state.$selectedWalletAccount.withLock { $0 = accountA }
+
+        let store = TestStore(initialState: state) {
+            SmartBanner()
+        } withDependencies: {
+            // `.onAppear` merges FOUR subscriptions -- the other three (network monitor, sync
+            // state, shielding processor) are unrelated to this test but still need safe,
+            // non-trapping stand-ins since this is the one test in the file that actually sends
+            // `.onAppear` rather than driving `.migrationStateChanged` by hand.
+            $0.walletStorage = .noOp
+            $0.sdkSynchronizer = .noOp
+            $0.networkMonitor.networkMonitorStream = { Empty().eraseToAnyPublisher() }
+            $0.shieldingProcessor.observe = { Empty().eraseToAnyPublisher() }
+            $0.migrationManager.bannerVariant = { _ in nil }
+            $0.migrationManager.stateEvents = { accountUUID in
+                requestedAccountUUIDs.withValue { $0.append(accountUUID) }
+                if accountUUID == accountA.id {
+                    return subjectA
+                        .handleEvents(receiveOutput: { _ in subjectADeliveries.withValue { $0 += 1 } })
+                        .eraseToAnyPublisher()
+                } else if accountUUID == accountB.id {
+                    return subjectB
+                        .handleEvents(receiveOutput: { _ in subjectBDeliveries.withValue { $0 += 1 } })
+                        .eraseToAnyPublisher()
+                } else {
+                    return Empty().eraseToAnyPublisher()
+                }
+            }
+        }
+        store.exhaustivity = .off
+        store.dependencies.mainQueue = .immediate
+
+        await store.send(.onAppear)
+        #expect(requestedAccountUUIDs.value == [accountA.id], "onAppear subscribes on the appeared account")
+
+        // Subscribed on A: a push for A reaches the banner.
+        subjectA.send(MigrationState.inProgress(
+            MigrationProgress(completedTransfers: 1, totalTransfers: 3, remainingOrchard: Zatoshi.zero, nextTransferReadyAtHeight: nil)
+        ))
+        await store.receive(\.migrationStateChanged)
+        await store.receive(\.migrationVariantUpdated)
+        #expect(subjectADeliveries.value == 1)
+
+        // Root sets the shared account BEFORE dispatching .walletAccountChanged -- mirrored here.
+        store.state.$selectedWalletAccount.withLock { $0 = accountB }
+        await store.send(.walletAccountChanged)
+        await store.receive(\.closeBanner)
+
+        #expect(
+            requestedAccountUUIDs.value == [accountA.id, accountB.id],
+            "walletAccountChanged must re-subscribe with the NEW account, not leave the onAppear subscription as the only one ever made"
+        )
+
+        // The OLD (A) subscription is torn down by the cancel -- this push has no live subscriber to
+        // reach. Red pre-fix: the stale subscription was still bound to A and WOULD have delivered.
+        subjectA.send(MigrationState.complete)
+        #expect(subjectADeliveries.value == 1, "a post-switch push for the OLD account must not be delivered")
+
+        // The NEW (B) subscription is live -- this push DOES reach the banner.
+        subjectB.send(MigrationState.inProgress(
+            MigrationProgress(completedTransfers: 2, totalTransfers: 3, remainingOrchard: Zatoshi.zero, nextTransferReadyAtHeight: nil)
+        ))
+        await store.receive(\.migrationStateChanged)
+        await store.receive(\.migrationVariantUpdated)
+        #expect(subjectBDeliveries.value == 1, "a push for the NEW account reaches the banner")
     }
 
     // MARK: - Tap

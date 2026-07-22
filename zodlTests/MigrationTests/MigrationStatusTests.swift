@@ -5,15 +5,20 @@
 //  Covers the MigrationStatus reducer (Features/Migration/MigrationStatus/MigrationStatusStore.swift)
 //  for MOB-1464/1466: the default `.progress` presentation, the `gotItTapped`/`sendNowTapped`/
 //  `rescheduleTapped` delegate contracts, the `remainingCount` derivation over a mixed row set, and
-//  (MOB-1466) `onAppear` loading rows/summary via `migrationTransfers()`/`migrationSummary()`,
-//  subscribing `migrationStateStream()` to refresh rows on change, the `isSendNowDisabled`
-//  derivation from `manager.sendGate()`, and the `isFlowRoot`-gated close-instead-of-pop back
-//  action. No shared/global state -> no `.serialized`.
+//  (MOB-1466) `onAppear` loading rows/summary via `migrationTransfers()`/`migrationSummary()` and
+//  subscribing `migrationStateStream()` to refresh rows on change, and the `isFlowRoot`-gated
+//  close-instead-of-pop back action. No shared/global state -> no `.serialized`.
 //
 //  MOB-1478 (W7) additions: `sentMinutesAgo`/`isBroadcasting` row fields riding unchanged through
 //  `onAppear`/`statusLoaded`, and the `rescheduleCompleted` action's transition to
 //  `.rescheduleConfirmed(first:last:)` — deriving the stalled-range numbers from the pre-transition
 //  `stalledNumber`/`rows.count`, refreshing rows/duration, and clearing `isRescheduling`.
+//
+//  R8-T6 (V8 fix) additions: `isSendNowDisabled` is now COMPUTED off `rows` (an `.overdue` row ->
+//  enabled) instead of stored from a `manager.sendGate()` read — `statusLoaded` no longer carries a
+//  gate reading at all. `onAppearWithDueTransferAndWaitUntilGateEnablesSendNow` is the red-against-
+//  HEAD proof: HEAD disables the CTA on `.waitUntil` even with an overdue row present (the V8
+//  chicken-and-egg bug); this fix enables it regardless of what the gate says.
 //
 
 import Testing
@@ -34,7 +39,10 @@ import ComposableArchitecture
         #expect(state.stalledHoursAgo == 0)
         #expect(state.isRescheduling == false)
         #expect(state.isFlowRoot == false)
-        #expect(state.isSendNowDisabled == false)
+        // R8-T6: computed off `rows` now — no rows loaded yet means no due (`.overdue`) transfer,
+        // so the CTA reads disabled by construction (rather than the old stored default's `false`,
+        // which was really just "nothing has set it yet").
+        #expect(state.isSendNowDisabled == true)
     }
 
     @MainActor @Test func gotItTappedEmitsDelegateDone() async {
@@ -97,9 +105,9 @@ import ComposableArchitecture
         await store.send(.delegate(.done))
     }
 
-    // MARK: - onAppear: load rows/summary + sendGate, subscribe to state stream
+    // MARK: - onAppear: load rows/summary, subscribe to state stream
 
-    @MainActor @Test func onAppearLoadsRowsSummaryAndSendGate() async {
+    @MainActor @Test func onAppearLoadsRowsAndSummary() async {
         let stateStream = PassthroughSubject<MigrationState, Never>()
         let rows: [MigrationTransferRow] = [
             MigrationTransferRow(id: "0", index: 0, amount: Zatoshi(351_220_000), status: .sent, hoursFromNow: 6),
@@ -116,17 +124,41 @@ import ComposableArchitecture
             MigrationStatus()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.migrationTransfers = { rows }
-            $0.sdkSynchronizer.migrationSummary = { summary }
-            $0.sdkSynchronizer.migrationStateStream = { stateStream.eraseToAnyPublisher() }
-            $0.migrationManager.sendGate = { .allowed }
+            $0.migrationManager.migrationTransfers = { _ in rows }
+            $0.migrationManager.migrationSummary = { _ in summary }
+            $0.migrationManager.stateEvents = { _ in stateStream.eraseToAnyPublisher() }
         }
 
         await store.send(.onAppear)
         await store.receive(\.statusLoaded) {
             $0.rows = IdentifiedArrayOf(uniqueElements: rows)
             $0.totalDurationHours = 24
-            $0.isSendNowDisabled = false
+        }
+        // R8-T6: no `.overdue` row in this fixture -> no due transfer -> CTA disabled, derived
+        // straight from the rows `.statusLoaded` just set (no gate consult any more).
+        #expect(store.state.isSendNowDisabled == true)
+
+        stateStream.send(completion: .finished)
+        await store.finish()
+    }
+
+    /// MOB-1496 (W3): `syncPrivacyBufferMinutes` = `Int((migrationPrivacySyncBufferDuration() /
+    /// 60).rounded())` — threads the resume footer's formatted minutes off the SDK's real buffer
+    /// instead of a hardcoded "10". Uses a non-10-minute value (900s = 15 min) so a stale hardcoded
+    /// "10" would visibly fail this assertion.
+    @MainActor @Test func onAppearComputesSyncPrivacyBufferMinutesFromSDKDuration() async {
+        let stateStream = PassthroughSubject<MigrationState, Never>()
+        let store = TestStore(initialState: MigrationStatus.State()) {
+            MigrationStatus()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.migrationPrivacySyncBufferDuration = { 900 }
+            $0.migrationManager.stateEvents = { _ in stateStream.eraseToAnyPublisher() }
+        }
+
+        await store.send(.onAppear)
+        await store.receive(\.statusLoaded) {
+            $0.syncPrivacyBufferMinutes = 15
         }
 
         stateStream.send(completion: .finished)
@@ -154,59 +186,79 @@ import ComposableArchitecture
             MigrationStatus()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.migrationTransfers = { rows }
-            $0.sdkSynchronizer.migrationSummary = { summary }
-            $0.sdkSynchronizer.migrationStateStream = { stateStream.eraseToAnyPublisher() }
-            $0.migrationManager.sendGate = { .allowed }
+            $0.migrationManager.migrationTransfers = { _ in rows }
+            $0.migrationManager.migrationSummary = { _ in summary }
+            $0.migrationManager.stateEvents = { _ in stateStream.eraseToAnyPublisher() }
         }
 
         await store.send(.onAppear)
         await store.receive(\.statusLoaded) {
             $0.rows = IdentifiedArrayOf(uniqueElements: rows)
             $0.totalDurationHours = 12
-            $0.isSendNowDisabled = false
         }
 
         #expect(store.state.rows[id: "0"]?.sentMinutesAgo == 18)
         #expect(store.state.rows[id: "1"]?.isBroadcasting == true)
+        // R8-T6: row "1" is `.active`, not `.overdue` -> still no due transfer -> CTA disabled.
+        #expect(store.state.isSendNowDisabled == true)
 
         stateStream.send(completion: .finished)
         await store.finish()
     }
 
-    @MainActor @Test func onAppearWithSyncRequiredGateDisablesSendNow() async {
+    // MARK: - R8-T6 (V8 fix): due-ness, not the gate, governs the Send-now CTA
+
+    /// "No due transfer -> CTA as today": with nothing `.overdue` in `rows` (the default, empty
+    /// set here), the CTA stays disabled exactly like it always has — due-ness alone governs it,
+    /// so this holds regardless of what the gate would have said.
+    @MainActor @Test func onAppearWithNoDueTransferKeepsSendNowDisabled() async {
         let stateStream = PassthroughSubject<MigrationState, Never>()
         let store = TestStore(initialState: MigrationStatus.State(presentation: .resume)) {
             MigrationStatus()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.migrationStateStream = { stateStream.eraseToAnyPublisher() }
-            $0.migrationManager.sendGate = { .syncRequired }
+            $0.migrationManager.migrationTransfers = { _ in [] }
+            $0.migrationManager.stateEvents = { _ in stateStream.eraseToAnyPublisher() }
         }
 
         await store.send(.onAppear)
-        await store.receive(\.statusLoaded) {
-            $0.isSendNowDisabled = true
-        }
+        await store.receive(\.statusLoaded)
+
+        #expect(store.state.isSendNowDisabled == true)
 
         stateStream.send(completion: .finished)
         await store.finish()
     }
 
-    @MainActor @Test func onAppearWithWaitUntilGateDisablesSendNow() async {
+    /// THE V8 fix, red against HEAD: a due (`.overdue`) transfer is present, but the app-side
+    /// privacy gate reads `.waitUntil` (the exact chicken-and-egg shape from the finding — a sync
+    /// just completed, re-arming the 600s gate, so it's never `.allowed` in normal foreground use).
+    /// HEAD disables the CTA here (`isSendNowDisabled` was driven straight off `sendGate()`); this
+    /// fix enables it — due-ness alone governs it now, and the gate is enforced later, inside
+    /// `MigrationSendingStore`'s Send-now lane (silence-window wait), not here. The `sendGate` mock
+    /// is deliberately left in place (unused post-fix) specifically to prove the CTA no longer
+    /// depends on it.
+    @MainActor @Test func onAppearWithDueTransferAndWaitUntilGateEnablesSendNow() async {
         let stateStream = PassthroughSubject<MigrationState, Never>()
+        let rows: [MigrationTransferRow] = [
+            MigrationTransferRow(id: "0", index: 0, amount: Zatoshi(1_000), status: .sent, hoursFromNow: 18),
+            MigrationTransferRow(id: "1", index: 1, amount: Zatoshi(1_000), status: .overdue, hoursFromNow: 5)
+        ]
         let store = TestStore(initialState: MigrationStatus.State(presentation: .resume)) {
             MigrationStatus()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.migrationStateStream = { stateStream.eraseToAnyPublisher() }
+            $0.migrationManager.migrationTransfers = { _ in rows }
+            $0.migrationManager.stateEvents = { _ in stateStream.eraseToAnyPublisher() }
             $0.migrationManager.sendGate = { .waitUntil(Date(timeIntervalSince1970: 1_000_000)) }
         }
 
         await store.send(.onAppear)
         await store.receive(\.statusLoaded) {
-            $0.isSendNowDisabled = true
+            $0.rows = IdentifiedArrayOf(uniqueElements: rows)
         }
+
+        #expect(store.state.isSendNowDisabled == false)
 
         stateStream.send(completion: .finished)
         await store.finish()
@@ -225,8 +277,8 @@ import ComposableArchitecture
             MigrationStatus()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.migrationTransfers = { currentRows.value }
-            $0.sdkSynchronizer.migrationStateStream = { stateStream.eraseToAnyPublisher() }
+            $0.migrationManager.migrationTransfers = { _ in currentRows.value }
+            $0.migrationManager.stateEvents = { _ in stateStream.eraseToAnyPublisher() }
             $0.migrationManager.sendGate = { .allowed }
         }
 

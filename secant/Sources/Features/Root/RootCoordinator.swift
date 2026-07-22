@@ -274,23 +274,65 @@ extension Root {
                 )
 
             case .migrationCoordFlow(.flowFinished):
+                // R8-T6 fix-wave (Critical-1): a defensive release — `.flowFinished` normally
+                // follows the Sending store's own exit (which already clears the hold itself), so
+                // this is a no-op in that ordinary case. But `.flowFinished` is also the Root-side
+                // terminal signal for every OTHER flow-root close (recovery/scheduled/reviewTransfer/
+                // complete's own delegates — see the cases below), so this closes any path where
+                // the coordinator finishes without the Sending store's own exit ever running.
+                // Called BEFORE the pop.
+                let releaseEffect = releaseSendWaitHold()
+                // MOB-1496: same "defensive, usually a no-op" reasoning as the release above, for a
+                // live Keystone signing ceremony instead of a send-wait hold — see
+                // `cancelAbandonedKeystoneMigrationRun`'s doc. Also called BEFORE the pop (though this
+                // case doesn't reset `migrationCoordFlowState` itself, reading before any mutation
+                // matches the release's own ordering).
+                let cancelEffect = cancelAbandonedKeystoneMigrationRun(state: state)
                 state.path = nil
-                return .none
+                // R8-T3 (#9): fire-and-forget — every flow-root close/terminal delegate lands
+                // here, including an abandoned pre-commit confirm lane that already took a
+                // network snapshot on its first `migrationNetworkOptions` read but never got far
+                // enough to commit a schedule (or acknowledge completion). `clearAbandonedNetworkSnapshot`
+                // itself no-ops unless the selected account's engine state is genuinely
+                // `.notStarted` with no stored schedule payload, so this is safe to fire on EVERY
+                // flow close, not just an abandoned one.
+                return .merge(
+                    releaseEffect,
+                    cancelEffect,
+                    .run { [migrationManager, accountUUID = state.selectedWalletAccount?.id] _ in
+                        await migrationManager.clearAbandonedNetworkSnapshot(accountUUID)
+                    }
+                )
 
             case .migrationCoordFlow(
                 .path(.element(id: _, action: .sending(.delegate(.viewTransaction))))
             ):
-                // The migration Sending delegate carries only a bare stub `txId: String`
+                // The migration Sending delegate carries only a bare `txId: String`
                 // (`MigrationSending.State.txId`), never a real `TransactionState` — but
                 // `TransactionsCoordFlow`'s existing open-a-transaction plumbing (mirrored from
                 // `.home(.transactionList(.transactionTapped))` above) requires a non-optional
-                // `TransactionState` looked up from `state.transactions`, which a synthetic
-                // migration txid will never be a member of. Until the real SDK (MOB-1455) fills
-                // in migration transfers with transactions the rest of the app can see, treat
-                // View Transaction as a flow close rather than a broken/empty detail screen.
-                // TODO: [MOB-1458] route to transaction detail once real txids exist
+                // `TransactionState` looked up from `state.transactions`, and the app exposes no
+                // by-txid lookup to fall back to. The txid is real now, but it still won't be in
+                // `state.transactions` at tap time: ordinary sync is deliberately paused right after
+                // a migration broadcast (`stopSyncBeforeMigrationBroadcast`) and stays gated behind
+                // the post-broadcast privacy buffer, so the wallet hasn't scanned the transaction
+                // back in yet. Treat View Transaction as a flow close rather than a broken/empty
+                // detail screen until a by-txid lookup exists.
+                // TODO: [MOB-1458] route to transaction detail once a by-txid transaction lookup exists
+                //
+                // R8-T6 fix-wave (Critical-1): also a defensive release (BEFORE the pop) — `View
+                // Transaction` only ever renders once the Sending screen has already reached
+                // `.success`, by which point `.sendNowGateResolved(.allowed)` has already cleared
+                // the hold itself, so this is a no-op in practice; kept for the same "Root pops the
+                // flow from outside the store's own exit" reasoning as `.flowFinished` above.
+                let releaseEffect = releaseSendWaitHold()
+                // MOB-1496: same defensive reasoning for a live Keystone signing ceremony — by the
+                // `.success` phase `pendingKeystoneSigning` is already `nil` in every reachable case
+                // (the Keystone resume chain clears it well before Sending is ever pushed), so this
+                // too is a no-op in practice; kept for symmetry with `.flowFinished` above.
+                let cancelEffect = cancelAbandonedKeystoneMigrationRun(state: state)
                 state.path = nil
-                return .none
+                return .merge(releaseEffect, cancelEffect)
 
                 // MARK: - Keystone
 

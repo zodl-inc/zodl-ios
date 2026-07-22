@@ -10,10 +10,12 @@
 //  view via `sdkSynchronizer.urEncoderForMigrationPCZTBatch(pczts)` — never cached in `State` (the
 //  same approach `SignWithKeystoneView` uses for `urEncoderForPCZT`), since `UREncoder` is a
 //  non-`Equatable`, non-`Sendable` class that cannot live in an `@ObservableState` `Equatable`
-//  struct. Stubbed today: the batch encoder returns `nil`, so the QR area renders the same
-//  empty/loading treatment `SignWithKeystoneView` shows while `pcztForUI == nil` — dormant, by
-//  design, until the SDK + Keystone batch support land (MOB-1455). The coordinator consumes both
-//  delegates (`.getSignature` -> scan -> submit/store, `.rejected` -> deferred pop) — MOB-1468.
+//  struct. The batch encoder still returns `nil` today — no batch UR format exists yet (a joint
+//  SDK + Keystone-team ask, device support unvalidated; see `urEncoderForMigrationPCZTBatch` in
+//  `SDKSynchronizerLive`), independent of the migration SDK wiring otherwise being complete — so
+//  the QR area renders the same empty/loading treatment `SignWithKeystoneView` shows while
+//  `pcztForUI == nil`. The coordinator consumes both delegates (`.getSignature` -> scan ->
+//  submit/store, `.rejected` -> deferred pop) — MOB-1468.
 //
 //  MOB-1480 adds a simulator-only bypass: a "Simulate signed result" button, visible iff
 //  `MigrationSimulatorFlag.isEnabled && migrationSimulator.readout().isActive` (computed once in
@@ -28,13 +30,13 @@ import ComposableArchitecture
 struct MigrationKeystoneSign {
     @ObservableState
     struct State: Equatable {
-        var pczts: [Pczt] = []
+        var pczts: [MigrationUnsignedTransferPczt] = []
         /// MOB-1480: drives the simulator-only "Simulate signed result" button's visibility — set
         /// once in `onAppear`, never touched anywhere else.
         var isSimulatorBypassVisible = false
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
 
-        init(pczts: [Pczt] = []) {
+        init(pczts: [MigrationUnsignedTransferPczt] = []) {
             self.pczts = pczts
         }
     }

@@ -122,6 +122,11 @@ import ComposableArchitecture
                 $0.flexaHandler.flexaAlert = { _, _ in alertCalls.withValue { $0 += 1 } }
                 $0.localAuthentication = .mockAuthenticationSucceeded
                 $0.mainQueue = .immediate
+                // R8-T7 (#12): `.walletAccountChanged` now re-subscribes SmartBanner's migration
+                // stateEvents stream on every account switch (this test switches accounts below) --
+                // `migrationManager` has no live-fallback testValue, so any access at all needs at
+                // least one member stubbed, or the whole client traps as "no test implementation".
+                $0.migrationManager.stateEvents = { _ in Empty().eraseToAnyPublisher() }
                 $0.mnemonic = .mock
                 $0.readTransactionsStorage.resetZashi = { }
                 $0.sdkSynchronizer = .noOp

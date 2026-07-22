@@ -26,10 +26,27 @@
 import Foundation
 import Testing
 import ComposableArchitecture
-@preconcurrency import ZcashLightClientKit
+@testable @preconcurrency import ZcashLightClientKit
 @testable import zodl_internal
 
 @Suite(.serialized) @MainActor struct RootMigrationRoutingTests {
+    /// R8-T5 (S4): a second account for the notification-tap account-switch tests — distinct
+    /// `idByte` from a plain `Root.State.initial` selection, mirroring `RootMigrationBackgroundTests
+    /// .walletAccount(idByte:)`'s identical fixture pattern.
+    private static func walletAccount(idByte: UInt8) -> WalletAccount {
+        WalletAccount(
+            Account(
+                id: AccountUUID(id: [UInt8](repeating: idByte, count: 16)),
+                name: "Zodl",
+                keySource: nil,
+                seedFingerprint: nil,
+                hdAccountIndex: Zip32AccountIndex(0),
+                ufvk: nil,
+                uivk: nil
+            )
+        )
+    }
+
     // MARK: - Banner tap -> .migrationCoordFlow
 
     /// Tapping the migration banner (`.home(.smartBanner(.migrationScreenRequested))`) must open
@@ -62,8 +79,10 @@ import ComposableArchitecture
     // MARK: - flowFinished -> path == nil
 
     /// `MigrationCoordFlow`'s `.flowFinished` (every flow-root close / terminal delegate) must
-    /// close the migration path back to Home.
+    /// close the migration path back to Home. R8-T3 (#9): also fires `clearAbandonedNetworkSnapshot`
+    /// fire-and-forget — asserted via a call-count spy, not just the path closing.
     @Test func migrationCoordFlowFinishedClosesPath() async {
+        let clearAbandonedNetworkSnapshotCalls = LockIsolated<Int>(0)
         await withDependencies {
             $0.defaultInMemoryStorage = InMemoryStorage()
         } operation: {
@@ -74,12 +93,91 @@ import ComposableArchitecture
                 Root()
             } withDependencies: {
                 baseNoOpDependencies(&$0)
+                $0.migrationManager.clearAbandonedNetworkSnapshot = { _ in
+                    clearAbandonedNetworkSnapshotCalls.withValue { $0 += 1 }
+                }
             }
 
             store.send(.migrationCoordFlow(.flowFinished))
             await waitForRootStore { store.state.path == nil }
 
             #expect(store.state.path == nil)
+            await waitForRootStore { clearAbandonedNetworkSnapshotCalls.withValue { $0 } == 1 }
+            #expect(clearAbandonedNetworkSnapshotCalls.withValue { $0 } == 1)
+        }
+    }
+
+    // MARK: - MOB-1496 (abandon reconciliation): external teardown cancels a stray Keystone run
+    //
+    // Mirrors the R8-T6 send-wait-hold release tests below for a DIFFERENT external-teardown
+    // hazard: the final migration engine creates a Keystone commit's WHOLE run (preps and schedule
+    // alike) the moment its PCZTs are built, and always resumes a stored non-terminal run on the next
+    // attempt, ignoring any newer preview. `.flowFinished` normally follows the in-flow
+    // `keystoneScanAbandoned`/resume machinery, which already clears `pendingKeystoneSigning` itself —
+    // this is a defensive counterpart for the case where Root tears the flow down from OUTSIDE the
+    // coordinator (e.g. the flow finished some other way while a ceremony was still stashed).
+
+    @Test func migrationCoordFlowFinishedWithLivePendingKeystoneSigningCancelsStrayMigrationRun() async {
+        let restartCalls = LockIsolated<[(AccountUUID, Bool)]>([])
+        let account = Self.walletAccount(idByte: 40)
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            var initialState = Root.State.initial
+            initialState.path = Root.State.Path.migrationCoordFlow
+            initialState.$selectedWalletAccount.withLock { $0 = account }
+            initialState.migrationCoordFlowState.pendingKeystoneSigning = MigrationCoordFlow.KeystoneSigningContext.planCommit
+
+            let store = Store(initialState: initialState) {
+                Root()
+            } withDependencies: {
+                baseNoOpDependencies(&$0)
+                $0.sdkSynchronizer.restartCurrentMigrationStep = { accountUUID, includeResidual in
+                    restartCalls.withValue { $0.append((accountUUID, includeResidual)) }
+                    return MigrationSchedule(transfers: [], estimatedDurationHours: 0)
+                }
+            }
+
+            store.send(.migrationCoordFlow(.flowFinished))
+            await waitForRootStore { store.state.path == nil }
+
+            #expect(store.state.path == nil)
+            await waitForRootStore { restartCalls.withValue { $0.count } == 1 }
+            #expect(restartCalls.withValue { $0.count } == 1)
+            #expect(restartCalls.withValue { $0.first?.0 } == account.id)
+            #expect(restartCalls.withValue { $0.first?.1 } == false)
+        }
+    }
+
+    /// Twin of the test above with no live ceremony (the ordinary case — `.flowFinished` following
+    /// the Sending store's own successful exit, or any other flow-root close that never touched
+    /// Keystone signing at all) — must never call `restartCurrentMigrationStep`.
+    @Test func migrationCoordFlowFinishedWithNoPendingKeystoneSigningNeverCancelsMigrationRun() async {
+        let restartCalls = LockIsolated<Int>(0)
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            var initialState = Root.State.initial
+            initialState.path = Root.State.Path.migrationCoordFlow
+            initialState.migrationCoordFlowState.pendingKeystoneSigning = nil
+
+            let store = Store(initialState: initialState) {
+                Root()
+            } withDependencies: {
+                baseNoOpDependencies(&$0)
+                $0.sdkSynchronizer.restartCurrentMigrationStep = { _, _ in
+                    restartCalls.withValue { $0 += 1 }
+                    return MigrationSchedule(transfers: [], estimatedDurationHours: 0)
+                }
+            }
+
+            store.send(.migrationCoordFlow(.flowFinished))
+            await waitForRootStore { store.state.path == nil }
+
+            #expect(store.state.path == nil)
+            // Let any async cancel effect settle before asserting its absence.
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            #expect(restartCalls.withValue { $0 } == 0)
         }
     }
 
@@ -145,11 +243,12 @@ import ComposableArchitecture
 
     // MARK: - View Transaction (Sending delegate)
 
-    /// The migration Sending screen's `.viewTransaction` delegate carries only a bare stub
+    /// The migration Sending screen's `.viewTransaction` delegate carries only a bare
     /// `txId: String` — never a real `TransactionState` the existing transaction-detail plumbing
-    /// (`TransactionDetails.State.transaction`, non-optional) could open. Root's v1 handling (see
-    /// the doc comment on this case in `RootCoordinator.swift`) treats it as a flow close rather
-    /// than opening a broken/empty detail screen, pending real txids from the SDK (MOB-1455).
+    /// (`TransactionDetails.State.transaction`, non-optional) could open, and the app has no
+    /// by-txid lookup to build one from. Root's v1 handling (see the doc comment on this case in
+    /// `RootCoordinator.swift`) treats it as a flow close rather than opening a broken/empty
+    /// detail screen, pending a by-txid transaction lookup (MOB-1458).
     @Test func sendingViewTransactionDelegateClosesMigrationFlow() async {
         await withDependencies {
             $0.defaultInMemoryStorage = InMemoryStorage()
@@ -203,13 +302,15 @@ import ComposableArchitecture
                 baseNoOpDependencies(&$0)
             }
 
-            store.send(.initialization(.appDelegate(.migrationNotificationTapped)))
+            // R8-T5 (S4-c): a nil/absent payload account routes exactly as before S4.
+            store.send(.initialization(.appDelegate(.migrationNotificationTapped(accountUUID: nil))))
             await waitForRootStore { store.state.path == Root.State.Path.migrationCoordFlow }
 
             #expect(store.state.path == Root.State.Path.migrationCoordFlow)
             #expect(store.state.migrationCoordFlowState.mode == nil)
             #expect(store.state.migrationCoordFlowState.path.isEmpty)
             #expect(store.state.pendingMigrationDeepLink == false)
+            #expect(store.state.pendingMigrationDeepLinkAccountUUID == nil)
         }
     }
 
@@ -231,10 +332,13 @@ import ComposableArchitecture
                 baseNoOpDependencies(&$0)
             }
 
-            store.send(.initialization(.appDelegate(.migrationNotificationTapped)))
+            // R8-T5 (S4): the stash carries an account too — replayed below.
+            let taggedAccountUUID = Data(Self.walletAccount(idByte: 9).id.id).hexEncodedString()
+            store.send(.initialization(.appDelegate(.migrationNotificationTapped(accountUUID: taggedAccountUUID))))
             await waitForRootStore { store.state.pendingMigrationDeepLink == true }
 
             #expect(store.state.pendingMigrationDeepLink == true)
+            #expect(store.state.pendingMigrationDeepLinkAccountUUID == taggedAccountUUID)
             #expect(store.state.path == nil)
 
             store.send(.initialization(.checkBackupPhraseValidation))
@@ -242,6 +346,105 @@ import ComposableArchitecture
 
             #expect(store.state.path == Root.State.Path.migrationCoordFlow)
             #expect(store.state.pendingMigrationDeepLink == false)
+            #expect(store.state.pendingMigrationDeepLinkAccountUUID == nil)
+        }
+    }
+
+    /// R8-T5 (S4-b): a tapped notification whose payload account differs from the currently
+    /// selected one must switch FIRST — via the house account-switch action (`.home
+    /// (.walletAccountTapped(_:))`, the SAME one `WalletAccountsSheet`'s tap uses) — THEN open the
+    /// migration flow.
+    ///
+    /// This file uses a plain `Store` (not `TestStore`) throughout — per its own header doc, `Root`'s
+    /// heavy init effects make exhaustive `TestStore` assertion impractical. That same choice also
+    /// turns out to be load-bearing here for a different reason: `TestStore<State: Equatable,
+    /// Action>` requires `Root.State: Equatable`, which it is not (confirmed against HEAD — adding
+    /// that conformance is a large, unrelated change well outside this task's "notification compose
+    /// + tap routing ONLY" scope). So this test asserts the OUTCOME (both the switch and the route
+    /// landed) via the same polling idiom every other test in this file uses; the ORDER guarantee
+    /// itself is structural, not empirical — `migrationNotificationTappedRoutingEffect`
+    /// (`RootInitialization.swift`) dispatches `.home(.walletAccountTapped(_:))` and
+    /// `.initialization(.migrationNotificationRoute)` via `.concatenate(...)`, which — per
+    /// `Effect.concatenate`'s own contract — only starts the second `.send` once the first action's
+    /// reducer pass (here, the synchronous `@Shared` write) has been fully applied, verifiable by
+    /// inspection of that function.
+    @Test func migrationNotificationTappedWithDifferentAccountSwitchesBeforeRouting() async {
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let selected = Self.walletAccount(idByte: 1)
+            let target = Self.walletAccount(idByte: 2)
+
+            var initialState = Root.State.initial
+            initialState.appInitializationState = InitializationState.initialized
+            initialState.$selectedWalletAccount.withLock { $0 = selected }
+            initialState.$walletAccounts.withLock { $0 = [selected, target] }
+
+            let store = Store(initialState: initialState) {
+                Root()
+            } withDependencies: {
+                baseNoOpDependencies(&$0)
+            }
+
+            store.send(.initialization(.appDelegate(.migrationNotificationTapped(accountUUID: Data(target.id.id).hexEncodedString()))))
+            await waitForRootStore { store.state.path == Root.State.Path.migrationCoordFlow }
+
+            #expect(store.state.path == Root.State.Path.migrationCoordFlow)
+            #expect(store.state.selectedWalletAccount == target)
+        }
+    }
+
+    /// R8-T5 (S4-b, negative case): a tapped notification whose payload account MATCHES the
+    /// already-selected account must NOT dispatch a switch — routes immediately with the selection
+    /// untouched, exactly like a nil payload does.
+    @Test func migrationNotificationTappedWithSameAccountAsSelectedDoesNotSwitch() async {
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let selected = Self.walletAccount(idByte: 1)
+            var initialState = Root.State.initial
+            initialState.appInitializationState = InitializationState.initialized
+            initialState.$selectedWalletAccount.withLock { $0 = selected }
+            initialState.$walletAccounts.withLock { $0 = [selected] }
+
+            let store = Store(initialState: initialState) {
+                Root()
+            } withDependencies: {
+                baseNoOpDependencies(&$0)
+            }
+
+            store.send(.initialization(.appDelegate(.migrationNotificationTapped(accountUUID: Data(selected.id.id).hexEncodedString()))))
+            await waitForRootStore { store.state.path == Root.State.Path.migrationCoordFlow }
+
+            #expect(store.state.path == Root.State.Path.migrationCoordFlow)
+            #expect(store.state.selectedWalletAccount == selected)
+        }
+    }
+
+    /// R8-T5 (S4-c edge): a payload account that doesn't resolve to any of `walletAccounts` (stale/
+    /// removed account) must degrade exactly like an absent payload — route immediately, selection
+    /// untouched — rather than getting stuck or crashing on the lookup.
+    @Test func migrationNotificationTappedWithUnresolvableAccountRoutesWithoutSwitching() async {
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let selected = Self.walletAccount(idByte: 1)
+            var initialState = Root.State.initial
+            initialState.appInitializationState = InitializationState.initialized
+            initialState.$selectedWalletAccount.withLock { $0 = selected }
+            initialState.$walletAccounts.withLock { $0 = [selected] }
+
+            let store = Store(initialState: initialState) {
+                Root()
+            } withDependencies: {
+                baseNoOpDependencies(&$0)
+            }
+
+            store.send(.initialization(.appDelegate(.migrationNotificationTapped(accountUUID: "not-a-real-account"))))
+            await waitForRootStore { store.state.path == Root.State.Path.migrationCoordFlow }
+
+            #expect(store.state.path == Root.State.Path.migrationCoordFlow)
+            #expect(store.state.selectedWalletAccount == selected)
         }
     }
 
@@ -270,6 +473,138 @@ import ComposableArchitecture
             await waitForRootStore { clearDeliveredCalls.withValue { $0 } == 1 }
 
             #expect(clearDeliveredCalls.withValue { $0 } == 1)
+        }
+    }
+
+    // MARK: - R8-T6 fix-wave (Critical-1): external teardown must release the send-wait hold
+
+    /// C1-a (red-first): a live `.sending(.waiting)` element — its hold flag set via
+    /// `MigrationSendingStore`'s OWN real `onAppear` -> `.sendNowGateResolved(.waitUntil(...))`
+    /// path, not a hand-poked `@Shared` write — sits on the migration path when a migration
+    /// notification tap arrives. The SAME notification-tap teardown route
+    /// `migrationNotificationTappedOnInitializedStateRoutesImmediately` above exercises
+    /// (`migrationNotificationTapped` -> `openMigrationCoordFlow`) must release the leaked hold:
+    /// the flag clears, `refreshMigrationSyncGate()` fires (identical semantics to the store's own
+    /// Cancel), and a SUBSEQUENT `.retryStart` is no longer fenced. FAILS against HEAD 1c828465 —
+    /// `openMigrationCoordFlow` resets the flow with no flag release, so the flag stays stranded
+    /// true and the following `.retryStart` silently re-defers forever.
+    @Test func notificationTapTeardownReleasesLiveSendWaitHoldAndUnfencesRetryStart() async {
+        let refreshMigrationSyncGateCalls = LockIsolated<Int>(0)
+        let startCalls = LockIsolated<[Bool]>([])
+
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            @Shared(.inMemory(.migrationSendWaitActive)) var migrationSendWaitActive: Bool = false
+            $migrationSendWaitActive.withLock { $0 = false }
+
+            let target = Date().addingTimeInterval(600)
+            let preparedState: SynchronizerState = {
+                var state = SynchronizerState.zero
+                state.syncStatus = SyncStatus.upToDate
+                return state
+            }()
+
+            var initialState = Root.State.initial
+            initialState.appInitializationState = InitializationState.initialized
+            initialState.path = Root.State.Path.migrationCoordFlow
+            initialState.migrationCoordFlowState.path.append(
+                .sending(MigrationSending.State(totalCount: 1, entersViaSendNow: true))
+            )
+
+            let sendingId = try? #require(initialState.migrationCoordFlowState.path.ids.last)
+            guard let sendingId else {
+                Issue.record("Expected a sending element id on the migration path")
+                return
+            }
+
+            let clock = TestClock()
+            let store = Store(initialState: initialState) {
+                Root()
+            } withDependencies: {
+                baseNoOpDependencies(&$0)
+                $0.continuousClock = clock
+                $0.diskSpaceChecker.hasEnoughFreeSpaceForSync = { true }
+                $0.migrationManager.sendGate = { .waitUntil(target) }
+                $0.migrationManager.refreshMigrationSyncGate = {
+                    refreshMigrationSyncGateCalls.withValue { $0 += 1 }
+                }
+                $0.sdkSynchronizer = SDKSynchronizerClient.mocked(
+                    latestState: { preparedState },
+                    start: { _ in startCalls.withValue { $0.append(true) } },
+                    isSyncing: { true }
+                )
+                $0.sdkSynchronizer.isMigrationSyncBlocked = { false }
+            }
+
+            // Drive the REAL Sending store's onAppear: it stops sync, reads the gate
+            // (`.waitUntil`), enters `.waiting`, and sets the hold flag via its own
+            // `setSendWaitActive(true)` — the store's real path, not a hand-poked flag.
+            store.send(.migrationCoordFlow(.path(.element(id: sendingId, action: .sending(.onAppear)))))
+            await waitForRootStore { migrationSendWaitActive == true }
+            #expect(migrationSendWaitActive == true)
+
+            // The notification-tap teardown route.
+            store.send(.initialization(.appDelegate(.migrationNotificationTapped(accountUUID: nil))))
+            await waitForRootStore { store.state.migrationCoordFlowState.path.isEmpty }
+
+            #expect(store.state.path == Root.State.Path.migrationCoordFlow)
+            #expect(store.state.migrationCoordFlowState.path.isEmpty)
+            await waitForRootStore { migrationSendWaitActive == false }
+            #expect(migrationSendWaitActive == false)
+            await waitForRootStore { refreshMigrationSyncGateCalls.withValue { $0 } == 1 }
+            #expect(refreshMigrationSyncGateCalls.withValue { $0 } == 1)
+
+            // A subsequent `.retryStart` must no longer be fenced — start proceeds. (Not pinned to
+            // exactly one call: `migrationStoppedSyncForBroadcast` is still `true` here — nothing
+            // in this fix clears it, by design, matching `.waitCancelTapped`'s own semantics — so
+            // this successful `.retryStart`'s OWN `.registerForSynchronizersUpdate` seed-reads
+            // `isMigrationSyncBlocked()` and, seeing it still set, legitimately replays a resume
+            // once more via the PRE-EXISTING `.migrationSyncGateChanged` mechanism above; that
+            // second start is orthogonal to this fix and out of scope here — what matters is that
+            // the fence no longer silently swallows the trigger.)
+            store.send(.initialization(.retryStart))
+            await waitForRootStore { startCalls.withValue { !$0.isEmpty } }
+            #expect(startCalls.withValue { !$0.isEmpty })
+        }
+    }
+
+    /// C1-b: the SAME teardown route with the hold flag NOT set — the release helper must be a
+    /// pure no-op (no nudge call). Guards against a naive implementation that nudges
+    /// unconditionally on every teardown regardless of whether a hold was ever live.
+    @Test func notificationTapTeardownWithNoHoldActiveNeverNudgesGate() async {
+        let refreshMigrationSyncGateCalls = LockIsolated<Int>(0)
+
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            @Shared(.inMemory(.migrationSendWaitActive)) var migrationSendWaitActive: Bool = false
+            $migrationSendWaitActive.withLock { $0 = false }
+
+            var initialState = Root.State.initial
+            initialState.appInitializationState = InitializationState.initialized
+            // Poison the pre-existing flow state so the reset itself is still observable, same as
+            // `migrationNotificationTappedOnInitializedStateRoutesImmediately` above.
+            initialState.migrationCoordFlowState.mode = MigrationMode.immediate
+            initialState.migrationCoordFlowState.path.append(.complete(MigrationComplete.State()))
+
+            let store = Store(initialState: initialState) {
+                Root()
+            } withDependencies: {
+                baseNoOpDependencies(&$0)
+                $0.migrationManager.refreshMigrationSyncGate = {
+                    refreshMigrationSyncGateCalls.withValue { $0 += 1 }
+                }
+            }
+
+            store.send(.initialization(.appDelegate(.migrationNotificationTapped(accountUUID: nil))))
+            await waitForRootStore { store.state.migrationCoordFlowState.path.isEmpty }
+
+            #expect(store.state.path == Root.State.Path.migrationCoordFlow)
+            #expect(migrationSendWaitActive == false)
+            // Let any async nudge effect settle before asserting its absence.
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            #expect(refreshMigrationSyncGateCalls.withValue { $0 } == 0)
         }
     }
 }
@@ -303,9 +638,10 @@ private func baseNoOpDependencies(_ values: inout DependencyValues) {
     values.migrationManager.setMigrationMode = { _ in }
     values.migrationManager.setManualDelivery = { _ in }
     values.migrationManager.setNetworkPrivacyOptions = { _ in }
-    values.migrationManager.acknowledgeComplete = { }
-    values.migrationManager.recordMigrationBroadcast = { }
+    values.migrationManager.acknowledgeComplete = { _ in }
     values.migrationManager.reconcile = { }
+    values.migrationManager.clearAbandonedNetworkSnapshot = { _ in }
+    values.migrationManager.recordSyncCompleted = { }
     values.readTransactionsStorage.resetZashi = { }
     values.sdkSynchronizer = .noOp
     values.userMetadataProvider.load = { _ in }

@@ -15,5 +15,9 @@ enum AppDelegateAction: Equatable {
     case backgroundTask(BGProcessingTask)
     case migrationBackgroundTask(BGProcessingTask)
     case migrationBackgroundTaskExpired
-    case migrationNotificationTapped
+    /// R8-T5 (S4): the tapped notification's account, hex-encoded (`Data.hexEncodedString()`,
+    /// matching every compose site's own encoding) — `nil` for a legacy/no-account payload. Read
+    /// off `UNNotificationResponse.notification.request.content.userInfo` by
+    /// `MigrationNotificationCenterDelegate` in `AppDelegate.swift`.
+    case migrationNotificationTapped(accountUUID: String?)
 }

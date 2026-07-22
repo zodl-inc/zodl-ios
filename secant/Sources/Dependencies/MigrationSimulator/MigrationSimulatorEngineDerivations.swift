@@ -47,10 +47,18 @@ enum MigrationSimulatorEngineDerivations {
 
     // MARK: - Time-driven escalation
 
-    /// Escalates `.inProgress`/`.requiresAttention(.transferStalled)` into
-    /// `.requiresAttention(.transferExpired)` once any unsent transfer's own window has been past
-    /// due for more than `expiryWindow`. Never demotes/resurrects any other state (`.complete`,
-    /// `.notStarted`, `.invalidTransfer`, etc. are left untouched).
+    /// Escalates `.inProgress` into `.requiresAttention(.transferExpired)` once any unsent
+    /// transfer's own window has been past due for more than `expiryWindow`. Never demotes/
+    /// resurrects any other state (`.complete`, `.notStarted`, `.invalidTransfer`, etc. are left
+    /// untouched).
+    ///
+    /// MOB-1496: the SDK's `MigrationAttentionReason` has no `.transferStalled` case — "stalled" is
+    /// now a pure derivation (`(state is .inProgress) && hasOverdue`, see `MigrationDerivations
+    /// .bannerVariant` in `MigrationManagerLiveKey.swift`), so the engine never sets that state any
+    /// more (see `apply(_:toPendingIndex:)`'s `.networkError` case and `applyPreset`'s
+    /// `.transferStalled` case below, both of which now just leave `state` as `.inProgress` and let
+    /// `hasOverdue()`'s time math do the signaling) — the second `case .requiresAttention` branch
+    /// this function used to escalate FROM `.transferStalled` is accordingly dead and removed.
     static func recompute(_ snapshot: inout SimulatorSnapshot, now: Date) {
         guard !snapshot.transfers.isEmpty else { return }
 
@@ -59,15 +67,8 @@ enum MigrationSimulatorEngineDerivations {
         }
         guard hasNewlyExpired else { return }
 
-        switch snapshot.state {
-        case MigrationState.inProgress:
-            snapshot.state = MigrationState.requiresAttention(AttentionReason.transferExpired)
-        case MigrationState.requiresAttention(let reason):
-            if case AttentionReason.transferStalled = reason {
-                snapshot.state = MigrationState.requiresAttention(AttentionReason.transferExpired)
-            }
-        default:
-            break
+        if case MigrationState.inProgress = snapshot.state {
+            snapshot.state = MigrationState.requiresAttention(MigrationAttentionReason.transferExpired)
         }
     }
 
@@ -92,7 +93,7 @@ enum MigrationSimulatorEngineDerivations {
     }
 
     /// Shared due-time formula for both `propose()` (stamping synthetic heights on each
-    /// `TransferProposal`) and `signAndStore()` (seeding each `SimulatorTransfer.dueAt`) — kept in
+    /// `MigrationTransferProposal`) and `signAndStore()` (seeding each `SimulatorTransfer.dueAt`) — kept in
     /// one place so the two can never drift apart, which would desync a proposed transfer's
     /// stamped height from the `dueAt` it's actually signed/stored with. Immediate mode is always
     /// due `now`; scheduled mode puts the first transfer `firstTransferDelay` out (~10 minutes)
@@ -151,10 +152,10 @@ enum MigrationSimulatorEngineDerivations {
         }
 
         if case MigrationState.requiresAttention(let reason) = state {
-            if case AttentionReason.invalidTransfer(let transferId) = reason, transferId == transfer.id {
+            if case MigrationAttentionReason.invalidTransfer(let transferId) = reason, transferId == transfer.id {
                 return MigrationTransferRow.Status.invalid
             }
-            if case AttentionReason.transferExpired = reason, now > transfer.dueAt.addingTimeInterval(Constants.expiryWindow) {
+            if case MigrationAttentionReason.transferExpired = reason, now > transfer.dueAt.addingTimeInterval(Constants.expiryWindow) {
                 return MigrationTransferRow.Status.expired
             }
         }
@@ -201,10 +202,11 @@ enum MigrationSimulatorEngineDerivations {
 
     /// Only the earliest not-yet-sent transfer can make the migration read as overdue — later
     /// transfers are simply blocked behind it (mirrors `derivedStatus`'s "first pending" rule).
+    /// MOB-1496: the special-cased `.transferStalled`-state branch this used to check first is
+    /// gone (the SDK's `MigrationAttentionReason` has no such case, and the engine never sets it
+    /// any more) — the time-math check below is now the ONLY source of "overdue", exactly as the
+    /// real `hasOverdueMigrationTransfers(accountUUID:)` documents it.
     static func hasOverdue(snapshot: SimulatorSnapshot, now: Date) -> Bool {
-        if case MigrationState.requiresAttention(let reason) = snapshot.state, case AttentionReason.transferStalled = reason {
-            return true
-        }
         guard let earliestPending = snapshot.transfers.filter({ $0.sentAt == nil }).min(by: { $0.index < $1.index }) else {
             return false
         }
@@ -216,9 +218,9 @@ enum MigrationSimulatorEngineDerivations {
     static func hasInvalid(snapshot: SimulatorSnapshot) -> Bool {
         guard case MigrationState.requiresAttention(let reason) = snapshot.state else { return false }
         switch reason {
-        case AttentionReason.invalidTransfer, AttentionReason.transferExpired:
+        case MigrationAttentionReason.invalidTransfer, MigrationAttentionReason.transferExpired:
             return true
-        case AttentionReason.transferStalled, AttentionReason.syncRequiredBeforeNext:
+        case MigrationAttentionReason.syncRequiredBeforeNext:
             return false
         }
     }
@@ -299,27 +301,35 @@ enum MigrationSimulatorEngineDerivations {
         "xfer-\(index)"
     }
 
+    /// MOB-1496 (final engine, plural preps): a fabricated ENGINE-style id for a simulated
+    /// preparation (note-split) transaction — mirrors `makeTransferId`'s scheme so the simulator's
+    /// fabricated preps look like genuine engine ids, the same way a real `createUnsignedNoteSplitPCZTs`
+    /// response would, rather than an app-invented sentinel.
+    static func makeNoteSplitId(index: Int) -> String {
+        "split-\(index)"
+    }
+
     static func makeTxId(prefix: String, discriminator: String) -> String {
         "tx-\(prefix)-\(discriminator)"
     }
 
     /// Non-empty, deterministic fabricated PCZT blob: an ASCII header, then the index and amount
     /// as fixed-width little-endian bytes.
-    static func fabricatePczt(index: Int, amount: Zatoshi) -> Pczt {
+    static func fabricatePczt(index: Int, amount: Zatoshi) -> Data {
         var data = Data(Constants.fabricatedPCZTHeader.utf8)
         withUnsafeBytes(of: Int32(index).littleEndian) { data.append(contentsOf: $0) }
         withUnsafeBytes(of: amount.amount.littleEndian) { data.append(contentsOf: $0) }
         return data
     }
 
-    static func describeArmedResult(_ result: TransferResult?, splitFailureArmed: Bool) -> String? {
+    static func describeArmedResult(_ result: MigrationTransferResult?, splitFailureArmed: Bool) -> String? {
         if splitFailureArmed { return "splitFailure" }
         guard let result else { return nil }
         switch result {
-        case TransferResult.success(let txId): return "success(txId: \(txId))"
-        case TransferResult.networkError(let retryable): return "networkError(retryable: \(retryable))"
-        case TransferResult.invalidNote: return "invalidNote"
-        case TransferResult.expired: return "expired"
+        case MigrationTransferResult.success(let txId): return "success(txId: \(txId))"
+        case MigrationTransferResult.networkError(let retryable): return "networkError(retryable: \(retryable))"
+        case MigrationTransferResult.invalidNote: return "invalidNote"
+        case MigrationTransferResult.expired: return "expired"
         }
     }
 
@@ -372,19 +382,23 @@ enum MigrationSimulatorEngineDerivations {
             snapshot.state = MigrationState.inProgress(computeProgress(for: snapshot))
 
         case SimulatorPreset.transferStalled:
+            // MOB-1496: the SDK's `MigrationAttentionReason` has no `.transferStalled` case —
+            // "stalled" is a pure derivation now (`(state is .inProgress) && hasOverdue`), so this
+            // preset just pushes the earliest pending transfer's `dueAt` past the overdue grace
+            // (with a 1s margin so `hasOverdue()`'s strict `>` reads true immediately, independent
+            // of exactly when it's next evaluated) and leaves `state` as `.inProgress` — `hasOverdue`
+            // (engine `hasOverdue()`, wired to `hasOverdueMigrationTransfers`) does the rest.
             seedPresetSchedule(&snapshot, now: now, sentCount: 2)
             if let index = firstPendingIndex(in: snapshot) {
-                snapshot.transfers[index].dueAt = now.addingTimeInterval(-Constants.overdueGrace)
-                snapshot.state = MigrationState.requiresAttention(
-                    AttentionReason.transferStalled(transferNumber: snapshot.transfers[index].index + 1)
-                )
+                snapshot.transfers[index].dueAt = now.addingTimeInterval(-(Constants.overdueGrace + 1))
             }
+            snapshot.state = MigrationState.inProgress(computeProgress(for: snapshot))
 
         case SimulatorPreset.updatePlanInvalid:
             seedPresetSchedule(&snapshot, now: now, sentCount: 2)
             if let index = firstPendingIndex(in: snapshot) {
                 snapshot.state = MigrationState.requiresAttention(
-                    AttentionReason.invalidTransfer(transferId: snapshot.transfers[index].id)
+                    MigrationAttentionReason.invalidTransfer(transferId: snapshot.transfers[index].id)
                 )
             }
 
@@ -393,7 +407,7 @@ enum MigrationSimulatorEngineDerivations {
             if let index = firstPendingIndex(in: snapshot) {
                 snapshot.transfers[index].dueAt = now.addingTimeInterval(-(Constants.expiryWindow + 1))
             }
-            snapshot.state = MigrationState.requiresAttention(AttentionReason.transferExpired)
+            snapshot.state = MigrationState.requiresAttention(MigrationAttentionReason.transferExpired)
 
         case SimulatorPreset.syncRequired:
             seedPresetSchedule(&snapshot, now: now, sentCount: 2)

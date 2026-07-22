@@ -7,8 +7,8 @@
 //  sheet, presented from both Entry (immediate path) and How This Works (scheduled path) right before
 //  the coordinator would otherwise route past the Tor step. `gotItTapped`'s `.delegate(.gotIt)` (and
 //  sheet swipe-dismissal, treated identically by the coordinator) is consumed by the coordinator,
-//  which persists `isTorOn` into a `NetworkPrivacyOptions` exactly as `MigrationNetworkPrivacyStore`
-//  did, then resumes whichever destination it stashed before presenting.
+//  which persists `isTorOn` into a `MigrationNetworkPrivacyOptions` exactly as
+//  `MigrationNetworkPrivacyStore` did, then resumes whichever destination it stashed before presenting.
 //
 //  MOB-1487 (round 3) briefly made the sheet Entry-immediate-only (scheduled path forced Tor on);
 //  MOB-1494 (round 4) restores the scheduled host per the revised canvas — the toggle now defaults

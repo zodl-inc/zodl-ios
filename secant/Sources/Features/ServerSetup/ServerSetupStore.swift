@@ -38,6 +38,14 @@ struct ServerSetup {
 
     @ObservableState
     struct State: Equatable {
+        /// MOB-1496 (W4): a manual Save that would land on an active migration run's broadcast
+        /// provider is stashed here while the privacy-warning alert is presented, so "Use it anyway"
+        /// can resume exactly where `.setServerTapped` left off.
+        struct PendingManualSwitch: Equatable {
+            let endpoint: LightWalletEndpoint
+            let isCustom: Bool
+        }
+
         @Presents var alert: AlertState<Action>?
         var connectionMode: UserPreferencesStorage.ConnectionMode
         var customServer: String
@@ -48,6 +56,9 @@ struct ServerSetup {
         var initialCustomServer: String = ""
         var initialSelectedServer: String?
         var network: NetworkType = .mainnet
+        /// Set right before presenting the migration privacy warning; read back by
+        /// `.manualSwitchPrivacyWarningConfirmed`. `nil` otherwise.
+        var pendingManualSwitch: PendingManualSwitch?
         var selectedServer: String?
         var servers: [ZcashSDKEnvironment.Server]
         var topKServers: [ZcashSDKEnvironment.Server]
@@ -102,6 +113,11 @@ struct ServerSetup {
         case connectionModeChanged(UserPreferencesStorage.ConnectionMode)
         case evaluatedServers([LightWalletEndpoint])
         case evaluateServers
+        /// MOB-1496 (W4): the migration privacy warning's "Use it anyway" — proceeds with the
+        /// `pendingManualSwitch` stashed by `.setServerTapped`. "Choose another" is a plain
+        /// `.alert(.dismiss)`, which also clears `pendingManualSwitch` (W7 review Minor) — the
+        /// picker itself is untouched either way.
+        case manualSwitchPrivacyWarningConfirmed
         case onAppear
         case onDisappear
         case refreshServersTapped
@@ -114,6 +130,7 @@ struct ServerSetup {
     init() {}
 
     @Dependency(\.mainQueue) var mainQueue
+    @Dependency(\.migrationManager) var migrationManager
     @Dependency(\.sdkSynchronizer) var sdkSynchronizer
     @Dependency(\.zcashSDKEnvironment) var zcashSDKEnvironment
     @Dependency(\.userStoredPreferences) var userStoredPreferences
@@ -171,11 +188,23 @@ struct ServerSetup {
                 state.isEvaluatingServers = false
                 return .none
 
+            case .alert(.presented(let action)):
+                // MOB-1496 (W4/W7): AlertState<Action> reuses this reducer's own Action type, so
+                // TCA wraps whatever a tapped button's `action:` carries as `.alert(.presented(_))`
+                // — including plain member cases like `.manualSwitchPrivacyWarningConfirmed`
+                // ("Use it anyway"). Re-dispatching unwrapped is the same pattern MigrationComplete
+                // uses for its own `AlertState<Action>`; a bare `case .alert:` catch-all here would
+                // (and previously did) swallow every presented payload before it could reach its
+                // real case.
+                return .send(action)
+
             case .alert(.dismiss):
                 state.alert = nil
-                return .none
-
-            case .alert:
+                // MOB-1496 (W4 review Minor, W7): "Choose another" on the migration privacy warning
+                // reaches this same generic dismiss — clear the stashed switch so it can't linger
+                // into some later alert cycle. A no-op for `endpointSwitchFailed`'s dismiss, which
+                // never sets `pendingManualSwitch` in the first place.
+                state.pendingManualSwitch = nil
                 return .none
 
             case .binding:
@@ -255,23 +284,13 @@ struct ServerSetup {
                     let cachedRecommendation = state.recommendedSyncServer
                     return .run { send in
                         do {
-                            let best: LightWalletEndpoint
-                            if let cachedRecommendation,
-                               let cached = UserPreferencesStorage.ServerConfig.endpoint(
-                                   for: cachedRecommendation,
-                                   streamingCallTimeoutInMillis: timeout
-                               ) {
-                                best = cached
-                            } else {
-                                let ranked = await sdkSynchronizer.evaluateBestOf(
-                                    ZcashSDKEnvironment.endpoints(for: network),
-                                    Benchmark.evaluationTimeoutSeconds,
-                                    Benchmark.blocksToDownload,
-                                    1,
-                                    network
-                                )
-                                best = ranked.first ?? ZcashSDKEnvironment.defaultEndpoint(for: network)
-                            }
+                            let activeSnapshots = migrationManager.activeNetworkSnapshots()
+                            let best = await resolveAutomaticSaveEndpoint(
+                                cachedRecommendation: cachedRecommendation,
+                                network: network,
+                                timeout: timeout,
+                                activeSnapshots: activeSnapshots
+                            )
                             try await applyServerSwitch(best, automatic: true, isCustom: false, send: send)
                         } catch is CancellationError {
                             return
@@ -296,17 +315,26 @@ struct ServerSetup {
                         return .none
                     }
 
-                    return .run { send in
-                        do {
-                            try await applyServerSwitch(endpoint, automatic: false, isCustom: isCustom, send: send)
-                        } catch is CancellationError {
-                            return
-                        } catch {
-                            await send(.switchFailed(error.toZcashError()))
-                        }
+                    // MOB-1496 (W4): a manual choice that would land on an active migration run's
+                    // broadcast provider gets a confirmation instead of applying immediately — revert
+                    // the optimistic `isUpdatingServer` flip above (Save/Back stay enabled while the
+                    // alert is up) and stash the switch for "Use it anyway" to resume.
+                    if Self.shouldWarnBeforeManualSwitch(endpoint: endpoint, activeSnapshots: migrationManager.activeNetworkSnapshots()) {
+                        state.isUpdatingServer = false
+                        state.pendingManualSwitch = State.PendingManualSwitch(endpoint: endpoint, isCustom: isCustom)
+                        state.alert = AlertState.migrationPrivacyWarning()
+                        return .none
                     }
-                    .cancellable(id: CancelID.setServer, cancelInFlight: true)
+
+                    return performManualSwitch(endpoint: endpoint, isCustom: isCustom)
                 }
+
+            case .manualSwitchPrivacyWarningConfirmed:
+                state.alert = nil
+                guard let pending = state.pendingManualSwitch else { return .none }
+                state.pendingManualSwitch = nil
+                state.isUpdatingServer = true
+                return performManualSwitch(endpoint: pending.endpoint, isCustom: pending.isCustom)
 
             case .switchFailed(let error):
                 state.isUpdatingServer = false
@@ -358,6 +386,97 @@ struct ServerSetup {
         try await mainQueue.sleep(for: .seconds(Benchmark.saveCompletionDelay))
         await send(.switchSucceeded(endpoint.server()))
     }
+
+    /// MOB-1496 (R8-T7 #10): resolves the endpoint an automatic Save applies, pinned to any active
+    /// migration run's sync-provider family via the `MigrationServerPinning` predicate shared with
+    /// `AutoServerSelectionLiveKey`'s own automatic-selection loop — so a Save tap can never
+    /// silently move sync onto a run's separated BROADCAST provider (previously neither the cached
+    /// recommendation nor the fresh benchmark below consulted pinning at all).
+    ///
+    /// - A cached recommendation (`state.recommendedSyncServer`, the top of the last "Recommended
+    ///   Servers" benchmark) is used as-is ONLY when it still passes the filter; a filtered-out
+    ///   cached recommendation is discarded in favor of a fresh filtered benchmark, never applied.
+    /// - The fresh benchmark filters `ZcashSDKEnvironment.endpoints(for:)` BEFORE calling
+    ///   `evaluateBestOf` — the same filter-before-benchmark order `AutoServerSelectionLiveKey
+    ///   .findBestServer` uses.
+    /// - Empty-after-filter mirrors `findBestServer`'s "skip the round entirely" behavior (never
+    ///   falls back to an unfiltered pick, e.g. the plain default endpoint): the benchmark is
+    ///   skipped and Save resolves to the CURRENT active endpoint instead — a no-op pick
+    ///   (`applyServerSwitch` only calls `switchToEndpoint` when the resolved endpoint differs from
+    ///   current), so the mode/preference flip Save promised still commits without adopting a new,
+    ///   unpinned provider.
+    private func resolveAutomaticSaveEndpoint(
+        cachedRecommendation: String?,
+        network: NetworkType,
+        timeout: Int64,
+        activeSnapshots: [MigrationNetworkSnapshot]
+    ) async -> LightWalletEndpoint {
+        if let cachedRecommendation,
+           let cached = UserPreferencesStorage.ServerConfig.endpoint(
+               for: cachedRecommendation,
+               streamingCallTimeoutInMillis: timeout
+           ),
+           MigrationServerPinning.isCandidateAllowed(host: cached.host, activeSnapshots: activeSnapshots) {
+            return cached
+        }
+
+        let filteredEndpoints = ZcashSDKEnvironment.endpoints(for: network).filter {
+            MigrationServerPinning.isCandidateAllowed(host: $0.host, activeSnapshots: activeSnapshots)
+        }
+
+        guard !filteredEndpoints.isEmpty else {
+            if !activeSnapshots.isEmpty {
+                LoggerProxy.event("[ServerSetup] Automatic Save skipped benchmark: migration pinning left no candidates")
+            }
+            return zcashSDKEnvironment.endpoint()
+        }
+
+        let ranked = await sdkSynchronizer.evaluateBestOf(
+            filteredEndpoints,
+            Benchmark.evaluationTimeoutSeconds,
+            Benchmark.blocksToDownload,
+            1,
+            network
+        )
+        return ranked.first ?? filteredEndpoints[0]
+    }
+
+    /// The manual Save's actual switch effect — shared by the direct (no warning needed) path and
+    /// `.manualSwitchPrivacyWarningConfirmed`'s resume.
+    private func performManualSwitch(endpoint: LightWalletEndpoint, isCustom: Bool) -> Effect<Action> {
+        .run { send in
+            do {
+                try await applyServerSwitch(endpoint, automatic: false, isCustom: isCustom, send: send)
+            } catch is CancellationError {
+                return
+            } catch {
+                await send(.switchFailed(error.toZcashError()))
+            }
+        }
+        .cancellable(id: CancelID.setServer, cancelInFlight: true)
+    }
+
+    /// MOB-1496 (W4): whether choosing `endpoint` manually should warn about migration privacy —
+    /// see `AlertState.migrationPrivacyWarning()`. Triggers when `endpoint`'s classified provider
+    /// matches some active snapshot's BROADCAST provider, OR its host matches that snapshot's
+    /// broadcast endpoint's host directly (catches a custom host `classify` alone can't line up by
+    /// provider identity, since every custom host is its own family of one) — UNLESS `endpoint` IS
+    /// that snapshot's own sync endpoint already (the sanctioned same-server mode: re-choosing the
+    /// server already synced with is not a NEW link, so it never warns). Host comparisons are
+    /// case-insensitive, matching `ServerProvider.classify`'s own normalization.
+    static func shouldWarnBeforeManualSwitch(endpoint: LightWalletEndpoint, activeSnapshots: [MigrationNetworkSnapshot]) -> Bool {
+        let chosenProvider = ServerProvider.classify(host: endpoint.host)
+        let chosenHost = endpoint.host.lowercased()
+
+        return activeSnapshots.contains { snapshot in
+            let matchesBroadcastProvider = chosenProvider == snapshot.broadcastProvider
+            let matchesBroadcastHost = chosenHost == snapshot.broadcastEndpoint.host.lowercased()
+            guard matchesBroadcastProvider || matchesBroadcastHost else { return false }
+
+            let isAlreadySyncEndpoint = chosenHost == snapshot.syncEndpoint.host.lowercased()
+            return !isAlreadySyncEndpoint
+        }
+    }
 }
 
 private extension ServerSetup.State {
@@ -398,6 +517,23 @@ extension AlertState where Action == ServerSetup.Action {
             }
         } message: {
             TextState(String(localizable: .serverSetupAlertFailedMessage(error.detailedMessage)))
+        }
+    }
+
+    /// MOB-1496 (W4): presented by a manual Save that would land on an active migration run's
+    /// broadcast provider — see `ServerSetup.shouldWarnBeforeManualSwitch`.
+    static func migrationPrivacyWarning() -> AlertState {
+        AlertState {
+            TextState(String(localizable: .serverSetupAlertMigrationPrivacyTitle))
+        } actions: {
+            ButtonState(role: .destructive, action: .manualSwitchPrivacyWarningConfirmed) {
+                TextState(String(localizable: .serverSetupAlertMigrationPrivacyUseAnyway))
+            }
+            ButtonState(role: .cancel, action: .alert(.dismiss)) {
+                TextState(String(localizable: .serverSetupAlertMigrationPrivacyChooseAnother))
+            }
+        } message: {
+            TextState(String(localizable: .serverSetupAlertMigrationPrivacyMessage))
         }
     }
 }

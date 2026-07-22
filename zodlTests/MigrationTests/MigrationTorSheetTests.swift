@@ -6,9 +6,9 @@
 //  (Features/Migration/MigrationTorSheet/MigrationTorSheetStore.swift) for MOB-1478 (W2) +
 //  MOB-1494 (round 4): the `isTorOn` binding (defaults ON per the round-4 canvas), the per-path
 //  body-copy flag (`usesFullBalanceCopy`), and the `gotItTapped` delegate contract. Persisting the
-//  choice into `NetworkPrivacyOptions` and resuming the stashed destination is
-//  `MigrationCoordFlowCoordinator`'s job — covered in `MigrationCoordFlowTests`. No shared/global
-//  state -> no `.serialized`.
+//  choice via `migrationManager.setNetworkPrivacyOptions(useTor:)` and resuming the stashed
+//  destination is `MigrationCoordFlowCoordinator`'s job — covered in `MigrationCoordFlowTests`. No
+//  shared/global state -> no `.serialized`.
 //
 
 import Testing

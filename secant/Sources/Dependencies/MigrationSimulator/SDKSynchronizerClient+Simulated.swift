@@ -14,11 +14,23 @@
 //  `false`, every override calls straight through to `original...`, so flipping the debug panel's
 //  toggle off — or never applying this at all, in `zodl-internal`/`zodl-production` where
 //  `MigrationSimulatorFlag.isEnabled` is a compile-time `false` — reproduces today's behavior
-//  byte-for-byte, including the existing 5-row `migrationTransfers` demo fixture (spec §3 flag-off
-//  guarantee).
+//  byte-for-byte.
 //
-//  Member mapping follows spec §5.2 exactly; grouped into one `private mutating func` per table
-//  row-group so no single function threatens the 150-line SwiftLint warning.
+//  MOB-1496: reshaped for the real, per-account, throwing SDK surface. `accountUUID` arrives on
+//  every override and is ignored (single simulated wallet, no real per-account bookkeeping).
+//  REMOVED members (`migrationStateStream`, `selectMigrationMode`, `rescheduleStalledMigrationTransfer`,
+//  `recreateInvalidMigrationTransfer`, `migrationSummary`, `migrationTransfers`, `lockMigrationDust`,
+//  `isMigrationDustLocked`, `initializeMigrationPostUpgrade`) have their overrides deleted —
+//  `migrationSummary`/`migrationTransfers`/`lockMigrationDust`/`isMigrationDustLocked` relocated to
+//  `MigrationManagerClient`, which reach-arounds the engine directly (`MigrationManagerLiveKey.swift`),
+//  gated exactly like this file's existing reach-arounds. `selectMigrationMode` had no real-SDK
+//  counterpart at all — the engine's internal `snapshot.mode` is now set by whichever propose
+//  override runs (`proposeMigrationTransfers` -> `.privateScheduled`, `proposeImmediateMigration`
+//  -> `.immediate`), mirroring how the real SDK distinguishes the two by WHICH function the host
+//  calls rather than a stored mode flag. `rescheduleStalledMigrationTransfer` is replaced by
+//  `rescheduleOverdueMigrationTransfer` (see `MigrationSimulatorEngine.rescheduleOverdue()`'s doc);
+//  `recreateInvalidMigrationTransfer` has no replacement (the recovery call site now uses
+//  `restartCurrentMigrationStep`, already simulated below).
 //
 
 import Foundation
@@ -34,28 +46,22 @@ extension SDKSynchronizerClient {
         applySimulatedProposalAndSchedule(engine: engine)
         applySimulatedBackgroundExecution(engine: engine)
         applySimulatedRecovery(engine: engine)
-        applySimulatedProgressUI(engine: engine)
         applySimulatedDustResolution(engine: engine)
         applySimulatedKeystone(engine: engine)
-        applySimulatedLifecycleAndTimestamp(engine: engine)
+        applySimulatedEstimateTimestamp(engine: engine)
     }
 
     // MARK: - State (spec §5.2 "State" row)
 
     private mutating func applySimulatedState(engine: MigrationSimulatorEngine) {
         let originalGetMigrationState = self.getMigrationState
-        self.getMigrationState = {
-            engine.isActive ? engine.currentState() : originalGetMigrationState()
-        }
-
-        let originalMigrationStateStream = self.migrationStateStream
-        self.migrationStateStream = {
-            engine.isActive ? engine.statePublisher() : originalMigrationStateStream()
+        self.getMigrationState = { accountUUID in
+            engine.isActive ? engine.currentState() : try await originalGetMigrationState(accountUUID)
         }
 
         let originalGetMigrationProgress = self.getMigrationProgress
-        self.getMigrationProgress = {
-            engine.isActive ? engine.progress() : originalGetMigrationProgress()
+        self.getMigrationProgress = { accountUUID in
+            engine.isActive ? engine.progress() : try await originalGetMigrationProgress(accountUUID)
         }
     }
 
@@ -63,34 +69,52 @@ extension SDKSynchronizerClient {
 
     private mutating func applySimulatedNoteSplit(engine: MigrationSimulatorEngine) {
         let originalIsNoteSplitNeeded = self.isNoteSplitNeeded
-        self.isNoteSplitNeeded = {
-            engine.isActive ? engine.isNoteSplitNeeded() : originalIsNoteSplitNeeded()
+        self.isNoteSplitNeeded = { accountUUID in
+            engine.isActive ? engine.isNoteSplitNeeded() : try await originalIsNoteSplitNeeded(accountUUID)
         }
 
         let originalPrepareNoteSplit = self.prepareNoteSplit
-        self.prepareNoteSplit = {
+        self.prepareNoteSplit = { accountUUID in
             if engine.isActive {
                 return await engine.prepareSplit()
             } else {
-                return await originalPrepareNoteSplit()
+                return try await originalPrepareNoteSplit(accountUUID)
             }
         }
 
         let originalSubmitNoteSplit = self.submitNoteSplit
-        self.submitNoteSplit = { proposal in
+        self.submitNoteSplit = { accountUUID, proposal, usk, options in
             if engine.isActive {
                 return await engine.submitSplit(proposal)
             } else {
-                return await originalSubmitNoteSplit(proposal)
+                return try await originalSubmitNoteSplit(accountUUID, proposal, usk, options)
             }
         }
 
-        let originalSubmitSignedNoteSplit = self.submitSignedNoteSplit
-        self.submitSignedNoteSplit = { pczt in
+        // MOB-1496 (C-1 fix): the old `submitSignedNoteSplit` composite split into a store member and
+        // a broadcast member — the simulator's single-snapshot engine has no run to shadow (that
+        // hazard is real-engine-only), so there is no separate "store" phase to simulate here.
+        // `engine.submitSignedSplit` is unchanged (still exercised directly by
+        // `MigrationSimulatorEngineTests`) and does the full store+submit in one shot; its own `pczt`
+        // parameter has always been ignored (it re-derives the deterministic split from
+        // `prepareSplit()`), so moving the ENTIRE call into `broadcastStoredNoteSplit` below —
+        // passing `Data()` — reproduces byte-identical panel/engine behavior to the old composite.
+        // MOB-1496 (final engine, plural preps): `storeSignedNoteSplits` takes the whole
+        // `[MigrationSignedTransferPczt]` batch now — still just a pass-through/no-op here for the
+        // same reason (nothing to shadow, nothing to store).
+        let originalStoreSignedNoteSplits = self.storeSignedNoteSplits
+        self.storeSignedNoteSplits = { accountUUID, signed in
+            if !engine.isActive {
+                try await originalStoreSignedNoteSplits(accountUUID, signed)
+            }
+        }
+
+        let originalBroadcastStoredNoteSplit = self.broadcastStoredNoteSplit
+        self.broadcastStoredNoteSplit = { accountUUID, options in
             if engine.isActive {
-                return await engine.submitSignedSplit(pczt)
+                return await engine.submitSignedSplit(Data())
             } else {
-                return await originalSubmitSignedNoteSplit(pczt)
+                return try await originalBroadcastStoredNoteSplit(accountUUID, options)
             }
         }
     }
@@ -98,30 +122,55 @@ extension SDKSynchronizerClient {
     // MARK: - Proposal / commit (spec §5.2 "Proposal" rows)
 
     private mutating func applySimulatedProposalAndSchedule(engine: MigrationSimulatorEngine) {
-        let originalSelectMigrationMode = self.selectMigrationMode
-        self.selectMigrationMode = { mode in
+        let originalProposeMigrationTransfers = self.proposeMigrationTransfers
+        self.proposeMigrationTransfers = { accountUUID, includeResidual in
             if engine.isActive {
-                engine.selectMode(mode)
+                engine.selectMode(MigrationMode.privateScheduled)
+                return await engine.propose()
             } else {
-                originalSelectMigrationMode(mode)
+                return try await originalProposeMigrationTransfers(accountUUID, includeResidual)
             }
         }
 
-        let originalProposeMigrationTransfers = self.proposeMigrationTransfers
-        self.proposeMigrationTransfers = {
+        let originalProposeImmediateMigration = self.proposeImmediateMigration
+        self.proposeImmediateMigration = { accountUUID in
             if engine.isActive {
+                engine.selectMode(MigrationMode.immediate)
                 return await engine.propose()
             } else {
-                return await originalProposeMigrationTransfers()
+                return try await originalProposeImmediateMigration(accountUUID)
+            }
+        }
+
+        // R8-T7 (#15): the one member this file's header claims to wire for "every migration-surface
+        // member" but didn't — falling through to the real SDK while the simulator is active.
+        // Latent today only because this override's sole real consumer,
+        // `MigrationManagerLiveKey.migrationSummary(accountUUID:)`, has its OWN simulator
+        // reach-around that short-circuits to `engine.summary()` before ever reaching
+        // `sdkSynchronizer.residualAfterMigration` — but wrong the day a consumer calls this member
+        // directly. Mirrors `engine.summary().dust` exactly (the SAME dust figure `migrationSummary`
+        // already surfaces today through its own reach-around, so a consumer that switches from that
+        // reach-around to this member sees byte-identical numbers) — the engine's `dustRemainder` is
+        // only ever seeded non-zero by the `.complete`/`.completeWithDust` presets, both of which
+        // also set `state = .complete` in the same branch, so `summary()`'s `isComplete` gate never
+        // actually differs from the raw remainder in any reachable engine state. "Nil when there is
+        // none" (the real member's own doc) maps zero dust to `nil`, not `Zatoshi.zero`.
+        let originalResidualAfterMigration = self.residualAfterMigration
+        self.residualAfterMigration = { accountUUID in
+            if engine.isActive {
+                let dust = engine.summary().dust
+                return dust.amount > 0 ? dust : nil
+            } else {
+                return try await originalResidualAfterMigration(accountUUID)
             }
         }
 
         let originalSignAndStoreMigrationSchedule = self.signAndStoreMigrationSchedule
-        self.signAndStoreMigrationSchedule = { schedule in
+        self.signAndStoreMigrationSchedule = { accountUUID, schedule, usk in
             if engine.isActive {
                 await engine.signAndStore(schedule)
             } else {
-                await originalSignAndStoreMigrationSchedule(schedule)
+                try await originalSignAndStoreMigrationSchedule(accountUUID, schedule, usk)
             }
         }
     }
@@ -130,27 +179,27 @@ extension SDKSynchronizerClient {
 
     private mutating func applySimulatedBackgroundExecution(engine: MigrationSimulatorEngine) {
         let originalIsSyncRequired = self.isSyncRequiredBeforeNextMigrationTransfer
-        self.isSyncRequiredBeforeNextMigrationTransfer = {
-            engine.isActive ? engine.isSyncRequired() : originalIsSyncRequired()
+        self.isSyncRequiredBeforeNextMigrationTransfer = { accountUUID in
+            engine.isActive ? engine.isSyncRequired() : try await originalIsSyncRequired(accountUUID)
         }
 
         let originalExecuteNext = self.executeNextPendingMigrationTransfer
-        self.executeNextPendingMigrationTransfer = { options in
+        self.executeNextPendingMigrationTransfer = { accountUUID, options in
             if engine.isActive {
                 return await engine.executeNext(options)
             } else {
-                return await originalExecuteNext(options)
+                return try await originalExecuteNext(accountUUID, options)
             }
         }
 
         let originalHasOverdue = self.hasOverdueMigrationTransfers
-        self.hasOverdueMigrationTransfers = {
-            engine.isActive ? engine.hasOverdue() : originalHasOverdue()
+        self.hasOverdueMigrationTransfers = { accountUUID in
+            engine.isActive ? engine.hasOverdue() : try await originalHasOverdue(accountUUID)
         }
 
         let originalHasInvalid = self.hasInvalidMigrationTransfers
-        self.hasInvalidMigrationTransfers = {
-            engine.isActive ? engine.hasInvalid() : originalHasInvalid()
+        self.hasInvalidMigrationTransfers = { accountUUID in
+            engine.isActive ? engine.hasInvalid() : try await originalHasInvalid(accountUUID)
         }
     }
 
@@ -158,86 +207,48 @@ extension SDKSynchronizerClient {
 
     private mutating func applySimulatedRecovery(engine: MigrationSimulatorEngine) {
         let originalRestart = self.restartCurrentMigrationStep
-        self.restartCurrentMigrationStep = {
+        self.restartCurrentMigrationStep = { accountUUID, includeResidual in
             if engine.isActive {
                 return await engine.restart()
             } else {
-                return await originalRestart()
+                return try await originalRestart(accountUUID, includeResidual)
             }
         }
 
-        let originalRescheduleStalled = self.rescheduleStalledMigrationTransfer
-        self.rescheduleStalledMigrationTransfer = {
+        let originalRescheduleOverdue = self.rescheduleOverdueMigrationTransfer
+        self.rescheduleOverdueMigrationTransfer = { accountUUID in
             if engine.isActive {
-                await engine.rescheduleStalled()
+                return await engine.rescheduleOverdue()
             } else {
-                await originalRescheduleStalled()
+                return try await originalRescheduleOverdue(accountUUID)
             }
-        }
-
-        let originalRecreateInvalid = self.recreateInvalidMigrationTransfer
-        self.recreateInvalidMigrationTransfer = {
-            if engine.isActive {
-                await engine.recreateInvalid()
-            } else {
-                await originalRecreateInvalid()
-            }
-        }
-    }
-
-    // MARK: - Progress UI (spec §5.2 "Progress UI" row)
-
-    /// Inactive engine falls back to `original()`, preserving today's 5-row `migrationTransfers`
-    /// demo fixture byte-for-byte (spec §3 flag-off guarantee).
-    private mutating func applySimulatedProgressUI(engine: MigrationSimulatorEngine) {
-        let originalMigrationSummary = self.migrationSummary
-        self.migrationSummary = {
-            engine.isActive ? engine.summary() : originalMigrationSummary()
-        }
-
-        let originalMigrationTransfers = self.migrationTransfers
-        self.migrationTransfers = {
-            engine.isActive ? engine.transferRows() : originalMigrationTransfers()
         }
     }
 
     // MARK: - Dust resolution (MOB-1487)
 
-    /// Lock gets a short simulated latency so the "Locking balance" in-flight state is visible;
-    /// the sweep's latency lives in `engine.migrateDust()` (mirrors `performSend`).
+    /// The sweep ("Migrate anyway") is a broadcast, so its stub takes the transaction guard like
+    /// the other broadcast-path stubs and is correct-by-construction once real broadcasting lands.
+    /// `lockMigrationDust`/`isMigrationDustLocked` relocated to `MigrationManagerClient` (MOB-1496)
+    /// — see that client's own reach-around, gated identically to this file's.
     private mutating func applySimulatedDustResolution(engine: MigrationSimulatorEngine) {
-        let originalLockMigrationDust = self.lockMigrationDust
-        self.lockMigrationDust = {
-            if engine.isActive {
-                try await Task.sleep(for: .seconds(0.5))
-                engine.lockDust()
-            } else {
-                try await originalLockMigrationDust()
-            }
-        }
-
         let originalMigrateMigrationDust = self.migrateMigrationDust
-        self.migrateMigrationDust = { options in
+        self.migrateMigrationDust = { accountUUID, usk, options in
             if engine.isActive {
                 return await engine.migrateDust()
             } else {
-                return await originalMigrateMigrationDust(options)
+                return try await originalMigrateMigrationDust(accountUUID, usk, options)
             }
-        }
-
-        let originalIsMigrationDustLocked = self.isMigrationDustLocked
-        self.isMigrationDustLocked = {
-            engine.isActive ? engine.isDustLocked() : originalIsMigrationDustLocked()
         }
 
         // MOB-1487 R3: the send-form Orchard disclaimer — any positive amount counts as touching
         // Orchard while the simulated wallet still holds an unlocked Orchard balance.
         let originalSendRequiresOrchardFunds = self.sendRequiresOrchardFunds
-        self.sendRequiresOrchardFunds = { amount in
+        self.sendRequiresOrchardFunds = { accountUUID, amount in
             if engine.isActive {
                 return amount.amount > 0 && engine.orchardBalance().amount > 0 && !engine.isDustLocked()
             } else {
-                return await originalSendRequiresOrchardFunds(amount)
+                return await originalSendRequiresOrchardFunds(accountUUID, amount)
             }
         }
     }
@@ -245,30 +256,30 @@ extension SDKSynchronizerClient {
     // MARK: - Keystone / PCZT (spec §5.2 "Keystone" rows + §7)
 
     private mutating func applySimulatedKeystone(engine: MigrationSimulatorEngine) {
-        let originalProposeNoteSplitPCZT = self.proposeNoteSplitPCZT
-        self.proposeNoteSplitPCZT = {
+        let originalProposeNoteSplitPCZTs = self.proposeNoteSplitPCZTs
+        self.proposeNoteSplitPCZTs = { accountUUID in
             if engine.isActive {
-                return engine.fabricateNoteSplitPCZT()
+                return engine.fabricateNoteSplitPCZTs()
             } else {
-                return await originalProposeNoteSplitPCZT()
+                return try await originalProposeNoteSplitPCZTs(accountUUID)
             }
         }
 
         let originalProposeMigrationPCZTs = self.proposeMigrationPCZTs
-        self.proposeMigrationPCZTs = { schedule in
+        self.proposeMigrationPCZTs = { accountUUID, schedule in
             if engine.isActive {
                 return engine.fabricateMigrationPCZTs(schedule)
             } else {
-                return await originalProposeMigrationPCZTs(schedule)
+                return try await originalProposeMigrationPCZTs(accountUUID, schedule)
             }
         }
 
         let originalStoreSignedMigrationTransactions = self.storeSignedMigrationTransactions
-        self.storeSignedMigrationTransactions = { pczts in
+        self.storeSignedMigrationTransactions = { accountUUID, signed in
             if engine.isActive {
-                engine.storeSignedBatch(pczts)
+                engine.storeSignedBatch(signed)
             } else {
-                await originalStoreSignedMigrationTransactions(pczts)
+                try await originalStoreSignedMigrationTransactions(accountUUID, signed)
             }
         }
 
@@ -288,26 +299,15 @@ extension SDKSynchronizerClient {
         }
     }
 
-    // MARK: - Lifecycle (spec §5.2 "Lifecycle" row) + estimateTimestamp
+    // MARK: - estimateTimestamp
 
-    /// `initializeMigrationPostUpgrade` isn't part of the migration member block's spec table by
-    /// name overlap alone — it IS the "Lifecycle" row. `estimateTimestamp` sits outside the
-    /// migration block entirely (it's a general SDK member), but the Transfer Plan screen's
-    /// per-row ETAs and the transfer-complete notification's "next in ~N h"
-    /// (`MigrationBGSchedulerLiveKey.arm(margin:)`) both resolve a `BlockHeight` through it —
-    /// translating our synthetic (epoch-seconds) heights back into real timestamps is what makes
-    /// those readings truthful against the simulated schedule instead of falling back to the
+    /// `estimateTimestamp` sits outside the migration block entirely (it's a general SDK member),
+    /// but the Transfer Plan screen's per-row ETAs and the transfer-complete notification's "next
+    /// in ~N h" (`MigrationBGSchedulerLiveKey.arm(margin:)`) both resolve a `BlockHeight` through
+    /// it — translating our synthetic (epoch-seconds) heights back into real timestamps is what
+    /// makes those readings truthful against the simulated schedule instead of falling back to the
     /// cadence-margin default (spec §9 flag #1, superseded).
-    private mutating func applySimulatedLifecycleAndTimestamp(engine: MigrationSimulatorEngine) {
-        let originalInitializeMigrationPostUpgrade = self.initializeMigrationPostUpgrade
-        self.initializeMigrationPostUpgrade = {
-            if engine.isActive {
-                engine.initializePostUpgrade()
-            } else {
-                originalInitializeMigrationPostUpgrade()
-            }
-        }
-
+    private mutating func applySimulatedEstimateTimestamp(engine: MigrationSimulatorEngine) {
         let originalEstimateTimestamp = self.estimateTimestamp
         self.estimateTimestamp = { height in
             if engine.isActive && MigrationSimulatorEngineDerivations.isSyntheticHeight(height) {
@@ -330,8 +330,8 @@ extension SDKSynchronizerClient {
     /// self-describing type so nothing could mistake it for a real Zcash PCZT UR, so the screen
     /// still has something to render. `nil` (both paths failing, or an empty batch) is tolerable —
     /// the Keystone bypass button is the real lane — but worth flagging during QA.
-    private static func simulatedBatchUREncoder(for pczts: [Pczt]) -> UREncoder? {
-        let joined = pczts.reduce(into: Data()) { $0.append($1) }
+    private static func simulatedBatchUREncoder(for pczts: [MigrationUnsignedTransferPczt]) -> UREncoder? {
+        let joined = pczts.reduce(into: Data()) { $0.append($1.pczt) }
         // FountainEncoder traps (fragment-count range 1...0) for messages shorter than its
         // 10-byte minFragmentLen, and UREncoder.init cannot throw — refuse tiny payloads instead.
         // Fabricated PCZTs are always larger (the 13-byte header alone), so this only guards

@@ -12,8 +12,24 @@
 //  `MigrationSimulatorStateStore.ephemeral()` and asserts, for a representative spread of members:
 //  active-engine behavior, and that `setActive(false)` restores every one of them to the sentinel.
 //  Constructs `SDKSynchronizerClient`/`MigrationSimulatorEngine` directly — never touches
-//  `MigrationSimulatorClient.sharedEngine` or `liveValue` — mirroring `MigrationSDKStubTests`'
-//  precedent, so those pinned `.noOp`/`.mocked()` contract tests stay untouched and green.
+//  `MigrationSimulatorClient.sharedEngine` or `liveValue` — mirroring the deleted
+//  `MigrationSDKStubTests`' precedent, so pinned `.noOp`/`.mocked()` contract tests stay untouched
+//  and green.
+//
+//  MOB-1496: reshaped for the real, per-account, throwing SDK surface. `migrationStateStream` and
+//  `migrationTransfers` (both covered here pre-MOB-1496) are GONE from `SDKSynchronizerClient`
+//  entirely — the former had no real-SDK counterpart (a per-account `stateEvents` replaced it,
+//  owned by `MigrationManagerClient`, which reach-arounds the engine directly in
+//  `MigrationManagerLiveKey.swift`, outside this file's `applySimulatedMigration` wiring
+//  altogether); the latter relocated the same way. Their coverage is accordingly dropped here, not
+//  replaced — `MigrationManagerLiveKey`'s reach-around isn't independently unit-testable from this
+//  file without touching the process-wide `MigrationSimulatorClient.sharedEngine` singleton (same
+//  reasoning the `isNextTransferDue` section below already documents for a sibling case).
+//  `proposeMigrationTransfers`'s simulated override now unconditionally selects `.privateScheduled`
+//  mode (mirroring the real SDK's WHICH-function-you-call distinction — see
+//  `SDKSynchronizerClient+Simulated.swift`'s file doc) and `proposeImmediateMigration` selects
+//  `.immediate` — so the round-trip test below drives its deterministic single-transfer path
+//  through `proposeImmediateMigration`, not `proposeMigrationTransfers`.
 //
 //  `MigrationManagerResetPersistedFlagsTests` below is `.serialized` because it's the one part of
 //  this file that touches `UserDefaults` (even via isolated named suites — same reasoning as
@@ -24,79 +40,109 @@
 import Testing
 import Foundation
 @preconcurrency import Combine
-@preconcurrency import ZcashLightClientKit
+@testable @preconcurrency import ZcashLightClientKit
 import ComposableArchitecture
 import URKit
 @testable import zodl_internal
 
 @Suite struct SimulatedSDKSynchronizerTests {
+    private static let accountUUID = AccountUUID(id: [UInt8](repeating: 0, count: 16))
+
     /// Fixed, obviously-fake sentinel values — never a value the engine itself would plausibly
     /// produce for the scenarios below — so a return-value check alone would already catch a
     /// wiring mistake, independent of the call counters.
     private enum SentinelValues {
         static let migrationState = MigrationState.complete
         static let migrationSchedule = MigrationSchedule(transfers: [], estimatedDurationHours: -1)
-        static let transferResult = TransferResult.invalidNote
-        static let transferRow = MigrationTransferRow(
-            id: "sentinel-row", index: 0, amount: Zatoshi(1), status: MigrationTransferRow.Status.sent, hoursFromNow: 0
-        )
-        static let pczt: Pczt = Data([0xFF])
-        static let parsedBatch: [Pczt] = [Data([0xAB, 0xCD])]
+        static let transferResult = MigrationTransferResult.invalidNote
+        static let pczt: Data = Data([0xFF])
+        // MOB-1496 (final engine, plural preps): the sentinel fallback for `proposeNoteSplitPCZTs`,
+        // now array-returning — reuses `pczt`'s bytes so it stays recognizably "obviously fake".
+        static let noteSplitPCZTs: [MigrationUnsignedTransferPczt] = [MigrationUnsignedTransferPczt(id: "sentinel-split", pczt: pczt)]
+        static let unsignedBatch: [MigrationUnsignedTransferPczt] = [MigrationUnsignedTransferPczt(id: "sentinel", pczt: Data([0xFF]))]
+        static let parsedBatch: [Data] = [Data([0xAB, 0xCD])]
         static let estimatedTimestamp: TimeInterval = 999_999
+        // R8-T7 (#15): an obviously-fake amount no seeded/preset engine dust figure would coincide
+        // with (`.completeWithDust`'s own dust is 800_000 zatoshi -- see that test below).
+        static let residualAfterMigration = Zatoshi(123_456_789)
     }
 
     /// One call counter per sentinel closure — see the file header for why this is the primary
     /// "did the override call through to `original`" signal.
     private struct CallCounters: Sendable {
         let getMigrationState = LockIsolated<Int>(0)
-        let migrationStateStream = LockIsolated<Int>(0)
         let isNoteSplitNeeded = LockIsolated<Int>(0)
         let proposeMigrationTransfers = LockIsolated<Int>(0)
+        let proposeImmediateMigration = LockIsolated<Int>(0)
+        let residualAfterMigration = LockIsolated<Int>(0)
         let signAndStoreMigrationSchedule = LockIsolated<Int>(0)
         let executeNextPendingMigrationTransfer = LockIsolated<Int>(0)
-        let migrationTransfers = LockIsolated<Int>(0)
+        let migrateMigrationDust = LockIsolated<Int>(0)
         let proposeMigrationPCZTs = LockIsolated<Int>(0)
         let parseMigrationPCZTBatch = LockIsolated<Int>(0)
         let urEncoderForMigrationPCZTBatch = LockIsolated<Int>(0)
         let estimateTimestamp = LockIsolated<Int>(0)
     }
 
-    private static let networkPrivacy = NetworkPrivacyOptions(useTor: false, submissionEndpoint: nil)
+    private static let networkPrivacy = MigrationNetworkPrivacyOptions(
+        useTor: false,
+        submissionEndpoint: LightWalletEndpoint(address: "", port: 0)
+    )
+
+    /// `UnifiedSpendingKey` has no public initializer anywhere in the SDK — derive a real (test)
+    /// one from `StoredWallet.placeholder`'s seed, matching the established repo-wide pattern
+    /// (`MigrationTransferPlanTests`' `withDependenciesUSKDerivable` and siblings). The simulated
+    /// `signAndStoreMigrationSchedule` override never actually inspects this value (see
+    /// `SDKSynchronizerClient+Simulated.swift` — the active branch calls `engine.signAndStore
+    /// (schedule)`, which takes no USK at all), so any validly-derived key works here.
+    private func usk() throws -> UnifiedSpendingKey {
+        try MigrationSpendingKeyDerivation.deriveUSK(
+            zip32AccountIndex: Zip32AccountIndex(0),
+            walletStorage: WalletStorageClient.noOp,
+            mnemonic: MnemonicClient.mock,
+            derivationTool: DerivationToolClient.liveValue,
+            networkType: NetworkType.testnet
+        )
+    }
 
     private func makeBaseClient(_ counters: CallCounters) -> SDKSynchronizerClient {
         var client = SDKSynchronizerClient.noOp
 
-        client.getMigrationState = {
+        client.getMigrationState = { _ in
             counters.getMigrationState.withValue { $0 += 1 }
             return SentinelValues.migrationState
         }
-        client.migrationStateStream = {
-            counters.migrationStateStream.withValue { $0 += 1 }
-            return Just(SentinelValues.migrationState).eraseToAnyPublisher()
-        }
-        client.isNoteSplitNeeded = {
+        client.isNoteSplitNeeded = { _ in
             counters.isNoteSplitNeeded.withValue { $0 += 1 }
             return false
         }
-        client.proposeMigrationTransfers = {
+        client.proposeMigrationTransfers = { _, _ in
             counters.proposeMigrationTransfers.withValue { $0 += 1 }
             return SentinelValues.migrationSchedule
         }
-        client.signAndStoreMigrationSchedule = { _ in
+        client.proposeImmediateMigration = { _ in
+            counters.proposeImmediateMigration.withValue { $0 += 1 }
+            return SentinelValues.migrationSchedule
+        }
+        client.residualAfterMigration = { _ in
+            counters.residualAfterMigration.withValue { $0 += 1 }
+            return SentinelValues.residualAfterMigration
+        }
+        client.signAndStoreMigrationSchedule = { _, _, _ in
             counters.signAndStoreMigrationSchedule.withValue { $0 += 1 }
         }
-        client.executeNextPendingMigrationTransfer = { _ in
+        client.executeNextPendingMigrationTransfer = { _, _ in
             counters.executeNextPendingMigrationTransfer.withValue { $0 += 1 }
             return SentinelValues.transferResult
         }
-        client.migrationTransfers = {
-            counters.migrationTransfers.withValue { $0 += 1 }
-            return [SentinelValues.transferRow]
+        client.migrateMigrationDust = { _, _, _ in
+            counters.migrateMigrationDust.withValue { $0 += 1 }
+            return SentinelValues.transferResult
         }
-        client.proposeNoteSplitPCZT = { SentinelValues.pczt }
-        client.proposeMigrationPCZTs = { _ in
+        client.proposeNoteSplitPCZTs = { _ in SentinelValues.noteSplitPCZTs }
+        client.proposeMigrationPCZTs = { _, _ in
             counters.proposeMigrationPCZTs.withValue { $0 += 1 }
-            return [SentinelValues.pczt]
+            return SentinelValues.unsignedBatch
         }
         client.parseMigrationPCZTBatch = { _ in
             counters.parseMigrationPCZTBatch.withValue { $0 += 1 }
@@ -117,9 +163,12 @@ import URKit
         return client
     }
 
-    // MARK: - State (getMigrationState / migrationStateStream)
+    // MARK: - State (getMigrationState)
+    //
+    // MOB-1496: `migrationStateStream` is gone from `SDKSynchronizerClient` (no real-SDK
+    // counterpart — see the file header) — this section now covers `getMigrationState` alone.
 
-    @Test func stateMembersRouteThroughTheEngineWhenActiveAndFallBackWhenInactive() {
+    @Test func getMigrationStateRoutesThroughTheEngineWhenActiveAndFallsBackWhenInactive() async throws {
         let counters = CallCounters()
         var client = makeBaseClient(counters)
         let engine = MigrationSimulatorEngine(store: MigrationSimulatorStateStore.ephemeral())
@@ -127,34 +176,18 @@ import URKit
         client.applySimulatedMigration(engine: engine)
 
         // Active: reads the engine's real (fresh-seeded) state, never the sentinel.
-        #expect(client.getMigrationState() == MigrationState.notStarted)
+        #expect(try await client.getMigrationState(Self.accountUUID) == MigrationState.notStarted)
         #expect(counters.getMigrationState.value == 0)
 
-        // Active: a live CurrentValueSubject that re-ticks on state changes (the improvement over
-        // HEAD's one-shot `Just`), not the sentinel stream.
-        let collected = LockIsolated<[MigrationState]>([])
-        let cancellable = client.migrationStateStream().sink { state in
-            collected.withValue { $0.append(state) }
-        }
-        engine.applyPreset(SimulatorPreset.splitting)
-        engine.confirmSplitNow()
-        #expect(collected.value.contains(MigrationState.splitPendingConfirmation))
-        #expect(collected.value.contains(MigrationState.readyToPropose))
-        #expect(counters.migrationStateStream.value == 0)
-        cancellable.cancel()
-
-        // Inactive: both fall back to the sentinel originals.
+        // Inactive: falls back to the sentinel original.
         engine.setActive(false)
-        #expect(client.getMigrationState() == SentinelValues.migrationState)
+        #expect(try await client.getMigrationState(Self.accountUUID) == SentinelValues.migrationState)
         #expect(counters.getMigrationState.value == 1)
-
-        _ = client.migrationStateStream()
-        #expect(counters.migrationStateStream.value == 1)
     }
 
     // MARK: - Note splitting (isNoteSplitNeeded)
 
-    @Test func isNoteSplitNeededRoutesThroughEngineWhenActiveAndFallsBackWhenInactive() {
+    @Test func isNoteSplitNeededRoutesThroughEngineWhenActiveAndFallsBackWhenInactive() async throws {
         let counters = CallCounters()
         var client = makeBaseClient(counters)
         let engine = MigrationSimulatorEngine(store: MigrationSimulatorStateStore.ephemeral())
@@ -163,84 +196,197 @@ import URKit
 
         // Fresh engine default (privateScheduled / notStarted / 1 note) answers true; the sentinel
         // always answers false, so a true here proves the engine (not the sentinel) answered.
-        #expect(client.isNoteSplitNeeded() == true)
+        #expect(try await client.isNoteSplitNeeded(Self.accountUUID) == true)
         #expect(counters.isNoteSplitNeeded.value == 0)
 
         engine.setActive(false)
-        #expect(client.isNoteSplitNeeded() == false)
+        #expect(try await client.isNoteSplitNeeded(Self.accountUUID) == false)
         #expect(counters.isNoteSplitNeeded.value == 1)
     }
 
-    // MARK: - propose -> signAndStore -> executeNext round trip + transferRows
+    // MARK: - proposeMigrationTransfers: forces .privateScheduled mode when active
 
-    @Test func proposeSignAndStoreExecuteNextRoundTripAndTransferRows() async {
+    @Test func proposeMigrationTransfersRoutesThroughEngineWhenActiveAndFallsBackWhenInactive() async throws {
         let counters = CallCounters()
         var client = makeBaseClient(counters)
         let engine = MigrationSimulatorEngine(store: MigrationSimulatorStateStore.ephemeral())
         engine.setActive(true) // the fresh-seed default is inactive (opt-in simulation)
-        engine.selectMode(MigrationMode.immediate)
         client.applySimulatedMigration(engine: engine)
 
-        let schedule = await client.proposeMigrationTransfers()
+        let schedule = try await client.proposeMigrationTransfers(Self.accountUUID, false)
         #expect(schedule != SentinelValues.migrationSchedule)
-        #expect(schedule.transfers.count == 1)
+        // Scheduled mode splits into 3-5 notes (RNG-driven) — not a fixed count, unlike immediate.
+        #expect((3...5).contains(schedule.transfers.count))
         #expect(counters.proposeMigrationTransfers.value == 0)
 
-        await client.signAndStoreMigrationSchedule(schedule)
+        engine.setActive(false)
+        let inactiveSchedule = try await client.proposeMigrationTransfers(Self.accountUUID, false)
+        #expect(inactiveSchedule == SentinelValues.migrationSchedule)
+        #expect(counters.proposeMigrationTransfers.value == 1)
+    }
+
+    // MARK: - residualAfterMigration (R8-T7 #15)
+    //
+    // Pre-fix, this member had no override at all in `SDKSynchronizerClient+Simulated.swift` --
+    // the one gap in the file's own "wires every migration-surface member" claim -- so it fell
+    // through to the real SDK even while the simulator was active. Mirrors `engine.summary().dust`
+    // (see that override's doc comment for why this is the exact right engine surface to mirror),
+    // seeded via the SAME `.completeWithDust` preset the dust-resolution tests below already use.
+
+    @Test func residualAfterMigrationRoutesThroughEngineWhenActiveAndFallsBackWhenInactive() async throws {
+        let counters = CallCounters()
+        var client = makeBaseClient(counters)
+        let engine = MigrationSimulatorEngine(store: MigrationSimulatorStateStore.ephemeral())
+        engine.setActive(true) // the fresh-seed default is inactive (opt-in simulation)
+        client.applySimulatedMigration(engine: engine)
+
+        engine.applyPreset(SimulatorPreset.completeWithDust)
+        #expect(engine.readout().dustRemainder.amount > 0)
+
+        // Active: reads the engine's own dust figure, never the sentinel.
+        let residual = try await client.residualAfterMigration(Self.accountUUID)
+        #expect(residual == engine.readout().dustRemainder)
+        #expect(residual != SentinelValues.residualAfterMigration)
+        #expect(counters.residualAfterMigration.value == 0)
+
+        // Inactive: falls back to the sentinel original.
+        engine.setActive(false)
+        let inactiveResidual = try await client.residualAfterMigration(Self.accountUUID)
+        #expect(inactiveResidual == SentinelValues.residualAfterMigration)
+        #expect(counters.residualAfterMigration.value == 1)
+    }
+
+    /// Mirrors the real member's own doc contract ("`nil` when there is none") -- a fresh engine
+    /// has no dust remainder yet, so this must read as absent (`nil`), never a fabricated
+    /// `Zatoshi.zero`.
+    @Test func residualAfterMigrationWithNoDustReturnsNilWhenActive() async throws {
+        let counters = CallCounters()
+        var client = makeBaseClient(counters)
+        let engine = MigrationSimulatorEngine(store: MigrationSimulatorStateStore.ephemeral())
+        engine.setActive(true)
+        client.applySimulatedMigration(engine: engine)
+
+        let residual = try await client.residualAfterMigration(Self.accountUUID)
+
+        #expect(residual == nil)
+        #expect(counters.residualAfterMigration.value == 0)
+    }
+
+    // MARK: - proposeImmediateMigration -> signAndStore -> executeNext round trip
+
+    @Test func proposeImmediateSignAndStoreExecuteNextRoundTrip() async throws {
+        let counters = CallCounters()
+        var client = makeBaseClient(counters)
+        let engine = MigrationSimulatorEngine(store: MigrationSimulatorStateStore.ephemeral())
+        engine.setActive(true) // the fresh-seed default is inactive (opt-in simulation)
+        client.applySimulatedMigration(engine: engine)
+
+        let schedule = try await client.proposeImmediateMigration(Self.accountUUID)
+        #expect(schedule != SentinelValues.migrationSchedule)
+        #expect(schedule.transfers.count == 1)
+        #expect(counters.proposeImmediateMigration.value == 0)
+
+        try await client.signAndStoreMigrationSchedule(Self.accountUUID, schedule, try usk())
         #expect(counters.signAndStoreMigrationSchedule.value == 0)
 
-        let result = await client.executeNextPendingMigrationTransfer(Self.networkPrivacy)
+        let result = try await client.executeNextPendingMigrationTransfer(Self.accountUUID, Self.networkPrivacy)
         #expect(counters.executeNextPendingMigrationTransfer.value == 0)
-        guard case .some(TransferResult.success) = result else {
+        guard case .some(MigrationTransferResult.success) = result else {
             Issue.record("Expected the immediate-mode transfer to be due right away and succeed")
             return
         }
 
-        let rows = client.migrationTransfers()
-        #expect(counters.migrationTransfers.value == 0)
-        #expect(rows.count == 1)
-        #expect(rows.first?.status == MigrationTransferRow.Status.sent)
+        #expect(engine.transferRows().count == 1)
+        #expect(engine.transferRows().first?.status == MigrationTransferRow.Status.sent)
 
         // Inactive: every member above falls back to the sentinel.
         engine.setActive(false)
 
-        let inactiveSchedule = await client.proposeMigrationTransfers()
+        let inactiveSchedule = try await client.proposeImmediateMigration(Self.accountUUID)
         #expect(inactiveSchedule == SentinelValues.migrationSchedule)
-        #expect(counters.proposeMigrationTransfers.value == 1)
+        #expect(counters.proposeImmediateMigration.value == 1)
 
-        await client.signAndStoreMigrationSchedule(inactiveSchedule)
+        try await client.signAndStoreMigrationSchedule(Self.accountUUID, inactiveSchedule, try usk())
         #expect(counters.signAndStoreMigrationSchedule.value == 1)
 
-        let inactiveResult = await client.executeNextPendingMigrationTransfer(Self.networkPrivacy)
+        let inactiveResult = try await client.executeNextPendingMigrationTransfer(Self.accountUUID, Self.networkPrivacy)
         #expect(inactiveResult == SentinelValues.transferResult)
         #expect(counters.executeNextPendingMigrationTransfer.value == 1)
-
-        let inactiveRows = client.migrationTransfers()
-        #expect(inactiveRows == [SentinelValues.transferRow])
-        #expect(counters.migrationTransfers.value == 1)
     }
 
-    // MARK: - Keystone (PCZT fabrication + batch parse round trip)
+    // MARK: - Dust resolution (MOB-1487 software composite; MOB-1496 W6 §4 simulator seam)
 
-    @Test func keystonePCZTsFabricatedWhenActiveAndParseRoundTripsRecognizedHeader() async {
+    /// Closes the "panel preset -> migrate-anyway -> simulated success" gap (MOB-1496 W6 §4): the
+    /// real-engine residual semantics can't be proven offline, but this exercises the SAME contract
+    /// the LiveKey's `migrateMigrationDust` composite implements (`SDKSynchronizerLive.swift`:
+    /// non-empty proposed schedule -> succeeds) against the simulator's own dust model, through the
+    /// `SDKSynchronizerClient` seam every other test in this file uses.
+    /// `SimulatorPreset.completeWithDust` is the SAME preset the Migration Simulator Panel's own dust
+    /// preset button applies (`MigrationSimulatorPanelTests.presetTappedCompleteWithDustAlsoResetsFlagsBeforeApplyPreset`).
+    @Test func migrateMigrationDustRoutesThroughEngineWhenActiveAndFallsBackWhenInactive() async throws {
         let counters = CallCounters()
         var client = makeBaseClient(counters)
         let engine = MigrationSimulatorEngine(store: MigrationSimulatorStateStore.ephemeral())
         engine.setActive(true) // the fresh-seed default is inactive (opt-in simulation)
         client.applySimulatedMigration(engine: engine)
 
-        let noteSplitPCZT = await client.proposeNoteSplitPCZT()
-        #expect(!noteSplitPCZT.isEmpty)
-        #expect(noteSplitPCZT != SentinelValues.pczt)
+        engine.applyPreset(SimulatorPreset.completeWithDust)
+        #expect(engine.readout().dustRemainder.amount > 0)
 
-        let schedule = await client.proposeMigrationTransfers()
-        let batch = await client.proposeMigrationPCZTs(schedule)
+        let result = try await client.migrateMigrationDust(Self.accountUUID, try usk(), Self.networkPrivacy)
+        #expect(counters.migrateMigrationDust.value == 0)
+        guard case MigrationTransferResult.success? = result else {
+            Issue.record("Expected the simulated dust sweep to succeed against the .completeWithDust preset")
+            return
+        }
+        #expect(engine.readout().dustRemainder == Zatoshi.zero)
+
+        // Inactive: falls back to the sentinel original, and the engine's own dust state (already
+        // swept above) is untouched by the fallback call.
+        engine.setActive(false)
+        let inactiveResult = try await client.migrateMigrationDust(Self.accountUUID, try usk(), Self.networkPrivacy)
+        #expect(inactiveResult == SentinelValues.transferResult)
+        #expect(counters.migrateMigrationDust.value == 1)
+    }
+
+    /// Empty-residual edge (§4 — mirrors `MigrationSimulatorEngineTests.migrateDustWithNoDustReturnsNil`
+    /// through this file's client seam instead of the raw engine): a fresh engine has no dust
+    /// remainder yet, so the sweep is a no-op `nil` — never a fabricated success.
+    @Test func migrateMigrationDustWithNoDustReturnsNilWhenActive() async throws {
+        let counters = CallCounters()
+        var client = makeBaseClient(counters)
+        let engine = MigrationSimulatorEngine(store: MigrationSimulatorStateStore.ephemeral())
+        engine.setActive(true)
+        client.applySimulatedMigration(engine: engine)
+
+        let result = try await client.migrateMigrationDust(Self.accountUUID, try usk(), Self.networkPrivacy)
+
+        #expect(result == nil)
+        #expect(counters.migrateMigrationDust.value == 0)
+    }
+
+    // MARK: - Keystone (PCZT fabrication + batch parse round trip)
+
+    @Test func keystonePCZTsFabricatedWhenActiveAndParseRoundTripsRecognizedHeader() async throws {
+        let counters = CallCounters()
+        var client = makeBaseClient(counters)
+        let engine = MigrationSimulatorEngine(store: MigrationSimulatorStateStore.ephemeral())
+        engine.setActive(true) // the fresh-seed default is inactive (opt-in simulation)
+        client.applySimulatedMigration(engine: engine)
+
+        let noteSplitPCZTs = try await client.proposeNoteSplitPCZTs(Self.accountUUID)
+        #expect(noteSplitPCZTs.count == 1)
+        #expect(!(noteSplitPCZTs.first?.pczt.isEmpty ?? true))
+        #expect(noteSplitPCZTs != SentinelValues.noteSplitPCZTs)
+
+        let schedule = try await client.proposeImmediateMigration(Self.accountUUID)
+        let batch = try await client.proposeMigrationPCZTs(Self.accountUUID, schedule)
         #expect(!batch.isEmpty)
-        #expect(batch.allSatisfy { !$0.isEmpty })
+        #expect(batch.allSatisfy { !$0.pczt.isEmpty })
         #expect(counters.proposeMigrationPCZTs.value == 0)
 
         // Active + recognized fabricated-format header -> returns the whole batch as one element.
-        let fabricated = engine.fabricateNoteSplitPCZT()
+        let fabricated = engine.fabricateNoteSplitPCZTs().first?.pczt ?? Data()
         #expect(client.parseMigrationPCZTBatch(fabricated) == [fabricated])
         #expect(counters.parseMigrationPCZTBatch.value == 0)
 
@@ -252,11 +398,11 @@ import URKit
         // Inactive: every member above falls back to the sentinel.
         engine.setActive(false)
 
-        let inactiveNoteSplitPCZT = await client.proposeNoteSplitPCZT()
-        #expect(inactiveNoteSplitPCZT == SentinelValues.pczt)
+        let inactiveNoteSplitPCZTs = try await client.proposeNoteSplitPCZTs(Self.accountUUID)
+        #expect(inactiveNoteSplitPCZTs == SentinelValues.noteSplitPCZTs)
 
-        let inactiveBatch = await client.proposeMigrationPCZTs(schedule)
-        #expect(inactiveBatch == [SentinelValues.pczt])
+        let inactiveBatch = try await client.proposeMigrationPCZTs(Self.accountUUID, schedule)
+        #expect(inactiveBatch == SentinelValues.unsignedBatch)
         #expect(counters.proposeMigrationPCZTs.value == 1)
 
         #expect(client.parseMigrationPCZTBatch(fabricated) == SentinelValues.parsedBatch)
@@ -358,24 +504,31 @@ struct MigrationManagerResetPersistedFlagsTests {
         defer { userDefaults.removePersistentDomain(forName: suiteName) }
 
         let storage = MigrationGateStorage(userDefaults: userDefaults)
+        let accountUUID = AccountUUID(id: [UInt8](repeating: 1, count: 16))
         storage.setMigrationMode(MigrationMode.immediate)
         storage.setManualDelivery(true)
-        storage.setNetworkPrivacyOptions(NetworkPrivacyOptions(useTor: true, submissionEndpoint: "https://example.com:9067"))
-        storage.acknowledgeComplete()
-        storage.recordMigrationBroadcast(at: Date())
-        storage.recordSyncCompletion(at: Date())
+        storage.setTorEnabledForMigration(true)
+        storage.acknowledgeComplete(for: accountUUID)
+        storage.setDustLocked(true)
+        storage.recordSyncCompleted(at: Date())
 
         storage.resetPersistedFlags()
 
         #expect(storage.migrationMode() == nil)
         #expect(storage.isManualDelivery() == false)
-        #expect(storage.networkPrivacyOptions() == NetworkPrivacyOptions(useTor: false, submissionEndpoint: nil))
-        #expect(storage.isCompleteAcknowledged() == false)
-        #expect(storage.isSyncDeferredAfterBroadcast(now: Date()) == false)
+        #expect(storage.isTorEnabledForMigration() == false)
+        #expect(storage.isDustLocked() == false)
+        // R8-T3 (S2): the acknowledged flag is per-account now — `MigrationGateStorage
+        // .resetPersistedFlags()` only clears the dead legacy (wallet-wide, unsuffixed) key; see
+        // `MigrationManagerTests.resetPersistedFlagsClearsDustLockedAlongWithEveryOtherFlag`'s
+        // twin assertion for the full explanation.
+        #expect(storage.isCompleteAcknowledged(for: accountUUID) == true)
 
-        // Deliberately untouched: the 10-minute sync<->send gate window is a short-lived timing
-        // value, not a durable app flag (see `resetPersistedFlags`'s doc comment).
-        guard case MigrationSendGate.waitUntil = storage.sendGate(now: Date()) else {
+        // Deliberately untouched: the send gate's timing window is a short-lived value, not a
+        // durable app flag (see `resetPersistedFlags`'s doc comment) — MOB-1496 (W3): a non-zero
+        // `buffer` proves the persisted `migrationLastSyncCompletedAt` itself survived, independent
+        // of whatever buffer value happens to be in force at read time.
+        guard case MigrationSendGate.waitUntil = storage.sendGate(now: Date(), buffer: 600) else {
             Issue.record("Expected the sync<->send gate window to survive resetPersistedFlags")
             return
         }

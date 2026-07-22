@@ -17,12 +17,12 @@ extension ZcashSDKEnvironment: DependencyKey {
             latestCheckpoint: { BlockHeight.ofLatestCheckpoint(network: network) },
             ironwoodActivationHeight: {
                 switch network.networkType {
-                case .mainnet:
-                    // zcash_protocol 0.10.0: NU6.3 (Ironwood) mainnet activation height, set 2026-07-09.
-                    return BlockHeight(3_428_143)
-                case .testnet:
-                    // zcash_protocol 0.10.0: NU6.3 (Ironwood) testnet activation height, set 2026-06-30.
-                    return BlockHeight(4_134_000)
+                case .mainnet, .testnet:
+                    // The SDK (`ZcashNetwork.ironwoodActivationHeight`, backed by zcash_protocol) is
+                    // the single source of truth for the NU6.3 (Ironwood) activation height on
+                    // mainnet/testnet. The nil branch never actually occurs for these two network
+                    // types, but is still handled fail-closed.
+                    return network.ironwoodActivationHeight ?? BlockHeight.max
                 case .regtest:
                     // Custom/regtest network: read the configured NU6.3 height, or "never activated" if absent.
                     return network.customActivationHeights?.nu6_3 ?? BlockHeight.max

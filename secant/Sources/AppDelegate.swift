@@ -242,8 +242,13 @@ final class MigrationNotificationCenterDelegate: NSObject, UNUserNotificationCen
     ) {
         if response.notification.request.identifier.hasPrefix(MigrationNotification.identifierPrefix) {
             let rootStore = self.rootStore
+            // R8-T5 (S4): the account this notification was composed for (see
+            // `UserNotificationsLiveKey.scheduleMigrationNotification`'s `userInfo` write) — `nil`
+            // for a legacy/no-account payload, in which case routing falls back to today's
+            // behavior (resolves whatever's currently selected).
+            let accountUUID = response.notification.request.content.userInfo["accountUUID"] as? String
             DispatchQueue.main.async {
-                rootStore?.send(.initialization(.appDelegate(.migrationNotificationTapped)))
+                rootStore?.send(.initialization(.appDelegate(.migrationNotificationTapped(accountUUID: accountUUID))))
             }
         }
 

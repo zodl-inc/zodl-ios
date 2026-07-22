@@ -33,4 +33,14 @@ import Testing
         let environment = ZcashSDKEnvironment.live(network: network)
         #expect(environment.ironwoodActivationHeight() == BlockHeight.max)
     }
+
+    // Pins the delegation itself (rather than re-asserting a literal): the app accessor must track
+    // whatever the SDK reports, for both real networks.
+    @Test(arguments: [NetworkType.mainnet, .testnet])
+    func accessorDelegatesToTheSDKConstant(_ networkType: NetworkType) throws {
+        let network = ZcashNetworkBuilder.network(for: networkType)
+        let sdkHeight = try #require(network.ironwoodActivationHeight)
+        let environment = ZcashSDKEnvironment.live(network: network)
+        #expect(environment.ironwoodActivationHeight() == sdkHeight)
+    }
 }

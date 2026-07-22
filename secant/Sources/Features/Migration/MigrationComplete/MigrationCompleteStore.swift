@@ -13,7 +13,7 @@
 //  `dust` at init (`.offered` when > `.zero`, else `.none`) unless a caller passes it explicitly —
 //  the coordinator's `completeState(isFlowRoot:)` still constructs `State` without naming it, so
 //  that derivation is the only thing driving it in the shipped app; tests can pin an explicit
-//  value. `lockBalanceTapped` (valid only from `.offered`) runs `sdkSynchronizer.lockMigrationDust()`:
+//  value. `lockBalanceTapped` (valid only from `.offered`) runs `migrationManager.lockMigrationDust()`:
 //  `.locking` while in flight, `.locked` on success, back to `.offered` plus a failure alert
 //  otherwise. `migrateAnywayTapped` just emits `.delegate(.migrateAnyway)` for the coordinator to
 //  wire up later (delegate wiring is a separate serialized stream) — no local state change.
@@ -104,7 +104,7 @@ struct MigrationComplete {
         }
     }
 
-    @Dependency(\.sdkSynchronizer) var sdkSynchronizer
+    @Dependency(\.migrationManager) var migrationManager
 
     init() { }
 
@@ -129,7 +129,7 @@ struct MigrationComplete {
                 state.dustResolution = .locking
                 return .run { send in
                     do {
-                        try await sdkSynchronizer.lockMigrationDust()
+                        try await migrationManager.lockMigrationDust()
                         await send(.lockDustSucceeded)
                     } catch {
                         await send(.lockDustFailed(error.toZcashError()))

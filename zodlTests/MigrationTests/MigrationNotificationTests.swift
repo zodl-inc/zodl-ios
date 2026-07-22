@@ -49,6 +49,11 @@ import Foundation
                 name: "migrationComplete",
                 notification: MigrationNotification.migrationComplete,
                 expected: "migration.complete"
+            ),
+            Row(
+                name: "migrationBatchComplete",
+                notification: MigrationNotification.migrationBatchComplete,
+                expected: "migration.batchComplete"
             )
         ]
 
@@ -64,7 +69,8 @@ import Foundation
             MigrationNotification.transferWaiting(number: 1),
             MigrationNotification.planNeedsUpdate,
             MigrationNotification.manualTransferReady(number: 1),
-            MigrationNotification.migrationComplete
+            MigrationNotification.migrationComplete,
+            MigrationNotification.migrationBatchComplete
         ]
 
         let identifiers = Set(notifications.map { $0.identifier })
@@ -105,6 +111,11 @@ import Foundation
                 name: "migrationComplete",
                 notification: MigrationNotification.migrationComplete,
                 expected: "Migration complete"
+            ),
+            Row(
+                name: "migrationBatchComplete",
+                notification: MigrationNotification.migrationBatchComplete,
+                expected: "Migration batch finished"
             )
         ]
 
@@ -177,6 +188,15 @@ import Foundation
         let notification = MigrationNotification.migrationComplete
 
         #expect(notification.body == "Open ZODL to review the details.")
+    }
+
+    /// MOB-1496: unlike every other case above, this one's body is NOT the generic
+    /// "Open ZODL to review the details." CTA — it explicitly says more remains, since that's the
+    /// whole reason this case exists instead of `.migrationComplete`.
+    @Test func migrationBatchCompleteBodyIsFixedCopy() {
+        let notification = MigrationNotification.migrationBatchComplete
+
+        #expect(notification.body == "More funds to migrate. Open ZODL to continue.")
     }
 
     // MARK: - Equatable
