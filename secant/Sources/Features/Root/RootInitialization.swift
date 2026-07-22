@@ -451,6 +451,13 @@ extension Root {
                 userDefaults.setValue(true, Constants.udIsRestoringWallet)
                 state.$walletStatus.withLock { $0 = .restoring }
                 state.isStaleWalletHealedAlertPending = true
+                // Covers the third transition point: the destination may have already settled
+                // on `.home` before this heal signal arrives (e.g. the new-wallet cascade), in
+                // which case neither of the other two hooks (`updateDestination` / the
+                // `.phraseDisplay`/`.onboarding` bypass arm) will ever fire again to deliver it.
+                if state.destinationState.destination == .home {
+                    return presentStaleWalletHealedAlertEffect(cancelId: state.staleWalletHealedAlertCancelId)
+                }
                 return .none
 
             case .initialization(.presentStaleWalletHealedAlert):

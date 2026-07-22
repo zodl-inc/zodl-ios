@@ -666,11 +666,12 @@ extension Root {
     /// The stale-wallet-heal notice (`AlertState.staleWalletDatabaseHealed()`) is deferred until
     /// the root destination settles on `.home`: presenting it immediately at heal time gets it
     /// auto-dismissed by the very destination switch that follows (SwiftUI tears down the
-    /// presenting view branch before the alert has a chance to be seen). Two call sites can land
-    /// the destination on `.home` — the `.destination(.updateDestination)` hook and the
-    /// synchronous `.phraseDisplay(.finishedTapped)` / `.onboarding(.newWalletSuccessfulyCreated)`
-    /// transition — so this effect is shared between both, keeping the wait-then-present logic in
-    /// exactly one place.
+    /// presenting view branch before the alert has a chance to be seen). Three call sites can
+    /// first satisfy "flag pending AND destination == `.home`" — the
+    /// `.destination(.updateDestination)` hook, the synchronous `.phraseDisplay(.finishedTapped)` /
+    /// `.onboarding(.newWalletSuccessfulyCreated)` transition, and `.staleWalletDatabaseHealed`
+    /// itself when the heal completes while already on `.home` — so this effect is shared between
+    /// all of them, keeping the wait-then-present logic in exactly one place.
     ///
     /// `cancelId` must be a dedicated ID (`state.staleWalletHealedAlertCancelId`) — never a
     /// shared/general-purpose one — so `cancelInFlight` only ever supersedes an earlier deferred

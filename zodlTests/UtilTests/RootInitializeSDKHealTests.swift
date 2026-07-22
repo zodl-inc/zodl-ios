@@ -74,10 +74,11 @@ extension Root.State: @retroactive Equatable {
         isSeedRelevant: Bool,
         walletAccountsResult: [WalletAccount] = [RootInitializeSDKHealTests.seedDerivedAccount],
         reprepareError: Error? = nil,
-        isStaleWalletHealedAlertPending: Bool = false
+        isStaleWalletHealedAlertPending: Bool = false,
+        destination: Root.DestinationState.Destination = .welcome
     ) -> TestStore<Root.State, Root.Action> {
         var initialState = Root.State(
-            destinationState: Root.DestinationState(),
+            destinationState: Root.DestinationState(internalDestination: destination),
             exportLogsState: ExportLogs.State(),
             onboardingState: RestoreWalletCoordFlow.State(),
             phraseDisplayState: RecoveryPhraseDisplay.State(),
@@ -577,6 +578,51 @@ extension Root.State: @retroactive Equatable {
         #expect(store.state.alert?.message == AlertState.staleWalletDatabaseHealed().message)
         #expect(!store.state.isStaleWalletHealedAlertPending)
         #expect(store.state.destinationState.destination == .home)
+
+        await drain(store)
+    }
+
+    // MARK: - Heal signal arrives after the destination has already settled on home
+
+    /// Covers the third transition point: unlike the other two tests, the destination is
+    /// `.home` *before* `.staleWalletDatabaseHealed` is even sent — e.g. the new-wallet cascade
+    /// already transitioned home (via the synchronous `.phraseDisplay(.finishedTapped)` /
+    /// `.onboarding(.newWalletSuccessfulyCreated)` arm) while the flag was still false, and
+    /// nothing on that path ever re-sends a home transition afterward. With no hook left to
+    /// fire, a flag that only gets set post-hoc would sit pending for the rest of the session.
+    @Test func staleWalletDatabaseHealedPresentsImmediatelyWhenDestinationIsAlreadyHome() async {
+        let calls = LockIsolated<[String]>([])
+        let removedKeys = LockIsolated<[String]>([])
+        let setBools = LockIsolated<[String: Bool]>([:])
+        let store = makeStore(
+            calls: calls,
+            removedUserDefaultsKeys: removedKeys,
+            setUserDefaultsBools: setBools,
+            firstPrepareResult: .success,
+            isSeedRelevant: true,
+            destination: .home
+        )
+
+        await store.send(.initialization(.staleWalletDatabaseHealed)) { state in
+            state.isRestoringWallet = true
+            state.$walletStatus.withLock { $0 = .restoring }
+            state.isStaleWalletHealedAlertPending = true
+        }
+
+        await store.receive(
+            { action in
+                guard case .initialization(.presentStaleWalletHealedAlert) = action else { return false }
+                return true
+            },
+            timeout: .seconds(5)
+        ) { state in
+            state.isStaleWalletHealedAlertPending = false
+            state.alert = AlertState.staleWalletDatabaseHealed()
+        }
+
+        #expect(store.state.alert?.title == AlertState.staleWalletDatabaseHealed().title)
+        #expect(store.state.alert?.message == AlertState.staleWalletDatabaseHealed().message)
+        #expect(!store.state.isStaleWalletHealedAlertPending)
 
         await drain(store)
     }
