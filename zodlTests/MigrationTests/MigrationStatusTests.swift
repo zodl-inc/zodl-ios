@@ -127,6 +127,7 @@ import ComposableArchitecture
             $0.migrationManager.migrationTransfers = { _ in rows }
             $0.migrationManager.migrationSummary = { _ in summary }
             $0.migrationManager.stateEvents = { _ in stateStream.eraseToAnyPublisher() }
+            $0.migrationManager.isMigrationTorHoldActive = { _ in false }
         }
 
         await store.send(.onAppear)
@@ -154,11 +155,36 @@ import ComposableArchitecture
             $0.sdkSynchronizer = .noOp
             $0.sdkSynchronizer.migrationPrivacySyncBufferDuration = { 900 }
             $0.migrationManager.stateEvents = { _ in stateStream.eraseToAnyPublisher() }
+            $0.migrationManager.isMigrationTorHoldActive = { _ in false }
         }
 
         await store.send(.onAppear)
         await store.receive(\.statusLoaded) {
             $0.syncPrivacyBufferMinutes = 15
+        }
+
+        stateStream.send(completion: .finished)
+        await store.finish()
+    }
+
+    /// R7 final review, Important-1 (spec §G): `isTorHoldActive` threads through `.statusLoaded` the
+    /// same way `isSendNowDisabled`/`syncPrivacyBufferMinutes` do — a live re-derived field, not a
+    /// coordinator-hydrate-once one, so it self-heals if the account's Tor hold clears while this
+    /// screen is on-screen (via `.migrationStateChanged`'s own `loadStatus` re-run).
+    @MainActor @Test func onAppearLoadsTheTorHoldIndicator() async {
+        let stateStream = PassthroughSubject<MigrationState, Never>()
+        let store = TestStore(initialState: MigrationStatus.State()) {
+            MigrationStatus()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.migrationManager.stateEvents = { _ in stateStream.eraseToAnyPublisher() }
+            $0.migrationManager.sendGate = { .allowed }
+            $0.migrationManager.isMigrationTorHoldActive = { _ in true }
+        }
+
+        await store.send(.onAppear)
+        await store.receive(\.statusLoaded) {
+            $0.isTorHoldActive = true
         }
 
         stateStream.send(completion: .finished)
@@ -189,6 +215,7 @@ import ComposableArchitecture
             $0.migrationManager.migrationTransfers = { _ in rows }
             $0.migrationManager.migrationSummary = { _ in summary }
             $0.migrationManager.stateEvents = { _ in stateStream.eraseToAnyPublisher() }
+            $0.migrationManager.isMigrationTorHoldActive = { _ in false }
         }
 
         await store.send(.onAppear)
@@ -219,6 +246,7 @@ import ComposableArchitecture
             $0.sdkSynchronizer = .noOp
             $0.migrationManager.migrationTransfers = { _ in [] }
             $0.migrationManager.stateEvents = { _ in stateStream.eraseToAnyPublisher() }
+            $0.migrationManager.isMigrationTorHoldActive = { _ in false }
         }
 
         await store.send(.onAppear)
@@ -251,6 +279,7 @@ import ComposableArchitecture
             $0.migrationManager.migrationTransfers = { _ in rows }
             $0.migrationManager.stateEvents = { _ in stateStream.eraseToAnyPublisher() }
             $0.migrationManager.sendGate = { .waitUntil(Date(timeIntervalSince1970: 1_000_000)) }
+            $0.migrationManager.isMigrationTorHoldActive = { _ in false }
         }
 
         await store.send(.onAppear)
@@ -280,6 +309,7 @@ import ComposableArchitecture
             $0.migrationManager.migrationTransfers = { _ in currentRows.value }
             $0.migrationManager.stateEvents = { _ in stateStream.eraseToAnyPublisher() }
             $0.migrationManager.sendGate = { .allowed }
+            $0.migrationManager.isMigrationTorHoldActive = { _ in false }
         }
 
         await store.send(.onAppear)

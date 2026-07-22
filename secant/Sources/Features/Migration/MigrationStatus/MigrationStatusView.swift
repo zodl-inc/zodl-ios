@@ -52,8 +52,13 @@ struct MigrationStatusView: View {
                 }
 
                 if store.presentation == .resume {
-                    footerNote
-                        .padding(.top, 16)
+                    VStack(alignment: .leading, spacing: 8) {
+                        if store.isTorHoldActive {
+                            torHoldNote
+                        }
+                        footerNote
+                    }
+                    .padding(.top, 16)
                 }
 
                 buttons
@@ -123,6 +128,25 @@ struct MigrationStatusView: View {
             return row.hoursFromNow == 0
                 ? String(localizable: .migrationPlanEtaFirst)
                 : String(localizable: .migrationPlanEtaHours(row.hoursFromNow))
+        }
+    }
+
+    // MARK: - Tor-hold note
+
+    /// R7 final review, Important-1 (spec §G): shown ABOVE `footerNote` when `store.isTorHoldActive`
+    /// — reuses `footerNote`'s exact row shape (info icon + tertiary caption) rather than inventing
+    /// a new visual, per the fix's own "reuse the existing footerNote-style row" instruction.
+    /// Flagged for the product/design pass — no Figma exists for this line (same caveat the
+    /// `migrationFailure.*` failure-sheet copy carries).
+    @ViewBuilder private var torHoldNote: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Asset.Assets.infoOutline.image
+                .zImage(size: 16, style: Design.Text.tertiary)
+
+            Text(localizable: .migrationFailureTorHoldStatusNote)
+                .zFont(size: 12, style: Design.Text.tertiary)
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 

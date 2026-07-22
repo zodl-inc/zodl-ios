@@ -56,6 +56,11 @@ struct MigrationReviewTransferView: View {
                     .padding(.vertical, 1)
                 }
 
+                if let broadcastDisclosureHost = store.broadcastDisclosureHost {
+                    disclosureFooter(host: broadcastDisclosureHost)
+                        .padding(.top, 16)
+                }
+
                 ZashiButton(String(localizable: .generalConfirm)) {
                     store.send(.confirmTapped)
                 }
@@ -172,6 +177,21 @@ struct MigrationReviewTransferView: View {
                 value: "\(store.fee.decimalString()) ZEC",
                 rowAppereance: .bottom
             )
+        }
+    }
+
+    // MARK: - Disclosure footer (MOB-1497 T2, R13 — sheet-skipped/sheet-confirmed provider users)
+
+    /// Same visual shape as `MigrationStatusView.footerNote` / `MigrationTransferPlanView`'s twin.
+    @ViewBuilder private func disclosureFooter(host: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Asset.Assets.infoOutline.image
+                .zImage(size: 16, style: Design.Text.tertiary)
+
+            Text(String(localizable: .migrationTorSheetDisclosure(host)))
+                .zFont(size: 12, style: Design.Text.tertiary)
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 

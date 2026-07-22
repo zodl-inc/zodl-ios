@@ -71,17 +71,127 @@ struct MigrationManagerClient: Sendable {
     // default for a non-throwing, non-`Void`/non-`Optional`-returning closure; every real call site
     // resolves a live snapshot. Tests never observe this default (see the `recordCommittedSchedule`
     // note).
+    //
+    // MOB-1497: by the time a broadcast reaches this member, `formNetworkSnapshot` below has almost
+    // always already formed the run's (provisional or committed) snapshot at the Tor-choice step —
+    // this ensure-or-create path is now mainly the safety net for a lane that reaches a broadcast
+    // without ever forming one (see `MigrationManagerImpl.ensureNetworkSnapshot`'s doc).
     var migrationNetworkOptions: @Sendable (_ accountUUID: AccountUUID?) async -> MigrationNetworkPrivacyOptions = { _ in
         MigrationNetworkPrivacyOptions(useTor: false, submissionEndpoint: LightWalletEndpoint(address: "", port: 0))
     }
+    // MOB-1497: forms (or, idempotently, returns the existing) provisional network snapshot for
+    // `accountUUID` (`nil` resolves the selected account, same convention as `migrationNetworkOptions`
+    // above) — called from the coordinator at the Tor-choice RESOLUTION points (the Tor sheet's
+    // confirm, and the sheet-skipped app-wide-Tor-on shortcut, on both the immediate and scheduled
+    // entry chains), never at plan-confirm or any re-entry path (a re-entry that never shows the Tor
+    // step must not form — see `MigrationManagerImpl.ensureOrCreateNetworkSnapshot`'s doc for the
+    // shared ensure-or-create body this and `migrationNetworkOptions`'s safety net both run through).
+    // The formed snapshot is PROVISIONAL (`committedAt == nil`) until `markNetworkSnapshotCommitted`
+    // stamps it. `= { _ in }` is a no-op default, not a test fallback (see the
+    // `recordCommittedSchedule` note above).
+    var formNetworkSnapshot: @Sendable (_ accountUUID: AccountUUID?) async -> Void = { _ in }
+    // MOB-1497 (T2): read-only peek at `accountUUID`'s currently persisted network snapshot (`nil`
+    // resolves the selected account, same convention as `migrationNetworkOptions` above) — unlike
+    // `migrationNetworkOptions`/`formNetworkSnapshot`, this NEVER forms one; `nil` when none is
+    // persisted yet. R13 needs the broadcast host ON the choice surface (the Tor sheet) and on the
+    // sheet-skipped TransferPlan/ReviewTransfer footers — the coordinator reads this AFTER
+    // `formNetworkSnapshot`/the skip branch has already formed one, to thread
+    // `broadcastEndpoint.host`/`syncProvider` into that UI without re-deriving custom-server
+    // classification itself. `= { _ in nil }` is a no-op default, not a test fallback (see the
+    // `recordCommittedSchedule` note above).
+    var networkSnapshot: @Sendable (_ accountUUID: AccountUUID?) async -> MigrationNetworkSnapshot? = { _ in nil }
+    // MOB-1497 (T2): the Tor sheet's confirm calls this INSTEAD OF `formNetworkSnapshot` — forming
+    // now happens at sheet PRESENTATION (R13 needs the endpoint to exist when the sheet appears), so
+    // by confirm time the user has already been shown a specific broadcast host; the run must use
+    // exactly that host, never a fresh re-roll. Mutates ONLY `useTor` on the existing PROVISIONAL
+    // snapshot — `broadcastEndpoint`/`syncEndpoint`/`takenAt` are left byte-for-byte untouched, and
+    // nothing is re-formed. Storage-lock protected; a no-op (logged warning) when no provisional
+    // snapshot exists for the account, or it's already committed — see
+    // `MigrationSnapshotStorage.updateUseTorIfProvisional`. `= { _, _ in }` is a no-op default, not a
+    // test fallback.
+    var confirmProvisionalTorChoice: @Sendable (_ accountUUID: AccountUUID?, _ useTor: Bool) -> Void = { _, _ in }
+    // MOB-1497: stamps `accountUUID`'s network snapshot committed (`nil` resolves the selected
+    // account). Production has exactly ONE call site — inside `recordCommittedSchedule` itself,
+    // co-located there so the two can never drift out of sync across `recordCommittedSchedule`'s
+    // several external write points (software sign+store success, Keystone deferred store success,
+    // dust commit) — see `MigrationManagerImpl.recordCommittedSchedule`'s doc. Also exposed as its
+    // own member so tests can exercise the stamp directly. `= { _ in }` is a no-op default, not a
+    // test fallback.
+    var markNetworkSnapshotCommitted: @Sendable (_ accountUUID: AccountUUID?) -> Void = { _ in }
+    // MOB-1497: discards `accountUUID`'s network snapshot (`nil` resolves the selected account) ONLY
+    // while still PROVISIONAL (`committedAt == nil`) — a no-op against an already-committed snapshot.
+    // Called at the migration flow's teardown (`RootCoordinator`'s `migrationCoordFlow` path-clearing
+    // sites) so closing the flow without committing discards the provisional pick; a re-entry
+    // re-forms and re-rolls. `= { _ in }` is a no-op default, not a test fallback.
+    var clearProvisionalNetworkSnapshot: @Sendable (_ accountUUID: AccountUUID?) -> Void = { _ in }
     // MOB-1496 (W4): every persisted network snapshot across `walletAccounts` (+ the selected
     // account, defensively, deduped) — i.e. every account with a currently-active migration run.
     // Drives `AutoServerSelectionLiveKey`'s pinning (auto server selection stays within an active
     // run's sync-provider family) and `ServerSetupStore`'s manual-switch privacy warning.
     var activeNetworkSnapshots: @Sendable () -> [MigrationNetworkSnapshot] = { [] }
+    // MOB-1497 (R7-T3 — failure routing, R14-R17): classifies + routes a broadcast failure for
+    // `accountUUID` (`nil` resolves the selected account, same convention as `migrationNetworkOptions`
+    // above). See `MigrationBroadcastFailureRoute`'s doc for what each outcome means to a caller, and
+    // `MigrationManagerImpl.routeBroadcastFailure` for the full R14-R17 decision table. Performs the
+    // R16 within-provider rotation itself when it returns `.retryRotated` — the ONE state change this
+    // member may make (see `MigrationSnapshotStorage.rotateBroadcastEndpoint`'s doc) — every other
+    // route makes no state change. `= { _, _ in .plainRetry }` is a required macro default (the return
+    // type is non-throwing/non-Void/non-Optional), not a test fallback (see the
+    // `recordCommittedSchedule` note above).
+    var routeBroadcastFailure: @Sendable (
+        _ accountUUID: AccountUUID?, _ failureClass: MigrationBroadcastFailureClass
+    ) async -> MigrationBroadcastFailureRoute = { _, _ in MigrationBroadcastFailureRoute.plainRetry }
+    // MOB-1497 (R7 final review, Important-1 — spec §G): per-account read of the persisted Tor-hold
+    // indicator `routeBroadcastFailure` maintains (see that member's doc and
+    // `MigrationFailureRoutingStorage.torHoldActive`) — true iff the account's MOST RECENT broadcast
+    // failure was a mid-run Tor hold (`.torHold`/R15), false for every other outcome, including a
+    // landed broadcast or a first-run Tor choice. Consumed by the waiting/stalled surfaces
+    // (`MigrationStatusStore`'s resume presentation, `SmartBanner`'s transfer-waiting variant via
+    // `bannerVariant` above) so a Tor-caused stall is never silent. `nil` accountUUID resolves the
+    // selected account, same convention as `migrationNetworkOptions` above. `= { _ in false }` is a
+    // required macro default, not a test fallback (see the `recordCommittedSchedule` note above).
+    var isMigrationTorHoldActive: @Sendable (_ accountUUID: AccountUUID?) -> Bool = { _ in false }
+    // MOB-1497 (R7-T3, R14): the R11-warning-gated, doc-sanctioned exception to R4's run-immutability
+    // for "Tor unavailable on the first broadcast of the run" — mutates ONLY `useTor` on `accountUUID`'s
+    // (`nil` resolves the selected account) ACTIVE network snapshot (committed if one exists, else the
+    // still-provisional one — R7-review fix, Important-1: the note-split lane's R14 choice can fire
+    // against a still-provisional snapshot); endpoint/provider/takenAt/committedAt are left
+    // byte-for-byte untouched. Only ever called with `useTor: false` in the shipped app (the user's
+    // "proceed without Tor" choice after the R11 warning), but the parameter stays a `Bool` rather than
+    // a fire-and-forget "turn it off" — see `MigrationSnapshotStorage`'s new mutation method for the
+    // no-op-when-no-snapshot-at-all shape.
+    // `= { _, _ in }` is a no-op default, not a test fallback.
+    var overrideTorForRun: @Sendable (_ accountUUID: AccountUUID?, _ useTor: Bool) -> Void = { _, _ in }
+    // MOB-1497 (R7-T3, R17): the consent-gated, doc-sanctioned sync-server fallback once every shipped
+    // endpoint for the broadcast provider is unreachable — sets `accountUUID`'s (`nil` resolves the
+    // selected account) ACTIVE network snapshot's (committed-else-provisional — same R7-review fix as
+    // `overrideTorForRun` above) `broadcastEndpoint`/`broadcastProvider` to its OWN
+    // `syncEndpoint`/`syncProvider`, and resets the R16 episode set (a fresh episode starts once the
+    // user has consented to the fallback). Afterwards the snapshot is same-server by construction, so a
+    // LATER endpoint-class failure takes `routeBroadcastFailure`'s same-server exemption naturally.
+    // `= { _ in }` is a no-op default, not a test fallback.
+    var overrideBroadcastEndpointToSyncServer: @Sendable (_ accountUUID: AccountUUID?) async -> Void = { _ in }
+    // MOB-1497 (R9-T3, C1 fix): identity-custom classification for the account's CURRENTLY
+    // CONFIGURED sync endpoint — the exact same classification `MigrationManagerImpl
+    // .createNetworkSnapshot` computes internally when building a fresh snapshot, but with NO
+    // snapshot storage read/write and no forming, so a caller can decide whether to persist + form
+    // (non-custom) or detour straight to the sheet (custom) BEFORE either happens. This exists
+    // because detecting via `formNetworkSnapshot` + a peek (the way the Tor sheet's own
+    // presentation-time detection works) is unsafe for the flag-on skip branches:
+    // `setNetworkPrivacyOptions` below must run BEFORE `formNetworkSnapshot` for the non-custom
+    // outcome (see that member's doc — a later persist does not correct an already-formed
+    // snapshot's baked-in `useTor`), so detection here must never form. `= { false }` (not custom)
+    // is a DELIBERATE safe default (unlike most `= { ... }` defaults in this file, which exist only
+    // because the macro requires a literal and production always overrides via `live()`) — an
+    // unstubbed test or preview reads "not custom", matching the coordinator's own
+    // `isIdentityCustom(nil)` nil-snapshot default and every existing non-custom flag-on test's
+    // expectations without needing to know this member exists.
+    var isSyncServerIdentityCustom: @Sendable () -> Bool = { false }
     // Persists the pre-run Tor choice the migration entry/Tor sheet writes. Consumed by
-    // `ensureNetworkSnapshot` when a run's snapshot is first taken — a later call does NOT alter an
-    // already-active run's snapshot (see `MigrationNetworkSnapshot.useTor`'s doc).
+    // `ensureNetworkSnapshot`/`formNetworkSnapshot` when a run's snapshot is first taken — a later
+    // call does NOT alter an already-active run's snapshot (see `MigrationNetworkSnapshot.useTor`'s
+    // doc). MOB-1497 (R1): the READ side of this choice (`MigrationGateStorage
+    // .isTorEnabledForMigration`) now defaults to `true`, not `false`, when never written.
     var setNetworkPrivacyOptions: @Sendable (_ useTor: Bool) -> Void
     // R8-T3 (S2): per-account now — a wallet-wide flag suppressed a SECOND account's own
     // completion banner/re-entry the moment the FIRST account acknowledged, made that account's
@@ -167,4 +277,39 @@ enum MigrationReentryRoute: Equatable, Sendable {
     case noteSplitProgress               // row 5
     case reviewManual(step: Int, total: Int)  // row 6 — manual delivery, next transfer due
     case entry                           // row 7 (notStarted / readyToPropose)
+}
+
+/// MOB-1497 (R7-T3 — failure routing): the outcome `MigrationManagerClient.routeBroadcastFailure`
+/// returns for a classified broadcast failure — which failure-routing surface (R14-R17) a foreground
+/// store should present, or (background) that a route was resolved at all (background maps every
+/// route to re-arm-only — see `RootInitialization.executeBroadcastAction`). See
+/// `MigrationManagerImpl.routeBroadcastFailure`'s doc for the full decision table.
+///
+/// R7 final review, Important-1 (spec §G): every call ALSO persists whether this route is `.torHold`
+/// into the account's Tor-hold indicator (`MigrationFailureRoutingStorage.torHoldActive`) — the
+/// "No [snapshot/episode] state change" notes below are about the network snapshot/episode only; the
+/// indicator update happens on every route, every lane, unconditionally.
+enum MigrationBroadcastFailureRoute: Equatable, Sendable {
+    /// R14: Tor was unavailable on the FIRST broadcast attempt of the run (no prior landed
+    /// broadcast) — offer the choice to retry (keeping Tor), proceed without it (subject to the R11
+    /// warning), or cancel. No snapshot/episode state change.
+    case torFirstRunChoice
+    /// R15: Tor was unavailable MID-run (at least one broadcast already landed this run) — hold and
+    /// retry; never an implicit clearnet opt-out. No snapshot/episode state change; this IS the one
+    /// route that sets the Tor-hold indicator (see the enum's own doc above).
+    case torHold
+    /// R16: the broadcast endpoint was unreachable and a same-provider rotation to an untried
+    /// endpoint was just performed — retry re-executes against the newly-rotated endpoint. Presents
+    /// the SAME generic failure sheet as `.plainRetry` (the rotation itself is silent).
+    case retryRotated
+    /// R16's same-server exemption (identity-custom sync server, or the defensive same-server
+    /// fallback — testnet or no other built-in provider), or the defensive no-active-snapshot
+    /// fallback: nothing to rotate to, so R17 can never fire either. Presents the plain existing
+    /// failure sheet, unchanged. No state change, no episode tracking.
+    case plainRetry
+    /// R17: every shipped endpoint for the broadcast provider has been tried this episode — offer
+    /// the consent-gated sync-server fallback. `torEnabled` (the active snapshot's `useTor` —
+    /// committed if one exists, else the still-provisional one) selects which R17 warning copy
+    /// applies.
+    case providerExhausted(torEnabled: Bool)
 }

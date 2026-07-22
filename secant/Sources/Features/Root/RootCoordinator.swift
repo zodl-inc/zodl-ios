@@ -288,6 +288,11 @@ extension Root {
                 // case doesn't reset `migrationCoordFlowState` itself, reading before any mutation
                 // matches the release's own ordering).
                 let cancelEffect = cancelAbandonedKeystoneMigrationRun(state: state)
+                // MOB-1497: the migration flow's teardown point — discards the account's network
+                // snapshot iff it's still PROVISIONAL (never committed to a schedule this run); a
+                // no-op against an already-committed one, which stays until its own run-end clear.
+                // `nil` resolves the selected account, same convention as every other manager member.
+                migrationManager.clearProvisionalNetworkSnapshot(nil)
                 state.path = nil
                 // R8-T3 (#9): fire-and-forget — every flow-root close/terminal delegate lands
                 // here, including an abandoned pre-commit confirm lane that already took a
@@ -325,6 +330,8 @@ extension Root {
                 // `.success`, by which point `.sendNowGateResolved(.allowed)` has already cleared
                 // the hold itself, so this is a no-op in practice; kept for the same "Root pops the
                 // flow from outside the store's own exit" reasoning as `.flowFinished` above.
+                // (MOB-1497 fix wave: the provisional-snapshot clear that briefly lived here was a
+                // documented dead no-op — `.flowFinished` is the one live provisional-teardown site.)
                 let releaseEffect = releaseSendWaitHold()
                 // MOB-1496: same defensive reasoning for a live Keystone signing ceremony — by the
                 // `.success` phase `pendingKeystoneSigning` is already `nil` in every reachable case

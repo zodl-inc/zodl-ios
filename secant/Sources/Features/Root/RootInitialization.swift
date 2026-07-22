@@ -305,6 +305,20 @@ extension Root {
         case checkRestoreWalletFlag(SyncStatus)
         case checkWalletInitialization
         case checkWalletConfig
+        /// R9-T5 (finding 7): the trigger for `migrationManager.clearAbandonedNetworkSnapshot(_:)`
+        /// — a pre-commit snapshot abandoned by killing the app mid-flow (which never reaches
+        /// `.migrationCoordFlow(.flowFinished)`, the only OTHER trigger — see `RootCoordinator`)
+        /// would otherwise survive forever instead of being cleared. Sent from TWO sites, both
+        /// needed (final-review IMPORTANT-1): (1) `.initialSetups`'s reconcile effect, once
+        /// `migrationManager.reconcile()` completes — covers a WARM re-init
+        /// (`willEnterForeground` unprepared/locked, `walletConfigChanged` re-entry) where accounts
+        /// are already populated from earlier in this same process; (2) `.loadedWalletAccounts`,
+        /// once the SDK's own account list lands in state — the site that actually fires on a
+        /// genuine COLD launch, since `.initialSetups` runs long before accounts exist or the SDK
+        /// is prepared there (see that send site's doc for the empty-candidate-list/unprepared-SDK
+        /// walk). Both sites share the SAME flow-open guard on this action's reducer arm below —
+        /// see there for why it's needed.
+        case clearAbandonedMigrationSnapshots
         case initializeSDK(WalletInitMode)
         case initialSetups
         case initializationFailed(ZcashError)
@@ -850,9 +864,64 @@ extension Root {
                     // MOB-1466: reconcile migration state once per launch — off the hot path
                     // (`migrationManager.reconcile()` is idempotent), so it never blocks or
                     // reorders the existing wallet-initialization sequence below.
-                    .run { [migrationManager] _ in await migrationManager.reconcile() },
+                    // R9-T5 (finding 7): `.clearAbandonedMigrationSnapshots` is chained AFTER
+                    // reconcile completes, in this SAME effect, rather than `.merge`d alongside it —
+                    // reconcile's own stale-`.notStarted` clear (`clearIfCommitted`) is deliberately
+                    // provisional-safe, so ordering doesn't matter for correctness against IT, but
+                    // running the abandoned-snapshot fan-out as a distinct step keeps this effect's
+                    // shape self-documenting as "reconcile, then a second, unrelated cleanup pass."
+                    // Final-review IMPORTANT-1: on a genuine COLD launch this particular send is a
+                    // near-total no-op — `state.selectedWalletAccount`/`state.walletAccounts` (both
+                    // `@Shared(.inMemory)`) are still nil/empty this early, populated only later by
+                    // `.loadedWalletAccounts` (dispatched from inside `.initializeSDK`, after
+                    // `sdkSynchronizer.walletAccounts()` succeeds) — so the fan-out below iterates
+                    // an empty list, and even a non-empty list would find the manager's own
+                    // `migrationState` read nil pre-prepare. `.loadedWalletAccounts`'s OWN send of
+                    // this same action (see its case below) is what actually clears an abandoned
+                    // snapshot on a cold launch; THIS site earns its keep on the WARM re-init paths
+                    // (`willEnterForeground` unprepared/locked, `walletConfigChanged`) where accounts
+                    // are already populated from earlier in this same process.
+                    .run { [migrationManager] send in
+                        await migrationManager.reconcile()
+                        await send(.initialization(.clearAbandonedMigrationSnapshots))
+                    },
                     .send(.initialization(.checkWalletInitialization))
                 )
+
+            case .initialization(.clearAbandonedMigrationSnapshots):
+                // R9-T5 (finding 7): GUARDED on the migration flow NOT being open — a cold launch
+                // via a migration-notification tap can push `.migrationCoordFlow` open DURING
+                // initialization (see `.migrationNotificationTapped`'s stash-and-replay above,
+                // and `.migrationNotificationRoute`'s own dispatch chain), racing this launch-side
+                // clear against a freshly-formed provisional snapshot; without this guard, the
+                // clear could win that race and wipe the snapshot out from under the user after the
+                // Tor sheet has already displayed its endpoint (an R13 violation on confirm). `state
+                // .path == .migrationCoordFlow` is the same presence check `RootCoordinator`'s own
+                // teardown sites key off (set at every "open the flow" site, cleared by
+                // `.flowFinished`/the Sending-delegate flow-close case) — checked here purely to
+                // close the LAUNCH-side race. The residual window — the flow opens WHILE a clear is
+                // already in flight — is the same accepted window `.migrationCoordFlow
+                // (.flowFinished)`'s own fire-and-forget clear already lives with (see that case's
+                // doc): human-speed flow entry makes it practically unreachable in practice. This
+                // ONE handler is shared by BOTH send sites (`.initialSetups` and
+                // `.loadedWalletAccounts` — see this action's case doc) — the guard is evaluated
+                // identically regardless of which one fired it; the notification-tap race is if
+                // anything MORE relevant at the `.loadedWalletAccounts` send, since it fires later
+                // in the cold-launch sequence, giving a stashed notification tap more time to have
+                // already replayed and opened the flow by then.
+                guard state.path != Root.State.Path.migrationCoordFlow else { return .none }
+
+                // Same candidate-account list `reconcile()` itself uses — selected account first,
+                // then the rest of `walletAccounts`, deduped.
+                let accountUUIDs = MigrationDerivations.candidateAccountUUIDs(
+                    selectedAccountUUID: state.selectedWalletAccount?.id,
+                    walletAccounts: state.walletAccounts
+                )
+                return .run { [migrationManager, accountUUIDs] _ in
+                    for accountUUID in accountUUIDs {
+                        await migrationManager.clearAbandonedNetworkSnapshot(accountUUID)
+                    }
+                }
 
                 /// Evaluate the wallet's state based on keychain keys and database files presence
             case .initialization(.checkWalletInitialization):
@@ -1042,7 +1111,21 @@ extension Root {
                 return .merge(
                     .send(.loadContacts),
                     .send(.loadUserMetadata),
-                    .send(.loadSwapAPIAccess)
+                    .send(.loadSwapAPIAccess),
+                    // R9-T5 fix (final-review IMPORTANT-1): the trigger that actually clears an
+                    // abandoned snapshot on a genuine COLD launch — `.initialSetups`'s own send
+                    // (chained after `reconcile()`) fires long before this point, when
+                    // `walletAccounts`/`selectedWalletAccount` are still empty/nil and the SDK
+                    // isn't prepared yet, so it fans over an empty candidate list and no-ops (see
+                    // that send site's doc). HERE both are populated just above AND the SDK is
+                    // provably prepared (this handler only runs after `sdkSynchronizer
+                    // .walletAccounts()` succeeded). Safe to double-fire alongside `.initialSetups`'s
+                    // send on the WARM re-init paths where accounts were already populated from
+                    // earlier in this same process: the shared handler's flow-open guard,
+                    // `clearAbandonedNetworkSnapshot`'s own idempotent no-op (nothing left to clear
+                    // the second time), and the manager's serial executor make a repeat call
+                    // harmless.
+                    .send(.initialization(.clearAbandonedMigrationSnapshots))
                 )
 
             case .resolveMetadataEncryptionKeys:
@@ -1593,24 +1676,73 @@ extension Root {
     /// remains the sole due-ness authority (the classification height was for ordering/re-arm math
     /// only) — nil, or any other throw, re-arms without a possibly-wrong notification and does NOT
     /// try another candidate (one broadcast per session, full stop).
+    /// R7-T3 (MOB-1497): both failure paths below now classify + call `routeBroadcastFailure` before
+    /// their existing notification/re-arm handling — see that member's own doc for the R14-R17
+    /// decision table. The BACKGROUND lane maps EVERY route to the SAME re-arm-only behavior it
+    /// already had: no route changes the notification content or adds a fallback, since consent
+    /// (R14's choice, R17's sync-server offer) is strictly foreground-only, and a Tor-class failure
+    /// (R14/R15) never rotates by construction (`routeBroadcastFailure` itself enforces this — see
+    /// its doc). The ONE state change this lane may observe is `.retryRotated`'s embedded rotation
+    /// (performed INSIDE `routeBroadcastFailure`, not here) — rotate-then-re-arm, so the NEXT
+    /// session's `migrationNetworkOptions` read picks up the newly-rotated endpoint. The one-
+    /// broadcast-per-session invariant is untouched: this call site never retries within the same
+    /// session regardless of route.
+    ///
+    /// R9-T7 (MOB-1497 review remediation, finding 9): this was the ONE broadcast lane that never
+    /// called `sdkSynchronizer.stopSyncBeforeMigrationBroadcast()` first — it relied on the SDK's own
+    /// during-sync throw (`ZcashError.migrationBroadcastDuringSync`) instead, which is only
+    /// advisory/point-in-time (see that method's doc) and never itself resumes sync afterward. An
+    /// overlap with an independently-scheduled sync (this app registers three separate
+    /// `BGTaskScheduler` tasks, and a foreground sync also qualifies) used to fall through the
+    /// generic `catch` below, where the OLD default-arm classification would misreport it as
+    /// `.endpointUnreachable` and pollute the persisted R16 rotation episode with a healthy endpoint.
+    /// Fixed in two halves: (1) below, mirroring `MigrationSendingStore.executeNextTransfer`'s
+    /// `didStopSyncForBroadcast` bookkeeping exactly — stop sync immediately before the broadcast
+    /// call, and nudge `refreshMigrationSyncGate()` afterward on every outcome that did NOT land
+    /// (the SDK's own gate transition covers a landed broadcast's resume, exactly like Sending);
+    /// (2) `MigrationBroadcastFailureClass.classify(error:)` now carves `migrationBroadcastDuringSync`
+    /// out to `nil` regardless of lane, so even a race that slips between this stop and the SDK's own
+    /// attempt (the guard is still only point-in-time) can never rotate/exhaust — see that method's
+    /// doc. Outcome table (stopped/nudged — identical shape to Sending's, since this lane has no
+    /// earlier guard that could skip the stop):
+    ///   - `.success` (landed): stopped, NOT nudged.
+    ///   - `.networkError`/`.invalidNote`/`.expired`: stopped, nudged.
+    ///   - `nil` (nothing due): stopped, nudged.
+    ///   - catch `migrationRecordFailedAfterBroadcast` (landed): stopped, NOT nudged.
+    ///   - catch anything else (incl. Tor-unavailable, and — post carve-out — the nil-classified
+    ///     during-sync race): stopped, nudged.
     private static func executeBroadcastAction(
         _ winnerAccountUUID: AccountUUID,
         classifications: [(accountUUID: AccountUUID, classification: MigrationAccountClassification)],
         dependencies: MigrationSessionDependencies
     ) async {
         let options = await dependencies.migrationManager.migrationNetworkOptions(winnerAccountUUID)
+        // R9-T7: tracks whether `stopSyncBeforeMigrationBroadcast()` ran THIS attempt — declared
+        // outside the `do` so the `catch` clauses below can read it too (mirrors
+        // `MigrationSendingStore.executeNextTransfer`'s identical `var` exactly). Nothing here can
+        // return before reaching the call (the winning account is already resolved by the planner
+        // before this function runs, unlike Sending's no-account/Keystone-dust/USK-derivation
+        // guards), so it is unconditionally `true` once the `do` block is entered — tracked the same
+        // way regardless, so the nudge checks below read identically at both call sites.
+        var didStopSyncForBroadcast = false
         do {
+            await dependencies.sdkSynchronizer.stopSyncBeforeMigrationBroadcast()
+            didStopSyncForBroadcast = true
             let result = try await dependencies.sdkSynchronizer.executeNextPendingMigrationTransfer(winnerAccountUUID, options)
 
             switch result {
             case .success:
                 // [MOB-1496] W2: persist the sent record + reconcile (this op's success is one of
-                // `reconcile()`'s triggers).
+                // `reconcile()`'s triggers). R9-T7: no nudge — the SDK's own gate transition on a
+                // successful broadcast already covers the resume (mirrors Sending's `.success` case).
                 if let result {
                     await handleLandedBroadcast(winnerAccountUUID, result, classifications: classifications, dependencies: dependencies)
                 }
 
             case .networkError, .invalidNote, .expired:
+                if let result {
+                    _ = await dependencies.migrationManager.routeBroadcastFailure(winnerAccountUUID, result: result)
+                }
                 let progress = (try? await dependencies.sdkSynchronizer.getMigrationProgress(winnerAccountUUID)) ?? nil
                 let nextNumber = (progress?.completedTransfers ?? 0) + 1
                 // R8-T5 (S4): attributed to the winning account this broadcast attempt was for.
@@ -1620,9 +1752,19 @@ extension Root {
                     Data(winnerAccountUUID.id).hexEncodedString()
                 )
                 await dependencies.migrationBGScheduler.scheduleNextWindow()
+                // R9-T7: not landed — the stop above was never followed by a successful broadcast,
+                // so nudge Root's gate feed directly (mirrors Sending's identical non-success nudge).
+                if didStopSyncForBroadcast {
+                    await dependencies.migrationManager.refreshMigrationSyncGate()
+                }
 
             case nil:
                 await dependencies.migrationBGScheduler.scheduleNextWindow()
+                // R9-T7: nothing was due, but the stop above still ran — nudge exactly like
+                // Sending's own `nil`-result case.
+                if didStopSyncForBroadcast {
+                    await dependencies.migrationManager.refreshMigrationSyncGate()
+                }
             }
         } catch ZcashError.migrationRecordFailedAfterBroadcast(_) {
             // [MOB-1496] The broadcast DID land; only the engine's own recording of it failed —
@@ -1630,7 +1772,8 @@ extension Root {
             // (`MigrationScheduleStorage` maps an empty string to `nil`). The BG session must not
             // re-send (this isn't a networkError) and must not skip the notification/re-arm a
             // landed transfer deserves. Mirrors `MigrationSendingStore`/`MigrationNoteSplitStore`'s
-            // identical foreground rationale for this same error.
+            // identical foreground rationale for this same error. R9-T7: landed, so no nudge either
+            // — matches Sending's identical catch clause (which never even checks the flag).
             await handleLandedBroadcast(
                 winnerAccountUUID,
                 MigrationTransferResult.success(txId: ""),
@@ -1638,12 +1781,26 @@ extension Root {
                 dependencies: dependencies
             )
         } catch {
+            // R7-T3 (MOB-1497): classify + route the thrown error too (e.g. `migrationTorUnavailable`
+            // routes as Tor-class here) — same re-arm-only outward behavior as before; the route's
+            // only effect is the possible embedded rotation (see this method's own doc). R9-T7: a
+            // `ZcashError.migrationBroadcastDuringSync` race (the stop above narrows this window but
+            // the guard stays only point-in-time) now classifies to `nil` here — see
+            // `MigrationBroadcastFailureClass.classify(error:)`'s dedicated carve-out — so it never
+            // reaches `routeBroadcastFailure`'s stateful routing at all.
+            _ = await dependencies.migrationManager.routeBroadcastFailure(winnerAccountUUID, error: error)
             // A throwing broadcast attempt for any OTHER reason is not itself a definite outcome to
             // notify about — treat it like the `nil` "nothing executed" case: re-arm the next
             // window and let that session's own outcome (or the engine's self-heal) settle it,
             // without a possibly-wrong notification.
             LoggerProxy.error("BGTask migration session: executeNextPendingMigrationTransfer failed \(error)")
             await dependencies.migrationBGScheduler.scheduleNextWindow()
+            // R9-T7: not landed — nudge exactly like Sending's own generic-catch nudge. Fires here
+            // too for the nil-classified during-sync race above: the stop still ran and this attempt
+            // still never landed, so sync must still resume.
+            if didStopSyncForBroadcast {
+                await dependencies.migrationManager.refreshMigrationSyncGate()
+            }
         }
     }
 

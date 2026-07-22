@@ -68,6 +68,12 @@ struct MigrationNoteSplit {
         var txId = ""
         /// Failure sheet presented over the splitting phase.
         var isFailurePresented = false
+        /// R7-T3 (MOB-1497): the classified/routed variant of the presented failure sheet — see
+        /// `MigrationSending.State.failureKind`'s doc for the shared shape; set by
+        /// `.broadcastFailureRouted`, always sent (when it is at all) immediately before the
+        /// `.splitResult` that flips `isFailurePresented`.
+        var failureKind: MigrationBroadcastFailureRoute?
+        @Presents var alert: AlertState<Action>?
         /// The prepared split proposal, held so `retryTapped` can re-submit without re-preparing.
         var proposal: NoteSplitProposal?
         var cancelStateStreamId = UUID()
@@ -127,7 +133,12 @@ struct MigrationNoteSplit {
     }
 
     enum Action: BindableAction, Equatable {
+        case alert(PresentationAction<Action>)
         case binding(BindingAction<State>)
+        /// R7-T3 (MOB-1497, R14/R15/R16): `routeBroadcastFailure`'s resolved route for a classified
+        /// broadcast failure — see `MigrationSending.Action.broadcastFailureRouted`'s doc for the
+        /// shared shape.
+        case broadcastFailureRouted(MigrationBroadcastFailureRoute)
         /// Failure sheet: dismiss (stay on screen).
         case cancelTapped
         /// Flow-root back control (splitting phase only): closes the flow instead of popping.
@@ -137,7 +148,12 @@ struct MigrationNoteSplit {
         case continueTapped
         case copyTxIdTapped
         case delegate(Delegate)
+        /// R7-T3 (R11, reused from `MigrationTorSheet`'s off-warning): see
+        /// `MigrationSending.Action.offWarningProceedTapped`'s doc.
+        case offWarningProceedTapped
         case onAppear
+        /// R7-T3 (R14): the `.torFirstRunChoice` sheet's "Proceed without Tor" button.
+        case proceedWithoutTorTapped
         /// Failure sheet: dismiss, then re-submit the stored proposal (or, on the Keystone fork,
         /// (re)store/broadcast the signed PCZT — see `signedNoteSplitPczt`/`splitStored`).
         case retryTapped
@@ -161,6 +177,8 @@ struct MigrationNoteSplit {
         /// existing `signedNoteSplitPczt`/`splitStored` clearing.
         case splitConfirmed
         case splitResult(MigrationTransferResult)
+        /// R7-T3 (R17): the `.providerExhausted` sheet's "Broadcast via sync server" button.
+        case useSyncServerTapped
 
         enum Delegate: Equatable {
             case continued
@@ -188,11 +206,25 @@ struct MigrationNoteSplit {
 
         Reduce { state, action in
             switch action {
+            case .alert(.presented(let action)):
+                return .send(action)
+
+            case .alert(.dismiss):
+                // Mirrors `MigrationCompleteStore`'s plain shape — see
+                // `MigrationSending.body`'s identical `.alert(.dismiss)` case for why.
+                state.alert = nil
+                return .none
+
             case .binding:
+                return .none
+
+            case .broadcastFailureRouted(let route):
+                state.failureKind = route
                 return .none
 
             case .cancelTapped:
                 state.isFailurePresented = false
+                state.failureKind = nil
                 return .none
 
             case .closeTapped:
@@ -207,6 +239,22 @@ struct MigrationNoteSplit {
                 return .none
 
             case .delegate:
+                return .none
+
+            case .offWarningProceedTapped:
+                state.alert = nil
+                state.isFailurePresented = false
+                state.failureKind = nil
+                if let account = state.selectedWalletAccount {
+                    migrationManager.overrideTorForRun(account.id, false)
+                }
+                return retryEffect(state)
+
+            case .proceedWithoutTorTapped:
+                // R7-review fix (Minor-3): see `MigrationSending`'s identical guard for the rationale.
+                guard state.failureKind == MigrationBroadcastFailureRoute.torFirstRunChoice else { return .none }
+                let usesFullBalanceCopy = migrationManager.migrationMode() == MigrationMode.immediate
+                state.alert = AlertState.migrationTorOffWarning(usesFullBalanceCopy: usesFullBalanceCopy, proceedAction: .offWarningProceedTapped)
                 return .none
 
             case .onAppear:
@@ -243,21 +291,8 @@ struct MigrationNoteSplit {
 
             case .retryTapped:
                 state.isFailurePresented = false
-                // MOB-1496 (C-1b fix, fix-wave 2): checked FIRST — a broadcast that already landed
-                // is safe and must never be re-sent; only the coordinator's deferred schedule store
-                // needs retrying (it alone holds the signed entries, so there is nothing to store
-                // here).
-                if state.awaitingScheduleStore {
-                    return .send(.delegate(.storeScheduleRequested))
-                }
-                if let signedNoteSplitPczt = state.signedNoteSplitPczt {
-                    return resubmitSignedNoteSplit(
-                        signedNoteSplitPczt,
-                        stored: state.splitStored,
-                        account: state.selectedWalletAccount
-                    )
-                }
-                return submitNoteSplit(state.proposal, account: state.selectedWalletAccount)
+                state.failureKind = nil
+                return retryEffect(state)
 
             case .noteSplitStored:
                 state.splitStored = true
@@ -269,6 +304,10 @@ struct MigrationNoteSplit {
 
             case .scheduleStoreFailed:
                 state.isFailurePresented = true
+                // Not a broadcast failure (the split already landed safely — only the coordinator's
+                // deferred schedule store failed) — never classified/routed, so the sheet always
+                // reverts to the plain generic copy here regardless of any earlier routed kind.
+                state.failureKind = nil
                 return .none
 
             case .splitConfirmed:
@@ -287,8 +326,41 @@ struct MigrationNoteSplit {
                     state.isFailurePresented = true
                 }
                 return .none
+
+            case .useSyncServerTapped:
+                state.isFailurePresented = false
+                state.failureKind = nil
+                guard let account = state.selectedWalletAccount else { return .none }
+                return .concatenate(
+                    .run { [migrationManager] _ in await migrationManager.overrideBroadcastEndpointToSyncServer(account.id) },
+                    retryEffect(state)
+                )
             }
         }
+    }
+
+    /// R7-T3 (MOB-1497): the retry dispatch `.retryTapped`/`.offWarningProceedTapped`/
+    /// `.useSyncServerTapped` all share — pulled out so R14's "Proceed without Tor" and R17's
+    /// "Broadcast via sync server" reach the SAME store-aware Keystone-fork-vs-software branching
+    /// `.retryTapped` already had, without duplicating it. Takes a snapshot of `State` rather than
+    /// `inout` — none of the three branches below need to observe a mutation made earlier in the
+    /// SAME action (each caller already applied its own `isFailurePresented`/`failureKind`/etc.
+    /// updates directly to the live `state` before calling this).
+    private func retryEffect(_ state: State) -> Effect<Action> {
+        // MOB-1496 (C-1b fix, fix-wave 2): checked FIRST — a broadcast that already landed is safe
+        // and must never be re-sent; only the coordinator's deferred schedule store needs retrying
+        // (it alone holds the signed entries, so there is nothing to store here).
+        if state.awaitingScheduleStore {
+            return .send(.delegate(.storeScheduleRequested))
+        }
+        if let signedNoteSplitPczt = state.signedNoteSplitPczt {
+            return resubmitSignedNoteSplit(
+                signedNoteSplitPczt,
+                stored: state.splitStored,
+                account: state.selectedWalletAccount
+            )
+        }
+        return submitNoteSplit(state.proposal, account: state.selectedWalletAccount)
     }
 
     private func submitNoteSplit(_ proposal: NoteSplitProposal?, account: WalletAccount?) -> Effect<Action> {
@@ -304,24 +376,48 @@ struct MigrationNoteSplit {
             }
         }
 
-        return .run { send in
-            // MOB-1496 (R8-T4, #3): see `MigrationSendingStore.executeNextTransfer`'s twin comment —
-            // only a stop that was never followed by a successful broadcast needs the nudge.
-            var didStopSyncForBroadcast = false
+        return .run { [migrationManager] send in
+            // R9-T4 (MOB-1497 review remediation, finding 5): USK derivation is pre-broadcast LOCAL
+            // work (keychain export + derivation) — hoisted ABOVE the broadcast `do`/`catch` below so
+            // a failure here can never reach `routeBroadcastFailure` — see
+            // `MigrationSendingStore.executeNextTransfer`'s twin comment for the full rationale. Sync
+            // is never stopped this early, so a hoisted failure here also never nudges
+            // `refreshMigrationSyncGate()`.
+            let usk: UnifiedSpendingKey
             do {
-                let usk = try MigrationSpendingKeyDerivation.deriveUSK(
+                usk = try MigrationSpendingKeyDerivation.deriveUSK(
                     zip32AccountIndex: zip32AccountIndex,
                     walletStorage: walletStorage,
                     mnemonic: mnemonic,
                     derivationTool: derivationTool,
                     networkType: zcashSDKEnvironment.network().networkType
                 )
+            } catch {
+                await send(.splitResult(MigrationTransferResult.networkError(retryable: true)))
+                return
+            }
+
+            // MOB-1496 (R8-T4, #3): see `MigrationSendingStore.executeNextTransfer`'s twin comment —
+            // only a stop that was never followed by a successful broadcast needs the nudge.
+            var didStopSyncForBroadcast = false
+            do {
                 let options = await migrationManager.migrationNetworkOptions(account.id)
                 await sdkSynchronizer.stopSyncBeforeMigrationBroadcast()
                 didStopSyncForBroadcast = true
                 let result = try await sdkSynchronizer.submitNoteSplit(account.id, proposal, usk, options)
+                // R7-T3 (MOB-1497): classify+route BEFORE sending the outcome action — a non-nil
+                // class additionally presents the matching failure-sheet variant; `.splitResult`'s
+                // own handling (below) is otherwise byte-for-byte unchanged.
+                if let route = await migrationManager.routeBroadcastFailure(account.id, result: result) {
+                    await send(.broadcastFailureRouted(route))
+                }
                 await send(.splitResult(result))
                 if case MigrationTransferResult.success = result {
+                    // R7-T3 (MOB-1497): the note-split lane's own had-broadcast/episode chokepoint —
+                    // see `MigrationManagerImpl.recordTransferBroadcast`'s doc for why this call is
+                    // safe against `MigrationScheduleStorage`'s own (unrelated) sentRecords
+                    // bookkeeping at this point in the flow.
+                    await migrationManager.recordTransferBroadcast(account.id, result)
                     await migrationManager.reconcile()
                 } else if didStopSyncForBroadcast {
                     await migrationManager.refreshMigrationSyncGate()
@@ -330,9 +426,18 @@ struct MigrationNoteSplit {
                 // [MOB-1496] The broadcast DID land; only recording failed (the engine self-heals
                 // on a later read/attempt) — route to the success-like path rather than implying a
                 // failure that didn't happen.
-                await send(.splitResult(MigrationTransferResult.success(txId: "")))
+                let landedResult = MigrationTransferResult.success(txId: "")
+                await send(.splitResult(landedResult))
+                await migrationManager.recordTransferBroadcast(account.id, landedResult)
                 await migrationManager.reconcile()
             } catch {
+                // R7-T3 (MOB-1497): classify+route the thrown error too — see the success path's
+                // comment above for the same "send route first" ordering.
+                if let route = await migrationManager.routeBroadcastFailure(account.id, error: error) {
+                    await send(.broadcastFailureRouted(route))
+                }
+                // R8-T4 (#3) composed with the classification: the nudge resumes sync
+                // stopped for a broadcast that never landed (the SDK gate never transitioned).
                 if didStopSyncForBroadcast {
                     await migrationManager.refreshMigrationSyncGate()
                 }
@@ -368,29 +473,57 @@ struct MigrationNoteSplit {
             return .run { send in await send(.splitResult(MigrationTransferResult.networkError(retryable: true))) }
         }
 
-        return .run { send in
+        return .run { [migrationManager] send in
             let options = await migrationManager.migrationNetworkOptions(account.id)
+
+            // R9-T4 (MOB-1497 review remediation, finding 5): storing the signed PCZT (only when it
+            // isn't already stored) is pre-broadcast LOCAL persistence — hoisted ABOVE the broadcast
+            // `do`/`catch` below so a failure here can never reach `routeBroadcastFailure` — see
+            // `MigrationSendingStore.executeNextTransfer`'s twin comment for the full rationale. Sync
+            // is never stopped this early, so a hoisted failure here also never nudges
+            // `refreshMigrationSyncGate()`.
+            if !stored {
+                do {
+                    try await sdkSynchronizer.storeSignedNoteSplits(account.id, signed)
+                } catch {
+                    await send(.splitResult(MigrationTransferResult.networkError(retryable: true)))
+                    return
+                }
+                await send(.noteSplitStored)
+            }
+
             // MOB-1496 (R8-T4, #3): see `MigrationSendingStore.executeNextTransfer`'s twin comment —
             // only a stop that was never followed by a successful broadcast needs the nudge.
             var didStopSyncForBroadcast = false
             do {
-                if !stored {
-                    try await sdkSynchronizer.storeSignedNoteSplits(account.id, signed)
-                    await send(.noteSplitStored)
-                }
                 await sdkSynchronizer.stopSyncBeforeMigrationBroadcast()
                 didStopSyncForBroadcast = true
                 let result = try await sdkSynchronizer.broadcastStoredNoteSplit(account.id, options)
+                // R7-T3 (MOB-1497): see `submitNoteSplit`'s identical comment for the "route first"
+                // ordering.
+                if let route = await migrationManager.routeBroadcastFailure(account.id, result: result) {
+                    await send(.broadcastFailureRouted(route))
+                }
                 await send(.splitResult(result))
                 if case MigrationTransferResult.success = result {
+                    // R7-T3 (MOB-1497): see `submitNoteSplit`'s identical `recordTransferBroadcast`
+                    // comment.
+                    await migrationManager.recordTransferBroadcast(account.id, result)
                     await send(.splitBroadcastSucceeded)
                 } else if didStopSyncForBroadcast {
                     await migrationManager.refreshMigrationSyncGate()
                 }
             } catch ZcashError.migrationRecordFailedAfterBroadcast(_) {
-                await send(.splitResult(MigrationTransferResult.success(txId: "")))
+                let landedResult = MigrationTransferResult.success(txId: "")
+                await send(.splitResult(landedResult))
+                await migrationManager.recordTransferBroadcast(account.id, landedResult)
                 await send(.splitBroadcastSucceeded)
             } catch {
+                if let route = await migrationManager.routeBroadcastFailure(account.id, error: error) {
+                    await send(.broadcastFailureRouted(route))
+                }
+                // R8-T4 (#3) composed with the classification: the nudge resumes sync
+                // stopped for a broadcast that never landed (the SDK gate never transitioned).
                 if didStopSyncForBroadcast {
                     await migrationManager.refreshMigrationSyncGate()
                 }
