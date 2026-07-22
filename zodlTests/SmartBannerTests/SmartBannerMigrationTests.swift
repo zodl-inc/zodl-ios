@@ -506,6 +506,102 @@ import ComposableArchitecture
         #expect(!store.state.isOpen)
     }
 
+    // MARK: - Reactive trigger: sync reaching upToDate re-checks migration with an EMPTY slot (MOB-1513 B2)
+    //
+    // The Defect-B fix above only re-checked migration when a restoring/syncing banner (priority3/
+    // priority45/priority4) occupied the slot. B2 extends the same `.upToDate` re-check to the
+    // EMPTY-slot case: right after a restore, the slot is often empty when the recovery balance
+    // finally surfaces (the SDK's E2-FIX now holds that balance across the post-restore summary
+    // gap, so it is available early), and the synchronizer re-emits `.upToDate` ~every 2s while
+    // synced — so the banner opens on the next tick, with no timer. Red before the fix: the
+    // empty-slot gate doesn't run, so the re-check never fires and (in exhaustive mode) none of the
+    // asserted follow-up actions are produced.
+
+    @MainActor @Test func syncReachingUpToDateWithEmptySlotOpensRequiredMigrationBanner() async {
+        let account = walletAccount(idByte: 34)
+        var state = SmartBanner.State()
+        state.$selectedWalletAccount.withLock { $0 = account }
+        // Empty slot: nothing is showing when the balance surfaces.
+        state.priorityContent = nil
+        state.priorityContentRequested = nil
+        state.isOpen = false
+        // `.complete`, not the `State()` default (`.required`), so the re-check landing `.required`
+        // below is an observable change — same observability idiom as the occupied-slot tests above.
+        state.migrationBannerVariant = MigrationBannerVariant.complete
+        let store = TestStore(initialState: state) {
+            SmartBanner()
+        } withDependencies: {
+            $0.migrationManager.isIronwoodActivated = { false }
+            $0.migrationManager.bannerVariant = { accountUUID in
+                #expect(accountUUID == account.id)
+                return MigrationBannerVariant.required
+            }
+        }
+        store.dependencies.mainQueue = .immediate
+
+        var upToDateState = SynchronizerState.zero
+        upToDateState.syncStatus = SyncStatus.upToDate
+
+        await store.send(.synchronizerStateChanged(upToDateState.redacted)) {
+            $0.lastObservedIronwoodActivation = false
+            $0.isSyncTimedOutAutoAppeareDisabled = false
+            $0.lastKnownBlocksRemaining = -1
+            $0.synchronizerStatusSnapshot = SyncStatusSnapshot.snapshotFor(state: SyncStatus.upToDate)
+        }
+        // The re-check still routes through `.closeBanner(true)` first (a no-op on the empty slot),
+        // exactly like the occupied-slot path, so the sequencing doc's await-the-close guarantee holds.
+        await store.receive(\.closeBanner)
+        await store.receive(\.openBannerRequest)
+        await store.receive(\.migrationVariantUpdated) {
+            $0.migrationBannerVariant = MigrationBannerVariant.required
+        }
+        await store.receive(\.triggerPriority) {
+            $0.priorityContentRequested = .priorityMigration
+        }
+        await store.receive(\.openBannerRequest) {
+            $0.priorityContent = .priorityMigration
+        }
+        await store.receive(\.openBanner) {
+            $0.delay = 1.0
+            $0.isOpen = true
+        }
+    }
+
+    /// Companion: with the slot empty and no migration pending (`bannerVariant` nil), the empty-slot
+    /// re-check must NOT conjure a banner — the slot stays empty. Also red before the fix (in
+    /// exhaustive mode the missing gate produces none of these receives).
+    @MainActor @Test func syncReachingUpToDateWithEmptySlotAndNoMigrationLeavesSlotEmpty() async {
+        let account = walletAccount(idByte: 35)
+        var state = SmartBanner.State()
+        state.$selectedWalletAccount.withLock { $0 = account }
+        state.priorityContent = nil
+        state.priorityContentRequested = nil
+        state.isOpen = false
+        let store = TestStore(initialState: state) {
+            SmartBanner()
+        } withDependencies: {
+            $0.migrationManager.isIronwoodActivated = { false }
+            $0.migrationManager.bannerVariant = { _ in nil }
+        }
+        store.dependencies.mainQueue = .immediate
+
+        var upToDateState = SynchronizerState.zero
+        upToDateState.syncStatus = SyncStatus.upToDate
+
+        await store.send(.synchronizerStateChanged(upToDateState.redacted)) {
+            $0.lastObservedIronwoodActivation = false
+            $0.isSyncTimedOutAutoAppeareDisabled = false
+            $0.lastKnownBlocksRemaining = -1
+            $0.synchronizerStatusSnapshot = SyncStatusSnapshot.snapshotFor(state: SyncStatus.upToDate)
+        }
+        await store.receive(\.closeBanner)
+        await store.receive(\.openBannerRequest)
+        await store.receive(\.migrationVariantUpdated)
+        // Nil variant with an empty slot: nothing opens, the slot stays empty.
+        #expect(store.state.priorityContent == nil)
+        #expect(!store.state.isOpen)
+    }
+
     // MARK: - Reactive trigger: Ironwood-activation flip (MOB-1483)
 
     /// First-ever observation, gate closed: latches `false` and triggers nothing — no
