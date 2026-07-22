@@ -34,6 +34,7 @@ extension Root.State: @retroactive Equatable {
             && lhs.appInitializationState == rhs.appInitializationState
             && lhs.alert?.title == rhs.alert?.title
             && lhs.alert?.message == rhs.alert?.message
+            && lhs.isStaleWalletHealedAlertPending == rhs.isStaleWalletHealedAlertPending
     }
 }
 
@@ -177,6 +178,32 @@ extension Root.State: @retroactive Equatable {
         await store.skipInFlightEffects(strict: false)
     }
 
+    /// Builds a `Root` `TestStore` for exercising the deferred-presentation wiring
+    /// (`.destination(.updateDestination)` / `.initialization(.presentStaleWalletHealedAlert)`)
+    /// in isolation, without the full heal-flow dependency wiring `makeStore` provides. That
+    /// wiring is irrelevant here — only `mainQueue` is touched by the code path under test — so
+    /// `isStaleWalletHealedAlertPending` is seeded directly on the initial state instead of
+    /// driving a real heal through `.initializeSDK`.
+    private func makeDestinationStore(isStaleWalletHealedAlertPending: Bool) -> TestStore<Root.State, Root.Action> {
+        var initialState = Root.State(
+            destinationState: Root.DestinationState(),
+            exportLogsState: ExportLogs.State(),
+            onboardingState: RestoreWalletCoordFlow.State(),
+            phraseDisplayState: RecoveryPhraseDisplay.State(),
+            walletConfig: .initial,
+            welcomeState: Welcome.State()
+        )
+        initialState.isStaleWalletHealedAlertPending = isStaleWalletHealedAlertPending
+
+        let store = TestStore(initialState: initialState) {
+            Root()
+        } withDependencies: {
+            $0.mainQueue = .immediate
+        }
+        store.exhaustivity = .off
+        return store
+    }
+
     // MARK: - Scenario 1: probe-false heal
 
     @Test func probeFalseHealWipesAndRepreparesInOrderThenSignalsRestore() async throws {
@@ -202,8 +229,10 @@ extension Root.State: @retroactive Equatable {
         ) { state in
             state.isRestoringWallet = true
             state.$walletStatus.withLock { $0 = .restoring }
-            state.alert = AlertState.staleWalletDatabaseHealed()
+            state.isStaleWalletHealedAlertPending = true
         }
+
+        #expect(store.state.alert == nil, "the heal notice must stay pending, not appear immediately")
 
         let recordedCalls = calls.value
         let wipeIndex = try #require(recordedCalls.firstIndex(of: "wipe"))
@@ -213,6 +242,23 @@ extension Root.State: @retroactive Equatable {
         #expect(setBools.value[Root.Constants.udIsRestoringWallet] == true)
         #expect(store.state.isRestoringWallet)
         #expect(store.state.walletStatus == .restoring)
+
+        // This test drives `.initializeSDK` directly, bypassing
+        // `.respondToWalletInitializationState`'s concatenation with `.checkBackupPhraseValidation`,
+        // so the home destination update that normally follows a successful initialization is
+        // never naturally sent here. Drive it explicitly to exercise the deferred-presentation wiring.
+        await store.send(.destination(.updateDestination(.home)))
+
+        await store.receive(
+            { action in
+                guard case .initialization(.presentStaleWalletHealedAlert) = action else { return false }
+                return true
+            },
+            timeout: .seconds(5)
+        ) { state in
+            state.isStaleWalletHealedAlertPending = false
+            state.alert = AlertState.staleWalletDatabaseHealed()
+        }
 
         await drain(store)
     }
@@ -245,7 +291,7 @@ extension Root.State: @retroactive Equatable {
         ) { state in
             state.isRestoringWallet = true
             state.$walletStatus.withLock { $0 = .restoring }
-            state.alert = AlertState.staleWalletDatabaseHealed()
+            state.isStaleWalletHealedAlertPending = true
         }
 
         let recordedCalls = calls.value
@@ -318,7 +364,7 @@ extension Root.State: @retroactive Equatable {
         ) { state in
             state.isRestoringWallet = true
             state.$walletStatus.withLock { $0 = .restoring }
-            state.alert = AlertState.staleWalletDatabaseHealed()
+            state.isStaleWalletHealedAlertPending = true
         }
 
         let recordedCalls = calls.value
@@ -380,6 +426,52 @@ extension Root.State: @retroactive Equatable {
         // former ever sets these fields, so their absence here confirms it was never sent.
         #expect(!store.state.isRestoringWallet, "a failed re-prepare must not signal a heal")
         #expect(store.state.alert == nil, "no heal alert should be shown when re-prepare fails")
+
+        await drain(store)
+    }
+
+    // MARK: - Deferred presentation: alert appears once home settles, consumed exactly once
+
+    @Test func pendingHealAlertPresentsOnceHomeDestinationSettlesAndIsConsumedOnlyOnce() async {
+        let store = makeDestinationStore(isStaleWalletHealedAlertPending: true)
+
+        await store.send(.destination(.updateDestination(.home)))
+
+        await store.receive(
+            { action in
+                guard case .initialization(.presentStaleWalletHealedAlert) = action else { return false }
+                return true
+            },
+            timeout: .seconds(5)
+        ) { state in
+            state.isStaleWalletHealedAlertPending = false
+            state.alert = AlertState.staleWalletDatabaseHealed()
+        }
+
+        #expect(store.state.alert?.title == AlertState.staleWalletDatabaseHealed().title)
+        #expect(store.state.alert?.message == AlertState.staleWalletDatabaseHealed().message)
+        #expect(!store.state.isStaleWalletHealedAlertPending)
+
+        // A later home entry (e.g. a subsequent settle, background/foreground cycle) must not
+        // re-present the notice: the flag was already consumed above.
+        await store.send(.destination(.updateDestination(.home)))
+
+        #expect(store.state.alert?.title == AlertState.staleWalletDatabaseHealed().title)
+        #expect(store.state.alert?.message == AlertState.staleWalletDatabaseHealed().message)
+        #expect(!store.state.isStaleWalletHealedAlertPending)
+
+        await drain(store)
+    }
+
+    // MARK: - No pending heal: home destination update never presents an alert
+
+    @Test func noPendingHealLeavesNoAlertOnHomeDestinationUpdate() async {
+        let store = makeDestinationStore(isStaleWalletHealedAlertPending: false)
+
+        await store.send(.destination(.updateDestination(.home)))
+
+        #expect(store.state.alert == nil, "no heal alert should appear when nothing is pending")
+        #expect(!store.state.isStaleWalletHealedAlertPending)
 
         await drain(store)
     }

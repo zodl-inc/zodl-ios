@@ -56,6 +56,19 @@ extension Root {
                     return .none
                 }
                 state.destinationState.destination = destination
+
+                // The stale-wallet-heal notice is deferred until the destination settles on
+                // home: presenting it immediately at heal time gets it auto-dismissed by this
+                // very destination switch (SwiftUI tears down the presenting view branch before
+                // the alert has a chance to be seen). Wait out the transition animation, then
+                // present it, consuming the pending flag exactly once.
+                if destination == .home && state.isStaleWalletHealedAlertPending {
+                    return .run { send in
+                        try await mainQueue.sleep(for: .seconds(0.5))
+                        await send(.initialization(.presentStaleWalletHealedAlert))
+                    }
+                }
+
                 return .none
 
             case .destination(.deeplink(let url)):

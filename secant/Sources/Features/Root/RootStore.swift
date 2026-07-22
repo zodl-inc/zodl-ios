@@ -64,6 +64,7 @@ struct Root {
         var homeState: Home.State = .initial
         var isLockedInKeychainUnavailableState = false
         var isRestoringWallet = false
+        var isStaleWalletHealedAlertPending = false
         @Shared(.appStorage(.lastAuthenticationTimestamp)) var lastAuthenticationTimestamp: Int = 0
         var maxResetZashiAppAttempts = ResetZashiConstants.maxResetZashiAppAttempts
         var maxResetZashiSDKAttempts = ResetZashiConstants.maxResetZashiSDKAttempts

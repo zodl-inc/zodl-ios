@@ -10,6 +10,7 @@ directly impact users rather than highlighting other crucial architectural updat
 - [PRO-325] Swaps out of ZEC and CrossPays that fail on the swap provider's side now show "Swap Failed" / "Payment Failed" (with the contact-support option) instead of appearing to stay in progress forever. Long-running swaps in this direction also correctly show their processing state.
 - [MOB-1475] The refund address explainer no longer reads like "USDC on NEAR" is a fixed destination for every refund — it now says the refund returns in the source currency on the same network, since that's true for any swap, not just NEAR-based ones.
 - [MOB-1512] Setting up a wallet over leftover data from a different wallet (e.g. after restoring a device backup onto a new device) no longer shows the old wallet's unspendable balance and no longer fails shielding/spending with ZRUST0002; ZODL now detects the mismatch, removes the stale database, and re-syncs the correct wallet, informing the user with an alert. This also clears the previous wallet's voting configuration and history, session state, and cached preferences so none of it can leak into the current wallet.
+- [MOB-1512] The "Wallet data replaced" notice now stays on screen after the healed wallet opens, instead of disappearing during the transition to the home screen.
 
 ## 3.7.3 build 1 (20026-07-12)
 

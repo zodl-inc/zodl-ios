@@ -28,6 +28,7 @@ extension Root {
         case checkWalletConfig
         case initializeSDK(WalletInitMode)
         case staleWalletDatabaseHealed
+        case presentStaleWalletHealedAlert
         case initialSetups
         case initializationFailed(ZcashError)
         case initializationSuccessfullyDone
@@ -449,6 +450,12 @@ extension Root {
                 state.isRestoringWallet = true
                 userDefaults.setValue(true, Constants.udIsRestoringWallet)
                 state.$walletStatus.withLock { $0 = .restoring }
+                state.isStaleWalletHealedAlertPending = true
+                return .none
+
+            case .initialization(.presentStaleWalletHealedAlert):
+                guard state.isStaleWalletHealedAlertPending else { return .none }
+                state.isStaleWalletHealedAlertPending = false
                 state.alert = AlertState.staleWalletDatabaseHealed()
                 return .none
 
