@@ -3281,22 +3281,127 @@ import ComposableArchitecture
 
     // MARK: - MOB-1487: dust lane ("Migrate anyway" over Migration Complete)
 
-    @MainActor @Test func completeMigrateAnywayPushesSendingConfiguredForDustLane() async {
+    /// MOB-1496 (W-B): software "Migrate anyway" now unlocks-then-proposes the immediate (send-max)
+    /// migration — unlock-first is LOAD-BEARING (locked notes are excluded from send-max note
+    /// selection), asserted here via call ORDER, not just "both were called".
+    @MainActor @Test func completeMigrateAnywaySoftwareUnlocksBeforeProposingAndPushesSendingWithImmediateProposal() async {
+        let callLog = LockIsolated<[String]>([])
+        let proposal = ImmediateMigrationProposal(proposal: .testOnlyFakeProposal(totalFee: 5_000), amount: Zatoshi(95_000), fee: Zatoshi(5_000))
         var state = MigrationCoordFlow.State()
         state.path.append(.complete(MigrationComplete.State(isFlowRoot: true)))
         let store = TestStore(initialState: state) {
             MigrationCoordFlow()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.unlockMigrationResidual = { _ in
+                callLog.withValue { $0.append("unlock") }
+                return 1
+            }
+            $0.sdkSynchronizer.proposeImmediateMigration = { _ in
+                callLog.withValue { $0.append("propose") }
+                return proposal
+            }
         }
         store.exhaustivity = .off
 
         await store.send(.path(.element(id: 0, action: .complete(.delegate(.migrateAnyway)))))
+        await store.receive(\.pushHydratedPathState)
+
+        #expect(callLog.value == ["unlock", "propose"])
+        guard case let .sending(sendingState) = try? #require(store.state.path.last) else {
+            Issue.record("Expected .sending pushed on top of .complete")
+            return
+        }
+        #expect(sendingState.totalCount == 1)
+        #expect(sendingState.immediateProposal == proposal)
+        #expect(sendingState.isFailurePresented == false)
+        #expect(store.state.pendingKeystoneSigning == nil)
+    }
+
+    /// Twin of the test above with an explicit software-vendor account, for symmetry with the
+    /// Keystone fork below (same vendor split the entry-screen immediate lane already makes).
+    @MainActor @Test func completeMigrateAnywayWithSoftwareAccountPushesSendingWithImmediateProposal() async {
+        let proposal = ImmediateMigrationProposal(proposal: .testOnlyFakeProposal(totalFee: 5_000), amount: Zatoshi(95_000), fee: Zatoshi(5_000))
+        var state = MigrationCoordFlow.State()
+        state.$selectedWalletAccount.withLock { $0 = walletAccount(keystone: false, idByte: 24) }
+        state.path.append(.complete(MigrationComplete.State(isFlowRoot: true)))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.unlockMigrationResidual = { _ in 0 }
+            $0.sdkSynchronizer.proposeImmediateMigration = { _ in proposal }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 0, action: .complete(.delegate(.migrateAnyway)))))
+        await store.receive(\.pushHydratedPathState)
 
         guard case let .sending(sendingState) = try? #require(store.state.path.last) else {
             Issue.record("Expected .sending pushed on top of .complete")
             return
         }
         #expect(sendingState.totalCount == 1)
-        #expect(sendingState.isDustLane == true)
+        #expect(sendingState.immediateProposal == proposal)
+        #expect(store.state.pendingKeystoneSigning == nil)
+    }
+
+    /// Propose/unlock failure (e.g. the SDK's clean `InsufficientFunds` throw when the fee would
+    /// consume the whole residual) falls back to the SAME generic Sending-screen failure sheet
+    /// every other broadcast failure already uses — no new UI, and the coordinator never reaches
+    /// the push-with-proposal branch.
+    @MainActor @Test func completeMigrateAnywaySoftwareProposeFailurePushesSendingWithFailureSheet() async {
+        var state = MigrationCoordFlow.State()
+        state.path.append(.complete(MigrationComplete.State(isFlowRoot: true)))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.unlockMigrationResidual = { _ in 0 }
+            // The SDK's clean throw when the ZIP-317 fee would consume the whole residual.
+            $0.sdkSynchronizer.proposeImmediateMigration = { _ in throw ZcashError.rustProposeSendMaxTransfer("insufficient funds") }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 0, action: .complete(.delegate(.migrateAnyway)))))
+        await store.receive(\.pushHydratedPathState)
+
+        guard case let .sending(sendingState) = try? #require(store.state.path.last) else {
+            Issue.record("Expected the generic failure-sheet Sending fallback pushed")
+            return
+        }
+        #expect(sendingState.isFailurePresented == true)
+        #expect(sendingState.immediateProposal == nil)
+        #expect(store.state.pendingKeystoneSigning == nil)
+    }
+
+    /// A throwing UNLOCK must never reach `proposeImmediateMigration` at all — proposing on top of
+    /// a still-locked residual would silently sweep `Zatoshi.zero` instead of surfacing a failure.
+    @MainActor @Test func completeMigrateAnywaySoftwareUnlockFailureNeverProposesAndPushesFailureSheet() async {
+        let proposeCalls = LockIsolated<Int>(0)
+        var state = MigrationCoordFlow.State()
+        state.path.append(.complete(MigrationComplete.State(isFlowRoot: true)))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.unlockMigrationResidual = { _ in throw ZcashError.rustMigrationUnlockResidual("boom") }
+            $0.sdkSynchronizer.proposeImmediateMigration = { _ in
+                proposeCalls.withValue { $0 += 1 }
+                return ImmediateMigrationProposal(proposal: .testOnlyFakeProposal(totalFee: 0), amount: .zero, fee: .zero)
+            }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 0, action: .complete(.delegate(.migrateAnyway)))))
+        await store.receive(\.pushHydratedPathState)
+
+        #expect(proposeCalls.value == 0)
+        guard case let .sending(sendingState) = try? #require(store.state.path.last) else {
+            Issue.record("Expected the generic failure-sheet Sending fallback pushed")
+            return
+        }
+        #expect(sendingState.isFailurePresented == true)
     }
 
     @MainActor @Test func sendingClosedOverCompleteAcknowledgesCompleteAndFinishesFlow() async {
@@ -3310,7 +3415,7 @@ import ComposableArchitecture
         var state = MigrationCoordFlow.State()
         state.mode = .privateScheduled
         state.path.append(.complete(MigrationComplete.State(isFlowRoot: true)))
-        state.path.append(.sending(MigrationSending.State(phase: .success, isDustLane: true)))
+        state.path.append(.sending(MigrationSending.State(phase: .success)))
         let store = TestStore(initialState: state) {
             MigrationCoordFlow()
         } withDependencies: {
@@ -3500,18 +3605,19 @@ import ComposableArchitecture
         #expect(restartCalls.value == 0)
     }
 
-    // MARK: - MOB-1496 (W6 §3): Keystone dust lane ("Migrate anyway" over Migration Complete)
+    // MARK: - MOB-1496 (W-B): Keystone "Migrate anyway" over Migration Complete
 
-    @MainActor @Test func completeMigrateAnywayWithKeystoneAccountProposesPCZTsAndPushesKeystoneSignContext() async {
-        let proposeTransfersCalls = LockIsolated<[Bool]>([])
-        let proposePCZTsCalls = LockIsolated<[MigrationSchedule]>([])
-        let schedule = MigrationSchedule(
-            transfers: [
-                MigrationTransferProposal(id: "dust0", amount: Zatoshi(12_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
-            ],
-            estimatedDurationHours: 0
-        )
-        let pczts: [MigrationUnsignedTransferPczt] = [MigrationUnsignedTransferPczt(id: "dust0", pczt: Data([0xDD]))]
+    /// Keystone "Migrate anyway" unlocks, proposes the immediate migration, and builds its PCZT via
+    /// `createPCZTFromProposal` — the SAME ordinary-send PCZT builder
+    /// `MigrationReviewTransferStore.requestKeystoneSignature` uses for the entry-screen immediate
+    /// lane. Call ORDER matters (unlock-first is load-bearing) and `.immediateReview` — not a
+    /// dust-specific context — is what gets armed, so the rest of the ceremony (scan -> proofs ->
+    /// submit) is the SAME already-tested `.immediateReview` machinery
+    /// (`foundPCZTBatchForImmediateReviewContextAddsProofsSubmitsRecordsAndPushesSendingSuccess`).
+    @MainActor @Test func completeMigrateAnywayKeystoneUnlocksProposesAndPushesKeystoneSignContext() async {
+        let callLog = LockIsolated<[String]>([])
+        let proposal = ImmediateMigrationProposal(proposal: .testOnlyFakeProposal(totalFee: 5_000), amount: Zatoshi(12_000), fee: Zatoshi(5_000))
+        let pczt = Data([0xDD])
         var state = MigrationCoordFlow.State()
         state.$selectedWalletAccount.withLock { $0 = walletAccount(keystone: true, idByte: 20) }
         state.path.append(.complete(MigrationComplete.State(isFlowRoot: true)))
@@ -3519,36 +3625,38 @@ import ComposableArchitecture
             MigrationCoordFlow()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.proposeMigrationTransfers = { _, includeResidual in
-                proposeTransfersCalls.withValue { $0.append(includeResidual) }
-                return schedule
+            $0.sdkSynchronizer.unlockMigrationResidual = { _ in
+                callLog.withValue { $0.append("unlock") }
+                return 1
             }
-            $0.sdkSynchronizer.proposeMigrationPCZTs = { _, proposed in
-                proposePCZTsCalls.withValue { $0.append(proposed) }
-                return pczts
+            $0.sdkSynchronizer.proposeImmediateMigration = { _ in
+                callLog.withValue { $0.append("propose") }
+                return proposal
+            }
+            $0.sdkSynchronizer.createPCZTFromProposal = { _, _ in
+                callLog.withValue { $0.append("createPCZT") }
+                return pczt
             }
         }
         store.exhaustivity = .off
 
         await store.send(.path(.element(id: 0, action: .complete(.delegate(.migrateAnyway)))))
-        await store.receive(\.keystoneDustPCZTsProposed)
+        await store.receive(\.migrateAnywayImmediateKeystonePCZTProposed)
 
-        // `includeResidual: true` — the dust lane proposes the residual-inclusive schedule.
-        #expect(proposeTransfersCalls.value == [true])
-        #expect(proposePCZTsCalls.value == [schedule])
-        #expect(store.state.pendingKeystoneSigning == MigrationCoordFlow.KeystoneSigningContext.dust(schedule))
+        #expect(callLog.value == ["unlock", "propose", "createPCZT"])
+        #expect(store.state.pendingKeystoneSigning == MigrationCoordFlow.KeystoneSigningContext.immediateReview)
         guard case let .keystoneSign(signState) = try? #require(store.state.path.last) else {
             Issue.record("Expected .keystoneSign pushed on top of .complete")
             return
         }
-        #expect(signState.pczts == pczts)
+        #expect(signState.pczts == [MigrationUnsignedTransferPczt(id: MigrationReviewTransfer.immediateKeystonePcztId, pczt: pczt)])
     }
 
-    /// Empty-residual edge (§4): below-threshold falls back to the SAME existing failure UX the
-    /// (already-shipped) software dust lane's empty-schedule path uses — no new screen/copy, and the
-    /// coordinator never even reaches the PCZT-proposal step.
-    @MainActor @Test func completeMigrateAnywayWithKeystoneAccountAndEmptyResidualFallsBackToBelowThresholdSending() async {
-        let proposePCZTsCalls = LockIsolated<Int>(0)
+    /// Propose/unlock (or PCZT-build) failure falls back to the SAME generic Sending-screen failure
+    /// sheet the software fork uses — no new UI, and the coordinator never reaches
+    /// `createPCZTFromProposal`/pushes `keystoneSign`.
+    @MainActor @Test func completeMigrateAnywayKeystoneProposeFailurePushesSendingWithFailureSheet() async {
+        let createPCZTCalls = LockIsolated<Int>(0)
         var state = MigrationCoordFlow.State()
         state.$selectedWalletAccount.withLock { $0 = walletAccount(keystone: true, idByte: 22) }
         state.path.append(.complete(MigrationComplete.State(isFlowRoot: true)))
@@ -3556,10 +3664,11 @@ import ComposableArchitecture
             MigrationCoordFlow()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.proposeMigrationTransfers = { _, _ in MigrationSchedule(transfers: [], estimatedDurationHours: 0) }
-            $0.sdkSynchronizer.proposeMigrationPCZTs = { _, _ in
-                proposePCZTsCalls.withValue { $0 += 1 }
-                return []
+            $0.sdkSynchronizer.unlockMigrationResidual = { _ in 0 }
+            $0.sdkSynchronizer.proposeImmediateMigration = { _ in throw ZcashError.rustProposeSendMaxTransfer("insufficient funds") }
+            $0.sdkSynchronizer.createPCZTFromProposal = { _, _ in
+                createPCZTCalls.withValue { $0 += 1 }
+                return Data()
             }
         }
         store.exhaustivity = .off
@@ -3567,91 +3676,13 @@ import ComposableArchitecture
         await store.send(.path(.element(id: 0, action: .complete(.delegate(.migrateAnyway)))))
         await store.receive(\.pushHydratedPathState)
 
-        #expect(proposePCZTsCalls.value == 0)
+        #expect(createPCZTCalls.value == 0)
         #expect(store.state.pendingKeystoneSigning == nil)
         guard case let .sending(sendingState) = try? #require(store.state.path.last) else {
-            Issue.record("Expected the existing below-threshold Sending fallback pushed")
+            Issue.record("Expected the generic failure-sheet Sending fallback pushed")
             return
         }
-        #expect(sendingState.isDustLane == true)
-    }
-
-    /// Software dust is byte-for-byte unchanged — twin of the pre-existing
-    /// `completeMigrateAnywayPushesSendingConfiguredForDustLane` above, restated here explicitly
-    /// alongside the new Keystone fork so the vendor split is visible in one place.
-    @MainActor @Test func completeMigrateAnywayWithSoftwareAccountPushesSendingConfiguredForDustLaneUnchanged() async {
-        var state = MigrationCoordFlow.State()
-        state.$selectedWalletAccount.withLock { $0 = walletAccount(keystone: false, idByte: 24) }
-        state.path.append(.complete(MigrationComplete.State(isFlowRoot: true)))
-        let store = TestStore(initialState: state) {
-            MigrationCoordFlow()
-        }
-        store.exhaustivity = .off
-
-        await store.send(.path(.element(id: 0, action: .complete(.delegate(.migrateAnyway)))))
-
-        guard case let .sending(sendingState) = try? #require(store.state.path.last) else {
-            Issue.record("Expected .sending pushed on top of .complete")
-            return
-        }
-        #expect(sendingState.totalCount == 1)
-        #expect(sendingState.isDustLane == true)
-        #expect(store.state.pendingKeystoneSigning == nil)
-    }
-
-    /// Full lane, sign-context-to-store half: once the batch-of-1 is scanned+stored, the coordinator
-    /// hands off to the dust Sending lane's EXISTING `executeNextPendingMigrationTransfer` path
-    /// (`isDustLane: false`) — never `migrateMigrationDust` (a USK composite that would re-propose
-    /// from scratch). The execute-with-snapshot-options / never-touches-USK half of this lane is
-    /// covered by `MigrationSendingTests`' `onAppearWithoutDustLaneAndKeystoneAccountExecutes...`.
-    @MainActor @Test func keystoneDustFoundPCZTBatchStoresAndPushesSendingConfiguredForExecuteNotDustComposite() async {
-        let storeCalls = LockIsolated<[[MigrationSignedTransferPczt]]>([])
-        let recordCommittedScheduleCalls = LockIsolated<[MigrationSchedule]>([])
-        let schedule = MigrationSchedule(
-            transfers: [
-                MigrationTransferProposal(id: "dust0", amount: Zatoshi(12_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
-            ],
-            estimatedDurationHours: 0
-        )
-        let unsigned: [MigrationUnsignedTransferPczt] = [MigrationUnsignedTransferPczt(id: "dust0", pczt: Data([0xDD]))]
-        // MOB-1510: see `Self.validKeystoneFirmwareStamp`'s doc.
-        let signed: [Data] = [Data([0xDD, 0x01]) + Self.validKeystoneFirmwareStamp]
-        let expectedStored: [MigrationSignedTransferPczt] = [
-            MigrationSignedTransferPczt(id: "dust0", pczt: Data([0xDD, 0x01]) + Self.validKeystoneFirmwareStamp)
-        ]
-
-        var state = MigrationCoordFlow.State()
-        state.$selectedWalletAccount.withLock { $0 = walletAccount(keystone: true, idByte: 23) }
-        state.pendingKeystoneSigning = MigrationCoordFlow.KeystoneSigningContext.dust(schedule)
-        state.path.append(.complete(MigrationComplete.State(isFlowRoot: true)))
-        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: unsigned)))
-        state.path.append(.scan(Scan.State.initial))
-        let store = TestStore(initialState: state) {
-            MigrationCoordFlow()
-        } withDependencies: {
-            $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, stored in storeCalls.withValue { $0.append(stored) } }
-            $0.migrationManager.recordCommittedSchedule = { _, schedule in recordCommittedScheduleCalls.withValue { $0.append(schedule) } }
-            $0.migrationManager.reconcile = { }
-        }
-        store.exhaustivity = .off
-
-        await store.send(.path(.element(id: 2, action: .scan(.foundPCZTBatch(signed)))))
-        await store.receive(\.keystoneSigningSubmitted)
-
-        #expect(storeCalls.value == [expectedStored])
-        #expect(recordCommittedScheduleCalls.value == [schedule])
-        #expect(store.state.pendingKeystoneSigning == nil)
-        guard case let .sending(sendingState) = try? #require(store.state.path.last) else {
-            Issue.record("Expected .sending pushed on top of the retained .complete element")
-            return
-        }
-        #expect(sendingState.isDustLane == false)
-        #expect(sendingState.totalCount == 1)
-        guard case .complete = try? #require(store.state.path[id: 0]) else {
-            Issue.record("Expected .complete retained at the bottom")
-            return
-        }
+        #expect(sendingState.isFailurePresented == true)
     }
 
     // MARK: - MOB-1496 (W6 §6): Keystone recovery — recreate routes through the PCZT batch session

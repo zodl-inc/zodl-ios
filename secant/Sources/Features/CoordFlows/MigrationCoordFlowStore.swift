@@ -127,12 +127,12 @@ struct MigrationCoordFlow {
         /// now also carries the note-split PCZT first, when `isNoteSplitNeeded()` — the split no
         /// longer has its own signing context (see `MigrationTransferPlanStore`).
         case planCommit
+        /// MOB-1513: the entry-screen immediate lane's Keystone PCZT-signing ceremony
+        /// (`MigrationReviewTransferStore.requestKeystoneSignature`). MOB-1496 (W-B): the "Migrate
+        /// anyway" hop over Migration Complete reuses this SAME context — both are an ordinary
+        /// `ImmediateMigrationProposal`'s single PCZT, engine-external, with no schedule for
+        /// `pendingKeystoneSchedule` to read back.
         case immediateReview
-        /// MOB-1496 (W6 §3): the Keystone "Migrate anyway" dust lane — a batch-of-1, no sentinel
-        /// (there is no split in the dust lane). The schedule is proposed directly by the
-        /// coordinator (`.keystoneDustPCZTsProposed`), not read off any path element's own state, so
-        /// it rides along on the context itself for `pendingKeystoneSchedule` to hand back.
-        case dust(MigrationSchedule)
     }
 
     /// MOB-1496 (C-1b fix, fix-wave 2): the ALREADY-SIGNED schedule payload a Keystone-with-split
@@ -307,11 +307,13 @@ struct MigrationCoordFlow {
         /// on that screen's `onAppear` — see `submitImmediateKeystoneTransaction`'s doc for why the
         /// Keystone lane can't defer to the Sending screen the way the software lane does).
         case keystoneImmediateSubmitted(txId: String)
-        /// Internal: MOB-1496 (W6 §3) — the Keystone dust lane's upfront propose
-        /// (`.complete(.delegate(.migrateAnyway))`'s Keystone fork) came back with a non-empty
-        /// schedule and its PCZTs — pushes the existing Keystone signing context as a batch-of-1 (no
-        /// sentinel; there is no split in the dust lane).
-        case keystoneDustPCZTsProposed(schedule: MigrationSchedule, pczts: [MigrationUnsignedTransferPczt])
+        /// Internal: MOB-1496 (W-B) — "Migrate anyway"'s Keystone fork
+        /// (`.complete(.delegate(.migrateAnyway))`) unlocked, proposed the immediate migration, and
+        /// built its single PCZT via `createPCZTFromProposal` — arms `.immediateReview` (the SAME
+        /// context the entry-screen immediate lane's Keystone ceremony uses) and pushes
+        /// `keystoneSign`, exactly like `MigrationReviewTransferStore.requestKeystoneSignature`'s
+        /// `.keystoneSignRequested` delegate does for that lane.
+        case migrateAnywayImmediateKeystonePCZTProposed(pczts: [MigrationUnsignedTransferPczt])
         /// Internal: MOB-1496 (W6) — the note-split screen's `.delegate(.continued)` landed while
         /// `pendingKeystoneSplitResume` was set (the mid-Keystone-commit split-broadcast case) — its
         /// pop is deferred to this follow-up self-action for the SAME reason `keystoneSignRejected`

@@ -32,6 +32,11 @@
 //  `recreateInvalidMigrationTransfer` has no replacement (the recovery call site now uses
 //  `restartCurrentMigrationStep`, already simulated below).
 //
+//  MOB-1496 (W-A/W-B): `lockMigrationResidual`/`unlockMigrationResidual` are ADDED (real SDK
+//  members "Migrate anyway"/`lockMigrationDust` now call) — see `applySimulatedDustResolution`'s
+//  doc. `migrateMigrationDust` is REMOVED along with its real-SDK counterpart — retired in favor of
+//  the immediate lane's `proposeImmediateMigration`, already simulated above.
+//
 
 import Foundation
 @preconcurrency import Combine
@@ -238,17 +243,48 @@ extension SDKSynchronizerClient {
 
     // MARK: - Dust resolution (MOB-1487)
 
-    /// The sweep ("Migrate anyway") is a broadcast, so its stub takes the transaction guard like
-    /// the other broadcast-path stubs and is correct-by-construction once real broadcasting lands.
     /// `lockMigrationDust`/`isMigrationDustLocked` relocated to `MigrationManagerClient` (MOB-1496)
     /// — see that client's own reach-around, gated identically to this file's.
+    ///
+    /// MOB-1496 (W-A): `lockMigrationResidual`/`unlockMigrationResidual` are the real SDK members
+    /// `MigrationManagerLiveKey`'s `lockMigrationDust`/the "Migrate anyway" hop now call directly —
+    /// simulated onto the SAME `lockDust()`/`unlockDust()`/`isDustLocked()` engine state
+    /// `lockMigrationDust`'s own simulator branch already reaches around to, so the debug-panel
+    /// dust demo stays byte-for-byte consistent with the real lane.
+    ///
+    /// MOB-1496 (W-B): the old dust-sweep composite (`migrateMigrationDust`, simulated onto
+    /// `engine.migrateDust()`) is retired along with the real SDK member it stood in for —
+    /// "Migrate anyway" now proposes through the ALREADY-simulated `proposeImmediateMigration`
+    /// override above, which reads `snapshot.orchardBalance` — the same figure `summary().dust`
+    /// mirrors once the engine's `.complete`/`.completeWithDust` presets are active (everything
+    /// migratable already swept, so what remains IS the dust), so the simulated propose amount
+    /// still matches the dust figure the panel/Complete screen shows. The ACTUAL broadcast this
+    /// proposal feeds into (`createAndSubmitProposedTransactions`/`createPCZTFromProposal`) is not
+    /// separately simulated — same pre-existing characteristic the entry-screen's own immediate
+    /// lane already has (its `.testOnlyFakeProposal` reaches those same real calls); "Migrate
+    /// anyway" is now simply consistent with that lane instead of uniquely different.
     private mutating func applySimulatedDustResolution(engine: MigrationSimulatorEngine) {
-        let originalMigrateMigrationDust = self.migrateMigrationDust
-        self.migrateMigrationDust = { accountUUID, usk, options in
+        let originalLockMigrationResidual = self.lockMigrationResidual
+        self.lockMigrationResidual = { accountUUID in
             if engine.isActive {
-                return await engine.migrateDust()
+                // Idempotent-additive, mirroring the real SDK: only the FIRST lock (unlocked ->
+                // locked) reports the dust value; a repeat call (already locked) reports `.zero`
+                // since nothing newly became spendable.
+                let wasAlreadyLocked = engine.isDustLocked()
+                let dust = engine.summary().dust
+                engine.lockDust()
+                return wasAlreadyLocked ? Zatoshi.zero : dust
             } else {
-                return try await originalMigrateMigrationDust(accountUUID, usk, options)
+                return try await originalLockMigrationResidual(accountUUID)
+            }
+        }
+
+        let originalUnlockMigrationResidual = self.unlockMigrationResidual
+        self.unlockMigrationResidual = { accountUUID in
+            if engine.isActive {
+                return engine.unlockDust()
+            } else {
+                return try await originalUnlockMigrationResidual(accountUUID)
             }
         }
 

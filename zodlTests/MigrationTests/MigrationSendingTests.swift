@@ -7,19 +7,21 @@
 //  phase/state, the `closeTapped` / `viewTransactionTapped` delegate contracts, the failure sheet
 //  dismissal (cancel/retry), and `onAppear` executing `executeNextPendingMigrationTransfer`,
 //  recording a broadcast + scheduling the next background window after success, presenting the
-//  failure sheet on failure/`nil`, and retry re-running the failed step. Also covers (MOB-1487/
-//  MOB-1494) `isDustLane` defaulting to false and being settable via init — since MOB-1494 the flag
-//  only selects the dust-sweep execution (the on-screen copy is identical in every lane). MOB-1496:
-//  both lanes now hit the real per-account SDK surface — `executeNextPendingMigrationTransfer` needs
-//  a concrete `AccountUUID`, and the dust lane additionally derives a real `UnifiedSpendingKey`
-//  (never for a Keystone account, which has no PCZT-based dust-sweep lane yet). MOB-1496 (W5,
-//  ZIP-0318): a single `onAppear` now executes AT MOST ONE transfer, even when the screen is
-//  configured with `totalCount` > 1 (the S10 "Send now" lane's old multi-overdue shape) — see
-//  `onAppearWithMultipleOverdueExecutesExactlyOneTransfer`. `.serialized`: several cases drive the
-//  process-global `@Shared(.inMemory(.selectedWalletAccount))`.
+//  failure sheet on failure/`nil`, and retry re-running the failed step. MOB-1496: both lanes now
+//  hit the real per-account SDK surface — `executeNextPendingMigrationTransfer` needs a concrete
+//  `AccountUUID`. MOB-1496 (W5, ZIP-0318): a single `onAppear` now executes AT MOST ONE transfer,
+//  even when the screen is configured with `totalCount` > 1 (the S10 "Send now" lane's old
+//  multi-overdue shape) — see `onAppearWithMultipleOverdueExecutesExactlyOneTransfer`. `.serialized`:
+//  several cases drive the process-global `@Shared(.inMemory(.selectedWalletAccount))`.
+//
+//  MOB-1496 (W-B): the "Migrate anyway" dust lane (MOB-1487/MOB-1494's `isDustLane`, a USK composite
+//  that re-proposed a residual-inclusive schedule via `migrateMigrationDust`) is retired — "Migrate
+//  anyway" now rides the SAME `immediateProposal` lane the entry-screen immediate migration already
+//  exercises below (`onAppearWithImmediateProposal...`), so its dust-specific tests are removed
+//  rather than ported.
 //
 //  MOB-1497 (T8, Q3'26 canvas): `isManualStepLane` defaults to false and is settable via init, same
-//  as `isDustLane`/`entersViaSendNow` — but unlike those two, it drives no SDK branching at all, only
+//  as `entersViaSendNow` — but unlike that one, it drives no SDK branching at all, only
 //  `sentSubtitle`'s "sent"-vs-"migrated" wording (asserted directly against both branches, since a
 //  view-only assertion isn't possible here without UI-testing infrastructure this repo doesn't have).
 //
@@ -56,8 +58,8 @@ import ComposableArchitecture
         )
     }
 
-    /// MOB-1496: the dust lane's software path derives a real USK from the wallet's stored seed —
-    /// see `MigrationTransferPlanTests`' twin helper for the rationale.
+    /// MOB-1496/MOB-1513: the immediate lane's software path derives a real USK from the wallet's
+    /// stored seed — see `MigrationTransferPlanTests`' twin helper for the rationale.
     private func withDependenciesUSKDerivable(_ values: inout DependencyValues) {
         values.derivationTool = .liveValue
         values.mnemonic = .mock
@@ -73,23 +75,11 @@ import ComposableArchitecture
         #expect(state.txId == "")
         #expect(state.totalCount == 1)
         #expect(state.sentCount == 0)
-        #expect(state.isDustLane == false)
         // R7-T3 (MOB-1497)
         #expect(state.failureKind == nil)
         #expect(state.alert == nil)
         // MOB-1497 (T8)
         #expect(state.isManualStepLane == false)
-    }
-
-    @MainActor @Test func isDustLaneDefaultsFalseButCanBeSetTrueViaInit() async {
-        let defaultState = MigrationSending.State()
-        let dustLaneState = MigrationSending.State(isDustLane: true)
-
-        #expect(defaultState.isDustLane == false)
-        #expect(dustLaneState.isDustLane == true)
-        // Unrelated defaults are untouched by the new trailing init parameter.
-        #expect(dustLaneState.phase == MigrationSending.State.Phase.sending)
-        #expect(dustLaneState.totalCount == 1)
     }
 
     // MARK: - MOB-1497 (T8, Q3'26 canvas): manual per-transfer lane -> "sent" success wording
@@ -115,17 +105,13 @@ import ComposableArchitecture
         #expect(state.sentSubtitle == String(localizable: .migrationSendingSentSubtitleTransfer))
     }
 
-    /// Every other lane — the default (immediate full sweep / plan-first review), the dust "Migrate
-    /// anyway" sweep, and the Status screen's "Send now" resume of an already-scheduled transfer —
-    /// still reads as part of one larger migration run, so it keeps the pre-existing "migrated"
-    /// wording. Flipping `isManualStepLane` is the only thing that changes the mapping — this would
-    /// fail if that selection were ever reversed.
+    /// Every other lane — the default (immediate full sweep / plan-first review, including "Migrate
+    /// anyway" since MOB-1496 W-B), and the Status screen's "Send now" resume of an
+    /// already-scheduled transfer — still reads as part of one larger migration run, so it keeps
+    /// the pre-existing "migrated" wording. Flipping `isManualStepLane` is the only thing that
+    /// changes the mapping — this would fail if that selection were ever reversed.
     @MainActor @Test func sentSubtitleIsMigratedWordingForEveryOtherLane() async {
         #expect(MigrationSending.State().sentSubtitle == String(localizable: .migrationSendingSentSubtitleMigrated))
-        #expect(
-            MigrationSending.State(isDustLane: true).sentSubtitle
-                == String(localizable: .migrationSendingSentSubtitleMigrated)
-        )
         #expect(
             MigrationSending.State(entersViaSendNow: true).sentSubtitle
                 == String(localizable: .migrationSendingSentSubtitleMigrated)
@@ -327,41 +313,6 @@ import ComposableArchitecture
 
         #expect(capturedOptions.value == sentinel)
         #expect(capturedAccountUUIDs.value == [walletAccount(keystone: false, idByte: 0).id])
-    }
-
-    /// MOB-1496 (W4): the dust lane gets the SAME execute-time options treatment as the scheduled
-    /// lane — a mocked sentinel must reach `migrateMigrationDust` unchanged.
-    @MainActor @Test func onAppearWithDustLaneReadsOptionsFromMigrationNetworkOptionsAtExecuteTime() async {
-        let capturedOptions = LockIsolated<MigrationNetworkPrivacyOptions?>(nil)
-        let sentinel = MigrationNetworkPrivacyOptions(
-            useTor: true,
-            submissionEndpoint: LightWalletEndpoint(address: "dust-sentinel.example.com", port: 9067)
-        )
-        let state = MigrationSending.State(totalCount: 1, isDustLane: true)
-        let store = TestStore(initialState: state) {
-            MigrationSending()
-        } withDependencies: {
-            $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.migrateMigrationDust = { _, _, passedOptions in
-                capturedOptions.setValue(passedOptions)
-                return MigrationTransferResult.success(txId: "tx-dust")
-            }
-            $0.migrationManager.migrationNetworkOptions = { _ in sentinel }
-            $0.migrationManager.recordTransferBroadcast = { _, _ in }
-            $0.migrationBGScheduler.scheduleNextWindow = { }
-            withDependenciesUSKDerivable(&$0)
-        }
-
-        await store.send(.onAppear)
-        await store.receive(\.transferResult) {
-            $0.sentCount = 1
-            $0.txId = "tx-dust"
-        }
-        await store.receive(\.allTransfersSent) {
-            $0.phase = .success
-        }
-
-        #expect(capturedOptions.value == sentinel)
     }
 
     // MARK: - MOB-1513 (Lane A2): immediate lane — genuine create+sign+submit happens HERE
@@ -588,125 +539,19 @@ import ComposableArchitecture
         #expect(callOrder.value == ["stop", "create"])
     }
 
-    // MARK: - Dust lane (MOB-1487): "Migrate anyway" sweeps the remainder, not the scheduled path
+    // MARK: - Keystone account, scheduled lane (never derives a USK, unlike the immediate lane)
 
-    @MainActor @Test func onAppearWithDustLaneExecutesMigrateMigrationDustInsteadOfScheduledTransfer() async {
-        let migrateDustCalls = LockIsolated<Int>(0)
-        let executeNextCalls = LockIsolated<Int>(0)
-        let scheduleNextWindowCalls = LockIsolated<Int>(0)
-        // MOB-1496 (W2): the dust lane flows through the SAME shared `.transferResult` success
-        // handler as the scheduled lane, so it gets the same write-point.
-        let recordTransferBroadcastCalls = LockIsolated<[(AccountUUID?, MigrationTransferResult)]>([])
-        let state = MigrationSending.State(totalCount: 1, isDustLane: true)
-        let store = TestStore(initialState: state) {
-            MigrationSending()
-        } withDependencies: {
-            $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.migrateMigrationDust = { _, _, _ in
-                migrateDustCalls.withValue { $0 += 1 }
-                return MigrationTransferResult.success(txId: "tx-dust")
-            }
-            $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in
-                executeNextCalls.withValue { $0 += 1 }
-                return MigrationTransferResult.success(txId: "tx-wrong-lane")
-            }
-            $0.migrationManager.recordTransferBroadcast = { accountUUID, result in
-                recordTransferBroadcastCalls.withValue { $0.append((accountUUID, result)) }
-            }
-            $0.migrationBGScheduler.scheduleNextWindow = { scheduleNextWindowCalls.withValue { $0 += 1 } }
-            withDependenciesUSKDerivable(&$0)
-        }
-
-        await store.send(.onAppear)
-        await store.receive(\.transferResult) {
-            $0.sentCount = 1
-            $0.txId = "tx-dust"
-        }
-        await store.receive(\.allTransfersSent) {
-            $0.phase = .success
-        }
-
-        #expect(migrateDustCalls.value == 1)
-        #expect(executeNextCalls.value == 0)
-        #expect(scheduleNextWindowCalls.value == 1)
-        #expect(recordTransferBroadcastCalls.value.first?.1 == MigrationTransferResult.success(txId: "tx-dust"))
-    }
-
-    @MainActor @Test func onAppearWithoutDustLaneExecutesScheduledTransferNotMigrateMigrationDust() async {
-        let migrateDustCalls = LockIsolated<Int>(0)
-        let executeNextCalls = LockIsolated<Int>(0)
-        let state = MigrationSending.State(totalCount: 1, isDustLane: false)
-        let store = TestStore(initialState: state) {
-            MigrationSending()
-        } withDependencies: {
-            $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in
-                executeNextCalls.withValue { $0 += 1 }
-                return MigrationTransferResult.success(txId: "tx-0")
-            }
-            $0.sdkSynchronizer.migrateMigrationDust = { _, _, _ in
-                migrateDustCalls.withValue { $0 += 1 }
-                return MigrationTransferResult.success(txId: "tx-dust")
-            }
-            $0.migrationManager.recordTransferBroadcast = { _, _ in }
-            $0.migrationBGScheduler.scheduleNextWindow = { }
-        }
-
-        await store.send(.onAppear)
-        await store.receive(\.transferResult) {
-            $0.sentCount = 1
-            $0.txId = "tx-0"
-        }
-        await store.receive(\.allTransfersSent) {
-            $0.phase = .success
-        }
-
-        #expect(executeNextCalls.value == 1)
-        #expect(migrateDustCalls.value == 0)
-    }
-
-    /// MOB-1496: the dust lane's USK derivation is never attempted for a Keystone account (no
-    /// PCZT-based dust-sweep lane exists yet) — the guard reports a `nil` result (ordinary failure
-    /// sheet) rather than deriving a USK for an account with no locally-held seed phrase.
-    @MainActor @Test func onAppearWithDustLaneAndKeystoneAccountNeverDerivesUSKOrCallsMigrateMigrationDust() async {
-        let deriveCalls = LockIsolated<Int>(0)
-        let migrateDustCalls = LockIsolated<Int>(0)
-        var state = MigrationSending.State(totalCount: 1, isDustLane: true)
-        state.$selectedWalletAccount.withLock { $0 = walletAccount(keystone: true, idByte: 7) }
-        let store = TestStore(initialState: state) {
-            MigrationSending()
-        } withDependencies: {
-            $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.migrateMigrationDust = { _, _, _ in
-                migrateDustCalls.withValue { $0 += 1 }
-                return MigrationTransferResult.success(txId: "should-not-be-called")
-            }
-            $0.derivationTool.deriveSpendingKey = { _, _, _ in
-                deriveCalls.withValue { $0 += 1 }
-                throw TestFailure()
-            }
-        }
-
-        await store.send(.onAppear)
-        await store.receive(\.transferResult) {
-            $0.isFailurePresented = true
-        }
-
-        #expect(deriveCalls.value == 0)
-        #expect(migrateDustCalls.value == 0)
-    }
-
-    /// MOB-1496 (W6 §3): the Keystone dust lane, once its PCZT-signed transfer is stored via the
-    /// coordinator's Keystone batch flow, hands off to THIS existing non-dust execution path
-    /// (`isDustLane: false`) rather than `migrateMigrationDust` (the USK composite the test above
-    /// proves Keystone can never use) — confirms it executes with the snapshot network options,
-    /// records the broadcast, and never touches the USK-deriving member, for a Keystone account.
-    @MainActor @Test func onAppearWithoutDustLaneAndKeystoneAccountExecutesWithSnapshotOptionsAndNeverDerivesUSK() async {
+    /// A Keystone account executes the SAME `executeNextPendingMigrationTransfer` path as a
+    /// software account — it needs no signing (it broadcasts an already-signed pending transfer,
+    /// already committed via the coordinator's Keystone PCZT batch flow), so it stays account-only
+    /// for both vendors — confirms it executes with the snapshot network options, records the
+    /// broadcast, and never touches the USK-deriving member.
+    @MainActor @Test func onAppearWithKeystoneAccountExecutesScheduledTransferWithSnapshotOptionsAndNeverDerivesUSK() async {
         let deriveCalls = LockIsolated<Int>(0)
         let executeCalls = LockIsolated<[MigrationNetworkPrivacyOptions]>([])
         let recordTransferBroadcastCalls = LockIsolated<Int>(0)
         let options = MigrationNetworkPrivacyOptions(useTor: true, submissionEndpoint: LightWalletEndpoint(address: "dust.example", port: 1))
-        var state = MigrationSending.State(totalCount: 1, isDustLane: false)
+        var state = MigrationSending.State(totalCount: 1)
         state.$selectedWalletAccount.withLock { $0 = walletAccount(keystone: true, idByte: 8) }
         let store = TestStore(initialState: state) {
             MigrationSending()
@@ -971,107 +816,6 @@ import ComposableArchitecture
 
         #expect(stopCalls.value == 0)
         #expect(migrationStoppedSyncForBroadcast == false)
-    }
-
-    /// The dust lane ("Migrate anyway") gets the same stop-before-broadcast treatment as the
-    /// scheduled lane — order asserted the same way.
-    @MainActor @Test func onAppearWithDustLaneWhileSyncingStopsSyncBeforeMigratingDust() async {
-        let callOrder = LockIsolated<[String]>([])
-        let state = MigrationSending.State(totalCount: 1, isDustLane: true)
-        let store = TestStore(initialState: state) {
-            MigrationSending()
-        } withDependencies: {
-            $0.sdkSynchronizer = SDKSynchronizerClient.mocked(
-                stop: { callOrder.withValue { $0.append("stop") } },
-                isSyncing: { true }
-            )
-            $0.sdkSynchronizer.migrateMigrationDust = { _, _, _ in
-                callOrder.withValue { $0.append("execute") }
-                return MigrationTransferResult.success(txId: "tx-dust")
-            }
-            $0.migrationManager.recordTransferBroadcast = { _, _ in }
-            $0.migrationBGScheduler.scheduleNextWindow = { }
-            withDependenciesUSKDerivable(&$0)
-        }
-
-        await store.send(.onAppear)
-        await store.receive(\.transferResult) {
-            $0.sentCount = 1
-            $0.txId = "tx-dust"
-        }
-        await store.receive(\.allTransfersSent) {
-            $0.phase = .success
-        }
-
-        #expect(callOrder.value == ["stop", "execute"])
-    }
-
-    /// The dust lane's own failure exit needs the SAME nudge as the scheduled lane's (MOB-1496
-    /// R8-T4 #3) — its `stopSyncBeforeMigrationBroadcast()` call site is independent of the
-    /// scheduled lane's, so it must be covered separately.
-    @MainActor @Test func onAppearWithDustLaneFailureResultPresentsFailureSheetAndNudgesGate() async {
-        let refreshMigrationSyncGateCalls = LockIsolated<Int>(0)
-        let state = MigrationSending.State(totalCount: 1, isDustLane: true)
-        let store = TestStore(initialState: state) {
-            MigrationSending()
-        } withDependencies: {
-            $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.migrateMigrationDust = { _, _, _ in MigrationTransferResult.networkError(retryable: true) }
-            $0.migrationManager.refreshMigrationSyncGate = { refreshMigrationSyncGateCalls.withValue { $0 += 1 } }
-            $0.migrationManager.routeBroadcastFailure = { _, _ in MigrationBroadcastFailureRoute.plainRetry }
-            withDependenciesUSKDerivable(&$0)
-        }
-
-        await store.send(.onAppear)
-        await store.receive(\.broadcastFailureRouted) {
-            $0.failureKind = MigrationBroadcastFailureRoute.plainRetry
-        }
-        await store.receive(\.transferResult) {
-            $0.isFailurePresented = true
-        }
-
-        #expect(refreshMigrationSyncGateCalls.value == 1)
-    }
-
-    /// R9-T4 (MOB-1497 review remediation, finding 5): the dust lane's USK derivation is pre-broadcast
-    /// LOCAL work (keychain export + derivation) — it must never reach the R16/R17 broadcast-failure
-    /// routing ladder, since no broadcast was ever attempted here. `TestFailure` is deliberately a
-    /// plain, unclassified error — exactly the shape `MigrationBroadcastFailureClass.classify(error:)`'s
-    /// default arm would turn into `.endpointUnreachable` if this reached the classifier at all; the
-    /// counted `routeBroadcastFailure` stub proves the hoist (not the classifier) is what keeps it out.
-    /// Also proves the sync-gate nudge stays silent (sync was never stopped for this attempt) and that
-    /// `migrateMigrationDust` itself never runs. RED against the parent commit: `deriveUSK`'s throw
-    /// there lands inside the SAME `do`/`catch` as the broadcast, so it WOULD route today.
-    @MainActor @Test func onAppearWithDustLaneDeriveUSKFailureReportsNilResultWithoutRoutingOrNudgingOrBroadcasting() async {
-        let migrateDustCalls = LockIsolated<Int>(0)
-        let routeBroadcastFailureCalls = LockIsolated<Int>(0)
-        let refreshMigrationSyncGateCalls = LockIsolated<Int>(0)
-        let state = MigrationSending.State(totalCount: 1, isDustLane: true)
-        let store = TestStore(initialState: state) {
-            MigrationSending()
-        } withDependencies: {
-            $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.migrateMigrationDust = { _, _, _ in
-                migrateDustCalls.withValue { $0 += 1 }
-                return MigrationTransferResult.success(txId: "should-not-be-called")
-            }
-            $0.migrationManager.routeBroadcastFailure = { _, _ in
-                routeBroadcastFailureCalls.withValue { $0 += 1 }
-                return MigrationBroadcastFailureRoute.plainRetry
-            }
-            $0.migrationManager.refreshMigrationSyncGate = { refreshMigrationSyncGateCalls.withValue { $0 += 1 } }
-            withDependenciesUSKDerivable(&$0)
-            $0.derivationTool.deriveSpendingKey = { _, _, _ in throw TestFailure() }
-        }
-
-        await store.send(.onAppear)
-        await store.receive(\.transferResult) {
-            $0.isFailurePresented = true
-        }
-
-        #expect(migrateDustCalls.value == 0)
-        #expect(routeBroadcastFailureCalls.value == 0)
-        #expect(refreshMigrationSyncGateCalls.value == 0)
     }
 
     // MARK: - R8-T6 (V8 fix): Send-now lane — silence-window gate-check/wait
@@ -1419,39 +1163,10 @@ import ComposableArchitecture
         #expect(migrationSendWaitActive == false)
     }
 
-    // MARK: - R8-T6: dust / manual lanes unchanged (never consult sendGate, no WAITING phase)
+    // MARK: - R8-T6: non-send-now lanes unchanged (never consult sendGate, no WAITING phase)
 
-    @MainActor @Test func onAppearWithDustLaneNeverConsultsSendGateOrEntersWaiting() async {
-        let sendGateCalls = LockIsolated<Int>(0)
-        let state = MigrationSending.State(totalCount: 1, isDustLane: true)
-        let store = TestStore(initialState: state) {
-            MigrationSending()
-        } withDependencies: {
-            $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.migrateMigrationDust = { _, _, _ in MigrationTransferResult.success(txId: "tx-dust") }
-            $0.migrationManager.recordTransferBroadcast = { _, _ in }
-            $0.migrationBGScheduler.scheduleNextWindow = { }
-            $0.migrationManager.sendGate = {
-                sendGateCalls.withValue { $0 += 1 }
-                return .waitUntil(Date().addingTimeInterval(600))
-            }
-            withDependenciesUSKDerivable(&$0)
-        }
-
-        await store.send(.onAppear)
-        await store.receive(\.transferResult) {
-            $0.sentCount = 1
-            $0.txId = "tx-dust"
-        }
-        await store.receive(\.allTransfersSent) {
-            $0.phase = .success
-        }
-
-        #expect(sendGateCalls.value == 0)
-    }
-
-    /// The default (non-dust, non-send-now) lane — immediate/manual/plan-first review, Keystone —
-    /// stays exactly as it was: never consults `sendGate()`, never shows `.waiting`.
+    /// The default (non-send-now) lane — immediate/manual/plan-first review, Keystone, "Migrate
+    /// anyway" — stays exactly as it was: never consults `sendGate()`, never shows `.waiting`.
     @MainActor @Test func onAppearWithoutSendNowLaneNeverConsultsSendGateOrEntersWaiting() async {
         let sendGateCalls = LockIsolated<Int>(0)
         let store = TestStore(initialState: MigrationSending.State(totalCount: 1)) {
@@ -1635,36 +1350,6 @@ import ComposableArchitecture
         await store.send(.cancelTapped) {
             $0.isFailurePresented = false
             $0.failureKind = nil
-        }
-    }
-
-    /// R7-review fix (controller adjudication, Important-2 in the review): the dust "Migrate anyway"
-    /// lane shares this SAME classify+route wiring with the scheduled lane (see `executeNextTransfer`'s
-    /// doc) — with the had-broadcast flag cleared at `acknowledgeComplete` (the dust run always starts
-    /// fresh, after Complete is acknowledged), a dust Tor failure routes as first-run (R14). This is
-    /// INTENDED per the approved design's flag semantics — the run-end trio clears the flag, the dust
-    /// mini-run is a genuinely fresh run, and its R14 choice is still R11-warned before any clearnet
-    /// fallback — pinned here so the disposition is documented rather than an unpinned gap.
-    @MainActor @Test func onAppearWithDustLaneTorUnavailableRoutesAsFirstRunChoice() async {
-        let state = MigrationSending.State(totalCount: 1, isDustLane: true)
-        let store = TestStore(initialState: state) {
-            MigrationSending()
-        } withDependencies: {
-            $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.migrateMigrationDust = { _, _, _ in throw ZcashError.migrationTorUnavailable }
-            $0.migrationManager.migrationNetworkOptions = { _ in
-                MigrationNetworkPrivacyOptions(useTor: true, submissionEndpoint: LightWalletEndpoint(address: "", port: 0))
-            }
-            $0.migrationManager.routeBroadcastFailure = { _, _ in MigrationBroadcastFailureRoute.torFirstRunChoice }
-            withDependenciesUSKDerivable(&$0)
-        }
-
-        await store.send(.onAppear)
-        await store.receive(\.broadcastFailureRouted) {
-            $0.failureKind = MigrationBroadcastFailureRoute.torFirstRunChoice
-        }
-        await store.receive(\.transferResult) {
-            $0.isFailurePresented = true
         }
     }
 
