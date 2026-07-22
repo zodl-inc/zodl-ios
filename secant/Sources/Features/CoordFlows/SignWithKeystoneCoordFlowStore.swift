@@ -13,6 +13,7 @@ import ComposableArchitecture
 struct SignWithKeystoneCoordFlow {
     @Reducer
     enum Path {
+        case keystoneFirmwareUpdate(SendConfirmation)
         case preSendingFailure(SendConfirmation)
         case scan(Scan)
         case sending(SendConfirmation)

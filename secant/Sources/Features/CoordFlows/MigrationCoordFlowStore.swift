@@ -192,6 +192,13 @@ struct MigrationCoordFlow {
         /// teardown that runs AFTER an account switch (the cross-account notification tap) still
         /// cancels the stranded run on the account that built it, not the newly selected one.
         var pendingKeystoneSigningAccountUUID: AccountUUID?
+        /// MOB-1510: firmware version detected on the scanned batch entry that failed the
+        /// minimum-firmware gate — `nil` when that entry carried no version stamp at all (firmware
+        /// older than the stamping feature). Drives the copy on `KeystoneFirmwareUpdateContent`,
+        /// mirrors `torSheetState`/`isTorSheetPresented`'s "coordinator owns its own sheet state"
+        /// idiom rather than an `@Presents`/`ifLet` destination.
+        var detectedKeystoneFirmware: KeystoneFirmwareVersion?
+        var isKeystoneFirmwareUpdatePresented = false
         /// MOB-1478 (W2): the Tor bottom sheet's own state — always present (not optional), toggled
         /// on screen via `isTorSheetPresented`, mirroring the `ServerSetup`/`serverSetupViewBinding`
         /// precedent in `Root` rather than an `@Presents`/`ifLet` destination (there's exactly one
@@ -308,6 +315,10 @@ struct MigrationCoordFlow {
         /// real round-trip, where `scan` is always the acting/top element; 1 (`keystoneSign` only) for
         /// the simulator bypass, which never pushes `scan`.
         case keystoneScanAbandoned
+        /// MOB-1510: `zashiSheet`'s `isPresented` binding changed for the firmware-update prompt —
+        /// mirrors `torSheetPresentationChanged`'s contract. `false` clears `detectedKeystoneFirmware`
+        /// (there is only ever a "Close" affordance here, no warn-on-swipe distinction to make).
+        case keystoneFirmwareUpdatePresentationChanged(Bool)
         /// MOB-1478 (W2): the Tor bottom sheet's own actions (toggle binding + "Got it").
         case torSheet(MigrationTorSheet.Action)
         /// MOB-1478 (W2): `zashiSheet`'s `isPresented` binding changed — `true` when presented (the

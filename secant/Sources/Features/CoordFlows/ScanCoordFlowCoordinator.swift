@@ -142,7 +142,32 @@ extension ScanCoordFlow {
                     }
                 }
                 return .none
-                
+
+            // MOB-1510: pushed on top of whatever's on the path (`.sending` is always there by
+            // this point — `.scan(.foundPCZT)` above already pushed it before forwarding into
+            // `confirmWithKeystone`) rather than branching on the top element like `pcztSendFailed`
+            // above — a firmware violation is detected strictly before any broadcast attempt, so
+            // there is no "failed during/after broadcast" case to distinguish here.
+            case .path(.element(id: _, action: .confirmWithKeystone(.keystoneFirmwareUpdateRequired))):
+                for element in state.path {
+                    if case .confirmWithKeystone(let sendConfirmationState) = element {
+                        state.path.append(.keystoneFirmwareUpdate(sendConfirmationState))
+                    }
+                }
+                return .none
+
+            // Close: pop back to `confirmWithKeystone` (discarding `.scan`/`.sending`/
+            // `.keystoneFirmwareUpdate` above it) so `getSignatureTapped` can drive a fresh scan
+            // once the user has updated their device's firmware — the PCZT/proposal already built
+            // is still valid, so there is no need to rebuild it from the send form.
+            case .path(.element(id: _, action: .keystoneFirmwareUpdate(.keystoneFirmwareUpdateCloseTapped))):
+                for (id, element) in zip(state.path.ids, state.path) {
+                    if element.is(\.confirmWithKeystone) {
+                        state.path.pop(to: id)
+                    }
+                }
+                return .none
+
                 // MARK: - Request ZEC Confirmation
                 
             case .path(.element(id: _, action: .requestZecConfirmation(.goBackTappedFromRequestZec))):
