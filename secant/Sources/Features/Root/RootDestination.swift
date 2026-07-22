@@ -57,16 +57,11 @@ extension Root {
                 }
                 state.destinationState.destination = destination
 
-                // The stale-wallet-heal notice is deferred until the destination settles on
-                // home: presenting it immediately at heal time gets it auto-dismissed by this
-                // very destination switch (SwiftUI tears down the presenting view branch before
-                // the alert has a chance to be seen). Wait out the transition animation, then
-                // present it, consuming the pending flag exactly once.
+                // See `presentStaleWalletHealedAlertEffect` (RootStore.swift) for why this is
+                // deferred and shared with the `.phraseDisplay(.finishedTapped)` /
+                // `.onboarding(.newWalletSuccessfulyCreated)` transition in RootInitialization.swift.
                 if destination == .home && state.isStaleWalletHealedAlertPending {
-                    return .run { send in
-                        try await mainQueue.sleep(for: .seconds(0.5))
-                        await send(.initialization(.presentStaleWalletHealedAlert))
-                    }
+                    return presentStaleWalletHealedAlertEffect(cancelId: state.staleWalletHealedAlertCancelId)
                 }
 
                 return .none

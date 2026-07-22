@@ -454,7 +454,14 @@ extension Root {
                 return .none
 
             case .initialization(.presentStaleWalletHealedAlert):
-                guard state.isStaleWalletHealedAlertPending else { return .none }
+                // Re-check the destination: the 0.5s wait isn't cancelled by leaving `.home`
+                // (only re-entering `.home` reschedules this effect), so a deep link or other
+                // navigation during the window must not present the notice over whatever screen
+                // is showing now. Leave the flag set so a later return to `.home` re-fires the
+                // hook and the notice still gets delivered.
+                guard state.isStaleWalletHealedAlertPending, state.destinationState.destination == .home else {
+                    return .none
+                }
                 state.isStaleWalletHealedAlertPending = false
                 state.alert = AlertState.staleWalletDatabaseHealed()
                 return .none
@@ -735,6 +742,11 @@ extension Root {
 
             case .phraseDisplay(.finishedTapped), .onboarding(.newWalletSuccessfulyCreated):
                 state.destinationState.destination = .home
+                // This is the second (synchronous, action-round-trip-free) place the destination
+                // can land on `.home` — see `presentStaleWalletHealedAlertEffect` (RootStore.swift).
+                if state.isStaleWalletHealedAlertPending {
+                    return presentStaleWalletHealedAlertEffect(cancelId: state.staleWalletHealedAlertCancelId)
+                }
                 return .none
 
             case .onboarding(.createNewWalletTapped):
