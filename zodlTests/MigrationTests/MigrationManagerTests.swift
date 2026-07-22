@@ -1796,6 +1796,190 @@ struct MigrationManagerTests {
         #expect(storage.remainderPending(for: account.id) == false)
     }
 
+    // MARK: - MOB-1513 (H3 guard): presentedFlowAccountUUIDs round trip + reconcile() skip/resume
+    //
+    // `evaluateMigrationRemainder`'s hazard (see its doc): `proposeMigrationTransfers` overwrites
+    // the SDK's plan cache, and `reconcile()` walks EVERY candidate account on EVERY call — so the
+    // one guaranteed once-per-transition evaluate can still land while some OTHER reconcile caller
+    // (there are many call sites) races a migration screen that is mid-review of an EARLIER,
+    // uncommitted propose for the SAME account. `setMigrationFlowPresented`/`isMigrationFlowPresented`
+    // are the in-memory signal that closes this: armed while a propose-consuming screen is on
+    // screen, read by `reconcile()` to skip the evaluate (and its paired `completedRounds`
+    // increment) for exactly that account, that pass — delayed, never lost.
+
+    @Test func setMigrationFlowPresentedRoundTripsThroughTheImpl() {
+        let account = AccountUUID(id: [UInt8](repeating: 60, count: 16))
+        let impl = MigrationManagerImpl()
+
+        #expect(impl.isMigrationFlowPresented(accountUUID: account) == false)
+
+        impl.setMigrationFlowPresented(accountUUID: account, isPresented: true)
+        #expect(impl.isMigrationFlowPresented(accountUUID: account) == true)
+
+        // The disarm every production close/replace site issues.
+        impl.setMigrationFlowPresented(accountUUID: account, isPresented: false)
+        #expect(impl.isMigrationFlowPresented(accountUUID: account) == false)
+    }
+
+    @Test func migrationFlowPresentedIsIsolatedPerAccount() {
+        let accountA = AccountUUID(id: [UInt8](repeating: 61, count: 16))
+        let accountB = AccountUUID(id: [UInt8](repeating: 62, count: 16))
+        let impl = MigrationManagerImpl()
+
+        impl.setMigrationFlowPresented(accountUUID: accountA, isPresented: true)
+
+        #expect(impl.isMigrationFlowPresented(accountUUID: accountA) == true)
+        #expect(impl.isMigrationFlowPresented(accountUUID: accountB) == false)
+    }
+
+    /// A `nil` accountUUID must never fall back to arming/disarming SOME OTHER account — there is
+    /// no account to key the signal to, so it is a pure no-op.
+    @Test func setMigrationFlowPresentedWithNilAccountUUIDIsANoOp() {
+        let account = AccountUUID(id: [UInt8](repeating: 63, count: 16))
+        let impl = MigrationManagerImpl()
+
+        impl.setMigrationFlowPresented(accountUUID: nil, isPresented: true)
+
+        #expect(impl.isMigrationFlowPresented(accountUUID: account) == false)
+    }
+
+    /// The core H3 behavior: an account reaching `.complete` with a migration screen presented for
+    /// it must NOT propose — `remainderPending` stays `nil` (never evaluated) and `completedRounds`
+    /// stays unincremented, exactly as if `reconcile()` had never observed the transition at all.
+    @Test func reconcileSkipsRemainderEvaluationWhileMigrationFlowIsPresented() async throws {
+        let userDefaults = try #require(
+            UserDefaults(suiteName: "testReconcileSkipsRemainderEvaluationWhileMigrationFlowIsPresented"),
+            "MigrationGateStorage: UserDefaults failed to initialize"
+        )
+        defer {
+            userDefaults.removePersistentDomain(forName: "testReconcileSkipsRemainderEvaluationWhileMigrationFlowIsPresented")
+        }
+
+        let storage = MigrationGateStorage(userDefaults: userDefaults)
+        let account = WalletAccount(
+            Account(
+                id: AccountUUID(id: [UInt8](repeating: 54, count: 16)),
+                name: "Zodl",
+                keySource: nil,
+                seedFingerprint: nil,
+                hdAccountIndex: Zip32AccountIndex(0),
+                ufvk: nil,
+                uivk: nil
+            )
+        )
+
+        @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
+        @Shared(.inMemory(.walletAccounts)) var walletAccounts: [WalletAccount] = []
+        $selectedWalletAccount.withLock { $0 = account }
+        $walletAccounts.withLock { $0 = [account] }
+
+        let proposeCalls = LockIsolated<Int>(0)
+        let impl = MigrationManagerImpl(gateStorage: storage)
+        impl.setMigrationFlowPresented(accountUUID: account.id, isPresented: true)
+
+        await withDependencies {
+            $0.sdkSynchronizer = SDKSynchronizerClient.mocked(
+                latestState: {
+                    var state = SynchronizerState.zero
+                    state.latestBlockHeight = 5_000_000
+                    return state
+                }
+            )
+            $0.sdkSynchronizer.getMigrationState = { _ in MigrationState.complete }
+            $0.sdkSynchronizer.proposeMigrationTransfers = { _, _ in
+                proposeCalls.withValue { $0 += 1 }
+                return MigrationSchedule(transfers: [], estimatedDurationHours: 0)
+            }
+        } operation: {
+            await impl.reconcile()
+        }
+
+        #expect(proposeCalls.withValue { $0 } == 0)
+        #expect(storage.remainderPending(for: account.id) == nil)
+        #expect(storage.completedRounds(for: account.id) == 0)
+    }
+
+    /// Twin of the skip test above: once the flag clears, the VERY NEXT `reconcile()` pass performs
+    /// the deferred evaluate — proving the skip only ever delays, never loses, the once-per-
+    /// transition evaluation.
+    @Test func reconcileEvaluatesRemainderOnceMigrationFlowIsNoLongerPresented() async throws {
+        let userDefaults = try #require(
+            UserDefaults(suiteName: "testReconcileEvaluatesRemainderOnceMigrationFlowIsNoLongerPresented"),
+            "MigrationGateStorage: UserDefaults failed to initialize"
+        )
+        defer {
+            userDefaults.removePersistentDomain(forName: "testReconcileEvaluatesRemainderOnceMigrationFlowIsNoLongerPresented")
+        }
+
+        let storage = MigrationGateStorage(userDefaults: userDefaults)
+        let account = WalletAccount(
+            Account(
+                id: AccountUUID(id: [UInt8](repeating: 55, count: 16)),
+                name: "Zodl",
+                keySource: nil,
+                seedFingerprint: nil,
+                hdAccountIndex: Zip32AccountIndex(0),
+                ufvk: nil,
+                uivk: nil
+            )
+        )
+
+        @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
+        @Shared(.inMemory(.walletAccounts)) var walletAccounts: [WalletAccount] = []
+        $selectedWalletAccount.withLock { $0 = account }
+        $walletAccounts.withLock { $0 = [account] }
+
+        let proposeCalls = LockIsolated<Int>(0)
+        let impl = MigrationManagerImpl(gateStorage: storage)
+        impl.setMigrationFlowPresented(accountUUID: account.id, isPresented: true)
+
+        await withDependencies {
+            $0.sdkSynchronizer = SDKSynchronizerClient.mocked(
+                latestState: {
+                    var state = SynchronizerState.zero
+                    state.latestBlockHeight = 5_000_000
+                    return state
+                }
+            )
+            $0.sdkSynchronizer.getMigrationState = { _ in MigrationState.complete }
+            $0.sdkSynchronizer.proposeMigrationTransfers = { _, _ in
+                proposeCalls.withValue { $0 += 1 }
+                return MigrationSchedule(transfers: [], estimatedDurationHours: 0)
+            }
+        } operation: {
+            // First pass: flow still presented — skipped.
+            await impl.reconcile()
+        }
+
+        #expect(proposeCalls.withValue { $0 } == 0)
+        #expect(storage.remainderPending(for: account.id) == nil)
+
+        // The flow closes.
+        impl.setMigrationFlowPresented(accountUUID: account.id, isPresented: false)
+
+        await withDependencies {
+            $0.sdkSynchronizer = SDKSynchronizerClient.mocked(
+                latestState: {
+                    var state = SynchronizerState.zero
+                    state.latestBlockHeight = 5_000_000
+                    return state
+                }
+            )
+            $0.sdkSynchronizer.getMigrationState = { _ in MigrationState.complete }
+            $0.sdkSynchronizer.proposeMigrationTransfers = { _, _ in
+                proposeCalls.withValue { $0 += 1 }
+                return MigrationSchedule(transfers: [], estimatedDurationHours: 0)
+            }
+        } operation: {
+            // Second pass: flag clear — the deferred evaluate finally runs.
+            await impl.reconcile()
+        }
+
+        #expect(proposeCalls.withValue { $0 } == 1)
+        #expect(storage.remainderPending(for: account.id) == false)
+        #expect(storage.completedRounds(for: account.id) == 1)
+    }
+
     // MARK: - stateEvents(): emits only on a reconcile-observed change
 
     /// `stateEvents(accountUUID:)` is backed by a `CurrentValueSubject` seeded `.notStarted`
