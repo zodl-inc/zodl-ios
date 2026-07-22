@@ -390,6 +390,65 @@ import ComposableArchitecture
         #expect(abs(actualTimestamp - expectedDueAt.timeIntervalSince1970) < 5)
     }
 
+    // MARK: - Rounds estimate (MOB-1511 W2)
+
+    /// Fresh engine: the default ~12.458 ZEC balance over the simplified 5 ZEC per-run capacity
+    /// ceils to 3 — exercising the actual multi-round "Round N of M" (M > 1) label QA needed a way
+    /// to reach, which the real SDK stub could never produce.
+    @Test func estimatedRunCountForFreshEngineDerivesFromDefaultBalance() {
+        let engine = makeEngine()
+
+        #expect(engine.estimatedRunCount() == 3)
+    }
+
+    /// A fully drained wallet (`.complete` preset: `orchardBalance == dustRemainder == .zero`)
+    /// has nothing left to migrate — `nil`, matching the real SDK's "zero runs" contract.
+    @Test func estimatedRunCountIsNilWhenOrchardBalanceIsFullyDrained() {
+        let engine = makeEngine()
+        engine.applyPreset(SimulatorPreset.complete)
+
+        #expect(engine.orchardBalance() == Zatoshi.zero)
+        #expect(engine.estimatedRunCount() == nil)
+    }
+
+    /// A wallet holding ONLY dust (`.completeWithDust`: `orchardBalance == dustRemainder`, both
+    /// 800_000 zats — non-zero) must ALSO answer `nil`, not a spurious 1 round: dust never
+    /// migrates, mirroring the real `MigrationRunEstimate.runs`/`finalResidual` split.
+    @Test func estimatedRunCountIsNilWhenOnlyDustRemains() {
+        let engine = makeEngine()
+        engine.applyPreset(SimulatorPreset.completeWithDust)
+
+        #expect(engine.orchardBalance().amount > 0)
+        #expect(engine.estimatedRunCount() == nil)
+    }
+
+    /// `MigrationSimulatorEngineDerivations.estimatedRunCount` table, independent of the engine —
+    /// exact multiples, a partial remainder that must round UP (never truncate a real fractional
+    /// run away), and the dust-subtraction floor.
+    @Test func estimatedRunCountTableAcrossBalanceShapes() {
+        let capacity = MigrationSimulatorEngineDerivations.Constants.simulatedRunCapacity
+        let cases: [(orchardBalance: Zatoshi, dustRemainder: Zatoshi, expected: Int?)] = [
+            (Zatoshi.zero, Zatoshi.zero, nil),
+            (capacity, Zatoshi.zero, 1),
+            (Zatoshi(capacity.amount * 2), Zatoshi.zero, 2),
+            (Zatoshi(capacity.amount + 1), Zatoshi.zero, 2),
+            (Zatoshi(800_000), Zatoshi(800_000), nil),
+            (Zatoshi(capacity.amount * 2 + 800_000), Zatoshi(800_000), 2)
+        ]
+
+        for testCase in cases {
+            let result = MigrationSimulatorEngineDerivations.estimatedRunCount(
+                orchardBalance: testCase.orchardBalance,
+                dustRemainder: testCase.dustRemainder
+            )
+            let failureMessage = """
+            orchardBalance \(testCase.orchardBalance.amount), dustRemainder \(testCase.dustRemainder.amount): \
+            expected \(String(describing: testCase.expected)), got \(String(describing: result))
+            """
+            #expect(result == testCase.expected, "\(failureMessage)")
+        }
+    }
+
     // MARK: - isNextTransferDue
 
     @Test func isNextTransferDueFalseUntilEarliestUnsentTransferMatures() async {

@@ -97,6 +97,16 @@ final class MigrationSimulatorEngine: @unchecked Sendable {
         withSnapshot { MigrationSimulatorEngineDerivations.computeSummary(for: $0) }
     }
 
+    /// MOB-1511 (W2): see `MigrationSimulatorEngineDerivations.estimatedRunCount`'s doc.
+    func estimatedRunCount() -> Int? {
+        withSnapshot { snapshot in
+            MigrationSimulatorEngineDerivations.estimatedRunCount(
+                orchardBalance: snapshot.orchardBalance,
+                dustRemainder: snapshot.dustRemainder
+            )
+        }
+    }
+
     func transferRows() -> [MigrationTransferRow] {
         withSnapshot { snapshot in
             MigrationSimulatorEngineDerivations.rows(

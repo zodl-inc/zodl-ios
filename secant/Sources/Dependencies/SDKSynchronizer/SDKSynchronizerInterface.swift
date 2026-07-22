@@ -193,12 +193,17 @@ struct SDKSynchronizerClient: Sendable {
     var rescheduleOverdueMigrationTransfer: @Sendable (AccountUUID) async throws -> MigrationTransferProposal?
     /// Re-evaluates the account's remaining spendable Orchard balance and returns a fresh schedule.
     var restartCurrentMigrationStep: @Sendable (AccountUUID, _ includeResidual: Bool) async throws -> MigrationSchedule
-    /// MOB-1511 (W2): the engine's estimate of how many migration runs ("rounds") the account's
-    /// balance needs in total. STUB — always `nil` today: the estimator
-    /// (`estimate_migration_runs` -> `MigrationRunEstimate.run_count()`) lives in
-    /// librustzcash#2714, unmerged and not yet plumbed through FFI/SDK. When it lands, swap the
-    /// live stub body for the real `Synchronizer` call; the UI already renders "Round N of M"
-    /// whenever this returns a value and "Round N" while it stays `nil`.
+    /// MOB-1511 (W2): the engine's estimate of how many migration runs ("rounds") migrating the
+    /// account's CURRENT spendable Orchard balance would take in total
+    /// (`Synchronizer.estimateMigrationRuns(accountUUID:)` -> `MigrationRunEstimate.runCount`,
+    /// mapped by `SDKSynchronizerClient.migrationRunCount(fromEstimate:)`). `nil` when the estimate
+    /// has zero runs — a drained or sub-quantum (dust-only) balance, a legitimate answer, not an
+    /// error — matching `MigrationRunEstimate.runs`'s own "empty when nothing migrates" contract.
+    /// The UI renders "Round N of M" whenever this returns a value and "Round N" while it's `nil`.
+    /// Treat the returned total as a PREVIEW that can shift with the balance — it's re-fetched
+    /// fresh on every read (see `migrationRoundContext`'s callers), never persisted as truth: a
+    /// later run can need more or fewer rounds than an earlier read implied, e.g. if funds arrive
+    /// or notes get spent between reads.
     var estimateMigrationRunCount: @Sendable (AccountUUID) async throws -> Int? = { _ in nil }
     /// Re-proposes at a fresh anchor and re-signs the account's active run (needs the USK); returns
     /// the number refreshed.
