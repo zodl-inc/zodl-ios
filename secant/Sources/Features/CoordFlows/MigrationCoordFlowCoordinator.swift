@@ -596,6 +596,23 @@ extension MigrationCoordFlow {
                     return .send(.keystoneScanAbandoned)
                 }
 
+                // MOB-1510: every entry in the batch was witnessed by the SAME physical device in
+                // the SAME signing ceremony, so one entry signed by out-of-date firmware means the
+                // whole ceremony was — check all of them, not just the first, before storing
+                // anything. Simulator-only `.simulateSignature` deliberately skips this: it never
+                // touches a real device (testnet-only, see `MigrationSimulatorFlag`), so there is no
+                // firmware to gate.
+                let firmwareCheck = MigrationCoordFlow.firstUnsupportedKeystoneFirmwareVersion(in: signedPczts)
+                if firmwareCheck.found {
+                    state.detectedKeystoneFirmware = firmwareCheck.version
+                    state.isKeystoneFirmwareUpdatePresented = true
+                    // Reuses the existing abandon machinery unmodified so no stray engine run is
+                    // left behind — same pop-count/cancel semantics as a re-pair failure or a
+                    // rejected scan (see `keystoneScanAbandoned`'s doc); the sheet set above shows
+                    // over whatever screen that abandon lands the user back on.
+                    return .send(.keystoneScanAbandoned)
+                }
+
                 // [MOB-1496] W2: the schedule that was just signed lives on the `.transferPlan`/
                 // `.reviewTransfer` element still beneath `keystoneSign`+`scan` on the path (or, for
                 // the dust lane, directly on `context` — see `pendingKeystoneSchedule`'s doc) — read
@@ -713,6 +730,15 @@ extension MigrationCoordFlow {
                     // to encounter (and cancel) itself, same as today.
                     _ = try? await sdkSynchronizer.restartCurrentMigrationStep(accountUUID, false)
                 }
+
+                // MARK: - Keystone firmware update (MOB-1510)
+
+            case .keystoneFirmwareUpdatePresentationChanged(let isPresented):
+                state.isKeystoneFirmwareUpdatePresented = isPresented
+                if !isPresented {
+                    state.detectedKeystoneFirmware = nil
+                }
+                return .none
 
                 // MARK: - Sending
 
@@ -1246,6 +1272,25 @@ extension MigrationCoordFlow {
             }
         }
         return (prepEntries, scheduleEntries)
+    }
+
+    // MARK: - MOB-1510: Keystone minimum-firmware gate over a signed batch
+
+    /// `true` when ANY entry in a re-paired signed Keystone batch is unstamped or below
+    /// `KeystoneFirmwareVersion.minimumSupported` — every entry in a batch is signed by the SAME
+    /// physical device in the SAME ceremony, so one out-of-date entry means the device was
+    /// out-of-date for the whole batch. `version` is the first offending entry's detected version
+    /// (`nil` = unstamped) for display; meaningless when `found` is `false`.
+    static func firstUnsupportedKeystoneFirmwareVersion(
+        in batch: [MigrationSignedTransferPczt]
+    ) -> (found: Bool, version: KeystoneFirmwareVersion?) {
+        for entry in batch {
+            let version = entry.pczt.keystoneFirmwareVersion()
+            guard let version, version >= KeystoneFirmwareVersion.minimumSupported else {
+                return (true, version)
+            }
+        }
+        return (false, nil)
     }
 
     // MARK: - Tor bottom sheet (MOB-1478 W2): present + confirm/dismiss

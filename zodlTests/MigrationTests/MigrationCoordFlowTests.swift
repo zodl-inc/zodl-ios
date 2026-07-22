@@ -93,6 +93,14 @@ import ComposableArchitecture
         )
     )
 
+    /// MOB-1510: a valid (at-minimum) Keystone firmware stamp, appended to this file's pre-existing
+    /// `signed`/`expectedStored`-style fixture bytes — written before the firmware gate existed, so
+    /// on their own they now read as "unstamped" and abandon the ceremony instead of proceeding.
+    /// Appended (not substituted) so the original identifying bytes stay visible in each fixture.
+    /// Tests that specifically exercise the gate itself live in `KeystoneFirmwareGateTests`
+    /// (`SendTests/KeystoneFirmwareTests.swift`) and `MigrationCoordFlowPureFunctionTests` below.
+    private static let validKeystoneFirmwareStamp = Data(Array("keystone:fw_version".utf8) + [0x03, 3, 0, 0])
+
     /// MOB-1496 (W6): `migrationManager.migrationNetworkOptions(_:)` has no macro default (unlike the
     /// SDK synchronizer's `.noOp`) — any test that reaches the note-split-broadcast or dust-execute
     /// branch must mock it explicitly or trip `unimplemented`. Same fixture shape as
@@ -1274,10 +1282,12 @@ import ComposableArchitecture
             MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xAA])),
             MigrationUnsignedTransferPczt(id: "t1", pczt: Data([0xBB]))
         ]
-        let signed: [Data] = [Data([0xAA, 0x01]), Data([0xBB, 0x01])]
+        // MOB-1510: `+ Self.validKeystoneFirmwareStamp` on `signed`/`expectedStored` keeps this
+        // pre-existing "happy path" fixture clearing the firmware gate — see that constant's doc.
+        let signed: [Data] = [Data([0xAA, 0x01]) + Self.validKeystoneFirmwareStamp, Data([0xBB, 0x01]) + Self.validKeystoneFirmwareStamp]
         let expectedStored: [MigrationSignedTransferPczt] = [
-            MigrationSignedTransferPczt(id: "t0", pczt: Data([0xAA, 0x01])),
-            MigrationSignedTransferPczt(id: "t1", pczt: Data([0xBB, 0x01]))
+            MigrationSignedTransferPczt(id: "t0", pczt: Data([0xAA, 0x01]) + Self.validKeystoneFirmwareStamp),
+            MigrationSignedTransferPczt(id: "t1", pczt: Data([0xBB, 0x01]) + Self.validKeystoneFirmwareStamp)
         ]
         var state = MigrationCoordFlow.State()
         state.pendingKeystoneSigning = .planCommit
@@ -1324,7 +1334,8 @@ import ComposableArchitecture
         let recordCommittedScheduleCalls = LockIsolated<[(AccountUUID?, MigrationSchedule)]>([])
         let reconcileCalls = LockIsolated<Int>(0)
         let unsigned: [MigrationUnsignedTransferPczt] = [MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xAA]))]
-        let signed: [Data] = [Data([0xAA, 0x01])]
+        // MOB-1510: see `Self.validKeystoneFirmwareStamp`'s doc.
+        let signed: [Data] = [Data([0xAA, 0x01]) + Self.validKeystoneFirmwareStamp]
         let schedule = MigrationSchedule(
             transfers: [MigrationTransferProposal(id: "t0", amount: Zatoshi(500_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)],
             estimatedDurationHours: 24
@@ -1465,11 +1476,16 @@ import ComposableArchitecture
             MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xAA])),
             MigrationUnsignedTransferPczt(id: "t1", pczt: Data([0xBB]))
         ]
-        let signed: [Data] = [Data([0x01, 0x99]), Data([0xAA, 0x99]), Data([0xBB, 0x99])]
+        // MOB-1510: see `Self.validKeystoneFirmwareStamp`'s doc.
+        let signed: [Data] = [
+            Data([0x01, 0x99]) + Self.validKeystoneFirmwareStamp,
+            Data([0xAA, 0x99]) + Self.validKeystoneFirmwareStamp,
+            Data([0xBB, 0x99]) + Self.validKeystoneFirmwareStamp
+        ]
         // The sentinel entry must NOT appear here — only the schedule's own engine-id pairs.
         let expectedStored: [MigrationSignedTransferPczt] = [
-            MigrationSignedTransferPczt(id: "t0", pczt: Data([0xAA, 0x99])),
-            MigrationSignedTransferPczt(id: "t1", pczt: Data([0xBB, 0x99]))
+            MigrationSignedTransferPczt(id: "t0", pczt: Data([0xAA, 0x99]) + Self.validKeystoneFirmwareStamp),
+            MigrationSignedTransferPczt(id: "t1", pczt: Data([0xBB, 0x99]) + Self.validKeystoneFirmwareStamp)
         ]
         var state = MigrationCoordFlow.State()
         state.pendingKeystoneSigning = .planCommit
@@ -1521,17 +1537,22 @@ import ComposableArchitecture
             MigrationUnsignedTransferPczt(id: "t1", pczt: Data([0xBB])),
             MigrationUnsignedTransferPczt(id: "note-split#p2", pczt: Data([0x03]))
         ]
+        // MOB-1510: see `Self.validKeystoneFirmwareStamp`'s doc.
         let signed: [Data] = [
-            Data([0x01, 0x99]), Data([0xAA, 0x99]), Data([0x02, 0x99]), Data([0xBB, 0x99]), Data([0x03, 0x99])
+            Data([0x01, 0x99]) + Self.validKeystoneFirmwareStamp,
+            Data([0xAA, 0x99]) + Self.validKeystoneFirmwareStamp,
+            Data([0x02, 0x99]) + Self.validKeystoneFirmwareStamp,
+            Data([0xBB, 0x99]) + Self.validKeystoneFirmwareStamp,
+            Data([0x03, 0x99]) + Self.validKeystoneFirmwareStamp
         ]
         let expectedPreps: [MigrationSignedTransferPczt] = [
-            MigrationSignedTransferPczt(id: "p0", pczt: Data([0x01, 0x99])),
-            MigrationSignedTransferPczt(id: "p1", pczt: Data([0x02, 0x99])),
-            MigrationSignedTransferPczt(id: "p2", pczt: Data([0x03, 0x99]))
+            MigrationSignedTransferPczt(id: "p0", pczt: Data([0x01, 0x99]) + Self.validKeystoneFirmwareStamp),
+            MigrationSignedTransferPczt(id: "p1", pczt: Data([0x02, 0x99]) + Self.validKeystoneFirmwareStamp),
+            MigrationSignedTransferPczt(id: "p2", pczt: Data([0x03, 0x99]) + Self.validKeystoneFirmwareStamp)
         ]
         let expectedSchedule: [MigrationSignedTransferPczt] = [
-            MigrationSignedTransferPczt(id: "t0", pczt: Data([0xAA, 0x99])),
-            MigrationSignedTransferPczt(id: "t1", pczt: Data([0xBB, 0x99]))
+            MigrationSignedTransferPczt(id: "t0", pczt: Data([0xAA, 0x99]) + Self.validKeystoneFirmwareStamp),
+            MigrationSignedTransferPczt(id: "t1", pczt: Data([0xBB, 0x99]) + Self.validKeystoneFirmwareStamp)
         ]
         var state = MigrationCoordFlow.State()
         state.pendingKeystoneSigning = .planCommit
@@ -1580,7 +1601,8 @@ import ComposableArchitecture
             MigrationUnsignedTransferPczt(id: "note-split#p0", pczt: Data([0x01])),
             MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xAA]))
         ]
-        let signed: [Data] = [Data([0x01, 0x99]), Data([0xAA, 0x99])]
+        // MOB-1510: see `Self.validKeystoneFirmwareStamp`'s doc.
+        let signed: [Data] = [Data([0x01, 0x99]) + Self.validKeystoneFirmwareStamp, Data([0xAA, 0x99]) + Self.validKeystoneFirmwareStamp]
         var state = MigrationCoordFlow.State()
         state.pendingKeystoneSigning = .planCommit
         state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .scheduled)))
@@ -1611,7 +1633,7 @@ import ComposableArchitecture
         await store.receive(\.path) // .noteSplit(.delegate(.storeScheduleRequested))
         await store.receive(\.path) // .noteSplit(.splitConfirmed) — the deferred store succeeded
 
-        #expect(storeSignedCalls.value == [[MigrationSignedTransferPczt(id: "p0", pczt: Data([0x01, 0x99]))]])
+        #expect(storeSignedCalls.value == [[MigrationSignedTransferPczt(id: "p0", pczt: Data([0x01, 0x99]) + Self.validKeystoneFirmwareStamp)]])
         #expect(broadcastCalls.value == 1)
         guard case let .noteSplit(noteSplitState) = try? #require(store.state.path.last) else {
             Issue.record("Expected .noteSplit pushed on top of the retained .transferPlan element")
@@ -1644,7 +1666,8 @@ import ComposableArchitecture
             MigrationUnsignedTransferPczt(id: "note-split#p0", pczt: Data([0x01])),
             MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xAA]))
         ]
-        let signed: [Data] = [Data([0x01, 0x99]), Data([0xAA, 0x99])]
+        // MOB-1510: see `Self.validKeystoneFirmwareStamp`'s doc.
+        let signed: [Data] = [Data([0x01, 0x99]) + Self.validKeystoneFirmwareStamp, Data([0xAA, 0x99]) + Self.validKeystoneFirmwareStamp]
         let schedule = MigrationSchedule(
             transfers: [MigrationTransferProposal(id: "t0", amount: Zatoshi(500_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)],
             estimatedDurationHours: 24
@@ -1715,7 +1738,8 @@ import ComposableArchitecture
             MigrationUnsignedTransferPczt(id: "note-split#p0", pczt: Data([0x01])),
             MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xAA]))
         ]
-        let signed: [Data] = [Data([0x01, 0x99]), Data([0xAA, 0x99])]
+        // MOB-1510: see `Self.validKeystoneFirmwareStamp`'s doc.
+        let signed: [Data] = [Data([0x01, 0x99]) + Self.validKeystoneFirmwareStamp, Data([0xAA, 0x99]) + Self.validKeystoneFirmwareStamp]
         let schedule = MigrationSchedule(
             transfers: [MigrationTransferProposal(id: "t0", amount: Zatoshi(500_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)],
             estimatedDurationHours: 24
@@ -1763,7 +1787,7 @@ import ComposableArchitecture
         #expect(noteSplitState.isFailurePresented == true)
         // R7-T3 (MOB-1497): the routed kind reached the screen's state too.
         #expect(noteSplitState.failureKind == MigrationBroadcastFailureRoute.plainRetry)
-        #expect(noteSplitState.signedNoteSplitPczt == [MigrationSignedTransferPczt(id: "p0", pczt: Data([0x01, 0x99]))])
+        #expect(noteSplitState.signedNoteSplitPczt == [MigrationSignedTransferPczt(id: "p0", pczt: Data([0x01, 0x99]) + Self.validKeystoneFirmwareStamp)])
         #expect(noteSplitState.awaitingScheduleStore == false)
     }
 
@@ -1781,7 +1805,8 @@ import ComposableArchitecture
             MigrationUnsignedTransferPczt(id: "note-split#p0", pczt: Data([0x01])),
             MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xAA]))
         ]
-        let signed: [Data] = [Data([0x01, 0x99]), Data([0xAA, 0x99])]
+        // MOB-1510: see `Self.validKeystoneFirmwareStamp`'s doc.
+        let signed: [Data] = [Data([0x01, 0x99]) + Self.validKeystoneFirmwareStamp, Data([0xAA, 0x99]) + Self.validKeystoneFirmwareStamp]
         var planState = MigrationTransferPlan.State(variant: .scheduled)
         planState.schedule = MigrationSchedule(
             transfers: [MigrationTransferProposal(id: "t0", amount: Zatoshi(500_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)],
@@ -1868,7 +1893,8 @@ import ComposableArchitecture
             MigrationUnsignedTransferPczt(id: "note-split#p0", pczt: Data([0x01])),
             MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xAA]))
         ]
-        let signed: [Data] = [Data([0x01, 0x99]), Data([0xAA, 0x99])]
+        // MOB-1510: see `Self.validKeystoneFirmwareStamp`'s doc.
+        let signed: [Data] = [Data([0x01, 0x99]) + Self.validKeystoneFirmwareStamp, Data([0xAA, 0x99]) + Self.validKeystoneFirmwareStamp]
         var state = MigrationCoordFlow.State()
         state.pendingKeystoneSigning = .planCommit
         state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .scheduled)))
@@ -1936,7 +1962,8 @@ import ComposableArchitecture
             MigrationUnsignedTransferPczt(id: "note-split#p0", pczt: Data([0x02])),
             MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xCC]))
         ]
-        let signed: [Data] = [Data([0x02, 0x99]), Data([0xCC, 0x99])]
+        // MOB-1510: see `Self.validKeystoneFirmwareStamp`'s doc.
+        let signed: [Data] = [Data([0x02, 0x99]) + Self.validKeystoneFirmwareStamp, Data([0xCC, 0x99]) + Self.validKeystoneFirmwareStamp]
         var state = MigrationCoordFlow.State()
         state.pendingKeystoneSigning = .immediateReview
         state.path.append(.reviewTransfer(MigrationReviewTransfer.State(mode: .immediate)))
@@ -1992,7 +2019,8 @@ import ComposableArchitecture
             MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xAA])),
             MigrationUnsignedTransferPczt(id: "t1", pczt: Data([0xBB]))
         ]
-        let signed: [Data] = [Data([0xAA, 0x01]), Data([0xBB, 0x01])]
+        // MOB-1510: see `Self.validKeystoneFirmwareStamp`'s doc.
+        let signed: [Data] = [Data([0xAA, 0x01]) + Self.validKeystoneFirmwareStamp, Data([0xBB, 0x01]) + Self.validKeystoneFirmwareStamp]
         var state = MigrationCoordFlow.State()
         state.pendingKeystoneSigning = .planCommit
         state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .scheduled)))
@@ -2090,7 +2118,8 @@ import ComposableArchitecture
 
     @MainActor @Test func foundPCZTBatchForPlanCommitContextPushesSendingForManualVariant() async {
         let unsigned: [MigrationUnsignedTransferPczt] = [MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xCC]))]
-        let signed: [Data] = [Data([0xCC, 0x01])]
+        // MOB-1510: see `Self.validKeystoneFirmwareStamp`'s doc.
+        let signed: [Data] = [Data([0xCC, 0x01]) + Self.validKeystoneFirmwareStamp]
         var state = MigrationCoordFlow.State()
         state.pendingKeystoneSigning = .planCommit
         state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .manual)))
@@ -2122,8 +2151,11 @@ import ComposableArchitecture
     @MainActor @Test func foundPCZTBatchForImmediateReviewContextStoresPopsAndPushesSending() async {
         let storeCalls = LockIsolated<[[MigrationSignedTransferPczt]]>([])
         let unsigned: [MigrationUnsignedTransferPczt] = [MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xDD]))]
-        let signed: [Data] = [Data([0xDD, 0x01])]
-        let expectedStored: [MigrationSignedTransferPczt] = [MigrationSignedTransferPczt(id: "t0", pczt: Data([0xDD, 0x01]))]
+        // MOB-1510: see `Self.validKeystoneFirmwareStamp`'s doc.
+        let signed: [Data] = [Data([0xDD, 0x01]) + Self.validKeystoneFirmwareStamp]
+        let expectedStored: [MigrationSignedTransferPczt] = [
+            MigrationSignedTransferPczt(id: "t0", pczt: Data([0xDD, 0x01]) + Self.validKeystoneFirmwareStamp)
+        ]
         var state = MigrationCoordFlow.State()
         state.pendingKeystoneSigning = .immediateReview
         state.path.append(.reviewTransfer(MigrationReviewTransfer.State(mode: .immediate)))
@@ -3499,8 +3531,11 @@ import ComposableArchitecture
             estimatedDurationHours: 0
         )
         let unsigned: [MigrationUnsignedTransferPczt] = [MigrationUnsignedTransferPczt(id: "dust0", pczt: Data([0xDD]))]
-        let signed: [Data] = [Data([0xDD, 0x01])]
-        let expectedStored: [MigrationSignedTransferPczt] = [MigrationSignedTransferPczt(id: "dust0", pczt: Data([0xDD, 0x01]))]
+        // MOB-1510: see `Self.validKeystoneFirmwareStamp`'s doc.
+        let signed: [Data] = [Data([0xDD, 0x01]) + Self.validKeystoneFirmwareStamp]
+        let expectedStored: [MigrationSignedTransferPczt] = [
+            MigrationSignedTransferPczt(id: "dust0", pczt: Data([0xDD, 0x01]) + Self.validKeystoneFirmwareStamp)
+        ]
 
         var state = MigrationCoordFlow.State()
         state.$selectedWalletAccount.withLock { $0 = walletAccount(keystone: true, idByte: 23) }
@@ -3554,8 +3589,11 @@ import ComposableArchitecture
             estimatedDurationHours: 12
         )
         let unsigned: [MigrationUnsignedTransferPczt] = [MigrationUnsignedTransferPczt(id: "r0", pczt: Data([0x11]))]
-        let signed: [Data] = [Data([0x11, 0x99])]
-        let expectedStored: [MigrationSignedTransferPczt] = [MigrationSignedTransferPczt(id: "r0", pczt: Data([0x11, 0x99]))]
+        // MOB-1510: see `Self.validKeystoneFirmwareStamp`'s doc.
+        let signed: [Data] = [Data([0x11, 0x99]) + Self.validKeystoneFirmwareStamp]
+        let expectedStored: [MigrationSignedTransferPczt] = [
+            MigrationSignedTransferPczt(id: "r0", pczt: Data([0x11, 0x99]) + Self.validKeystoneFirmwareStamp)
+        ]
 
         var state = MigrationCoordFlow.State()
         state.$selectedWalletAccount.withLock { $0 = walletAccount(keystone: true, idByte: 30) }
@@ -3655,7 +3693,8 @@ import ComposableArchitecture
             MigrationUnsignedTransferPczt(id: "note-split#p0", pczt: Data([0x22])),
             MigrationUnsignedTransferPczt(id: "r0", pczt: Data([0x11]))
         ]
-        let signed: [Data] = [Data([0x22, 0x99]), Data([0x11, 0x99])]
+        // MOB-1510: see `Self.validKeystoneFirmwareStamp`'s doc.
+        let signed: [Data] = [Data([0x22, 0x99]) + Self.validKeystoneFirmwareStamp, Data([0x11, 0x99]) + Self.validKeystoneFirmwareStamp]
 
         var planState = MigrationTransferPlan.State(variant: .recreated)
         planState.injectedSchedule = restartedSchedule
@@ -3689,8 +3728,8 @@ import ComposableArchitecture
         await store.receive(\.path) // .noteSplit(.delegate(.storeScheduleRequested))
         await store.receive(\.path) // .noteSplit(.splitConfirmed) — the deferred store succeeded
 
-        #expect(storeCalls.value == [[MigrationSignedTransferPczt(id: "r0", pczt: Data([0x11, 0x99]))]])
-        #expect(storeSignedNoteSplitCalls.value == [[MigrationSignedTransferPczt(id: "p0", pczt: Data([0x22, 0x99]))]])
+        #expect(storeCalls.value == [[MigrationSignedTransferPczt(id: "r0", pczt: Data([0x11, 0x99]) + Self.validKeystoneFirmwareStamp)]])
+        #expect(storeSignedNoteSplitCalls.value == [[MigrationSignedTransferPczt(id: "p0", pczt: Data([0x22, 0x99]) + Self.validKeystoneFirmwareStamp)]])
     }
 }
 
@@ -3812,5 +3851,60 @@ import ComposableArchitecture
 
         #expect(prepEntries.isEmpty)
         #expect(scheduleEntries.isEmpty)
+    }
+
+    // MARK: - MOB-1510: firstUnsupportedKeystoneFirmwareVersion
+
+    private static func signedPczt(firmware: (major: Int, minor: Int, build: Int)?, id: String) -> MigrationSignedTransferPczt {
+        var data = Data()
+        if let firmware {
+            data.append(contentsOf: Array("keystone:fw_version".utf8))
+            data.append(contentsOf: [0x03, UInt8(firmware.major), UInt8(firmware.minor), UInt8(firmware.build)])
+        }
+        return MigrationSignedTransferPczt(id: id, pczt: data)
+    }
+
+    @Test func firstUnsupportedKeystoneFirmwareVersionAllAtOrAboveMinimumReturnsNotFound() {
+        let batch = [
+            Self.signedPczt(firmware: (3, 0, 0), id: "t0"),
+            Self.signedPczt(firmware: (3, 1, 0), id: "t1")
+        ]
+
+        let result = MigrationCoordFlow.firstUnsupportedKeystoneFirmwareVersion(in: batch)
+
+        #expect(!result.found)
+        #expect(result.version == nil)
+    }
+
+    @Test func firstUnsupportedKeystoneFirmwareVersionBelowMinimumEntryIsFound() {
+        let batch = [
+            Self.signedPczt(firmware: (3, 0, 0), id: "t0"),
+            Self.signedPczt(firmware: (2, 4, 6), id: "t1"),
+            Self.signedPczt(firmware: (3, 1, 0), id: "t2")
+        ]
+
+        let result = MigrationCoordFlow.firstUnsupportedKeystoneFirmwareVersion(in: batch)
+
+        #expect(result.found)
+        #expect(result.version == KeystoneFirmwareVersion(major: 2, minor: 4, build: 6))
+    }
+
+    @Test func firstUnsupportedKeystoneFirmwareVersionUnstampedEntryIsFoundWithNilVersion() {
+        let batch = [
+            Self.signedPczt(firmware: (3, 0, 0), id: "t0"),
+            Self.signedPczt(firmware: nil, id: "t1")
+        ]
+
+        let result = MigrationCoordFlow.firstUnsupportedKeystoneFirmwareVersion(in: batch)
+
+        #expect(result.found)
+        #expect(result.version == nil)
+    }
+
+    @Test func firstUnsupportedKeystoneFirmwareVersionEmptyBatchReturnsNotFound() {
+        let result = MigrationCoordFlow.firstUnsupportedKeystoneFirmwareVersion(in: [])
+
+        #expect(!result.found)
+        #expect(result.version == nil)
     }
 }
