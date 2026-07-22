@@ -17,31 +17,27 @@
 //  coordinator to route through `MigrationKeystoneSign` + `Scan` in ONE batched session. The software
 //  path and the rescheduled `requiresSigning == false` variant (never re-signs) are unchanged.
 //
-//  MOB-1478 (W4): note splitting runs silently under this screen's commit, right before signing —
-//  `.confirmTapped`/`.retryTapped` share one effect: iff `isNoteSplitNeeded()`, `prepareNoteSplit` +
-//  `submitNoteSplit` first (mirrors `MigrationNoteSplitStore`'s old explainer-confirm sequence 1:1);
-//  a split failure presents the same Cancel/Retry failure sheet `MigrationNoteSplit` uses (this
-//  screen had none before) instead of proceeding to sign+store. The Keystone fork's batch
-//  (`requestKeystoneSignature`) now proposes the note-split PCZT first too, when needed, so the WHOLE
-//  batch (split + all N transfers) signs in the same QR ceremony — `storeSignedMigrationTransactions`
-//  stores the whole `[MigrationSignedTransferPczt]` array atomically, so the no-partial-storage
-//  invariant holds unchanged (MOB-1496: see `requestKeystoneSignature`'s doc for the note-split
-//  PCZT's sentinel-id wrapping, needed since it's typed differently — raw `Data` — from the
-//  schedule's own PCZTs). `MigrationNoteSplit` itself no longer requests Keystone signing
-//  (re-entry-only now).
-//
 //  MOB-1496 (R8-T1 remediation): the software commit sequence and the Keystone PCZT-proposal fork
-//  now delegate to the shared `MigrationCommitPipeline` (finding #19 — this store and
-//  `MigrationReviewTransferStore` drove byte-identical copies of both before), always in
-//  `.scheduled` mode (every `variant` here signs a multi-transfer schedule the same way).
-//  `onAppear`'s propose and `confirmTapped`'s commit no longer silently fall back to an empty
+//  delegate to the shared `MigrationCommitPipeline` (finding #19 — this store and
+//  `MigrationReviewTransferStore` drove byte-identical copies of both before).
+//  `onAppear`'s propose and `confirmTapped`'s commit never silently fall back to an empty
 //  schedule on failure (finding S3): a propose failure presents the SAME failure sheet with
 //  `failureReason == .propose` (Retry re-proposes), and Confirm is guarded against a nil or
-//  zero-transfer schedule regardless of why. A landed-but-unrecorded note split
-//  (`ZcashError.migrationRecordFailedAfterBroadcast`) is treated as success rather than routed into
-//  a Retry that would re-sign a conflicting split (finding #1) — see `MigrationCommitPipeline
-//  .commitSoftware`'s doc. The Keystone fork now throws through instead of swallowing errors with
-//  `try?`, and an empty PCZT batch is also a failure (finding #4).
+//  zero-transfer schedule regardless of why. The Keystone fork throws through instead of swallowing
+//  errors with `try?`, and an empty PCZT batch is also a failure (finding #4).
+//
+//  MOB-1513 (B4 — confirm redesign): the commit chain is SIGN-ONLY now. The MOB-1478 (W4) silent
+//  note-split broadcast that used to run under this screen's Confirm (`submitNoteSplit`: proving +
+//  inline Tor + broadcast — the multi-second confirm freeze QA hit) left the chain entirely, along
+//  with its whole R14-R17 broadcast-failure surface (`failureKind`, `broadcastFailureRouted`, the
+//  Tor off-warning alert, and the sync-server fallback actions this store carried in R9-T2) — a
+//  commit failure is a plain thrown error now, presented on the existing generic Cancel/Retry
+//  sheet. The first prep broadcasts AFTER navigation, via `MigrationCoordFlowCoordinator`'s
+//  post-confirm first-delivery kick; broadcast failures surface (and retry) through the migration
+//  progress machinery, never on this screen. Confirm shows a loader (`isConfirming`) and is
+//  single-flight. The Keystone fork's batch (`requestKeystoneSignature`) still proposes any
+//  preparation PCZTs first, so the whole batch (preps + all N transfers) signs in the same QR
+//  ceremony.
 //
 
 import Foundation
@@ -110,12 +106,6 @@ struct MigrationTransferPlan {
         /// MOB-1496 (R8-T1, S3): which kind of failure `isFailurePresented` is showing; see
         /// `FailureReason`.
         var failureReason: FailureReason?
-        /// R9-T2 (finding 3): the classified/routed variant of a `.commit`-reason failure sheet —
-        /// see `MigrationSending.State.failureKind`'s doc for the shared shape. Always `nil` for a
-        /// `.propose` failure (never broadcast-related) and for an unclassifiable or Keystone commit
-        /// failure (today's generic copy, unchanged).
-        var failureKind: MigrationBroadcastFailureRoute?
-        @Presents var alert: AlertState<Action>?
 
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
 
@@ -133,32 +123,21 @@ struct MigrationTransferPlan {
     }
 
     enum Action: BindableAction, Equatable {
-        case alert(PresentationAction<Action>)
         case binding(BindingAction<State>)
-        /// R9-T2 (finding 3, R14/R15/R16): `routeBroadcastFailure`'s resolved route for a classified
-        /// scheduled-commit split failure — see `MigrationSending.Action.broadcastFailureRouted`'s
-        /// doc for the shared shape. Never sent for an unclassified failure — `failureKind` then
-        /// stays `nil`, the existing generic sheet.
-        case broadcastFailureRouted(MigrationBroadcastFailureRoute)
         /// Failure sheet: dismiss (stay on screen).
         case cancelTapped
-        /// Signs and stores the active schedule (silently splitting first, when needed).
+        /// Signs and stores the active schedule (sign-only — the first prep broadcasts later, via
+        /// the coordinator's post-confirm kick; MOB-1513 B4).
         case confirmTapped
         case delegate(Delegate)
-        /// The commit failed — presents the failure sheet instead of proceeding to sign+store.
-        /// Covers the silent note-split step (MOB-1478 W4), any other software commit failure, and
-        /// (MOB-1496 R8-T1, #4) the Keystone PCZT-proposal fork's failures.
+        /// The commit failed — presents the failure sheet instead of proceeding. Covers any
+        /// software commit failure and (MOB-1496 R8-T1, #4) the Keystone PCZT-proposal fork's
+        /// failures. (The name predates MOB-1513 B4, when a silent note-split broadcast was part of
+        /// the commit — kept for continuity with `MigrationReviewTransfer`'s identical action.)
         case noteSplitFailed
-        /// R9-T2 (R11, reused from `MigrationTorSheet`'s off-warning): the R14 sheet's "Proceed
-        /// without Tor" alert confirms — turns Tor off for the REST of this run then re-attempts the
-        /// commit.
-        case offWarningProceedTapped
         case onAppear
         /// MOB-1511 (W2): the round context loaded on appearance — see `State.round`'s doc.
         case roundContextLoaded(round: Int, totalRounds: Int?)
-        /// R9-T2 (R14): the `.torFirstRunChoice` sheet's "Proceed without Tor" button — presents the
-        /// R11 warning alert instead of proceeding directly.
-        case proceedWithoutTorTapped
         /// Failure sheet: dismiss, then re-attempt the failed step from scratch — the whole commit
         /// sequence when `failureReason == .commit` (or unset), or (MOB-1496 R8-T1, S3) a fresh
         /// proposal when `failureReason == .propose`.
@@ -170,8 +149,6 @@ struct MigrationTransferPlan {
         case transferProposalFailed
         /// `proposeMigrationTransfers()` result — populates rows/duration for a fresh entry.
         case transfersProposed(MigrationSchedule)
-        /// R9-T2 (R17): the `.providerExhausted` sheet's "Broadcast via sync server" button.
-        case useSyncServerTapped
 
         enum Delegate: Equatable {
             case confirmed
@@ -198,26 +175,12 @@ struct MigrationTransferPlan {
 
         Reduce { state, action in
             switch action {
-            case .alert(.presented(let action)):
-                return .send(action)
-
-            case .alert(.dismiss):
-                // Mirrors `MigrationSendingStore`'s identical shape — this screen has no toggle
-                // analog to restore; "Keep Tor on" simply returns to the R14 sheet unchanged.
-                state.alert = nil
-                return .none
-
             case .binding:
-                return .none
-
-            case .broadcastFailureRouted(let route):
-                state.failureKind = route
                 return .none
 
             case .cancelTapped:
                 state.isFailurePresented = false
                 state.failureReason = nil
-                state.failureKind = nil
                 return .none
 
             case .confirmTapped, .retryTapped:
@@ -227,7 +190,6 @@ struct MigrationTransferPlan {
                 // `MIGRATION_PLAN_STALE` error sheet QA hit).
                 guard !state.isConfirming else { return .none }
                 state.isFailurePresented = false
-                state.failureKind = nil
 
                 // MOB-1496 (R8-T1, S3): a propose failure's Retry re-proposes instead of
                 // re-attempting the commit — checked FIRST, before any of the commit guards below.
@@ -281,28 +243,6 @@ struct MigrationTransferPlan {
                 state.failureReason = State.FailureReason.commit
                 return .none
 
-            case .offWarningProceedTapped:
-                state.alert = nil
-                state.isFailurePresented = false
-                state.failureKind = nil
-                state.failureReason = nil
-                let account = state.selectedWalletAccount
-                if let account {
-                    migrationManager.overrideTorForRun(account.id, false)
-                }
-                return retryCommitEffect(state)
-
-            case .proceedWithoutTorTapped:
-                // Gated to the R14 first-run-choice variant — the alert this presents leads to a
-                // clearnet retry (`overrideTorForRun(account, false)`), which R15's mid-run hold must
-                // never offer. Mirrors `MigrationSendingStore`'s identical guard.
-                guard state.failureKind == MigrationBroadcastFailureRoute.torFirstRunChoice else { return .none }
-                // Scheduled commits are never full-balance (only the immediate lane is — this screen
-                // is only ever reached for `.privateScheduled` mode), so unlike Sending/NoteSplit this
-                // never reads `migrationManager.migrationMode()`.
-                state.alert = AlertState.migrationTorOffWarning(usesFullBalanceCopy: false, proceedAction: .offWarningProceedTapped)
-                return .none
-
             case .onAppear:
                 // MOB-1511 (W2): the multi-round label loads on EVERY appearance path (fresh
                 // proposal, injected schedule, hydrated rows alike) — it derives from persisted
@@ -354,27 +294,14 @@ struct MigrationTransferPlan {
                 state.isConfirming = false
                 apply(schedule, to: &state)
                 return .none
-
-            case .useSyncServerTapped:
-                state.isFailurePresented = false
-                state.failureKind = nil
-                state.failureReason = nil
-                guard let account = state.selectedWalletAccount else { return .none }
-                return .concatenate(
-                    .run { [migrationManager] _ in await migrationManager.overrideBroadcastEndpointToSyncServer(account.id) },
-                    retryCommitEffect(state)
-                )
             }
         }
     }
 
-    /// R9-T2 (finding 3): the software commit sequence `.confirmTapped`/`.retryTapped`'s fallthrough,
-    /// `.offWarningProceedTapped`, and `.useSyncServerTapped` all funnel into — classifies+routes a
-    /// scheduled-commit split failure via `MigrationCommitPipeline`'s typed
-    /// `MigrationCommitError.splitFailedRouted` before falling back to the existing generic
-    /// `.noteSplitFailed` outcome, mirroring `MigrationSendingStore`/`MigrationNoteSplitStore`'s
-    /// "route first, generic outcome second" ordering. A `nil` route (unclassifiable failure) sends
-    /// only `.noteSplitFailed` — `state.failureKind` stays `nil`, today's generic sheet.
+    /// The software commit — sign-only since MOB-1513 (B4): a success is `.scheduleSigned`, any
+    /// thrown error is the plain generic `.noteSplitFailed` (nothing was persisted — see
+    /// `MigrationCommitPipeline.commitSoftware`'s doc). No broadcast happens here any more, so
+    /// there is no failure to classify/route either.
     private func commitEffect(schedule: MigrationSchedule, account: WalletAccount, zip32AccountIndex: Zip32AccountIndex) -> Effect<Action> {
         .run { send in
             do {
@@ -390,31 +317,10 @@ struct MigrationTransferPlan {
                     networkType: zcashSDKEnvironment.network().networkType
                 )
                 await send(.scheduleSigned)
-            } catch MigrationCommitError.splitFailedRouted(let route) {
-                if let route {
-                    await send(.broadcastFailureRouted(route))
-                }
-                await send(.noteSplitFailed)
             } catch {
                 await send(.noteSplitFailed)
             }
         }
-    }
-
-    /// R9-T2 (finding 3): the retry dispatch `.offWarningProceedTapped`/`.useSyncServerTapped` share —
-    /// a ROUTED failure (`failureKind != nil`) can only ever have come from the software
-    /// `commitSoftware` path (Keystone forks BEFORE ever reaching it — see `requestKeystoneSignature`
-    /// below), so this skips straight to the software guard chain without re-checking
-    /// `requiresSigning`/vendor, unlike `.confirmTapped`/`.retryTapped`'s own fuller chain. Takes a
-    /// snapshot of `State` rather than `inout`, mirroring `MigrationNoteSplitStore.retryEffect` — ONE
-    /// of the guards below failing (e.g. the account was deselected mid-flow) is a silent no-op,
-    /// mirroring `.confirmTapped`/`.retryTapped`'s own identical guards.
-    private func retryCommitEffect(_ state: State) -> Effect<Action> {
-        guard let schedule = state.schedule, !schedule.transfers.isEmpty else { return .none }
-        guard let account = state.selectedWalletAccount else { return .none }
-        guard let zip32AccountIndex = account.zip32AccountIndex else { return .none }
-
-        return commitEffect(schedule: schedule, account: account, zip32AccountIndex: zip32AccountIndex)
     }
 
     /// MOB-1468 (Keystone) `confirmTapped` fork: proposes ALL of the schedule's PCZTs — prefixed with
@@ -431,11 +337,9 @@ struct MigrationTransferPlan {
     /// `.scan(.foundPCZTBatch)`/`.simulateSignature` handlers split the prefixed entries back out
     /// (stripping the prefix) before storing — only the schedule's own engine-id-paired entries reach
     /// `storeSignedMigrationTransactions`, and the preps route through the dedicated
-    /// `storeSignedNoteSplits`/`broadcastStoredNoteSplit` pair instead (via the existing
-    /// `MigrationNoteSplit` resubmit lane) — see that coordinator's doc for the full mechanism,
+    /// dedicated `storeSignedNoteSplits` store — see that coordinator's doc for the full mechanism,
     /// including why (C-1 fix, final review R6) the preps still store BEFORE the schedule. The
-    /// software path above (which routes the split through `submitNoteSplit` directly) is unaffected
-    /// either way.
+    /// software path above (sign-only since MOB-1513 B4) is unaffected either way.
     ///
     /// MOB-1496 (R8-T1, #19/#4; final engine: unconditional fold): now delegates to the shared
     /// `MigrationCommitPipeline.proposeKeystoneBatch(schedule:account:sdkSynchronizer:)` — every

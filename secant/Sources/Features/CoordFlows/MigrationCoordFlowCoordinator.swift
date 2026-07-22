@@ -283,6 +283,16 @@
 //  field at all — the two modes converge on the identical `.confirmed` delegate, so nothing upstream of
 //  this coordinator can tell them apart.
 //
+//  MOB-1513 (B4 — confirm redesign + "Splitting Funds" removal): the confirm chain is sign-only now
+//  (see `MigrationCommitPipeline.commitSoftware`), and the W6/C-1b mid-Keystone-commit note-split
+//  detour narrated above is retired. Landing on B9 Migration Scheduled fires the coordinator-owned
+//  FIRST-DELIVERY KICK (`runFirstDeliveryKick`): the first prep broadcasts there over the existing
+//  next-due lane, and a Keystone commit's deferred schedule store (C-1b ordering preserved: only
+//  after a prep broadcast lands) runs inside the same kick, releasing
+//  `pendingKeystoneScheduleStore` via `.deferredKeystoneScheduleStored`. Kick failures are silent —
+//  the run stays `splitPendingConfirmation`, surfaced by the migration progress banner/route, and
+//  BG windows + foreground reconcile retry preps naturally.
+//
 
 import Foundation
 import ComposableArchitecture
@@ -482,48 +492,24 @@ extension MigrationCoordFlow {
                 }
                 return confirmTorSheet(state: &state)
 
-                // MARK: - NoteSplit (re-entry root, MOB-1478 W4 — OR a MOB-1496 W6 mid-Keystone-commit push)
+                // MARK: - NoteSplit (re-entry root, MOB-1478 W4)
 
             case .path(.element(id: let id, action: .noteSplit(.delegate(.continued)))):
-                // Forward routing never pushes `.noteSplit` for a FRESH silent split any more (that
-                // runs under the TransferPlan/ReviewTransfer commit CTAs), so a flow-root `.noteSplit`
-                // is always a re-entry.
+                // MOB-1513 (B4): forward routing never pushes `.noteSplit` at all any more — the
+                // mid-Keystone-commit push (MOB-1496 W6/C-1b) re-homed onto the post-confirm
+                // first-delivery kick — so the only occurrence left is the re-entry root.
                 if case .noteSplit(let noteSplitState) = state.path[id: id], noteSplitState.isFlowRoot {
                     return .send(.flowFinished)
                 }
-                // MOB-1496 (W6): this note-split screen was instead pushed mid-Keystone-commit to
-                // broadcast a signed split PCZT (`resumeAfterKeystoneSigning`) — its "Continue"
-                // (reached once the broadcast lands and the SDK reports `.readyToPropose`) resumes
-                // exactly the chain that would have run immediately had no split been needed, never
-                // the permission-chain fallback below. The actual pop+resume is deferred to
-                // `keystoneSplitResumeContinued` (see that action's doc) rather than done inline here.
-                if state.pendingKeystoneSplitResume != nil {
-                    return .send(.keystoneSplitResumeContinued)
-                }
                 // Kept defensively (the exhaustive shape this reducer already had) for any other
-                // non-root, non-Keystone-split `.noteSplit` occurrence rather than deleted.
+                // non-root `.noteSplit` occurrence rather than deleted.
                 return .run { send in
                     await send(.pushNextPermissionStep(await nextPermissionStepResult()))
                 }
 
-            case .keystoneSplitResumeContinued:
-                guard let resumeContext = state.pendingKeystoneSplitResume else { return .none }
-                state.pendingKeystoneSplitResume = nil
-                let _ = state.path.popLast()
-                return resumeCommittedMigrationChain(context: resumeContext, state: &state)
-
-                // MOB-1496 (C-1b fix, fix-wave 2): the note-split screen's Keystone-fork broadcast
-                // landed (or a previous deferred-store attempt failed and the user retried) — see
-                // `storeDeferredKeystoneSchedule`'s doc for the full sequence and Step 0's citations.
-            case .path(.element(id: let id, action: .noteSplit(.delegate(.storeScheduleRequested)))):
-                return storeDeferredKeystoneSchedule(noteSplitId: id, state: &state)
-
-                // The deferred store succeeded and flipped the note-split screen to `.confirmed` via
-                // its OWN `.splitConfirmed` (dispatched by `storeDeferredKeystoneSchedule`) — the
-                // entries are durably in the engine now, so the stash can be released. A no-op for
-                // the unrelated legacy re-entry `.splitConfirmed` (driven by `stateEvents` observing
-                // `.readyToPropose`), where this is already `nil`.
-            case .path(.element(id: _, action: .noteSplit(.splitConfirmed))):
+                // MOB-1513 (B4): the first-delivery kick's deferred Keystone schedule store landed —
+                // the entries are durably in the engine now, so the stash can be released.
+            case .deferredKeystoneScheduleStored:
                 state.pendingKeystoneScheduleStore = nil
                 return .none
 
@@ -733,10 +719,9 @@ extension MigrationCoordFlow {
                     scheduleEntries: scheduleEntries
                 )
 
-            case .keystoneSigningSubmitted(let context, let signedPreps, let pendingScheduleStore):
+            case .keystoneSigningSubmitted(let context, let pendingScheduleStore):
                 return resumeAfterKeystoneSigning(
                     context: context,
-                    signedPreps: signedPreps,
                     pendingScheduleStore: pendingScheduleStore,
                     state: &state
                 )
@@ -1038,21 +1023,39 @@ extension MigrationCoordFlow {
     /// synchronously); manual pushes `.sending` (totalCount 1, current network-privacy options)
     /// synchronously, unchanged. Either way, schedules the first background window after. Shared by
     /// the software `TransferPlan.delegate(.confirmed)` row and the Keystone `planCommit` resume
-    /// (`resumeAfterKeystoneSigning`), which both reach this point with a signed+stored schedule
-    /// (and, when needed, an already-signed+submitted note split — MOB-1478 W4). `schedule` is the
-    /// same one just signed+recorded (`recordCommittedSchedule` always runs before this chain, on
-    /// every lane — see `scheduledState`'s doc for how it combines with the manager's summary).
+    /// (`resumeAfterKeystoneSigning`), which both reach this point with a signed schedule.
+    ///
+    /// MOB-1513 (B4): the confirm chain is sign-only now — nothing has broadcast by the time this
+    /// runs. The `.scheduled`/`.recreated` branch fires the FIRST-DELIVERY KICK right after landing
+    /// on B9 Migration Scheduled ("splits execute immediately"): `runFirstDeliveryKick` broadcasts
+    /// the next due transaction (the first prep, when the run has any) over the existing next-due
+    /// lane, and — for a Keystone commit whose schedule store was deferred
+    /// (`state.pendingKeystoneScheduleStore`) — runs that deferred store once the broadcast lands.
+    /// The `.manual` branch keeps its Sending-screen delivery (that screen's own `onAppear`
+    /// broadcast IS the first-delivery mechanism there) and fires the kick ONLY when a deferred
+    /// Keystone schedule store is pending — the kick then owns the prep broadcast + store handshake,
+    /// and the Sending screen's own concurrent attempt resolves to a nil next-due naturally (the
+    /// SDK's per-account broadcast flow is single-flight).
+    ///
+    /// Software `.scheduled`/`.recreated` commits recorded their schedule at confirm, so
+    /// `scheduledState`'s summary read is fully hydrated; a Keystone deferred commit hasn't recorded
+    /// yet, so it hydrates via `deferredScheduledState` (see its doc).
     private func transferPlanPostConfirmChain(
         variant: MigrationTransferPlan.State.Variant,
         schedule: MigrationSchedule?,
         state: inout MigrationCoordFlow.State
     ) -> Effect<MigrationCoordFlow.Action> {
+        let accountUUID = state.selectedWalletAccount?.id
+        let pendingScheduleStore = state.pendingKeystoneScheduleStore
         switch variant {
         case .scheduled, .recreated:
-            let accountUUID = state.selectedWalletAccount?.id
-            return .run { [migrationBGScheduler, accountUUID, schedule] send in
-                await send(.pushHydratedPathState(.scheduled(await scheduledState(accountUUID: accountUUID, schedule: schedule))))
+            return .run { [migrationBGScheduler, accountUUID, schedule, pendingScheduleStore] send in
+                let scheduledState = pendingScheduleStore != nil
+                    ? await deferredScheduledState(accountUUID: accountUUID, schedule: schedule)
+                    : await scheduledState(accountUUID: accountUUID, schedule: schedule)
+                await send(.pushHydratedPathState(.scheduled(scheduledState)))
                 await migrationBGScheduler.scheduleFirstWindow()
+                await runFirstDeliveryKick(accountUUID: accountUUID, pendingScheduleStore: pendingScheduleStore, send: send)
             }
         case .manual:
             // MOB-1497 (T8, Q3'26 canvas): the manual-delivery run's FIRST transfer — same "sent"
@@ -1060,7 +1063,12 @@ extension MigrationCoordFlow {
             // `.reviewTransfer(.delegate(.confirmed))` case above).
             let sendingState = MigrationSending.State(totalCount: 1, isManualStepLane: true)
             state.path.append(.sending(sendingState))
-            return .run { [migrationBGScheduler] _ in await migrationBGScheduler.scheduleFirstWindow() }
+            return .run { [migrationBGScheduler, accountUUID, pendingScheduleStore] send in
+                await migrationBGScheduler.scheduleFirstWindow()
+                if pendingScheduleStore != nil {
+                    await runFirstDeliveryKick(accountUUID: accountUUID, pendingScheduleStore: pendingScheduleStore, send: send)
+                }
+            }
         }
     }
 
@@ -1092,27 +1100,154 @@ extension MigrationCoordFlow {
         )
     }
 
+    /// MOB-1513 (B4): `scheduledState`'s twin for the Keystone DEFERRED-store window — B9 is pushed
+    /// before `recordCommittedSchedule` has run (the kick records only after its prep broadcast
+    /// lands), so `migrationSummary`'s schedule-derived fields would read the PREVIOUS payload (a
+    /// `.recreated` re-entry) or the degraded progress-only fallback (a fresh commit — whose `dust`
+    /// would even read the whole unmigrated balance). The schedule-derived numbers come from the
+    /// in-hand `schedule` instead, combined with the summary's prior-sent bookkeeping (correct in
+    /// both windows: prior payload for `.recreated`, zeros for fresh), and `dustAmount` reads the
+    /// SDK's stored-run residual live (the run IS stored engine-side at this point — the same
+    /// residual-first precedence `MigrationDerivations.summary` applies). Post-store, the regular
+    /// `scheduledState` numbers and these agree by construction.
+    private func deferredScheduledState(accountUUID: AccountUUID?, schedule: MigrationSchedule?) async -> MigrationScheduled.State {
+        let summary = await migrationManager.migrationSummary(accountUUID)
+        let newScheduleAmount = schedule?.transfers.reduce(Zatoshi.zero) { $0 + $1.amount } ?? Zatoshi.zero
+        var residual: Zatoshi?
+        if let accountUUID {
+            residual = (try? await sdkSynchronizer.residualAfterMigration(accountUUID)) ?? nil
+        }
+        return MigrationScheduled.State(
+            totalAmount: summary.transferred + newScheduleAmount,
+            sentCount: summary.transfersSent,
+            totalCount: summary.transfersSent + (schedule?.transfers.count ?? 0),
+            durationHours: schedule?.estimatedDurationHours ?? summary.estimatedDurationHours,
+            dustAmount: residual ?? Zatoshi.zero
+        )
+    }
+
+    // MARK: - MOB-1513 (B4): post-confirm first-delivery kick
+
+    /// The coordinator-owned background task fired right after landing on B9 Migration Scheduled
+    /// (design: "everything signed at once, splits execute immediately, transfers per offsets") —
+    /// broadcasts the next due transaction over the EXISTING next-due lane, exactly the closure the
+    /// BG-window path uses (`executeNextPendingMigrationTransfer`: serves preps AND transfers,
+    /// proves at broadcast — the one-time Orchard proving-key build happens HERE, off the confirm
+    /// tap, not under it — is retry-idempotent, and is per-account single-flight SDK-side; the
+    /// transaction guard lives inside its LiveKey, never wrapped here). Stop-sync first, exactly
+    /// like every other broadcast lane; nothing due (`nil`) is a valid, silent no-op.
+    ///
+    /// Outcomes (all SILENT — B4 controller resolution 3: broadcast failure needs NO UI; the run
+    /// stays `splitPendingConfirmation` engine-side, the progress banner/route reflect it, and BG
+    /// windows + foreground reconcile retry preps naturally):
+    /// - Landed (`.success`, or the landed-but-record-failed
+    ///   `ZcashError.migrationRecordFailedAfterBroadcast`): `recordTransferBroadcast` (the
+    ///   had-broadcast/episode chokepoint — its prep-phase guard keeps a prep out of the schedule's
+    ///   sent records), then the deferred Keystone schedule store when one is pending (see
+    ///   `finishLandedFirstDelivery`), then `reconcile()` so the banner/status pick the fresh state
+    ///   up promptly.
+    /// - Failure result / thrown error: classify+route (`routeBroadcastFailure` — R16
+    ///   rotation/Tor-hold bookkeeping only, same re-arm-only treatment as the BG lane; the
+    ///   background Tor prompt latch stays BG-lane-only) and nudge `refreshMigrationSyncGate()`
+    ///   (the stop above was never followed by a landed broadcast).
+    /// - `nil` (nothing due — e.g. a no-split schedule whose first transfer isn't due yet): nudge
+    ///   the gate only.
+    ///
+    /// KNOWN, ACCEPTED loss window (same class as the pre-B4 "Splitting Funds" handshake, which
+    /// held `pendingKeystoneScheduleStore` in memory across its retry sheet): a Keystone deferred
+    /// store that never gets to run (kick broadcast fails and the user closes the flow, or the app
+    /// dies mid-kick) loses the in-memory signed schedule entries — the run's transfers then can't
+    /// deliver and the existing recovery flow (restart + fresh ceremony) is the way out. Pre-B4 the
+    /// user could reach the identical loss by backing out of the failed "Splitting Funds" screen.
+    private func runFirstDeliveryKick(
+        accountUUID: AccountUUID?,
+        pendingScheduleStore: MigrationCoordFlow.PendingScheduleStore?,
+        send: Send<MigrationCoordFlow.Action>
+    ) async {
+        guard let accountUUID else { return }
+        let options = await migrationManager.migrationNetworkOptions(accountUUID)
+        await sdkSynchronizer.stopSyncBeforeMigrationBroadcast()
+        do {
+            let result = try await sdkSynchronizer.executeNextPendingMigrationTransfer(accountUUID, options)
+            switch result {
+            case .success:
+                if let result {
+                    await finishLandedFirstDelivery(
+                        accountUUID: accountUUID,
+                        result: result,
+                        pendingScheduleStore: pendingScheduleStore,
+                        send: send
+                    )
+                }
+
+            case .networkError, .invalidNote, .expired:
+                if let result {
+                    _ = await migrationManager.routeBroadcastFailure(accountUUID, result: result)
+                }
+                await migrationManager.refreshMigrationSyncGate()
+
+            case nil:
+                await migrationManager.refreshMigrationSyncGate()
+            }
+        } catch ZcashError.migrationRecordFailedAfterBroadcast {
+            // The broadcast DID land; only the engine's own recording of it failed — same
+            // landed-broadcast continuation as `.success`, with the empty-txId placeholder every
+            // other lane uses for this error.
+            await finishLandedFirstDelivery(
+                accountUUID: accountUUID,
+                result: MigrationTransferResult.success(txId: ""),
+                pendingScheduleStore: pendingScheduleStore,
+                send: send
+            )
+        } catch {
+            _ = await migrationManager.routeBroadcastFailure(accountUUID, error: error)
+            await migrationManager.refreshMigrationSyncGate()
+        }
+    }
+
+    /// The kick's landed-broadcast continuation: had-broadcast/episode bookkeeping first (mirrors
+    /// the pre-B4 order — record before the deferred store), then — MOB-1496 C-1b, re-homed — the
+    /// deferred Keystone schedule store `storeKeystoneSignedBatch` stashed: the prep broadcast just
+    /// landed, which is the earliest point the C-1b trace proved safe to store the schedule.
+    /// Success releases the stash via `.deferredKeystoneScheduleStored`; a store failure keeps it
+    /// (silent — see `runFirstDeliveryKick`'s doc) and deliberately skips `reconcile()` too,
+    /// mirroring the pre-B4 handshake's "no premature reconcile before the schedule store settles".
+    private func finishLandedFirstDelivery(
+        accountUUID: AccountUUID,
+        result: MigrationTransferResult,
+        pendingScheduleStore: MigrationCoordFlow.PendingScheduleStore?,
+        send: Send<MigrationCoordFlow.Action>
+    ) async {
+        await migrationManager.recordTransferBroadcast(accountUUID, result)
+
+        guard let pendingScheduleStore else {
+            await migrationManager.reconcile()
+            return
+        }
+
+        guard (try? await sdkSynchronizer.storeSignedMigrationTransactions(pendingScheduleStore.accountUUID, pendingScheduleStore.scheduleEntries)) != nil else {
+            return
+        }
+        if let schedule = pendingScheduleStore.schedule {
+            await migrationManager.recordCommittedSchedule(pendingScheduleStore.accountUUID, schedule)
+        }
+        await migrationManager.reconcile()
+        await send(.deferredKeystoneScheduleStored)
+    }
+
     // MARK: - Keystone signing (MOB-1468): resume after store
 
-    /// Pops back to the signing-source element and either resumes whichever chain `context`
-    /// represents (no preps) or routes the signed preparation (note-split) entries to the note-split
-    /// progress phase first (MOB-1496 W6, reshaped for the final engine's plural preps):
-    /// - `.planCommit`/`.immediateReview`/`.dust` with `signedPreps == nil`: identical to before —
-    ///   `resumeCommittedMigrationChain(context:state:)` proceeds straight to the post-commit screen,
-    ///   mirroring how the equivalent software `.confirmed` row would proceed.
-    /// - `signedPreps != nil`: one or more sentinel-prefixed prep entries rode the batch — pushes
-    ///   `MigrationNoteSplit` carrying the signed array the SAME way the existing Keystone resubmit
-    ///   lane receives one (`State.signedNoteSplitPczt`), WITH `splitStored: true` (the store effect
-    ///   above already called `storeSignedNoteSplits` before this ever runs), then dispatches that
-    ///   screen's OWN `.retryTapped` so its existing `resubmitSignedNoteSplit` effect
-    ///   (`stopSyncBeforeMigrationBroadcast()` -> `broadcastStoredNoteSplit(account, options)`, no
-    ///   re-store since `splitStored` is already `true`) broadcasts it with the existing
-    ///   success/failure/retry UX — no new UI, no duplicated broadcast logic.
-    ///   `pendingKeystoneSplitResume` stashes `context` so that screen's own `.continued` can land on
-    ///   `resumeCommittedMigrationChain` too, once the broadcast is confirmed. MOB-1496 (C-1b fix,
-    ///   fix-wave 2): `pendingScheduleStore` (non-`nil` exactly when `signedPreps` is) stashes into
-    ///   `pendingKeystoneScheduleStore` alongside it — the schedule store itself is deferred to
-    ///   `storeDeferredKeystoneSchedule`, triggered once that screen's broadcast succeeds.
+    /// Pops back to the signing-source element and resumes whichever chain `context` represents —
+    /// `resumeCommittedMigrationChain(context:state:)` proceeds straight to the post-commit screen,
+    /// mirroring how the equivalent software `.confirmed` row would proceed.
+    ///
+    /// MOB-1513 (B4): a batch that carried preparation (note-split) entries no longer detours
+    /// through a "Splitting Funds" screen — the preps are already stored (the ceremony's store
+    /// effect ran `storeSignedNoteSplits` before this), the flow lands on B9 Migration Scheduled
+    /// like any other commit, and the post-confirm first-delivery kick broadcasts the first prep
+    /// and runs the deferred schedule store (`pendingScheduleStore`, stashed here into
+    /// `state.pendingKeystoneScheduleStore` — MOB-1496 C-1b: the schedule may only store after a
+    /// prep broadcast lands) — see `runFirstDeliveryKick`'s doc.
     ///
     /// MOB-1480: how much to pop depends on which caller reached here. The real QR round-trip
     /// pushes `scan` on top of `keystoneSign` (2 elements to unwind back to the signing source); the
@@ -1124,7 +1259,6 @@ extension MigrationCoordFlow {
     /// Clears `pendingKeystoneSigning` in every case.
     private func resumeAfterKeystoneSigning(
         context: MigrationCoordFlow.KeystoneSigningContext,
-        signedPreps: [MigrationSignedTransferPczt]?,
         pendingScheduleStore: MigrationCoordFlow.PendingScheduleStore?,
         state: inout MigrationCoordFlow.State
     ) -> Effect<MigrationCoordFlow.Action> {
@@ -1133,64 +1267,15 @@ extension MigrationCoordFlow {
         let topElementIsScan = state.path.last?.is(\.scan) == true
         state.path.removeLast(topElementIsScan ? 2 : 1)
 
-        if let signedPreps {
-            state.pendingKeystoneSplitResume = context
-            state.pendingKeystoneScheduleStore = pendingScheduleStore
-            state.path.append(
-                .noteSplit(
-                    MigrationNoteSplit.State(
-                        phase: .splitting,
-                        isFlowRoot: false,
-                        signedNoteSplitPczt: signedPreps,
-                        // MOB-1496 (C-1 fix): the store effect above already stored these preps (it
-                        // had to, to create the run the schedule store joined) — this screen only
-                        // ever needs to (re)broadcast them, never re-store.
-                        splitStored: true
-                    )
-                )
-            )
-            guard let newId = state.path.ids.last else { return .none }
-            return .send(.path(.element(id: newId, action: .noteSplit(.retryTapped))))
-        }
+        state.pendingKeystoneScheduleStore = pendingScheduleStore
 
         return resumeCommittedMigrationChain(context: context, state: &state)
     }
 
-    /// MOB-1496 (C-1b fix, fix-wave 2): runs the schedule store the batch-commit step deferred until
-    /// the Keystone split's broadcast landed — see this file's header comment and Step 0 of the
-    /// fix-wave-2 report for the engine phase-machine citations this order is built to survive.
-    /// Triggered by the note-split screen's `.delegate(.storeScheduleRequested)`, sent automatically
-    /// the instant its broadcast succeeds and again on every subsequent store-retry tap (a store
-    /// failure never re-signs or re-broadcasts the already-safe split — only the store itself
-    /// retries, per `MigrationNoteSplit.State.awaitingScheduleStore`). On success, flips that screen
-    /// to `.confirmed` via its own `.splitConfirmed` (which also releases `pendingKeystoneScheduleStore`
-    /// — see that case above); on failure, re-presents its EXISTING failure sheet
-    /// (`.scheduleStoreFailed`) with the entries still stashed for the next retry. A no-op if nothing
-    /// is stashed (defensive — should not happen for a live `.storeScheduleRequested` sender).
-    private func storeDeferredKeystoneSchedule(
-        noteSplitId: StackElementID,
-        state: inout MigrationCoordFlow.State
-    ) -> Effect<MigrationCoordFlow.Action> {
-        guard let pending = state.pendingKeystoneScheduleStore else { return .none }
-        return .run { [sdkSynchronizer, migrationManager, pending, noteSplitId] send in
-            let stored = (try? await sdkSynchronizer.storeSignedMigrationTransactions(pending.accountUUID, pending.scheduleEntries)) != nil
-            guard stored else {
-                await send(.path(.element(id: noteSplitId, action: .noteSplit(.scheduleStoreFailed))))
-                return
-            }
-            if let schedule = pending.schedule {
-                await migrationManager.recordCommittedSchedule(pending.accountUUID, schedule)
-            }
-            await migrationManager.reconcile()
-            await send(.path(.element(id: noteSplitId, action: .noteSplit(.splitConfirmed))))
-        }
-    }
-
-    /// MOB-1496 (W6): the shared "schedule/dust transfer is fully committed and ready to proceed"
-    /// resume — reused by `resumeAfterKeystoneSigning` directly (no-split batch) and by the
-    /// note-split screen's own `.delegate(.continued)` (split batch, once its broadcast is
-    /// confirmed), so both land on the identical post-commit routing the software path's `.confirmed`
-    /// row would reach.
+    /// MOB-1496 (W6; MOB-1513 B4): the shared post-commit resume — `resumeAfterKeystoneSigning`
+    /// lands here for EVERY `planCommit` batch now (with or without preps — the with-preps
+    /// note-split detour is retired), so the ceremony reaches the identical post-commit routing the
+    /// software path's `.confirmed` row would.
     private func resumeCommittedMigrationChain(
         context: MigrationCoordFlow.KeystoneSigningContext,
         state: inout MigrationCoordFlow.State
@@ -1226,21 +1311,12 @@ extension MigrationCoordFlow {
     ///
     /// No preps: stores the schedule immediately, exactly as before. R8-T2 (#5 fix): success
     /// bookkeeping (`.keystoneSigningSubmitted`, which drives `resumeAfterKeystoneSigning` into
-    /// `recordCommittedSchedule`/`reconcile()` and, from there, `transferPlanPostConfirmChain`'s
-    /// `scheduleFirstWindow()`) now fires ONLY when the store call actually succeeds — the code this
-    /// replaced discarded a thrown error into a bare `Bool` (`(try? await ...) != nil`) and fired
-    /// `.keystoneSigningSubmitted` regardless, landing on the terminal "Migration Scheduled" screen
-    /// with nothing stored in the engine and no schedule recorded. On failure this abandons instead
-    /// (`keystoneScanAbandoned` semantics — same as a re-pair failure or the prep-store failure
-    /// below): `MigrationNoteSplit`, the deferred-schedule path's own store-only retry affordance
-    /// (`MigrationCoordFlowCoordinator.storeDeferredKeystoneSchedule`), was investigated and rejected
-    /// as the reuse target for THIS, the no-prep case — it is structurally split-specific (`Phase`
-    /// is `.splitting`/`.confirmed` only, its Keystone retry fork always ends in
-    /// `broadcastStoredNoteSplit`, and its copy is literally "Splitting Funds…"/"Split
-    /// Confirmed!"/"Split Failed" — presenting any of that for a batch that was never split would
-    /// misinform the user), and both its files (`MigrationNoteSplitStore`/`View`) are out of this
-    /// task's scope to extend into hosting a generic no-prep retry. See this task's report for the
-    /// full reuse-vs-abandon analysis.
+    /// `transferPlanPostConfirmChain`'s `scheduleFirstWindow()`) fires ONLY when the store call
+    /// actually succeeds — the code this replaced discarded a thrown error into a bare `Bool`
+    /// (`(try? await ...) != nil`) and fired `.keystoneSigningSubmitted` regardless, landing on the
+    /// terminal "Migration Scheduled" screen with nothing stored in the engine and no schedule
+    /// recorded. On failure this abandons instead (`keystoneScanAbandoned` semantics — same as a
+    /// re-pair failure or the prep-store failure below), the honest-failure surface.
     ///
     /// Preps present (one or many, MOB-1496 final engine's plural `[MigrationUnsignedTransferPczt]`
     /// preparation transactions — superseding the pre-final-engine singular split): unchanged
@@ -1253,7 +1329,9 @@ extension MigrationCoordFlow {
     /// store runs — see `SDKSynchronizerInterface`'s doc), and `storeSignedNoteSplits`/
     /// `storeSignedMigrationTransactions` are now order-independent per-transaction signature
     /// applications over that one run. What still motivates this ordering is C-1b, immediately
-    /// below: storing preps (and letting them broadcast) before the schedule is stored.
+    /// below: storing preps (and letting them broadcast) before the schedule is stored. MOB-1513
+    /// (B4): the deferred store's home moved from the retired "Splitting Funds" handshake to the
+    /// post-confirm first-delivery kick — see `runFirstDeliveryKick`'s doc.
     private func storeKeystoneSignedBatch(
         context: MigrationCoordFlow.KeystoneSigningContext,
         accountUUID: AccountUUID,
@@ -1273,7 +1351,7 @@ extension MigrationCoordFlow {
                     await migrationManager.recordCommittedSchedule(accountUUID, schedule)
                 }
                 await migrationManager.reconcile()
-                await send(.keystoneSigningSubmitted(context: context, signedPreps: nil, pendingScheduleStore: nil))
+                await send(.keystoneSigningSubmitted(context: context, pendingScheduleStore: nil))
                 return
             }
             // Preps present (MOB-1496 C-1b fix, fix-wave 2 — still in force under the final engine,
@@ -1284,9 +1362,9 @@ extension MigrationCoordFlow {
             // phase — a schedule store performed here, before the preps even broadcast, gets
             // clobbered the instant a broadcast lands, stranding the run at `.readyToPropose` once
             // the prep mines (`context.rs:361-378`). The schedule rides along in
-            // `pendingScheduleStore` instead, resumed by
-            // `MigrationCoordFlowCoordinator.storeDeferredKeystoneSchedule` once the note-split
-            // screen's broadcast succeeds — the earliest point the trace proved safe.
+            // `pendingScheduleStore` instead; MOB-1513 (B4): the deferred store now runs inside the
+            // post-confirm first-delivery kick (`runFirstDeliveryKick`), right after its prep
+            // broadcast lands — the earliest point the trace proved safe.
             guard (try? await sdkSynchronizer.storeSignedNoteSplits(accountUUID, prepEntries)) != nil else {
                 // Nothing was stored at all — abandon exactly like a re-pair failure: nothing to
                 // resume, same `keystoneScanAbandoned` semantics.
@@ -1298,13 +1376,7 @@ extension MigrationCoordFlow {
                 scheduleEntries: scheduleEntries,
                 schedule: schedule
             )
-            await send(
-                .keystoneSigningSubmitted(
-                    context: context,
-                    signedPreps: prepEntries,
-                    pendingScheduleStore: pendingScheduleStore
-                )
-            )
+            await send(.keystoneSigningSubmitted(context: context, pendingScheduleStore: pendingScheduleStore))
         }
     }
 
