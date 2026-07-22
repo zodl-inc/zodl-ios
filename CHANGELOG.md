@@ -6,6 +6,9 @@ directly impact users rather than highlighting other crucial architectural updat
 
 ## [Unreleased]
 
+### Changed
+- [MOB-1507] Temporarily hidden the Beta: Coinholder Polling option in Settings behind a feature flag. Nothing was removed — the feature can be re-enabled by flipping the flag.
+
 ### Added
 - [MOB-1458] The app now builds against the Ironwood-capable Zcash SDK (local development path) and can sync with the new Slipstream engine, selected by a feature flag that is on by default on this line. Funds in the Ironwood pool are counted in all shielded balances (spendable, pending, and total).
 - [MOB-1459] Groundwork for the Orchard → Ironwood migration: data models and the stubbed migration SDK interface. No user-visible changes yet.

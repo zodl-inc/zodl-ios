@@ -34,11 +34,13 @@ struct SettingsView: View {
                                 }
                             }
                             
-                            ActionRow(
-                                icon: Asset.Assets.Icons.checkVerified.image,
-                                title: String(localizable: .settingsCoinholderPolling)
-                            ) {
-                                store.send(.coinholderPollingTapped)
+                            if store.featureFlags.coinholderPolling {
+                                ActionRow(
+                                    icon: Asset.Assets.Icons.checkVerified.image,
+                                    title: String(localizable: .settingsCoinholderPolling)
+                                ) {
+                                    store.send(.coinholderPollingTapped)
+                                }
                             }
 
                             ActionRow(
