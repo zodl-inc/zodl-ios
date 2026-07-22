@@ -80,6 +80,12 @@ struct MigrationReviewTransfer {
         /// in immediate mode until a proposal succeeds — also the `onAppear` cache guard: non-`nil`
         /// means "already proposed, don't propose again."
         var immediateProposal: ImmediateMigrationProposal?
+        /// MOB-1513 (B4): true while an async confirm leg is in flight — the Keystone PCZT build,
+        /// or a propose-failure Retry's re-propose. Drives the Confirm button's disabled+spinner
+        /// state AND the `.confirmTapped`/`.retryTapped` single-flight guard (same treatment as
+        /// `MigrationTransferPlan.State.isConfirming` — see its doc). The software immediate and
+        /// manual-step confirms delegate synchronously and never set it.
+        var isConfirming = false
         /// True when the manual-step variant is the coordinator's re-entry root — its back control
         /// then closes the flow instead of popping.
         var isFlowRoot = false
@@ -169,13 +175,20 @@ struct MigrationReviewTransfer {
                 return .send(.delegate(.closed))
 
             case .confirmTapped, .retryTapped:
+                // MOB-1513 (B4): single-flight — a second tap while an async confirm leg is in
+                // flight must be a complete no-op (same guard as `MigrationTransferPlan`'s confirm).
+                guard !state.isConfirming else { return .none }
                 state.isFailurePresented = false
 
                 // MOB-1513: a propose failure's Retry re-proposes instead of re-attempting the
                 // commit — checked FIRST, before any of the commit guards below.
                 if case .retryTapped = action, state.failureReason == State.FailureReason.propose {
                     state.failureReason = nil
-                    return proposeEffect(accountUUID: state.selectedWalletAccount?.id)
+                    // Set only when a real re-propose launches (a nil account is a no-op inside
+                    // `proposeEffect`, which must not strand the flag).
+                    guard let accountUUID = state.selectedWalletAccount?.id else { return .none }
+                    state.isConfirming = true
+                    return proposeEffect(accountUUID: accountUUID)
                 }
                 state.failureReason = nil
 
@@ -195,6 +208,7 @@ struct MigrationReviewTransfer {
                 guard let account = state.selectedWalletAccount else { return .none }
 
                 guard account.vendor != WalletAccount.Vendor.keystone else {
+                    state.isConfirming = true
                     return requestKeystoneSignature(for: proposal, account: account)
                 }
 
@@ -203,10 +217,18 @@ struct MigrationReviewTransfer {
                 // `immediateProposal` into.
                 return .send(.delegate(.confirmed))
 
+            case .delegate(.keystoneSignRequested):
+                // MOB-1513 (B4): the PCZT is handed to the coordinator (which pushes the QR
+                // ceremony on top) — re-enable Confirm so a pop-back after a rejected signature
+                // lands on a tappable button again.
+                state.isConfirming = false
+                return .none
+
             case .delegate:
                 return .none
 
             case .noteSplitFailed:
+                state.isConfirming = false
                 state.isFailurePresented = true
                 state.failureReason = State.FailureReason.commit
                 return .none
@@ -220,11 +242,13 @@ struct MigrationReviewTransfer {
                 return proposeEffect(accountUUID: state.selectedWalletAccount?.id)
 
             case .transferProposalFailed:
+                state.isConfirming = false
                 state.isFailurePresented = true
                 state.failureReason = State.FailureReason.propose
                 return .none
 
             case .transferProposed(let proposal):
+                state.isConfirming = false
                 state.immediateProposal = proposal
                 state.amount = proposal.amount
                 state.fee = proposal.fee
