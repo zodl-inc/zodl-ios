@@ -1287,32 +1287,233 @@ struct MigrationManagerTests {
         #expect(storage.isTorEnabledForMigration() == false)
     }
 
-    /// MOB-1487/MOB-1496: "Lock balance" persistence — relocated onto `MigrationGateStorage` from
-    /// the (inert, pre-real-SDK) `SDKSynchronizerClient` stub.
-    @Test func dustLockedPersistenceRoundTrip() throws {
+    // MARK: - MOB-1496 (W-A): real residual lock/unlock
+
+    /// `lockMigrationDust` now delegates straight to the SDK's real `lockMigrationResidual` — no
+    /// more cosmetic `Task.sleep` + `gateStorage.setDustLocked` bookkeeping.
+    @Test func lockMigrationDustDelegatesToSDKLockMigrationResidual() async throws {
+        let lockCalls = LockIsolated<[AccountUUID]>([])
+        let accountUUID = AccountUUID(id: [UInt8](repeating: 30, count: 16))
+
+        try await withDependencies {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.lockMigrationResidual = { accountUUID in
+                lockCalls.withValue { $0.append(accountUUID) }
+                return Zatoshi(4_000)
+            }
+        } operation: {
+            let impl = MigrationManagerImpl()
+            try await impl.lockMigrationDust(accountUUID: accountUUID)
+        }
+
+        #expect(lockCalls.value == [accountUUID])
+    }
+
+    /// `isMigrationDustLocked` is now derived from the account's live Orchard
+    /// `PoolBalance.lockedValue` rather than app-persisted storage — a nonzero locked value reads
+    /// as locked, mirroring `lockMigrationResidual`'s own "locked value leaves `spendableValue` but
+    /// stays in `lockedValue`" contract. Async now (a live SDK balance read).
+    @Test func isMigrationDustLockedDerivedFromNonzeroLockedValue() async throws {
+        let accountUUID = AccountUUID(id: [UInt8](repeating: 31, count: 16))
+
+        let lockedResult = await withDependencies {
+            $0.sdkSynchronizer = SDKSynchronizerClient.mocked(
+                getAccountsBalances: {
+                    [
+                        accountUUID: AccountBalance(
+                            saplingBalance: PoolBalance(spendableValue: .zero, changePendingConfirmation: .zero, valuePendingSpendability: .zero),
+                            orchardBalance: PoolBalance(
+                                spendableValue: .zero,
+                                changePendingConfirmation: .zero,
+                                valuePendingSpendability: .zero,
+                                lockedValue: Zatoshi(4_000)
+                            ),
+                            unshielded: .zero
+                        )
+                    ]
+                }
+            )
+        } operation: {
+            let impl = MigrationManagerImpl()
+            return await impl.isMigrationDustLocked(accountUUID: accountUUID)
+        }
+        #expect(lockedResult == true)
+
+        let unlockedResult = await withDependencies {
+            $0.sdkSynchronizer = SDKSynchronizerClient.mocked(
+                getAccountsBalances: {
+                    [
+                        accountUUID: AccountBalance(
+                            saplingBalance: PoolBalance(spendableValue: .zero, changePendingConfirmation: .zero, valuePendingSpendability: .zero),
+                            orchardBalance: PoolBalance(spendableValue: Zatoshi(4_000), changePendingConfirmation: .zero, valuePendingSpendability: .zero),
+                            unshielded: .zero
+                        )
+                    ]
+                }
+            )
+        } operation: {
+            let impl = MigrationManagerImpl()
+            return await impl.isMigrationDustLocked(accountUUID: accountUUID)
+        }
+        #expect(unlockedResult == false)
+    }
+
+    /// An unresolvable account (nothing passed, nothing selected) reads as unlocked rather than
+    /// crashing — same "degrade to the safe default" convention as every other per-account read.
+    @Test func isMigrationDustLockedWithNoResolvableAccountIsFalse() async throws {
+        @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
+        $selectedWalletAccount.withLock { $0 = nil }
+
+        let result = await withDependencies {
+            $0.sdkSynchronizer = .noOp
+        } operation: {
+            let impl = MigrationManagerImpl()
+            return await impl.isMigrationDustLocked(accountUUID: nil)
+        }
+
+        #expect(result == false)
+    }
+
+    // MARK: - W-D: locked-aware migration signals
+
+    /// `orchardBalanceToMigrate` must exclude `lockedValue` — a locked residual has already been
+    /// intentionally taken out of migration, so it must not inflate the Migration Entry headline or
+    /// re-trigger the `.required` banner on re-entry.
+    @Test func orchardBalanceToMigrateExcludesLockedValue() async throws {
+        let accountUUID = AccountUUID(id: [UInt8](repeating: 32, count: 16))
+
+        let balance = await withDependencies {
+            $0.sdkSynchronizer = SDKSynchronizerClient.mocked(
+                getAccountsBalances: {
+                    [
+                        accountUUID: AccountBalance(
+                            saplingBalance: PoolBalance(spendableValue: .zero, changePendingConfirmation: .zero, valuePendingSpendability: .zero),
+                            orchardBalance: PoolBalance(
+                                spendableValue: Zatoshi(1_000),
+                                changePendingConfirmation: Zatoshi(200),
+                                valuePendingSpendability: Zatoshi(300),
+                                lockedValue: Zatoshi(5_000)
+                            ),
+                            unshielded: .zero
+                        )
+                    ]
+                }
+            )
+        } operation: {
+            let impl = MigrationManagerImpl()
+            return await impl.orchardBalanceToMigrate(accountUUID: accountUUID)
+        }
+
+        // spendable + changePending + valuePending — the 5_000 locked is excluded.
+        #expect(balance == Zatoshi(1_500))
+    }
+
+    /// A locked-only residual (nothing spendable, everything locked) reads as ZERO balance to
+    /// migrate — the locked amount is settled, not a pending remainder.
+    @Test func orchardBalanceToMigrateWithOnlyLockedValueIsZero() async throws {
+        let accountUUID = AccountUUID(id: [UInt8](repeating: 33, count: 16))
+
+        let balance = await withDependencies {
+            $0.sdkSynchronizer = SDKSynchronizerClient.mocked(
+                getAccountsBalances: {
+                    [
+                        accountUUID: AccountBalance(
+                            saplingBalance: PoolBalance(spendableValue: .zero, changePendingConfirmation: .zero, valuePendingSpendability: .zero),
+                            orchardBalance: PoolBalance(
+                                spendableValue: .zero,
+                                changePendingConfirmation: .zero,
+                                valuePendingSpendability: .zero,
+                                lockedValue: Zatoshi(5_000)
+                            ),
+                            unshielded: .zero
+                        )
+                    ]
+                }
+            )
+        } operation: {
+            let impl = MigrationManagerImpl()
+            return await impl.orchardBalanceToMigrate(accountUUID: accountUUID)
+        }
+
+        #expect(balance == Zatoshi.zero)
+    }
+
+    /// `reconcile()`'s own balance-to-migrate signal (which backs `stateEvents`'s balance-change
+    /// emission — see `stateEventsEmitsOnStateOrBalanceChangeAndNotOnIdenticalReRead` above) is
+    /// locked-aware too: `reconcileOrchardBalance` shares `orchardBalanceToMigrate`'s
+    /// locked-exclusion, so a "Lock balance" transition (spendable moving into `lockedValue`, with
+    /// nothing newly becoming migratable) must never spuriously re-emit a completed state.
+    @Test func reconcileTreatsLockedOnlyResidualAsSettledNotAsBalanceToMigrate() async throws {
         let userDefaults = try #require(
-            UserDefaults(suiteName: "testDustLockedPersistenceRoundTrip"),
+            UserDefaults(suiteName: "testReconcileTreatsLockedOnlyResidualAsSettled"),
             "MigrationGateStorage: UserDefaults failed to initialize"
         )
-        defer { userDefaults.removePersistentDomain(forName: "testDustLockedPersistenceRoundTrip") }
+        defer { userDefaults.removePersistentDomain(forName: "testReconcileTreatsLockedOnlyResidualAsSettled") }
 
         let storage = MigrationGateStorage(userDefaults: userDefaults)
-        let accountA = AccountUUID(id: [UInt8](repeating: 1, count: 16))
-        let accountB = AccountUUID(id: [UInt8](repeating: 2, count: 16))
+        let account = WalletAccount(
+            Account(
+                id: AccountUUID(id: [UInt8](repeating: 34, count: 16)),
+                name: "Zodl",
+                keySource: nil,
+                seedFingerprint: nil,
+                hdAccountIndex: Zip32AccountIndex(0),
+                ufvk: nil,
+                uivk: nil
+            )
+        )
 
-        #expect(storage.isDustLocked(for: accountA) == false)
+        @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
+        @Shared(.inMemory(.walletAccounts)) var walletAccounts: [WalletAccount] = []
+        $selectedWalletAccount.withLock { $0 = account }
+        $walletAccounts.withLock { $0 = [account] }
 
-        storage.setDustLocked(true, for: accountA)
-        #expect(storage.isDustLocked(for: accountA) == true)
-        // MOB-1509: per-account isolation — A locking its remainder must never mark B's locked.
-        #expect(storage.isDustLocked(for: accountB) == false)
+        let currentLockedValue = LockIsolated<Zatoshi>(Zatoshi.zero)
 
-        storage.setDustLocked(false, for: accountA)
-        #expect(storage.isDustLocked(for: accountA) == false)
+        await withDependencies {
+            $0.sdkSynchronizer = SDKSynchronizerClient.mocked(
+                latestState: {
+                    var state = SynchronizerState.zero
+                    state.latestBlockHeight = 5_000_000
+                    return state
+                },
+                getAccountsBalances: {
+                    [
+                        account.id: AccountBalance(
+                            saplingBalance: PoolBalance(spendableValue: .zero, changePendingConfirmation: .zero, valuePendingSpendability: .zero),
+                            orchardBalance: PoolBalance(
+                                spendableValue: .zero,
+                                changePendingConfirmation: .zero,
+                                valuePendingSpendability: .zero,
+                                lockedValue: currentLockedValue.value
+                            ),
+                            unshielded: .zero
+                        )
+                    ]
+                }
+            )
+            $0.sdkSynchronizer.getMigrationState = { _ in MigrationState.complete }
+        } operation: {
+            let impl = MigrationManagerImpl(gateStorage: storage)
+            let collected = LockIsolated<[MigrationState]>([])
+            let cancellable = impl.stateEvents(accountUUID: account.id).sink { state in
+                collected.withValue { $0.append(state) }
+            }
 
-        storage.setDustLocked(true, for: accountB)
-        storage.clearDustLocked(for: accountB)
-        #expect(storage.isDustLocked(for: accountB) == false)
+            // 1st reconcile: notStarted (seed) -> complete is a genuine STATE change -> emits.
+            await impl.reconcile()
+            // "Lock balance" happens: the residual moves from spendable into `lockedValue` —
+            // nothing NEW became migratable, so a correctly locked-excluded reconcile must not
+            // re-emit `.complete` a second time.
+            currentLockedValue.setValue(Zatoshi(5_000))
+            // 2nd reconcile: state repeats (.complete); if `reconcileOrchardBalance` wrongly summed
+            // the newly-locked value in (e.g. via `PoolBalance.total()`), `hasBalanceToMigrate`
+            // would flip false -> true and spuriously re-push `.complete`.
+            await impl.reconcile()
+
+            #expect(collected.value == [MigrationState.notStarted, MigrationState.complete])
+            cancellable.cancel()
+        }
     }
 
     /// MOB-1511 (W2): the per-account completed-rounds counter behind the "Round N" labels.
@@ -1406,17 +1607,15 @@ struct MigrationManagerTests {
         storage.setManualDelivery(true, for: accountUUID)
         storage.setTorEnabledForMigration(true)
         storage.acknowledgeComplete(for: accountUUID)
-        storage.setDustLocked(true, for: accountUUID)
         storage.recordSyncCompleted(at: Date(timeIntervalSince1970: 5_000_000))
 
         storage.resetPersistedFlags()
 
-        // MOB-1509: mode/manual/dust-locked are per-account now (same transition the acknowledged
-        // flag went through in R8-T3) — the storage-level reset only deletes the dead legacy
-        // wallet-wide keys, so every per-account value survives it.
+        // MOB-1509: mode/manual are per-account now (same transition the acknowledged flag went
+        // through in R8-T3) — the storage-level reset only deletes the dead legacy wallet-wide
+        // keys, so every per-account value survives it.
         #expect(storage.migrationMode(for: accountUUID) == MigrationMode.immediate)
         #expect(storage.isManualDelivery(for: accountUUID) == true)
-        #expect(storage.isDustLocked(for: accountUUID) == true)
         // MOB-1497 (R1): the stored choice is genuinely gone (see the raw-key check below) — it just
         // reads back `true` now, the new never-written default, rather than `false`.
         #expect(storage.isTorEnabledForMigration() == true)

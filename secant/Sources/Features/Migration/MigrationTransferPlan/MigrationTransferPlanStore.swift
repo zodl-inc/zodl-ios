@@ -296,12 +296,11 @@ struct MigrationTransferPlan {
 
                 // `includeResidual: false` by design: the scheduled plan never folds the Orchard
                 // remainder into its own run — dust stays on the separate, post-completion
-                // "Migrate anyway" lane (`migrateMigrationDust`/the Keystone propose fork in
-                // `MigrationCoordFlowCoordinator`, both `includeResidual: true`, MOB-1496 W6). This
-                // screen is only ever reached for `.privateScheduled` mode (the coordinator routes
-                // `.immediate` through `MigrationReviewTransfer` instead), so
-                // `proposeMigrationTransfers` (not `proposeImmediateMigration`) is always correct
-                // here.
+                // "Migrate anyway" lane (MOB-1496 W-B: unlock + `proposeImmediateMigration`, in
+                // `MigrationCoordFlowCoordinator`, for both vendors). This screen is only ever
+                // reached for `.privateScheduled` mode (the coordinator routes `.immediate` through
+                // `MigrationReviewTransfer` instead), so `proposeMigrationTransfers` (not
+                // `proposeImmediateMigration`) is always correct here.
                 // `.concatenate` (not `.merge`): the round load answers instantly today, and a
                 // deterministic receive order keeps exhaustive TestStores stable.
                 return .concatenate(roundContextEffect, proposeEffect(accountUUID: state.selectedWalletAccount?.id))

@@ -72,6 +72,9 @@ import URKit
         // R8-T7 (#15): an obviously-fake amount no seeded/preset engine dust figure would coincide
         // with (`.completeWithDust`'s own dust is 800_000 zatoshi -- see that test below).
         static let residualAfterMigration = Zatoshi(123_456_789)
+        // MOB-1496 (W-A): equally obviously-fake — no seeded/preset engine dust figure coincides.
+        static let lockMigrationResidual = Zatoshi(987_654_321)
+        static let unlockMigrationResidual = 42
     }
 
     /// One call counter per sentinel closure — see the file header for why this is the primary
@@ -82,9 +85,10 @@ import URKit
         let proposeMigrationTransfers = LockIsolated<Int>(0)
         let proposeImmediateMigration = LockIsolated<Int>(0)
         let residualAfterMigration = LockIsolated<Int>(0)
+        let lockMigrationResidual = LockIsolated<Int>(0)
+        let unlockMigrationResidual = LockIsolated<Int>(0)
         let signAndStoreMigrationSchedule = LockIsolated<Int>(0)
         let executeNextPendingMigrationTransfer = LockIsolated<Int>(0)
-        let migrateMigrationDust = LockIsolated<Int>(0)
         let proposeMigrationPCZTs = LockIsolated<Int>(0)
         let parseMigrationPCZTBatch = LockIsolated<Int>(0)
         let urEncoderForMigrationPCZTBatch = LockIsolated<Int>(0)
@@ -135,15 +139,19 @@ import URKit
             counters.residualAfterMigration.withValue { $0 += 1 }
             return SentinelValues.residualAfterMigration
         }
+        client.lockMigrationResidual = { _ in
+            counters.lockMigrationResidual.withValue { $0 += 1 }
+            return SentinelValues.lockMigrationResidual
+        }
+        client.unlockMigrationResidual = { _ in
+            counters.unlockMigrationResidual.withValue { $0 += 1 }
+            return SentinelValues.unlockMigrationResidual
+        }
         client.signAndStoreMigrationSchedule = { _, _, _ in
             counters.signAndStoreMigrationSchedule.withValue { $0 += 1 }
         }
         client.executeNextPendingMigrationTransfer = { _, _ in
             counters.executeNextPendingMigrationTransfer.withValue { $0 += 1 }
-            return SentinelValues.transferResult
-        }
-        client.migrateMigrationDust = { _, _, _ in
-            counters.migrateMigrationDust.withValue { $0 += 1 }
             return SentinelValues.transferResult
         }
         client.proposeNoteSplitPCZTs = { _ in SentinelValues.noteSplitPCZTs }
@@ -320,16 +328,18 @@ import URKit
         #expect(counters.proposeImmediateMigration.value == 1)
     }
 
-    // MARK: - Dust resolution (MOB-1487 software composite; MOB-1496 W6 §4 simulator seam)
+    // MARK: - Dust resolution (MOB-1496 W-A: lockMigrationResidual/unlockMigrationResidual)
+    //
+    // MOB-1496 (W-B): the old dust-sweep composite (`migrateMigrationDust`) is retired along with
+    // the real SDK member it stood in for — "Migrate anyway" now proposes through the
+    // already-covered `proposeImmediateMigrationReturnsEngineDerivedProposalWhenActiveAndSentinelWhenInactive`
+    // above. This section now covers only the lock/unlock members `lockMigrationDust`/"Migrate
+    // anyway" (unlock-first) call directly.
 
-    /// Closes the "panel preset -> migrate-anyway -> simulated success" gap (MOB-1496 W6 §4): the
-    /// real-engine residual semantics can't be proven offline, but this exercises the SAME contract
-    /// the LiveKey's `migrateMigrationDust` composite implements (`SDKSynchronizerLive.swift`:
-    /// non-empty proposed schedule -> succeeds) against the simulator's own dust model, through the
-    /// `SDKSynchronizerClient` seam every other test in this file uses.
-    /// `SimulatorPreset.completeWithDust` is the SAME preset the Migration Simulator Panel's own dust
-    /// preset button applies (`MigrationSimulatorPanelTests.presetTappedCompleteWithDustAlsoResetsFlagsBeforeApplyPreset`).
-    @Test func migrateMigrationDustRoutesThroughEngineWhenActiveAndFallsBackWhenInactive() async throws {
+    /// `SimulatorPreset.completeWithDust` is the SAME preset the Migration Simulator Panel's own
+    /// dust preset button applies. The FIRST lock reports the dust value (nothing was locked
+    /// before); mirrors the real SDK's idempotent-additive contract.
+    @Test func lockMigrationResidualRoutesThroughEngineWhenActiveAndFallsBackWhenInactive() async throws {
         let counters = CallCounters()
         var client = makeBaseClient(counters)
         let engine = MigrationSimulatorEngine(store: MigrationSimulatorStateStore.ephemeral())
@@ -339,36 +349,72 @@ import URKit
         engine.applyPreset(SimulatorPreset.completeWithDust)
         #expect(engine.readout().dustRemainder.amount > 0)
 
-        let result = try await client.migrateMigrationDust(Self.accountUUID, try usk(), Self.networkPrivacy)
-        #expect(counters.migrateMigrationDust.value == 0)
-        guard case MigrationTransferResult.success? = result else {
-            Issue.record("Expected the simulated dust sweep to succeed against the .completeWithDust preset")
-            return
-        }
-        #expect(engine.readout().dustRemainder == Zatoshi.zero)
+        let locked = try await client.lockMigrationResidual(Self.accountUUID)
+        #expect(counters.lockMigrationResidual.value == 0)
+        #expect(locked == engine.readout().dustRemainder)
+        #expect(engine.isDustLocked() == true)
 
-        // Inactive: falls back to the sentinel original, and the engine's own dust state (already
-        // swept above) is untouched by the fallback call.
+        // Inactive: falls back to the sentinel original, and the engine's own lock state (already
+        // set above) is untouched by the fallback call.
         engine.setActive(false)
-        let inactiveResult = try await client.migrateMigrationDust(Self.accountUUID, try usk(), Self.networkPrivacy)
-        #expect(inactiveResult == SentinelValues.transferResult)
-        #expect(counters.migrateMigrationDust.value == 1)
+        let inactiveResult = try await client.lockMigrationResidual(Self.accountUUID)
+        #expect(inactiveResult == SentinelValues.lockMigrationResidual)
+        #expect(counters.lockMigrationResidual.value == 1)
     }
 
-    /// Empty-residual edge (§4 — mirrors `MigrationSimulatorEngineTests.migrateDustWithNoDustReturnsNil`
-    /// through this file's client seam instead of the raw engine): a fresh engine has no dust
-    /// remainder yet, so the sweep is a no-op `nil` — never a fabricated success.
-    @Test func migrateMigrationDustWithNoDustReturnsNilWhenActive() async throws {
+    /// Idempotent-additive: a SECOND lock call (already locked, nothing newly spendable) reports
+    /// `.zero`, never the dust figure again.
+    @Test func lockMigrationResidualSecondCallWhileAlreadyLockedReturnsZero() async throws {
+        let counters = CallCounters()
+        var client = makeBaseClient(counters)
+        let engine = MigrationSimulatorEngine(store: MigrationSimulatorStateStore.ephemeral())
+        engine.setActive(true)
+        client.applySimulatedMigration(engine: engine)
+        engine.applyPreset(SimulatorPreset.completeWithDust)
+
+        _ = try await client.lockMigrationResidual(Self.accountUUID)
+        let secondLock = try await client.lockMigrationResidual(Self.accountUUID)
+
+        #expect(secondLock == Zatoshi.zero)
+        #expect(engine.isDustLocked() == true)
+    }
+
+    /// The release half — mirrors the real SDK's "returns the number unlocked (`0` when nothing was
+    /// locked)" contract.
+    @Test func unlockMigrationResidualRoutesThroughEngineWhenActiveAndFallsBackWhenInactive() async throws {
+        let counters = CallCounters()
+        var client = makeBaseClient(counters)
+        let engine = MigrationSimulatorEngine(store: MigrationSimulatorStateStore.ephemeral())
+        engine.setActive(true)
+        client.applySimulatedMigration(engine: engine)
+        engine.applyPreset(SimulatorPreset.completeWithDust)
+        engine.lockDust()
+        #expect(engine.isDustLocked() == true)
+
+        let unlocked = try await client.unlockMigrationResidual(Self.accountUUID)
+        #expect(counters.unlockMigrationResidual.value == 0)
+        #expect(unlocked == 1)
+        #expect(engine.isDustLocked() == false)
+
+        // Inactive: falls back to the sentinel original.
+        engine.setActive(false)
+        let inactiveResult = try await client.unlockMigrationResidual(Self.accountUUID)
+        #expect(inactiveResult == SentinelValues.unlockMigrationResidual)
+        #expect(counters.unlockMigrationResidual.value == 1)
+    }
+
+    /// Nothing locked -> `0`, never a fabricated positive count.
+    @Test func unlockMigrationResidualWithNothingLockedReturnsZeroWhenActive() async throws {
         let counters = CallCounters()
         var client = makeBaseClient(counters)
         let engine = MigrationSimulatorEngine(store: MigrationSimulatorStateStore.ephemeral())
         engine.setActive(true)
         client.applySimulatedMigration(engine: engine)
 
-        let result = try await client.migrateMigrationDust(Self.accountUUID, try usk(), Self.networkPrivacy)
+        let unlocked = try await client.unlockMigrationResidual(Self.accountUUID)
 
-        #expect(result == nil)
-        #expect(counters.migrateMigrationDust.value == 0)
+        #expect(unlocked == 0)
+        #expect(counters.unlockMigrationResidual.value == 0)
     }
 
     // MARK: - Keystone (PCZT fabrication + batch parse round trip)
@@ -520,18 +566,16 @@ struct MigrationManagerResetPersistedFlagsTests {
         storage.setManualDelivery(true, for: accountUUID)
         storage.setTorEnabledForMigration(true)
         storage.acknowledgeComplete(for: accountUUID)
-        storage.setDustLocked(true, for: accountUUID)
         storage.recordSyncCompleted(at: Date())
 
         storage.resetPersistedFlags()
 
-        // MOB-1509: mode/manual/dust-locked are per-account now (the acknowledged flag's R8-T3
-        // transition) — the storage-level reset only deletes the dead legacy wallet-wide keys, so
-        // per-account values survive; clearing them per KNOWN account is
+        // MOB-1509: mode/manual are per-account now (the acknowledged flag's R8-T3 transition) —
+        // the storage-level reset only deletes the dead legacy wallet-wide keys, so per-account
+        // values survive; clearing them per KNOWN account is
         // `MigrationManagerImpl.resetPersistedFlags()`'s job (see the twin test below).
         #expect(storage.migrationMode(for: accountUUID) == MigrationMode.immediate)
         #expect(storage.isManualDelivery(for: accountUUID) == true)
-        #expect(storage.isDustLocked(for: accountUUID) == true)
         // MOB-1497 (R1): the stored choice is genuinely gone (see the raw-key check below) — it just
         // reads back `true` now, the new never-written default, rather than `false`.
         #expect(storage.isTorEnabledForMigration() == true)
@@ -580,14 +624,12 @@ struct MigrationManagerResetPersistedFlagsTests {
             $selectedWalletAccount.withLock { $0 = account }
             storage.setMigrationMode(MigrationMode.privateScheduled, for: account.id)
             storage.setManualDelivery(true, for: account.id)
-            storage.setDustLocked(true, for: account.id)
 
             let impl = MigrationManagerImpl(gateStorage: storage)
             impl.resetPersistedFlags()
 
             #expect(storage.migrationMode(for: account.id) == nil)
             #expect(storage.isManualDelivery(for: account.id) == false)
-            #expect(storage.isDustLocked(for: account.id) == false)
         }
     }
 }

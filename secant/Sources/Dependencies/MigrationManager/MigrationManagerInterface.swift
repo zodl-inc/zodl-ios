@@ -56,7 +56,9 @@ struct MigrationManagerClient: Sendable {
     // per-account (`nil` resolves the selected account) — two parallel migrations must not share
     // one lock verdict.
     var lockMigrationDust: @Sendable (_ accountUUID: AccountUUID?) async throws -> Void
-    var isMigrationDustLocked: @Sendable (_ accountUUID: AccountUUID?) -> Bool = { _ in false }
+    // MOB-1496: async now — derived from a live SDK balance read (the account's Orchard
+    // `PoolBalance.lockedValue`) rather than app-persisted storage.
+    var isMigrationDustLocked: @Sendable (_ accountUUID: AccountUUID?) async -> Bool = { _ in false }
     // MOB-1511 (W2): the multi-round labels' context — CURRENT round (app-persisted completed-run
     // count + 1) and the engine's estimated TOTAL rounds (`nil` until librustzcash#2714 is plumbed
     // through the SDK; see `SDKSynchronizerClient.estimateMigrationRunCount`).
@@ -312,8 +314,9 @@ struct MigrationManagerClient: Sendable {
     // `reconcile`'s no-op but is not a test fallback (see the `recordCommittedSchedule` note).
     var clearAbandonedNetworkSnapshot: @Sendable (_ accountUUID: AccountUUID?) async -> Void = { _ in }
     // Debug/testnet-only: clears every persisted migration flag this client owns (mode, manual
-    // delivery, network privacy, complete-acknowledged, dust-locked) — consumed by the
-    // migration SDK simulator's debug panel "Reset app migration flags" control (MOB-1480).
+    // delivery, network privacy, complete-acknowledged) — consumed by the migration SDK simulator's
+    // debug panel "Reset app migration flags" control (MOB-1480). MOB-1496 (W-A): no longer
+    // includes dust-locked — "Lock balance" is now a genuine SDK-side lock, not app-persisted state.
     var resetPersistedFlags: @Sendable () -> Void
 }
 

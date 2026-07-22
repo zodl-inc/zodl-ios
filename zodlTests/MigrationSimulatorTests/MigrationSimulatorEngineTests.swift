@@ -789,6 +789,49 @@ import ComposableArchitecture
         #expect(engine.isDustLocked() == false)
     }
 
+    /// MOB-1496 (W-A): the release half of `lockDust()` — mirrors the real SDK's
+    /// `unlockMigrationResidual` ("Migrate anyway" unlocks before re-proposing).
+    @Test func unlockDustWithLockedDustUnlocksAndReportsOne() {
+        let engine = makeEngine()
+        engine.applyPreset(SimulatorPreset.completeWithDust)
+        engine.lockDust()
+        #expect(engine.isDustLocked() == true)
+
+        let unlocked = engine.unlockDust()
+
+        #expect(unlocked == 1)
+        #expect(engine.isDustLocked() == false)
+        #expect(engine.readout().dustRemainder == Zatoshi(800_000))
+    }
+
+    @Test func unlockDustWithNothingLockedReportsZero() {
+        let engine = makeEngine()
+        engine.applyPreset(SimulatorPreset.completeWithDust)
+        #expect(engine.isDustLocked() == false)
+
+        let unlocked = engine.unlockDust()
+
+        #expect(unlocked == 0)
+        #expect(engine.isDustLocked() == false)
+    }
+
+    /// After unlocking, `migrateDust()` sweeps normally again — "Migrate anyway" over a
+    /// previously-locked residual is unlock-then-sweep.
+    @Test func migrateDustAfterUnlockDustSucceedsAgain() async {
+        let engine = makeEngine()
+        engine.applyPreset(SimulatorPreset.completeWithDust)
+        engine.lockDust()
+        _ = engine.unlockDust()
+
+        let result = await engine.migrateDust()
+
+        guard case MigrationTransferResult.success? = result else {
+            Issue.record("Expected migrateDust to succeed again after unlockDust")
+            return
+        }
+        #expect(engine.readout().dustRemainder == Zatoshi.zero)
+    }
+
     // MARK: - Derivation-table helpers
 
     private func bannerVariant(
