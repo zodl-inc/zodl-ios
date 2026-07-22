@@ -59,6 +59,14 @@ struct MigrationStatus {
         /// True when this screen is the coordinator's re-entry root (both presentations) — its back
         /// control then closes the flow instead of popping.
         var isFlowRoot = false
+        /// MOB-1497 (R7 final review, Important-1 — spec §G): true iff the selected account's most
+        /// recent broadcast failure was a mid-run Tor hold — carries the Tor-specific line on the
+        /// `.resume` presentation (see `MigrationStatusView.torHoldNote`). Loaded both via
+        /// `.statusLoaded` (live, re-derived on every load/state-change tick) and the coordinator's
+        /// re-entry hydration (`MigrationCoordFlowCoordinator.statusResumeState`/
+        /// `statusProgressState`). (Rebased onto R8-T6: `isSendNowDisabled` is COMPUTED off `rows`
+        /// now, so this is the one stored per-load flag left here.)
+        var isTorHoldActive = false
         /// MOB-1496 (W3): the SDK's post-broadcast privacy buffer
         /// (`sdkSynchronizer.migrationPrivacySyncBufferDuration()`), rounded to whole minutes —
         /// threads the resume footer's "…about %1$lld mins…" copy (`migrationStatusWindowMissedNote`)
@@ -118,12 +126,14 @@ struct MigrationStatus {
         case rescheduleTapped
         case sendNowTapped
         /// `migrationTransfers()` + `migrationSummary()` + `sdkSynchronizer
-        /// .migrationPrivacySyncBufferDuration()` result. R8-T6: no longer carries a gate reading —
-        /// `isSendNowDisabled` is derived from `rows` itself (see `State.isSendNowDisabled`'s doc).
+        /// .migrationPrivacySyncBufferDuration()` + `manager.isMigrationTorHoldActive()` result.
+        /// R8-T6: no longer carries a gate reading — `isSendNowDisabled` is derived from `rows`
+        /// itself (see `State.isSendNowDisabled`'s doc).
         case statusLoaded(
             rows: [MigrationTransferRow],
             totalDurationHours: Int,
-            syncPrivacyBufferMinutes: Int
+            syncPrivacyBufferMinutes: Int,
+            isTorHoldActive: Bool
         )
 
         enum Delegate: Equatable {
@@ -181,10 +191,11 @@ struct MigrationStatus {
             case .sendNowTapped:
                 return .send(.delegate(.sendNow))
 
-            case .statusLoaded(let rows, let totalDurationHours, let syncPrivacyBufferMinutes):
+            case .statusLoaded(let rows, let totalDurationHours, let syncPrivacyBufferMinutes, let isTorHoldActive):
                 state.rows = IdentifiedArrayOf(uniqueElements: rows)
                 state.totalDurationHours = totalDurationHours
                 state.syncPrivacyBufferMinutes = syncPrivacyBufferMinutes
+                state.isTorHoldActive = isTorHoldActive
                 return .none
             }
         }
@@ -197,11 +208,13 @@ struct MigrationStatus {
             let syncPrivacyBufferMinutes = MigrationStatus.syncPrivacyBufferMinutes(
                 from: sdkSynchronizer.migrationPrivacySyncBufferDuration()
             )
+            let isTorHoldActive = migrationManager.isMigrationTorHoldActive(accountUUID)
             await send(
                 .statusLoaded(
                     rows: rows,
                     totalDurationHours: summary.estimatedDurationHours,
-                    syncPrivacyBufferMinutes: syncPrivacyBufferMinutes
+                    syncPrivacyBufferMinutes: syncPrivacyBufferMinutes,
+                    isTorHoldActive: isTorHoldActive
                 )
             )
         }

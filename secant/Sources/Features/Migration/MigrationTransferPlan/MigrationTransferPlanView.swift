@@ -54,6 +54,11 @@ struct MigrationTransferPlanView: View {
                     .padding(.vertical, 1)
                 }
 
+                if let broadcastDisclosureHost = store.broadcastDisclosureHost {
+                    disclosureFooter(host: broadcastDisclosureHost)
+                        .padding(.top, 16)
+                }
+
                 ZashiButton(String(localizable: .generalConfirm)) {
                     store.send(.confirmTapped)
                 }
@@ -128,14 +133,51 @@ struct MigrationTransferPlanView: View {
             : String(localizable: .migrationPlanEtaHours(hoursFromNow))
     }
 
-    // MARK: - Failure sheet (MOB-1478 W4 — silent note split; MOB-1496 R8-T1 — also a propose failure)
+    // MARK: - Disclosure footer (MOB-1497 T2, R13 — sheet-skipped provider users)
 
-    /// Mirrors `MigrationNoteSplitView`'s failure sheet shape (same Cancel/Retry layout) — this
-    /// screen had no failure path before the silent split moved under its commit. MOB-1496 (R8-T1,
-    /// S3): the copy now depends on `store.failureReason` — a propose failure (nothing was ever
-    /// broadcast) uses honest "couldn't load" copy instead of the commit failure's "couldn't be
-    /// broadcast" copy.
+    /// Same visual shape as `MigrationStatusView.footerNote` (info icon + tertiary caption).
+    @ViewBuilder private func disclosureFooter(host: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Asset.Assets.infoOutline.image
+                .zImage(size: 16, style: Design.Text.tertiary)
+
+            Text(String(localizable: .migrationTorSheetDisclosure(host)))
+                .zFont(size: 12, style: Design.Text.tertiary)
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    // MARK: - Failure sheet
+
+    /// A `.propose` failure keeps this screen's own honest "couldn't load" copy; every other
+    /// failure (`.commit`, or unset) is always broadcast-related and adopts T1's shared
+    /// `MigrationBroadcastFailureSheetView` component (R9-T2, finding 3) — see
+    /// `MigrationSendingView`'s identical adoption shape. `nil` `failureKind` (unclassified, or the
+    /// Keystone fork) keeps that component's own generic copy. `zashiSheet`'s `content` closure isn't
+    /// `@ViewBuilder`, so the dispatch lives in this ONE `@ViewBuilder` property instead.
     @ViewBuilder private var failureSheetContent: some View {
+        if store.failureReason == MigrationTransferPlan.State.FailureReason.propose {
+            proposeFailureSheetContent
+        } else {
+            MigrationBroadcastFailureSheetView(
+                failureKind: store.failureKind,
+                cancelTapped: { store.send(.cancelTapped) },
+                proceedWithoutTorTapped: { store.send(.proceedWithoutTorTapped) },
+                retryTapped: { store.send(.retryTapped) },
+                useSyncServerTapped: { store.send(.useSyncServerTapped) }
+            )
+            .alert($store.scope(state: \.alert, action: \.alert))
+        }
+    }
+
+    // MARK: - Failure sheet: propose failures only (MOB-1496 R8-T1, S3)
+
+    /// A propose failure (`proposeMigrationTransfers()` threw — nothing was ever broadcast) uses
+    /// honest "couldn't load" copy and a plain Cancel/Retry layout; it's never broadcast-related, so
+    /// it never adopts the shared `MigrationBroadcastFailureSheetView` component (R9-T2, finding 3)
+    /// the `.commit`-reason branch uses instead — see this screen's `body`.
+    @ViewBuilder private var proposeFailureSheetContent: some View {
         VStack(spacing: 0) {
             Asset.Assets.Icons.alertOutline.image
                 .zImage(size: 20, style: Design.Utility.ErrorRed._500)
@@ -146,13 +188,13 @@ struct MigrationTransferPlanView: View {
                 }
                 .padding(.top, 48)
 
-            Text(failureTitle)
+            Text(String(localizable: .migrationPlanProposeFailedTitle))
                 .zFont(.semiBold, size: 20, style: Design.Text.primary)
                 .multilineTextAlignment(.center)
                 .padding(.top, 16)
                 .padding(.bottom, 12)
 
-            Text(failureBody)
+            Text(String(localizable: .migrationPlanProposeFailedBody))
                 .zFont(size: 14, style: Design.Text.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
                 .multilineTextAlignment(.center)
@@ -168,20 +210,6 @@ struct MigrationTransferPlanView: View {
                 store.send(.retryTapped)
             }
             .padding(.bottom, Design.Spacing.sheetBottomSpace)
-        }
-    }
-
-    private var failureTitle: String {
-        switch store.failureReason {
-        case .propose: return String(localizable: .migrationPlanProposeFailedTitle)
-        case .commit, nil: return String(localizable: .migrationNoteSplitFailedTitle)
-        }
-    }
-
-    private var failureBody: String {
-        switch store.failureReason {
-        case .propose: return String(localizable: .migrationPlanProposeFailedBody)
-        case .commit, nil: return String(localizable: .migrationNoteSplitFailedBody)
         }
     }
 }

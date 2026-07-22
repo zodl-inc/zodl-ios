@@ -100,6 +100,11 @@ enum MigrationMode: String, Equatable, Sendable, Codable {
 /// doc for the full lifecycle. Not part of the SDK surface: `LightWalletEndpoint` itself is not
 /// `Codable`, so `Endpoint` is the persisted wrapper (`toLightWalletEndpoint()` reconstructs one for
 /// SDK calls). [ext]
+///
+/// MOB-1497: forming moved earlier (the Tor-choice step, not the first broadcast-bearing read) and
+/// gained a provisional-until-commit lifecycle — see `committedAt`'s doc and
+/// `MigrationManagerClient.formNetworkSnapshot`/`markNetworkSnapshotCommitted`/
+/// `clearProvisionalNetworkSnapshot`.
 struct MigrationNetworkSnapshot: Equatable, Sendable, Codable {
     /// `Codable`/`Sendable` stand-in for `LightWalletEndpoint` (which is neither). Deliberately
     /// narrower than the SDK type — `singleCallTimeoutInMillis`/`streamingCallTimeoutInMillis` are
@@ -142,20 +147,51 @@ struct MigrationNetworkSnapshot: Equatable, Sendable, Codable {
     let syncEndpoint: Endpoint
     let broadcastEndpoint: Endpoint
     let takenAt: Date
+    /// MOB-1497: nil while the snapshot is PROVISIONAL — formed at the Tor-choice step but not yet
+    /// committed to a schedule. Stamped exactly once, by `markCommitted`/`markNetworkSnapshotCommitted`,
+    /// at the same moment `recordCommittedSchedule` persists the committed schedule (co-located there
+    /// so the two can never drift). A still-provisional snapshot is discarded at migration flow
+    /// teardown (`clearProvisionalNetworkSnapshot`) or left alone by a background reconcile tick that
+    /// observes a stale `.notStarted` (only a COMMITTED snapshot is stale-cleared) — a user sitting on
+    /// the sheet/plan screen must not have their just-formed pick wiped out from under them. `var`
+    /// (unlike every other field here, fixed for the snapshot's whole life): this is the one field
+    /// ever mutated in place, and only ever nil -> a date, never back.
+    ///
+    /// Plain optional `Codable` — no custom decode needed. The feature is unreleased (no old payload
+    /// without this field exists in the wild), and Swift's synthesized `Decodable` already treats a
+    /// missing key on an `Optional` property as `nil` (`decodeIfPresent` under the hood), so an old
+    /// payload would decode as provisional even if one somehow existed.
+    var committedAt: Date?
 
     /// R8-T3 (#22): computed, not stored — every construction site set this to exactly
     /// `ServerProvider.classify(host:)` of `syncEndpoint`'s own host, and both readers
     /// (`AutoServerSelectionLiveKey`'s pinning, `ServerSetupStore`'s manual-switch privacy warning)
     /// already compare it against a freshly-computed `classify(host:)` call — a stored, potentially
     /// stale copy carried no information a live re-derivation didn't already have. Dropping these
-    /// two from the stored/`Codable`/memberwise-init surface also drops them from the 7 construction
-    /// sites' argument lists (both compile-time enforced: the auto-generated memberwise `init` no
-    /// longer accepts them). A legacy persisted blob encoded WITH these as stored keys still decodes
-    /// fine — `JSONDecoder` silently ignores JSON keys that aren't in the (now-shorter) synthesized
-    /// `CodingKeys`.
+    /// two from the stored/`Codable`/memberwise-init surface also drops them from the construction
+    /// sites' argument lists (both compile-time enforced). A legacy persisted blob encoded WITH
+    /// these as stored keys still decodes fine — `JSONDecoder` silently ignores JSON keys that
+    /// aren't in the (now-shorter) synthesized `CodingKeys`.
     var syncProvider: ServerProvider { ServerProvider.classify(host: syncEndpoint.host) }
     /// See `syncProvider`'s doc — same computed treatment, classifying `broadcastEndpoint`'s host.
     var broadcastProvider: ServerProvider { ServerProvider.classify(host: broadcastEndpoint.host) }
+
+    /// Explicit init (rebase of MOB-1497 onto R8-T3's computed providers): the provider arguments
+    /// are gone — they derive from the endpoints — and `committedAt` defaults nil so every pre-1497
+    /// construction site keeps compiling as a PROVISIONAL snapshot.
+    init(
+        useTor: Bool,
+        syncEndpoint: Endpoint,
+        broadcastEndpoint: Endpoint,
+        takenAt: Date,
+        committedAt: Date? = nil
+    ) {
+        self.useTor = useTor
+        self.syncEndpoint = syncEndpoint
+        self.broadcastEndpoint = broadcastEndpoint
+        self.takenAt = takenAt
+        self.committedAt = committedAt
+    }
 }
 
 /// MOB-1496 (W4; extracted R8-T7 #10): shared active-snapshot pinning predicate for automatic

@@ -26,6 +26,64 @@
 //  `migrationPrivacySyncBufferDuration()`, since the SDK only rejects a broadcast *during* an
 //  active sync (advisory, point-in-time) rather than enforcing a post-sync cooldown itself.
 //
+//  MOB-1497 (T1 of the Tor & broadcast-routing requirements round): four changes to the network
+//  snapshot. (1) Forming moves from the first broadcast-bearing `migrationNetworkOptions` read to
+//  the Tor-choice step (`formNetworkSnapshot`, called by the coordinator), with a provisional-
+//  until-commit lifecycle — `MigrationNetworkSnapshot.committedAt` is nil until
+//  `markNetworkSnapshotCommitted` stamps it (co-located inside `recordCommittedSchedule`, its one
+//  production call site); a provisional snapshot is discarded at flow teardown
+//  (`clearProvisionalNetworkSnapshot`) rather than surviving to be silently reused, and survives a
+//  background reconcile's stale-`.notStarted` observation (`clearIfCommitted`, not the old
+//  unconditional `clear`) so a user mid-flow never has their just-formed pick wiped out from under
+//  them. `ensureNetworkSnapshot` (the old entry point) is now the safety net for a lane that never
+//  formed one, sharing `ensureOrCreateNetworkSnapshot`'s body with `formNetworkSnapshot` and
+//  stamping committed immediately on creation. (2) R7: `createNetworkSnapshot`'s broadcast pick is
+//  now a uniform-random draw (`@Dependency(\.migrationRandomness)`) over the other provider's
+//  shipped endpoints, replacing `evaluateBestOf` entirely — creation now makes zero network calls.
+//  (3) R8: custom-server detection is identity-based only — the stored `ServerConfig.isCustom` flag
+//  is no longer read here. (4) R1: `MigrationGateStorage.isTorEnabledForMigration()`'s never-
+//  written default flips from `false` to `true`; the identity-custom forced-false (R2's data half)
+//  still wins over either the default or an explicit stored choice.
+//
+//  MOB-1497 (R7 adversarial-review fix, Important-1): `ensureOrCreateNetworkSnapshot` used to return
+//  ANY existing snapshot before creating, regardless of committed/provisional state — so a stale
+//  PROVISIONAL snapshot left behind by an abandoned attempt (app killed before commit, or a
+//  same-session back-and-reconfirm) would silently win over a fresh Tor choice made at a later
+//  attempt's Tor-choice step, in the worst case broadcasting over clearnet under a screen that showed
+//  Tor ON. Fixed with a `reformIfProvisional` flag threaded through `ensureOrCreateNetworkSnapshot`:
+//  `true` for `formNetworkSnapshot` (a still-provisional existing snapshot is discarded and re-formed
+//  from the current stored choice plus a fresh random roll — always safe, since nothing has broadcast
+//  against an uncommitted snapshot), `false` for `ensureNetworkSnapshot` (the broadcast-time safety
+//  net stays strictly idempotent against a provisional snapshot too, so R7's "held for the run" isn't
+//  broken for a mid-run/BG-executor caller). A COMMITTED existing snapshot is never reformed by
+//  either path.
+//
+//  MOB-1497 (R9-T6, finding 8): `ensureOrCreateNetworkSnapshot`'s create path no longer takes
+//  `transactionGuard` — the app-wide FIFO mutex shared with `createProposedTransactions`/
+//  `createTransactionFromPCZT`/`getTreeState`/vote submission/server switches. Forming was queueing
+//  behind whatever ELSE happened to be broadcasting (another account's Tor bootstrap + submit, for
+//  one) for no reason: forming never touches the live synchronizer. Its reads/writes are
+//  `zcashSDKEnvironment.endpoint()` (UserDefaults-backed), the migration gate's Tor flag
+//  (UserDefaults, self-locked), `migrationRandomness.randomIndex` (pure), and `snapshotStorage`
+//  (every call atomic under its own `OSAllocatedUnfairLock`) — the hazard the guard exists for
+//  (`switchTo(endpoint:)` tearing down the synchronizer under an in-flight broadcast) cannot reach
+//  any of that. The routing layer's own snapshot mutations (`rotateBroadcastEndpoint`,
+//  `overrideUseTorOnActiveSnapshot`, `overrideBroadcastEndpointToSyncServerOnActiveSnapshot`) were
+//  already guard-free by this same reasoning — forming was the odd one out. `MigrationManagerImpl`
+//  no longer holds a `transactionGuard` dependency at all.
+//
+//  The ONE thing the guard incidentally provided — closing the "check absent -> create -> write"
+//  race between two concurrent formers for the SAME account — is re-closed at the storage layer:
+//  `MigrationSnapshotStorage.ensureOrCreate(candidate:reformIfProvisional:for:)` folds the decide-
+//  and-write into ONE `PerAccountCodableStorage.modify` closure. The caller computes the candidate
+//  snapshot (the only `await`s — endpoint/Tor-flag/random-pick reads) BEFORE calling in, since
+//  `modify`'s closure is synchronous; `ensureOrCreate` then re-checks the SAME reuse condition
+//  (`existing.committedAt != nil || !reformIfProvisional`) against whatever is ACTUALLY persisted
+//  at the instant its lock is held — a competing former's already-written value wins if it
+//  satisfies the condition, this call's candidate otherwise — and returns whichever one is now
+//  actually stored. Every caller therefore gets back a value consistent with storage, never a
+//  value a concurrent write has already superseded.
+//
 
 import Foundation
 @preconcurrency import Combine
@@ -60,7 +118,25 @@ extension MigrationManagerClient: DependencyKey {
             isManualDelivery: { impl.gateStorage.isManualDelivery() },
             setManualDelivery: { impl.gateStorage.setManualDelivery($0) },
             migrationNetworkOptions: { accountUUID in await impl.migrationNetworkOptions(accountUUID: accountUUID) },
+            formNetworkSnapshot: { accountUUID in await impl.formNetworkSnapshot(accountUUID: accountUUID) },
+            networkSnapshot: { accountUUID in await impl.networkSnapshot(accountUUID: accountUUID) },
+            confirmProvisionalTorChoice: { accountUUID, useTor in
+                impl.confirmProvisionalTorChoice(accountUUID: accountUUID, useTor: useTor)
+            },
+            markNetworkSnapshotCommitted: { accountUUID in impl.markNetworkSnapshotCommitted(accountUUID: accountUUID) },
+            clearProvisionalNetworkSnapshot: { accountUUID in impl.clearProvisionalNetworkSnapshot(accountUUID: accountUUID) },
             activeNetworkSnapshots: { impl.activeNetworkSnapshots() },
+            routeBroadcastFailure: { accountUUID, failureClass in
+                await impl.routeBroadcastFailure(accountUUID: accountUUID, failureClass: failureClass)
+            },
+            isMigrationTorHoldActive: { accountUUID in impl.isTorHoldActive(accountUUID: accountUUID) },
+            overrideTorForRun: { accountUUID, useTor in
+                impl.overrideTorForRun(accountUUID: accountUUID, useTor: useTor)
+            },
+            overrideBroadcastEndpointToSyncServer: { accountUUID in
+                await impl.overrideBroadcastEndpointToSyncServer(accountUUID: accountUUID)
+            },
+            isSyncServerIdentityCustom: { impl.isSyncServerIdentityCustom() },
             setNetworkPrivacyOptions: { impl.setNetworkPrivacyOptions(useTor: $0) },
             isCompleteAcknowledged: { accountUUID in impl.isCompleteAcknowledged(accountUUID: accountUUID) },
             acknowledgeComplete: { accountUUID in await impl.acknowledgeComplete(accountUUID: accountUUID) },
@@ -83,10 +159,11 @@ extension MigrationManagerClient: DependencyKey {
 /// racing in from the no-split commit lane, which deliberately doesn't stop sync while it runs).
 /// Mirrors the shape of the repo's existing FIFO-mutex-actor precedent,
 /// `Dependencies/TransactionGuard/TransactionGuard.swift` — but is its OWN instance, never
-/// `@Dependency(\.transactionGuard)`: nesting that guard here would risk exactly the deadlock its
-/// own doc warns against (non-reentrant, and `MigrationManagerImpl.ensureNetworkSnapshot` already
-/// acquires it elsewhere in this same class), and it would be serializing a disjoint set of
+/// `@Dependency(\.transactionGuard)`: `TransactionGuard` is non-reentrant (nesting it would risk
+/// exactly the deadlock its own doc warns against), and it would be serializing a disjoint set of
 /// operations anyway (submission-vs-switch exclusivity, not this class's storage-mutating passes).
+/// MOB-1497 (R9-T6): `MigrationManagerImpl` no longer holds a `transactionGuard` dependency at all
+/// — see `MigrationManagerImpl.migrationNetworkOptions`'s doc.
 ///
 /// Deliberately simpler than `TransactionGuard`: `run(_:)` is non-throwing (every operation it
 /// wraps already is) and not cancellation-aware — the wrapped bodies are fast in-memory/
@@ -142,8 +219,10 @@ actor MigrationManagerSerialExecutor {
 final class MigrationManagerImpl: @unchecked Sendable {
     @Dependency(\.sdkSynchronizer) var sdkSynchronizer
     @Dependency(\.zcashSDKEnvironment) var zcashSDKEnvironment
-    @Dependency(\.userStoredPreferences) var userStoredPreferences
-    @Dependency(\.transactionGuard) var transactionGuard
+    // MOB-1497 (R7): the uniform-random broadcast-endpoint pick's test-controllable randomness seam
+    // — see `MigrationRandomnessInterface.swift`'s doc for why this exists instead of a raw
+    // `RandomNumberGenerator`.
+    @Dependency(\.migrationRandomness) var migrationRandomness
 
     @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
     @Shared(.inMemory(.walletAccounts)) var walletAccounts: [WalletAccount] = []
@@ -157,16 +236,22 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// `clearAbandonedNetworkSnapshot` — see `MigrationManagerSerialExecutor`'s doc.
     let serialExecutor = MigrationManagerSerialExecutor()
 
+    /// MOB-1497 (R7-T3): per-account persisted failure-routing state (had-broadcast flag + R16
+    /// episode set) — see `MigrationFailureRoutingStorage`.
+    let failureRoutingStorage: MigrationFailureRoutingStorage
+
     /// Internal (not private) with injectable storage so unit tests can exercise the real
     /// `reconcile()` against a scoped `UserDefaults` suite.
     init(
         gateStorage: MigrationGateStorage = MigrationGateStorage(),
         scheduleStorage: MigrationScheduleStorage = MigrationScheduleStorage(),
-        snapshotStorage: MigrationSnapshotStorage = MigrationSnapshotStorage()
+        snapshotStorage: MigrationSnapshotStorage = MigrationSnapshotStorage(),
+        failureRoutingStorage: MigrationFailureRoutingStorage = MigrationFailureRoutingStorage()
     ) {
         self.gateStorage = gateStorage
         self.scheduleStorage = scheduleStorage
         self.snapshotStorage = snapshotStorage
+        self.failureRoutingStorage = failureRoutingStorage
     }
 
     /// MOB-1496: one `CurrentValueSubject` per account `stateEvents` has ever been asked about,
@@ -218,9 +303,23 @@ final class MigrationManagerImpl: @unchecked Sendable {
             // MOB-1496: nil (never evaluated) reads as `false` here, same "not known to be
             // pending" convention `MigrationManagerImpl.isMigrationRemainderPending` uses.
             isMigrationRemainderPending: gateStorage.remainderPending(for: resolvedAccountUUID) ?? false,
-            transferRows: rows
+            transferRows: rows,
+            // R7 final review, Important-1 (spec §G): threads the persisted Tor-hold indicator into
+            // `.transferWaiting`'s `torHold` flag — see `MigrationFailureRoutingStorage
+            // .torHoldActive`'s doc.
+            isTorHoldActive: failureRoutingStorage.torHoldActive(for: resolvedAccountUUID)
         )
     }
+
+    /// R7 final review, Important-1 (spec §G): per-account read of the persisted Tor-hold indicator
+    /// — see `MigrationFailureRoutingStorage.torHoldActive`'s doc. Backs `MigrationManagerClient
+    /// .isMigrationTorHoldActive`, consumed by `MigrationStatusStore`'s resume-presentation footer
+    /// (and `MigrationCoordFlowCoordinator`'s twin re-entry hydration).
+    func isTorHoldActive(accountUUID: AccountUUID?) -> Bool {
+        guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return false }
+        return failureRoutingStorage.torHoldActive(for: resolvedAccountUUID)
+    }
+
 
     /// R8-T3 (#23): same one-read-each treatment as `bannerVariant` above — the pre-fix version
     /// read `progress` up to 3x (once inside `normalizedState`'s conditional branch, once directly
@@ -407,10 +506,24 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// `reconcile`/`acknowledgeComplete`/`clearAbandonedNetworkSnapshot` — see
     /// `MigrationManagerSerialExecutor`'s doc; this is the "commit" half of the TOCTOU `reconcile()`
     /// otherwise races.
+    ///
+    /// MOB-1497: also stamps the account's network snapshot committed (`markNetworkSnapshotCommitted`)
+    /// — this is the SINGLE production call site for that stamp, deliberately co-located here rather
+    /// than duplicated at each of `recordCommittedSchedule`'s several external callers (software
+    /// sign+store success in `MigrationTransferPlanStore`/`MigrationReviewTransferStore`, Keystone
+    /// deferred store success in `MigrationCoordFlowCoordinator.storeDeferredKeystoneSchedule`, the
+    /// Keystone no-split immediate store, and the software dust commit) so the schedule commit and
+    /// the snapshot commit can never drift out of sync. Ordered after the schedule write: a snapshot
+    /// briefly still reading provisional while the schedule is already durable is harmless (nothing
+    /// reads `committedAt` in that narrow window), whereas the reverse order risks a snapshot that
+    /// reads committed for a schedule write that then fails. The stamp rides INSIDE the same
+    /// serialized critical section as the schedule write (rebase of MOB-1497 onto R8-T3): it is a
+    /// mutating pass over the same per-run storage pair the executor exists to serialize.
     func recordCommittedSchedule(accountUUID: AccountUUID?, schedule: MigrationSchedule) async {
         guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return }
         await serialExecutor.run { [self] in
             scheduleStorage.recordCommittedSchedule(schedule, for: resolvedAccountUUID, now: Date())
+            markNetworkSnapshotCommitted(accountUUID: resolvedAccountUUID)
         }
     }
 
@@ -418,8 +531,23 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// (appends a `SentRecord` for the first not-yet-sent transfer, in schedule order); non-success
     /// results and a missing payload (nothing to append against) are both no-ops — see
     /// `MigrationScheduleStorage.recordTransferBroadcast`.
+    ///
+    /// MOB-1497 (R7-T3): this is the manager-layer chokepoint every LANDED-broadcast lane funnels
+    /// through — FG send (`MigrationSendingStore`, including the dust lane), FG note split
+    /// (`MigrationNoteSplitStore`, both the software and Keystone forks), and BG
+    /// (`RootInitialization.handleLandedBroadcast`) — so a `.success` here also marks the had-
+    /// broadcast flag (R14 first-run vs R15 mid-run) and resets the R16 episode set (a fresh episode
+    /// starts with every new transfer attempt window). A note split's own broadcast is not one of
+    /// `scheduleStorage`'s schedule transfers, but the guard inside `MigrationScheduleStorage
+    /// .recordTransferBroadcast` (no payload yet -> no-op) makes calling it from that lane harmless
+    /// today: every live note-split broadcast happens BEFORE `recordCommittedSchedule` persists this
+    /// run's schedule (see `MigrationNoteSplitStore`'s header doc) — flagged in the T3 report as a
+    /// timing-dependent assumption worth a comment here rather than a silent one.
     func recordTransferBroadcast(accountUUID: AccountUUID?, result: MigrationTransferResult) async {
         guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return }
+        if case MigrationTransferResult.success = result {
+            failureRoutingStorage.markHadBroadcast(for: resolvedAccountUUID)
+        }
         scheduleStorage.recordTransferBroadcast(result, for: resolvedAccountUUID, now: Date())
     }
 
@@ -460,17 +588,100 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// `MigrationNetworkPrivacyOptions`. See `MigrationManagerClient.migrationNetworkOptions`'s doc
     /// for the full contract (idempotent, never throws).
     ///
-    /// DO-NOT-NEST WARNING: internally serializes creation against a mid-flight server switch via
-    /// `transactionGuard.withSubmission` — `TransactionGuard` is NON-REENTRANT (a nested
-    /// `withSubmission`/`switchIfIdle`/`switchWaiting` deadlocks: the inner `acquire()` waits forever
-    /// for a `release()` that can only happen after the inner call itself returns). NEVER call this
-    /// from inside another `withSubmission`/`switchIfIdle`/`switchWaiting` block — in particular,
-    /// never from inside `SDKSynchronizerLive`'s own guarded closures. Every call site in this
-    /// codebase reads options in the store/effect BEFORE invoking the broadcast client member (which
-    /// takes the guard internally in ITS OWN LiveKey), never from after/inside it.
+    /// MOB-1497 (R9-T6, finding 8): safe to call from ANYWHERE, including from inside another
+    /// dependency's `transactionGuard.withSubmission`/`switchIfIdle`/`switchWaiting` block — forming
+    /// (`ensureOrCreateNetworkSnapshot` below) no longer touches `transactionGuard` at all, and never
+    /// actually needed to: it reads/writes only `zcashSDKEnvironment.endpoint()` (UserDefaults-
+    /// backed), the migration gate's Tor flag (UserDefaults, self-locked), `migrationRandomness
+    /// .randomIndex` (pure), and `snapshotStorage` (atomic under its own `OSAllocatedUnfairLock`) —
+    /// never the live synchronizer, so the hazard the guard exists for (`switchTo(endpoint:)`
+    /// tearing down the synchronizer under an in-flight broadcast) cannot touch it. The one thing
+    /// the guard incidentally provided — closing the "check absent -> create -> write" race between
+    /// two concurrent formers for the SAME account — is now closed at the storage layer instead; see
+    /// `ensureOrCreateNetworkSnapshot`'s doc.
     func migrationNetworkOptions(accountUUID: AccountUUID?) async -> MigrationNetworkPrivacyOptions {
         let snapshot = await ensureNetworkSnapshot(accountUUID: accountUUID)
         return MigrationNetworkPrivacyOptions(useTor: snapshot.useTor, submissionEndpoint: snapshot.broadcastEndpoint.toLightWalletEndpoint())
+    }
+
+    /// MOB-1497: forms (or, idempotently, returns the existing) provisional network snapshot for
+    /// `accountUUID` — called by the coordinator at the Tor-choice RESOLUTION points (the Tor sheet's
+    /// confirm, and the sheet-skipped app-wide-Tor-on shortcut, on both the immediate and scheduled
+    /// entry chains). Shares `ensureOrCreateNetworkSnapshot`'s body with `ensureNetworkSnapshot`
+    /// below, `stampCommitted: false` — a freshly created snapshot here stays PROVISIONAL
+    /// (`committedAt == nil`) until `markNetworkSnapshotCommitted` stamps it at schedule-commit. A
+    /// re-entry path that never shows the Tor step never calls this, so it never forms one; if an
+    /// already-COMMITTED snapshot from an earlier session exists, this naturally just returns it
+    /// unchanged (mid-run idempotence — see the guard inside `ensureOrCreateNetworkSnapshot`).
+    ///
+    /// R7-review fix (Important-1): `reformIfProvisional: true` — a still-PROVISIONAL existing
+    /// snapshot is discarded and re-formed from the CURRENT stored Tor choice and a fresh random
+    /// roll, rather than returned as-is. Without this, a provisional snapshot left behind by an
+    /// abandoned attempt (app killed before commit, or a same-session back-and-reconfirm) has no
+    /// cleanup path other than flow teardown (`clearProvisionalNetworkSnapshot`, which only runs on
+    /// an in-app close) — so it would silently outlive the attempt that made it, and THIS run's fresh
+    /// Tor choice at the sheet would never reach the snapshot a later broadcast reads. Worst case: a
+    /// clearnet broadcast under a screen that showed Tor ON. Always safe to re-form here: nothing has
+    /// broadcast against a snapshot that hasn't committed yet (a COMMITTED existing snapshot is never
+    /// reformed — see below), so "made at migration start and held for the run" (R4/R7) attaches to
+    /// the run that is actually starting now, not to an abandoned one.
+    func formNetworkSnapshot(accountUUID: AccountUUID?) async {
+        _ = await ensureOrCreateNetworkSnapshot(accountUUID: accountUUID, stampCommitted: false, reformIfProvisional: true)
+    }
+
+    /// MOB-1497 (T2): read-only peek — see `MigrationManagerClient.networkSnapshot`'s doc. Never
+    /// forms/creates; never touches `transactionGuard` (no creation can happen here, so there's
+    /// nothing to serialize against a mid-flight server switch).
+    func networkSnapshot(accountUUID: AccountUUID?) async -> MigrationNetworkSnapshot? {
+        guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return nil }
+        return snapshotStorage.snapshot(for: resolvedAccountUUID)
+    }
+
+    /// MOB-1497 (T2): see `MigrationManagerClient.confirmProvisionalTorChoice`'s doc. Purely a
+    /// storage mutation (no SDK/network interaction), so — like `markNetworkSnapshotCommitted`/
+    /// `clearProvisionalNetworkSnapshot` beside it — this doesn't need `transactionGuard` either.
+    func confirmProvisionalTorChoice(accountUUID: AccountUUID?, useTor: Bool) {
+        guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return }
+        snapshotStorage.updateUseTorIfProvisional(useTor, for: resolvedAccountUUID)
+    }
+
+    /// MOB-1497: stamps `accountUUID`'s persisted network snapshot committed. A no-op when no
+    /// snapshot is persisted (defensive — should not happen for a live commit, since
+    /// `formNetworkSnapshot` always runs first) or when it is already committed (idempotent) — see
+    /// `MigrationSnapshotStorage.markCommitted`. Production has exactly one call site,
+    /// `recordCommittedSchedule` above (inside its serialized critical section) — see that method's
+    /// doc for why.
+    ///
+    /// R7 final review, Minor M-A: also resets the R16 episode set here — a NEW run committing is a
+    /// reliable "this account's endpoint-rotation history starts fresh" signal no matter how the
+    /// committing snapshot got here (freshly formed, or `formNetworkSnapshot`'s own
+    /// `reformIfProvisional` reform over a stale provisional left by an abandoned earlier attempt —
+    /// see that method's doc). Without this, a stale episode from an abandoned attempt (e.g. a
+    /// Keystone note-split that rotated/exhausted pre-commit, then got closed without committing)
+    /// could survive into a later attempt and trigger R17's provider-exhausted consent before a
+    /// fresh sweep of the provider's endpoints actually happened this run. EPISODE ONLY — never the
+    /// had-broadcast flag: a landed note-split broadcast before an abandoned deferred-store commit
+    /// means a re-entry that later commits genuinely IS mid-run, and clearing the flag here would
+    /// wrongly re-open an R14 clearnet offer on a run that already has a landed transaction (the
+    /// unsafe direction).
+    func markNetworkSnapshotCommitted(accountUUID: AccountUUID?) {
+        guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return }
+        snapshotStorage.markCommitted(for: resolvedAccountUUID, now: Date())
+        failureRoutingStorage.resetEpisode(for: resolvedAccountUUID)
+    }
+
+    /// MOB-1497: discards `accountUUID`'s persisted network snapshot ONLY while still provisional —
+    /// a no-op against an already-committed one. Called at migration flow teardown (`RootCoordinator`'s
+    /// `.migrationCoordFlow(.flowFinished)` path-clearing site — the flow's one teardown point; a
+    /// second call site at the Sending `.viewTransaction` delegate was removed as a dead no-op, since
+    /// reaching Sending always implies an already-committed snapshot) so closing the flow without
+    /// committing discards the provisional pick; a re-entry re-forms and re-rolls. See
+    /// `MigrationSnapshotStorage.clearIfProvisional`. Complementary to R8-T3's
+    /// `clearAbandonedNetworkSnapshot` (which guards on engine `.notStarted` + no stored payload and
+    /// handles COMMITTED-but-dead leftovers): this one only ever touches a provisional pick.
+    func clearProvisionalNetworkSnapshot(accountUUID: AccountUUID?) {
+        guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return }
+        snapshotStorage.clearIfProvisional(for: resolvedAccountUUID)
     }
 
     /// MOB-1496 (W4): every persisted network snapshot across every candidate account — i.e. every
@@ -488,6 +699,123 @@ final class MigrationManagerImpl: @unchecked Sendable {
         return accountUUIDs.compactMap { snapshotStorage.snapshot(for: $0) }
     }
 
+    /// MOB-1497 (R7-T3): the failure-routing decision for a classified broadcast failure — see
+    /// `MigrationBroadcastFailureRoute`'s doc for what each case means to a caller. Storage-locked
+    /// where it touches storage: the had-broadcast flag / R16 episode set live in
+    /// `failureRoutingStorage` (read/written directly here — neither is part of the network
+    /// snapshot); the snapshot's `broadcastEndpoint` is mutated ONLY via the sanctioned
+    /// `snapshotStorage.rotateBroadcastEndpoint` below.
+    ///
+    /// R7-review fix (Important-1): operates on the run's ACTIVE snapshot — the COMMITTED one if
+    /// present, else the still-PROVISIONAL one — rather than requiring a committed snapshot. The live
+    /// Keystone note-split lane broadcasts BEFORE its schedule (and therefore its snapshot) commits,
+    /// by design: `MigrationCoordFlowCoordinator.storeDeferredKeystoneSchedule` defers
+    /// `recordCommittedSchedule`/`markNetworkSnapshotCommitted` until AFTER the split's OWN broadcast
+    /// succeeds (see that method's doc for why — this ordering is untouched by this fix). Requiring
+    /// `committedAt != nil` here meant every note-split failure fell through to the defensive
+    /// `.plainRetry` below, so R14/R16/R17 never engaged on that lane. Since at most one snapshot is
+    /// ever persisted per account at a time (provisional XOR committed), `snapshotStorage.snapshot(for:)`
+    /// already returns whichever one is active — no extra lookup needed. A mutation applied here to a
+    /// still-provisional snapshot is carried forward automatically once `markNetworkSnapshotCommitted`
+    /// later stamps it (that stamps whatever is currently persisted, mutated or not), so a
+    /// rotated/overridden choice survives the commit.
+    ///
+    /// Decision table (normative doc R14-R17):
+    /// - NO active (committed or provisional) network snapshot for the account (defensive — should
+    ///   not happen for a live broadcast, since one is always formed well before a broadcast is
+    ///   attempted) -> `.plainRetry`, logged.
+    /// - `.torUnavailable` -> `.torFirstRunChoice` (R14) when the account has never had a landed
+    ///   broadcast this run, else `.torHold` (R15). NEVER rotates or touches the episode: a Tor-class
+    ///   failure says nothing about which endpoint is reachable, so leaking a rotation decision off
+    ///   it would be wrong.
+    /// - `.endpointUnreachable` + same-server snapshot (`broadcastProvider == syncProvider` — covers
+    ///   identity-custom AND the defensive empty-candidates/testnet fallback in
+    ///   `createNetworkSnapshot`) -> `.plainRetry` (R16 exemption: nothing to rotate to, so R17 can
+    ///   never fire either). No episode tracking.
+    /// - `.endpointUnreachable` + provider snapshot: add the CURRENT `broadcastEndpoint.host` to the
+    ///   episode set, then candidates = the shipped endpoints for `broadcastProvider` (the SAME
+    ///   source `createNetworkSnapshot` draws from) minus every host tried this episode. Non-empty ->
+    ///   rotate to a uniform-random candidate (`migrationRandomness.randomIndex`, the SAME seam R7
+    ///   uses) and return `.retryRotated`. Empty (the episode now covers the whole shipped list — 5
+    ///   for P1/zecRocks, 2 for P2/stardust) -> `.providerExhausted(torEnabled:)`, WITHOUT rotating
+    ///   anything — the episode itself stays full (nothing resets it except a landed broadcast or the
+    ///   R17 sync-server override), so a REPEATED failure keeps returning `.providerExhausted`.
+    ///
+    /// R7 final review, Important-1 (spec §G): single chokepoint for `failureRoutingStorage`'s
+    /// Tor-hold indicator — right before returning, persists whether the route ABOUT TO BE RETURNED
+    /// is `.torHold` (`true`) or anything else (`false`, including the defensive no-snapshot
+    /// fallback and `.torFirstRunChoice` — a first-run Tor failure is a foreground CHOICE point, not
+    /// a silent hold). This is what lets the waiting/stalled surfaces show a Tor-specific line
+    /// without the BG lane needing any UI of its own: BG already discards the route for presentation
+    /// purposes (see `RootInitialization.executeBroadcastAction`), but it calls this SAME member, so
+    /// the indicator persists regardless of which lane called it.
+    func routeBroadcastFailure(accountUUID: AccountUUID?, failureClass: MigrationBroadcastFailureClass) async -> MigrationBroadcastFailureRoute {
+        guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else {
+            LoggerProxy.warn("[MigrationManagerImpl] routeBroadcastFailure: no account to route against — defaulting to plainRetry.")
+            return MigrationBroadcastFailureRoute.plainRetry
+        }
+        guard let snapshot = snapshotStorage.snapshot(for: resolvedAccountUUID) else {
+            LoggerProxy.warn("[MigrationManagerImpl] routeBroadcastFailure: no active network snapshot for the account — defaulting to plainRetry.")
+            failureRoutingStorage.setTorHoldActive(false, for: resolvedAccountUUID)
+            return MigrationBroadcastFailureRoute.plainRetry
+        }
+
+        let route: MigrationBroadcastFailureRoute
+        switch failureClass {
+        case MigrationBroadcastFailureClass.torUnavailable:
+            let hadBroadcast = failureRoutingStorage.hadBroadcast(for: resolvedAccountUUID)
+            route = hadBroadcast ? MigrationBroadcastFailureRoute.torHold : MigrationBroadcastFailureRoute.torFirstRunChoice
+
+        case MigrationBroadcastFailureClass.endpointUnreachable:
+            if snapshot.broadcastProvider == snapshot.syncProvider {
+                route = MigrationBroadcastFailureRoute.plainRetry
+            } else {
+                let episodeHosts = Set(failureRoutingStorage.addEpisodeHost(snapshot.broadcastEndpoint.host, for: resolvedAccountUUID))
+                let network = zcashSDKEnvironment.network().networkType
+                let candidates = ZcashSDKEnvironment.endpoints(for: network, skipDefault: false).filter { candidate in
+                    ServerProvider.classify(host: candidate.host) == snapshot.broadcastProvider && !episodeHosts.contains(candidate.host)
+                }
+
+                if candidates.isEmpty {
+                    route = MigrationBroadcastFailureRoute.providerExhausted(torEnabled: snapshot.useTor)
+                } else {
+                    let index = migrationRandomness.randomIndex(candidates.count)
+                    let chosen = MigrationNetworkSnapshot.Endpoint(candidates[index])
+                    snapshotStorage.rotateBroadcastEndpoint(to: chosen, for: resolvedAccountUUID)
+                    route = MigrationBroadcastFailureRoute.retryRotated
+                }
+            }
+        }
+
+        failureRoutingStorage.setTorHoldActive(route == MigrationBroadcastFailureRoute.torHold, for: resolvedAccountUUID)
+        return route
+    }
+
+    /// MOB-1497 (R7-T3, R14): see `MigrationManagerClient.overrideTorForRun`'s doc. Purely a storage
+    /// mutation (no SDK/network interaction), so — like `markNetworkSnapshotCommitted`/
+    /// `confirmProvisionalTorChoice` above — this doesn't need `transactionGuard` either.
+    ///
+    /// R7-review fix (Important-1): mutates the account's ACTIVE snapshot (committed-else-provisional)
+    /// — see `routeBroadcastFailure`'s doc for why (the note-split lane's R14 choice can fire against
+    /// a still-provisional snapshot).
+    func overrideTorForRun(accountUUID: AccountUUID?, useTor: Bool) {
+        guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return }
+        snapshotStorage.overrideUseTorOnActiveSnapshot(useTor, for: resolvedAccountUUID)
+    }
+
+    /// MOB-1497 (R7-T3, R17): see `MigrationManagerClient.overrideBroadcastEndpointToSyncServer`'s
+    /// doc. `async` to match the client's closure shape (a future implementation detail could need
+    /// to suspend); today's body has no actual `await` — same no-network-call reasoning as the other
+    /// sanctioned mutations.
+    ///
+    /// R7-review fix (Important-1): mutates the account's ACTIVE snapshot (committed-else-provisional)
+    /// — see `routeBroadcastFailure`'s doc for why.
+    func overrideBroadcastEndpointToSyncServer(accountUUID: AccountUUID?) async {
+        guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return }
+        snapshotStorage.overrideBroadcastEndpointToSyncServerOnActiveSnapshot(for: resolvedAccountUUID)
+        failureRoutingStorage.resetEpisode(for: resolvedAccountUUID)
+    }
+
     /// Persists the pre-run Tor choice — consumed the next time THIS account's snapshot is first
     /// taken (`createNetworkSnapshot`'s `useTor` read). Does not alter an already-active run's
     /// snapshot (see `MigrationNetworkSnapshot.useTor`'s doc).
@@ -495,56 +823,107 @@ final class MigrationManagerImpl: @unchecked Sendable {
         gateStorage.setTorEnabledForMigration(useTor)
     }
 
+    /// MOB-1496 (W4) safety net: ensure-or-read `accountUUID`'s atomic per-run network snapshot for a
+    /// lane that reaches a broadcast without one already formed (e.g. the BG executor on a mid-run
+    /// account after a reinstall-edge — a snapshot from before this device had ever seen the Tor
+    /// sheet). Shares `ensureOrCreateNetworkSnapshot`'s body with `formNetworkSnapshot` above,
+    /// `stampCommitted: true` (MOB-1497): a broadcast-bearing read implies a committed run reached
+    /// this point some other way, so a snapshot created HERE is stamped committed immediately rather
+    /// than left provisional forever — this lane has no guaranteed later `recordCommittedSchedule`
+    /// call to stamp it (a bare dust broadcast, for one, commits no schedule at all).
+    ///
+    /// R7-review fix (Important-1): `reformIfProvisional: false`, deliberately — UNLIKE
+    /// `formNetworkSnapshot`, this path must stay strictly idempotent against a PROVISIONAL existing
+    /// snapshot too. It is reached from a broadcast-bearing read (`migrationNetworkOptions`); a
+    /// mid-run call landing here (the BG-executor lane this safety net exists for in the first place)
+    /// must return the SAME endpoint/Tor choice a prior read already handed out, never a fresh draw —
+    /// re-rolling here would break R7's "made at migration start and held for the run."
+    private func ensureNetworkSnapshot(accountUUID: AccountUUID?) async -> MigrationNetworkSnapshot {
+        await ensureOrCreateNetworkSnapshot(accountUUID: accountUUID, stampCommitted: true, reformIfProvisional: false)
+    }
+
     /// Idempotent ensure-or-create for `accountUUID`'s (resolved, if `nil`, to the selected account)
-    /// atomic per-run network snapshot. Returns the persisted snapshot when one already exists;
-    /// otherwise creates one from the CURRENT sync endpoint/Tor choice, persists it, and returns it.
-    /// Double-checks presence again AFTER acquiring the guard (not just before) — a concurrent first
-    /// caller for the SAME account may have already created and persisted one while this call
-    /// waited, and that one must win rather than being silently overwritten. A missing/unresolvable
+    /// atomic per-run network snapshot — shared body for `formNetworkSnapshot` (provisional,
+    /// `stampCommitted: false`, `reformIfProvisional: true`) and `ensureNetworkSnapshot` (safety net,
+    /// `stampCommitted: true`, `reformIfProvisional: false`). Returns the persisted snapshot when one
+    /// already exists AND (it is already COMMITTED, or `reformIfProvisional` is false) — an existing
+    /// snapshot's committed state is never promoted by this method, only by
+    /// `markNetworkSnapshotCommitted`. Otherwise creates one from the CURRENT sync endpoint/Tor
+    /// choice and persists it (stamped committed or left provisional per `stampCommitted`), REPLACING
+    /// a stale existing PROVISIONAL snapshot when `reformIfProvisional` is true (see
+    /// `formNetworkSnapshot`'s doc for why that's always safe pre-broadcast). A missing/unresolvable
     /// account still returns SOME snapshot (the current endpoint/Tor choice, unpersisted) — every
     /// path ends in a value, never a throw.
-    private func ensureNetworkSnapshot(accountUUID: AccountUUID?) async -> MigrationNetworkSnapshot {
+    ///
+    /// MOB-1497 (R9-T6, finding 8): no `transactionGuard` acquisition here any more — see
+    /// `migrationNetworkOptions`'s doc for why forming never needed it. `createNetworkSnapshot()`
+    /// (the only `await` this needs — endpoint/Tor-flag/random-pick reads) runs unguarded, OUTSIDE
+    /// any lock; the race that used to require a guard's double-check-after-acquire (two concurrent
+    /// callers for the SAME account both observing "no reusable snapshot" above, both computing a
+    /// candidate) is now closed at the storage layer — `MigrationSnapshotStorage.ensureOrCreate`
+    /// re-checks the SAME reuse condition against whatever is ACTUALLY persisted at the instant its
+    /// `PerAccountCodableStorage` lock is held, and returns whichever value wins (a concurrent
+    /// former's already-persisted write if it satisfies the condition, this call's own candidate
+    /// otherwise) — so the value returned here always matches what is actually stored, never a value
+    /// some other racing call has already superseded.
+    private func ensureOrCreateNetworkSnapshot(
+        accountUUID: AccountUUID?,
+        stampCommitted: Bool,
+        reformIfProvisional: Bool
+    ) async -> MigrationNetworkSnapshot {
         let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id
 
-        if let resolvedAccountUUID, let existing = snapshotStorage.snapshot(for: resolvedAccountUUID) {
+        if let resolvedAccountUUID,
+           let existing = snapshotStorage.snapshot(for: resolvedAccountUUID),
+           existing.committedAt != nil || !reformIfProvisional {
             return existing
         }
 
-        // DO-NOT-NEST: see `migrationNetworkOptions`'s doc — this must never run inside another
-        // `withSubmission`/`switchIfIdle`/`switchWaiting`.
-        let guarded = try? await transactionGuard.withSubmission { () async -> MigrationNetworkSnapshot in
-            if let resolvedAccountUUID, let existing = snapshotStorage.snapshot(for: resolvedAccountUUID) {
-                return existing
-            }
-            let created = await createNetworkSnapshot()
-            if let resolvedAccountUUID {
-                snapshotStorage.recordSnapshot(created, for: resolvedAccountUUID)
-            }
-            return created
+        var candidate = await createNetworkSnapshot()
+        if stampCommitted {
+            candidate.committedAt = Date()
         }
 
-        // `withSubmission` only throws on task cancellation (`acquire()`'s `CancellationError`) — the
-        // closure body above never throws. Even a cancelled guard acquisition must still end in SOME
-        // snapshot (never a throw) — fall back to an unguarded, unpersisted read.
-        if let guarded {
-            return guarded
+        guard let resolvedAccountUUID else {
+            return candidate
         }
-        return await createNetworkSnapshot()
+
+        return snapshotStorage.ensureOrCreate(candidate: candidate, reformIfProvisional: reformIfProvisional, for: resolvedAccountUUID)
     }
 
-    /// The actual read+benchmark sequence for a fresh snapshot — see `ensureNetworkSnapshot`'s doc
-    /// for the guard this always runs inside. Never throws; every path ends in a snapshot.
+    /// MOB-1497 (R9-T3, C1 fix): see `MigrationManagerClient.isSyncServerIdentityCustom`'s doc.
+    /// Deliberately a SEPARATE, tiny computation from `createNetworkSnapshot` below rather than a
+    /// shared extraction — that function's `syncProvider` local is read a SECOND time later (the
+    /// broadcast-candidate filter), so factoring out just the `isCustomServer` half would mean
+    /// either reshaping its control flow or returning an unused value to this caller; this few-line
+    /// duplication keeps that already-reviewed, privacy-sensitive function untouched.
+    func isSyncServerIdentityCustom() -> Bool {
+        if case ServerProvider.custom = ServerProvider.classify(host: zcashSDKEnvironment.endpoint().host) {
+            return true
+        }
+        return false
+    }
+
+    /// The actual read+random-pick sequence for a fresh snapshot — see
+    /// `ensureOrCreateNetworkSnapshot`'s doc for the caller that awaits this (MOB-1497 R9-T6:
+    /// unguarded — this runs BEFORE the atomic storage decide-and-write, never inside it). Never
+    /// throws; every path ends in a snapshot, always freshly PROVISIONAL (`committedAt == nil` — the
+    /// caller stamps it when `stampCommitted` is set). MOB-1497 (R7): makes ZERO network calls — no
+    /// benchmark, no clearnet pre-probe.
     private func createNetworkSnapshot() async -> MigrationNetworkSnapshot {
         let currentEndpoint = zcashSDKEnvironment.endpoint()
-        let storedServerConfig = userStoredPreferences.server()
         let useTor = gateStorage.isTorEnabledForMigration()
         let syncProvider = ServerProvider.classify(host: currentEndpoint.host)
 
-        var syncProviderIsCustom = false
+        // MOB-1497 (R8): identity-based ONLY — the stored `ServerConfig.isCustom` flag no longer
+        // drives migration routing (it keeps its non-migration uses, e.g. `ServerSetupStore`'s own
+        // "Custom" picker state). A manually-entered host that resolves to a known provider's
+        // infrastructure (e.g. `eu.zec.rocks`) is that provider, full stop — only a host that
+        // classifies as `.custom` BY IDENTITY is treated as custom.
+        var isCustomServer = false
         if case ServerProvider.custom = syncProvider {
-            syncProviderIsCustom = true
+            isCustomServer = true
         }
-        let isCustomServer = syncProviderIsCustom || (storedServerConfig?.isCustom ?? false)
 
         let broadcastEndpoint: LightWalletEndpoint
 
@@ -566,30 +945,29 @@ final class MigrationManagerImpl: @unchecked Sendable {
                 // same-server fallback (the sanctioned single-server mode extends here too).
                 broadcastEndpoint = currentEndpoint
             } else {
-                // Reuse exactly the constants/shape `AutoServerSelectionLiveKey.findBestServer`'s
-                // background benchmark uses.
-                let ranked = await sdkSynchronizer.evaluateBestOf(
-                    candidates,
-                    AutoServerSelectionConstants.evaluationTimeoutSeconds,
-                    AutoServerSelectionConstants.blocksToDownload,
-                    AutoServerSelectionConstants.candidateCount,
-                    network
-                )
-                if let best = ranked.first {
-                    broadcastEndpoint = best
-                } else {
-                    LoggerProxy.event(
-                        "[MigrationNetworkSnapshot] Broadcast benchmark produced no result — falling back to \(candidates[0].host)"
-                    )
-                    broadcastEndpoint = candidates[0]
-                }
+                // MOB-1497 (R7): uniform-random pick across the OTHER provider's shipped endpoints —
+                // replaces the old `evaluateBestOf` benchmark entirely. Snapshot creation must make
+                // ZERO network calls (the benchmark's clearnet pre-probe was itself a privacy leak
+                // while Tor is on) and must not select by proximity/latency/locale — either would
+                // carry a hint about the user's region that the Tor circuit otherwise conceals — so a
+                // uniform index draw over the full candidate set satisfies both at once.
+                let index = migrationRandomness.randomIndex(candidates.count)
+                broadcastEndpoint = candidates[index]
             }
         }
+
+        // MOB-1497 (R2 data half / R8 consequence): a custom server can't be reached over Tor — force
+        // the formed snapshot's `useTor` false for a custom sync provider, regardless of the stored
+        // pre-run choice. T2's sheet UI disables/hides the toggle for a custom user, but the stored
+        // choice could in principle still read `true` (e.g. the app-wide Tor flag) — this is the
+        // data-layer belt to that UI belt, since this is the value background broadcasts actually
+        // read.
+        let effectiveUseTor = isCustomServer ? false : useTor
 
         // R8-T3 (#22): `syncProvider`/`broadcastProvider` are computed on `MigrationNetworkSnapshot`
         // now (from `syncEndpoint`/`broadcastEndpoint`'s own hosts) — no longer constructor args.
         return MigrationNetworkSnapshot(
-            useTor: useTor,
+            useTor: effectiveUseTor,
             syncEndpoint: MigrationNetworkSnapshot.Endpoint(currentEndpoint),
             broadcastEndpoint: MigrationNetworkSnapshot.Endpoint(broadcastEndpoint),
             takenAt: Date()
@@ -724,9 +1102,21 @@ final class MigrationManagerImpl: @unchecked Sendable {
                 // seed). MOB-1496 (W4): the network snapshot's lifetime is tied to the same logical
                 // run as the schedule payload — clear it beside the schedule (a later dust mini-run
                 // then takes a FRESH snapshot, which is correct).
+                // MOB-1497: `clearIfCommitted`, not the unconditional `clear` — this is a BACKGROUND
+                // reconcile tick, which can race a user sitting on the Tor sheet/plan screen with
+                // state still `.notStarted` and a just-formed PROVISIONAL snapshot (forming now
+                // happens at the Tor-choice step, before any schedule is committed). Wiping that
+                // snapshot out from under them mid-flow is exactly the hazard this guards against; a
+                // committed snapshot still clears here exactly as before. Provisional snapshots are
+                // cleared only by flow teardown (`clearProvisionalNetworkSnapshot`) or promoted to
+                // committed (`markNetworkSnapshotCommitted`).
                 if state == MigrationState.notStarted && scheduleStorage.hasStoredPayload(for: accountUUID) {
                     scheduleStorage.clear(for: accountUUID)
-                    snapshotStorage.clear(for: accountUUID)
+                    snapshotStorage.clearIfCommitted(for: accountUUID)
+                    // MOB-1497 (R7-T3): the had-broadcast flag/episode's lifetime is tied to the
+                    // same logical run as the schedule payload — clear beside it (a later dust
+                    // mini-run then starts first-run-fresh, matching the snapshot's precedent).
+                    failureRoutingStorage.clear(for: accountUUID)
                 }
             }
         }
@@ -803,6 +1193,9 @@ final class MigrationManagerImpl: @unchecked Sendable {
             gateStorage.acknowledgeComplete(for: resolvedAccountUUID)
             scheduleStorage.clear(for: resolvedAccountUUID)
             snapshotStorage.clear(for: resolvedAccountUUID)
+            // MOB-1497 (R7-T3): the failure-routing state (had-broadcast flag + R16 episode)
+            // shares the run's lifetime — clear it with the run's other records.
+            failureRoutingStorage.clear(for: resolvedAccountUUID)
         }
     }
 
@@ -812,15 +1205,31 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// hasStoredPayload` (this account never had a payload) or an acknowledge (nothing completed,
     /// so it's never reached) — so an abandoned pre-commit run leaked an ACTIVE snapshot forever
     /// (`UserDefaults`, no TTL), pinning auto-server-selection and arming the ServerSetup privacy
-    /// warning indefinitely. Called fire-and-forget from the coordinator's `.flowFinished` handler
-    /// (every flow-root close / terminal delegate) for the selected account (`nil` resolves it,
-    /// same convention as `migrationSummary`/`recordCommittedSchedule` above): reads `accountUUID`'s
-    /// engine state FRESH — `.notStarted` with no stored schedule payload means nothing was ever
-    /// committed this attempt (or the run genuinely finished/reset already) — clears its snapshot;
-    /// any other state (a real active/committed run) is a no-op. R8-T3 (#18): serialized alongside
-    /// `reconcile`/`recordCommittedSchedule`/`acknowledgeComplete` for the same TOCTOU reasons.
-    /// Deliberately self-contained (doesn't reach for anything a real run's schedule/state would
-    /// carry) so the R7 branch's provisional-snapshot machinery can subsume it on rebase.
+    /// warning indefinitely. Reads `accountUUID`'s engine state FRESH — `.notStarted` with no
+    /// stored schedule payload means nothing was ever committed this attempt (or the run genuinely
+    /// finished/reset already) — clears its snapshot; any other state (a real active/committed run)
+    /// is a no-op. R8-T3 (#18): serialized alongside `reconcile`/`recordCommittedSchedule`/
+    /// `acknowledgeComplete` for the same TOCTOU reasons. Deliberately self-contained (doesn't reach
+    /// for anything a real run's schedule/state would carry) so the R7 branch's provisional-snapshot
+    /// machinery can subsume it on rebase.
+    ///
+    /// Two sanctioned production call sites (R9-T5, finding 7 — the fix that added the second one):
+    /// (1) the coordinator's `.flowFinished` handler (`RootCoordinator.swift`, every flow-root close
+    /// / terminal delegate), fire-and-forget for the selected account only (`nil` resolves it, same
+    /// convention as `migrationSummary`/`recordCommittedSchedule` above) — covers a flow closed out
+    /// normally without committing. (2) app launch, via `RootInitialization.swift`'s
+    /// `.clearAbandonedMigrationSnapshots` action — sent from TWO points there (final-review
+    /// IMPORTANT-1), since accounts aren't necessarily in state yet at the first one:
+    /// `.initialSetups`'s reconcile-chained send (covers a WARM re-init, where accounts are already
+    /// populated from earlier in the same process) and `.loadedWalletAccounts`'s send (the one that
+    /// actually fires on a genuine COLD launch, once the SDK's own account list lands in state and
+    /// the SDK is provably prepared). Both routes fan over EVERY candidate account
+    /// (`MigrationDerivations.candidateAccountUUIDs`), never `nil` — covers a flow abandoned by
+    /// killing the app mid-run, which never reaches `.flowFinished` at all, for whichever account
+    /// (not necessarily the selected one) was mid-flow at kill time. All three call sites share the
+    /// SAME guard on the migration flow not being open before ever calling this (see
+    /// `.clearAbandonedMigrationSnapshots`'s reducer arm) — this function itself stays unaware of
+    /// any of them.
     func clearAbandonedNetworkSnapshot(accountUUID: AccountUUID?) async {
         guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return }
 
@@ -857,7 +1266,8 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// MOB-1480: the migration SDK simulator's debug panel "Reset app migration flags" control.
     /// MOB-1496 (W2): also clears every candidate account's persisted schedule — a debug reset must
     /// leave no stale committed-schedule payload behind either. MOB-1496 (W4): and its network
-    /// snapshot. R8-T3: sourced from `MigrationDerivations.candidateAccountUUIDs` (was two separate
+    /// snapshot; MOB-1497 (R7-T3): and its failure-routing state (had-broadcast flag + R16
+    /// episode). R8-T3: sourced from `MigrationDerivations.candidateAccountUUIDs` (was two separate
     /// hand-rolled loops — `walletAccounts`, then `selectedWalletAccount` again, redundantly
     /// re-clearing it — that disagreed with `reconcile()`'s/`activeNetworkSnapshots()`'s own
     /// account-set logic); also now clears each candidate account's own per-account acknowledged
@@ -876,6 +1286,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
             gateStorage.clearRemainderPending(for: accountUUID)
             scheduleStorage.clear(for: accountUUID)
             snapshotStorage.clear(for: accountUUID)
+            failureRoutingStorage.clear(for: accountUUID)
         }
     }
 
@@ -1028,6 +1439,10 @@ enum MigrationDerivations {
     /// no longer computes it either, removing a wasted `hasInvalidMigrationTransfers` SDK read per
     /// call. `reentryRoute` below keeps its OWN `hasInvalid` parameter — that one genuinely is
     /// consulted (row 1, `.recovery`).
+    ///
+    /// R7 final review, Important-1 (spec §G): `isTorHoldActive` carries into `.transferWaiting`'s
+    /// `torHold` flag (see that case's own doc) — defaults `false` so every pre-existing call site
+    /// (none of which know about the indicator) is unaffected.
     static func bannerVariant(
         isIronwoodActivated: Bool,
         state: MigrationState,
@@ -1037,7 +1452,8 @@ enum MigrationDerivations {
         orchardBalance: Zatoshi,
         isCompleteAcknowledged: Bool,
         isMigrationRemainderPending: Bool,
-        transferRows: [MigrationTransferRow]
+        transferRows: [MigrationTransferRow],
+        isTorHoldActive: Bool = false
     ) -> MigrationBannerVariant? {
         guard isIronwoodActivated else { return nil }
 
@@ -1052,7 +1468,7 @@ enum MigrationDerivations {
 
         case let MigrationState.inProgress(progress):
             if hasOverdue {
-                return MigrationBannerVariant.transferWaiting(number: progress.completedTransfers + 1)
+                return MigrationBannerVariant.transferWaiting(number: progress.completedTransfers + 1, torHold: isTorHoldActive)
             }
             if isManualDelivery && isNextTransferDue {
                 return MigrationBannerVariant.transferReady(number: progress.completedTransfers + 1)
@@ -1409,10 +1825,17 @@ final class MigrationGateStorage: @unchecked Sendable {
     /// `MigrationManagerImpl.createNetworkSnapshot()` reads this once, when a run's
     /// `MigrationNetworkSnapshot` is first taken, and combines it with the app's then-current sync
     /// endpoint.
+    ///
+    /// MOB-1497 (R1): defaults to `true`, not `false`, when never written — Tor is on by default for
+    /// a provider user. The sheet's own visual default is already ON (`MigrationTorSheet.State
+    /// .isTorOn`); this closes the belt-and-braces gap where a broadcast could theoretically read an
+    /// implicit false (e.g. a lane that reaches a broadcast before the sheet has ever written a
+    /// choice). The identity-custom forced-false in `createNetworkSnapshot` still wins over this for
+    /// a custom sync server, same as it would over an explicit stored `true`.
     func isTorEnabledForMigration() -> Bool {
         guard let data = userDefaults.data(forKey: .migrationNetworkPrivacyOptions),
               let stored = try? JSONDecoder().decode(PersistedNetworkPrivacyOptions.self, from: data) else {
-            return false
+            return true
         }
 
         return stored.useTor
@@ -1538,15 +1961,26 @@ final class PerAccountCodableStorage<Payload: Codable & Sendable>: @unchecked Se
     /// concurrent `read`/`write`/`clear`/`modify` call for this account can observe a half-updated
     /// value or interleave between the read `body` sees and the write/clear it produces. Setting the
     /// `inout` value to `nil` inside `body` clears the persisted payload instead of writing one.
-    func modify(for accountUUID: AccountUUID, _ body: @Sendable (inout Payload?) -> Void) {
+    ///
+    /// `body` may return a value, propagated back through `modify` itself — MOB-1497 (R9-T6): lets
+    /// a caller (`MigrationSnapshotStorage.ensureOrCreate`) report which value it decided on
+    /// (existing vs. a freshly-written candidate) from INSIDE the same atomic section, without
+    /// capturing an outer `var` into the `@Sendable` closure (the Swift 6 concurrency checker
+    /// disallows mutating a captured `var` from inside a `@Sendable` closure even when, as here,
+    /// the closure is actually invoked synchronously and non-escaping). Every pre-existing call
+    /// site's closure has no `return <value>` statement, so `T` continues to infer as `Void` for
+    /// them — this is a purely additive, backward-compatible signature widening.
+    @discardableResult
+    func modify<T: Sendable>(for accountUUID: AccountUUID, _ body: @Sendable (inout Payload?) -> T) -> T {
         lock.withLock { _ in
             var payload = readPayload(for: accountUUID)
-            body(&payload)
+            let result = body(&payload)
             if let payload {
                 writePayload(payload, for: accountUUID)
             } else {
                 userDefaults.removeObject(forKey: key(for: accountUUID))
             }
+            return result
         }
     }
 
@@ -1671,18 +2105,338 @@ final class MigrationSnapshotStorage: @unchecked Sendable {
         storage.read(for: accountUUID)
     }
 
-    /// Persists `snapshot` for `accountUUID`, REPLACING any existing one. Callers are responsible
-    /// for the idempotent ensure-or-create semantics (`MigrationManagerImpl.ensureNetworkSnapshot`)
-    /// — this storage itself is a plain, unconditional write.
+    /// Persists `snapshot` for `accountUUID`, REPLACING any existing one unconditionally — a plain
+    /// write with no reuse/atomicity semantics of its own. MOB-1497 (R9-T6): `MigrationManagerImpl`'s
+    /// ensure-or-create callers go through `ensureOrCreate(candidate:reformIfProvisional:for:)` below
+    /// instead, which performs the atomic decide-and-write; this remains the raw primitive (used
+    /// directly by tests to seed a starting snapshot).
     func recordSnapshot(_ snapshot: MigrationNetworkSnapshot, for accountUUID: AccountUUID) {
         storage.write(snapshot, for: accountUUID)
     }
 
+    /// MOB-1497 (R9-T6, finding 8): atomic ensure-or-create for
+    /// `MigrationManagerImpl.ensureOrCreateNetworkSnapshot`'s create path — closes the "check absent
+    /// -> create -> write" race between two concurrent formers for the SAME account now that forming
+    /// no longer serializes through `transactionGuard` (see that method's doc for why it never
+    /// actually needed to). `candidate` is computed by the CALLER before this call (the `await`s on
+    /// `zcashSDKEnvironment`/`migrationRandomness` must not run inside `PerAccountCodableStorage`'s
+    /// synchronous `modify` closure — this method's own body never awaits anything); already stamped
+    /// committed by the caller when `stampCommitted` applies. This method's body is the ONE atomic
+    /// decide-and-write: it RE-CHECKS the exact same reuse condition
+    /// `ensureOrCreateNetworkSnapshot` already checked before computing `candidate` — existing
+    /// `committedAt != nil`, or `reformIfProvisional` is false — against whatever is ACTUALLY
+    /// persisted at the instant the lock is held, not the (possibly now-stale) read that motivated
+    /// computing `candidate` in the first place. A competing former that already wrote AND satisfies
+    /// the condition wins: `candidate` is discarded and the existing payload is kept, untouched.
+    /// Otherwise `candidate` is written. Either way, returns whatever ends up persisted — never an
+    /// unstored `candidate` a concurrent write has already superseded.
+    func ensureOrCreate(
+        candidate: MigrationNetworkSnapshot,
+        reformIfProvisional: Bool,
+        for accountUUID: AccountUUID
+    ) -> MigrationNetworkSnapshot {
+        storage.modify(for: accountUUID) { payload in
+            if let existing = payload, existing.committedAt != nil || !reformIfProvisional {
+                return existing
+            }
+            payload = candidate
+            return candidate
+        }
+    }
+
     /// Clears the run's snapshot: consumed by the SAME run-end paths `MigrationScheduleStorage.clear`
-    /// is (`acknowledgeComplete()`/`resetPersistedFlags()`/`reconcile()`'s stale-`.notStarted`
-    /// observation/`clearAbandonedNetworkSnapshot()`) — always alongside the schedule clear (except
-    /// the abandon-clear, which by design has no schedule to clear — see that method's doc).
+    /// is (`acknowledgeComplete()`/`resetPersistedFlags()`/`clearAbandonedNetworkSnapshot()`) —
+    /// always alongside the schedule clear (except the abandon-clear, which by design has no
+    /// schedule to clear — see that method's doc).
+    ///
+    /// MOB-1497: `acknowledgeComplete()`/`resetPersistedFlags()` still call this unconditional clear
+    /// directly (a genuine run-end/reset always wipes, committed or not) — only `reconcile()`'s
+    /// stale-`.notStarted` observation was moved onto `clearIfCommitted` below, since THAT path can
+    /// race a still-provisional in-flight formation. See `clearIfCommitted`/`clearIfProvisional`.
     func clear(for accountUUID: AccountUUID) {
         storage.clear(for: accountUUID)
+    }
+
+    /// MOB-1497: stamps `accountUUID`'s persisted snapshot committed (`committedAt = now`) — a no-op
+    /// when no snapshot is persisted, or when it is already committed (idempotent: `committedAt`
+    /// only ever moves nil -> a date, never back, so a second stamp must not overwrite the FIRST
+    /// commit's timestamp with a later one). Atomic read-mutate-write via the generic's `modify`
+    /// (R8-T3 #21 rebase — the hand-rolled lock/read/write this was written against is gone).
+    func markCommitted(for accountUUID: AccountUUID, now: Date) {
+        storage.modify(for: accountUUID) { payload in
+            guard var existing = payload, existing.committedAt == nil else { return }
+            existing.committedAt = now
+            payload = existing
+        }
+    }
+
+    /// MOB-1497: clears `accountUUID`'s persisted snapshot ONLY when it is already COMMITTED
+    /// (`committedAt != nil`) — a no-op against a still-provisional one, or when none is persisted.
+    /// Used by `reconcile()`'s stale-`.notStarted` observation, which is a BACKGROUND tick that must
+    /// not wipe a snapshot a user just formed by reaching the Tor-choice step (state is still
+    /// `.notStarted` at that point — nothing has been proposed/committed yet) out from under them.
+    func clearIfCommitted(for accountUUID: AccountUUID) {
+        storage.modify(for: accountUUID) { payload in
+            guard let existing = payload, existing.committedAt != nil else { return }
+            payload = nil
+        }
+    }
+
+    /// MOB-1497 (T2): mutates ONLY `useTor` on `accountUUID`'s persisted snapshot, but ONLY while it
+    /// is still PROVISIONAL (`committedAt == nil`) — every other field (notably `broadcastEndpoint`)
+    /// is left byte-for-byte untouched, and nothing is re-formed/re-rolled: this REPLACES the whole
+    /// persisted value with a fresh `MigrationNetworkSnapshot` copied field-for-field from the
+    /// existing one except `useTor`, rather than mutating `useTor` in place (it stays a `let` —
+    /// unlike `committedAt`, which is the one field this type ever mutates in place). A no-op
+    /// (logged) against an already-committed snapshot or when none is persisted — a live confirm
+    /// should always find the provisional snapshot `formNetworkSnapshot` formed moments earlier at
+    /// presentation, so reaching either branch here signals a caller ordering bug worth surfacing.
+    func updateUseTorIfProvisional(_ useTor: Bool, for accountUUID: AccountUUID) {
+        storage.modify(for: accountUUID) { payload in
+            guard let existing = payload, existing.committedAt == nil else {
+                LoggerProxy.warn(
+                    "[MigrationSnapshotStorage] confirmProvisionalTorChoice: no provisional snapshot to update — ignoring."
+                )
+                return
+            }
+            payload = MigrationNetworkSnapshot(
+                useTor: useTor,
+                syncEndpoint: existing.syncEndpoint,
+                broadcastEndpoint: existing.broadcastEndpoint,
+                takenAt: existing.takenAt,
+                committedAt: existing.committedAt
+            )
+        }
+    }
+
+    /// MOB-1497: clears `accountUUID`'s persisted snapshot ONLY when it is still PROVISIONAL
+    /// (`committedAt == nil`) — a no-op against an already-committed one, or when none is persisted.
+    /// Used at migration flow teardown: leaving the flow without ever committing a schedule discards
+    /// the provisional pick, so a re-entry re-forms and re-rolls rather than resuming a stale one.
+    func clearIfProvisional(for accountUUID: AccountUUID) {
+        storage.modify(for: accountUUID) { payload in
+            guard let existing = payload, existing.committedAt == nil else { return }
+            payload = nil
+        }
+    }
+
+    // MARK: - MOB-1497 (R7-T3, R7-review fix Important-1): sanctioned ACTIVE-snapshot mutations
+    // (R14/R16/R17)
+    //
+    // The three doc-sanctioned exceptions to R4's run-immutability that a failure-routing surface
+    // may perform — see `MigrationManagerClient.overrideTorForRun`/`.overrideBroadcastEndpointTo
+    // SyncServer` and `MigrationManagerImpl.routeBroadcastFailure`'s own doc for each requirement.
+    // Same shape as `updateUseTorIfProvisional` above (atomic via the generic storage's `modify`,
+    // no-op + `LoggerProxy.warn` when there is nothing to mutate), but UNLIKE it these apply to the
+    // account's ACTIVE snapshot — the COMMITTED one if present, else the still-PROVISIONAL one —
+    // rather than only ever a provisional one. (Rebased onto R8-T3: replace-with-copy now spells
+    // only the four stored fields — the providers are computed off the endpoints.)
+    //
+    // R7-review fix (Important-1): originally committed-only. That left the live Keystone note-split
+    // lane — whose broadcast (and therefore its first R14/R16/R17 failure) happens BEFORE its
+    // snapshot commits, by design — with no sanctioned mutation to apply even once
+    // `routeBroadcastFailure`'s own guard was widened; a rotation/override attempted against that
+    // lane's still-provisional snapshot would have silently no-op'd. A mutation applied here to a
+    // still-provisional snapshot is carried forward automatically: `markCommitted` above stamps
+    // whatever is CURRENTLY persisted, mutated or not, so the choice survives the commit. No-op +
+    // `LoggerProxy.warn` only when NEITHER a committed nor a provisional snapshot exists at all.
+
+    /// R14: mutates ONLY `useTor` on `accountUUID`'s ACTIVE (committed-else-provisional) snapshot —
+    /// the R11-warning-gated exception to R4 for "Tor unavailable on the first broadcast of the run."
+    /// Endpoint/takenAt/committedAt are left byte-for-byte untouched. A no-op (logged) only
+    /// when no snapshot — committed or provisional — is persisted for the account at all.
+    func overrideUseTorOnActiveSnapshot(_ useTor: Bool, for accountUUID: AccountUUID) {
+        storage.modify(for: accountUUID) { payload in
+            guard let existing = payload else {
+                LoggerProxy.warn("[MigrationSnapshotStorage] overrideTorForRun: no active snapshot to update — ignoring.")
+                return
+            }
+            payload = MigrationNetworkSnapshot(
+                useTor: useTor,
+                syncEndpoint: existing.syncEndpoint,
+                broadcastEndpoint: existing.broadcastEndpoint,
+                takenAt: existing.takenAt,
+                committedAt: existing.committedAt
+            )
+        }
+    }
+
+    /// R16: mutates ONLY `broadcastEndpoint` on `accountUUID`'s ACTIVE (committed-else-provisional)
+    /// snapshot — the sanctioned within-provider rotation after an unreachable broadcast endpoint.
+    /// The broadcast PROVIDER is unchanged by construction: `routeBroadcastFailure` (the sole
+    /// caller) only ever offers a same-provider candidate here (and the provider is computed off
+    /// the endpoint's own host). A no-op (logged) only when no snapshot — committed or provisional
+    /// — is persisted for the account at all. Internal to `routeBroadcastFailure` — deliberately
+    /// not a `MigrationManagerClient` member (nothing else in the app needs to trigger a rotation
+    /// directly).
+    func rotateBroadcastEndpoint(to endpoint: MigrationNetworkSnapshot.Endpoint, for accountUUID: AccountUUID) {
+        storage.modify(for: accountUUID) { payload in
+            guard let existing = payload else {
+                LoggerProxy.warn("[MigrationSnapshotStorage] rotateBroadcastEndpoint: no active snapshot to update — ignoring.")
+                return
+            }
+            payload = MigrationNetworkSnapshot(
+                useTor: existing.useTor,
+                syncEndpoint: existing.syncEndpoint,
+                broadcastEndpoint: endpoint,
+                takenAt: existing.takenAt,
+                committedAt: existing.committedAt
+            )
+        }
+    }
+
+    /// R17: sets `broadcastEndpoint := syncEndpoint` on `accountUUID`'s ACTIVE
+    /// (committed-else-provisional) snapshot (the broadcast provider follows computed, becoming the
+    /// sync provider) — the sanctioned consent-gated fallback once every shipped endpoint for the
+    /// broadcast provider is unreachable. Afterwards the snapshot is same-server by construction,
+    /// so a LATER endpoint-class failure takes `routeBroadcastFailure`'s same-server exemption
+    /// (`.plainRetry`) naturally. A no-op (logged) only when no snapshot — committed or provisional
+    /// — is persisted for the account at all. (The episode reset this requirement also calls for
+    /// lives one layer up, in `MigrationManagerImpl.overrideBroadcastEndpointToSyncServer` — this
+    /// storage type has no knowledge of `MigrationFailureRoutingStorage`.)
+    func overrideBroadcastEndpointToSyncServerOnActiveSnapshot(for accountUUID: AccountUUID) {
+        storage.modify(for: accountUUID) { payload in
+            guard let existing = payload else {
+                LoggerProxy.warn("[MigrationSnapshotStorage] overrideBroadcastEndpointToSyncServer: no active snapshot to update — ignoring.")
+                return
+            }
+            payload = MigrationNetworkSnapshot(
+                useTor: existing.useTor,
+                syncEndpoint: existing.syncEndpoint,
+                broadcastEndpoint: existing.syncEndpoint,
+                takenAt: existing.takenAt,
+                committedAt: existing.committedAt
+            )
+        }
+    }
+}
+
+// MARK: - Persistence: broadcast-failure routing state (MOB-1497, R7-T3)
+
+/// Per-account `UserDefaults`-backed persistence for `MigrationManagerImpl.routeBroadcastFailure`'s
+/// three pieces of state: the had-broadcast flag (R14 first-run vs R15 mid-run), the broadcast-
+/// endpoint "episode" (R16's per-account set of hosts already tried since the last landed
+/// broadcast), and the Tor-hold indicator (R7 final review, Important-1 / spec §G — whether the
+/// account's MOST RECENT routing outcome was `.torHold`, read by the waiting/stalled surfaces).
+/// Same house pattern as `MigrationSnapshotStorage` beside which this lives: `final class`,
+/// `@unchecked Sendable` guarded by an `OSAllocatedUnfairLock` around each read-modify-write,
+/// injectable `UserDefaults` (default `.standard`) so tests can use an isolated named suite, same
+/// per-account key suffix idiom.
+final class MigrationFailureRoutingStorage: @unchecked Sendable {
+    private let userDefaults: UserDefaults
+    private let lock = OSAllocatedUnfairLock(initialState: false)
+
+    init(userDefaults: UserDefaults = .standard) {
+        self.userDefaults = userDefaults
+    }
+
+    // MARK: Had-broadcast flag (R14/R15)
+
+    /// First-run (this run has never had a landed broadcast) ⟺ `false`.
+    func hadBroadcast(for accountUUID: AccountUUID) -> Bool {
+        lock.withLock { _ in userDefaults.bool(forKey: hadBroadcastKey(for: accountUUID)) }
+    }
+
+    /// SET on any LANDED broadcast, on every lane (FG send, note split, BG — see
+    /// `MigrationManagerImpl.recordTransferBroadcast`, the single call site). Also resets the R16
+    /// episode: a fresh episode starts with every new transfer attempt window.
+    ///
+    /// R7 final review, Important-1: also clears the Tor-hold indicator — a landed broadcast is the
+    /// freshest possible signal that Tor (if on) is reachable right now, so any previously-persisted
+    /// hold no longer describes reality. Same lock acquisition as the two clears above (one
+    /// read-modify-write, not three).
+    func markHadBroadcast(for accountUUID: AccountUUID) {
+        lock.withLock { _ in
+            userDefaults.set(true, forKey: hadBroadcastKey(for: accountUUID))
+            userDefaults.removeObject(forKey: episodeKey(for: accountUUID))
+            userDefaults.removeObject(forKey: torHoldKey(for: accountUUID))
+        }
+    }
+
+    /// CLEARED at the run-end trio (`MigrationManagerImpl.acknowledgeComplete`/`resetPersistedFlags`/
+    /// `reconcile`'s stale-`.notStarted` observation), beside the existing schedule/snapshot clears.
+    /// Clears the flag, the episode, and the Tor-hold indicator.
+    func clear(for accountUUID: AccountUUID) {
+        lock.withLock { _ in
+            userDefaults.removeObject(forKey: hadBroadcastKey(for: accountUUID))
+            userDefaults.removeObject(forKey: episodeKey(for: accountUUID))
+            userDefaults.removeObject(forKey: torHoldKey(for: accountUUID))
+        }
+    }
+
+    // MARK: Episode set (R16)
+
+    /// Read-only peek at the hosts tried this episode — never creates/mutates. Primarily for tests;
+    /// `routeBroadcastFailure` itself uses `addEpisodeHost(_:for:)`'s return value instead, so the
+    /// add-then-compute-candidates sequence reads one consistent snapshot of the set rather than two
+    /// separately-locked calls that could interleave with a concurrent caller for the same account.
+    func episodeHosts(for accountUUID: AccountUUID) -> [String] {
+        lock.withLock { _ in readEpisodeHosts(for: accountUUID) }
+    }
+
+    /// Adds `host` to `accountUUID`'s episode set (a no-op if already present) and returns the
+    /// resulting FULL set, in one locked read-modify-write.
+    @discardableResult
+    func addEpisodeHost(_ host: String, for accountUUID: AccountUUID) -> [String] {
+        lock.withLock { _ in
+            var hosts = readEpisodeHosts(for: accountUUID)
+            guard !hosts.contains(host) else { return hosts }
+            hosts.append(host)
+            userDefaults.set(hosts, forKey: episodeKey(for: accountUUID))
+            return hosts
+        }
+    }
+
+    /// RESET on: a landed broadcast (see `markHadBroadcast`), the R17 sync-server override
+    /// (`MigrationManagerImpl.overrideBroadcastEndpointToSyncServer`), and the run-end trio (see
+    /// `clear`). Episode ONLY — deliberately does not touch the Tor-hold indicator below (same
+    /// "never the flag" scoping this method already applies to `hadBroadcast`); by the time the R17
+    /// override runs, `routeBroadcastFailure` has already cleared the indicator itself
+    /// (`.providerExhausted` is one of the routes that clears it).
+    func resetEpisode(for accountUUID: AccountUUID) {
+        lock.withLock { _ in userDefaults.removeObject(forKey: episodeKey(for: accountUUID)) }
+    }
+
+    private func readEpisodeHosts(for accountUUID: AccountUUID) -> [String] {
+        userDefaults.stringArray(forKey: episodeKey(for: accountUUID)) ?? []
+    }
+
+    // MARK: Tor-hold indicator (R7 final review, Important-1 / spec §G)
+
+    /// Per-account: true iff the MOST RECENT `routeBroadcastFailure` outcome for this account was
+    /// `.torHold` (R15 — a mid-run Tor outage) — i.e. the run is currently stalled specifically
+    /// because Tor can't be reached, as opposed to any other reason. Read by the waiting/stalled
+    /// surfaces (`MigrationStatusStore`'s resume presentation, `SmartBanner`'s transfer-waiting
+    /// variant via `MigrationManagerImpl.bannerVariant`) to show a Tor-specific line — spec §G:
+    /// "existing waiting/stalled surfaces gain a Tor-specific line." Defaults `false` (no known
+    /// hold).
+    func torHoldActive(for accountUUID: AccountUUID) -> Bool {
+        lock.withLock { _ in userDefaults.bool(forKey: torHoldKey(for: accountUUID)) }
+    }
+
+    /// SET by `MigrationManagerImpl.routeBroadcastFailure`'s single chokepoint on EVERY call —
+    /// `true` only when it is about to return `.torHold`, `false` for every other route (INCLUDING
+    /// `.torFirstRunChoice`: a first-run Tor failure is a foreground CHOICE point, not a silent
+    /// hold). Reflects the LAST known failure cause, not a sticky/latched flag — a later non-hold
+    /// route (e.g. a rotation succeeding) clears it even before any broadcast lands. Both lanes hit
+    /// this automatically since FG and BG call the same routing member — the BG lane needs no UI of
+    /// its own; the indicator persisting here is the whole point. ALSO cleared by `markHadBroadcast`
+    /// (a landed broadcast) and `clear` (the run-end trio) — see their docs.
+    func setTorHoldActive(_ active: Bool, for accountUUID: AccountUUID) {
+        lock.withLock { _ in userDefaults.set(active, forKey: torHoldKey(for: accountUUID)) }
+    }
+
+    // MARK: Keys
+
+    private func hadBroadcastKey(for accountUUID: AccountUUID) -> String {
+        "\(String.migrationHadBroadcast)_\(Data(accountUUID.id).hexEncodedString())"
+    }
+
+    private func episodeKey(for accountUUID: AccountUUID) -> String {
+        "\(String.migrationBroadcastEpisode)_\(Data(accountUUID.id).hexEncodedString())"
+    }
+
+    private func torHoldKey(for accountUUID: AccountUUID) -> String {
+        "\(String.migrationTorHold)_\(Data(accountUUID.id).hexEncodedString())"
     }
 }

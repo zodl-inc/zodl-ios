@@ -75,7 +75,14 @@ struct MigrationNoteSplitView: View {
             .screenHorizontalPadding()
             .applyPresentationModifier(store: store)
             .zashiSheet(isPresented: $store.isFailurePresented) {
-                failureSheetContent
+                MigrationBroadcastFailureSheetView(
+                    failureKind: store.failureKind,
+                    cancelTapped: { store.send(.cancelTapped) },
+                    proceedWithoutTorTapped: { store.send(.proceedWithoutTorTapped) },
+                    retryTapped: { store.send(.retryTapped) },
+                    useSyncServerTapped: { store.send(.useSyncServerTapped) }
+                )
+                .alert($store.scope(state: \.alert, action: \.alert))
             }
         }
         .applyScreenBackground()
@@ -225,44 +232,6 @@ struct MigrationNoteSplitView: View {
         .background {
             RoundedRectangle(cornerRadius: Design.Radius._2xl)
                 .fill(Design.Surfaces.bgSecondary.color(colorScheme))
-        }
-    }
-
-    // MARK: - Failure sheet
-
-    @ViewBuilder private var failureSheetContent: some View {
-        VStack(spacing: 0) {
-            Asset.Assets.Icons.alertOutline.image
-                .zImage(size: 20, style: Design.Utility.ErrorRed._500)
-                .background {
-                    Circle()
-                        .fill(Design.Utility.ErrorRed._100.color(colorScheme))
-                        .frame(width: 44, height: 44)
-                }
-                .padding(.top, 48)
-
-            Text(localizable: .migrationNoteSplitFailedTitle)
-                .zFont(.semiBold, size: 20, style: Design.Text.primary)
-                .multilineTextAlignment(.center)
-                .padding(.top, 16)
-                .padding(.bottom, 12)
-
-            Text(localizable: .migrationNoteSplitFailedBody)
-                .zFont(size: 14, style: Design.Text.tertiary)
-                .fixedSize(horizontal: false, vertical: true)
-                .multilineTextAlignment(.center)
-                .lineSpacing(2)
-                .padding(.bottom, 32)
-
-            ZashiButton(String(localizable: .generalCancel), type: .secondary) {
-                store.send(.cancelTapped)
-            }
-            .padding(.bottom, 12)
-
-            ZashiButton(String(localizable: .migrationNoteSplitRetry)) {
-                store.send(.retryTapped)
-            }
-            .padding(.bottom, Design.Spacing.sheetBottomSpace)
         }
     }
 }

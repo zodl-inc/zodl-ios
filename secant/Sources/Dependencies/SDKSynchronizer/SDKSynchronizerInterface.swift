@@ -237,6 +237,13 @@ extension SDKSynchronizerClient {
     /// (`ZcashError.migrationBroadcastDuringSync`) is only advisory/point-in-time, so callers stop
     /// proactively instead of relying on it. Idempotent: a no-op when nothing is syncing.
     ///
+    /// R9-T7 (MOB-1497 review remediation, finding 9): the BACKGROUND broadcast lane
+    /// (`RootInitialization.executeBroadcastAction`) now calls this too — it was the one broadcast
+    /// entry point still relying solely on the SDK's own during-sync throw, which never itself
+    /// resumes sync afterward (unlike this method's own `migrationStoppedSyncForBroadcast` flag,
+    /// which Root's `.migrationSyncGateChanged` handler consumes to guarantee a resume). Every
+    /// broadcast-performing call site in the app now stops sync first.
+    ///
     /// MOB-1496 (W3 review fix B): when this DOES stop an in-flight sync, it also flips the shared
     /// `migrationStoppedSyncForBroadcast` flag (`@Shared(.inMemory(...))`, same idiom as
     /// `selectedWalletAccount`) — never when idle. `RootInitialization.swift`'s
