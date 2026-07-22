@@ -112,6 +112,16 @@
 //  their `broadcastDisclosureHost` state are gone, so the coordinator no longer threads a host or
 //  peeks the snapshot for one.
 //
+//  MOB-1513 (B4 — confirm redesign + "Splitting Funds" removal): the W6/C-1/C-1b mid-Keystone-commit
+//  note-split detour narrated above is RETIRED — the ceremony still stores preps first and defers the
+//  schedule entries (`PendingScheduleStore`, unchanged shape), but `resumeAfterKeystoneSigning` now
+//  resumes STRAIGHT to B9 Migration Scheduled, and the first-prep broadcast + deferred schedule store
+//  both live in the coordinator's post-confirm first-delivery kick
+//  (`MigrationCoordFlowCoordinator.runFirstDeliveryKick`, completing via the new
+//  `deferredKeystoneScheduleStored` action). `pendingKeystoneSplitResume`, the
+//  `keystoneSplitResumeContinued` action, the `storeScheduleRequested`/`splitConfirmed` handshake
+//  cases, and `storeDeferredKeystoneSchedule` are deleted with the detour.
+//
 
 import SwiftUI
 import ComposableArchitecture
@@ -138,8 +148,8 @@ struct MigrationCoordFlow {
     /// MOB-1496 (C-1b fix, fix-wave 2): the ALREADY-SIGNED schedule payload a Keystone-with-split
     /// commit must store only after its split's broadcast succeeds (Step 0's engine trace — see the
     /// header comment above). Threaded from the batch-commit store effect, through
-    /// `.keystoneSigningSubmitted`, into `State.pendingKeystoneScheduleStore`; consumed by
-    /// `MigrationCoordFlowCoordinator.storeDeferredKeystoneSchedule`.
+    /// `.keystoneSigningSubmitted`, into `State.pendingKeystoneScheduleStore`; consumed (MOB-1513
+    /// B4) by `MigrationCoordFlowCoordinator.runFirstDeliveryKick`'s deferred store step.
     struct PendingScheduleStore: Equatable {
         let accountUUID: AccountUUID
         let scheduleEntries: [MigrationSignedTransferPczt]
@@ -217,20 +227,15 @@ struct MigrationCoordFlow {
         var isTorSheetPresented = false
         /// Non-nil exactly while `isTorSheetPresented` is true — see `PendingTorDestination`.
         var pendingTorDestination: PendingTorDestination?
-        /// MOB-1496 (W6): non-nil while a `.noteSplit` screen pushed by `resumeAfterKeystoneSigning`
-        /// (to broadcast a just-stored Keystone split) is showing — carries the SAME context so its
-        /// own `.delegate(.continued)` resumes exactly the post-commit chain that would have run
-        /// immediately had no split been needed (`resumeCommittedMigrationChain`), instead of
-        /// falling into the permission-chain fallback that handler otherwise takes. `nil` for every
-        /// other `.noteSplit` occurrence (re-entry root, or the pre-MOB-1478 defensive branch).
-        var pendingKeystoneSplitResume: KeystoneSigningContext?
-        /// MOB-1496 (C-1b fix, fix-wave 2): non-nil exactly while `pendingKeystoneSplitResume` is —
-        /// the Keystone commit's already-signed schedule entries, held back from
-        /// `storeSignedMigrationTransactions` until the split's broadcast succeeds (see this file's
-        /// header comment for why storing any earlier strands the run once the split mines).
-        /// `storeDeferredKeystoneSchedule` consumes this, clearing it on a successful store (the
-        /// `.noteSplit(.splitConfirmed)` case) but leaving it intact across a store failure so a
-        /// retry can read the same entries again.
+        /// MOB-1496 (C-1b fix, fix-wave 2; re-homed by MOB-1513 B4): the Keystone commit's
+        /// already-signed schedule entries, held back from `storeSignedMigrationTransactions` until
+        /// a preparation broadcast succeeds (see this file's header comment for why storing any
+        /// earlier strands the run once the split mines). Consumed by the coordinator's
+        /// post-confirm first-delivery kick (`MigrationCoordFlowCoordinator.runFirstDeliveryKick`),
+        /// which runs the deferred store right after its prep broadcast lands and clears this via
+        /// `.deferredKeystoneScheduleStored`; a kick failure (broadcast or store) leaves it intact.
+        /// In-memory only — see `runFirstDeliveryKick`'s doc for the accepted loss window this
+        /// shares with the pre-B4 "Splitting Funds" handshake.
         var pendingKeystoneScheduleStore: PendingScheduleStore?
         /// MOB-1496: the real per-account SDK surface needs a concrete `AccountUUID` for nearly
         /// every migration call the coordinator makes.
@@ -275,30 +280,25 @@ struct MigrationCoordFlow {
         /// Internal: sendNow's Sending screen finished (`.closed`) — refresh the `.status` element
         /// beneath with freshly-read rows and pop back to it.
         case sendNowCompleted(rows: [MigrationTransferRow])
-        /// Internal: MOB-1468 Keystone `scan(.foundPCZTBatch)` finished storing the signed PCZTs
-        /// (`storeSignedMigrationTransactions`, `Void`-returning) — pops `scan`+`keystoneSign` and
-        /// resumes the chain `context` represents. MOB-1478 (W4): the stored batch now always
-        /// includes the note-split PCZT(s) first when the engine needs any — there's no separate
-        /// per-source result to carry any more (the old `.noteSplit` context's `TransferResult`/
-        /// signed-PCZT payload is gone along with that context). MOB-1496 (final engine, plural
-        /// preps): `signedPreps` is the sentinel-prefixed entries' signed bytes — zero, one, or many
-        /// — split out of the batch (ids stripped back to their bare engine form) and stored
-        /// separately (via `storeSignedNoteSplits`, BEFORE `storeSignedMigrationTransactions` — C-1
-        /// fix, still the ordering under the final engine, see `storeKeystoneSignedBatch`'s doc for
-        /// why) — `nil` when the run needed no preps, or when the PREP store failed (that failure
-        /// takes an earlier, separate abandon path — see the `.run` effects in
-        /// `MigrationCoordFlowCoordinator`) — non-`nil` routes to the note-split screen instead of
-        /// resuming the schedule/review chain immediately (see `resumeAfterKeystoneSigning`).
-        /// MOB-1496 (C-1b fix, fix-wave 2): `pendingScheduleStore` carries the already-signed
-        /// schedule entries when (and only when) `signedPreps != nil` — the schedule is no longer
-        /// stored inline here; it rides along to be stored once the preps' broadcast succeeds (see
-        /// this file's header comment). `nil` for a no-prep batch, whose schedule already stored
-        /// immediately, unchanged.
+        /// Internal: MOB-1468 Keystone `scan(.foundPCZTBatch)` finished the ceremony's store step —
+        /// pops `scan`+`keystoneSign` and resumes the chain `context` represents. The ceremony
+        /// stores any sentinel-prefixed preparation entries via `storeSignedNoteSplits` first (C-1
+        /// order — see `storeKeystoneSignedBatch`'s doc); a no-prep batch's schedule entries store
+        /// immediately too. MOB-1496 (C-1b fix, fix-wave 2; re-homed by MOB-1513 B4):
+        /// `pendingScheduleStore` carries the already-signed schedule entries when (and only when)
+        /// preps rode the batch — the schedule is not stored inline then; it rides along to be
+        /// stored by the post-confirm first-delivery kick once a prep broadcast succeeds (see
+        /// `State.pendingKeystoneScheduleStore`). `nil` for a no-prep batch, whose schedule already
+        /// stored immediately, unchanged.
         case keystoneSigningSubmitted(
             context: KeystoneSigningContext,
-            signedPreps: [MigrationSignedTransferPczt]?,
             pendingScheduleStore: PendingScheduleStore?
         )
+        /// Internal: MOB-1513 (B4) — the first-delivery kick's deferred Keystone schedule store
+        /// succeeded (`storeSignedMigrationTransactions` -> `recordCommittedSchedule` ->
+        /// `reconcile`) — releases `pendingKeystoneScheduleStore`. Never sent on a kick failure
+        /// (broadcast or store), which leaves the stash intact.
+        case deferredKeystoneScheduleStored
         /// MOB-1513: the immediate lane's Keystone post-signing submit
         /// (`MigrationCommitPipeline.commitImmediateKeystone`, dispatched from
         /// `submitImmediateKeystoneTransaction`) succeeded — pops back to the signing source exactly
@@ -314,14 +314,6 @@ struct MigrationCoordFlow {
         /// `keystoneSign`, exactly like `MigrationReviewTransferStore.requestKeystoneSignature`'s
         /// `.keystoneSignRequested` delegate does for that lane.
         case migrateAnywayImmediateKeystonePCZTProposed(pczts: [MigrationUnsignedTransferPczt])
-        /// Internal: MOB-1496 (W6) — the note-split screen's `.delegate(.continued)` landed while
-        /// `pendingKeystoneSplitResume` was set (the mid-Keystone-commit split-broadcast case) — its
-        /// pop is deferred to this follow-up self-action for the SAME reason `keystoneSignRejected`
-        /// defers its own: popping the `noteSplit` element inline in the `.path(.element(...))` case
-        /// would race `.forEach(\.path, action:)`'s delivery of that same action to the (then-missing)
-        /// element (a TCA "missing element" runtime error, caught by
-        /// `noteSplitContinuedAfterKeystoneSplitRoutingResumesToScheduledAndClearsPendingResume`).
-        case keystoneSplitResumeContinued
         /// Internal: MOB-1468 `keystoneSign(.delegate(.rejected))`'s pop, deferred to a follow-up
         /// self-action for the same reason `sendNowCompleted` defers its pop — popping the
         /// `keystoneSign` element inline in the `.path(.element(...))` case would race

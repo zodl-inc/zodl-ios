@@ -593,6 +593,105 @@ struct MigrationManagerTests {
         #expect(impl.isPendingBackgroundTorPrompt(accountUUID: accountB) == false)
     }
 
+    // MARK: - MOB-1513 (B4): recordTransferBroadcast prep-phase guard
+
+    /// B4 reorder: the schedule is app-recorded at CONFIRM now, BEFORE any preparation (note-split)
+    /// broadcast — so the old "a note split's broadcast happens before `recordCommittedSchedule`,
+    /// making the schedule-storage append a harmless no-op" timing assumption is gone. A landed
+    /// broadcast recorded while the engine still reports `.splitPendingConfirmation` is a
+    /// preparation transaction, NOT one of the schedule's transfers: it must mark the
+    /// had-broadcast/episode flag (R14-vs-R15 routing) but append NO schedule sent record —
+    /// otherwise the "Split Balance"/transfer rows would show transfers as sent that never
+    /// broadcast.
+    @Test func recordTransferBroadcastDuringSplitPendingConfirmationMarksHadBroadcastWithoutAppendingASentRecord() async throws {
+        let scheduleSuiteName = "testRecordTransferBroadcastPrepPhaseGuardSchedule"
+        let scheduleUserDefaults = try #require(UserDefaults(suiteName: scheduleSuiteName))
+        defer { scheduleUserDefaults.removePersistentDomain(forName: scheduleSuiteName) }
+        let routingSuiteName = "testRecordTransferBroadcastPrepPhaseGuardRouting"
+        let routingUserDefaults = try #require(UserDefaults(suiteName: routingSuiteName))
+        defer { routingUserDefaults.removePersistentDomain(forName: routingSuiteName) }
+        let scheduleStorage = MigrationScheduleStorage(userDefaults: scheduleUserDefaults)
+        let failureRoutingStorage = MigrationFailureRoutingStorage(userDefaults: routingUserDefaults)
+        let account = AccountUUID(id: [UInt8](repeating: 55, count: 16))
+        let schedule = MigrationSchedule(
+            transfers: [
+                MigrationTransferProposal(id: "t0", amount: Zatoshi(100), anchorHeight: 1, nextExecutableAfterHeight: 1, expiryHeight: 9)
+            ],
+            estimatedDurationHours: 6
+        )
+        scheduleStorage.recordCommittedSchedule(schedule, for: account, now: Date())
+
+        await withDependencies {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.getMigrationState = { _ in MigrationState.splitPendingConfirmation }
+        } operation: {
+            let impl = MigrationManagerImpl(scheduleStorage: scheduleStorage, failureRoutingStorage: failureRoutingStorage)
+            await impl.recordTransferBroadcast(accountUUID: account, result: MigrationTransferResult.success(txId: "prep-tx"))
+        }
+
+        #expect(failureRoutingStorage.hadBroadcast(for: account) == true)
+        #expect(scheduleStorage.committedSchedule(for: account)?.sentRecords.isEmpty == true)
+    }
+
+    /// Once the preps are mined the engine reports `.inProgress` — a landed broadcast then IS one
+    /// of the schedule's transfers and appends exactly as before.
+    @Test func recordTransferBroadcastWhileInProgressStillAppendsSentRecord() async throws {
+        let scheduleSuiteName = "testRecordTransferBroadcastInProgressAppendsSchedule"
+        let scheduleUserDefaults = try #require(UserDefaults(suiteName: scheduleSuiteName))
+        defer { scheduleUserDefaults.removePersistentDomain(forName: scheduleSuiteName) }
+        let scheduleStorage = MigrationScheduleStorage(userDefaults: scheduleUserDefaults)
+        let account = AccountUUID(id: [UInt8](repeating: 56, count: 16))
+        let schedule = MigrationSchedule(
+            transfers: [
+                MigrationTransferProposal(id: "t0", amount: Zatoshi(100), anchorHeight: 1, nextExecutableAfterHeight: 1, expiryHeight: 9)
+            ],
+            estimatedDurationHours: 6
+        )
+        scheduleStorage.recordCommittedSchedule(schedule, for: account, now: Date())
+        let progress = MigrationProgress(
+            completedTransfers: 0, totalTransfers: 1, remainingOrchard: Zatoshi(100), nextTransferReadyAtHeight: nil
+        )
+
+        await withDependencies {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.getMigrationState = { _ in MigrationState.inProgress(progress) }
+        } operation: {
+            let impl = MigrationManagerImpl(scheduleStorage: scheduleStorage)
+            await impl.recordTransferBroadcast(accountUUID: account, result: MigrationTransferResult.success(txId: "transfer-tx"))
+        }
+
+        #expect(scheduleStorage.committedSchedule(for: account)?.sentRecords.map { $0.transferId } == ["t0"])
+    }
+
+    /// An UNREADABLE state (the read throws) keeps today's behavior — append — the guard is only
+    /// for the positively-identified prep phase, never a new way to silently drop a real transfer's
+    /// record.
+    @Test func recordTransferBroadcastWithUnreadableStateStillAppendsSentRecord() async throws {
+        struct StateReadFailure: Error { }
+        let scheduleSuiteName = "testRecordTransferBroadcastUnreadableStateAppendsSchedule"
+        let scheduleUserDefaults = try #require(UserDefaults(suiteName: scheduleSuiteName))
+        defer { scheduleUserDefaults.removePersistentDomain(forName: scheduleSuiteName) }
+        let scheduleStorage = MigrationScheduleStorage(userDefaults: scheduleUserDefaults)
+        let account = AccountUUID(id: [UInt8](repeating: 57, count: 16))
+        let schedule = MigrationSchedule(
+            transfers: [
+                MigrationTransferProposal(id: "t0", amount: Zatoshi(100), anchorHeight: 1, nextExecutableAfterHeight: 1, expiryHeight: 9)
+            ],
+            estimatedDurationHours: 6
+        )
+        scheduleStorage.recordCommittedSchedule(schedule, for: account, now: Date())
+
+        await withDependencies {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.getMigrationState = { _ in throw StateReadFailure() }
+        } operation: {
+            let impl = MigrationManagerImpl(scheduleStorage: scheduleStorage)
+            await impl.recordTransferBroadcast(accountUUID: account, result: MigrationTransferResult.success(txId: "transfer-tx"))
+        }
+
+        #expect(scheduleStorage.committedSchedule(for: account)?.sentRecords.map { $0.transferId } == ["t0"])
+    }
+
     // MARK: - reentryRoute
 
     @Test func hasInvalidTransfersWinsOverEverythingElse() {
