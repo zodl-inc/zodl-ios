@@ -142,7 +142,7 @@ struct MigrationManagerTests {
             transferRows: []
         )
 
-        #expect(variant == MigrationBannerVariant.inProgress(done: 2, total: 5))
+        #expect(variant == MigrationBannerVariant.inProgress(done: 2, total: 5, round: nil, totalRounds: nil))
     }
 
     @Test func inProgressNonManualIsPlainProgressEvenWhenDue() {
@@ -165,7 +165,7 @@ struct MigrationManagerTests {
             transferRows: []
         )
 
-        #expect(variant == MigrationBannerVariant.inProgress(done: 1, total: 4))
+        #expect(variant == MigrationBannerVariant.inProgress(done: 1, total: 4, round: nil, totalRounds: nil))
     }
 
     @Test func requiresAttentionSyncRequiredBeforeNextRendersAsPlainProgress() {
@@ -192,7 +192,7 @@ struct MigrationManagerTests {
             transferRows: []
         )
 
-        #expect(variant == MigrationBannerVariant.inProgress(done: 3, total: 6))
+        #expect(variant == MigrationBannerVariant.inProgress(done: 3, total: 6, round: nil, totalRounds: nil))
     }
 
     // MOB-1496: the SDK's `MigrationAttentionReason` has no `.transferStalled` case — "stalled" is
@@ -425,7 +425,7 @@ struct MigrationManagerTests {
         #expect(variant == nil)
     }
 
-    @Test func completeAcknowledgedWithRemainderPendingIsRequired() {
+    @Test func completeAcknowledgedWithRemainderPendingIsNextRoundRequiredAtDefaultRound() {
         let variant = MigrationDerivations.bannerVariant(
             isIronwoodActivated: true,
             state: MigrationState.complete,
@@ -440,7 +440,10 @@ struct MigrationManagerTests {
             transferRows: []
         )
 
-        #expect(variant == MigrationBannerVariant.required)
+        // MOB-1511 (W2): the re-offer is round-aware now — defaulted round args pin the
+        // default-path shape; `completeAcknowledgedWithRemainderIsNextRoundRequired` below covers
+        // explicit round threading.
+        #expect(variant == MigrationBannerVariant.nextRoundRequired(round: 1, totalRounds: nil))
     }
 
     @Test func acknowledgedFlagIsIgnoredOutsideCompleteState() {
@@ -1310,6 +1313,82 @@ struct MigrationManagerTests {
         storage.setDustLocked(true, for: accountB)
         storage.clearDustLocked(for: accountB)
         #expect(storage.isDustLocked(for: accountB) == false)
+    }
+
+    /// MOB-1511 (W2): the per-account completed-rounds counter behind the "Round N" labels.
+    @Test func completedRoundsPersistenceRoundTrip() throws {
+        let userDefaults = try #require(
+            UserDefaults(suiteName: "testCompletedRoundsPersistenceRoundTrip"),
+            "MigrationGateStorage: UserDefaults failed to initialize"
+        )
+        defer { userDefaults.removePersistentDomain(forName: "testCompletedRoundsPersistenceRoundTrip") }
+
+        let storage = MigrationGateStorage(userDefaults: userDefaults)
+        let accountA = AccountUUID(id: [UInt8](repeating: 1, count: 16))
+        let accountB = AccountUUID(id: [UInt8](repeating: 2, count: 16))
+
+        #expect(storage.completedRounds(for: accountA) == 0)
+
+        storage.incrementCompletedRounds(for: accountA)
+        storage.incrementCompletedRounds(for: accountA)
+        #expect(storage.completedRounds(for: accountA) == 2)
+        // Per-account isolation — A's runs never count toward B's.
+        #expect(storage.completedRounds(for: accountB) == 0)
+
+        storage.clearCompletedRounds(for: accountA)
+        #expect(storage.completedRounds(for: accountA) == 0)
+    }
+
+    /// MOB-1511 (W2): an acknowledged completion with a pending remainder re-offers as the
+    /// round-aware banner, carrying the (already incremented) next round number.
+    @Test func completeAcknowledgedWithRemainderIsNextRoundRequired() {
+        let variant = MigrationDerivations.bannerVariant(
+            isIronwoodActivated: true,
+            state: MigrationState.complete,
+            hasOverdue: false,
+            isManualDelivery: false,
+            isNextTransferDue: false,
+            orchardBalance: Zatoshi.zero,
+            isCompleteAcknowledged: true,
+            isMigrationRemainderPending: true,
+            transferRows: [],
+            round: 2,
+            totalRounds: 4
+        )
+
+        #expect(variant == MigrationBannerVariant.nextRoundRequired(round: 2, totalRounds: 4))
+    }
+
+    /// MOB-1511 (W2): the in-progress display rule — round 1 with no known total renders no round
+    /// label; a later round (or a known multi-round total) embeds the context.
+    @Test func inProgressEmbedsRoundContextOnlyForMultiRoundMigrations() {
+        let progress = MigrationProgress(
+            completedTransfers: 2,
+            totalTransfers: 5,
+            remainingOrchard: Zatoshi(1_000),
+            nextTransferReadyAtHeight: 100
+        )
+
+        func variant(round: Int, totalRounds: Int?) -> MigrationBannerVariant? {
+            MigrationDerivations.bannerVariant(
+                isIronwoodActivated: true,
+                state: MigrationState.inProgress(progress),
+                hasOverdue: false,
+                isManualDelivery: false,
+                isNextTransferDue: false,
+                orchardBalance: Zatoshi.zero,
+                isCompleteAcknowledged: false,
+                isMigrationRemainderPending: false,
+                transferRows: [],
+                round: round,
+                totalRounds: totalRounds
+            )
+        }
+
+        #expect(variant(round: 1, totalRounds: nil) == MigrationBannerVariant.inProgress(done: 2, total: 5, round: nil, totalRounds: nil))
+        #expect(variant(round: 1, totalRounds: 1) == MigrationBannerVariant.inProgress(done: 2, total: 5, round: nil, totalRounds: nil))
+        #expect(variant(round: 2, totalRounds: nil) == MigrationBannerVariant.inProgress(done: 2, total: 5, round: 2, totalRounds: nil))
+        #expect(variant(round: 1, totalRounds: 4) == MigrationBannerVariant.inProgress(done: 2, total: 5, round: 1, totalRounds: 4))
     }
 
     @Test func resetPersistedFlagsClearsWalletWideFlagsAndLeavesPerAccountFlags() throws {
@@ -2731,7 +2810,7 @@ struct MigrationManagerTests {
             return await impl.bannerVariant(accountUUID: nil)
         }
 
-        #expect(variant == MigrationBannerVariant.inProgress(done: 1, total: 4))
+        #expect(variant == MigrationBannerVariant.inProgress(done: 1, total: 4, round: nil, totalRounds: nil))
         #expect(getMigrationStateCalls.withValue { $0 } == 1)
         #expect(getMigrationProgressCalls.withValue { $0 } == 1)
         #expect(hasOverdueCalls.withValue { $0 } == 1)

@@ -383,6 +383,9 @@ extension SDKSynchronizerClient: DependencyKey {
             restartCurrentMigrationStep: { accountUUID, includeResidual in
                 try await synchronizer.restartCurrentMigrationStep(accountUUID: accountUUID, includeResidual: includeResidual)
             },
+            // MOB-1511 (W2) STUB: nil until librustzcash#2714's `estimate_migration_runs` is
+            // plumbed through the SDK — see the interface doc for the swap recipe.
+            estimateMigrationRunCount: { _ in nil },
             refreshStaleMigrationTransfers: { accountUUID, usk, includeResidual in
                 try await synchronizer.refreshStaleMigrationTransfers(
                     accountUUID: accountUUID,

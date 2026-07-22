@@ -648,7 +648,7 @@ import ComposableArchitecture
         let engine = makeEngine()
         engine.applyPreset(SimulatorPreset.inProgress)
 
-        #expect(bannerVariant(for: engine) == MigrationBannerVariant.inProgress(done: 2, total: 5))
+        #expect(bannerVariant(for: engine) == MigrationBannerVariant.inProgress(done: 2, total: 5, round: nil, totalRounds: nil))
         #expect(reentryRoute(for: engine) == MigrationReentryRoute.statusProgress)
     }
 
@@ -699,7 +699,7 @@ import ComposableArchitecture
         engine.applyPreset(SimulatorPreset.syncRequired)
 
         #expect(engine.isSyncRequired() == true)
-        #expect(bannerVariant(for: engine) == MigrationBannerVariant.inProgress(done: 2, total: 5))
+        #expect(bannerVariant(for: engine) == MigrationBannerVariant.inProgress(done: 2, total: 5, round: nil, totalRounds: nil))
         #expect(reentryRoute(for: engine) == MigrationReentryRoute.statusProgress)
     }
 
