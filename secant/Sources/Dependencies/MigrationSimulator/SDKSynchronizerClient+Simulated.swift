@@ -101,39 +101,15 @@ extension SDKSynchronizerClient {
             }
         }
 
-        let originalSubmitNoteSplit = self.submitNoteSplit
-        self.submitNoteSplit = { accountUUID, proposal, usk, options in
-            if engine.isActive {
-                return await engine.submitSplit(proposal)
-            } else {
-                return try await originalSubmitNoteSplit(accountUUID, proposal, usk, options)
-            }
-        }
-
-        // MOB-1496 (C-1 fix): the old `submitSignedNoteSplit` composite split into a store member and
-        // a broadcast member — the simulator's single-snapshot engine has no run to shadow (that
-        // hazard is real-engine-only), so there is no separate "store" phase to simulate here.
-        // `engine.submitSignedSplit` is unchanged (still exercised directly by
-        // `MigrationSimulatorEngineTests`) and does the full store+submit in one shot; its own `pczt`
-        // parameter has always been ignored (it re-derives the deterministic split from
-        // `prepareSplit()`), so moving the ENTIRE call into `broadcastStoredNoteSplit` below —
-        // passing `Data()` — reproduces byte-identical panel/engine behavior to the old composite.
-        // MOB-1496 (final engine, plural preps): `storeSignedNoteSplits` takes the whole
-        // `[MigrationSignedTransferPczt]` batch now — still just a pass-through/no-op here for the
-        // same reason (nothing to shadow, nothing to store).
+        // MOB-1513 (B4): the `submitNoteSplit`/`broadcastStoredNoteSplit` overrides are retired
+        // with those members — preps broadcast through `executeNextPendingMigrationTransfer` (the
+        // next-due lane, already routed through the engine below). `storeSignedNoteSplits` stays a
+        // pass-through/no-op while simulated: the simulator's single-snapshot engine has no run to
+        // store against (nothing to shadow, nothing to store).
         let originalStoreSignedNoteSplits = self.storeSignedNoteSplits
         self.storeSignedNoteSplits = { accountUUID, signed in
             if !engine.isActive {
                 try await originalStoreSignedNoteSplits(accountUUID, signed)
-            }
-        }
-
-        let originalBroadcastStoredNoteSplit = self.broadcastStoredNoteSplit
-        self.broadcastStoredNoteSplit = { accountUUID, options in
-            if engine.isActive {
-                return await engine.submitSignedSplit(Data())
-            } else {
-                return try await originalBroadcastStoredNoteSplit(accountUUID, options)
             }
         }
     }

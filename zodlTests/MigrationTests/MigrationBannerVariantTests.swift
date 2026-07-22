@@ -22,15 +22,6 @@ import Foundation
         #expect(variant.percent == nil)
     }
 
-    @Test func splittingTitleAndInfo() {
-        let variant = MigrationBannerVariant.splitting
-
-        #expect(variant.title == String(localizable: .migrationBannerRequiredTitle))
-        #expect(variant.info == String(localizable: .migrationBannerSplittingInfo))
-        #expect(variant.buttonLabel == String(localizable: .generalMore))
-        #expect(variant.percent == nil)
-    }
-
     @Test func inProgressTitleAndInfoInterpolatesDoneTotalAndPercent() {
         let variant = MigrationBannerVariant.inProgress(done: 2, total: 5, round: nil, totalRounds: nil)
 
@@ -144,7 +135,6 @@ import Foundation
     @Test func onlyTransferReadyUsesTheReviewButtonLabel() {
         let allOtherVariants: [MigrationBannerVariant] = [
             .required,
-            .splitting,
             .inProgress(done: 1, total: 2, round: nil, totalRounds: nil),
             .nextRoundRequired(round: 2, totalRounds: nil),
             .transferWaiting(number: 1),

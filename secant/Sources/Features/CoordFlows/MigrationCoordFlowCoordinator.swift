@@ -492,21 +492,6 @@ extension MigrationCoordFlow {
                 }
                 return confirmTorSheet(state: &state)
 
-                // MARK: - NoteSplit (re-entry root, MOB-1478 W4)
-
-            case .path(.element(id: let id, action: .noteSplit(.delegate(.continued)))):
-                // MOB-1513 (B4): forward routing never pushes `.noteSplit` at all any more — the
-                // mid-Keystone-commit push (MOB-1496 W6/C-1b) re-homed onto the post-confirm
-                // first-delivery kick — so the only occurrence left is the re-entry root.
-                if case .noteSplit(let noteSplitState) = state.path[id: id], noteSplitState.isFlowRoot {
-                    return .send(.flowFinished)
-                }
-                // Kept defensively (the exhaustive shape this reducer already had) for any other
-                // non-root `.noteSplit` occurrence rather than deleted.
-                return .run { send in
-                    await send(.pushNextPermissionStep(await nextPermissionStepResult()))
-                }
-
                 // MOB-1513 (B4): the first-delivery kick's deferred Keystone schedule store landed —
                 // the entries are durably in the engine now, so the stash can be released.
             case .deferredKeystoneScheduleStored:
@@ -1633,9 +1618,6 @@ extension MigrationCoordFlow {
 
         case .complete:
             return .complete(await completeState(accountUUID: accountUUID, isFlowRoot: true))
-
-        case .noteSplitProgress:
-            return .noteSplit(MigrationNoteSplit.State(phase: .splitting, isFlowRoot: true))
 
         case .reviewManual(let step, let total):
             return .reviewTransfer(await reviewManualState(accountUUID: accountUUID, step: step, total: total, isFlowRoot: true))

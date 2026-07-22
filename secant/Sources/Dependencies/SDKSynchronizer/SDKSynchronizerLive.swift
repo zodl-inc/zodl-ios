@@ -307,8 +307,8 @@ extension SDKSynchronizerClient: DependencyKey {
                 }
             },
             // Migration (Orchard → Ironwood) — real SDK wiring (MOB-1496). The three broadcast-path
-            // members (`submitNoteSplit`, `executeNextPendingMigrationTransfer`,
-            // `broadcastStoredNoteSplit`) acquire the transaction guard — same `withSubmission`
+            // members (`executeNextPendingMigrationTransfer`,
+            // `createAndSubmitProposedTransactions`) acquire the transaction guard — same `withSubmission`
             // pattern as `createAndSubmitProposedTransactions` — so a `switchTo(endpoint:)` can
             // never overlap a migration broadcast. Every other member here is read-only/non-broadcast
             // and stays unguarded; `lockMigrationResidual`/`unlockMigrationResidual` are not
@@ -333,17 +333,6 @@ extension SDKSynchronizerClient: DependencyKey {
             },
             prepareNoteSplit: { accountUUID in
                 try await synchronizer.prepareNoteSplit(accountUUID: accountUUID)
-            },
-            submitNoteSplit: { accountUUID, proposal, usk, options in
-                @Dependency(\.transactionGuard) var transactionGuard
-                return try await transactionGuard.withSubmission {
-                    try await synchronizer.submitNoteSplit(
-                        accountUUID: accountUUID,
-                        proposal: proposal,
-                        usk: usk,
-                        options: options
-                    )
-                }
             },
             proposeMigrationTransfers: { accountUUID, includeResidual in
                 try await synchronizer.proposeMigrationTransfers(accountUUID: accountUUID, includeResidual: includeResidual)
@@ -434,17 +423,6 @@ extension SDKSynchronizerClient: DependencyKey {
                 // see `SDKSynchronizerInterface`'s doc: this store and `storeSignedMigrationTransactions`
                 // are order-independent per-transaction signature applications now.
                 _ = try await synchronizer.storeSignedNoteSplitPCZTs(accountUUID: accountUUID, signed)
-            },
-            broadcastStoredNoteSplit: { accountUUID, options in
-                @Dependency(\.transactionGuard) var transactionGuard
-                return try await transactionGuard.withSubmission {
-                    // The engine serves the already-stored split as the next-due transfer, so `nil`
-                    // here means it wasn't due yet (not a failure) — treat as retryable so the UI
-                    // offers a retry rather than reporting a false failure. Idempotent by
-                    // construction: a retry just asks "what's next-due" again, never re-stores.
-                    let result = try await synchronizer.executeNextPendingMigrationTransfer(accountUUID: accountUUID, options: options)
-                    return result ?? MigrationTransferResult.networkError(retryable: true)
-                }
             },
             proposeMigrationPCZTs: { accountUUID, schedule in
                 try await synchronizer.createUnsignedMigrationTransferPCZTs(accountUUID: accountUUID, for: schedule)

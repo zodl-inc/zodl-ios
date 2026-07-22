@@ -10098,23 +10098,6 @@
         }
       }
     },
-    "migrationBanner.splittingInfo" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Split in progress…"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "División en curso…"
-          }
-        }
-      }
-    },
     "migrationBanner.updatePlanInfo" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -10918,40 +10901,6 @@
         }
       }
     },
-    "migrationNoteSplit.confirmedDesc" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Your balance is now split into transfer-sized notes, ready to migrate."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Tu saldo ya está dividido en notas del tamaño de una transferencia, listas para migrar."
-          }
-        }
-      }
-    },
-    "migrationNoteSplit.confirmedTitle" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Split Confirmed!"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "¡División confirmada!"
-          }
-        }
-      }
-    },
     "migrationNoteSplit.continue" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -11003,40 +10952,6 @@
         }
       }
     },
-    "migrationNoteSplit.inProgressBody" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Keep your phone on and the app open until this step completes."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Mantén el teléfono encendido y la app abierta hasta que termine este paso."
-          }
-        }
-      }
-    },
-    "migrationNoteSplit.inProgressTitle" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Transaction in Progress"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Transacción en curso"
-          }
-        }
-      }
-    },
     "migrationNoteSplit.retry" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -11050,40 +10965,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Reintentar"
-          }
-        }
-      }
-    },
-    "migrationNoteSplit.splittingDesc" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Splitting your balance into transfer-sized notes. This is a send-to-self — your ZEC stays in Orchard."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Dividiendo tu saldo en notas del tamaño de una transferencia. Esto es un envío a ti mismo: tu ZEC permanece en Orchard."
-          }
-        }
-      }
-    },
-    "migrationNoteSplit.splittingTitle" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Splitting Funds…"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Dividiendo fondos…"
           }
         }
       }
