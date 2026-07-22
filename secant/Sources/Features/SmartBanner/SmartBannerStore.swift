@@ -744,7 +744,17 @@ struct SmartBanner {
                 // sample (which can still be >= the show threshold if the SDK skipped
                 // a final low-remainder update) and spuriously re-show the banner.
                 state.lastKnownBlocksRemaining = -1
-                if state.priorityContent == .priority3 || state.priorityContent == .priority45 || state.priorityContent == .priority4 {
+                if state.priorityContent == .priority3 || state.priorityContent == .priority45 || state.priorityContent == .priority4 || state.priorityContent == nil {
+                    // MOB-1513 (B2): the empty-slot case (`priorityContent == nil`) runs the SAME
+                    // re-check. After a restore the slot is often empty at the moment the recovery
+                    // balance finally surfaces (the SDK's E2-FIX holds that balance across the
+                    // post-restore summary gap, so it is available early); the synchronizer re-emits
+                    // `.upToDate` ~every 2s while synced, so this deterministic app-side trigger
+                    // opens "Migration Required" on the next tick with no timer. On an empty slot the
+                    // `.closeBanner(true)` below is a harmless no-op, and a nil re-check variant opens
+                    // nothing — so this never conjures a banner out of nothing. The occupied-slot
+                    // preemption cases (priority3/priority45/priority4) are unchanged.
+                    //
                     // MOB-1513 (Defect B): closing here used to leave the slot empty with NO
                     // re-evaluation — on an Ironwood-migration account this let currency-conversion
                     // (priority8) claim the banner before migration ever got a chance to (the next
