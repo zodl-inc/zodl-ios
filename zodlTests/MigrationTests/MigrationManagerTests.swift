@@ -200,6 +200,92 @@ struct MigrationManagerTests {
         #expect(variant == MigrationBannerVariant.inProgress(done: 1, total: 4, round: nil, totalRounds: nil))
     }
 
+    // MARK: - MOB-1513 (B1): the immediate (send-max) sweep goes fully quiet
+
+    /// MOB-1513 (B1): an immediate sweep in flight shows NO banner during the unmined window — the
+    /// balance is already spent, so there is nothing to prompt and nothing to acknowledge. Only the
+    /// `isImmediate` flag on the in-progress snapshot distinguishes it from an engine run (which
+    /// still shows the progress banner, pinned by the `.inProgress` tests above).
+    @Test func inProgressImmediateSweepShowsNoBanner() {
+        let progress = MigrationProgress(
+            completedTransfers: 0,
+            totalTransfers: 1,
+            remainingOrchard: Zatoshi.zero,
+            nextTransferReadyAtHeight: nil,
+            isImmediate: true
+        )
+
+        let variant = MigrationDerivations.bannerVariant(
+            isIronwoodActivated: true,
+            state: MigrationState.inProgress(progress),
+            hasOverdue: false,
+            isManualDelivery: false,
+            isNextTransferDue: false,
+            orchardBalance: Zatoshi.zero,
+            isCompleteAcknowledged: false,
+            isMigrationRemainderPending: false,
+            transferRows: []
+        )
+
+        #expect(variant == nil)
+    }
+
+    /// MOB-1513 (B1): "Migration Required" can NEVER surface mid-flight for the immediate sweep —
+    /// the balance is already spent. Even a stray positive `orchardBalance` threaded in leaves the
+    /// immediate in-progress state quiet (nil), pinning that the immediate guard sits inside the
+    /// `.inProgress` arm, which never consults `orchardBalance` to re-offer `.required`.
+    @Test func inProgressImmediateSweepNeverShowsRequiredEvenWithPositiveBalance() {
+        let progress = MigrationProgress(
+            completedTransfers: 0,
+            totalTransfers: 1,
+            remainingOrchard: Zatoshi(1_000),
+            nextTransferReadyAtHeight: nil,
+            isImmediate: true
+        )
+
+        let variant = MigrationDerivations.bannerVariant(
+            isIronwoodActivated: true,
+            state: MigrationState.inProgress(progress),
+            hasOverdue: false,
+            isManualDelivery: false,
+            isNextTransferDue: false,
+            orchardBalance: Zatoshi(1_000),
+            isCompleteAcknowledged: false,
+            isMigrationRemainderPending: false,
+            transferRows: []
+        )
+
+        #expect(variant == nil)
+        #expect(variant != MigrationBannerVariant.required)
+    }
+
+    /// MOB-1513 (B1): the immediate guard is scoped to the `.inProgress` arm only — an engine run
+    /// (`isImmediate` false, the default) still renders the ordinary progress banner. Pins the
+    /// engine path is byte-identical alongside the immediate quiet path.
+    @Test func inProgressEngineRunStillShowsProgressBanner() {
+        let progress = MigrationProgress(
+            completedTransfers: 2,
+            totalTransfers: 5,
+            remainingOrchard: Zatoshi(1_000),
+            nextTransferReadyAtHeight: 100,
+            isImmediate: false
+        )
+
+        let variant = MigrationDerivations.bannerVariant(
+            isIronwoodActivated: true,
+            state: MigrationState.inProgress(progress),
+            hasOverdue: false,
+            isManualDelivery: false,
+            isNextTransferDue: false,
+            orchardBalance: Zatoshi.zero,
+            isCompleteAcknowledged: false,
+            isMigrationRemainderPending: false,
+            transferRows: []
+        )
+
+        #expect(variant == MigrationBannerVariant.inProgress(done: 2, total: 5, round: nil, totalRounds: nil))
+    }
+
     @Test func requiresAttentionSyncRequiredBeforeNextRendersAsPlainProgress() {
         // The LiveKey normalizes `.requiresAttention(.syncRequiredBeforeNext)` into
         // `.inProgress(progress)` using its own `getMigrationProgress()` snapshot before calling
@@ -906,6 +992,32 @@ struct MigrationManagerTests {
         )
 
         #expect(route == MigrationReentryRoute.statusProgress)
+    }
+
+    /// MOB-1513 (B1): an immediate sweep in flight has no per-transfer status screen to resume into
+    /// — re-entry routes to `.entry` (quiet) rather than `.statusProgress`. Engine-run in-progress
+    /// (`isImmediate` false) still resumes on the status screen (see `plainInProgressIsStatusProgress`).
+    @Test func immediateInProgressRoutesToEntry() {
+        let progress = MigrationProgress(
+            completedTransfers: 0,
+            totalTransfers: 1,
+            remainingOrchard: Zatoshi.zero,
+            nextTransferReadyAtHeight: nil,
+            isImmediate: true
+        )
+
+        let route = MigrationDerivations.reentryRoute(
+            isIronwoodActivated: true,
+            state: MigrationState.inProgress(progress),
+            hasInvalid: false,
+            hasOverdue: false,
+            isManualDelivery: false,
+            isNextTransferDue: false,
+            isCompleteAcknowledged: false,
+            progress: progress
+        )
+
+        #expect(route == MigrationReentryRoute.entry)
     }
 
     @Test func completeUnacknowledgedIsCompleteRoute() {

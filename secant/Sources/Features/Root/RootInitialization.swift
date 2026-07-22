@@ -67,6 +67,16 @@ private enum MigrationAccountClassification: Equatable {
     /// nil — nothing pending to order against this session, but still an active run (excluded from
     /// the "every account complete/notStarted" cancel-all trigger).
     case activeNoCandidate
+    /// MOB-1513 (B1): an immediate (send-max) run in flight — `.inProgress` with the SDK's
+    /// `MigrationProgress.isImmediate` flag set. Its single transaction was already broadcast from
+    /// the foreground immediate lane and it has NO scheduled transfers, so the BG lane has nothing
+    /// to broadcast, sync, or retry for it. Unlike `.activeNoCandidate` (a generic active run that
+    /// re-arms the wakeup windows), this counts as no-BG-work: `isDoneClassification` treats it as
+    /// done, so a lone immediate-in-flight account cancels scheduling rather than re-arming, while
+    /// composing transparently with any engine-run account (it never blocks another account's own
+    /// broadcast/sync). Its own resolution needs no wakeup chain — mining goes quiet (the engine
+    /// consumes it, no `.complete`), expiry re-offers "Migration Required" from the foreground.
+    case immediateInFlight
     /// A `try?`-guarded read failed for this account — logged and skipped; conservatively excluded
     /// from the cancel-all trigger too (its true state is unknown).
     case unreadable
@@ -92,6 +102,15 @@ private func classifyMigrationAccount(
         return MigrationAccountClassification.nothingToDo(migrationState)
     default:
         break
+    }
+
+    // MOB-1513 (B1): peel off an immediate (send-max) run in flight before the broadcast-candidate
+    // probes below — its single transaction is already broadcast and it has no scheduled transfers,
+    // so it is no-BG-work (never a candidate, never re-arms; see `.immediateInFlight`'s doc). Done
+    // ahead of the plan-broken / sync-required / reschedule reads, which are all meaningless for an
+    // immediate run and would otherwise leave it as `.activeNoCandidate`, spuriously re-arming.
+    if case let MigrationState.inProgress(progress) = migrationState, progress.isImmediate {
+        return MigrationAccountClassification.immediateInFlight
     }
 
     guard let hasInvalid = try? await sdkSynchronizer.hasInvalidMigrationTransfers(accountUUID) else {
@@ -217,8 +236,18 @@ private enum MigrationSessionPlanner {
     /// post-broadcast complete-check, via `allAccountsAreDone` below, so the two "is everyone
     /// really done" sites can't drift apart.
     static func isDoneClassification(_ classification: MigrationAccountClassification) -> Bool {
-        guard case let .nothingToDo(state) = classification else { return false }
-        return state == MigrationState.complete || state == MigrationState.notStarted
+        switch classification {
+        case let .nothingToDo(state):
+            return state == MigrationState.complete || state == MigrationState.notStarted
+        // MOB-1513 (B1): an immediate (send-max) run in flight is no-BG-work — it counts as done for
+        // the cancel-all gate so a lone immediate-in-flight account cancels scheduling instead of
+        // re-arming, and never blocks an engine-run account's own broadcast/sync (see
+        // `.immediateInFlight`'s doc).
+        case .immediateInFlight:
+            return true
+        default:
+            return false
+        }
     }
 
     /// True only when EVERY entry in `classifications` is done (`isDoneClassification`) —
@@ -1563,8 +1592,8 @@ extension Root {
     /// 2. MOB-1496 (W5): every OTHER candidate account (the wallet's accounts, selected first, then
     ///    stored order — `MigrationDerivations.candidateAccountUUIDs`) is independently classified
     ///    (`classifyMigrationAccount`) into `.nothingToDo`/`.planBroken`/`.syncNeeded`/
-    ///    `.broadcastCandidate`/`.activeNoCandidate`/`.unreadable`, then `MigrationSessionPlanner
-    ///    .plan(_:)` resolves the WHOLE session to exactly one action:
+    ///    `.broadcastCandidate`/`.activeNoCandidate`/`.immediateInFlight`/`.unreadable`, then
+    ///    `MigrationSessionPlanner.plan(_:)` resolves the WHOLE session to exactly one action:
     ///    - Any plan-broken account -> ONE `.planNeedsUpdate` notification for the whole session
     ///      (not per account); continue evaluating the rest (does not itself block a healthy
     ///      account's own sync/broadcast).

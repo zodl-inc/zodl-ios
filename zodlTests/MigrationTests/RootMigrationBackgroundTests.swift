@@ -1242,6 +1242,64 @@ import ComposableArchitecture
         }
     }
 
+    /// MOB-1513 (B1): an immediate (send-max) run in flight has a single already-broadcast
+    /// transaction and NO scheduled transfers for the BG lane to ever broadcast. Unlike a generic
+    /// active `.inProgress` account whose reschedule probe returns nil (`.activeNoCandidate`, which
+    /// re-arms — pinned by `activeAccountWithNilProbeIsNotABroadcastCandidate` above), an immediate
+    /// run is classified as no-BG-work: never a broadcast candidate, and it does NOT re-arm the
+    /// wakeup windows. A lone immediate-in-flight account therefore CANCELS scheduling rather than
+    /// re-arming — nothing the BG lane can ever broadcast for it, and its own resolution (mine ->
+    /// quiet, expire -> foreground re-offer) needs no wakeup chain. The reschedule probe is never
+    /// even read, since the immediate run is peeled off before the broadcast-candidate check.
+    @Test func immediateInFlightRunIsNoBackgroundWorkAndCancelsRatherThanRearms() async {
+        let executeNextPendingMigrationTransferCalls = LockIsolated<Int>(0)
+        let rescheduleCalls = LockIsolated<Int>(0)
+        let cancelAllCalls = LockIsolated<Int>(0)
+        let scheduleNextWindowCalls = LockIsolated<Int>(0)
+        let completeCalls = LockIsolated<[Bool]>([])
+
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let store = Store(initialState: Self.selectedAccountState()) {
+                Root()
+            } withDependencies: {
+                baseNoOpDependencies(&$0)
+                $0.sdkSynchronizer.getMigrationState = { _ in
+                    MigrationState.inProgress(
+                        MigrationProgress(
+                            completedTransfers: 0,
+                            totalTransfers: 1,
+                            remainingOrchard: Zatoshi.zero,
+                            nextTransferReadyAtHeight: nil,
+                            isImmediate: true
+                        )
+                    )
+                }
+                $0.sdkSynchronizer.rescheduleOverdueMigrationTransfer = { _ in
+                    rescheduleCalls.withValue { $0 += 1 }
+                    return nil
+                }
+                $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in
+                    executeNextPendingMigrationTransferCalls.withValue { $0 += 1 }
+                    return MigrationTransferResult.success(txId: "should-not-be-called")
+                }
+                $0.migrationBGScheduler.cancelAll = { cancelAllCalls.withValue { $0 += 1 } }
+                $0.migrationBGScheduler.scheduleNextWindow = { scheduleNextWindowCalls.withValue { $0 += 1 } }
+            }
+
+            let handle = MigrationBGSessionHandle(rawTask: nil) { success in completeCalls.withValue { $0.append(success) } }
+            store.send(.initialization(.migrationBackgroundSession(handle)))
+            await waitForRootStore { completeCalls.withValue { !$0.isEmpty } }
+
+            #expect(executeNextPendingMigrationTransferCalls.withValue { $0 } == 0)
+            #expect(rescheduleCalls.withValue { $0 } == 0)
+            #expect(scheduleNextWindowCalls.withValue { $0 } == 0)
+            #expect(cancelAllCalls.withValue { $0 } == 1)
+            #expect(completeCalls.withValue { $0 } == [true])
+        }
+    }
+
     /// Fix-wave finding 1 (the review's headline SPEC violation) — THIS IS THE PINNING TEST: two
     /// accounts, the winner's OWN broadcast finishes IT (`getMigrationState(winner)` reads
     /// `.complete` on the post-broadcast check), but the OTHER account is still `.inProgress` with
