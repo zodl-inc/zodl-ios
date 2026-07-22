@@ -181,11 +181,20 @@ struct WalletStorage {
     func resetZashi() throws {
         try deleteData(forKey: Constants.zcashStoredWallet)
         try? deleteData(forKey: Constants.zcashStoredAdressBookEncryptionKeys)
-        try? deleteData(forKey: "\(Constants.zcashStoredUserMetadataEncryptionKeys)_zashi")
-        try? deleteData(forKey: "\(Constants.zcashStoredUserMetadataEncryptionKeys)_keystone")
+        // Metadata-encryption-key and shielding-reminder entries are stored per account under
+        // "<base>_<accountName>" (accountMetadataFilename / zcashStoredShieldingReminder). The
+        // account name comes from a localizable string — it became "Zodl" after the ZODL rebrand
+        // (was "Zashi"), and the two builders even disagree on casing ("_zodl" vs "_Zodl") — so a
+        // hardcoded "_zashi"/"_keystone" suffix misses the live key and leaks a stale metadata
+        // encryption key into the next wallet (MOB-1450 class). Enumerate and wipe every per-account
+        // entry, mirroring the voting-hotkey handling below.
+        for key in keychainKeys(withPrefix: "\(Constants.zcashStoredUserMetadataEncryptionKeys)_") {
+            try? deleteData(forKey: key)
+        }
         try? deleteData(forKey: Constants.zcashStoredWalletBackupReminder)
-        try? deleteData(forKey: "\(Constants.zcashStoredShieldingReminder)_zashi")
-        try? deleteData(forKey: "\(Constants.zcashStoredShieldingReminder)_keystone")
+        for key in keychainKeys(withPrefix: "\(Constants.zcashStoredShieldingReminder)_") {
+            try? deleteData(forKey: key)
+        }
         try? deleteData(forKey: Constants.zcashStoredWalletBackupAcknowledged)
         try? deleteData(forKey: Constants.zcashStoredShieldingAcknowledged)
         try? deleteData(forKey: Constants.zcashStoredTorSetupFlag)
@@ -206,10 +215,15 @@ struct WalletStorage {
             guard let data = try encode(object: keys) else {
                 throw KeychainError.encoding
             }
-            
-            try setData(data, forKey: Constants.zcashStoredAdressBookEncryptionKeys)
-        } catch KeychainError.duplicate {
-            throw WalletStorageError.alreadyImported
+
+            do {
+                try setData(data, forKey: Constants.zcashStoredAdressBookEncryptionKeys)
+            } catch KeychainError.duplicate {
+                // The slot already holds keys; overwrite instead of failing so a key derived
+                // from a previous wallet seed can be replaced with the current seed's key. A
+                // stale key must never survive into a new wallet (MOB-1450).
+                try updateData(data, forKey: Constants.zcashStoredAdressBookEncryptionKeys)
+            }
         } catch {
             throw WalletStorageError.storageError(error)
         }
@@ -243,14 +257,19 @@ struct WalletStorage {
                 throw KeychainError.encoding
             }
             
-            try setData(data, forKey: Constants.accountMetadataFilename(account: account))
-        } catch KeychainError.duplicate {
-            throw WalletStorageError.alreadyImported
+            do {
+                try setData(data, forKey: Constants.accountMetadataFilename(account: account))
+            } catch KeychainError.duplicate {
+                // The slot already holds keys; overwrite instead of failing so a key derived
+                // from a previous wallet seed can be replaced with the current seed's key. A
+                // stale key must never survive into a new wallet (MOB-1450).
+                try updateData(data, forKey: Constants.accountMetadataFilename(account: account))
+            }
         } catch {
             throw WalletStorageError.storageError(error)
         }
     }
-    
+
     func exportUserMetadataEncryptionKeys(account: Account) throws -> UserMetadataEncryptionKeys {
         let reqData: Data?
         
