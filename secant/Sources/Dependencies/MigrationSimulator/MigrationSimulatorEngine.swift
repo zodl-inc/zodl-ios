@@ -269,6 +269,20 @@ final class MigrationSimulatorEngine: @unchecked Sendable {
         withSnapshot { $0.isDustLocked }
     }
 
+    /// MOB-1496: the release half of `lockDust()` — mirrors the real SDK's
+    /// `unlockMigrationResidual`, which "Migrate anyway" now calls before re-proposing. Returns `1`
+    /// when a lock was actually cleared, `0` otherwise (the real SDK returns a count of unlocked
+    /// outputs; this simulator has only the one dust remainder to unlock, so the count is binary).
+    @discardableResult
+    func unlockDust() -> Int {
+        withSnapshot { snapshot in
+            guard snapshot.isDustLocked else { return 0 }
+            snapshot.isDustLocked = false
+            snapshot.lastBackgroundRunSummary = "dust unlocked"
+            return 1
+        }
+    }
+
     /// "Migrate anyway" on Migration Complete: broadcasts the dust remainder as one final
     /// transfer. Same broadcast latency as `performSend`; `nil` when there is nothing sweepable
     /// (no dust, or already locked) so the Sending screen's failure sheet surfaces misuse.

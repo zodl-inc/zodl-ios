@@ -306,17 +306,22 @@ extension SDKSynchronizerClient: DependencyKey {
                     try await synchronizer.getTreeState(height: height)
                 }
             },
-            // Migration (Orchard → Ironwood) — real SDK wiring (MOB-1496). The four broadcast-path
+            // Migration (Orchard → Ironwood) — real SDK wiring (MOB-1496). The three broadcast-path
             // members (`submitNoteSplit`, `executeNextPendingMigrationTransfer`,
-            // `migrateMigrationDust`, `broadcastStoredNoteSplit`) acquire the transaction guard —
-            // same `withSubmission` pattern as `createAndSubmitProposedTransactions` — so a
-            // `switchTo(endpoint:)` can never overlap a migration broadcast. Every other member
-            // here is read-only/non-broadcast and stays unguarded; `storeSignedMigrationTransactions`/
-            // `storeSignedNoteSplits` (Keystone/PCZT path) are local storage, not a broadcast, so they
-            // stay unguarded too. Final engine: the run is created at PCZT-build time
-            // (`proposeNoteSplitPCZTs`, below) — these two stores are order-independent
-            // per-transaction signature applications over that same already-created run, not a
-            // sequencing hazard (see `SDKSynchronizerInterface`'s doc on both members).
+            // `broadcastStoredNoteSplit`) acquire the transaction guard — same `withSubmission`
+            // pattern as `createAndSubmitProposedTransactions` — so a `switchTo(endpoint:)` can
+            // never overlap a migration broadcast. Every other member here is read-only/non-broadcast
+            // and stays unguarded; `lockMigrationResidual`/`unlockMigrationResidual` are not
+            // broadcast-bearing either (no transaction submitted). MOB-1496 (W-B): the old fourth
+            // guarded member, `migrateMigrationDust` (a schedule-propose + sign-store + execute
+            // composite), is retired — "Migrate anyway" broadcasts through the already-guarded
+            // `createAndSubmitProposedTransactions`/`createPCZTFromProposal` lane instead, same as
+            // any other immediate transfer. `storeSignedMigrationTransactions`/`storeSignedNoteSplits`
+            // (Keystone/PCZT path) are local storage, not a broadcast, so they stay unguarded too.
+            // Final engine: the run is created at PCZT-build time (`proposeNoteSplitPCZTs`, below) —
+            // these two stores are order-independent per-transaction signature applications over
+            // that same already-created run, not a sequencing hazard (see `SDKSynchronizerInterface`'s
+            // doc on both members).
             getMigrationState: { accountUUID in
                 try await synchronizer.migrationState(accountUUID: accountUUID)
             },
@@ -351,6 +356,14 @@ extension SDKSynchronizerClient: DependencyKey {
             },
             residualAfterMigration: { accountUUID in
                 try await synchronizer.residualAfterMigration(accountUUID: accountUUID)
+            },
+            // MOB-1496: thin passthroughs — not broadcast-bearing (no transaction-guard wrap), same
+            // reasoning as `residualAfterMigration` above.
+            lockMigrationResidual: { accountUUID in
+                try await synchronizer.lockMigrationResidual(accountUUID: accountUUID)
+            },
+            unlockMigrationResidual: { accountUUID in
+                try await synchronizer.unlockMigrationResidual(accountUUID: accountUUID)
             },
             signAndStoreMigrationSchedule: { accountUUID, schedule, usk in
                 try await synchronizer.signAndStoreMigrationSchedule(accountUUID: accountUUID, schedule, usk: usk)
@@ -405,18 +418,6 @@ extension SDKSynchronizerClient: DependencyKey {
                     return false
                 }
                 return SDKSynchronizerClient.requiresOrchardFunds(amount: amount, balance: balance)
-            },
-            // MOB-1487: composite — propose a residual-inclusive schedule, sign+store it, then
-            // execute the first (only) due transfer, all under one guard acquisition so nothing else
-            // can broadcast in between. `nil` when there is nothing left to sweep.
-            migrateMigrationDust: { accountUUID, usk, options in
-                @Dependency(\.transactionGuard) var transactionGuard
-                return try await transactionGuard.withSubmission {
-                    let schedule = try await synchronizer.proposeMigrationTransfers(accountUUID: accountUUID, includeResidual: true)
-                    guard !schedule.transfers.isEmpty else { return nil }
-                    try await synchronizer.signAndStoreMigrationSchedule(accountUUID: accountUUID, schedule, usk: usk)
-                    return try await synchronizer.executeNextPendingMigrationTransfer(accountUUID: accountUUID, options: options)
-                }
             },
             proposeNoteSplitPCZTs: { accountUUID in
                 try await synchronizer.createUnsignedNoteSplitPCZTs(accountUUID: accountUUID)

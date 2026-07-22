@@ -155,6 +155,18 @@ struct SDKSynchronizerClient: Sendable {
     /// The leftover Orchard balance a migration would not cross, when worth offering a choice
     /// about; `nil` when there is none. THROWS before the wallet's first completed sync.
     var residualAfterMigration: @Sendable (AccountUUID) async throws -> Zatoshi?
+    /// MOB-1496: locks every currently-spendable legacy-Orchard note of the account until explicit
+    /// unlock and returns the total value just locked — the "Lock balance" choice at migration
+    /// `Complete`. `Zatoshi(0)` is a legitimate result; idempotent-additive (repeating the call
+    /// locks only notes that became spendable since); a concurrent-lock race throws and is
+    /// retry-safe. NOT broadcast-bearing (no transaction-guard wrap).
+    var lockMigrationResidual: @Sendable (AccountUUID) async throws -> Zatoshi
+    /// MOB-1496: clears ALL of the account's output locks — the release half of
+    /// `lockMigrationResidual` — and returns the number of outputs unlocked (`0` when nothing was
+    /// locked). "Migrate anyway" over a locked residual is this call followed by
+    /// `proposeImmediateMigration`: locked notes are excluded from note selection, so the unlock
+    /// must come first. NOT broadcast-bearing (no transaction-guard wrap).
+    var unlockMigrationResidual: @Sendable (AccountUUID) async throws -> Int
     /// Pre-signs and persists every transfer of `schedule` in the migration engine (needs the
     /// account's USK).
     var signAndStoreMigrationSchedule: @Sendable (AccountUUID, MigrationSchedule, UnifiedSpendingKey) async throws -> Void
@@ -197,14 +209,11 @@ struct SDKSynchronizerClient: Sendable {
     /// the send-form privacy disclaimer once Ironwood is active. Non-throwing: degrades to `false`
     /// (matches the pre-real-SDK stub's permissive default) on any read error.
     var sendRequiresOrchardFunds: @Sendable (AccountUUID, Zatoshi) async -> Bool = { _, _ in false }
-    // Dust resolution — [ext] MOB-1487: `migrateMigrationDust` broadcasts the account's leftover
-    // dust as one final transfer ("Migrate anyway") — deliberately NOT
-    // `executeNextPendingMigrationTransfer`, which a background poll may call with no pending
-    // transfers and must never sweep dust the user hasn't consented to move. `lockMigrationDust`/
+    // MOB-1496 (W-B): the old engine-schedule-based dust composite (`migrateMigrationDust`) is
+    // retired — "Migrate anyway" now rides the same `proposeImmediateMigration` +
+    // `createAndSubmitProposedTransactions`/`createPCZTFromProposal` lane as the entry-screen
+    // immediate migration, unlock-first (`unlockMigrationResidual`, above). `lockMigrationDust`/
     // `isMigrationDustLocked` are app persistence, not SDK calls — see `MigrationManagerClient`.
-    var migrateMigrationDust: @Sendable (
-        AccountUUID, UnifiedSpendingKey, MigrationNetworkPrivacyOptions
-    ) async throws -> MigrationTransferResult?
     // Keystone (PCZT)
     /// Builds the account's whole previewed Keystone migration commit UNSIGNED and returns the
     /// preparation (note-split) subset for the signing ceremony — empty when no preps are needed.

@@ -64,11 +64,23 @@
 //  `resubmitSignedNoteSplit` lane) instead of resuming the schedule/review chain immediately —
 //  `pendingKeystoneSplitResume` stashes what to resume with once that screen's `.continued` fires,
 //  landing on the SAME `resumeCommittedMigrationChain` helper `resumeAfterKeystoneSigning` uses
-//  directly for a no-split batch. `.complete(.delegate(.migrateAnyway))` now forks on vendor:
-//  software is unchanged, and Keystone proposes + PCZT-signs a batch-of-1 dust transfer through this
-//  same signing machinery (`KeystoneSigningContext.dust`) before broadcasting it via the dust Sending
-//  lane's existing `executeNextPendingMigrationTransfer` path (never `migrateMigrationDust`, a USK
-//  composite that would re-propose from scratch).
+//  directly for a no-split batch.
+//
+//  MOB-1496 (W-B): "Migrate anyway" (`.complete(.delegate(.migrateAnyway))`) is rewired onto the
+//  same immediate (send-max) lane the entry-screen migration uses, for BOTH vendors — the old
+//  engine-schedule-based dust composite (`SDKSynchronizerClient.migrateMigrationDust`,
+//  `proposeMigrationTransfers(includeResidual: true)`, `KeystoneSigningContext.dust`,
+//  `.keystoneDustPCZTsProposed`) is retired entirely. Unlock-first is LOAD-BEARING: locked notes
+//  are excluded from send-max note selection, so `unlockMigrationResidual` must run before
+//  `proposeImmediateMigration` — a residual locked via "Lock balance" would otherwise propose
+//  `Zatoshi.zero` silently. Software pushes `MigrationSending.State(immediateProposal:)` directly
+//  (Complete -> Sending, no `ReviewTransfer` hop); Keystone builds the proposal's PCZT via
+//  `createPCZTFromProposal` and arms `KeystoneSigningContext.immediateReview` — the SAME context
+//  (and the SAME `submitImmediateKeystoneTransaction` post-signing step) the entry-screen
+//  immediate lane's Keystone ceremony already uses, via `.migrateAnywayImmediateKeystonePCZTProposed`
+//  (Complete -> keystoneSign -> scan, unchanged shape). A propose/unlock failure on either vendor
+//  pushes `MigrationSending.State(isFailurePresented: true)` — the same generic failure sheet every
+//  other lane's broadcast failure already shows, reused rather than inventing new UI.
 //
 //  MOB-1496 (final review R6, C-1 fix): W6's store order was backwards against the real engine —
 //  `storeSignedNoteSplitPCZT` unconditionally starts a NEW run, while `storeSignedMigrationTransactions`
@@ -948,45 +960,51 @@ extension MigrationCoordFlow {
 
                 // MARK: - Flow-root closes / terminal delegates -> .flowFinished
 
-                // MOB-1487 dust lane: "Migrate anyway" sweeps the remainder through the Sending
-                // screen pushed over the complete screen. MOB-1494: the copy is unified
-                // ("migrated" everywhere) — `isDustLane` only selects the dust-sweep execution.
-                // MOB-1496 (W6 §3): `migrateMigrationDust` (the software lane below) is a USK
-                // composite — a Keystone account has no USK, so it forks here into a dedicated
-                // propose -> PCZT-sign -> store -> execute lane instead, using the SAME house vendor
-                // check `MigrationTransferPlan`/`MigrationReviewTransfer`'s `confirmTapped` already
-                // use. Software is byte-for-byte unchanged below.
+                // MOB-1496 (W-B): "Migrate anyway" now rides the SAME immediate (send-max) lane the
+                // entry-screen migration uses, for both vendors — see this file's header doc.
+                // Unlock-first is LOAD-BEARING: a locked residual is excluded from send-max note
+                // selection, so `proposeImmediateMigration` must never run before
+                // `unlockMigrationResidual` completes. A propose/unlock failure on EITHER vendor
+                // falls back to the same generic Sending-screen failure sheet
+                // (`isFailurePresented: true`) every other broadcast failure already uses — no new
+                // UI. Entry-screen immediate migrations must NEVER call `unlockMigrationResidual`
+                // (a locked residual staying excluded from later sweeps is correct-by-construction);
+                // this is the ONE call site that does.
             case .path(.element(id: _, action: .complete(.delegate(.migrateAnyway)))):
                 guard let account = state.selectedWalletAccount else { return .none }
 
                 guard account.vendor != WalletAccount.Vendor.keystone else {
                     return .run { [sdkSynchronizer, accountUUID = account.id] send in
-                        let schedule = (try? await sdkSynchronizer.proposeMigrationTransfers(accountUUID, true))
-                            ?? MigrationSchedule(transfers: [], estimatedDurationHours: 0)
-                        guard !schedule.transfers.isEmpty,
-                              let pczts = try? await sdkSynchronizer.proposeMigrationPCZTs(accountUUID, schedule),
-                              !pczts.isEmpty else {
-                            // Below-threshold (or a propose/PCZT failure): today's existing
-                            // below-threshold failure UX — the Keystone short-circuit inside
-                            // `MigrationSendingStore.executeNextTransfer`'s dust branch reports it
-                            // via the same failure sheet every other dust failure already uses.
-                            await send(.pushHydratedPathState(.sending(MigrationSending.State(totalCount: 1, isDustLane: true))))
-                            return
+                        do {
+                            _ = try await sdkSynchronizer.unlockMigrationResidual(accountUUID)
+                            let proposal = try await sdkSynchronizer.proposeImmediateMigration(accountUUID)
+                            let pczt = try await sdkSynchronizer.createPCZTFromProposal(accountUUID, proposal.proposal)
+                            await send(
+                                .migrateAnywayImmediateKeystonePCZTProposed(
+                                    pczts: [MigrationUnsignedTransferPczt(id: MigrationReviewTransfer.immediateKeystonePcztId, pczt: pczt)]
+                                )
+                            )
+                        } catch {
+                            await send(.pushHydratedPathState(.sending(MigrationSending.State(isFailurePresented: true, totalCount: 1))))
                         }
-                        await send(.keystoneDustPCZTsProposed(schedule: schedule, pczts: pczts))
                     }
                 }
 
-                var sendingState = MigrationSending.State(totalCount: 1)
-                sendingState.isDustLane = true
-                state.path.append(.sending(sendingState))
-                return .none
+                return .run { [sdkSynchronizer, accountUUID = account.id] send in
+                    do {
+                        _ = try await sdkSynchronizer.unlockMigrationResidual(accountUUID)
+                        let proposal = try await sdkSynchronizer.proposeImmediateMigration(accountUUID)
+                        await send(.pushHydratedPathState(.sending(MigrationSending.State(totalCount: 1, immediateProposal: proposal))))
+                    } catch {
+                        await send(.pushHydratedPathState(.sending(MigrationSending.State(isFailurePresented: true, totalCount: 1))))
+                    }
+                }
 
-            case .keystoneDustPCZTsProposed(let schedule, let pczts):
-                // MOB-1496 (W6 §3): batch-of-1, no sentinel (there is no split in the dust lane) —
-                // the existing Keystone signing context/machinery (scan -> re-pair -> store) handles
-                // it uniformly alongside the schedule/review lanes.
-                state.pendingKeystoneSigning = .dust(schedule)
+            case .migrateAnywayImmediateKeystonePCZTProposed(let pczts):
+                // Mirrors `.reviewTransfer(.delegate(.keystoneSignRequested))`'s handler exactly —
+                // this hop reaches the identical `.immediateReview` ceremony from a different
+                // starting screen (Complete instead of ReviewTransfer).
+                state.pendingKeystoneSigning = .immediateReview
                 state.pendingKeystoneSigningAccountUUID = state.selectedWalletAccount?.id
                 state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: pczts)))
                 return .none
@@ -1146,24 +1164,17 @@ extension MigrationCoordFlow {
             return transferPlanPostConfirmChain(variant: planState.variant, state: &state)
 
         case .immediateReview:
-            // MOB-1513: unreachable in practice — `submitImmediateKeystoneTransaction` intercepts
-            // `.immediateReview` at BOTH of `resumeAfterKeystoneSigning`'s callers (the real
-            // `.scan(.foundPCZTBatch)` round-trip and the `.simulateSignature` bypass) before either
-            // ever reaches this function, and the immediate lane's single ordinary-send PCZT
-            // (`createPCZTFromProposal`) never carries note-split preps for the split-routing branch
-            // above to route here either. Kept only for this switch's exhaustiveness; if it ever DID
-            // run, it would incorrectly push a fresh `.sending` broadcast attempt for a transaction
-            // `submitImmediateKeystoneTransaction` already submitted.
+            // MOB-1513/MOB-1496 (W-B): unreachable in practice — `submitImmediateKeystoneTransaction`
+            // intercepts `.immediateReview` at BOTH of `resumeAfterKeystoneSigning`'s callers (the
+            // real `.scan(.foundPCZTBatch)` round-trip and the `.simulateSignature` bypass) before
+            // either ever reaches this function, for BOTH producers of this context (the
+            // entry-screen immediate lane and "Migrate anyway") — the immediate lane's single
+            // ordinary-send PCZT (`createPCZTFromProposal`) never carries note-split preps for the
+            // split-routing branch above to route here either. Kept only for this switch's
+            // exhaustiveness; if it ever DID run, it would incorrectly push a fresh `.sending`
+            // broadcast attempt for a transaction `submitImmediateKeystoneTransaction` already
+            // submitted.
             let sendingState = MigrationSending.State(totalCount: 1)
-            state.path.append(.sending(sendingState))
-            return .none
-
-        case .dust:
-            // MOB-1496 (W6 §3): the transfer is already proposed/signed/stored by this point —
-            // execute via the dust Sending lane's EXISTING `executeNextPendingMigrationTransfer`
-            // path (`isDustLane: false`), never `migrateMigrationDust` (a USK composite that would
-            // re-propose and re-store from scratch).
-            let sendingState = MigrationSending.State(totalCount: 1, isDustLane: false)
             state.path.append(.sending(sendingState))
             return .none
         }
@@ -1316,15 +1327,14 @@ extension MigrationCoordFlow {
     /// pushes `scan`) — mirrors how `signState.pczts` above reads the unsigned batch off the same
     /// stack position. `nil` when that element carries no schedule of its own (a fixture/test state
     /// that never populated one) — the caller then skips `recordCommittedSchedule` rather than
-    /// persisting nothing. MOB-1496 (W6 §3): `.dust` carries its schedule directly on the context
-    /// instead — the coordinator proposed it itself (`.keystoneDustPCZTsProposed`), so there is no path
-    /// element to peek at all.
+    /// persisting nothing.
     ///
-    /// MOB-1513: `.immediateReview` always returns `nil` now — `MigrationReviewTransfer.State` dropped
-    /// its `schedule` field entirely (the immediate lane's `ImmediateMigrationProposal` carries no
-    /// engine schedule to record). This branch is unreachable in practice — both call sites above
-    /// intercept `.immediateReview` via `submitImmediateKeystoneTransaction` before ever reaching this
-    /// function — but stays for the switch's exhaustiveness.
+    /// MOB-1513/MOB-1496 (W-B): `.immediateReview` always returns `nil` — `MigrationReviewTransfer
+    /// .State` (and, since W-B, "Migrate anyway") carry no engine schedule at all; the immediate
+    /// lane's `ImmediateMigrationProposal` is engine-external. This branch is unreachable in
+    /// practice — both call sites above intercept `.immediateReview` via
+    /// `submitImmediateKeystoneTransaction` before ever reaching this function — but stays for the
+    /// switch's exhaustiveness.
     private func pendingKeystoneSchedule(
         context: MigrationCoordFlow.KeystoneSigningContext,
         depthBelowTop: Int,
@@ -1337,9 +1347,6 @@ extension MigrationCoordFlow {
 
         case .immediateReview:
             return nil
-
-        case .dust(let schedule):
-            return schedule
         }
     }
 
@@ -1720,7 +1727,13 @@ extension MigrationCoordFlow {
             isFlowRoot: isFlowRoot,
             // MOB-1487: a previously locked remainder re-enters on the locked confirmation
             // instead of re-offering resolution (offered/none derive from `dust` otherwise).
-            dustResolution: migrationManager.isMigrationDustLocked(accountUUID)
+            // MOB-1496 (W-A #7): `residualAfterMigration` (which `summary.dust` above derives
+            // from) falls through to a fresh spendable-based plan once the migration state is
+            // terminal — after a lock, the locked notes are excluded from that fresh plan, so
+            // `dust` alone would silently go to zero/nil post-lock. `isMigrationDustLocked` (now
+            // balance-derived, async) is the independent, lock-aware signal that still reads
+            // correctly after the lock — see that function's doc.
+            dustResolution: await migrationManager.isMigrationDustLocked(accountUUID)
                 ? MigrationComplete.State.DustResolution.locked
                 : nil
         )

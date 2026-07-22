@@ -98,6 +98,17 @@ import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
 import os
 
+extension PoolBalance {
+    /// MOB-1496 (W-D): the migratable portion of this pool's balance — every component of
+    /// `total()` EXCEPT `lockedValue`. A locked residual (the "Lock balance" choice at migration
+    /// Complete) has already been deliberately taken out of migration, so `orchardBalanceToMigrate`/
+    /// `reconcileOrchardBalance` must not count it toward "more to migrate" — unlike `total()`,
+    /// which correctly keeps locked funds in the account's overall balance.
+    var unlockedForMigration: Zatoshi {
+        spendableValue + changePendingConfirmation + valuePendingSpendability
+    }
+}
+
 extension MigrationManagerClient: DependencyKey {
     static let liveValue: MigrationManagerClient = Self.live()
 
@@ -118,7 +129,7 @@ extension MigrationManagerClient: DependencyKey {
                 await impl.recordTransferBroadcast(accountUUID: accountUUID, result: result)
             },
             lockMigrationDust: { try await impl.lockMigrationDust(accountUUID: $0) },
-            isMigrationDustLocked: { impl.isMigrationDustLocked(accountUUID: $0) },
+            isMigrationDustLocked: { await impl.isMigrationDustLocked(accountUUID: $0) },
             migrationRoundContext: { await impl.migrationRoundContext(accountUUID: $0) },
             stateEvents: { accountUUID in impl.stateEvents(accountUUID: accountUUID) },
             migrationMode: { impl.migrationMode(accountUUID: $0) },
@@ -440,7 +451,11 @@ final class MigrationManagerImpl: @unchecked Sendable {
             return .zero
         }
 
-        return balance.orchardBalance.total()
+        // MOB-1496 (W-D): excludes `lockedValue` — a locked residual (the "Lock balance" choice at
+        // migration Complete) has already been deliberately taken out of migration, so it must not
+        // inflate the Migration Entry headline or re-trigger the `.required` banner on re-entry.
+        // See `PoolBalance.unlockedForMigration`'s doc.
+        return balance.orchardBalance.unlockedForMigration
     }
 
     /// MOB-1496 W2: derives from the persisted committed schedule (`MigrationScheduleStorage`) +
@@ -624,11 +639,17 @@ final class MigrationManagerImpl: @unchecked Sendable {
         scheduleStorage.recordTransferBroadcast(result, for: resolvedAccountUUID, now: Date())
     }
 
-    /// MOB-1487/MOB-1496: no SDK primitive — "Lock balance" is app-only bookkeeping (marks the
-    /// identified Orchard remainder unspendable instead of migrating it). The short pause keeps the
-    /// "Locking balance" in-flight state observable, matching the pre-relocation
-    /// `SDKSynchronizerClient` stub. Simulator reach-around mirrors the engine's own (shorter)
-    /// simulated latency, matching its pre-relocation wiring in `SDKSynchronizerClient+Simulated`.
+    /// MOB-1496: "Lock balance" now calls the SDK's real `lockMigrationResidual` directly — the
+    /// cosmetic `Task.sleep` + app-persisted `gateStorage.setDustLocked` bookkeeping this replaces
+    /// (pre-real-SDK stand-in) is gone; the lock itself is now genuine and its state lives in the
+    /// account's own `PoolBalance.lockedValue` (see `isMigrationDustLocked` below), not a local
+    /// flag. The returned locked total is discarded here — this member is `Void`-returning; a
+    /// caller that needs the amount reads it back via balance, same as everywhere else in the app.
+    /// Simulator reach-around unchanged: still reaches around to the engine's own dust model
+    /// (`MigrationSimulatorEngine.lockDust()`), matching its pre-relocation wiring in
+    /// `SDKSynchronizerClient+Simulated` — kept here (rather than folded into the SDK client's own
+    /// simulated override) because the simulator has no live-balance derivation for
+    /// `isMigrationDustLocked` below to reach around to either.
     func lockMigrationDust(accountUUID: AccountUUID?) async throws {
         if MigrationSimulatorFlag.isEnabled && MigrationSimulatorClient.sharedEngine.isActive {
             try await Task.sleep(for: .seconds(0.5))
@@ -636,20 +657,24 @@ final class MigrationManagerImpl: @unchecked Sendable {
             return
         }
 
-        try await Task.sleep(nanoseconds: 800_000_000)
-        // MOB-1509: per-account — see `MigrationGateStorage.dustLockedStorage`. An unresolvable
-        // account (nothing passed, nothing selected) has no remainder to lock; storing nothing
-        // keeps the failure path identical to the pre-per-account behavior.
         guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return }
-        gateStorage.setDustLocked(true, for: resolvedAccountUUID)
+        _ = try await sdkSynchronizer.lockMigrationResidual(resolvedAccountUUID)
     }
 
-    func isMigrationDustLocked(accountUUID: AccountUUID?) -> Bool {
+    /// MOB-1496: balance-derived now — a nonzero Orchard `PoolBalance.lockedValue` means the
+    /// residual is locked. Async (a live SDK balance read) where the pre-real-SDK stand-in was a
+    /// synchronous `UserDefaults` read; degrades to `false` on an unresolvable account or a failed
+    /// balance read, same "safe default" convention as `orchardBalanceToMigrate` below.
+    func isMigrationDustLocked(accountUUID: AccountUUID?) async -> Bool {
         if MigrationSimulatorFlag.isEnabled && MigrationSimulatorClient.sharedEngine.isActive {
             return MigrationSimulatorClient.sharedEngine.isDustLocked()
         }
         guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return false }
-        return gateStorage.isDustLocked(for: resolvedAccountUUID)
+        guard let balances = try? await sdkSynchronizer.getAccountsBalances(),
+              let balance = balances[resolvedAccountUUID] else {
+            return false
+        }
+        return balance.orchardBalance.lockedValue > Zatoshi.zero
     }
 
     /// MOB-1509: per-account persisted prefs (mode, manual delivery) — `nil` resolves the selected
@@ -1321,7 +1346,9 @@ final class MigrationManagerImpl: @unchecked Sendable {
             return MigrationSimulatorClient.sharedEngine.orchardBalance()
         }
         guard let balance = walletBalances?[accountUUID] else { return .zero }
-        return balance.orchardBalance.total()
+        // MOB-1496 (W-D): same locked-exclusion as `orchardBalanceToMigrate` above — a "Lock
+        // balance" transition must never re-flip `hasBalanceToMigrate` from false to true.
+        return balance.orchardBalance.unlockedForMigration
     }
 
     /// R8-T3 (V18 + S2): reads `accountUUID`'s (resolved, if `nil`, to the selected account) engine
@@ -1474,7 +1501,6 @@ final class MigrationManagerImpl: @unchecked Sendable {
         for accountUUID in accountUUIDs {
             gateStorage.clearAcknowledgedComplete(for: accountUUID)
             gateStorage.clearRemainderPending(for: accountUUID)
-            gateStorage.clearDustLocked(for: accountUUID)
             gateStorage.clearMigrationMode(for: accountUUID)
             gateStorage.clearManualDelivery(for: accountUUID)
             gateStorage.clearCompletedRounds(for: accountUUID)
@@ -1959,12 +1985,6 @@ final class MigrationGateStorage: @unchecked Sendable {
     /// is exactly the tri-state `remainderPending(for:)` below needs to preserve. Same generic
     /// storage / hex-key idiom as `acknowledgedStorage` beside it.
     private let remainderStorage: PerAccountCodableStorage<Bool>
-    /// MOB-1509: per-account now, like `acknowledgedStorage` beside it — the previous wallet-wide
-    /// flag let one account's "Lock balance" mark every other account's own dust remainder locked.
-    /// Same reuse-the-legacy-key-as-prefix idiom; the bare key is only ever deleted for hygiene
-    /// (`resetPersistedFlags()`), never read. No migration of the old value: the feature is
-    /// unreleased (dev/QA installs only).
-    private let dustLockedStorage: PerAccountCodableStorage<Bool>
     /// MOB-1511 (W2): per-account count of COMPLETED migration runs — drives the "Round N" labels
     /// on the transfer plan and the Home banner for multi-round (sequential-run) migrations.
     private let completedRoundsStorage: PerAccountCodableStorage<Int>
@@ -1984,11 +2004,6 @@ final class MigrationGateStorage: @unchecked Sendable {
         self.remainderStorage = PerAccountCodableStorage<Bool>(
             keyPrefix: .migrationRemainderPending,
             corruptLogTag: "MigrationGateStorage.remainderStorage",
-            userDefaults: userDefaults
-        )
-        self.dustLockedStorage = PerAccountCodableStorage<Bool>(
-            keyPrefix: .migrationDustLocked,
-            corruptLogTag: "MigrationGateStorage.dustLockedStorage",
             userDefaults: userDefaults
         )
         self.completedRoundsStorage = PerAccountCodableStorage<Int>(
@@ -2131,22 +2146,6 @@ final class MigrationGateStorage: @unchecked Sendable {
         remainderStorage.clear(for: accountUUID)
     }
 
-    /// MOB-1487/MOB-1496: "Lock balance" acknowledged on Migration Complete — the dust remainder is
-    /// marked unspendable and the complete screen re-enters on its locked confirmation instead of
-    /// re-offering resolution. Relocated here from the (inert, pre-real-SDK) `SDKSynchronizerClient`
-    /// stub — this was always app-only bookkeeping, never an SDK call.
-    func isDustLocked(for accountUUID: AccountUUID) -> Bool {
-        dustLockedStorage.read(for: accountUUID) ?? false
-    }
-
-    func setDustLocked(_ isLocked: Bool, for accountUUID: AccountUUID) {
-        dustLockedStorage.write(isLocked, for: accountUUID)
-    }
-
-    func clearDustLocked(for accountUUID: AccountUUID) {
-        dustLockedStorage.clear(for: accountUUID)
-    }
-
     /// MOB-1511 (W2): how many runs ("rounds") `accountUUID` has COMPLETED — incremented exactly
     /// once per completion transition (beside `reconcile()`'s remainder evaluation, which shares
     /// the same exactly-once gate). The user-facing round number of the run in flight is
@@ -2164,20 +2163,22 @@ final class MigrationGateStorage: @unchecked Sendable {
     }
 
     /// Clears every WALLET-WIDE persisted migration flag this storage owns: mode, manual delivery,
-    /// network privacy, dust-locked, PLUS the legacy (pre-R8-T3, unsuffixed) complete-acknowledged
-    /// key — dead weight now that the flag is per-account (`acknowledgedStorage`), kept here only so
-    /// no stray value lingers. The actual per-account acknowledged flags are cleared by
+    /// network privacy, PLUS the legacy (pre-R8-T3, unsuffixed) complete-acknowledged key — dead
+    /// weight now that the flag is per-account (`acknowledgedStorage`), kept here only so no stray
+    /// value lingers. The actual per-account acknowledged flags are cleared by
     /// `MigrationManagerImpl.resetPersistedFlags()`, which knows the account set this storage does
     /// not. Backs the migration SDK simulator's debug panel "Reset app migration flags" control
     /// (MOB-1480). Deliberately leaves `migrationLastSyncCompletedAt` alone: the send gate's timing
     /// window is a short-lived value, not a durable app flag, and expires (the buffer elapses) on
     /// its own — same reasoning the retired `migrationSyncGateUntil` followed pre-MOB-1496 (W3).
+    /// MOB-1496 (W-A): no longer touches `.migrationDustLocked` — "Lock balance" is now a genuine
+    /// SDK-side lock (`PoolBalance.lockedValue`), not app-persisted storage, so there is no local
+    /// dust-locked flag left to clear.
     func resetPersistedFlags() {
         userDefaults.removeObject(forKey: .migrationMode)
         userDefaults.removeObject(forKey: .migrationManualDelivery)
         userDefaults.removeObject(forKey: .migrationNetworkPrivacyOptions)
         userDefaults.removeObject(forKey: .migrationCompleteAcknowledged)
-        userDefaults.removeObject(forKey: .migrationDustLocked)
     }
 }
 
