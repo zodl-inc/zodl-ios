@@ -1374,6 +1374,47 @@ struct MigrationManagerTests {
         #expect(result == false)
     }
 
+    /// `migrationLockedAmount` reports the Orchard `lockedValue` itself — the amount the Complete
+    /// screen's locked confirmation shows on re-entry, when `migrationSummary().dust` has already
+    /// re-planned to zero because the locked notes left spendable selection. `.zero` on an
+    /// unresolvable account.
+    @Test func migrationLockedAmountReportsOrchardLockedValue() async throws {
+        let accountUUID = AccountUUID(id: [UInt8](repeating: 32, count: 16))
+
+        let amount = await withDependencies {
+            $0.sdkSynchronizer = SDKSynchronizerClient.mocked(
+                getAccountsBalances: {
+                    [
+                        accountUUID: AccountBalance(
+                            saplingBalance: PoolBalance(spendableValue: .zero, changePendingConfirmation: .zero, valuePendingSpendability: .zero),
+                            orchardBalance: PoolBalance(
+                                spendableValue: .zero,
+                                changePendingConfirmation: .zero,
+                                valuePendingSpendability: .zero,
+                                lockedValue: Zatoshi(31_000)
+                            ),
+                            unshielded: .zero
+                        )
+                    ]
+                }
+            )
+        } operation: {
+            let impl = MigrationManagerImpl()
+            return await impl.migrationLockedAmount(accountUUID: accountUUID)
+        }
+        #expect(amount == Zatoshi(31_000))
+
+        @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
+        $selectedWalletAccount.withLock { $0 = nil }
+        let unresolvable = await withDependencies {
+            $0.sdkSynchronizer = .noOp
+        } operation: {
+            let impl = MigrationManagerImpl()
+            return await impl.migrationLockedAmount(accountUUID: nil)
+        }
+        #expect(unresolvable == Zatoshi.zero)
+    }
+
     // MARK: - W-D: locked-aware migration signals
 
     /// `orchardBalanceToMigrate` must exclude `lockedValue` — a locked residual has already been

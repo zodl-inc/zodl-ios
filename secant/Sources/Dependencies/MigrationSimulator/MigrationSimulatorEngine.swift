@@ -279,6 +279,14 @@ final class MigrationSimulatorEngine: @unchecked Sendable {
         withSnapshot { $0.isDustLocked }
     }
 
+    /// MOB-1496: the simulated counterpart of the balance-derived locked amount — the engine's
+    /// dust remainder while `lockDust()` holds it, `.zero` otherwise (mirrors reading the real
+    /// account's `PoolBalance.lockedValue`, which keeps reporting the locked remainder after
+    /// `residualAfterMigration`'s terminal-state replan stops seeing the locked notes).
+    func lockedDustAmount() -> Zatoshi {
+        withSnapshot { $0.isDustLocked ? $0.dustRemainder : Zatoshi.zero }
+    }
+
     /// MOB-1496: the release half of `lockDust()` — mirrors the real SDK's
     /// `unlockMigrationResidual`, which "Migrate anyway" now calls before re-proposing. Returns `1`
     /// when a lock was actually cleared, `0` otherwise (the real SDK returns a count of unlocked
