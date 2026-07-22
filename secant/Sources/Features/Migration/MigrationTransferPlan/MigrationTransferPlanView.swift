@@ -62,7 +62,15 @@ struct MigrationTransferPlanView: View {
                             .zFont(size: 14, style: Design.Text.tertiary)
                             .multilineTextAlignment(.leading)
                             .fixedSize(horizontal: false, vertical: true)
-                            .padding(.bottom, 24)
+                            .padding(.bottom, store.round == nil ? 24 : 12)
+
+                        // MOB-1511 (W2, Figma 4198:14325): the multi-round label — "Round N of M"
+                        // once the engine estimate exists, "Round N" until then.
+                        if let round = store.round {
+                            Text(roundLabel(round: round, totalRounds: store.totalRounds))
+                                .zFont(.semiBold, size: 14, style: Design.Text.primary)
+                                .padding(.bottom, 24)
+                        }
 
                         MigrationTransferTimeline(
                             rows: store.rows,
@@ -119,6 +127,14 @@ struct MigrationTransferPlanView: View {
     }
 
     // MARK: - Caption
+
+    /// MOB-1511 (W2): "Round N of M" once the engine estimate exists, "Round N" until then.
+    private func roundLabel(round: Int, totalRounds: Int?) -> String {
+        if let totalRounds {
+            return String(localizable: .migrationPlanRoundNOfM(round, totalRounds))
+        }
+        return String(localizable: .migrationPlanRoundN(round))
+    }
 
     private func caption(for row: MigrationTransferRow) -> String {
         switch row.status {

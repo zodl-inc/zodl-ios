@@ -552,17 +552,25 @@ extension Root {
                 }
                 return .run { [migrationBGScheduler] _ in await migrationBGScheduler.scheduleNextWindow() }
 
-            case .initialization(.appDelegate(.migrationNotificationTapped(let accountUUID))):
+            case .initialization(.appDelegate(.migrationNotificationTapped(let accountUUID, let isTorFailure))):
                 // Same gate as `checkBackupPhraseValidation` uses for `isAtDeeplinkWarningScreen`:
                 // `.initialized` is set exactly once, at that checkpoint, so it doubles as "Home
                 // is up" here. If we're not there yet (cold start still in flight), stash the
                 // request — `checkBackupPhraseValidation` fires it once initialization completes.
                 // R8-T5 (S4): the stash now carries the tapped notification's account too, so the
                 // deferred replay can switch accounts exactly like the immediate path below does.
+                // MOB-1511 (W3): a Tor-failure tap is never stashed — the cold-launch prompt check
+                // already surfaces the sheet once Home is up (see `checkMigrationTorFailurePrompt`'s
+                // cold-launch caller), so a pre-Home tap needs nothing beyond opening the app.
                 guard state.appInitializationState == .initialized else {
-                    state.pendingMigrationDeepLink = true
-                    state.pendingMigrationDeepLinkAccountUUID = accountUUID
+                    if !isTorFailure {
+                        state.pendingMigrationDeepLink = true
+                        state.pendingMigrationDeepLinkAccountUUID = accountUUID
+                    }
                     return .none
+                }
+                if isTorFailure {
+                    return migrationTorFailureTapRoutingEffect(state: state, accountUUID: accountUUID)
                 }
                 return migrationNotificationTappedRoutingEffect(state: &state, accountUUID: accountUUID)
 
@@ -1265,7 +1273,8 @@ extension Root {
                         await send(.destination(.updateDestination(Root.DestinationState.Destination.home)))
                     }
                     if hasPendingMigrationDeepLink {
-                        await send(.initialization(.appDelegate(.migrationNotificationTapped(accountUUID: pendingMigrationDeepLinkAccountUUID))))
+                        // MOB-1511 (W3): always a flow-opening tap — Tor-failure taps never stash.
+                        await send(.initialization(.appDelegate(.migrationNotificationTapped(accountUUID: pendingMigrationDeepLinkAccountUUID, isTorFailure: false))))
                     }
                     if let pendingMigrationBackgroundSession {
                         await send(.initialization(.migrationBackgroundSession(pendingMigrationBackgroundSession)))
@@ -1807,14 +1816,25 @@ extension Root {
                 if let result {
                     _ = await dependencies.migrationManager.routeBroadcastFailure(winnerAccountUUID, result: result)
                 }
-                let progress = (try? await dependencies.sdkSynchronizer.getMigrationProgress(winnerAccountUUID)) ?? nil
-                let nextNumber = (progress?.completedTransfers ?? 0) + 1
-                // R8-T5 (S4): attributed to the winning account this broadcast attempt was for.
-                await dependencies.userNotifications.scheduleMigrationNotification(
-                    MigrationNotification.transferWaiting(number: nextNumber),
-                    nil,
-                    Data(winnerAccountUUID.id).hexEncodedString()
-                )
+                // MOB-1511 (W3): a Tor-caused failure just armed the foreground prompt latch inside
+                // `routeBroadcastFailure` — surface it as the dedicated failure notification (its
+                // tap routes to the Tor-failure sheet) instead of the generic waiting nudge.
+                if dependencies.migrationManager.isPendingBackgroundTorPrompt(winnerAccountUUID) {
+                    await dependencies.userNotifications.scheduleMigrationNotification(
+                        MigrationNotification.migrationTorFailure,
+                        nil,
+                        Data(winnerAccountUUID.id).hexEncodedString()
+                    )
+                } else {
+                    let progress = (try? await dependencies.sdkSynchronizer.getMigrationProgress(winnerAccountUUID)) ?? nil
+                    let nextNumber = (progress?.completedTransfers ?? 0) + 1
+                    // R8-T5 (S4): attributed to the winning account this broadcast attempt was for.
+                    await dependencies.userNotifications.scheduleMigrationNotification(
+                        MigrationNotification.transferWaiting(number: nextNumber),
+                        nil,
+                        Data(winnerAccountUUID.id).hexEncodedString()
+                    )
+                }
                 await dependencies.migrationBGScheduler.scheduleNextWindow()
                 // R9-T7: not landed — the stop above was never followed by a successful broadcast,
                 // so nudge Root's gate feed directly (mirrors Sending's identical non-success nudge).
@@ -2219,5 +2239,27 @@ extension Root {
         }
 
         return openMigrationCoordFlow(state: &state)
+    }
+
+    /// MOB-1511 (W3): the Tor-failure notification's tap — switch to the tapped account when it
+    /// isn't selected (the SAME house switch action the ordinary migration tap uses), then surface
+    /// the Tor-failure sheet via the existing `.checkMigrationTorFailurePrompt` pass instead of
+    /// opening the migration flow: the prompt IS the decision surface here, and it presents over
+    /// Home. The explicit check-send covers the app-already-foreground tap; a background tap's
+    /// foregrounding fires the same check on `.willEnterForeground` anyway.
+    private func migrationTorFailureTapRoutingEffect(
+        state: Root.State,
+        accountUUID: String?
+    ) -> Effect<Root.Action> {
+        if let accountUUID,
+           let targetAccount = state.walletAccounts.first(where: { Data($0.id.id).hexEncodedString() == accountUUID }),
+           targetAccount != state.selectedWalletAccount {
+            return .concatenate(
+                .send(.home(.walletAccountTapped(targetAccount))),
+                .send(.checkMigrationTorFailurePrompt)
+            )
+        }
+
+        return .send(.checkMigrationTorFailurePrompt)
     }
 }

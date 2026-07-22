@@ -74,6 +74,11 @@ struct MigrationTransferPlan {
         var variant = Variant.scheduled
         var rows: IdentifiedArrayOf<MigrationTransferRow> = []
         var totalDurationHours = 0
+        /// MOB-1511 (W2): the multi-round label — non-nil only when the display rule says the
+        /// label belongs on screen (a later round in flight, or a known engine total above one);
+        /// `totalRounds` additionally needs the SDK estimate (stubbed nil until librustzcash#2714).
+        var round: Int?
+        var totalRounds: Int?
         @Shared(.inMemory(.exchangeRate)) var currencyConversion: CurrencyConversion?
         /// Coordinator-injected schedule for recovery/reschedule variants — when set, `onAppear`
         /// populates rows from it directly instead of calling `proposeMigrationTransfers()`. `nil`
@@ -140,6 +145,8 @@ struct MigrationTransferPlan {
         /// commit.
         case offWarningProceedTapped
         case onAppear
+        /// MOB-1511 (W2): the round context loaded on appearance — see `State.round`'s doc.
+        case roundContextLoaded(round: Int, totalRounds: Int?)
         /// R9-T2 (R14): the `.torFirstRunChoice` sheet's "Proceed without Tor" button — presents the
         /// R11 warning alert instead of proceeding directly.
         case proceedWithoutTorTapped
@@ -269,15 +276,22 @@ struct MigrationTransferPlan {
                 return .none
 
             case .onAppear:
+                // MOB-1511 (W2): the multi-round label loads on EVERY appearance path (fresh
+                // proposal, injected schedule, hydrated rows alike) — it derives from persisted
+                // app state + the stub estimate, independent of where the rows came from.
+                let roundContextEffect = Effect<MigrationTransferPlan.Action>.run { [migrationManager, accountUUID = state.selectedWalletAccount?.id] send in
+                    let context = await migrationManager.migrationRoundContext(accountUUID)
+                    await send(.roundContextLoaded(round: context.round, totalRounds: context.totalRounds))
+                }
                 if let injectedSchedule = state.injectedSchedule {
                     apply(injectedSchedule, to: &state)
-                    return .none
+                    return roundContextEffect
                 }
 
                 // Coordinator-hydrated rows (the rescheduled variant — no schedule object exists
                 // for it) must not be overwritten by a fresh proposal.
                 if !state.rows.isEmpty {
-                    return .none
+                    return roundContextEffect
                 }
 
                 // `includeResidual: false` by design: the scheduled plan never folds the Orchard
@@ -288,7 +302,16 @@ struct MigrationTransferPlan {
                 // `.immediate` through `MigrationReviewTransfer` instead), so
                 // `proposeMigrationTransfers` (not `proposeImmediateMigration`) is always correct
                 // here.
-                return proposeEffect(accountUUID: state.selectedWalletAccount?.id)
+                // `.concatenate` (not `.merge`): the round load answers instantly today, and a
+                // deterministic receive order keeps exhaustive TestStores stable.
+                return .concatenate(roundContextEffect, proposeEffect(accountUUID: state.selectedWalletAccount?.id))
+
+            case .roundContextLoaded(let round, let totalRounds):
+                // MOB-1511 (W2): shown only for a genuinely multi-round migration — a later round
+                // in flight, or a known engine estimate above one.
+                state.round = round >= 2 || (totalRounds ?? 1) > 1 ? round : nil
+                state.totalRounds = state.round != nil ? totalRounds : nil
+                return .none
 
             case .scheduleSigned:
                 return .send(.delegate(.confirmed))

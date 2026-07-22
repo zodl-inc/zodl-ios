@@ -200,12 +200,21 @@ struct MigrationEntryView: View {
 
     // MARK: - Disclaimer
 
+    /// MOB-1511 (W1, Figma 3480:5841): the immediate path's note — same plain info-note anatomy as
+    /// `footerNote` below, in the warning tone (the `WarningYellow` ramp renders the design's
+    /// orange), replacing the earlier titled "Privacy Disclaimer" callout.
     @ViewBuilder private var disclaimer: some View {
-        ZashiInfoCallout(
-            style: .warning,
-            title: String(localizable: .migrationEntryPrivacyDisclaimerTitle),
-            body: String(localizable: .migrationEntryPrivacyDisclaimerBody)
-        )
+        HStack(alignment: .top, spacing: 8) {
+            Asset.Assets.infoOutline.image
+                .zImage(size: 16, style: Design.Utility.WarningYellow._700)
+
+            Text(localizable: .migrationEntryImmediateNote)
+                .zFont(size: 12, style: Design.Utility.WarningYellow._700)
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 16)
     }
 
     // MARK: - Footer note
