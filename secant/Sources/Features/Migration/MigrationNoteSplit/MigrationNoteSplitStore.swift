@@ -253,7 +253,7 @@ struct MigrationNoteSplit {
             case .proceedWithoutTorTapped:
                 // R7-review fix (Minor-3): see `MigrationSending`'s identical guard for the rationale.
                 guard state.failureKind == MigrationBroadcastFailureRoute.torFirstRunChoice else { return .none }
-                let usesFullBalanceCopy = migrationManager.migrationMode() == MigrationMode.immediate
+                let usesFullBalanceCopy = migrationManager.migrationMode(state.selectedWalletAccount?.id) == MigrationMode.immediate
                 state.alert = AlertState.migrationTorOffWarning(usesFullBalanceCopy: usesFullBalanceCopy, proceedAction: .offWarningProceedTapped)
                 return .none
 
