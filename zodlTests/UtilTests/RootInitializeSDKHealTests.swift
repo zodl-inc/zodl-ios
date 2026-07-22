@@ -126,6 +126,29 @@ extension Root.State: @retroactive Equatable {
 
             $0.userMetadataProvider.load = { _ in }
 
+            // The `.initializeSDK` cascade on the Ironwood branch reaches the migration manager
+            // (SmartBanner migration evaluation and the sync-completed reconcile hooks).
+            // `MigrationManagerClient`'s inline defaults do NOT make members test-safe — any
+            // unmocked call records an issue (see the gotcha note in MigrationManagerInterface) —
+            // so mirror the member no-ops the migration Root suites use in `baseNoOpDependencies`,
+            // with Ironwood NOT activated: these scenarios are about the heal, and a dormant
+            // migration surface keeps the cascade identical to the pre-Ironwood one.
+            $0.migrationManager.bannerVariant = { _ in nil }
+            $0.migrationManager.isIronwoodActivated = { false }
+            $0.migrationManager.reentryRoute = { .entry }
+            $0.migrationManager.migrationMode = { _ in nil }
+            $0.migrationManager.setMigrationMode = { _, _ in }
+            $0.migrationManager.setManualDelivery = { _, _ in }
+            $0.migrationManager.setNetworkPrivacyOptions = { _ in }
+            $0.migrationManager.formNetworkSnapshot = { _ in }
+            $0.migrationManager.markNetworkSnapshotCommitted = { _ in }
+            $0.migrationManager.clearProvisionalNetworkSnapshot = { _ in }
+            $0.migrationManager.acknowledgeComplete = { _ in }
+            $0.migrationManager.isMigrationRemainderPending = { _ in false }
+            $0.migrationManager.reconcile = { }
+            $0.migrationManager.clearAbandonedNetworkSnapshot = { _ in }
+            $0.migrationManager.recordSyncCompleted = { }
+
             $0.sdkSynchronizer = .mocked(
                 stateStream: { Empty().eraseToAnyPublisher() },
                 prepareWith: { _, _, _, _ in

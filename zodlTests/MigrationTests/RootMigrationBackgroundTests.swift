@@ -2044,6 +2044,11 @@ import ComposableArchitecture
                 $0.sdkSynchronizer = SDKSynchronizerClient.mocked(
                     start: { _ in startCalls.withValue { $0.append(true) } }
                 )
+                // MOB-1512 heal: `.mocked` answers the relevance probe `false` over an empty
+                // account list, which the heal reads as a view-only stale database and aborts the
+                // init chain with `viewOnlyDatabase` before this test's gate logic is ever reached.
+                // A relevant seed makes the heal the no-op these scenarios always assumed.
+                $0.sdkSynchronizer.isSeedRelevantToAnyDerivedAccount = { _ in true }
                 $0.sdkSynchronizer.isMigrationSyncBlocked = { true }
             }
 
@@ -2080,6 +2085,11 @@ import ComposableArchitecture
                 $0.sdkSynchronizer = SDKSynchronizerClient.mocked(
                     start: { _ in throw ZcashError.migrationSyncBlocked }
                 )
+                // MOB-1512 heal: `.mocked` answers the relevance probe `false` over an empty
+                // account list, which the heal reads as a view-only stale database and aborts the
+                // init chain with `viewOnlyDatabase` before this test's gate logic is ever reached.
+                // A relevant seed makes the heal the no-op these scenarios always assumed.
+                $0.sdkSynchronizer.isSeedRelevantToAnyDerivedAccount = { _ in true }
                 $0.sdkSynchronizer.isMigrationSyncBlocked = {
                     isMigrationSyncBlockedCallCount.withValue { count -> Bool in
                         count += 1
@@ -2124,6 +2134,11 @@ import ComposableArchitecture
                     latestState: { Self.preparedState },
                     start: { _ in startCalls.withValue { $0.append(true) } }
                 )
+                // MOB-1512 heal: `.mocked` answers the relevance probe `false` over an empty
+                // account list, which the heal reads as a view-only stale database and aborts the
+                // init chain with `viewOnlyDatabase` before this test's gate logic is ever reached.
+                // A relevant seed makes the heal the no-op these scenarios always assumed.
+                $0.sdkSynchronizer.isSeedRelevantToAnyDerivedAccount = { _ in true }
                 $0.sdkSynchronizer.isMigrationSyncBlocked = { isMigrationSyncBlockedValue.withValue { $0 } }
             }
 
