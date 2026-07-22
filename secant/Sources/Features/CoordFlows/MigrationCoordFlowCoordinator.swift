@@ -1755,22 +1755,23 @@ extension MigrationCoordFlow {
 
     private func completeState(accountUUID: AccountUUID?, isFlowRoot: Bool) async -> MigrationComplete.State {
         let summary = await migrationManager.migrationSummary(accountUUID)
+        // MOB-1487: a previously locked remainder re-enters on the locked confirmation instead
+        // of re-offering resolution (offered/none derive from `dust` otherwise).
+        // MOB-1496 (W-A #7): `residualAfterMigration` (which `summary.dust` derives from) falls
+        // through to a fresh spendable-based plan once the migration state is terminal — after a
+        // lock, the locked notes are excluded from that fresh plan, so `summary.dust` silently
+        // reads zero post-lock. The balance-derived `migrationLockedAmount` (the account's
+        // Orchard `lockedValue`) is both the lock signal AND the amount that stay correct after
+        // the lock, so the locked confirmation card shows the real locked remainder on re-entry.
+        let lockedAmount = await migrationManager.migrationLockedAmount(accountUUID)
         return MigrationComplete.State(
             totalTransferred: summary.transferred,
-            dust: summary.dust,
+            dust: lockedAmount > Zatoshi.zero ? lockedAmount : summary.dust,
             transfersSent: summary.transfersSent,
             transfersTotal: summary.transfersTotal,
             durationHours: summary.estimatedDurationHours,
             isFlowRoot: isFlowRoot,
-            // MOB-1487: a previously locked remainder re-enters on the locked confirmation
-            // instead of re-offering resolution (offered/none derive from `dust` otherwise).
-            // MOB-1496 (W-A #7): `residualAfterMigration` (which `summary.dust` above derives
-            // from) falls through to a fresh spendable-based plan once the migration state is
-            // terminal — after a lock, the locked notes are excluded from that fresh plan, so
-            // `dust` alone would silently go to zero/nil post-lock. `isMigrationDustLocked` (now
-            // balance-derived, async) is the independent, lock-aware signal that still reads
-            // correctly after the lock — see that function's doc.
-            dustResolution: await migrationManager.isMigrationDustLocked(accountUUID)
+            dustResolution: lockedAmount > Zatoshi.zero
                 ? MigrationComplete.State.DustResolution.locked
                 : nil
         )
