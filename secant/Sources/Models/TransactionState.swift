@@ -49,6 +49,11 @@ struct TransactionState: Equatable, Identifiable {
     var hasTransparentOutputs = false
     var totalSpent: Zatoshi?
     var totalReceived: Zatoshi?
+    /// MOB-1513 (E1): the SDK's per-transaction note counts, carried so the display amount can adopt
+    /// Android's migration-self-send fallback (see `netValue`). Default 0 for the non-SDK inits (a
+    /// pending send, a swap deposit) — none of which is the note-less migration shape.
+    var sentNoteCount = 0
+    var receivedNoteCount = 0
 
     var rawID: Data? = nil
     
@@ -288,9 +293,21 @@ struct TransactionState: Equatable, Identifiable {
     }
     
     var netValue: String {
-        isShieldingTransaction
-        ? Zatoshi(totalSpent?.amount ?? 0).atLeastThreeDecimalsZashiFormatted()
-        : zecAmount.atLeastThreeDecimalsZashiFormatted()
+        if isShieldingTransaction {
+            return Zatoshi(totalSpent?.amount ?? 0).atLeastThreeDecimalsZashiFormatted()
+        }
+        // MOB-1513 (E1): a migration self-send collapses to a fee-only net value (`zecAmount`),
+        // which hides the real amount that crossed the Orchard -> Ironwood turnstile. Mirror
+        // Android's fallback (TransactionRepository.kt): a transaction with no counted sent OR
+        // received notes shows `totalReceived` — the true crossing amount — instead of the
+        // fee-collapsed net. Both the transaction list (TransactionRowView) and the detail screen
+        // (TransactionDetailsView) render this property, so both pick up the fallback consistently.
+        // Every other transaction kind keeps at least one note, so the guard leaves them
+        // byte-identical.
+        if sentNoteCount == 0, receivedNoteCount == 0, let totalReceived {
+            return totalReceived.atLeastThreeDecimalsZashiFormatted()
+        }
+        return zecAmount.atLeastThreeDecimalsZashiFormatted()
     }
 
     var amountWithoutFee: Zatoshi {
@@ -398,6 +415,8 @@ extension TransactionState {
         memoCount = transaction.memoCount
         totalSpent = transaction.totalSpent
         totalReceived = transaction.totalReceived
+        sentNoteCount = transaction.sentNoteCount
+        receivedNoteCount = transaction.receivedNoteCount
 
         let isPending = isSentTransaction ? minedHeight == nil : transaction.state == .pending
         // Fallback for when the SDK's `expired_unmined` column lags (e.g. an unmined sent tx
