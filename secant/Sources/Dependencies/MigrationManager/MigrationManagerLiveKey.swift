@@ -622,20 +622,30 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// `MigrationScheduleStorage.recordTransferBroadcast`.
     ///
     /// MOB-1497 (R7-T3): this is the manager-layer chokepoint every LANDED-broadcast lane funnels
-    /// through — FG send (`MigrationSendingStore`, including the dust lane), FG note split
-    /// (`MigrationNoteSplitStore`, both the software and Keystone forks), and BG
-    /// (`RootInitialization.handleLandedBroadcast`) — so a `.success` here also marks the had-
-    /// broadcast flag (R14 first-run vs R15 mid-run) and resets the R16 episode set (a fresh episode
-    /// starts with every new transfer attempt window). A note split's own broadcast is not one of
-    /// `scheduleStorage`'s schedule transfers, but the guard inside `MigrationScheduleStorage
-    /// .recordTransferBroadcast` (no payload yet -> no-op) makes calling it from that lane harmless
-    /// today: every live note-split broadcast happens BEFORE `recordCommittedSchedule` persists this
-    /// run's schedule (see `MigrationNoteSplitStore`'s header doc) — flagged in the T3 report as a
-    /// timing-dependent assumption worth a comment here rather than a silent one.
+    /// through — FG send (`MigrationSendingStore`, including the dust lane), the coordinator's
+    /// post-confirm first-delivery kick, and BG (`RootInitialization.handleLandedBroadcast`) — so a
+    /// `.success` here also marks the had-broadcast flag (R14 first-run vs R15 mid-run) and resets
+    /// the R16 episode set (a fresh episode starts with every new transfer attempt window).
+    ///
+    /// MOB-1513 (B4) prep-phase guard: the reordered confirm chain app-records the schedule at
+    /// commit time, BEFORE any preparation (note-split) broadcast — the pre-B4 "every note-split
+    /// broadcast happens before `recordCommittedSchedule`, so the schedule-storage append is a
+    /// harmless no-op" timing assumption (flagged in the T3 report) no longer holds. A landed
+    /// broadcast recorded while the engine still reports `.splitPendingConfirmation` is a
+    /// PREPARATION transaction, not one of the schedule's transfers ("the run is committed and its
+    /// preparation transactions are not yet all mined" — the state only advances to `.inProgress`
+    /// once every prep is mined, so a schedule transfer can never land during it): it marks the
+    /// had-broadcast flag but must append NO schedule sent record, or the status/plan rows would
+    /// show transfers as sent that never broadcast. An UNREADABLE state (the read throws, `nil`)
+    /// keeps today's append — the guard only fires on a positively identified prep phase, never as
+    /// a new way to silently drop a real transfer's record.
     func recordTransferBroadcast(accountUUID: AccountUUID?, result: MigrationTransferResult) async {
         guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return }
         if case MigrationTransferResult.success = result {
             failureRoutingStorage.markHadBroadcast(for: resolvedAccountUUID)
+        }
+        if await migrationState(accountUUID: resolvedAccountUUID) == MigrationState.splitPendingConfirmation {
+            return
         }
         scheduleStorage.recordTransferBroadcast(result, for: resolvedAccountUUID, now: Date())
     }

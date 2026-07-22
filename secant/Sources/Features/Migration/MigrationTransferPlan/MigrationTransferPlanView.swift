@@ -179,24 +179,23 @@ struct MigrationTransferPlanView: View {
 
     // MARK: - Failure sheet
 
-    /// A `.propose` failure keeps this screen's own honest "couldn't load" copy; every other
-    /// failure (`.commit`, or unset) is always broadcast-related and adopts T1's shared
-    /// `MigrationBroadcastFailureSheetView` component (R9-T2, finding 3) — see
-    /// `MigrationSendingView`'s identical adoption shape. `nil` `failureKind` (unclassified, or the
-    /// Keystone fork) keeps that component's own generic copy. `zashiSheet`'s `content` closure isn't
-    /// `@ViewBuilder`, so the dispatch lives in this ONE `@ViewBuilder` property instead.
+    /// A `.propose` failure keeps this screen's own honest "couldn't load" copy; a `.commit` (or
+    /// unset) failure renders the shared component's generic Cancel/Retry content. MOB-1513 (B4):
+    /// the commit is sign-only now — no broadcast happens under Confirm, so `failureKind` is always
+    /// `nil` here and the R14-R17 variants (whose buttons below are structurally unreachable no-ops)
+    /// can never present on this screen. `zashiSheet`'s `content` closure isn't `@ViewBuilder`, so
+    /// the dispatch lives in this ONE `@ViewBuilder` property instead.
     @ViewBuilder private var failureSheetContent: some View {
         if store.failureReason == MigrationTransferPlan.State.FailureReason.propose {
             proposeFailureSheetContent
         } else {
             MigrationBroadcastFailureSheetView(
-                failureKind: store.failureKind,
+                failureKind: nil,
                 cancelTapped: { store.send(.cancelTapped) },
-                proceedWithoutTorTapped: { store.send(.proceedWithoutTorTapped) },
+                proceedWithoutTorTapped: { },
                 retryTapped: { store.send(.retryTapped) },
-                useSyncServerTapped: { store.send(.useSyncServerTapped) }
+                useSyncServerTapped: { }
             )
-            .alert($store.scope(state: \.alert, action: \.alert))
         }
     }
 
