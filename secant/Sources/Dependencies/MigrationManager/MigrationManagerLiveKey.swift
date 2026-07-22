@@ -600,7 +600,8 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// — this is the SINGLE production call site for that stamp, deliberately co-located here rather
     /// than duplicated at each of `recordCommittedSchedule`'s several external callers (software
     /// sign+store success in `MigrationTransferPlanStore`/`MigrationReviewTransferStore`, Keystone
-    /// deferred store success in `MigrationCoordFlowCoordinator.storeDeferredKeystoneSchedule`, the
+    /// deferred store success in `MigrationCoordFlowCoordinator.resolvePendingScheduleStore` (the
+    /// first-delivery kick, MOB-1513 B4), the
     /// Keystone no-split immediate store, and the software dust commit) so the schedule commit and
     /// the snapshot commit can never drift out of sync. Ordered after the schedule write: a snapshot
     /// briefly still reading provisional while the schedule is already durable is harmless (nothing
@@ -855,9 +856,9 @@ final class MigrationManagerImpl: @unchecked Sendable {
     ///
     /// R7-review fix (Important-1): operates on the run's ACTIVE snapshot — the COMMITTED one if
     /// present, else the still-PROVISIONAL one — rather than requiring a committed snapshot. The live
-    /// Keystone note-split lane broadcasts BEFORE its schedule (and therefore its snapshot) commits,
-    /// by design: `MigrationCoordFlowCoordinator.storeDeferredKeystoneSchedule` defers
-    /// `recordCommittedSchedule`/`markNetworkSnapshotCommitted` until AFTER the split's OWN broadcast
+    /// Keystone prep lane broadcasts BEFORE its schedule (and therefore its snapshot) commits,
+    /// by design: `MigrationCoordFlowCoordinator.runFirstDeliveryKick` (MOB-1513 B4) defers
+    /// `recordCommittedSchedule`/`markNetworkSnapshotCommitted` until AFTER a prep's OWN broadcast
     /// succeeds (see that method's doc for why — this ordering is untouched by this fix). Requiring
     /// `committedAt != nil` here meant every note-split failure fell through to the defensive
     /// `.plainRetry` below, so R14/R16/R17 never engaged on that lane. Since at most one snapshot is

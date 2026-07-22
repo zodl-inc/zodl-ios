@@ -51,7 +51,7 @@
 //  proving, no broadcast) -> `recordCommittedSchedule` -> `reconcile`. The first prep's actual
 //  broadcast (prove-at-broadcast, Tor, privacy buffer) happens AFTER navigation, via
 //  `MigrationCoordFlowCoordinator`'s post-confirm first-delivery kick over the existing next-due
-//  lane — see `firstDeliveryKickEffect`'s doc there. NEVER add a `submitNoteSplit` call after
+//  lane — see `runFirstDeliveryKick`'s doc there. NEVER add a `submitNoteSplit` call after
 //  `signAndStoreMigrationSchedule`: the successful commit clears the plan cache, so
 //  `sign_note_split`'s echo-validation would throw plan-stale.
 //

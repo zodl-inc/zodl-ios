@@ -231,10 +231,11 @@ struct MigrationCoordFlow {
         /// a preparation broadcast succeeds (see this file's header comment for why storing any
         /// earlier strands the run once the split mines). Consumed by the coordinator's
         /// post-confirm first-delivery kick (`MigrationCoordFlowCoordinator.runFirstDeliveryKick`),
-        /// which runs the deferred store right after its prep broadcast lands and clears this via
-        /// `.deferredKeystoneScheduleStored`; a kick failure (broadcast or store) leaves it intact.
-        /// In-memory only — see `runFirstDeliveryKick`'s doc for the accepted loss window this
-        /// shares with the pre-B4 "Splitting Funds" handshake.
+        /// which runs the deferred store once a prep broadcast has landed and clears this via
+        /// `.deferredKeystoneScheduleStored`. A kick that exhausts its bounded attempts leaves it
+        /// intact AND arms the state-event re-arm (`.firstDeliveryKickFailed`, payload captured in
+        /// the effect — this STATE copy resets at flow teardown, the armed effect does not).
+        /// In-memory only — see `runFirstDeliveryKick`'s doc for the accepted app-death loss window.
         var pendingKeystoneScheduleStore: PendingScheduleStore?
         /// MOB-1496: the real per-account SDK surface needs a concrete `AccountUUID` for nearly
         /// every migration call the coordinator makes.
@@ -295,9 +296,24 @@ struct MigrationCoordFlow {
         )
         /// Internal: MOB-1513 (B4) — the first-delivery kick's deferred Keystone schedule store
         /// succeeded (`storeSignedMigrationTransactions` -> `recordCommittedSchedule` ->
-        /// `reconcile`) — releases `pendingKeystoneScheduleStore`. Never sent on a kick failure
-        /// (broadcast or store), which leaves the stash intact.
+        /// `reconcile`) — releases `pendingKeystoneScheduleStore` and cancels any armed
+        /// state-event re-arm. Never sent on a kick failure (broadcast or store), which leaves the
+        /// stash intact.
         case deferredKeystoneScheduleStored
+        /// Internal: MOB-1513 (B4 fix wave) — the first-delivery kick exhausted its bounded
+        /// attempts with a Keystone deferred schedule store still pending. Arms the SILENT
+        /// state-event re-arm (`.deferredKeystoneScheduleResolveDue` per
+        /// `migrationManager.stateEvents` emission) so the store still happens once a prep
+        /// broadcast lands, no matter who lands it (a later BG-window broadcast, or foreground
+        /// reconcile observing the mined prep). Carries the payload IN THE ACTION — the flow's
+        /// teardown resets coordinator state, but this flow is a permanent `Scope` child of Root
+        /// (no dismissal effect-cancellation), so the armed effect and its captured payload outlive
+        /// a "Got it" close by design.
+        case firstDeliveryKickFailed(pendingScheduleStore: PendingScheduleStore, accountUUID: AccountUUID)
+        /// Internal: MOB-1513 (B4 fix wave) — one `stateEvents` emission arrived while the re-arm
+        /// above is active: run one silent resolve attempt (probe the next-due lane; a landed or
+        /// exhausted (`nil`) outcome runs the deferred store) with the payload the re-arm captured.
+        case deferredKeystoneScheduleResolveDue(pendingScheduleStore: PendingScheduleStore, accountUUID: AccountUUID)
         /// MOB-1513: the immediate lane's Keystone post-signing submit
         /// (`MigrationCommitPipeline.commitImmediateKeystone`, dispatched from
         /// `submitImmediateKeystoneTransaction`) succeeded — pops back to the signing source exactly
@@ -345,6 +361,8 @@ struct MigrationCoordFlow {
         case torSheetStateReady(MigrationTorSheet.State, destination: PendingTorDestination)
     }
 
+    // MOB-1513 (B4 fix wave): paces the first-delivery kick's bounded in-kick broadcast retries.
+    @Dependency(\.continuousClock) var clock
     @Dependency(\.migrationBGScheduler) var migrationBGScheduler
     @Dependency(\.migrationManager) var migrationManager
     @Dependency(\.sdkSynchronizer) var sdkSynchronizer
