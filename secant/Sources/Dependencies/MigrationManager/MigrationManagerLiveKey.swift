@@ -1725,6 +1725,14 @@ enum MigrationDerivations {
             )
 
         case let MigrationState.inProgress(progress):
+            // MOB-1513 (B1): an immediate (send-max) sweep in flight shows NO banner during the
+            // unmined window — the balance is already spent, so there is nothing to prompt and
+            // nothing to acknowledge. The engine reports `isImmediate` false, so engine runs (and
+            // the `splitPendingConfirmation` remap above, itself an engine-run state) are
+            // unaffected.
+            if progress.isImmediate {
+                return nil
+            }
             if hasOverdue {
                 return MigrationBannerVariant.transferWaiting(number: progress.completedTransfers + 1, torHold: isTorHoldActive)
             }
@@ -1800,7 +1808,13 @@ enum MigrationDerivations {
             return MigrationReentryRoute.reviewManual(step: progress.completedTransfers + 1, total: progress.totalTransfers)
         }
 
-        if case MigrationState.inProgress = state {
+        if case let MigrationState.inProgress(inFlightProgress) = state {
+            // MOB-1513 (B1): an immediate (send-max) sweep in flight has no per-transfer status
+            // screen to resume into — route to `.entry` so re-entry stays quiet during the unmined
+            // window. Engine runs (`isImmediate` false) still resume on the status screen.
+            if inFlightProgress.isImmediate {
+                return MigrationReentryRoute.entry
+            }
             return MigrationReentryRoute.statusProgress
         }
 
