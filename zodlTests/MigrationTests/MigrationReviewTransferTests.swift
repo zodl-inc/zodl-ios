@@ -240,12 +240,16 @@ import ComposableArchitecture
             }
         }
 
-        await store.send(.confirmTapped)
+        await store.send(.confirmTapped) {
+            $0.isConfirming = true
+        }
         await store.receive(
             .delegate(
                 .keystoneSignRequested([MigrationUnsignedTransferPczt(id: MigrationReviewTransfer.immediateKeystonePcztId, pczt: pcztBytes)])
             )
-        )
+        ) {
+            $0.isConfirming = false
+        }
 
         #expect(createPCZTCalls.value.count == 1)
         #expect(createPCZTCalls.value.first?.0 == state.selectedWalletAccount?.id)
@@ -307,8 +311,11 @@ import ComposableArchitecture
             $0.sdkSynchronizer.createPCZTFromProposal = { _, _ in throw CreatePCZTFailure() }
         }
 
-        await store.send(.confirmTapped)
+        await store.send(.confirmTapped) {
+            $0.isConfirming = true
+        }
         await store.receive(\.noteSplitFailed) {
+            $0.isConfirming = false
             $0.isFailurePresented = true
             $0.failureReason = MigrationReviewTransfer.State.FailureReason.commit
         }
@@ -370,10 +377,12 @@ import ComposableArchitecture
         }
 
         await store.send(.retryTapped) {
+            $0.isConfirming = true
             $0.isFailurePresented = false
             $0.failureReason = nil
         }
         await store.receive(\.transferProposed) {
+            $0.isConfirming = false
             $0.amount = Zatoshi(1_245_800_000)
             $0.fee = Zatoshi(15_000)
             $0.immediateProposal = proposal
@@ -423,6 +432,7 @@ import ComposableArchitecture
         }
 
         await store.send(.retryTapped) {
+            $0.isConfirming = true
             $0.isFailurePresented = false
             $0.failureReason = nil
         }
@@ -430,9 +440,82 @@ import ComposableArchitecture
             .delegate(
                 .keystoneSignRequested([MigrationUnsignedTransferPczt(id: MigrationReviewTransfer.immediateKeystonePcztId, pczt: pcztBytes)])
             )
-        )
+        ) {
+            $0.isConfirming = false
+        }
 
         #expect(proposeCalls.value == 0)
         #expect(createPCZTCalls.value == 1)
+    }
+
+    // MARK: - MOB-1513 (B4): confirm loading + single-flight (Keystone propose leg)
+
+    /// Same treatment as `MigrationTransferPlan`'s confirm (B4): the Keystone fork's PCZT build is
+    /// async, so Confirm shows a loader (`isConfirming`) and a second tap while it's in flight is a
+    /// complete no-op; the flag clears once the batch is handed to the coordinator so a later
+    /// pop-back (rejected signature) re-enables Confirm. The software/manual-step confirms delegate
+    /// synchronously and never need the flag.
+    @MainActor @Test func confirmTappedKeystoneSetsIsConfirmingAndIgnoresSecondTapWhilePcztBuildInFlight() async {
+        let createPCZTCalls = LockIsolated<Int>(0)
+        let (releaseStream, releaseContinuation) = AsyncStream<Void>.makeStream()
+        let proposal = immediateProposal(amount: Zatoshi(1_245_800_000), fee: Zatoshi(15_000))
+        let pcztBytes = Data([0xAB])
+        var state = MigrationReviewTransfer.State(mode: .immediate)
+        state.immediateProposal = proposal
+        state.$selectedWalletAccount.withLock { $0 = walletAccount(keystone: true, idByte: 21) }
+        let store = TestStore(initialState: state) {
+            MigrationReviewTransfer()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.createPCZTFromProposal = { _, _ in
+                createPCZTCalls.withValue { $0 += 1 }
+                for await _ in releaseStream { break }
+                return pcztBytes
+            }
+        }
+
+        await store.send(.confirmTapped) {
+            $0.isConfirming = true
+        }
+        // Second tap while the PCZT build is in flight: a complete no-op.
+        await store.send(.confirmTapped)
+
+        releaseContinuation.yield()
+        releaseContinuation.finish()
+
+        await store.receive(
+            .delegate(
+                .keystoneSignRequested([MigrationUnsignedTransferPczt(id: MigrationReviewTransfer.immediateKeystonePcztId, pczt: pcztBytes)])
+            )
+        ) {
+            $0.isConfirming = false
+        }
+
+        #expect(createPCZTCalls.value == 1)
+    }
+
+    /// A failed PCZT build must clear the loading flag alongside presenting the failure sheet, so
+    /// Retry is tappable again.
+    @MainActor @Test func confirmTappedKeystonePcztBuildFailureClearsIsConfirming() async {
+        struct PcztFailure: Error { }
+        let proposal = immediateProposal(amount: Zatoshi(1_245_800_000), fee: Zatoshi(15_000))
+        var state = MigrationReviewTransfer.State(mode: .immediate)
+        state.immediateProposal = proposal
+        state.$selectedWalletAccount.withLock { $0 = walletAccount(keystone: true, idByte: 22) }
+        let store = TestStore(initialState: state) {
+            MigrationReviewTransfer()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.createPCZTFromProposal = { _, _ in throw PcztFailure() }
+        }
+
+        await store.send(.confirmTapped) {
+            $0.isConfirming = true
+        }
+        await store.receive(\.noteSplitFailed) {
+            $0.isConfirming = false
+            $0.isFailurePresented = true
+            $0.failureReason = MigrationReviewTransfer.State.FailureReason.commit
+        }
     }
 }

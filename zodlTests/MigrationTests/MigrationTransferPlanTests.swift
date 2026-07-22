@@ -216,8 +216,12 @@ import ComposableArchitecture
             withDependenciesUSKDerivable(&$0)
         }
 
-        await store.send(.confirmTapped)
-        await store.receive(\.scheduleSigned)
+        await store.send(.confirmTapped) {
+            $0.isConfirming = true
+        }
+        await store.receive(\.scheduleSigned) {
+            $0.isConfirming = false
+        }
         await store.receive(.delegate(.confirmed))
 
         #expect(signedSchedule.value == schedule)
@@ -251,8 +255,12 @@ import ComposableArchitecture
             withDependenciesUSKDerivable(&$0)
         }
 
-        await store.send(.confirmTapped)
-        await store.receive(\.scheduleSigned)
+        await store.send(.confirmTapped) {
+            $0.isConfirming = true
+        }
+        await store.receive(\.scheduleSigned) {
+            $0.isConfirming = false
+        }
         await store.receive(.delegate(.confirmed))
     }
 
@@ -286,8 +294,12 @@ import ComposableArchitecture
             $0.sdkSynchronizer.signAndStoreMigrationSchedule = { _, _, _ in signCalls.withValue { $0 += 1 } }
         }
 
-        await store.send(.confirmTapped)
-        await store.receive(.delegate(.keystoneSignRequested(pczts)))
+        await store.send(.confirmTapped) {
+            $0.isConfirming = true
+        }
+        await store.receive(.delegate(.keystoneSignRequested(pczts))) {
+            $0.isConfirming = false
+        }
 
         #expect(proposeCalls.value == [schedule])
         #expect(signCalls.value == 0)
@@ -319,8 +331,12 @@ import ComposableArchitecture
             }
         }
 
-        await store.send(.confirmTapped)
-        await store.receive(.delegate(.keystoneSignRequested(pczts)))
+        await store.send(.confirmTapped) {
+            $0.isConfirming = true
+        }
+        await store.receive(.delegate(.keystoneSignRequested(pczts))) {
+            $0.isConfirming = false
+        }
 
         #expect(proposeCalls.value == 1)
     }
@@ -352,8 +368,12 @@ import ComposableArchitecture
             withDependenciesUSKDerivable(&$0)
         }
 
-        await store.send(.confirmTapped)
-        await store.receive(\.scheduleSigned)
+        await store.send(.confirmTapped) {
+            $0.isConfirming = true
+        }
+        await store.receive(\.scheduleSigned) {
+            $0.isConfirming = false
+        }
         await store.receive(.delegate(.confirmed))
 
         #expect(proposeCalls.value == 0)
@@ -419,8 +439,12 @@ import ComposableArchitecture
             withDependenciesUSKDerivable(&$0)
         }
 
-        await store.send(.confirmTapped)
-        await store.receive(\.scheduleSigned)
+        await store.send(.confirmTapped) {
+            $0.isConfirming = true
+        }
+        await store.receive(\.scheduleSigned) {
+            $0.isConfirming = false
+        }
         await store.receive(.delegate(.confirmed))
 
         #expect(callOrder.value == ["prepare", "submit", "recordTransferBroadcast", "signAndStore"])
@@ -455,8 +479,12 @@ import ComposableArchitecture
             withDependenciesUSKDerivable(&$0)
         }
 
-        await store.send(.confirmTapped)
-        await store.receive(\.scheduleSigned)
+        await store.send(.confirmTapped) {
+            $0.isConfirming = true
+        }
+        await store.receive(\.scheduleSigned) {
+            $0.isConfirming = false
+        }
         await store.receive(.delegate(.confirmed))
 
         #expect(prepareCalls.value == 0)
@@ -505,7 +533,9 @@ import ComposableArchitecture
             withDependenciesUSKDerivable(&$0)
         }
 
-        await store.send(.confirmTapped)
+        await store.send(.confirmTapped) {
+            $0.isConfirming = true
+        }
         // R9-T2 (finding 3): a classifiable split failure now routes FIRST — mirrors
         // `MigrationSendingStore`/`MigrationNoteSplitStore`'s "route first" ordering.
         await store.receive(\.broadcastFailureRouted) {
@@ -514,6 +544,7 @@ import ComposableArchitecture
         // MOB-1496 (R8-T1): `.noteSplitFailed` now also tags `failureReason` so Retry knows to
         // re-attempt the commit (not re-propose).
         await store.receive(\.noteSplitFailed) {
+            $0.isConfirming = false
             $0.isFailurePresented = true
             $0.failureReason = MigrationTransferPlan.State.FailureReason.commit
         }
@@ -554,11 +585,14 @@ import ComposableArchitecture
             withDependenciesUSKDerivable(&$0)
         }
 
-        await store.send(.confirmTapped)
+        await store.send(.confirmTapped) {
+            $0.isConfirming = true
+        }
         await store.receive(\.broadcastFailureRouted) {
             $0.failureKind = MigrationBroadcastFailureRoute.torFirstRunChoice
         }
         await store.receive(\.noteSplitFailed) {
+            $0.isConfirming = false
             $0.isFailurePresented = true
             $0.failureReason = MigrationTransferPlan.State.FailureReason.commit
         }
@@ -599,8 +633,11 @@ import ComposableArchitecture
             withDependenciesUSKDerivable(&$0)
         }
 
-        await store.send(.confirmTapped)
+        await store.send(.confirmTapped) {
+            $0.isConfirming = true
+        }
         await store.receive(\.noteSplitFailed) {
+            $0.isConfirming = false
             $0.isFailurePresented = true
             $0.failureReason = MigrationTransferPlan.State.FailureReason.commit
         }
@@ -645,9 +682,12 @@ import ComposableArchitecture
         }
 
         await store.send(.retryTapped) {
+            $0.isConfirming = true
             $0.isFailurePresented = false
         }
-        await store.receive(\.scheduleSigned)
+        await store.receive(\.scheduleSigned) {
+            $0.isConfirming = false
+        }
         await store.receive(.delegate(.confirmed))
     }
 
@@ -693,8 +733,12 @@ import ComposableArchitecture
             }
         }
 
-        await store.send(.confirmTapped)
-        await store.receive(.delegate(.keystoneSignRequested(expectedBatch)))
+        await store.send(.confirmTapped) {
+            $0.isConfirming = true
+        }
+        await store.receive(.delegate(.keystoneSignRequested(expectedBatch))) {
+            $0.isConfirming = false
+        }
 
         #expect(proposeOrder.value == ["split", "schedule"])
         // W6 review Minor (sentinel drift guard, W7): the literal three independent sites use
@@ -743,8 +787,12 @@ import ComposableArchitecture
             withDependenciesUSKDerivable(&$0)
         }
 
-        await store.send(.confirmTapped)
-        await store.receive(\.scheduleSigned)
+        await store.send(.confirmTapped) {
+            $0.isConfirming = true
+        }
+        await store.receive(\.scheduleSigned) {
+            $0.isConfirming = false
+        }
         await store.receive(.delegate(.confirmed))
 
         // `prepare` runs first (a read-only propose, not a broadcast — needed before we even know
@@ -781,8 +829,12 @@ import ComposableArchitecture
             withDependenciesUSKDerivable(&$0)
         }
 
-        await store.send(.confirmTapped)
-        await store.receive(\.scheduleSigned)
+        await store.send(.confirmTapped) {
+            $0.isConfirming = true
+        }
+        await store.receive(\.scheduleSigned) {
+            $0.isConfirming = false
+        }
         await store.receive(.delegate(.confirmed))
 
         #expect(stopCalls.value == 0)
@@ -858,10 +910,12 @@ import ComposableArchitecture
         }
 
         await store.send(.retryTapped) {
+            $0.isConfirming = true
             $0.isFailurePresented = false
             $0.failureReason = nil
         }
         await store.receive(\.transfersProposed) {
+            $0.isConfirming = false
             $0.rows = [
                 MigrationTransferRow(id: "t0", index: 0, amount: Zatoshi(500_000_000), status: .active, hoursFromNow: 0)
             ]
@@ -961,8 +1015,12 @@ import ComposableArchitecture
             withDependenciesUSKDerivable(&$0)
         }
 
-        await store.send(.confirmTapped)
-        await store.receive(\.scheduleSigned)
+        await store.send(.confirmTapped) {
+            $0.isConfirming = true
+        }
+        await store.receive(\.scheduleSigned) {
+            $0.isConfirming = false
+        }
         await store.receive(.delegate(.confirmed))
 
         // Exactly one submit attempt — the landed-but-unrecorded outcome is NEVER retried with a
@@ -1004,8 +1062,11 @@ import ComposableArchitecture
             $0.sdkSynchronizer.proposeNoteSplitPCZTs = { _ in throw ProposeFailure() }
         }
 
-        await store.send(.confirmTapped)
+        await store.send(.confirmTapped) {
+            $0.isConfirming = true
+        }
         await store.receive(\.noteSplitFailed) {
+            $0.isConfirming = false
             $0.isFailurePresented = true
             $0.failureReason = MigrationTransferPlan.State.FailureReason.commit
         }
@@ -1029,8 +1090,11 @@ import ComposableArchitecture
             $0.sdkSynchronizer.proposeMigrationPCZTs = { _, _ in throw ProposeFailure() }
         }
 
-        await store.send(.confirmTapped)
+        await store.send(.confirmTapped) {
+            $0.isConfirming = true
+        }
         await store.receive(\.noteSplitFailed) {
+            $0.isConfirming = false
             $0.isFailurePresented = true
             $0.failureReason = MigrationTransferPlan.State.FailureReason.commit
         }
@@ -1053,8 +1117,11 @@ import ComposableArchitecture
             $0.sdkSynchronizer.proposeMigrationPCZTs = { _, _ in [] }
         }
 
-        await store.send(.confirmTapped)
+        await store.send(.confirmTapped) {
+            $0.isConfirming = true
+        }
         await store.receive(\.noteSplitFailed) {
+            $0.isConfirming = false
             $0.isFailurePresented = true
             $0.failureReason = MigrationTransferPlan.State.FailureReason.commit
         }
@@ -1099,11 +1166,14 @@ import ComposableArchitecture
         }
 
         await store.send(.retryTapped) {
+            $0.isConfirming = true
             $0.isFailurePresented = false
             $0.failureKind = nil
             $0.failureReason = nil
         }
-        await store.receive(\.scheduleSigned)
+        await store.receive(\.scheduleSigned) {
+            $0.isConfirming = false
+        }
         await store.receive(.delegate(.confirmed))
 
         #expect(overrideTorCalls.value == 0)
@@ -1208,11 +1278,14 @@ import ComposableArchitecture
         }
 
         await store.send(.retryTapped) {
+            $0.isConfirming = true
             $0.isFailurePresented = false
             $0.failureKind = nil
             $0.failureReason = nil
         }
-        await store.receive(\.scheduleSigned)
+        await store.receive(\.scheduleSigned) {
+            $0.isConfirming = false
+        }
         await store.receive(.delegate(.confirmed))
 
         #expect(overrideTorCalls.value == 0)
@@ -1261,11 +1334,14 @@ import ComposableArchitecture
         }
 
         await store.send(.retryTapped) {
+            $0.isConfirming = true
             $0.isFailurePresented = false
             $0.failureKind = nil
             $0.failureReason = nil
         }
-        await store.receive(\.scheduleSigned)
+        await store.receive(\.scheduleSigned) {
+            $0.isConfirming = false
+        }
         await store.receive(.delegate(.confirmed))
 
         #expect(capturedOptions.value == rotatedSentinel)
@@ -1289,11 +1365,14 @@ import ComposableArchitecture
             withDependenciesUSKDerivable(&$0)
         }
 
-        await store.send(.confirmTapped)
+        await store.send(.confirmTapped) {
+            $0.isConfirming = true
+        }
         await store.receive(\.broadcastFailureRouted) {
             $0.failureKind = MigrationBroadcastFailureRoute.providerExhausted(torEnabled: true)
         }
         await store.receive(\.noteSplitFailed) {
+            $0.isConfirming = false
             $0.isFailurePresented = true
             $0.failureReason = MigrationTransferPlan.State.FailureReason.commit
         }
@@ -1373,6 +1452,167 @@ import ComposableArchitecture
         await store.send(.roundContextLoaded(round: 1, totalRounds: 1)) {
             $0.round = nil
             $0.totalRounds = nil
+        }
+    }
+
+    // MARK: - MOB-1513 (B4): confirm loading + single-flight
+
+    /// QA 2026-07-22 (B4 symptom 1): tapping Confirm froze the UI with no feedback and a second tap
+    /// spawned a CONCURRENT commit (the plan-cache overwrite race behind the `MIGRATION_PLAN_STALE`
+    /// error sheet). The fix is a loading flag (`isConfirming`, driving the button's
+    /// disabled+spinner state) plus a single-flight guard: a second `.confirmTapped` while a commit
+    /// is in flight must be a complete no-op — no second effect, no second SDK call.
+    @MainActor @Test func confirmTappedSetsIsConfirmingAndIgnoresSecondTapWhileCommitInFlight() async {
+        let schedule = MigrationSchedule(
+            transfers: [
+                MigrationTransferProposal(id: "t0", amount: Zatoshi(500_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
+            ],
+            estimatedDurationHours: 24
+        )
+        let signCalls = LockIsolated<Int>(0)
+        let (releaseStream, releaseContinuation) = AsyncStream<Void>.makeStream()
+        var state = MigrationTransferPlan.State()
+        state.schedule = schedule
+        let store = TestStore(initialState: state) {
+            MigrationTransferPlan()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.signAndStoreMigrationSchedule = { _, _, _ in
+                signCalls.withValue { $0 += 1 }
+                // Hold the commit in flight until the test releases it.
+                for await _ in releaseStream { break }
+            }
+            $0.migrationManager.recordCommittedSchedule = { _, _ in }
+            $0.migrationManager.reconcile = { }
+            withDependenciesUSKDerivable(&$0)
+        }
+
+        await store.send(.confirmTapped) {
+            $0.isConfirming = true
+        }
+        // Second tap while the commit is in flight: a complete no-op — no state change, no second
+        // effect (exhaustive TestStore would fail on any unasserted mutation or extra receive).
+        await store.send(.confirmTapped)
+
+        releaseContinuation.yield()
+        releaseContinuation.finish()
+
+        await store.receive(\.scheduleSigned) {
+            $0.isConfirming = false
+        }
+        await store.receive(.delegate(.confirmed))
+
+        #expect(signCalls.value == 1)
+    }
+
+    /// A failed commit must clear the loading flag alongside presenting the failure sheet, so
+    /// Retry is tappable again.
+    @MainActor @Test func confirmTappedFailureClearsIsConfirmingAlongsidePresentingFailureSheet() async {
+        struct CommitFailure: Error { }
+        let schedule = MigrationSchedule(
+            transfers: [
+                MigrationTransferProposal(id: "t0", amount: Zatoshi(500_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
+            ],
+            estimatedDurationHours: 24
+        )
+        var state = MigrationTransferPlan.State()
+        state.schedule = schedule
+        let store = TestStore(initialState: state) {
+            MigrationTransferPlan()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.signAndStoreMigrationSchedule = { _, _, _ in throw CommitFailure() }
+            // Unlocks the no-testValue `migrationManager` client for this test (the commit effect
+            // captures it) — the thrown sign+store means no member is actually reached.
+            $0.migrationManager.recordCommittedSchedule = { _, _ in }
+            withDependenciesUSKDerivable(&$0)
+        }
+
+        await store.send(.confirmTapped) {
+            $0.isConfirming = true
+        }
+        await store.receive(\.noteSplitFailed) {
+            $0.isConfirming = false
+            $0.isFailurePresented = true
+            $0.failureReason = MigrationTransferPlan.State.FailureReason.commit
+        }
+    }
+
+    /// The Keystone propose leg gets the same treatment: `isConfirming` while the PCZT batch is
+    /// being proposed, single-flight against a second tap, cleared once the batch is handed to the
+    /// coordinator (`.delegate(.keystoneSignRequested)`) so a later pop-back re-enables Confirm.
+    @MainActor @Test func confirmTappedKeystoneSetsIsConfirmingAndIgnoresSecondTapWhileProposeInFlight() async {
+        let schedule = MigrationSchedule(
+            transfers: [
+                MigrationTransferProposal(id: "t0", amount: Zatoshi(500_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
+            ],
+            estimatedDurationHours: 24
+        )
+        let proposeCalls = LockIsolated<Int>(0)
+        let (releaseStream, releaseContinuation) = AsyncStream<Void>.makeStream()
+        var state = MigrationTransferPlan.State()
+        state.schedule = schedule
+        state.$selectedWalletAccount.withLock { $0 = walletAccount(keystone: true, idByte: 9) }
+        let store = TestStore(initialState: state) {
+            MigrationTransferPlan()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.proposeNoteSplitPCZTs = { _ in
+                proposeCalls.withValue { $0 += 1 }
+                for await _ in releaseStream { break }
+                return []
+            }
+            $0.sdkSynchronizer.proposeMigrationPCZTs = { _, _ in
+                [MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0x01]))]
+            }
+        }
+
+        await store.send(.confirmTapped) {
+            $0.isConfirming = true
+        }
+        await store.send(.confirmTapped)
+
+        releaseContinuation.yield()
+        releaseContinuation.finish()
+
+        await store.receive(.delegate(.keystoneSignRequested([MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0x01]))]))) {
+            $0.isConfirming = false
+        }
+
+        #expect(proposeCalls.value == 1)
+    }
+
+    /// A propose-failure Retry (`failureReason == .propose`) re-proposes — that leg shows the same
+    /// loader and clears it when the fresh proposal lands (or fails again).
+    @MainActor @Test func retryTappedAfterProposeFailureSetsIsConfirmingUntilFreshProposalLands() async {
+        let schedule = MigrationSchedule(
+            transfers: [
+                MigrationTransferProposal(id: "t0", amount: Zatoshi(200_000_000), anchorHeight: 50, nextExecutableAfterHeight: 50, expiryHeight: 150)
+            ],
+            estimatedDurationHours: 12
+        )
+        var state = MigrationTransferPlan.State()
+        state.isFailurePresented = true
+        state.failureReason = MigrationTransferPlan.State.FailureReason.propose
+        let store = TestStore(initialState: state) {
+            MigrationTransferPlan()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.proposeMigrationTransfers = { _, _ in schedule }
+        }
+
+        await store.send(.retryTapped) {
+            $0.isFailurePresented = false
+            $0.failureReason = nil
+            $0.isConfirming = true
+        }
+        await store.receive(\.transfersProposed) {
+            $0.isConfirming = false
+            $0.rows = [
+                MigrationTransferRow(id: "t0", index: 0, amount: Zatoshi(200_000_000), status: .active, hoursFromNow: 0)
+            ]
+            $0.totalDurationHours = 12
+            $0.schedule = schedule
         }
     }
 }

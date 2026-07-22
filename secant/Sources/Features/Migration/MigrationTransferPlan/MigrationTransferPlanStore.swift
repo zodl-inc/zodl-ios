@@ -94,6 +94,15 @@ struct MigrationTransferPlan {
         /// `signAndStoreMigrationSchedule` and delegates `.confirmed` directly. The re-created
         /// (recovery) variant signs a fresh schedule, so it keeps the default `true`.
         var requiresSigning = true
+        /// MOB-1513 (B4): true while an async confirm leg is in flight — the software commit, the
+        /// Keystone PCZT-batch propose, or a propose-failure Retry's re-propose. Drives the Confirm
+        /// button's disabled+spinner state AND the `.confirmTapped`/`.retryTapped` single-flight
+        /// guard: a second tap while set is a complete no-op, so concurrent commits (the
+        /// plan-cache-overwrite race behind QA's `MIGRATION_PLAN_STALE` error sheet) can't happen.
+        /// Cleared on every outcome: `.scheduleSigned`, `.noteSplitFailed`,
+        /// `.delegate(.keystoneSignRequested)` (so a pop-back after a rejected QR ceremony
+        /// re-enables Confirm), `.transfersProposed`, and `.transferProposalFailed`.
+        var isConfirming = false
         /// MOB-1478 (W4): failure sheet for the silent note-split step, presented over this screen
         /// instead of proceeding to sign+store — mirrors `MigrationNoteSplit.State.isFailurePresented`.
         /// MOB-1496 (R8-T1, S3): also covers a propose failure now — see `failureReason`.
@@ -212,6 +221,11 @@ struct MigrationTransferPlan {
                 return .none
 
             case .confirmTapped, .retryTapped:
+                // MOB-1513 (B4): single-flight — a second tap while a confirm leg is already in
+                // flight must not spawn a concurrent commit (every propose/prepare overwrites the
+                // SDK's one-slot plan cache, so a concurrent commit surfaces as the
+                // `MIGRATION_PLAN_STALE` error sheet QA hit).
+                guard !state.isConfirming else { return .none }
                 state.isFailurePresented = false
                 state.failureKind = nil
 
@@ -219,7 +233,11 @@ struct MigrationTransferPlan {
                 // re-attempting the commit — checked FIRST, before any of the commit guards below.
                 if case .retryTapped = action, state.failureReason == State.FailureReason.propose {
                     state.failureReason = nil
-                    return proposeEffect(accountUUID: state.selectedWalletAccount?.id)
+                    // Set only when a real re-propose launches (a nil account is a no-op inside
+                    // `proposeEffect`, which must not strand the flag).
+                    guard let accountUUID = state.selectedWalletAccount?.id else { return .none }
+                    state.isConfirming = true
+                    return proposeEffect(accountUUID: accountUUID)
                 }
                 state.failureReason = nil
 
@@ -238,17 +256,27 @@ struct MigrationTransferPlan {
                 guard let account = state.selectedWalletAccount else { return .none }
 
                 guard account.vendor != WalletAccount.Vendor.keystone else {
+                    state.isConfirming = true
                     return requestKeystoneSignature(for: schedule, account: account)
                 }
 
                 guard let zip32AccountIndex = account.zip32AccountIndex else { return .none }
 
+                state.isConfirming = true
                 return commitEffect(schedule: schedule, account: account, zip32AccountIndex: zip32AccountIndex)
+
+            case .delegate(.keystoneSignRequested):
+                // MOB-1513 (B4): the batch is handed to the coordinator (which pushes the QR
+                // ceremony on top) — re-enable Confirm so a pop-back after a rejected signature
+                // lands on a tappable button again.
+                state.isConfirming = false
+                return .none
 
             case .delegate:
                 return .none
 
             case .noteSplitFailed:
+                state.isConfirming = false
                 state.isFailurePresented = true
                 state.failureReason = State.FailureReason.commit
                 return .none
@@ -313,14 +341,17 @@ struct MigrationTransferPlan {
                 return .none
 
             case .scheduleSigned:
+                state.isConfirming = false
                 return .send(.delegate(.confirmed))
 
             case .transferProposalFailed:
+                state.isConfirming = false
                 state.isFailurePresented = true
                 state.failureReason = State.FailureReason.propose
                 return .none
 
             case .transfersProposed(let schedule):
+                state.isConfirming = false
                 apply(schedule, to: &state)
                 return .none
 
