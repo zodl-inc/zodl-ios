@@ -92,8 +92,9 @@ extension SDKSynchronizerClient: TestDependencyKey {
         ),
         proposeImmediateMigration: unimplemented(
             "\(Self.self).proposeImmediateMigration",
-            placeholder: MigrationSchedule(transfers: [], estimatedDurationHours: 0)
+            placeholder: ImmediateMigrationProposal(proposal: .testOnlyFakeProposal(totalFee: 0), amount: Zatoshi.zero, fee: Zatoshi.zero)
         ),
+        recordImmediateMigration: unimplemented("\(Self.self).recordImmediateMigration"),
         residualAfterMigration: unimplemented("\(Self.self).residualAfterMigration", placeholder: nil),
         signAndStoreMigrationSchedule: unimplemented("\(Self.self).signAndStoreMigrationSchedule"),
         isSyncRequiredBeforeNextMigrationTransfer: unimplemented(
@@ -187,7 +188,8 @@ extension SDKSynchronizerClient {
         prepareNoteSplit: { _ in NoteSplitProposal(outputNotes: [], fee: Zatoshi.zero) },
         submitNoteSplit: { _, _, _, _ in MigrationTransferResult.success(txId: "") },
         proposeMigrationTransfers: { _, _ in MigrationSchedule(transfers: [], estimatedDurationHours: 0) },
-        proposeImmediateMigration: { _ in MigrationSchedule(transfers: [], estimatedDurationHours: 0) },
+        proposeImmediateMigration: { _ in ImmediateMigrationProposal(proposal: .testOnlyFakeProposal(totalFee: 0), amount: Zatoshi.zero, fee: Zatoshi.zero) },
+        recordImmediateMigration: { _, _ in },
         residualAfterMigration: { _ in nil },
         signAndStoreMigrationSchedule: { _, _, _ in },
         isSyncRequiredBeforeNextMigrationTransfer: { _ in false },
@@ -400,7 +402,8 @@ extension SDKSynchronizerClient {
             prepareNoteSplit: { _ in NoteSplitProposal(outputNotes: [], fee: Zatoshi.zero) },
             submitNoteSplit: { _, _, _, _ in MigrationTransferResult.success(txId: "") },
             proposeMigrationTransfers: { _, _ in MigrationSchedule(transfers: [], estimatedDurationHours: 0) },
-            proposeImmediateMigration: { _ in MigrationSchedule(transfers: [], estimatedDurationHours: 0) },
+            proposeImmediateMigration: { _ in ImmediateMigrationProposal(proposal: .testOnlyFakeProposal(totalFee: 0), amount: Zatoshi.zero, fee: Zatoshi.zero) },
+            recordImmediateMigration: { _, _ in },
             residualAfterMigration: { _ in nil },
             signAndStoreMigrationSchedule: { _, _, _ in },
             isSyncRequiredBeforeNextMigrationTransfer: { _ in false },

@@ -347,6 +347,9 @@ extension SDKSynchronizerClient: DependencyKey {
             proposeImmediateMigration: { accountUUID in
                 try await synchronizer.proposeImmediateMigration(accountUUID: accountUUID)
             },
+            recordImmediateMigration: { accountUUID, txid in
+                try await synchronizer.recordImmediateMigration(accountUUID: accountUUID, txid: txid)
+            },
             residualAfterMigration: { accountUUID in
                 try await synchronizer.residualAfterMigration(accountUUID: accountUUID)
             },

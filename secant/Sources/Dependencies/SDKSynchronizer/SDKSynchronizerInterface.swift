@@ -139,8 +139,19 @@ struct SDKSynchronizerClient: Sendable {
     ) async throws -> MigrationTransferResult
     /// The full scheduled-migration schedule for the account's spendable Orchard balance.
     var proposeMigrationTransfers: @Sendable (AccountUUID, _ includeResidual: Bool) async throws -> MigrationSchedule
-    /// The immediate (single-transaction) migration schedule for the account.
-    var proposeImmediateMigration: @Sendable (AccountUUID) async throws -> MigrationSchedule
+    /// MOB-1513: proposes the immediate (single-transaction) migration — an ordinary send-max
+    /// proposal (NOT an engine-held schedule; no plan-cache staleness applies to it). Execute it via
+    /// `createAndSubmitProposedTransactions(proposal.proposal, usk)` (software) or
+    /// `createPCZTFromProposal(accountUUID, proposal.proposal)` (Keystone) exactly like any other
+    /// ordinary transfer, then call `recordImmediateMigration` after a successful broadcast.
+    var proposeImmediateMigration: @Sendable (AccountUUID) async throws -> ImmediateMigrationProposal
+    /// MOB-1513: records a broadcast immediate-migration sweep so the platform migration state
+    /// machine reports it (`InProgress` 0-of-1 while unmined, `Complete` once mined). NOT
+    /// broadcast-sensitive itself (the broadcast already rode the already-guarded
+    /// `createAndSubmitProposedTransactions`/`createAndSubmitTransactionFromPCZT` closures) — no
+    /// transaction-guard wrap here. `txid` is the SDK's raw/internal byte order (32 bytes; matches
+    /// `TxId.id`, NOT the reversed display-hex order `Data.toHexStringTxId()` produces).
+    var recordImmediateMigration: @Sendable (AccountUUID, Data) async throws -> Void
     /// The leftover Orchard balance a migration would not cross, when worth offering a choice
     /// about; `nil` when there is none. THROWS before the wallet's first completed sync.
     var residualAfterMigration: @Sendable (AccountUUID) async throws -> Zatoshi?
