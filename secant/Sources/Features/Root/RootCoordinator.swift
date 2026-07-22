@@ -274,40 +274,26 @@ extension Root {
                 )
 
             case .migrationCoordFlow(.flowFinished):
-                // R8-T6 fix-wave (Critical-1): a defensive release — `.flowFinished` normally
-                // follows the Sending store's own exit (which already clears the hold itself), so
-                // this is a no-op in that ordinary case. But `.flowFinished` is also the Root-side
-                // terminal signal for every OTHER flow-root close (recovery/scheduled/reviewTransfer/
-                // complete's own delegates — see the cases below), so this closes any path where
-                // the coordinator finishes without the Sending store's own exit ever running.
-                // Called BEFORE the pop.
-                let releaseEffect = releaseSendWaitHold()
-                // MOB-1496: same "defensive, usually a no-op" reasoning as the release above, for a
-                // live Keystone signing ceremony instead of a send-wait hold — see
-                // `cancelAbandonedKeystoneMigrationRun`'s doc. Also called BEFORE the pop (though this
-                // case doesn't reset `migrationCoordFlowState` itself, reading before any mutation
-                // matches the release's own ordering).
-                let cancelEffect = cancelAbandonedKeystoneMigrationRun(state: state)
-                // MOB-1497: the migration flow's teardown point — discards the account's network
-                // snapshot iff it's still PROVISIONAL (never committed to a schedule this run); a
-                // no-op against an already-committed one, which stays until its own run-end clear.
-                // `nil` resolves the selected account, same convention as every other manager member.
-                migrationManager.clearProvisionalNetworkSnapshot(nil)
+                // `.flowFinished` is the Root-side terminal signal for every flow-root close
+                // (Sending's own exit, and recovery/scheduled/reviewTransfer/complete's own delegates
+                // — see the cases below), so this closes any path where the coordinator finishes.
+                // MOB-1497 (T4): the teardown (defensive hold release + provisional/abandoned snapshot
+                // clears) is shared with `.switchServerRequested` below via `tearDownMigrationCoordFlow`
+                // so the two stay in lockstep; this case then closes the path back to Home.
+                let teardownEffect = tearDownMigrationCoordFlow(state: &state)
                 state.path = nil
-                // R8-T3 (#9): fire-and-forget — every flow-root close/terminal delegate lands
-                // here, including an abandoned pre-commit confirm lane that already took a
-                // network snapshot on its first `migrationNetworkOptions` read but never got far
-                // enough to commit a schedule (or acknowledge completion). `clearAbandonedNetworkSnapshot`
-                // itself no-ops unless the selected account's engine state is genuinely
-                // `.notStarted` with no stored schedule payload, so this is safe to fire on EVERY
-                // flow close, not just an abandoned one.
-                return .merge(
-                    releaseEffect,
-                    cancelEffect,
-                    .run { [migrationManager, accountUUID = state.selectedWalletAccount?.id] _ in
-                        await migrationManager.clearAbandonedNetworkSnapshot(accountUUID)
-                    }
-                )
+                return teardownEffect
+
+            case .migrationCoordFlow(.switchServerRequested):
+                // MOB-1497 (T4): the custom-server Tor sheet's "Switch Server" — the abandoned attempt
+                // persisted nothing (its network snapshot is still provisional, discarded by the
+                // shared teardown), so instead of closing to Home this opens Server Setup with
+                // back-to-Home, mirroring the smart-banner `.serverSwitchRequested` entry's own state
+                // prep (`ServerSetup.State.initial` + `.serverSwitch`).
+                let switchTeardownEffect = tearDownMigrationCoordFlow(state: &state)
+                state.serverSetupState = ServerSetup.State.initial
+                state.path = .serverSwitch
+                return switchTeardownEffect
 
             case .migrationCoordFlow(
                 .path(.element(id: _, action: .sending(.delegate(.viewTransaction))))
@@ -548,8 +534,91 @@ extension Root {
                     .send(.home(.smartBanner(.closeSheetTapped)))
                 )
 
+                // MARK: - Migration Tor Failure Prompt (MOB-1497 T6)
+
+            case .checkMigrationTorFailurePrompt:
+                // Foreground gate — present the "Couldn't Connect to Tor" sheet over Home iff Home is
+                // fully visible (no Root path pushed, Server Setup cover down), nothing is already
+                // presented, it hasn't been offered yet THIS foreground, a selected account exists,
+                // and that account's BACKGROUND Tor-failure latch is armed. `isPendingBackgroundTorPrompt`
+                // is a synchronous UserDefaults read, so the whole gate resolves inline. When the gate
+                // fails for path/cover reasons the latch is left untouched (`didOffer` stays false), so
+                // a later foreground with Home visible still presents.
+                guard state.path == nil,
+                    !state.serverSetupViewBinding,
+                    !state.isTorFailurePromptPresented,
+                    !state.didOfferTorFailurePromptThisForeground,
+                    let accountUUID = state.selectedWalletAccount?.id,
+                    migrationManager.isPendingBackgroundTorPrompt(accountUUID)
+                else {
+                    return .none
+                }
+                state.didOfferTorFailurePromptThisForeground = true
+                state.torFailurePromptState = MigrationTorFailureSheet.State()
+                state.isTorFailurePromptPresented = true
+                return .none
+
+            case .torFailurePromptPresentationChanged(let isPresented):
+                // Swipe-dismiss sends `false` (the latch stays armed — the next foreground re-checks).
+                // A failed in-sheet retry sends `true` to re-present (bypassing the once-per-foreground
+                // gate deliberately — see `attemptForegroundMigrationTorRetry`).
+                state.isTorFailurePromptPresented = isPresented
+                return .none
+
+            case .torFailurePrompt(.delegate(.continueWithoutTor)):
+                // The sheet's `MigrationRisksCard` is the R15 clearnet-consent surface (no second
+                // alert): turn Tor off for the REST of this run BEFORE the attempt, then clear the
+                // latch and run one foreground broadcast.
+                state.isTorFailurePromptPresented = false
+                guard let accountUUID = state.selectedWalletAccount?.id else { return .none }
+                migrationManager.overrideTorForRun(accountUUID, false)
+                return clearLatchAndAttemptForegroundTorRetry(accountUUID)
+
+            case .torFailurePrompt(.delegate(.tryAgain)):
+                // Keeps Tor on — clear the latch and run one foreground broadcast; a Tor-class failure
+                // re-arms the latch and re-presents from inside the attempt.
+                state.isTorFailurePromptPresented = false
+                guard let accountUUID = state.selectedWalletAccount?.id else { return .none }
+                return clearLatchAndAttemptForegroundTorRetry(accountUUID)
+
             default: return .none
             }
         }
+    }
+
+    /// MOB-1497 (T4): the migration flow's shared teardown — run by BOTH
+    /// `.migrationCoordFlow(.flowFinished)` (which then closes the path back to Home) and
+    /// `.migrationCoordFlow(.switchServerRequested)` (which then routes to Server Setup) so the two
+    /// stay in lockstep. Does NOT touch `state.path` — each caller sets its own destination after.
+    ///
+    /// The three effects, in order:
+    /// - `releaseSendWaitHold()`: a defensive release — normally a no-op (the Sending store's own
+    ///   exit already clears the hold), but every flow-root close lands here, so this covers any
+    ///   path where the coordinator finishes without that exit running. Read here, BEFORE the caller
+    ///   repoints `state.path`.
+    /// - `clearProvisionalNetworkSnapshot(nil)`: discards the account's network snapshot iff it is
+    ///   still PROVISIONAL (never committed to a schedule this run); a no-op against an
+    ///   already-committed one, which stays until its own run-end clear. `nil` resolves the selected
+    ///   account, same convention as every other manager member.
+    /// - `clearAbandonedNetworkSnapshot(accountUUID)` (fire-and-forget): covers an abandoned
+    ///   pre-commit confirm lane that took a snapshot on its first `migrationNetworkOptions` read but
+    ///   never committed a schedule. Itself a no-op unless the account's engine state is genuinely
+    ///   `.notStarted` with no stored schedule payload, so it is safe to fire on EVERY flow close.
+    private func tearDownMigrationCoordFlow(state: inout Root.State) -> Effect<Root.Action> {
+        let releaseEffect = releaseSendWaitHold()
+        // MOB-1496 (abandon reconciliation): a live Keystone signing ceremony means the engine
+        // already created the run at PCZT-build time and would silently resume it (stale PCZTs) on
+        // the next attempt — cancel it on any external teardown, Switch Server included. Read
+        // BEFORE the callers reset/replace `migrationCoordFlowState`; see
+        // `cancelAbandonedKeystoneMigrationRun`'s doc.
+        let cancelEffect = cancelAbandonedKeystoneMigrationRun(state: state)
+        migrationManager.clearProvisionalNetworkSnapshot(nil)
+        return .merge(
+            releaseEffect,
+            cancelEffect,
+            .run { [migrationManager, accountUUID = state.selectedWalletAccount?.id] _ in
+                await migrationManager.clearAbandonedNetworkSnapshot(accountUUID)
+            }
+        )
     }
 }

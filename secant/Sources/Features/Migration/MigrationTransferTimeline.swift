@@ -16,6 +16,17 @@
 //  pending-gray once Transfers 1-2 are sent). The reschedule skeleton placeholder resizes
 //  72x12 -> 60x16 (corner radius unchanged, confirmed against the Figma skeleton Rectangle).
 //
+//  MOB-1497 (T8, Q3'26 canvas, Figma 4207:7394): two changes, both to row 0 specifically.
+//  - Title: row 0 always reads "Split Balance" instead of "Transfer 1" — applied here (not in each
+//    caller) so Plan and Status stay consistent per the task's own instruction, covering row 0 for
+//    its whole lifecycle (pre-confirmation through fully sent, on either screen). `migrationPlan
+//    .transferN` stays in use for every other row (index >= 1), so it's not orphaned.
+//  - Badge: `usesNeutralCheckForReadyFirstStep` (opted into by `MigrationTransferPlanView` only —
+//    see that view's header doc) swaps row 0's badge for the new `.neutral` check while it's still
+//    `.active` (ready, not yet sent) instead of the numbered dark circle every other `.active` row
+//    gets; a `.sent` row 0 keeps the ordinary green check either way. Defaults `false`, so
+//    `MigrationStatusView` (which never opts in) is byte-for-byte unchanged.
+//
 
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
@@ -28,6 +39,9 @@ struct MigrationTransferTimeline: View {
     let rows: IdentifiedArrayOf<MigrationTransferRow>
     let caption: (MigrationTransferRow) -> String
     var skeletonPendingCaptions = false
+    /// MOB-1497 (T8): opts row 0 into the neutral "ready, not yet done" check while `.active`. See
+    /// this file's header doc.
+    var usesNeutralCheckForReadyFirstStep = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -40,7 +54,7 @@ struct MigrationTransferTimeline: View {
     @ViewBuilder private func timelineRow(_ row: MigrationTransferRow, isLast: Bool) -> some View {
         HStack(alignment: .top, spacing: 12) {
             VStack(spacing: 4) {
-                MigrationStepBadge(number: row.index + 1, style: badgeStyle(for: row.status))
+                MigrationStepBadge(number: row.index + 1, style: badgeStyle(for: row))
 
                 if !isLast {
                     Rectangle()
@@ -50,7 +64,7 @@ struct MigrationTransferTimeline: View {
             }
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(String(localizable: .migrationPlanTransferN(row.index + 1)))
+                Text(rowTitle(for: row))
                     .zFont(.medium, size: 14, style: Design.Text.primary)
 
                 captionOrSkeleton(for: row)
@@ -73,6 +87,14 @@ struct MigrationTransferTimeline: View {
         }
     }
 
+    /// MOB-1497 (T8): row 0 always reads "Split Balance" — every other row keeps its "Transfer N"
+    /// title. See this file's header doc.
+    private func rowTitle(for row: MigrationTransferRow) -> String {
+        row.index == 0
+            ? String(localizable: .migrationPlanSplitBalance)
+            : String(localizable: .migrationPlanTransferN(row.index + 1))
+    }
+
     @ViewBuilder private func captionOrSkeleton(for row: MigrationTransferRow) -> some View {
         if skeletonPendingCaptions && row.status != .sent {
             RoundedRectangle(cornerRadius: 4)
@@ -82,6 +104,16 @@ struct MigrationTransferTimeline: View {
             Text(caption(row))
                 .zFont(size: 12, style: Design.Text.tertiary)
         }
+    }
+
+    /// MOB-1497 (T8): row-aware entry point — layers the opt-in neutral-first-step rule (see this
+    /// file's header doc) on top of the plain status mapping below, which every other row (and
+    /// every row when the opt-in is off) still uses unchanged.
+    private func badgeStyle(for row: MigrationTransferRow) -> MigrationStepBadge.Style {
+        if usesNeutralCheckForReadyFirstStep, row.index == 0, row.status == .active {
+            return .neutral
+        }
+        return badgeStyle(for: row.status)
     }
 
     private func badgeStyle(for status: MigrationTransferRow.Status) -> MigrationStepBadge.Style {
@@ -117,6 +149,13 @@ struct MigrationTransferTimeline: View {
             return Design.Surfaces.strokePrimary
         case .warning:
             return Design.Utility.WarningYellow._500
+        case .neutral:
+            // MOB-1497 (T8): structurally unreachable here — this switch is fed by the status-only
+            // `badgeStyle(for:)` overload above, which never returns `.neutral` (only the row-aware
+            // overload, driving the badge itself, can); `connectorColor` is only ever called with
+            // `row.status` (never the row), so it can't observe the opt-in either. Handled only for
+            // exhaustiveness, falling back to the same tone as `.pending`.
+            return Design.Surfaces.strokePrimary
         }
     }
 }

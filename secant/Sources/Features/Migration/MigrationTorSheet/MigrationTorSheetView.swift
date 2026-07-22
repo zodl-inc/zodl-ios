@@ -8,13 +8,19 @@
 //  `MigrationNetworkPrivacyView`.
 //
 //  MOB-1497 (T2): `store.isCustomServer` swaps the toggle card for the no-toggle "unavailable" body
-//  copy (R2/R12) — badge and title stay the same in both variants (no new title string exists for
-//  the unavailable case; flagged for a product/design pass). Within the toggle variant,
-//  `store.showsBroadcastDisclosure` (R7-T2 fix-wave 1, Important-1) independently gates the R13
-//  disclosure line — testnet and the defensive same-server fallback keep the toggle but must not
-//  show a "different server" claim that isn't true. The off-warning alert (R3/R11) is presented via
-//  the standard `.alert(store:)` binding — see the shared `AlertState.migrationTorOffWarning`
+//  copy (R2/R12). The off-warning alert (R3/R11) is presented via the standard `.alert(store:)`
+//  binding — see the shared `AlertState.migrationTorOffWarning`
 //  (Features/Migration/MigrationOffWarningAlert.swift).
+//
+//  MOB-1497 (T3): the custom-server variant is redesigned per the refreshed canvas (4207:10692 / dark
+//  4207:10875) — it now gets its OWN title (`migrationTorSheetUnavailableTitle`, 20pt semibold, vs.
+//  the provider variant's unchanged 24pt `migrationTorSheetTitle`), a `MigrationRisksCard` ("What are
+//  the risks?") below the body copy, and two buttons in place of the shared "Got it": destructive1
+//  "Continue without Tor" (`continueWithoutTorTapped`) and primary "Switch Server"
+//  (`switchServerTapped`, wired to the coordinator in T4). `disclosureLine` — the R13 broadcast-host
+//  line this view used to render under the provider toggle card, gated on
+//  `store.showsBroadcastDisclosure` — is deleted outright for BOTH variants; R13 now surfaces only
+//  via the (unchanged) TransferPlan/ReviewTransfer confirm footers.
 //
 
 import ComposableArchitecture
@@ -31,49 +37,80 @@ struct MigrationTorSheetView: View {
     var body: some View {
         WithPerceptionTracking {
             VStack(alignment: .leading, spacing: 0) {
-                torBadge
-                    .padding(.top, 48)
-                    .padding(.bottom, 16)
-
-                Text(localizable: .migrationTorSheetTitle)
-                    .zFont(.semiBold, size: 24, style: Design.Text.primary)
-                    .padding(.bottom, 12)
-
-                Text(bodyText)
-                    .zFont(size: 14, style: Design.Text.tertiary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .multilineTextAlignment(.leading)
-                    .padding(.bottom, Design.Spacing._3xl)
-
-                if !store.isCustomServer {
-                    toggleCard
-                        // R9-F11: the 32pt gap before the button lives on the disclosure line when it
-                        // renders; when `showsBroadcastDisclosure` is false (testnet single-endpoint,
-                        // same-server fallback) there's no disclosure line to carry it, so the toggle
-                        // card itself must supply the full 32pt instead of its usual 12pt.
-                        .padding(.bottom, store.showsBroadcastDisclosure ? 12 : 32)
-
-                    if store.showsBroadcastDisclosure {
-                        disclosureLine
-                            .padding(.bottom, 32)
-                    }
+                if store.isCustomServer {
+                    unavailableContent
+                } else {
+                    providerContent
                 }
-
-                ZashiButton(String(localizable: .migrationGotIt)) {
-                    store.send(.gotItTapped)
-                }
-                .padding(.bottom, Design.Spacing.sheetBottomSpace)
             }
             .alert($store.scope(state: \.alert, action: \.alert))
         }
     }
 
+    // MARK: - Provider variant (unchanged besides the deleted R13 `disclosureLine`)
+
+    @ViewBuilder private var providerContent: some View {
+        torBadge
+            .padding(.top, 48)
+            .padding(.bottom, 16)
+
+        Text(localizable: .migrationTorSheetTitle)
+            .zFont(.semiBold, size: 24, style: Design.Text.primary)
+            .padding(.bottom, 12)
+
+        Text(bodyText)
+            .zFont(size: 14, style: Design.Text.tertiary)
+            .fixedSize(horizontal: false, vertical: true)
+            .multilineTextAlignment(.leading)
+            .padding(.bottom, Design.Spacing._3xl)
+
+        toggleCard
+            // R9-F11: with the R13 disclosure line deleted, the toggle card itself supplies the
+            // full 32pt gap before the button (12pt left a cramped toggle-to-button seam).
+            .padding(.bottom, 32)
+
+        ZashiButton(String(localizable: .migrationGotIt)) {
+            store.send(.gotItTapped)
+        }
+        .padding(.bottom, Design.Spacing.sheetBottomSpace)
+    }
+
+    // MARK: - Custom-server variant (MOB-1497 T3: risks card + Continue without Tor / Switch Server)
+
+    @ViewBuilder private var unavailableContent: some View {
+        torBadge
+            .padding(.top, 48)
+            .padding(.bottom, 12)
+
+        Text(localizable: .migrationTorSheetUnavailableTitle)
+            .zFont(.semiBold, size: 20, style: Design.Text.primary)
+            .padding(.bottom, 4)
+
+        Text(bodyText)
+            .zFont(size: 14, style: Design.Text.tertiary)
+            .fixedSize(horizontal: false, vertical: true)
+            .multilineTextAlignment(.leading)
+            .padding(.bottom, Design.Spacing._3xl)
+
+        MigrationRisksCard(body: risksBodyText)
+            .padding(.bottom, Design.Spacing._3xl)
+
+        VStack(spacing: 12) {
+            ZashiButton(String(localizable: .migrationTorSheetContinueWithoutTor), type: .destructive1) {
+                store.send(.continueWithoutTorTapped)
+            }
+
+            ZashiButton(String(localizable: .migrationTorSheetSwitchServer)) {
+                store.send(.switchServerTapped)
+            }
+        }
+        .padding(.bottom, Design.Spacing.sheetBottomSpace)
+    }
+
     // MARK: - Body copy
 
-    /// MOB-1497 (T2, R2/R11/R12): identity-custom users see the no-toggle unavailable-variant copy
-    /// (the formed snapshot's host, plus the path-specific R11 exposure line — combined into one
-    /// string per path, since design has no split-line frame for this variant); provider users keep
-    /// the existing toggle-sheet body copy, unchanged.
+    /// MOB-1497 (T2, R2/R11/R12): identity-custom users see the no-toggle unavailable-variant copy;
+    /// provider users keep the existing toggle-sheet body copy, unchanged.
     private var bodyText: String {
         guard store.isCustomServer else {
             return store.usesFullBalanceCopy
@@ -81,8 +118,16 @@ struct MigrationTorSheetView: View {
                 : String(localizable: .migrationTorSheetBody)
         }
         return store.usesFullBalanceCopy
-            ? String(localizable: .migrationTorSheetUnavailableBodyFull(store.broadcastHost))
-            : String(localizable: .migrationTorSheetUnavailableBodyGradual(store.broadcastHost))
+            ? String(localizable: .migrationTorSheetUnavailableBodyFull)
+            : String(localizable: .migrationTorSheetUnavailableBodyGradual)
+    }
+
+    /// MOB-1497 (T3): `MigrationRisksCard`'s body — the same full/gradual split as `bodyText` above,
+    /// off the same `usesFullBalanceCopy` flag ("full" == immediate, "gradual" == scheduled).
+    private var risksBodyText: String {
+        store.usesFullBalanceCopy
+            ? String(localizable: .migrationTorSheetRisksBodyFull)
+            : String(localizable: .migrationTorSheetRisksBodyGradual)
     }
 
     // MARK: - Tor badge
@@ -127,23 +172,24 @@ struct MigrationTorSheetView: View {
                 }
         }
     }
-
-    // MARK: - Disclosure (MOB-1497 T2, R13)
-
-    @ViewBuilder private var disclosureLine: some View {
-        Text(String(localizable: .migrationTorSheetDisclosure(store.broadcastHost)))
-            .zFont(size: 12, style: Design.Text.tertiary)
-            .fixedSize(horizontal: false, vertical: true)
-            .multilineTextAlignment(.leading)
-    }
 }
 
 // MARK: - Previews
 
-#Preview {
+#Preview("Provider") {
     MigrationTorSheetView(
         store: StoreOf<MigrationTorSheet>(
             initialState: MigrationTorSheet.State()
+        ) {
+            MigrationTorSheet()
+        }
+    )
+}
+
+#Preview("Custom server") {
+    MigrationTorSheetView(
+        store: StoreOf<MigrationTorSheet>(
+            initialState: MigrationTorSheet.State(isCustomServer: true)
         ) {
             MigrationTorSheet()
         }

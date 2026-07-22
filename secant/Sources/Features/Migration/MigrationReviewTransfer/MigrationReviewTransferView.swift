@@ -12,6 +12,18 @@
 //  presents the same Cancel/Retry bottom sheet `MigrationNoteSplit` uses (this screen had no failure
 //  path before).
 //
+//  MOB-1497 (T4, Q3'26 canvas): the R13 broadcast-server disclosure footer (added in T2 for the
+//  immediate mode, whether the Tor sheet was skipped or confirmed) is retired per the new designs —
+//  the footer, its `disclosureFooter` builder, and the store's `broadcastDisclosureHost` state are
+//  removed. Migration screens no longer name which server will receive transfers.
+//
+//  MOB-1497 (T7, Q3'26 canvas · 3491:11447 "Review Transfer 3 (A)"): manual mode's `description` is
+//  now the three-sentence composition `descManual + reviewAndConfirm + cannotBeUndone` rendered as a
+//  single paragraph — `cannotBeUndone`'s old separate line inside `thisTransferBlock` is dropped for
+//  manual mode accordingly. Immediate mode (`descImmediate`, frame 3485:6264) is untouched — its copy
+//  already ends with its own cannot-be-cancelled sentence. A `ZashiInfoCallout(.warning)` "Privacy
+//  Disclaimer" card now shows below `detailRows` in manual mode only, above the Confirm button.
+//
 
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
@@ -52,13 +64,13 @@ struct MigrationReviewTransferView: View {
                         }
 
                         detailRows
+
+                        if isPrivacyDisclaimerVisible {
+                            privacyDisclaimer
+                                .padding(.top, 16)
+                        }
                     }
                     .padding(.vertical, 1)
-                }
-
-                if let broadcastDisclosureHost = store.broadcastDisclosureHost {
-                    disclosureFooter(host: broadcastDisclosureHost)
-                        .padding(.top, 16)
                 }
 
                 ZashiButton(String(localizable: .generalConfirm)) {
@@ -101,7 +113,13 @@ struct MigrationReviewTransferView: View {
         case .immediate:
             return String(localizable: .migrationReviewDescImmediate)
         case .manualStep:
-            return String(localizable: .migrationReviewDescManual)
+            // MOB-1497 (T7): merged into a single paragraph — descManual sets up the transfer,
+            // reviewAndConfirm prompts the confirm action, cannotBeUndone closes the warning that
+            // used to render as its own line inside `thisTransferBlock` (see that builder's comment).
+            let descManual = String(localizable: .migrationReviewDescManual)
+            let reviewAndConfirm = String(localizable: .migrationReviewReviewAndConfirm)
+            let cannotBeUndone = String(localizable: .migrationReviewCannotBeUndone)
+            return "\(descManual) \(reviewAndConfirm) \(cannotBeUndone)"
         }
     }
 
@@ -123,14 +141,12 @@ struct MigrationReviewTransferView: View {
     }
 
     @ViewBuilder private var thisTransferBlock: some View {
+        // MOB-1497 (T7): `migrationReviewCannotBeUndone` used to render here as its own line —
+        // it now folds into the top `description` paragraph instead (manual mode only), so this
+        // block is just the title above `thisTransferRow`.
         VStack(alignment: .leading, spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(localizable: .migrationReviewThisTransferTitle)
-                    .zFont(.medium, size: 14, style: Design.Text.primary)
-
-                Text(localizable: .migrationReviewCannotBeUndone)
-                    .zFont(size: 12, style: Design.Text.tertiary)
-            }
+            Text(localizable: .migrationReviewThisTransferTitle)
+                .zFont(.medium, size: 14, style: Design.Text.primary)
 
             thisTransferRow
         }
@@ -180,19 +196,20 @@ struct MigrationReviewTransferView: View {
         }
     }
 
-    // MARK: - Disclosure footer (MOB-1497 T2, R13 — sheet-skipped/sheet-confirmed provider users)
+    // MARK: - Privacy disclaimer (manual mode only; MOB-1497 T7)
 
-    /// Same visual shape as `MigrationStatusView.footerNote` / `MigrationTransferPlanView`'s twin.
-    @ViewBuilder private func disclosureFooter(host: String) -> some View {
-        HStack(alignment: .top, spacing: 8) {
-            Asset.Assets.infoOutline.image
-                .zImage(size: 16, style: Design.Text.tertiary)
+    /// Same "manual mode only" condition as `isThisTransferVisible`, kept as its own property so the
+    /// two blocks' visibility can diverge later without an implicit coupling.
+    private var isPrivacyDisclaimerVisible: Bool {
+        store.mode != .immediate
+    }
 
-            Text(String(localizable: .migrationTorSheetDisclosure(host)))
-                .zFont(size: 12, style: Design.Text.tertiary)
-                .multilineTextAlignment(.leading)
-                .fixedSize(horizontal: false, vertical: true)
-        }
+    @ViewBuilder private var privacyDisclaimer: some View {
+        ZashiInfoCallout(
+            style: .warning,
+            title: String(localizable: .migrationEntryPrivacyDisclaimerTitle),
+            body: String(localizable: .migrationReviewPrivacyDisclaimerBody)
+        )
     }
 
     // MARK: - Failure sheet (immediate mode only; MOB-1496 R8-T1 — commit or propose failure)

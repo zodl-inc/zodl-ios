@@ -326,6 +326,23 @@ private extension RootView {
                     }
                 }
             }
+            // MOB-1497 (T6): the "Couldn't Connect to Tor" sheet over Home — presented only under the
+            // Home-visible foreground gate in `.checkMigrationTorFailurePrompt`, so hosting it here
+            // (alongside the `serverSetupViewBinding` cover) keeps it Home-scoped in practice.
+            .zashiSheet(
+                isPresented:
+                    Binding(
+                        get: { store.isTorFailurePromptPresented },
+                        set: { store.send(.torFailurePromptPresentationChanged($0)) }
+                    )
+            ) {
+                MigrationTorFailureSheetView(
+                    store: store.scope(
+                        state: \.torFailurePromptState,
+                        action: \.torFailurePrompt
+                    )
+                )
+            }
 
             shareLogsView(store)
             shareView()

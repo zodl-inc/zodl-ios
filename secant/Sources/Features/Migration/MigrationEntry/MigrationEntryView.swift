@@ -8,6 +8,12 @@
 //  `nextTapped` is consumed by nobody yet — chaining into the rest of the migration flow lands in
 //  MOB-1466.
 //
+//  MOB-1497 (T7, Q3'26 canvas · 3508:11219 / 4207:10692): the immediate-mode disclaimer note is
+//  replaced with the shared `ZashiInfoCallout(.warning)` "Privacy Disclaimer" card — same visibility
+//  condition (`.immediate` selected), same position — now sharing its look with the Review Transfer
+//  screen's manual-mode callout. The privacy-mode `footerNote` and its `.migrationEntryFooterNote`
+//  key are untouched.
+//
 
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
@@ -195,17 +201,11 @@ struct MigrationEntryView: View {
     // MARK: - Disclaimer
 
     @ViewBuilder private var disclaimer: some View {
-        HStack(alignment: .top, spacing: 8) {
-            Asset.Assets.infoOutline.image
-                .zImage(size: 16, style: Design.Utility.WarningYellow._700)
-
-            Text(localizable: .migrationEntryDisclaimerDesc)
-                .zFont(size: 12, style: Design.Utility.WarningYellow._700)
-                .multilineTextAlignment(.leading)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 16)
+        ZashiInfoCallout(
+            style: .warning,
+            title: String(localizable: .migrationEntryPrivacyDisclaimerTitle),
+            body: String(localizable: .migrationEntryPrivacyDisclaimerBody)
+        )
     }
 
     // MARK: - Footer note

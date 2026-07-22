@@ -84,6 +84,13 @@
 //  actually stored. Every caller therefore gets back a value consistent with storage, never a
 //  value a concurrent write has already superseded.
 //
+//  MOB-1497 (T5): `MigrationFailureRoutingStorage` gains a fourth piece of per-account persisted state
+//  — the "pending background Tor prompt" latch (`pendingBackgroundTorPrompt`/
+//  `setPendingBackgroundTorPrompt`), armed only by the background broadcast lane on a Tor-class route
+//  (see `RootInitialization.executeBroadcastAction`) and cleared alongside the Tor-hold indicator by
+//  `markHadBroadcast` (landed broadcast) and `clear` (run-end trio). Exposed on the impl as
+//  `isPendingBackgroundTorPrompt`/`setPendingBackgroundTorPrompt` for T6's foreground read/clear.
+//
 
 import Foundation
 @preconcurrency import Combine
@@ -130,6 +137,10 @@ extension MigrationManagerClient: DependencyKey {
                 await impl.routeBroadcastFailure(accountUUID: accountUUID, failureClass: failureClass)
             },
             isMigrationTorHoldActive: { accountUUID in impl.isTorHoldActive(accountUUID: accountUUID) },
+            isPendingBackgroundTorPrompt: { accountUUID in impl.isPendingBackgroundTorPrompt(accountUUID: accountUUID) },
+            setPendingBackgroundTorPrompt: { accountUUID, isPending in
+                impl.setPendingBackgroundTorPrompt(accountUUID: accountUUID, isPending: isPending)
+            },
             overrideTorForRun: { accountUUID, useTor in
                 impl.overrideTorForRun(accountUUID: accountUUID, useTor: useTor)
             },
@@ -318,6 +329,25 @@ final class MigrationManagerImpl: @unchecked Sendable {
     func isTorHoldActive(accountUUID: AccountUUID?) -> Bool {
         guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return false }
         return failureRoutingStorage.torHoldActive(for: resolvedAccountUUID)
+    }
+
+    /// MOB-1497 (T5): per-account read of the persisted "pending background Tor prompt" latch — see
+    /// `MigrationFailureRoutingStorage.pendingBackgroundTorPrompt`'s doc. Backs `MigrationManagerClient
+    /// .isPendingBackgroundTorPrompt`, read on app foreground by T6. `accountUUID` is always concrete
+    /// (the BG lane's broadcast winner, T6's per-account read), so — unlike `isTorHoldActive` above —
+    /// there is no selected-account fallback to resolve.
+    func isPendingBackgroundTorPrompt(accountUUID: AccountUUID) -> Bool {
+        failureRoutingStorage.pendingBackgroundTorPrompt(for: accountUUID)
+    }
+
+    /// MOB-1497 (T5): sets/clears the "pending background Tor prompt" latch for `accountUUID` — see
+    /// `MigrationFailureRoutingStorage.setPendingBackgroundTorPrompt`'s doc. Armed (`isPending: true`)
+    /// only by the background broadcast lane's Tor-class chokepoint
+    /// (`RootInitialization.executeBroadcastAction`); T6 clears it (`isPending: false`) on user
+    /// resolution. Purely a storage write — like `overrideTorForRun`/`markNetworkSnapshotCommitted`,
+    /// no `transactionGuard`/`serialExecutor`.
+    func setPendingBackgroundTorPrompt(accountUUID: AccountUUID, isPending: Bool) {
+        failureRoutingStorage.setPendingBackgroundTorPrompt(isPending, for: accountUUID)
     }
 
 
@@ -2343,24 +2373,30 @@ final class MigrationFailureRoutingStorage: @unchecked Sendable {
     ///
     /// R7 final review, Important-1: also clears the Tor-hold indicator — a landed broadcast is the
     /// freshest possible signal that Tor (if on) is reachable right now, so any previously-persisted
-    /// hold no longer describes reality. Same lock acquisition as the two clears above (one
-    /// read-modify-write, not three).
+    /// hold no longer describes reality. MOB-1497 (T5): for the same reason, also clears the pending
+    /// background-Tor-prompt latch — a landed broadcast means Tor is reachable, so any pending prompt
+    /// from an earlier BG Tor failure this run is stale. Same lock acquisition as the clears above (one
+    /// read-modify-write, not several).
     func markHadBroadcast(for accountUUID: AccountUUID) {
         lock.withLock { _ in
             userDefaults.set(true, forKey: hadBroadcastKey(for: accountUUID))
             userDefaults.removeObject(forKey: episodeKey(for: accountUUID))
             userDefaults.removeObject(forKey: torHoldKey(for: accountUUID))
+            userDefaults.removeObject(forKey: pendingTorPromptKey(for: accountUUID))
         }
     }
 
     /// CLEARED at the run-end trio (`MigrationManagerImpl.acknowledgeComplete`/`resetPersistedFlags`/
     /// `reconcile`'s stale-`.notStarted` observation), beside the existing schedule/snapshot clears.
-    /// Clears the flag, the episode, and the Tor-hold indicator.
+    /// Clears the flag, the episode, the Tor-hold indicator, and — MOB-1497 (T5) — the pending
+    /// background-Tor-prompt latch (the run ending is the definitive resolution of any pending prompt
+    /// tied to it).
     func clear(for accountUUID: AccountUUID) {
         lock.withLock { _ in
             userDefaults.removeObject(forKey: hadBroadcastKey(for: accountUUID))
             userDefaults.removeObject(forKey: episodeKey(for: accountUUID))
             userDefaults.removeObject(forKey: torHoldKey(for: accountUUID))
+            userDefaults.removeObject(forKey: pendingTorPromptKey(for: accountUUID))
         }
     }
 
@@ -2426,6 +2462,30 @@ final class MigrationFailureRoutingStorage: @unchecked Sendable {
         lock.withLock { _ in userDefaults.set(active, forKey: torHoldKey(for: accountUUID)) }
     }
 
+    // MARK: Pending background Tor prompt (MOB-1497 T5)
+
+    /// Per-account: true iff a BACKGROUND migration broadcast attempt most recently failed on a
+    /// Tor-class route (R14 `.torFirstRunChoice` / R15 `.torHold`) and the user has not yet been
+    /// shown the resulting "Couldn't Connect to Tor" prompt. UNLIKE `torHoldActive` above — a
+    /// non-sticky reflection of the last route that `MigrationManagerImpl.routeBroadcastFailure`
+    /// rewrites on EVERY call, every lane — this is a STICKY, BACKGROUND-ONLY latch: it is set ONLY
+    /// by the background broadcast lane (`RootInitialization.executeBroadcastAction`), never by
+    /// `routeBroadcastFailure` itself, so a FOREGROUND broadcast failure (which has its own on-screen
+    /// failure UI) never arms it. Read on app foreground by T6. Defaults `false`.
+    func pendingBackgroundTorPrompt(for accountUUID: AccountUUID) -> Bool {
+        lock.withLock { _ in userDefaults.bool(forKey: pendingTorPromptKey(for: accountUUID)) }
+    }
+
+    /// SET `true` by the background broadcast lane's Tor-class chokepoint; SET `false` by T6 on user
+    /// resolution. ALSO cleared by `markHadBroadcast` (a landed broadcast) and `clear` (the run-end
+    /// trio) — see their docs — so it shares the Tor-hold indicator's landed-broadcast /
+    /// teardown-completion clearing lifecycle exactly, while deliberately NOT sharing the per-route
+    /// rewrite that `setTorHoldActive` above takes (this latch must survive across the many routing
+    /// calls of a stalled run until the user is actually shown the prompt).
+    func setPendingBackgroundTorPrompt(_ pending: Bool, for accountUUID: AccountUUID) {
+        lock.withLock { _ in userDefaults.set(pending, forKey: pendingTorPromptKey(for: accountUUID)) }
+    }
+
     // MARK: Keys
 
     private func hadBroadcastKey(for accountUUID: AccountUUID) -> String {
@@ -2438,5 +2498,9 @@ final class MigrationFailureRoutingStorage: @unchecked Sendable {
 
     private func torHoldKey(for accountUUID: AccountUUID) -> String {
         "\(String.migrationTorHold)_\(Data(accountUUID.id).hexEncodedString())"
+    }
+
+    private func pendingTorPromptKey(for accountUUID: AccountUUID) -> String {
+        "\(String.migrationPendingTorPrompt)_\(Data(accountUUID.id).hexEncodedString())"
     }
 }
