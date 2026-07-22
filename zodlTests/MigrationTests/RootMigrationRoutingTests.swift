@@ -364,6 +364,207 @@ import ComposableArchitecture
         }
     }
 
+    // MARK: - MOB-1513 (H3 guard): setMigrationFlowPresented disarmed at every close/replace site
+    //
+    // `MigrationCoordFlow.State.presentedMigrationFlowAccountUUID` is the account THIS flow
+    // instance recorded as its owner at `.onAppear` (see `MigrationCoordFlowTests`'s coverage of
+    // the arm side). Every one of Root's migration-flow close/replace sites must disarm
+    // `migrationManager.setMigrationFlowPresented` for exactly THAT recorded account — never
+    // whatever `state.selectedWalletAccount` reads at close time — or the H3 guard would strand
+    // permanently true for an account whose flow already closed. Verified against HEAD: the sites
+    // turned out to be FOUR, not the three the pre-guard doc comment named — `tearDownMigrationCoordFlow`
+    // covers three (`.flowFinished`/`.switchServerRequested`/the inline `.walletAccountTapped`
+    // teardown) via one shared call; the Sending `.viewTransaction` delegate and
+    // `openMigrationCoordFlow` (the notification-tap deep link) each close/replace the path WITHOUT
+    // routing through that helper, so each disarms independently.
+
+    /// `.flowFinished` (via the shared `tearDownMigrationCoordFlow` helper) disarms the signal for
+    /// the RECORDED owner account.
+    @Test func migrationCoordFlowFinishedDisarmsMigrationFlowPresentedSignalForRecordedAccount() async {
+        let setMigrationFlowPresentedCalls = LockIsolated<[(AccountUUID?, Bool)]>([])
+        let account = Self.walletAccount(idByte: 56)
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            var initialState = Root.State.initial
+            initialState.path = Root.State.Path.migrationCoordFlow
+            initialState.migrationCoordFlowState.presentedMigrationFlowAccountUUID = account.id
+
+            let store = Store(initialState: initialState) {
+                Root()
+            } withDependencies: {
+                baseNoOpDependencies(&$0)
+                $0.migrationManager.setMigrationFlowPresented = { accountUUID, isPresented in
+                    setMigrationFlowPresentedCalls.withValue { $0.append((accountUUID, isPresented)) }
+                }
+            }
+
+            store.send(.migrationCoordFlow(.flowFinished))
+            await waitForRootStore { store.state.path == nil }
+            await waitForRootStore { setMigrationFlowPresentedCalls.value.count == 1 }
+
+            #expect(setMigrationFlowPresentedCalls.value.count == 1)
+            #expect(setMigrationFlowPresentedCalls.value.first?.0 == account.id)
+            #expect(setMigrationFlowPresentedCalls.value.first?.1 == false)
+        }
+    }
+
+    /// `.switchServerRequested` (the SAME shared helper, different downstream destination) disarms
+    /// identically.
+    @Test func migrationCoordFlowSwitchServerRequestedDisarmsMigrationFlowPresentedSignalForRecordedAccount() async {
+        let setMigrationFlowPresentedCalls = LockIsolated<[(AccountUUID?, Bool)]>([])
+        let account = Self.walletAccount(idByte: 57)
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            var initialState = Root.State.initial
+            initialState.path = Root.State.Path.migrationCoordFlow
+            initialState.migrationCoordFlowState.presentedMigrationFlowAccountUUID = account.id
+
+            let store = Store(initialState: initialState) {
+                Root()
+            } withDependencies: {
+                baseNoOpDependencies(&$0)
+                $0.migrationManager.setMigrationFlowPresented = { accountUUID, isPresented in
+                    setMigrationFlowPresentedCalls.withValue { $0.append((accountUUID, isPresented)) }
+                }
+            }
+
+            store.send(.migrationCoordFlow(.switchServerRequested))
+            await waitForRootStore { store.state.path == Root.State.Path.serverSwitch }
+            await waitForRootStore { setMigrationFlowPresentedCalls.value.count == 1 }
+
+            #expect(setMigrationFlowPresentedCalls.value.count == 1)
+            #expect(setMigrationFlowPresentedCalls.value.first?.0 == account.id)
+            #expect(setMigrationFlowPresentedCalls.value.first?.1 == false)
+        }
+    }
+
+    /// The KEY account-keying test: an account switch while the flow is open (the inline teardown
+    /// inside `.home(.walletAccountTapped)`, ALSO routed through `tearDownMigrationCoordFlow`) must
+    /// disarm the signal for the OLD (recorded) account — never the newly-tapped one — even though
+    /// `state.selectedWalletAccount` has not been reassigned yet at the moment the helper runs.
+    /// Mirrors `walletAccountSwitchWithOpenMigrationFlowTearsDownAndCancelsOwnersCeremony`'s existing
+    /// "recorded owner, not selected-at-close" precedent for `pendingKeystoneSigningAccountUUID`.
+    @Test func walletAccountSwitchWithOpenMigrationFlowDisarmsMigrationFlowPresentedSignalForOldAccountOnly() async {
+        let setMigrationFlowPresentedCalls = LockIsolated<[(AccountUUID?, Bool)]>([])
+        let accountA = Self.walletAccount(idByte: 58)
+        let accountB = Self.walletAccount(idByte: 59)
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            var initialState = Root.State.initial
+            initialState.path = Root.State.Path.migrationCoordFlow
+            initialState.$selectedWalletAccount.withLock { $0 = accountA }
+            initialState.$walletAccounts.withLock { $0 = [accountA, accountB] }
+            initialState.migrationCoordFlowState.presentedMigrationFlowAccountUUID = accountA.id
+
+            let store = Store(initialState: initialState) {
+                Root()
+            } withDependencies: {
+                baseNoOpDependencies(&$0)
+                $0.migrationManager.setMigrationFlowPresented = { accountUUID, isPresented in
+                    setMigrationFlowPresentedCalls.withValue { $0.append((accountUUID, isPresented)) }
+                }
+            }
+
+            store.send(.home(.walletAccountTapped(accountB)))
+            await waitForRootStore { store.state.path == nil }
+            await waitForRootStore { setMigrationFlowPresentedCalls.value.count == 1 }
+
+            #expect(store.state.selectedWalletAccount == accountB)
+            #expect(setMigrationFlowPresentedCalls.value.count == 1)
+            #expect(setMigrationFlowPresentedCalls.value.first?.0 == accountA.id)
+            #expect(setMigrationFlowPresentedCalls.value.first?.1 == false)
+        }
+    }
+
+    /// The Sending `.viewTransaction` delegate closes `state.path` WITHOUT routing through
+    /// `tearDownMigrationCoordFlow` (see that case's own doc in `RootCoordinator.swift` for why —
+    /// View Transaction is reached well past commit) — it must still disarm the signal
+    /// independently, or the flag would strand permanently true for this account.
+    @Test func sendingViewTransactionDelegateDisarmsMigrationFlowPresentedSignalForRecordedAccount() async {
+        let setMigrationFlowPresentedCalls = LockIsolated<[(AccountUUID?, Bool)]>([])
+        let account = Self.walletAccount(idByte: 60)
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            var initialState = Root.State.initial
+            initialState.path = Root.State.Path.migrationCoordFlow
+            initialState.migrationCoordFlowState.presentedMigrationFlowAccountUUID = account.id
+            let sendingState = MigrationSending.State(phase: .success, txId: "stub-tx-id")
+            initialState.migrationCoordFlowState.path.append(.sending(sendingState))
+
+            let store = Store(initialState: initialState) {
+                Root()
+            } withDependencies: {
+                baseNoOpDependencies(&$0)
+                $0.migrationManager.setMigrationFlowPresented = { accountUUID, isPresented in
+                    setMigrationFlowPresentedCalls.withValue { $0.append((accountUUID, isPresented)) }
+                }
+            }
+
+            let sendingId = try? #require(initialState.migrationCoordFlowState.path.ids.last)
+            guard let sendingId else {
+                Issue.record("Expected a sending element id on the migration path")
+                return
+            }
+
+            store.send(
+                .migrationCoordFlow(
+                    .path(.element(id: sendingId, action: .sending(.delegate(.viewTransaction))))
+                )
+            )
+            await waitForRootStore { store.state.path == nil }
+            await waitForRootStore { setMigrationFlowPresentedCalls.value.count == 1 }
+
+            #expect(setMigrationFlowPresentedCalls.value.count == 1)
+            #expect(setMigrationFlowPresentedCalls.value.first?.0 == account.id)
+            #expect(setMigrationFlowPresentedCalls.value.first?.1 == false)
+        }
+    }
+
+    /// `openMigrationCoordFlow` (the notification-tap deep link) wholesale-REPLACES
+    /// `migrationCoordFlowState` with a fresh `.initial` and can fire while the flow is ALREADY
+    /// open (R8-T6 already established this exact hazard class for the send-wait-hold flag — see
+    /// `notificationTapTeardownReleasesLiveSendWaitHoldAndUnfencesRetryStart` above, which this test
+    /// mirrors). It must disarm the OLD recorded account's signal BEFORE the reset discards the
+    /// only record of which account it was armed for — otherwise the flag strands permanently true.
+    @Test func notificationTapWhileFlowAlreadyOpenDisarmsMigrationFlowPresentedSignalForOldAccount() async {
+        let setMigrationFlowPresentedCalls = LockIsolated<[(AccountUUID?, Bool)]>([])
+        let account = Self.walletAccount(idByte: 61)
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            var initialState = Root.State.initial
+            initialState.appInitializationState = InitializationState.initialized
+            initialState.path = Root.State.Path.migrationCoordFlow
+            initialState.$selectedWalletAccount.withLock { $0 = account }
+            initialState.migrationCoordFlowState.presentedMigrationFlowAccountUUID = account.id
+            initialState.migrationCoordFlowState.path.append(
+                .sending(MigrationSending.State(totalCount: 1, entersViaSendNow: true))
+            )
+
+            let store = Store(initialState: initialState) {
+                Root()
+            } withDependencies: {
+                baseNoOpDependencies(&$0)
+                $0.migrationManager.setMigrationFlowPresented = { accountUUID, isPresented in
+                    setMigrationFlowPresentedCalls.withValue { $0.append((accountUUID, isPresented)) }
+                }
+            }
+
+            store.send(.initialization(.appDelegate(.migrationNotificationTapped(accountUUID: nil, isTorFailure: false))))
+            await waitForRootStore { store.state.migrationCoordFlowState.path.isEmpty }
+            await waitForRootStore { setMigrationFlowPresentedCalls.value.count == 1 }
+
+            #expect(store.state.path == Root.State.Path.migrationCoordFlow)
+            #expect(setMigrationFlowPresentedCalls.value.count == 1)
+            #expect(setMigrationFlowPresentedCalls.value.first?.0 == account.id)
+            #expect(setMigrationFlowPresentedCalls.value.first?.1 == false)
+        }
+    }
+
     // MARK: - isSensitiveFlowActive
 
     /// Pure computed-property check: `.migrationCoordFlow` must classify as sensitive, alongside
@@ -982,6 +1183,7 @@ private func baseNoOpDependencies(_ values: inout DependencyValues) {
     values.migrationManager.formNetworkSnapshot = { _ in }
     values.migrationManager.markNetworkSnapshotCommitted = { _ in }
     values.migrationManager.clearProvisionalNetworkSnapshot = { _ in }
+    values.migrationManager.setMigrationFlowPresented = { _, _ in }
     values.migrationManager.acknowledgeComplete = { _ in }
     values.migrationManager.reconcile = { }
     values.migrationManager.clearAbandonedNetworkSnapshot = { _ in }

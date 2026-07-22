@@ -284,7 +284,16 @@ extension MigrationCoordFlow {
 
             case .onAppear:
                 guard state.path.isEmpty else { return .none }
-                return .run { [accountUUID = state.selectedWalletAccount?.id] send in
+                // MOB-1513 (H3 guard): genuine flow start ONLY (the guard above) — record this
+                // instance's owner and arm the "propose-consuming migration screen is on screen for
+                // this account" signal synchronously, before the async re-entry lookup below even
+                // resolves. See `MigrationCoordFlow.State.presentedMigrationFlowAccountUUID`'s doc
+                // and `MigrationManagerImpl.presentedFlowAccountUUIDs`'s doc for the full
+                // arm/disarm site list this pairs with.
+                let accountUUID = state.selectedWalletAccount?.id
+                state.presentedMigrationFlowAccountUUID = accountUUID
+                migrationManager.setMigrationFlowPresented(accountUUID, true)
+                return .run { [accountUUID] send in
                     let pathState = await reentryPathState(accountUUID: accountUUID)
                     await send(.pushNextPermissionStep(PermissionStepResult(pathState: pathState)))
                 }

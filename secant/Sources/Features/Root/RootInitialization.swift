@@ -2230,9 +2230,16 @@ extension Root {
     /// `releaseSendWaitHold()` runs BEFORE the reset. MOB-1496: same reasoning applies to a live
     /// Keystone signing ceremony — `cancelAbandonedKeystoneMigrationRun(state:)` also runs BEFORE the
     /// reset, reading `pendingKeystoneSigning` off the ABOUT-TO-BE-DISCARDED state.
+    ///
+    /// MOB-1513 (H3 guard): same class of external-teardown hazard as the two effects above — this
+    /// wholesale-REPLACES `migrationCoordFlowState`, discarding whatever account it recorded as the
+    /// H3 guard's owner (`presentedMigrationFlowAccountUUID`), so that account's signal must be
+    /// disarmed HERE, before the reset, or it strands permanently true (see
+    /// `MigrationManagerImpl.presentedFlowAccountUUIDs`'s doc for the full arm/disarm site list).
     private func openMigrationCoordFlow(state: inout Root.State) -> Effect<Root.Action> {
         let releaseEffect = releaseSendWaitHold()
         let cancelEffect = cancelAbandonedKeystoneMigrationRun(state: state)
+        migrationManager.setMigrationFlowPresented(state.migrationCoordFlowState.presentedMigrationFlowAccountUUID, false)
         state.migrationCoordFlowState = MigrationCoordFlow.State.initial
         state.path = Root.State.Path.migrationCoordFlow
         return .merge(releaseEffect, cancelEffect)

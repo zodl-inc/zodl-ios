@@ -248,8 +248,32 @@ struct MigrationManagerClient: Sendable {
     // completion transition (see `MigrationManagerImpl.evaluateMigrationRemainder`'s doc for why:
     // `proposeMigrationTransfers` overwrites the SDK's plan cache, and a later commit must match
     // the LATEST propose — evaluating on every reconcile could invalidate a plan the user is
-    // mid-review of, turning its commit into a `migrationPlanStale` error).
+    // mid-review of, turning its commit into a `migrationPlanStale` error). MOB-1513 (H3 guard):
+    // that hazard is now actually guarded — see `setMigrationFlowPresented` below.
     var isMigrationRemainderPending: @Sendable (_ accountUUID: AccountUUID?) -> Bool = { _ in false }
+    // MOB-1513 (H3 guard): "a propose-consuming migration screen is on screen for this account"
+    // signal. `reconcile()`'s once-per-completion-transition remainder evaluation (see
+    // `isMigrationRemainderPending`'s doc just above, and `MigrationManagerImpl
+    // .evaluateMigrationRemainder`'s doc) SKIPS an account while this is `true`, rather than
+    // overwriting the SDK's plan cache out from under a plan the user is mid-review of — e.g. the
+    // "Migrate Anyway" residual flow, whose visibility is driven by `migrationSummary`'s own
+    // independent residual read, not by `isMigrationRemainderPending`. A skip is never lost, only
+    // delayed: the account stays in the once-per-transition gate's un-evaluated (`nil`) state, so a
+    // LATER `reconcile()` pass — there are many call sites — retries once the flag clears.
+    //
+    // Set `true` by `MigrationCoordFlowCoordinator.onAppear` at genuine flow start
+    // (`state.path.isEmpty`); set `false` by every production close/replace site for
+    // `Root.State.Path.migrationCoordFlow` — see `MigrationManagerImpl
+    // .presentedFlowAccountUUIDs`'s doc for the full, verified site list. In-memory only (never
+    // persisted — a flow being on screen doesn't survive relaunch, and shouldn't). A `nil`
+    // accountUUID is a no-op either direction: there is no account to key the signal to, and the
+    // caller (a coordinator/Root close site) already resolved the concrete UUID it means before
+    // calling — this member never itself falls back to the selected account, since doing so could
+    // silently arm/disarm the WRONG account's signal during an in-flight account switch. `= { _, _
+    // in }` is a no-op default, not a test fallback (see the `recordCommittedSchedule` note above)
+    // — this is called from `MigrationCoordFlowCoordinator.onAppear`, reached by nearly every
+    // coordinator test in the suite, and from several Root-level teardown sites.
+    var setMigrationFlowPresented: @Sendable (_ accountUUID: AccountUUID?, _ isPresented: Bool) -> Void = { _, _ in }
     // Sync<->send gate (app direction: a completed sync briefly disables migration sends). MOB-1496
     // (W3): re-keyed off observed sync completions + the SDK's own buffer duration — the OTHER
     // direction (broadcast briefly disables sync) is now enforced by the SDK itself
