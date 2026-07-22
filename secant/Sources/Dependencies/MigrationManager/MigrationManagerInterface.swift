@@ -60,8 +60,8 @@ struct MigrationManagerClient: Sendable {
     // `PoolBalance.lockedValue`) rather than app-persisted storage.
     var isMigrationDustLocked: @Sendable (_ accountUUID: AccountUUID?) async -> Bool = { _ in false }
     // MOB-1511 (W2): the multi-round labels' context — CURRENT round (app-persisted completed-run
-    // count + 1) and the engine's estimated TOTAL rounds (`nil` until librustzcash#2714 is plumbed
-    // through the SDK; see `SDKSynchronizerClient.estimateMigrationRunCount`).
+    // count + 1) and the engine's estimated TOTAL rounds, `nil` when the SDK's estimate has zero
+    // runs (see `SDKSynchronizerClient.estimateMigrationRunCount`'s doc).
     var migrationRoundContext: @Sendable (_ accountUUID: AccountUUID?) async -> (round: Int, totalRounds: Int?) = { _ in (1, nil) }
     // Per-account migration-state stream (MOB-1496: relocated from SDKSynchronizerClient's
     // `migrationStateStream`) — emits on `reconcile()` and whenever a store reports a completed

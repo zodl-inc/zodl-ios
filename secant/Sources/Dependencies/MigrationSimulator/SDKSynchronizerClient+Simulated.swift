@@ -47,6 +47,7 @@ import URKit
 extension SDKSynchronizerClient {
     mutating func applySimulatedMigration(engine: MigrationSimulatorEngine) {
         applySimulatedState(engine: engine)
+        applySimulatedRoundsEstimate(engine: engine)
         applySimulatedNoteSplit(engine: engine)
         applySimulatedProposalAndSchedule(engine: engine)
         applySimulatedBackgroundExecution(engine: engine)
@@ -67,6 +68,19 @@ extension SDKSynchronizerClient {
         let originalGetMigrationProgress = self.getMigrationProgress
         self.getMigrationProgress = { accountUUID in
             engine.isActive ? engine.progress() : try await originalGetMigrationProgress(accountUUID)
+        }
+    }
+
+    // MARK: - Rounds estimate (MOB-1511 W2)
+
+    /// Pre-fix, this member had no override at all — the real SDK stub always answered `nil`, so
+    /// even with the simulator active the debug panel could never exercise the "Round N of M"
+    /// multi-round label. Mirrors `engine.estimatedRunCount()` (see that method's doc for the
+    /// simplified per-run-capacity heuristic this is derived from).
+    private mutating func applySimulatedRoundsEstimate(engine: MigrationSimulatorEngine) {
+        let originalEstimateMigrationRunCount = self.estimateMigrationRunCount
+        self.estimateMigrationRunCount = { accountUUID in
+            engine.isActive ? engine.estimatedRunCount() : try await originalEstimateMigrationRunCount(accountUUID)
         }
     }
 

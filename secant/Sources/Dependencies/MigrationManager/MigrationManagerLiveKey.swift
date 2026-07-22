@@ -1327,10 +1327,10 @@ final class MigrationManagerImpl: @unchecked Sendable {
     }
 
     /// MOB-1511 (W2): the round context the multi-round labels render — the CURRENT round number
-    /// (completed runs + 1, app-persisted) plus the engine's estimated TOTAL round count, which is
-    /// `nil` until librustzcash#2714 lands and gets plumbed through the SDK (see
-    /// `SDKSynchronizerClient.estimateMigrationRunCount`'s stub doc). Cheap today (the stub answers
-    /// instantly); revisit caching only once the real estimate call exists.
+    /// (completed runs + 1, app-persisted) plus the engine's estimated TOTAL round count
+    /// (`SDKSynchronizerClient.estimateMigrationRunCount`'s doc), `nil` when the estimate has zero
+    /// runs. Re-fetched fresh on every call rather than cached — see that member's doc for why the
+    /// total is a preview that can shift with the balance, not a persisted fact.
     func migrationRoundContext(accountUUID: AccountUUID?) async -> (round: Int, totalRounds: Int?) {
         guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return (1, nil) }
         let round = gateStorage.completedRounds(for: resolvedAccountUUID) + 1

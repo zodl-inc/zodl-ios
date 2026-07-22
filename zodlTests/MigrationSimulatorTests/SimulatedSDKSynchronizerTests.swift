@@ -75,6 +75,9 @@ import URKit
         // MOB-1496 (W-A): equally obviously-fake — no seeded/preset engine dust figure coincides.
         static let lockMigrationResidual = Zatoshi(987_654_321)
         static let unlockMigrationResidual = 42
+        // MOB-1511 (W2): negative — no engine-derived round count is ever <= 0, so this can never
+        // collide with a genuine active-engine answer.
+        static let estimateMigrationRunCount = -777
     }
 
     /// One call counter per sentinel closure — see the file header for why this is the primary
@@ -93,6 +96,7 @@ import URKit
         let parseMigrationPCZTBatch = LockIsolated<Int>(0)
         let urEncoderForMigrationPCZTBatch = LockIsolated<Int>(0)
         let estimateTimestamp = LockIsolated<Int>(0)
+        let estimateMigrationRunCount = LockIsolated<Int>(0)
     }
 
     private static let networkPrivacy = MigrationNetworkPrivacyOptions(
@@ -173,6 +177,10 @@ import URKit
         client.estimateTimestamp = { _ in
             counters.estimateTimestamp.withValue { $0 += 1 }
             return SentinelValues.estimatedTimestamp
+        }
+        client.estimateMigrationRunCount = { _ in
+            counters.estimateMigrationRunCount.withValue { $0 += 1 }
+            return SentinelValues.estimateMigrationRunCount
         }
 
         return client
@@ -285,6 +293,49 @@ import URKit
 
         #expect(residual == nil)
         #expect(counters.residualAfterMigration.value == 0)
+    }
+
+    // MARK: - estimateMigrationRunCount (MOB-1511 W2)
+    //
+    // Pre-fix, this member had no override at all -- the real SDK stub always answered `nil`, so
+    // even with the simulator active the debug panel's "Round N of M" multi-round label could
+    // never be exercised. Mirrors `engine.estimatedRunCount()` -- see that method's doc.
+
+    @Test func estimateMigrationRunCountRoutesThroughEngineWhenActiveAndFallsBackWhenInactive() async throws {
+        let counters = CallCounters()
+        var client = makeBaseClient(counters)
+        let engine = MigrationSimulatorEngine(store: MigrationSimulatorStateStore.ephemeral())
+        engine.setActive(true) // the fresh-seed default is inactive (opt-in simulation)
+        client.applySimulatedMigration(engine: engine)
+
+        // Active: reads the engine's own estimate (fresh-seeded default balance -> 3 rounds),
+        // never the sentinel.
+        let estimate = try await client.estimateMigrationRunCount(Self.accountUUID)
+        #expect(estimate == 3)
+        #expect(estimate != SentinelValues.estimateMigrationRunCount)
+        #expect(counters.estimateMigrationRunCount.value == 0)
+
+        // Inactive: falls back to the sentinel original.
+        engine.setActive(false)
+        let inactiveEstimate = try await client.estimateMigrationRunCount(Self.accountUUID)
+        #expect(inactiveEstimate == SentinelValues.estimateMigrationRunCount)
+        #expect(counters.estimateMigrationRunCount.value == 1)
+    }
+
+    /// A fully drained engine (`.complete` preset) must answer `nil`, not a fabricated `0` or `1`
+    /// -- mirrors the real SDK member's own "zero runs is a legitimate answer" contract.
+    @Test func estimateMigrationRunCountIsNilWhenDrainedWhileActive() async throws {
+        let counters = CallCounters()
+        var client = makeBaseClient(counters)
+        let engine = MigrationSimulatorEngine(store: MigrationSimulatorStateStore.ephemeral())
+        engine.setActive(true)
+        client.applySimulatedMigration(engine: engine)
+
+        engine.applyPreset(SimulatorPreset.complete)
+        let estimate = try await client.estimateMigrationRunCount(Self.accountUUID)
+
+        #expect(estimate == nil)
+        #expect(counters.estimateMigrationRunCount.value == 0)
     }
 
     // MARK: - proposeImmediateMigration

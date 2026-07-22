@@ -43,6 +43,11 @@ enum MigrationSimulatorEngineDerivations {
         /// its `expiryHeight`. Synthetic heights ARE epoch-second timestamps, so this is literally
         /// `expiryWindow` expressed in the same "height" units (MOB-1480).
         static let syntheticExpiryOffset: BlockHeight = 86_400
+        /// MOB-1511 (W2): debug-only per-run capacity for `estimatedRunCount(orchardBalance:
+        /// dustRemainder:)` — the simulator models no note-cap/max-denomination concept to derive a
+        /// real per-run ceiling from, so this is a simplified stand-in letting the debug panel
+        /// exercise "Round N of M" for M > 1 (the default preset's ~12.458 ZEC / 5 ZEC ≈ 3 rounds).
+        static let simulatedRunCapacity = Zatoshi(500_000_000)
     }
 
     // MARK: - Time-driven escalation
@@ -272,6 +277,24 @@ enum MigrationSimulatorEngineDerivations {
             transfersTotal: snapshot.transfers.count,
             estimatedDurationHours: estimatedDurationHours
         )
+    }
+
+    // MARK: - Rounds estimate (MOB-1511 W2)
+
+    /// Debug-only mirror of the real SDK's `estimateMigrationRuns`: how many migration runs
+    /// ("rounds") the account's CURRENT remaining balance would take, given the simplified
+    /// `Constants.simulatedRunCapacity` per-run ceiling. `dustRemainder` is subtracted first —
+    /// dust never migrates (matches the real `MigrationRunEstimate.runs`/`finalResidual` split,
+    /// where a sub-threshold remainder is excluded from every run) — so a wallet holding only dust
+    /// (`orchardBalance == dustRemainder`, the `.complete`/`.completeWithDust` presets' shape)
+    /// answers `nil`, same as a fully drained one, rather than a spurious 1 round. `nil` for any
+    /// non-positive migratable remainder; otherwise the ceiling division by the per-run capacity.
+    static func estimatedRunCount(orchardBalance: Zatoshi, dustRemainder: Zatoshi) -> Int? {
+        let migratable = Zatoshi(max(0, orchardBalance.amount - dustRemainder.amount))
+        guard migratable.amount > 0 else { return nil }
+
+        let capacity = Constants.simulatedRunCapacity.amount
+        return Int((Double(migratable.amount) / Double(capacity)).rounded(.up))
     }
 
     // MARK: - Note splitting

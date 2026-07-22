@@ -1540,6 +1540,77 @@ struct MigrationManagerTests {
         #expect(storage.completedRounds(for: accountA) == 0)
     }
 
+    // MARK: - MOB-1511 (W2 stub swap): rounds estimate — live mapping + migrationRoundContext
+
+    /// `SDKSynchronizerClient.migrationRunCount(fromEstimate:)` is the pure mapping the live
+    /// `estimateMigrationRunCount` closure applies to the SDK's real `MigrationRunEstimate` —
+    /// factored out (same rationale as `requiresOrchardFunds`'s own table test) so it's directly
+    /// testable without a mocked `Synchronizer`, which no harness in this codebase provides today.
+    /// Empty `runs` is the SDK's own documented "nothing migrates" answer, not an error.
+    @Test func migrationRunCountMapsEmptyRunsToNil() {
+        let estimate = MigrationRunEstimate(runs: [], finalResidual: Zatoshi(31_000))
+
+        #expect(SDKSynchronizerClient.migrationRunCount(fromEstimate: estimate) == nil)
+    }
+
+    @Test func migrationRunCountMapsNonEmptyRunsToRunCount() {
+        let run = MigrationRunEstimate.Run(migratable: Zatoshi(500_000_000), crossings: 3, preparationLayers: 1, preparationTransactions: 2)
+        let estimate = MigrationRunEstimate(runs: [run, run, run], finalResidual: Zatoshi.zero)
+
+        #expect(SDKSynchronizerClient.migrationRunCount(fromEstimate: estimate) == 3)
+    }
+
+    /// `migrationRoundContext` simply passes through whatever `sdkSynchronizer
+    /// .estimateMigrationRunCount` answers as `totalRounds`, alongside the app-persisted
+    /// `completedRounds + 1` for `round` — the fallback-level test named in this task's spec (no
+    /// `mocked(synchronizer:)`-style harness taking a real `Synchronizer` conformer exists in this
+    /// codebase to test the live closure any more directly than `migrationRunCountMaps...` above
+    /// already does).
+    @Test func migrationRoundContextReflectsSDKEstimateWhenPresent() async throws {
+        let userDefaults = try #require(
+            UserDefaults(suiteName: "testMigrationRoundContextReflectsSDKEstimateWhenPresent"),
+            "MigrationGateStorage: UserDefaults failed to initialize"
+        )
+        defer { userDefaults.removePersistentDomain(forName: "testMigrationRoundContextReflectsSDKEstimateWhenPresent") }
+
+        let storage = MigrationGateStorage(userDefaults: userDefaults)
+        let accountUUID = AccountUUID(id: [UInt8](repeating: 40, count: 16))
+        storage.incrementCompletedRounds(for: accountUUID)
+
+        let context = await withDependencies {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.estimateMigrationRunCount = { _ in 3 }
+        } operation: {
+            let impl = MigrationManagerImpl(gateStorage: storage)
+            return await impl.migrationRoundContext(accountUUID: accountUUID)
+        }
+
+        #expect(context.round == 2)
+        #expect(context.totalRounds == 3)
+    }
+
+    @Test func migrationRoundContextIsNilTotalRoundsWhenSDKEstimateIsNil() async throws {
+        let userDefaults = try #require(
+            UserDefaults(suiteName: "testMigrationRoundContextIsNilTotalRoundsWhenSDKEstimateIsNil"),
+            "MigrationGateStorage: UserDefaults failed to initialize"
+        )
+        defer { userDefaults.removePersistentDomain(forName: "testMigrationRoundContextIsNilTotalRoundsWhenSDKEstimateIsNil") }
+
+        let storage = MigrationGateStorage(userDefaults: userDefaults)
+        let accountUUID = AccountUUID(id: [UInt8](repeating: 41, count: 16))
+
+        let context = await withDependencies {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.estimateMigrationRunCount = { _ in nil }
+        } operation: {
+            let impl = MigrationManagerImpl(gateStorage: storage)
+            return await impl.migrationRoundContext(accountUUID: accountUUID)
+        }
+
+        #expect(context.round == 1)
+        #expect(context.totalRounds == nil)
+    }
+
     /// MOB-1511 (W2): an acknowledged completion with a pending remainder re-offers as the
     /// round-aware banner, carrying the (already incremented) next round number.
     @Test func completeAcknowledgedWithRemainderIsNextRoundRequired() {

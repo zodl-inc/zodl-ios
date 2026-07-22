@@ -398,9 +398,16 @@ extension SDKSynchronizerClient: DependencyKey {
             restartCurrentMigrationStep: { accountUUID, includeResidual in
                 try await synchronizer.restartCurrentMigrationStep(accountUUID: accountUUID, includeResidual: includeResidual)
             },
-            // MOB-1511 (W2) STUB: nil until librustzcash#2714's `estimate_migration_runs` is
-            // plumbed through the SDK — see the interface doc for the swap recipe.
-            estimateMigrationRunCount: { _ in nil },
+            // MOB-1511 (W2): librustzcash#2714's `estimate_migration_runs` is now plumbed through
+            // the SDK (`Synchronizer.estimateMigrationRuns(accountUUID:)`) — the mapping itself
+            // (`runs.isEmpty -> nil`, else `runCount`) is factored into `SDKSynchronizerClient
+            // .migrationRunCount(fromEstimate:)` below, table-testable without a mocked
+            // `Synchronizer` (same rationale as `requiresOrchardFunds` above).
+            estimateMigrationRunCount: { accountUUID in
+                SDKSynchronizerClient.migrationRunCount(
+                    fromEstimate: try await synchronizer.estimateMigrationRuns(accountUUID: accountUUID)
+                )
+            },
             refreshStaleMigrationTransfers: { accountUUID, usk, includeResidual in
                 try await synchronizer.refreshStaleMigrationTransfers(
                     accountUUID: accountUUID,
@@ -463,6 +470,19 @@ extension SDKSynchronizerClient: DependencyKey {
         }
 
         return client
+    }
+}
+
+// MARK: - MOB-1511 (W2): rounds estimate mapping (pure, table-testable)
+
+extension SDKSynchronizerClient {
+    /// Maps the engine's per-run migration estimate onto the app's simple "total rounds" figure:
+    /// `nil` when `estimate.runs` is empty (a legitimate drained/sub-quantum-balance answer, per
+    /// `MigrationRunEstimate.runs`'s own doc — NOT an error), otherwise `estimate.runCount`.
+    /// Factored out of `estimateMigrationRunCount`'s closure body so it's directly table-testable
+    /// without a mocked `Synchronizer` (same rationale as `requiresOrchardFunds` below).
+    static func migrationRunCount(fromEstimate estimate: MigrationRunEstimate) -> Int? {
+        estimate.runs.isEmpty ? nil : estimate.runCount
     }
 }
 
