@@ -43,7 +43,7 @@ struct MigrationSimulatorPanel {
         case activeToggled(Bool)
         case advanceTimeTapped(hours: Int)
         case applySeedTapped
-        case armResultTapped(TransferResult)
+        case armResultTapped(MigrationTransferResult)
         case armSplitFailureTapped
         case binding(BindingAction<State>)
         case confirmSplitNowTapped

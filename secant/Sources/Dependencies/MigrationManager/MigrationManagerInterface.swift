@@ -3,12 +3,14 @@
 //  Zashi
 //
 //  App-owned logic for the Orchard -> Ironwood migration (MOB-1466): persistence, the
-//  10-minute sync<->send gate, and the banner-variant / re-entry-route derivations. The SDK
-//  only exposes raw state (`MigrationState`, `MigrationProgress`, …) — this client is the
-//  single place that turns that state plus app-side flags into what the UI actually shows.
+//  sync<->send privacy gate's app-owned half (MOB-1496 W3 — see `sendGate` below), and the
+//  banner-variant / re-entry-route derivations. The SDK only exposes raw state (`MigrationState`,
+//  `MigrationProgress`, …) — this client is the single place that turns that state plus app-side
+//  flags into what the UI actually shows.
 //
 
 import Foundation
+@preconcurrency import Combine
 @preconcurrency import ZcashLightClientKit
 import ComposableArchitecture
 
@@ -23,41 +25,142 @@ extension DependencyValues {
 struct MigrationManagerClient: Sendable {
     // Derivations (pure given SDK members + persistence; unit-tested as tables)
     var bannerVariant: @Sendable (_ accountUUID: AccountUUID?) async -> MigrationBannerVariant? = { _ in nil }
-    var reentryRoute: @Sendable () -> MigrationReentryRoute = { .entry }
+    // MOB-1496: async — the SDK's per-account migration reads are now `async throws`.
+    var reentryRoute: @Sendable () async -> MigrationReentryRoute = { .entry }
     // MOB-1483: "Ironwood (NU6.3) activated on the current network" — gates `bannerVariant`,
-    // `reentryRoute`, and `reconcile()`. Defaults closed so a test that doesn't override it stays
-    // fail-safe instead of trapping via the macro's `unimplemented`.
+    // `reentryRoute`, and `reconcile()`. `= { false }` is a required macro default (non-Void,
+    // non-throwing return), NOT a test fallback — see the `recordCommittedSchedule` note below.
     var isIronwoodActivated: @Sendable () -> Bool = { false }
     var orchardBalanceToMigrate: @Sendable (_ accountUUID: AccountUUID?) async -> Zatoshi = { _ in .zero }
+    // Progress UI (MOB-1496: relocated from SDKSynchronizerClient — app-side derivations over the
+    // SDK's per-account state, not raw SDK calls). `nil` accountUUID resolves the selected account
+    // internally, same convention as `bannerVariant` above.
+    var migrationSummary: @Sendable (_ accountUUID: AccountUUID?) async -> MigrationSummary = { _ in MigrationSummary.zero }
+    var migrationTransfers: @Sendable (_ accountUUID: AccountUUID?) async -> [MigrationTransferRow] = { _ in [] }
+    // Persisted committed schedule (MOB-1496 W2): the SDK retains no proposal list once a schedule
+    // is committed — these persist the app's own record of it, which `migrationSummary`/
+    // `migrationTransfers` above derive from. `nil` accountUUID resolves the selected account
+    // internally, same convention as the other members here.
+    // swift-dependencies gotcha: these no-op defaults do NOT let a test skip mocking. The client has
+    // no `testValue`, so the first uncustomized `@Dependency(\.migrationManager)` access in a test
+    // fails "has no test implementation" (whole-client, any member/arity — not per-endpoint).
+    // Customizing ANY one member unlocks the client for that test; un-overridden members then fall
+    // through to their LIVE impl, not these no-ops.
+    var recordCommittedSchedule: @Sendable (_ accountUUID: AccountUUID?, _ schedule: MigrationSchedule) async -> Void = { _, _ in }
+    var recordTransferBroadcast: @Sendable (_ accountUUID: AccountUUID?, _ result: MigrationTransferResult) async -> Void = { _, _ in }
+    // Dust resolution (MOB-1487/MOB-1496: relocated — app persistence, not SDK calls).
+    var lockMigrationDust: @Sendable () async throws -> Void
+    var isMigrationDustLocked: @Sendable () -> Bool = { false }
+    // Per-account migration-state stream (MOB-1496: relocated from SDKSynchronizerClient's
+    // `migrationStateStream`) — emits on `reconcile()` and whenever a store reports a completed
+    // migration op. `nil` accountUUID resolves the selected account internally.
+    var stateEvents: @Sendable (_ accountUUID: AccountUUID?) -> AnyPublisher<MigrationState, Never> = { _ in Empty().eraseToAnyPublisher() }
     // Persistence (UserDefaults-backed; keys in SharedStateKeys.swift)
     var migrationMode: @Sendable () -> MigrationMode?
     var setMigrationMode: @Sendable (MigrationMode) -> Void
     var isManualDelivery: @Sendable () -> Bool = { false }
     var setManualDelivery: @Sendable (Bool) -> Void
-    var networkPrivacyOptions: @Sendable () -> NetworkPrivacyOptions = { NetworkPrivacyOptions(useTor: false, submissionEndpoint: nil) }
-    var setNetworkPrivacyOptions: @Sendable (NetworkPrivacyOptions) -> Void
-    var isCompleteAcknowledged: @Sendable () -> Bool = { false }
-    var acknowledgeComplete: @Sendable () -> Void
-    // 10-minute sync<->send gate
-    var sendGate: @Sendable () -> MigrationSendGate = { .allowed }
-    var recordMigrationBroadcast: @Sendable () -> Void
-    var isSyncDeferredAfterBroadcast: @Sendable () -> Bool = { false }   // consumed by MOB-1467
-    // Reconciliation
-    var reconcile: @Sendable () -> Void
+    // MOB-1496 (W4): ensure-or-read the run's atomic network snapshot (Tor + sync provider/endpoint +
+    // broadcast provider/endpoint — see `MigrationNetworkSnapshot`) for `accountUUID` (`nil` resolves
+    // the selected account, same convention as `migrationSummary`/`migrationTransfers` above), mapped
+    // onto the SDK's `MigrationNetworkPrivacyOptions`. Idempotent for the life of a run: the first
+    // call creates and persists the snapshot; every later call (from ANY lane, any elapsed time)
+    // returns the SAME persisted values, immune to a mid-run auto server switch. NEVER throws — every
+    // internal failure degrades to SOME snapshot (see `MigrationManagerImpl.ensureNetworkSnapshot`'s
+    // doc). Default is the closed/no-Tor, unset-endpoint value — the macro requires a concrete
+    // default for a non-throwing, non-`Void`/non-`Optional`-returning closure; every real call site
+    // resolves a live snapshot. Tests never observe this default (see the `recordCommittedSchedule`
+    // note).
+    var migrationNetworkOptions: @Sendable (_ accountUUID: AccountUUID?) async -> MigrationNetworkPrivacyOptions = { _ in
+        MigrationNetworkPrivacyOptions(useTor: false, submissionEndpoint: LightWalletEndpoint(address: "", port: 0))
+    }
+    // MOB-1496 (W4): every persisted network snapshot across `walletAccounts` (+ the selected
+    // account, defensively, deduped) — i.e. every account with a currently-active migration run.
+    // Drives `AutoServerSelectionLiveKey`'s pinning (auto server selection stays within an active
+    // run's sync-provider family) and `ServerSetupStore`'s manual-switch privacy warning.
+    var activeNetworkSnapshots: @Sendable () -> [MigrationNetworkSnapshot] = { [] }
+    // Persists the pre-run Tor choice the migration entry/Tor sheet writes. Consumed by
+    // `ensureNetworkSnapshot` when a run's snapshot is first taken — a later call does NOT alter an
+    // already-active run's snapshot (see `MigrationNetworkSnapshot.useTor`'s doc).
+    var setNetworkPrivacyOptions: @Sendable (_ useTor: Bool) -> Void
+    // R8-T3 (S2): per-account now — a wallet-wide flag suppressed a SECOND account's own
+    // completion banner/re-entry the moment the FIRST account acknowledged, made that account's
+    // own `acknowledgeComplete` unreachable, and left its snapshot immortal. `nil` resolves the
+    // selected account, same convention as `bannerVariant`/`migrationSummary` above.
+    var isCompleteAcknowledged: @Sendable (_ accountUUID: AccountUUID?) -> Bool = { _ in false }
+    // R8-T3 (V18): async now — reads `accountUUID`'s engine state fresh and NO-OPs (schedule +
+    // snapshot INTACT, flag unset) unless it is exactly `.complete`. Pre-fix this was unconditional
+    // and destructive: a close reached while the engine was still genuinely `.inProgress` wiped the
+    // still-live run's own records.
+    var acknowledgeComplete: @Sendable (_ accountUUID: AccountUUID?) async -> Void
+    // MOB-1496: `MigrationState.complete` is now PER-RUN ("the stored run is fully mined"), never
+    // "nothing left to migrate" — the final engine caps how much a single run covers (a per-run
+    // cap, or funds arriving mid-run), so a `.complete` account may still have more to migrate.
+    // Sync read of a persisted, per-account flag (`nil` resolves the selected account, same
+    // convention as `isCompleteAcknowledged` above): `true` only when a completed evaluation found
+    // a genuinely non-empty fresh plan; unevaluated (`nil`, internally) or a genuinely empty plan
+    // both read as `false` here — this member never distinguishes the two. No public "evaluate"
+    // member exists — the evaluation itself (a fresh, plan-cache-overwriting
+    // `proposeMigrationTransfers`) is internal to `reconcile()`, and runs AT MOST ONCE per
+    // completion transition (see `MigrationManagerImpl.evaluateMigrationRemainder`'s doc for why:
+    // `proposeMigrationTransfers` overwrites the SDK's plan cache, and a later commit must match
+    // the LATEST propose — evaluating on every reconcile could invalidate a plan the user is
+    // mid-review of, turning its commit into a `migrationPlanStale` error).
+    var isMigrationRemainderPending: @Sendable (_ accountUUID: AccountUUID?) -> Bool = { _ in false }
+    // Sync<->send gate (app direction: a completed sync briefly disables migration sends). MOB-1496
+    // (W3): re-keyed off observed sync completions + the SDK's own buffer duration — the OTHER
+    // direction (broadcast briefly disables sync) is now enforced by the SDK itself
+    // (`SDKSynchronizerClient.isMigrationSyncBlocked`/`migrationSyncBlockedStream`); this client no
+    // longer duplicates it.
+    var sendGate: @Sendable () async -> MigrationSendGate = { .allowed }
+    // MOB-1496 (W3): written once per completed sync from Root's existing sync-completion edge
+    // (`RootInitialization.swift`'s `.synchronizerStateChanged`, the same place `reconcile()` fires
+    // on the false->true transition into `.upToDate`) — NOT on every tick. `= { }` mirrors
+    // `reconcile`'s no-op but is not a test fallback (see the `recordCommittedSchedule` note).
+    var recordSyncCompleted: @Sendable () -> Void = { }
+    // MOB-1496 (R8-T4, #3): app-side companion to the SDK's own `migrationSyncBlockedStream` — a
+    // broadcast-failure call site that ran `stopSyncBeforeMigrationBroadcast()` without ever
+    // reaching a successful broadcast calls `refreshMigrationSyncGate()` to manually re-push the
+    // CURRENT gate value through this independent feed. The SDK's own stream only transitions on a
+    // SUCCESSFUL broadcast and dedupes via `removeDuplicates()`, so a pre-broadcast throw or a
+    // `.networkError`/`.invalidNote`/`.expired` result — which never flips the SDK's gate — would
+    // otherwise leave `RootInitialization.swift`'s `.migrationSyncGateChanged` handler waiting for an
+    // event that never arrives, stranding sync stopped all session. `migrationSyncGateFeed()` returns
+    // the SAME long-lived stream on every call (a fresh `AsyncStream` per subscriber would each get
+    // their own continuation and miss each other's pushes) — subscribed exactly once, alongside the
+    // SDK's own stream, in `.registerForSynchronizersUpdate`. `refreshMigrationSyncGate()` is a
+    // read+yield only: it does NOT acquire `MigrationManagerSerialExecutor` (mutates nothing this
+    // class owns) and does NOT touch `transactionGuard` (not a broadcast/server-switch).
+    var migrationSyncGateFeed: @Sendable () -> AsyncStream<Bool> = { AsyncStream { _ in } }
+    var refreshMigrationSyncGate: @Sendable () async -> Void = { }
+    // Reconciliation. MOB-1496: async — re-reads `getMigrationState` for `stateEvents`; call sites in
+    // `MigrationSendingStore`/`MigrationNoteSplitStore` (post-broadcast) join the launch/foreground
+    // ones. `= { }` is a no-op default, not a test fallback (see the `recordCommittedSchedule` note).
+    var reconcile: @Sendable () async -> Void = { }
+    // R8-T3 (#9): clears `accountUUID`'s (`nil` resolves the selected account) network snapshot iff
+    // its engine state is fresh `.notStarted` with no stored schedule payload — i.e. a confirm lane
+    // that took a snapshot (every lane does, on the FIRST `migrationNetworkOptions` read, before any
+    // store/broadcast) but was abandoned before ever committing. Otherwise a no-op. Called
+    // fire-and-forget from the coordinator's `.flowFinished` handler. `= { _ in }` mirrors
+    // `reconcile`'s no-op but is not a test fallback (see the `recordCommittedSchedule` note).
+    var clearAbandonedNetworkSnapshot: @Sendable (_ accountUUID: AccountUUID?) async -> Void = { _ in }
     // Debug/testnet-only: clears every persisted migration flag this client owns (mode, manual
-    // delivery, network privacy, complete-acknowledged, last-broadcast) — consumed by the
+    // delivery, network privacy, complete-acknowledged, dust-locked) — consumed by the
     // migration SDK simulator's debug panel "Reset app migration flags" control (MOB-1480).
     var resetPersistedFlags: @Sendable () -> Void
 }
 
 enum MigrationSendGate: Equatable, Sendable {
     case allowed
-    case syncRequired            // isSyncRequiredBeforeNextMigrationTransfer() == true — CTA disabled
-    case waitUntil(Date)         // required sync finished < 10 min ago — CTA disabled with ETA
+    // MOB-1496 (W3): `sdkSynchronizer.isSyncing()` == true right now — CTA disabled.
+    case syncRequired
+    // MOB-1496 (W3): a sync completed < `migrationPrivacySyncBufferDuration()` ago — CTA disabled,
+    // `Date` is when the gate clears (sync-completion timestamp + buffer).
+    case waitUntil(Date)
 }
 
 enum MigrationReentryRoute: Equatable, Sendable {
-    case recovery(isExpired: Bool)       // §4.3 row 1 — variant from AttentionReason (.transferExpired → true, else false)
+    case recovery(isExpired: Bool)       // §4.3 row 1 — variant from MigrationAttentionReason (.transferExpired → true, else false)
     case statusResume                    // row 2
     case statusProgress                  // row 3
     case complete                        // row 4 (unacknowledged)

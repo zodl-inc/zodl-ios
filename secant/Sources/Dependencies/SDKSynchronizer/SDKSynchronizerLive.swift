@@ -307,126 +307,146 @@ extension SDKSynchronizerClient: DependencyKey {
                     try await synchronizer.getTreeState(height: height)
                 }
             },
-            // Migration (Orchard → Ironwood) — STUB: the SDK API does not exist yet (MOB-1455).
-            // These compile the app against the expected contract and do nothing. When the real
-            // SDK lands, replace these closures here. The three broadcast-path stubs
-            // (`submitNoteSplit`, `executeNextPendingMigrationTransfer`, `submitSignedNoteSplit`)
-            // already acquire the transaction guard below — same `withSubmission` pattern as
-            // `createAndSubmitProposedTransactions` — so they are correct-by-construction once
-            // real broadcasting lands; every other migration stub here is read-only/non-broadcast
-            // and stays unguarded. `storeSignedMigrationTransactions` (Keystone/PCZT path) is
-            // local storage, not a broadcast, so it stays unguarded too — MOB-1468. The two batch
-            // members (`urEncoderForMigrationPCZTBatch`, `parseMigrationPCZTBatch`) are plain
-            // inert stubs — their real implementations belong to KeystoneSDK/the Zcash SDK when
-            // the batch UR format exists (joint SDK + Keystone-team ask, unvalidated).
-            getMigrationState: { .notStarted },
-            migrationStateStream: { Just(MigrationState.notStarted).eraseToAnyPublisher() },
-            getMigrationProgress: { nil },
-            isNoteSplitNeeded: { false },
-            prepareNoteSplit: { NoteSplitProposal(outputNotes: [], fee: Zatoshi.zero) },
-            submitNoteSplit: { _ in
-                @Dependency(\.transactionGuard) var transactionGuard
-                do {
-                    return try await transactionGuard.withSubmission {
-                        TransferResult.success(txId: "")
-                    }
-                } catch {
-                    return TransferResult.networkError(retryable: true)
-                }
+            // Migration (Orchard → Ironwood) — real SDK wiring (MOB-1496). The four broadcast-path
+            // members (`submitNoteSplit`, `executeNextPendingMigrationTransfer`,
+            // `migrateMigrationDust`, `broadcastStoredNoteSplit`) acquire the transaction guard —
+            // same `withSubmission` pattern as `createAndSubmitProposedTransactions` — so a
+            // `switchTo(endpoint:)` can never overlap a migration broadcast. Every other member
+            // here is read-only/non-broadcast and stays unguarded; `storeSignedMigrationTransactions`/
+            // `storeSignedNoteSplits` (Keystone/PCZT path) are local storage, not a broadcast, so they
+            // stay unguarded too. Final engine: the run is created at PCZT-build time
+            // (`proposeNoteSplitPCZTs`, below) — these two stores are order-independent
+            // per-transaction signature applications over that same already-created run, not a
+            // sequencing hazard (see `SDKSynchronizerInterface`'s doc on both members).
+            getMigrationState: { accountUUID in
+                try await synchronizer.migrationState(accountUUID: accountUUID)
             },
-            selectMigrationMode: { _ in },
-            proposeMigrationTransfers: { MigrationSchedule(transfers: [], estimatedDurationHours: 0) },
-            signAndStoreMigrationSchedule: { _ in },
-            isSyncRequiredBeforeNextMigrationTransfer: { false },
-            executeNextPendingMigrationTransfer: { _ in
-                @Dependency(\.transactionGuard) var transactionGuard
-                do {
-                    return try await transactionGuard.withSubmission {
-                        let stubResult: TransferResult? = nil
-                        return stubResult
-                    }
-                } catch {
-                    return nil
-                }
+            getMigrationProgress: { accountUUID in
+                try await synchronizer.migrationProgress(accountUUID: accountUUID)
             },
-            hasOverdueMigrationTransfers: { false },
-            hasInvalidMigrationTransfers: { false },
-            restartCurrentMigrationStep: { MigrationSchedule(transfers: [], estimatedDurationHours: 0) },
-            rescheduleStalledMigrationTransfer: { },
-            recreateInvalidMigrationTransfer: { },
-            migrationSummary: { MigrationSummary.zero },
-            // MOB-1487: unlike the inert stubs around it, this one carries fixture rows —
-            // `MigrationStatus` is otherwise unreachable in any demo/QA state. The six rows mirror
-            // the "Final Designs" S10-progress frame and exercise every caption branch: sent-hours-ago,
-            // sent-minutes-ago (Transfer 2, under an hour), actively-broadcasting (Transfer 3), and
-            // three pending ETAs.
-            migrationTransfers: {
-                [
-                    MigrationTransferRow(
-                        id: "0", index: 0, amount: Zatoshi(1_000_000_000), status: .sent, hoursFromNow: 6
-                    ),
-                    MigrationTransferRow(
-                        id: "1",
-                        index: 1,
-                        amount: Zatoshi(100_000_000),
-                        status: .sent,
-                        hoursFromNow: 0,
-                        sentMinutesAgo: 18
-                    ),
-                    MigrationTransferRow(
-                        id: "2",
-                        index: 2,
-                        amount: Zatoshi(100_000_000),
-                        status: .active,
-                        hoursFromNow: 0,
-                        isBroadcasting: true
-                    ),
-                    MigrationTransferRow(
-                        id: "3", index: 3, amount: Zatoshi(20_000_000), status: .pending, hoursFromNow: 12
-                    ),
-                    MigrationTransferRow(
-                        id: "4", index: 4, amount: Zatoshi(20_000_000), status: .pending, hoursFromNow: 18
-                    ),
-                    MigrationTransferRow(
-                        id: "5", index: 5, amount: Zatoshi(5_000_000), status: .pending, hoursFromNow: 36
+            isNoteSplitNeeded: { accountUUID in
+                try await synchronizer.isNoteSplitNeeded(accountUUID: accountUUID)
+            },
+            prepareNoteSplit: { accountUUID in
+                try await synchronizer.prepareNoteSplit(accountUUID: accountUUID)
+            },
+            submitNoteSplit: { accountUUID, proposal, usk, options in
+                @Dependency(\.transactionGuard) var transactionGuard
+                return try await transactionGuard.withSubmission {
+                    try await synchronizer.submitNoteSplit(
+                        accountUUID: accountUUID,
+                        proposal: proposal,
+                        usk: usk,
+                        options: options
                     )
-                ]
-            },
-            // MOB-1487: no SDK primitives yet — the lock stub succeeds after a short pause so the
-            // "Locking balance" in-flight state is observable during QA (non-broadcast, unguarded);
-            // the dust sweep is a broadcast, so its stub takes the transaction guard like the other
-            // broadcast-path stubs and is correct-by-construction once real broadcasting lands.
-            lockMigrationDust: {
-                try await Task.sleep(nanoseconds: 800_000_000)
-            },
-            migrateMigrationDust: { _ in
-                @Dependency(\.transactionGuard) var transactionGuard
-                do {
-                    return try await transactionGuard.withSubmission {
-                        TransferResult.success(txId: "")
-                    }
-                } catch {
-                    return TransferResult.networkError(retryable: true)
                 }
             },
-            isMigrationDustLocked: { false },
-            sendRequiresOrchardFunds: { _ in false },
-            proposeNoteSplitPCZT: { Pczt() },
-            proposeMigrationPCZTs: { _ in [] },
-            storeSignedMigrationTransactions: { _ in },
-            submitSignedNoteSplit: { _ in
+            proposeMigrationTransfers: { accountUUID, includeResidual in
+                try await synchronizer.proposeMigrationTransfers(accountUUID: accountUUID, includeResidual: includeResidual)
+            },
+            proposeImmediateMigration: { accountUUID in
+                try await synchronizer.proposeImmediateMigration(accountUUID: accountUUID)
+            },
+            residualAfterMigration: { accountUUID in
+                try await synchronizer.residualAfterMigration(accountUUID: accountUUID)
+            },
+            signAndStoreMigrationSchedule: { accountUUID, schedule, usk in
+                try await synchronizer.signAndStoreMigrationSchedule(accountUUID: accountUUID, schedule, usk: usk)
+            },
+            isSyncRequiredBeforeNextMigrationTransfer: { accountUUID in
+                try await synchronizer.isSyncRequiredBeforeNextMigrationTransfer(accountUUID: accountUUID)
+            },
+            executeNextPendingMigrationTransfer: { accountUUID, options in
                 @Dependency(\.transactionGuard) var transactionGuard
-                do {
-                    return try await transactionGuard.withSubmission {
-                        TransferResult.success(txId: "")
-                    }
-                } catch {
-                    return TransferResult.networkError(retryable: true)
+                return try await transactionGuard.withSubmission {
+                    try await synchronizer.executeNextPendingMigrationTransfer(accountUUID: accountUUID, options: options)
                 }
             },
+            isMigrationSyncBlocked: {
+                await synchronizer.isMigrationSyncBlocked()
+            },
+            migrationSyncBlockedStream: {
+                synchronizer.migrationSyncBlockedStream
+            },
+            migrationPrivacySyncBufferDuration: {
+                synchronizer.migrationPrivacySyncBufferDuration
+            },
+            hasOverdueMigrationTransfers: { accountUUID in
+                try await synchronizer.hasOverdueMigrationTransfers(accountUUID: accountUUID)
+            },
+            hasInvalidMigrationTransfers: { accountUUID in
+                try await synchronizer.hasInvalidMigrationTransfers(accountUUID: accountUUID)
+            },
+            rescheduleOverdueMigrationTransfer: { accountUUID in
+                try await synchronizer.rescheduleOverdueMigrationTransfer(accountUUID: accountUUID)
+            },
+            restartCurrentMigrationStep: { accountUUID, includeResidual in
+                try await synchronizer.restartCurrentMigrationStep(accountUUID: accountUUID, includeResidual: includeResidual)
+            },
+            refreshStaleMigrationTransfers: { accountUUID, usk, includeResidual in
+                try await synchronizer.refreshStaleMigrationTransfers(
+                    accountUUID: accountUUID,
+                    usk: usk,
+                    includeResidual: includeResidual
+                )
+            },
+            // [ext] MOB-1487 R3: a send of `amount` "requires Orchard funds" — see
+            // `SDKSynchronizerClient.requiresOrchardFunds(amount:balance:)` for the pure comparison.
+            // Any balance-read error degrades to `false` (matches the pre-real-SDK stub's
+            // permissive default rather than blocking the send form on an SDK hiccup).
+            sendRequiresOrchardFunds: { accountUUID, amount in
+                guard let balances = try? await synchronizer.getAccountsBalances(),
+                      let balance = balances[accountUUID] else {
+                    return false
+                }
+                return SDKSynchronizerClient.requiresOrchardFunds(amount: amount, balance: balance)
+            },
+            // MOB-1487: composite — propose a residual-inclusive schedule, sign+store it, then
+            // execute the first (only) due transfer, all under one guard acquisition so nothing else
+            // can broadcast in between. `nil` when there is nothing left to sweep.
+            migrateMigrationDust: { accountUUID, usk, options in
+                @Dependency(\.transactionGuard) var transactionGuard
+                return try await transactionGuard.withSubmission {
+                    let schedule = try await synchronizer.proposeMigrationTransfers(accountUUID: accountUUID, includeResidual: true)
+                    guard !schedule.transfers.isEmpty else { return nil }
+                    try await synchronizer.signAndStoreMigrationSchedule(accountUUID: accountUUID, schedule, usk: usk)
+                    return try await synchronizer.executeNextPendingMigrationTransfer(accountUUID: accountUUID, options: options)
+                }
+            },
+            proposeNoteSplitPCZTs: { accountUUID in
+                try await synchronizer.createUnsignedNoteSplitPCZTs(accountUUID: accountUUID)
+            },
+            storeSignedNoteSplits: { accountUUID, signed in
+                // Run-creating call moved to `createUnsignedNoteSplitPCZTs` above (final engine) —
+                // see `SDKSynchronizerInterface`'s doc: this store and `storeSignedMigrationTransactions`
+                // are order-independent per-transaction signature applications now.
+                _ = try await synchronizer.storeSignedNoteSplitPCZTs(accountUUID: accountUUID, signed)
+            },
+            broadcastStoredNoteSplit: { accountUUID, options in
+                @Dependency(\.transactionGuard) var transactionGuard
+                return try await transactionGuard.withSubmission {
+                    // The engine serves the already-stored split as the next-due transfer, so `nil`
+                    // here means it wasn't due yet (not a failure) — treat as retryable so the UI
+                    // offers a retry rather than reporting a false failure. Idempotent by
+                    // construction: a retry just asks "what's next-due" again, never re-stores.
+                    let result = try await synchronizer.executeNextPendingMigrationTransfer(accountUUID: accountUUID, options: options)
+                    return result ?? MigrationTransferResult.networkError(retryable: true)
+                }
+            },
+            proposeMigrationPCZTs: { accountUUID, schedule in
+                try await synchronizer.createUnsignedMigrationTransferPCZTs(accountUUID: accountUUID, for: schedule)
+            },
+            storeSignedMigrationTransactions: { accountUUID, signed in
+                try await synchronizer.storeSignedMigrationSchedulePCZTs(accountUUID: accountUUID, signed)
+            },
+            // [ext] JOINT SDK + Keystone-team ask; device support unvalidated (feature-spec §14
+            // risk). No batch UR format exists yet — inert stub, unchanged from the pre-real-SDK
+            // shape (MOB-1496 only reshapes the payload types: `[MigrationUnsignedTransferPczt]`
+            // in, encoding `$0.pczt` blobs in order once a real batch format lands).
             urEncoderForMigrationPCZTBatch: { _ in nil },
-            parseMigrationPCZTBatch: { _ in nil },
-            initializeMigrationPostUpgrade: { }
+            // [ext] Same ask as above — inert stub; parses to `[Data]` in scan order once a real
+            // batch format lands.
+            parseMigrationPCZTBatch: { _ in nil }
         )
 
         // MOB-1480: routes the migration member block above (plus `estimateTimestamp`) through
@@ -437,6 +457,23 @@ extension SDKSynchronizerClient: DependencyKey {
         }
 
         return client
+    }
+}
+
+// MARK: - MOB-1487 R3: Orchard-spend disclaimer (pure, table-testable)
+
+extension SDKSynchronizerClient {
+    /// Whether a send of `amount` would have to draw on `balance`'s Orchard pool: the account's
+    /// spendable non-Orchard shielded (Sapling + Ironwood) + transparent balance can't cover
+    /// `amount`, but adding the Orchard pool could. Factored out of `sendRequiresOrchardFunds`'s
+    /// closure body so it's directly table-testable without a mocked `Synchronizer`.
+    static func requiresOrchardFunds(amount: Zatoshi, balance: AccountBalance) -> Bool {
+        let nonOrchardSpendable = balance.saplingBalance.spendableValue
+            + balance.ironwoodBalance.spendableValue
+            + balance.unshielded
+        guard nonOrchardSpendable < amount else { return false }
+        let totalSpendable = nonOrchardSpendable + balance.orchardBalance.spendableValue
+        return totalSpendable >= amount
     }
 }
 

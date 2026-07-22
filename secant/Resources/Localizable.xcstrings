@@ -10680,6 +10680,40 @@
         }
       }
     },
+    "migrationNotification.batchCompleteBody" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "More funds to migrate. Open ZODL to continue."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hay más fondos para migrar. Abre ZODL para continuar."
+          }
+        }
+      }
+    },
+    "migrationNotification.batchCompleteTitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Migration batch finished"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Lote de migración finalizado"
+          }
+        }
+      }
+    },
     "migrationNotification.manualTransferReadyBody" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -11111,6 +11145,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "in ~%1$lld hours"
+          }
+        }
+      }
+    },
+    "migrationPlan.proposeFailedBody" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "We couldn't calculate your migration transfer. Your ZEC is safe — tap below to try again."
+          }
+        }
+      }
+    },
+    "migrationPlan.proposeFailedTitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn't Load Transfer"
           }
         }
       }
@@ -11640,6 +11696,40 @@
         }
       }
     },
+    "migrationSending.waitingBody" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ZODL paused syncing and will send in a moment. Sending and syncing are kept apart to protect your privacy."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ZODL pausó la sincronización y enviará en un momento. El envío y la sincronización se mantienen separados para proteger tu privacidad."
+          }
+        }
+      }
+    },
+    "migrationSending.waitingTitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Preparing a private send window"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Preparando una ventana de envío privada"
+          }
+        }
+      }
+    },
     "migrationStatus.desc" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -11832,13 +11922,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Sending now will delay your wallet's sync about 10 mins. To protect your privacy, we need to decouple syncing and transaction broadcasting."
+            "value" : "Sending now will delay your wallet's sync about %1$lld mins. To protect your privacy, we need to decouple syncing and transaction broadcasting."
           }
         },
         "es" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Enviar ahora retrasará la sincronización de tu billetera unos 10 minutos. Para proteger tu privacidad, necesitamos desacoplar la sincronización de la transmisión de transacciones."
+            "state" : "needs_review",
+            "value" : "Enviar ahora retrasará la sincronización de tu billetera unos %1$lld minutos. Para proteger tu privacidad, necesitamos desacoplar la sincronización de la transmisión de transacciones."
           }
         }
       }
@@ -15319,6 +15409,74 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Punto final no válido"
+          }
+        }
+      }
+    },
+    "serverSetup.alert.migrationPrivacy.chooseAnother" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Choose another"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Elegir otro"
+          }
+        }
+      }
+    },
+    "serverSetup.alert.migrationPrivacy.message" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This server currently receives your Ironwood migration transfers. Using it for syncing as well would let one operator link your sync activity to those transfers."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Este servidor recibe actualmente tus transferencias de migración a Ironwood. Usarlo también para la sincronización permitiría que un mismo operador vincule tu actividad de sincronización con esas transferencias."
+          }
+        }
+      }
+    },
+    "serverSetup.alert.migrationPrivacy.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Migration privacy notice"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aviso de privacidad de la migración"
+          }
+        }
+      }
+    },
+    "serverSetup.alert.migrationPrivacy.useAnyway" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Use it anyway"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Usarlo de todos modos"
           }
         }
       }

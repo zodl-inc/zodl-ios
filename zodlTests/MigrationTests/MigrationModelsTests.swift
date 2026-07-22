@@ -3,8 +3,17 @@
 //  zodlTests
 //
 //  Covers Codable round-trips and basic invariants for the Orchard -> Ironwood migration
-//  value models (Models/Migration/MigrationModels.swift). No shared/global state -> no
-//  `.serialized`.
+//  value models (Models/Migration/MigrationModels.swift). MOB-1496: most of the pre-real-SDK
+//  shadow types this file used to cover (`MigrationState`, `AttentionReason`/`MigrationAttentionReason`,
+//  `TransferResult`/`MigrationTransferResult`, `NetworkPrivacyOptions`/`MigrationNetworkPrivacyOptions`)
+//  are now real SDK types the app no longer owns — and, per the SDK's ground truth
+//  (`Model/MigrationModels.swift`, `Migration/OrchardMigration.swift`), none of them are `Codable`
+//  (`Equatable, Sendable` only; `MigrationNetworkPrivacyOptions` is `Equatable` only, carrying a
+//  non-`Sendable` `LightWalletEndpoint`) — so their round-trip coverage is simply gone, not
+//  replaceable. `MigrationSchedule`/`MigrationTransferProposal` ARE still `Codable` (real SDK types,
+//  kept for local persistence) — their coverage is retargeted, not dropped. What remains app-owned
+//  in `MigrationModels.swift` (`MigrationSummary`, `MigrationTransferRow`, `MigrationMode`) is
+//  unaffected. No shared/global state -> no `.serialized`.
 //
 
 import Testing
@@ -20,86 +29,23 @@ import Foundation
         }
     }
 
-    @Test func networkPrivacyOptionsCodableRoundTripWithNilEndpoint() throws {
-        let original = NetworkPrivacyOptions(useTor: true, submissionEndpoint: nil)
-        let data = try JSONEncoder().encode(original)
-        #expect(try JSONDecoder().decode(NetworkPrivacyOptions.self, from: data) == original)
-    }
-
-    @Test func networkPrivacyOptionsCodableRoundTripWithNonNilEndpoint() throws {
-        let original = NetworkPrivacyOptions(useTor: false, submissionEndpoint: "https://example.com:9067")
-        let data = try JSONEncoder().encode(original)
-        #expect(try JSONDecoder().decode(NetworkPrivacyOptions.self, from: data) == original)
-    }
-
-    @Test func transferResultCodableRoundTripAllCases() throws {
-        let cases: [TransferResult] = [
-            TransferResult.success(txId: "abc123"),
-            TransferResult.networkError(retryable: true),
-            TransferResult.invalidNote,
-            TransferResult.expired
-        ]
-
-        for original in cases {
-            let data = try JSONEncoder().encode(original)
-            #expect(try JSONDecoder().decode(TransferResult.self, from: data) == original)
-        }
-    }
-
-    @Test func attentionReasonCodableRoundTripAllCases() throws {
-        let cases: [AttentionReason] = [
-            AttentionReason.invalidTransfer(transferId: "transfer-1"),
-            AttentionReason.transferExpired,
-            AttentionReason.syncRequiredBeforeNext,
-            AttentionReason.transferStalled(transferNumber: 3)
-        ]
-
-        for original in cases {
-            let data = try JSONEncoder().encode(original)
-            #expect(try JSONDecoder().decode(AttentionReason.self, from: data) == original)
-        }
-    }
-
-    @Test func migrationStateCodableRoundTripAllCases() throws {
-        let progress = MigrationProgress(
-            completedTransfers: 2,
-            totalTransfers: 5,
-            remainingOrchard: Zatoshi(1_000),
-            nextTransferReadyAtHeight: 123_456
-        )
-
-        let cases: [MigrationState] = [
-            MigrationState.notStarted,
-            MigrationState.splitPendingConfirmation,
-            MigrationState.readyToPropose,
-            MigrationState.inProgress(progress),
-            MigrationState.requiresAttention(AttentionReason.transferExpired),
-            MigrationState.complete
-        ]
-
-        for original in cases {
-            let data = try JSONEncoder().encode(original)
-            #expect(try JSONDecoder().decode(MigrationState.self, from: data) == original)
-        }
-    }
-
     @Test func migrationScheduleCodableRoundTripWithNonTrivialTransferGraph() throws {
         let transfers = [
-            TransferProposal(
+            MigrationTransferProposal(
                 id: "transfer-1",
                 amount: Zatoshi(500),
                 anchorHeight: 100,
                 nextExecutableAfterHeight: 110,
                 expiryHeight: 200
             ),
-            TransferProposal(
+            MigrationTransferProposal(
                 id: "transfer-2",
                 amount: Zatoshi(1_500),
                 anchorHeight: 110,
                 nextExecutableAfterHeight: 220,
                 expiryHeight: 310
             ),
-            TransferProposal(
+            MigrationTransferProposal(
                 id: "transfer-3",
                 amount: Zatoshi(2_500),
                 anchorHeight: 220,
@@ -185,7 +131,7 @@ import Foundation
     }
 
     @Test func transferProposalIdDrivesIdentifiable() {
-        let proposal = TransferProposal(
+        let proposal = MigrationTransferProposal(
             id: "transfer-42",
             amount: Zatoshi(999),
             anchorHeight: 10,
@@ -193,5 +139,89 @@ import Foundation
             expiryHeight: 30
         )
         #expect(proposal.id == "transfer-42")
+    }
+
+    // MARK: - MigrationNetworkSnapshot (MOB-1496 W4)
+
+    @Test func migrationNetworkSnapshotCodableRoundTripIncludingCustomProvider() throws {
+        let original = MigrationNetworkSnapshot(
+            useTor: true,
+            syncEndpoint: MigrationNetworkSnapshot.Endpoint(host: "na.zec.rocks", port: 443, secure: true),
+            broadcastEndpoint: MigrationNetworkSnapshot.Endpoint(host: "mynode.example.com", port: 9067, secure: false),
+            takenAt: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(MigrationNetworkSnapshot.self, from: data)
+
+        #expect(decoded == original)
+        #expect(decoded.syncProvider == ServerProvider.zecRocks)
+        #expect(decoded.broadcastProvider == ServerProvider.custom(host: "mynode.example.com"))
+    }
+
+    /// R8-T3 (#22): `syncProvider`/`broadcastProvider` used to be STORED (constructor args, present
+    /// as their own JSON keys) — a legacy persisted blob from before this change still carries those
+    /// two extra keys. `JSONDecoder` ignores unknown keys by default, so decoding must still succeed,
+    /// with the (now-computed) provider properties matching a live `ServerProvider.classify(host:)`
+    /// of their respective endpoint — never the stale value the legacy blob happened to carry.
+    @Test func migrationNetworkSnapshotDecodesLegacyBlobWithStoredProviderKeys() throws {
+        struct LegacyMigrationNetworkSnapshot: Codable {
+            let useTor: Bool
+            let syncEndpoint: MigrationNetworkSnapshot.Endpoint
+            let syncProvider: ServerProvider
+            let broadcastEndpoint: MigrationNetworkSnapshot.Endpoint
+            let broadcastProvider: ServerProvider
+            let takenAt: Date
+        }
+
+        // Deliberately a STALE/wrong `syncProvider` value versus what `syncEndpoint`'s host would
+        // classify to — proving the decoded snapshot re-derives it live rather than ever reading
+        // back whatever this legacy blob's own (now-ignored) key happened to carry.
+        let legacy = LegacyMigrationNetworkSnapshot(
+            useTor: true,
+            syncEndpoint: MigrationNetworkSnapshot.Endpoint(host: "na.zec.rocks", port: 443, secure: true),
+            syncProvider: ServerProvider.custom(host: "stale-value-from-before-the-fix"),
+            broadcastEndpoint: MigrationNetworkSnapshot.Endpoint(host: "mynode.example.com", port: 9067, secure: false),
+            broadcastProvider: ServerProvider.custom(host: "stale-value-from-before-the-fix"),
+            takenAt: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+
+        let legacyData = try JSONEncoder().encode(legacy)
+        let decoded = try JSONDecoder().decode(MigrationNetworkSnapshot.self, from: legacyData)
+
+        #expect(decoded.useTor == true)
+        #expect(decoded.syncEndpoint.host == "na.zec.rocks")
+        #expect(decoded.broadcastEndpoint.host == "mynode.example.com")
+        #expect(decoded.takenAt == legacy.takenAt)
+        #expect(decoded.syncProvider == ServerProvider.zecRocks)
+        #expect(decoded.broadcastProvider == ServerProvider.custom(host: "mynode.example.com"))
+    }
+
+    @Test func migrationNetworkSnapshotEndpointRoundTripsHostPortSecureThroughLightWalletEndpoint() {
+        let source = LightWalletEndpoint(address: "eu.zec.stardust.rest", port: 8443, secure: false, streamingCallTimeoutInMillis: 12_345)
+
+        let wrapped = MigrationNetworkSnapshot.Endpoint(source)
+
+        #expect(wrapped.host == "eu.zec.stardust.rest")
+        #expect(wrapped.port == 8443)
+        #expect(wrapped.secure == false)
+
+        // Reconstruction uses the SAME streaming-timeout constant the built-in endpoint list uses —
+        // not whatever the original `LightWalletEndpoint` happened to carry (the wrapper doesn't
+        // persist it at all).
+        let reconstructed = wrapped.toLightWalletEndpoint()
+        #expect(reconstructed.host == "eu.zec.stardust.rest")
+        #expect(reconstructed.port == 8443)
+        #expect(reconstructed.secure == false)
+        #expect(reconstructed.streamingCallTimeoutInMillis == ZcashSDKEnvironment.ZcashSDKConstants.streamingCallTimeoutInMillis)
+    }
+
+    @Test func migrationNetworkSnapshotEndpointMemberwiseInitAlsoRoundTrips() {
+        let wrapped = MigrationNetworkSnapshot.Endpoint(host: "zec.rocks", port: 443, secure: true)
+        let reconstructed = wrapped.toLightWalletEndpoint()
+
+        #expect(reconstructed.host == "zec.rocks")
+        #expect(reconstructed.port == 443)
+        #expect(reconstructed.secure == true)
     }
 }

@@ -45,6 +45,250 @@ extension MigrationBGSessionHandle: Equatable {
     }
 }
 
+/// MOB-1496 (W5): one candidate account's classification within a single migration BG session,
+/// computed by `migrationBackgroundSessionEffect`'s per-account probe (`classifyMigrationAccount`)
+/// and consumed by `MigrationSessionPlanner.plan(_:)` to pick the session's single action. Mirrors
+/// the ordered classification the spec's "Per-account background decision tree" describes.
+private enum MigrationAccountClassification: Equatable {
+    /// `complete`/`notStarted`/`readyToPropose` — no broadcast, no sync need for this account.
+    case nothingToDo(MigrationState)
+    /// `hasInvalidMigrationTransfers` OR state is `.requiresAttention(.transferExpired)` /
+    /// `.requiresAttention(.invalidTransfer)`.
+    case planBroken
+    /// `isSyncRequiredBeforeNextMigrationTransfer` is true.
+    case syncNeeded
+    /// `rescheduleOverdueMigrationTransfer` returned a proposal — a candidate for this session's
+    /// single broadcast, ordered by `isOverdue` then `nextExecutableAfterHeight`. Due-ness itself is
+    /// NOT decided here (see `migrationBackgroundSessionEffect`'s "height-due semantics" doc) —
+    /// `executeNextPendingMigrationTransfer`'s own nil-return is the authority.
+    case broadcastCandidate(nextExecutableAfterHeight: BlockHeight, isOverdue: Bool)
+    /// An active run (not `nothingToDo`/`planBroken`/`syncNeeded`) whose reschedule probe came back
+    /// nil — nothing pending to order against this session, but still an active run (excluded from
+    /// the "every account complete/notStarted" cancel-all trigger).
+    case activeNoCandidate
+    /// A `try?`-guarded read failed for this account — logged and skipped; conservatively excluded
+    /// from the cancel-all trigger too (its true state is unknown).
+    case unreadable
+}
+
+/// MOB-1496 (W5): classifies one account for `migrationBackgroundSessionEffect`'s per-account probe.
+/// Every SDK read is `try?`-guarded — log-and-skip per the existing single-account pattern (MOB-1496
+/// W1-W4): a read failure degrades this ONE account to `.unreadable` rather than aborting the whole
+/// session.
+private func classifyMigrationAccount(
+    _ accountUUID: AccountUUID,
+    sdkSynchronizer: SDKSynchronizerClient
+) async -> MigrationAccountClassification {
+    guard let migrationState = try? await sdkSynchronizer.getMigrationState(accountUUID) else {
+        LoggerProxy.error("BGTask migration session: state read failed for an account")
+        return MigrationAccountClassification.unreadable
+    }
+
+    switch migrationState {
+    // `.readyToPropose` is never actually emitted by the final migration engine — kept here only
+    // for exhaustiveness / the migration SDK simulator, which still models it.
+    case MigrationState.complete, MigrationState.notStarted, MigrationState.readyToPropose:
+        return MigrationAccountClassification.nothingToDo(migrationState)
+    default:
+        break
+    }
+
+    guard let hasInvalid = try? await sdkSynchronizer.hasInvalidMigrationTransfers(accountUUID) else {
+        LoggerProxy.error("BGTask migration session: plan-broken check failed for an account")
+        return MigrationAccountClassification.unreadable
+    }
+
+    let isPlanBrokenByState: Bool
+    switch migrationState {
+    case MigrationState.requiresAttention(MigrationAttentionReason.transferExpired),
+         MigrationState.requiresAttention(MigrationAttentionReason.invalidTransfer):
+        isPlanBrokenByState = true
+    default:
+        isPlanBrokenByState = false
+    }
+
+    if hasInvalid || isPlanBrokenByState {
+        return MigrationAccountClassification.planBroken
+    }
+
+    guard let isSyncRequired = try? await sdkSynchronizer.isSyncRequiredBeforeNextMigrationTransfer(accountUUID) else {
+        LoggerProxy.error("BGTask migration session: sync-required check failed for an account")
+        return MigrationAccountClassification.unreadable
+    }
+
+    if isSyncRequired {
+        return MigrationAccountClassification.syncNeeded
+    }
+
+    // Double-optional flatten: `rescheduleOverdueMigrationTransfer` already returns an Optional on
+    // success, and `try?` adds a second layer — a thrown read and a genuinely-empty probe both read
+    // as "no candidate" here (mirrors `MigrationManagerImpl.migrationSummary`'s identical `residual`
+    // flatten). Per the tree's "height-due semantics" doc, a nil probe is NOT itself an error worth
+    // logging — it just means nothing is pending to order against this session.
+    let proposal = (try? await sdkSynchronizer.rescheduleOverdueMigrationTransfer(accountUUID)) ?? nil
+    guard let proposal else {
+        return MigrationAccountClassification.activeNoCandidate
+    }
+
+    let isOverdue = (try? await sdkSynchronizer.hasOverdueMigrationTransfers(accountUUID)) ?? false
+    return MigrationAccountClassification.broadcastCandidate(
+        nextExecutableAfterHeight: proposal.nextExecutableAfterHeight,
+        isOverdue: isOverdue
+    )
+}
+
+/// MOB-1496 (W5): pure per-session resolution — table-testable given already-classified accounts, no
+/// SDK dependency. Mirrors `WakeupAction.decide`'s "pure decision, effectful caller" split; verified
+/// indirectly here via the Store-level `RootMigrationBackgroundTests` (this file has no direct-SDK
+/// escape hatch the way `MigrationCadence`/`WakeupAction` do, since account CLASSIFICATION itself
+/// needs async SDK reads — only the RESOLUTION over already-classified accounts is pure).
+private enum MigrationSessionPlanner {
+    struct Plan: Equatable {
+        let notifyPlanNeedsUpdate: Bool
+        /// R8-T5 (S4): the FIRST plan-broken account found (selected-first order, same "whichever"
+        /// tie-break the rest of this planner already uses) — carried so the `.planNeedsUpdate`
+        /// notification can be attributed to the account that actually needs attention, instead of
+        /// composing for the session's broadcast winner: a DIFFERENT, healthy account may be the one
+        /// that broadcasts this very session (see `plan(_:)`'s ordering doc — a plan-broken account
+        /// does not block a healthy account's own broadcast/sync). `nil` exactly when
+        /// `notifyPlanNeedsUpdate` is `false`.
+        let planBrokenAccountUUID: AccountUUID?
+        let action: Action
+
+        enum Action: Equatable {
+            case syncOnly
+            case broadcast(winner: AccountUUID)
+            case cancelAll
+            case rearm
+            /// Plan-broken-only (nothing else fired this session): no rearm, no cancel — mirrors the
+            /// single-account precedent (a broken plan needs the user's own Recovery-flow re-arm,
+            /// not an automatic retry).
+            case none
+        }
+    }
+
+    /// Session resolution, checked in this exact order (spec "Session resolution"):
+    /// 1. Any `planNeedsUpdate` account -> notify once for the whole session; continue evaluating
+    ///    the rest (a plan-broken account doesn't block a healthy account's own broadcast/sync).
+    /// 2. Any `syncNeeded` account -> sync-only session; ALL broadcasts deferred (ZIP: never both).
+    /// 3. Else any `broadcastCandidate` -> pick exactly one (prefer overdue; earliest
+    ///    `nextExecutableAfterHeight`; tie -> earliest in `classifications`' own order, i.e. the
+    ///    selected account, since callers pass accounts selected-first).
+    /// 4. Nothing else fired: plan-broken-only -> `.none` (no rearm, no cancel); else cancelAll when
+    ///    EVERY classified account is `.complete`/`.notStarted` (no active run anywhere); else rearm.
+    static func plan(_ classifications: [(accountUUID: AccountUUID, classification: MigrationAccountClassification)]) -> Plan {
+        let hasSyncNeeded = classifications.contains { if case .syncNeeded = $0.classification { return true } else { return false } }
+        // R8-T5 (S4): the FIRST plan-broken account (selected-first order) — non-nil exactly when a
+        // plan-broken account exists, so this doubles as the old `hasPlanBroken` check too.
+        let planBrokenAccountUUID = classifications.first { if case .planBroken = $0.classification { return true } else { return false } }?.accountUUID
+
+        if hasSyncNeeded {
+            return Plan(notifyPlanNeedsUpdate: planBrokenAccountUUID != nil, planBrokenAccountUUID: planBrokenAccountUUID, action: Plan.Action.syncOnly)
+        }
+
+        if let winner = pickBroadcastWinner(classifications) {
+            return Plan(
+                notifyPlanNeedsUpdate: planBrokenAccountUUID != nil,
+                planBrokenAccountUUID: planBrokenAccountUUID,
+                action: Plan.Action.broadcast(winner: winner)
+            )
+        }
+
+        if let planBrokenAccountUUID {
+            return Plan(notifyPlanNeedsUpdate: true, planBrokenAccountUUID: planBrokenAccountUUID, action: Plan.Action.none)
+        }
+
+        let everyAccountIsCompleteOrNotStarted = !classifications.isEmpty && allAccountsAreDone(classifications)
+
+        return Plan(
+            notifyPlanNeedsUpdate: false,
+            planBrokenAccountUUID: nil,
+            action: everyAccountIsCompleteOrNotStarted ? Plan.Action.cancelAll : Plan.Action.rearm
+        )
+    }
+
+    /// A single account's classification counts as "done" (no active run) for the cancel-all gate
+    /// below — `.complete`/`.notStarted` only. `.readyToPropose` (a real balance, no committed plan
+    /// yet) and `.unreadable` (an unknown true state) both deliberately do NOT count as done, so
+    /// either one blocks a premature cancelAll and keeps the wakeup chain alive instead.
+    ///
+    /// MOB-1496 (fix-wave, review IMPORTANT-1): also reused by `handleLandedBroadcast`'s own
+    /// post-broadcast complete-check, via `allAccountsAreDone` below, so the two "is everyone
+    /// really done" sites can't drift apart.
+    static func isDoneClassification(_ classification: MigrationAccountClassification) -> Bool {
+        guard case let .nothingToDo(state) = classification else { return false }
+        return state == MigrationState.complete || state == MigrationState.notStarted
+    }
+
+    /// True only when EVERY entry in `classifications` is done (`isDoneClassification`) —
+    /// vacuously true for an EMPTY list, matching `Array.allSatisfy`'s own empty-collection
+    /// semantics (a broadcast winner with no OTHER classified accounts this session IS "every other
+    /// account done"). `plan(_:)` above additionally guards the TOTAL account set against being
+    /// empty itself (defensive — never actually empty by the time a session reaches this code);
+    /// `handleLandedBroadcast`'s own "every OTHER account" check deliberately does NOT apply that
+    /// same guard, so a single-account session's landed broadcast still cancels exactly as it
+    /// always has.
+    static func allAccountsAreDone(
+        _ classifications: [(accountUUID: AccountUUID, classification: MigrationAccountClassification)]
+    ) -> Bool {
+        classifications.allSatisfy { isDoneClassification($0.classification) }
+    }
+
+    /// A broadcast candidate mid-comparison in `pickBroadcastWinner` — a small named type instead
+    /// of a 3-member tuple (SwiftLint's `large_tuple` caps tuples at 2 members).
+    private struct BroadcastCandidate {
+        let accountUUID: AccountUUID
+        let height: BlockHeight
+        let isOverdue: Bool
+    }
+
+    /// Prefers a candidate with the overdue flag; among several, earliest `nextExecutableAfterHeight`;
+    /// a tie keeps whichever the loop reached first — callers pass accounts selected-first, so that
+    /// is the selected account per the spec's own tie-break rule.
+    private static func pickBroadcastWinner(
+        _ classifications: [(accountUUID: AccountUUID, classification: MigrationAccountClassification)]
+    ) -> AccountUUID? {
+        var winner: BroadcastCandidate?
+
+        for (accountUUID, classification) in classifications {
+            guard case let .broadcastCandidate(height, isOverdue) = classification else { continue }
+
+            guard let current = winner else {
+                winner = BroadcastCandidate(accountUUID: accountUUID, height: height, isOverdue: isOverdue)
+                continue
+            }
+
+            let isBetter: Bool
+            if isOverdue != current.isOverdue {
+                isBetter = isOverdue
+            } else if height != current.height {
+                isBetter = height < current.height
+            } else {
+                isBetter = false
+            }
+
+            if isBetter {
+                winner = BroadcastCandidate(accountUUID: accountUUID, height: height, isOverdue: isOverdue)
+            }
+        }
+
+        return winner?.accountUUID
+    }
+}
+
+/// MOB-1496 (fix-wave, review MINOR-4): bundles the 4 dependency clients
+/// `migrationBackgroundSessionEffect`'s `.run` closure captures, so the per-plan-action handlers
+/// extracted out of that closure (`runMigrationSession` and friends, below in `extension Root`)
+/// take one parameter instead of four apiece. Plain explicit-value capture (matching this file's
+/// existing "capture specific dependency values, never `self`" idiom) — every field is itself
+/// `Sendable`, so this struct is too.
+private struct MigrationSessionDependencies: Sendable {
+    let migrationManager: MigrationManagerClient
+    let sdkSynchronizer: SDKSynchronizerClient
+    let migrationBGScheduler: MigrationBGSchedulerClient
+    let userNotifications: UserNotificationsClient
+}
+
 /// In this file is a collection of helpers that control all state and action related operations
 /// for the `Root` with a connection to the app/wallet initialization and erasure of the wallet.
 extension Root {
@@ -67,6 +311,32 @@ extension Root {
         case initializationSuccessfullyDone
         case loadedWalletAccounts([WalletAccount])
         case migrationBackgroundSession(MigrationBGSessionHandle)
+        /// R8-T5 (S4): fires after `.migrationNotificationTapped`'s account-switch effect (`.home
+        /// (.walletAccountTapped(_:))`) completes — `.concatenate` orders the two dispatches so the
+        /// migration flow opens only once the switch is fully applied. See
+        /// `migrationNotificationTappedRoutingEffect`'s doc.
+        case migrationNotificationRoute
+        /// MOB-1496 (R8-T4, #11): the migration BG session tree's own "I'm done" round-trip —
+        /// effects can't mutate `state` directly, so both `runMigrationSession`'s normal-completion
+        /// tail and `completeSyncOnlySession`'s gate-blocked branch send this instead of calling
+        /// `handle.complete(_:)` inline. The reducer guards on `state
+        /// .activeMigrationBackgroundSessionHandle` being non-nil before completing AND clears it
+        /// first — see that state property's doc for why (double-complete safety against
+        /// `.migrationBackgroundTaskExpired`).
+        case migrationBackgroundSessionCompleted(Bool)
+        /// MOB-1496: the migration BG decision tree's "sync required, not deferred" branch needs to
+        /// mutate `state.bgTask` — effects can't do that directly, so the async decision tree
+        /// (`migrationBackgroundSessionEffect`'s `.run`) sends this back into the reducer instead of
+        /// setting it inline the way the pre-real-SDK synchronous version did.
+        case migrationBackgroundSyncOnly(MigrationBGSessionHandle)
+        /// MOB-1496 (W3): `.retryStart`'s `.run` effect can't mutate `state` directly — sent back
+        /// into the reducer (proactively, before ever calling `start`, or reactively after `start`
+        /// throws `ZcashError.migrationSyncBlocked`) to set `state.syncDeferredByMigrationGate`.
+        /// R8-T6: also sent for the SAME reason when a Send-now silence-window wait's own hold flag
+        /// (`migrationSendWaitActive`) is set — one flag/replay path safely covers both "sync must
+        /// stay stopped" reasons, since `.retryStart`'s own re-check at replay time re-validates
+        /// BOTH conditions fresh regardless of which one caused the original defer.
+        case migrationSyncDeferredByGate
         case resetZashi
         case resetZashiRequest(Bool)
         case resetZashiRequestCanceled
@@ -104,11 +374,11 @@ extension Root {
                 }
                 state.appStartState = .willEnterForeground
                 // MOB-1466: reconcile migration state on every foreground entry (idempotent
-                // `initializeMigrationPostUpgrade()` + the stale-acknowledge reset) so a banner/
+                // `migrationManager.reconcile()` + the stale-acknowledge reset) so a banner/
                 // re-entry route that changed while backgrounded is picked up promptly. Banner
                 // freshness itself stays reactive (SmartBanner's own subscription + walk) — this
                 // is deliberately the minimal Root-side hook the spec calls for.
-                let reconcileEffect: Effect<Action> = .run { [migrationManager] _ in migrationManager.reconcile() }
+                let reconcileEffect: Effect<Action> = .run { [migrationManager] _ in await migrationManager.reconcile() }
                 // MOB-1467: opening the app clears stale migration notifications from Notification
                 // Center — the banner/re-entry route now carries the current state. Delivered ONLY:
                 // a pending manual-mode "ready to send" reminder must survive foreground entry.
@@ -160,9 +430,88 @@ extension Root {
                 return .send(.initialization(.migrationBackgroundSession(MigrationBGSessionHandle.live(task))))
 
             case .initialization(.migrationBackgroundSession(let handle)):
+                // MOB-1496 (R8-T4, #7): a cold launch races this dispatch against wallet-state
+                // hydration — the SAME deep-link stash treatment `.migrationNotificationTapped`
+                // above already uses: stash until `checkBackupPhraseValidation`'s "just reached
+                // Home" checkpoint replays it, rather than letting `migrationBackgroundSessionEffect`'s
+                // own early-return checks run against not-yet-hydrated state (`isIronwoodActivated()`'s
+                // tip==0 fail-safe sentinel, an empty `walletAccounts`) and misread a REAL
+                // activated/populated wallet as "nothing to do," consuming the BG request without
+                // re-arming. Checked here (rather than in `.appDelegate(.migrationBackgroundTask)`
+                // just above) so the stash itself stays exercisable with the spy handles this whole
+                // suite already drives — a raw `BGProcessingTask` can't be constructed in tests.
+                guard state.appInitializationState == .initialized else {
+                    state.pendingMigrationBackgroundSession = handle
+                    return .none
+                }
                 return migrationBackgroundSessionEffect(state: &state, handle: handle)
 
+            case .initialization(.migrationBackgroundSyncOnly(let handle)):
+                // R8 final cumulative review (Finding 2): `completeSyncOnlySession` sends this
+                // hand-off back into the reducer — but `.migrationBackgroundTaskExpired` can win the
+                // race and complete the session FIRST (its guarded active-session branch clears
+                // `activeMigrationBackgroundSessionHandle` — see that action's doc) while this send
+                // is already in flight and survives the tree's own cancellation. Guard on the SAME
+                // live-session marker before adopting anything: `nil` means expiration already
+                // completed/re-armed this session, so adopting `handle` into `state.bgTask` here
+                // would resurrect a task iOS already considers done (risking a second
+                // `setTaskCompleted` on it from a later completion path) and kick a sync start
+                // inside a dead BG window.
+                guard state.activeMigrationBackgroundSessionHandle != nil else { return .none }
+
+                // Sync-only session: never broadcasts. Re-arm up front, then reuse the
+                // `power_wifi_sync` handler's own sync-kick verbatim (`state.bgTask` + `.retryStart`)
+                // — `synchronizerStateChanged` completes `state.bgTask` on
+                // `.upToDate`/`.stopped`/`.error` exactly as it does for that task. `handle.rawTask`
+                // may be `nil` in tests (spy handles); that completion is then a no-op, which is
+                // acceptable — this branch is asserted on the arm + kick + stash, not on task
+                // completion.
+                state.bgTask = handle.rawTask
+                // MOB-1496 (R8-T4, #11): this hand-off transitions the handle's completion out of
+                // `activeMigrationBackgroundSessionHandle`'s tracking and into `bgTask`'s existing
+                // one (just set above) — clear it here so a LATER expiration falls through to the
+                // untouched sync-bgTask tail below instead of trying to complete via a stale handle.
+                state.activeMigrationBackgroundSessionHandle = nil
+                return .concatenate(
+                    .run { [migrationBGScheduler] _ in await migrationBGScheduler.scheduleNextWindow() },
+                    .send(.initialization(.retryStart))
+                )
+
+            case .initialization(.migrationBackgroundSessionCompleted(let success)):
+                // MOB-1496 (R8-T4, #11): guard-on-nil — whichever of THIS (normal completion) or
+                // `.migrationBackgroundTaskExpired` reaches the (single-threaded) reducer first wins;
+                // the other then finds the slot already `nil` and no-ops, so the same
+                // `BGProcessingTask` can never be completed twice.
+                guard let handle = state.activeMigrationBackgroundSessionHandle else { return .none }
+                state.activeMigrationBackgroundSessionHandle = nil
+                handle.complete(success)
+                return .none
+
             case .initialization(.appDelegate(.migrationBackgroundTaskExpired)):
+                // MOB-1496 (R8-T4, #7): a session stashed pre-init never actually started — release
+                // it here rather than betting hydration replays it before the OS reclaims the task;
+                // re-arm so the wakeup chain survives regardless.
+                if let pendingMigrationBackgroundSession = state.pendingMigrationBackgroundSession {
+                    state.pendingMigrationBackgroundSession = nil
+                    pendingMigrationBackgroundSession.complete(false)
+                    return .run { [migrationBGScheduler] _ in await migrationBGScheduler.scheduleNextWindow() }
+                }
+
+                // MOB-1496 (R8-T4, #11): an ACTIVE session tree is genuinely mid-flight (possibly
+                // mid-broadcast) — cancel the tree, complete via the STORED handle (never `state
+                // .bgTask`, which stays `nil` for this plan — see `MigrationBGSessionHandle`'s doc),
+                // clear the stash, and re-arm. `handle.complete(false)` here races
+                // `.migrationBackgroundSessionCompleted`'s own guard (see its doc); whichever gets
+                // to the slot first wins, so the two can never double-complete.
+                if let activeMigrationBackgroundSessionHandle = state.activeMigrationBackgroundSessionHandle {
+                    state.activeMigrationBackgroundSessionHandle = nil
+                    activeMigrationBackgroundSessionHandle.complete(false)
+                    return .merge(
+                        .cancel(id: state.migrationBackgroundSessionCancelId),
+                        .run { [migrationBGScheduler] _ in await migrationBGScheduler.scheduleNextWindow() }
+                    )
+                }
+
                 // Mirror `didEnterBackground`'s expiration handling for the existing
                 // `power_wifi_sync` task: stop the synchronizer and release `state.bgTask` (a
                 // sync-only session may have set it), then re-arm — an expired session must never
@@ -180,24 +529,48 @@ extension Root {
                 }
                 return .run { [migrationBGScheduler] _ in await migrationBGScheduler.scheduleNextWindow() }
 
-            case .initialization(.appDelegate(.migrationNotificationTapped)):
+            case .initialization(.appDelegate(.migrationNotificationTapped(let accountUUID))):
                 // Same gate as `checkBackupPhraseValidation` uses for `isAtDeeplinkWarningScreen`:
                 // `.initialized` is set exactly once, at that checkpoint, so it doubles as "Home
                 // is up" here. If we're not there yet (cold start still in flight), stash the
                 // request — `checkBackupPhraseValidation` fires it once initialization completes.
+                // R8-T5 (S4): the stash now carries the tapped notification's account too, so the
+                // deferred replay can switch accounts exactly like the immediate path below does.
                 guard state.appInitializationState == .initialized else {
                     state.pendingMigrationDeepLink = true
+                    state.pendingMigrationDeepLinkAccountUUID = accountUUID
                     return .none
                 }
-                return migrationNotificationTappedRoutingEffect(state: &state)
+                return migrationNotificationTappedRoutingEffect(state: &state, accountUUID: accountUUID)
+
+            case .initialization(.migrationNotificationRoute):
+                // R8-T5 (S4): see `migrationNotificationTappedRoutingEffect`'s doc — reached only
+                // after the account-switch effect it dispatched ahead of this has completed.
+                return openMigrationCoordFlow(state: &state)
 
             case .synchronizerStateChanged(let latestState):
                 let snapshot = SyncStatusSnapshot.snapshotFor(state: latestState.data.syncStatus)
 
+                // MOB-1496 (W2): reconcile migration state on the EDGE into `.upToDate` — not on
+                // every tick while already synced (would storm `reconcile()` on every subsequent
+                // tick at the tip). Piggybacks on this existing `stateStream()` subscription
+                // (`.registerForSynchronizersUpdate` below) rather than opening a second one.
+                // MOB-1496 (W3): `recordSyncCompleted()` re-keys the app's send gate off this SAME
+                // edge — once per completed sync, not per tick, exactly like `reconcile()` beside
+                // it (see `MigrationManagerClient.recordSyncCompleted`'s doc).
+                let didJustReachUpToDate = snapshot.syncStatus == .upToDate && !state.wasSyncUpToDateForMigration
+                state.wasSyncUpToDateForMigration = snapshot.syncStatus == .upToDate
+                let migrationReconcileEffect: Effect<Action> = didJustReachUpToDate
+                    ? .run { [migrationManager] _ in
+                        migrationManager.recordSyncCompleted()
+                        await migrationManager.reconcile()
+                      }
+                    : .none
+
                 guard let account = state.selectedWalletAccount else {
-                    return .none
+                    return migrationReconcileEffect
                 }
-                
+
                 // update flexa balance
                 if let accountBalance = latestState.data.accountsBalances[account.id] {
                     let shieldedBalance = accountBalance.shieldedSpendableValue
@@ -219,12 +592,12 @@ extension Root {
 
                 // handle BCGTask
                 guard state.bgTask != nil else {
-                    return .send(.initialization(.checkRestoreWalletFlag(snapshot.syncStatus)))
+                    return .merge(migrationReconcileEffect, .send(.initialization(.checkRestoreWalletFlag(snapshot.syncStatus))))
                 }
-                
+
                 var finishBGTask = false
                 var successOfBGTask = false
-                
+
                 switch snapshot.syncStatus {
                 case .upToDate:
                     successOfBGTask = true
@@ -240,19 +613,76 @@ extension Root {
                     finishBGTask = true
                 default: break
                 }
-                
+
                 if finishBGTask  {
                     LoggerProxy.event("BGTask setTaskCompleted(success: \(successOfBGTask)) from TCA")
                     state.bgTask?.setTaskCompleted(success: successOfBGTask)
                     state.bgTask = nil
                     return .merge(
+                        migrationReconcileEffect,
                         .cancel(id: state.CancelStateId),
                         .cancel(id: state.CancelTransactionsStateId)
                     )
                 }
 
-                return .send(.initialization(.checkRestoreWalletFlag(snapshot.syncStatus)))
-                
+                return .merge(migrationReconcileEffect, .send(.initialization(.checkRestoreWalletFlag(snapshot.syncStatus))))
+
+            // MOB-1496 (W2): gate-flip migration-reconcile trigger — see
+            // `.registerForSynchronizersUpdate`'s `migrationSyncGateEffect` for how this is fed.
+            // MOB-1496 (W3): also the resume point for `.retryStart`'s deferral — a flip to
+            // NOT-blocked while a start was deferred clears the flag and replays `.retryStart` so
+            // the normal chain resumes identically to an ungated launch. The flag clears BEFORE
+            // the replay, so a still-blocked re-entry (the proactive check in `.retryStart` reads
+            // the gate fresh) just re-defers rather than looping.
+            //
+            // MOB-1496 (W3 review fix B): a foreground broadcast's stop (`SDKSynchronizerClient
+            // .stopSyncBeforeMigrationBroadcast()`) must also guarantee a resume once the gate
+            // clears, even when `syncDeferredByMigrationGate` was never set — that flag only gets
+            // set when a `.retryStart` happens to run (and defer) WHILE the gate is blocked; a user
+            // who never triggers one (e.g. parked on the note-split progress screen) would
+            // otherwise stall until an unrelated app-lifecycle event. `migrationStoppedSyncForBroadcast`
+            // (the shared flag that helper sets) covers that gap: resuming is now checked
+            // independent of `isGenuineChange` (moved ahead of the dedupe early-return) so it isn't
+            // gated on a genuine transition arriving at all. This also covers the edge where the
+            // gate never blocks in the first place (a broadcast fails pre-flight, e.g. a Tor
+            // bootstrap error, before it ever reaches the SDK's own gate-setting code) — no
+            // `true->false` transition will EVER arrive for that case, but the flag stays set until
+            // the NEXT `.migrationSyncGateChanged(false)` reaches here regardless of source (the
+            // seed read this same subscription re-sends on every future successful start), which
+            // this now resumes on too rather than letting the dedupe swallow it as "no change".
+            // `reconcile()` itself stays gated on a genuine change only — unrelated concern (banner/
+            // re-entry-route derivation), unchanged from W3.
+            //
+            // Mechanism choice (see fix report for the full write-up): a store cannot reach this
+            // action directly (`SDKSynchronizerClient`'s stores are typed to their own reducer's
+            // `Action`, not `Root.Action`), stores have no OTHER precedent for kicking sync
+            // themselves (`.retryStart` is `RootInitialization.swift`'s confirmed sole choke point —
+            // W3 already audited this), and no pre-existing delegate/coordinator chain from any of
+            // the four broadcast-bearing stores already serves "resume sync" (the one nested-action
+            // match Root has today, `.sending(.delegate(.viewTransaction))`, is unrelated
+            // navigation) — building one from scratch would mean four new deep nested-action
+            // matches in Root for a single flag check. Extending this already-existing, already-
+            // subscribed handler is the deterministic option that adds no new plumbing.
+            case .migrationSyncGateChanged(let isBlocked):
+                @Shared(.inMemory(.migrationStoppedSyncForBroadcast)) var migrationStoppedSyncForBroadcast: Bool = false
+
+                let isGenuineChange = isBlocked != state.lastMigrationSyncGateBlocked
+                let shouldResume = !isBlocked && (state.syncDeferredByMigrationGate || migrationStoppedSyncForBroadcast)
+                guard isGenuineChange || shouldResume else { return .none }
+
+                state.lastMigrationSyncGateBlocked = isBlocked
+                let reconcileEffect: Effect<Action> = isGenuineChange
+                    ? .run { [migrationManager] _ in await migrationManager.reconcile() }
+                    : .none
+
+                guard shouldResume else {
+                    return reconcileEffect
+                }
+
+                state.syncDeferredByMigrationGate = false
+                $migrationStoppedSyncForBroadcast.withLock { $0 = false }
+                return .merge(reconcileEffect, .send(.initialization(.retryStart)))
+
             case .initialization(.checkRestoreWalletFlag(let syncStatus)):
                 if state.isRestoringWallet && syncStatus == .upToDate {
                     state.isRestoringWallet = false
@@ -278,6 +708,35 @@ extension Root {
                     return .none
                 }
                 return .run { [state] send in
+                    // R8-T6: a Send-now silence-window wait (`MigrationSendingStore`) holds sync
+                    // stopped WITHOUT ever touching the SDK's OWN migration-blocked flag below — no
+                    // broadcast has been attempted yet, so there's nothing for `isMigrationSyncBlocked()`
+                    // to report, and this check would otherwise sail straight through and restart
+                    // sync mid-wait. Checked first, ahead of any SDK round-trip, so a live wait can
+                    // never lose a race to a slow gate read. Deferred the SAME silent way as the SDK
+                    // gate check below — reusing `.migrationSyncDeferredByGate`/
+                    // `syncDeferredByMigrationGate` rather than a parallel flag/action: the replay
+                    // this needs is EXACTLY `.migrationSyncGateChanged`'s existing resume path
+                    // (below), fired once `MigrationSendingStore`'s cancel/broadcast-start path
+                    // clears the hold and calls `migrationManager.refreshMigrationSyncGate()`. A
+                    // stale replay (the hold still set somehow) just re-defers here — no new loop
+                    // risk, mirroring `stillBlockedReEntryReDefersWithoutLooping`'s existing proof
+                    // for the SDK gate below.
+                    @Shared(.inMemory(.migrationSendWaitActive)) var migrationSendWaitActive: Bool = false
+                    if migrationSendWaitActive {
+                        await send(.initialization(.migrationSyncDeferredByGate))
+                        return
+                    }
+                    // MOB-1496 (W3): proactive half of the SDK's post-broadcast privacy gate —
+                    // checked before ever calling `start`, so a still-blocked window never even
+                    // attempts it: no error, no alert, nothing downstream of a successful start
+                    // runs. `.migrationSyncGateChanged(false)` (below) replays `.retryStart` once
+                    // the gate clears, so the normal chain (start -> registerForSynchronizersUpdate
+                    // -> refreshAutomaticServer) resumes identically to an ungated launch.
+                    if await sdkSynchronizer.isMigrationSyncBlocked() {
+                        await send(.initialization(.migrationSyncDeferredByGate))
+                        return
+                    }
                     do {
                         try await sdkSynchronizer.start(true)
                         if state.bgTask != nil {
@@ -285,6 +744,11 @@ extension Root {
                         }
                         await send(.initialization(.registerForSynchronizersUpdate))
                         await send(.refreshAutomaticServer)
+                    } catch ZcashError.migrationSyncBlocked {
+                        // MOB-1496 (W3): reactive half — `start` itself raced the gate (blocked in
+                        // the window between the proactive check above and the SDK's own attempt).
+                        // Same silent deferral; every other error keeps its existing handling below.
+                        await send(.initialization(.migrationSyncDeferredByGate))
                     } catch {
                         if state.bgTask != nil {
                             LoggerProxy.event("BGTask synchronizer.start() failed \(error.toZcashError())")
@@ -292,7 +756,11 @@ extension Root {
                         await send(.initialization(.synchronizerStartFailed(error.toZcashError())))
                     }
                 }
-                
+
+            case .initialization(.migrationSyncDeferredByGate):
+                state.syncDeferredByMigrationGate = true
+                return .none
+
             case .initialization(.registerForSynchronizersUpdate):
                 let stateStreamEffect = Effect.publisher {
                     sdkSynchronizer.stateStream()
@@ -301,11 +769,48 @@ extension Root {
                         .map(Root.Action.synchronizerStateChanged)
                 }
                 .cancellable(id: state.CancelStateId, cancelInFlight: true)
+
+                // MOB-1496 (W2): gate-flip migration-reconcile trigger. An initial
+                // `isMigrationSyncBlocked()` read (its stream seeds a conservative `false`
+                // synchronously, corrected asynchronously — see `migrationSyncBlockedStream`'s
+                // doc) is `.concatenate`d ahead of the live stream itself (its own first/seed
+                // emission dropped, since the initial read already has the real value), under one
+                // cancel id so both start/stop together with this subscription's own lifetime.
+                //
+                // MOB-1496 (R8-T4, #3): merged alongside the SDK's own stream is the manager-owned
+                // app-side feed (`migrationManager.migrationSyncGateFeed()`) a broadcast-failure
+                // call site nudges (`refreshMigrationSyncGate()`) when it stopped sync for a
+                // broadcast that never reached a successful outcome — the SDK's stream above only
+                // transitions on a SUCCESSFUL broadcast and dedupes via its own `removeDuplicates()`
+                // internally, so that path alone would never re-emit for a pre-broadcast throw or a
+                // `.networkError`/`.invalidNote`/`.expired` result. Both feeds funnel into the SAME
+                // `.migrationSyncGateChanged` mapping, under the SAME cancel id, so all three
+                // (state stream, SDK gate stream, app-side gate feed) start/stop together.
+                let migrationSyncGateEffect = Effect.merge(
+                    Effect.concatenate(
+                        .run { [sdkSynchronizer] send in
+                            await send(.migrationSyncGateChanged(await sdkSynchronizer.isMigrationSyncBlocked()))
+                        },
+                        Effect.publisher {
+                            sdkSynchronizer.migrationSyncBlockedStream()
+                                .dropFirst()
+                                .map(Root.Action.migrationSyncGateChanged)
+                        }
+                    ),
+                    .run { [migrationManager] send in
+                        for await isBlocked in migrationManager.migrationSyncGateFeed() {
+                            await send(.migrationSyncGateChanged(isBlocked))
+                        }
+                    }
+                )
+                .cancellable(id: state.migrationSyncGateCancelId, cancelInFlight: true)
+
                 if state.bgTask != nil {
-                    return stateStreamEffect
+                    return .merge(stateStreamEffect, migrationSyncGateEffect)
                 } else {
                     return .merge(
                         stateStreamEffect,
+                        migrationSyncGateEffect,
                         .send(.home(.smartBanner(.evaluatePriority1)))
                     )
                 }
@@ -343,9 +848,9 @@ extension Root {
                 /// We need to fetch data from keychain, in order to be 100% sure the keychain can be read we delay the check a bit
                 return .merge(
                     // MOB-1466: reconcile migration state once per launch — off the hot path
-                    // (`initializeMigrationPostUpgrade()` is idempotent), so it never blocks or
+                    // (`migrationManager.reconcile()` is idempotent), so it never blocks or
                     // reorders the existing wallet-initialization sequence below.
-                    .run { [migrationManager] _ in migrationManager.reconcile() },
+                    .run { [migrationManager] _ in await migrationManager.reconcile() },
                     .send(.initialization(.checkWalletInitialization))
                 )
 
@@ -446,7 +951,29 @@ extension Root {
                             await send(.resolveMetadataEncryptionKeys)
                             await send(.loadUserMetadata)
 
-                            try await sdkSynchronizer.start(false)
+                            // MOB-1496 (R8-T4, #2): mirrors `.retryStart`'s proactive check AND
+                            // reactive catch exactly — but, unlike `.retryStart`, defers ONLY this
+                            // `start` call: the rest of this cold-start chain (account selection,
+                            // exchange-rate refresh, address-book key import) and, critically,
+                            // `.initializationSuccessfullyDone` below still run either way, so
+                            // `.registerForSynchronizersUpdate` brings up the state-stream AND
+                            // gate-resume subscriptions even inside the post-broadcast privacy
+                            // window — otherwise nothing would ever observe the gate clearing, and
+                            // `.retryStart` would never get replayed to perform the deferred start.
+                            // The generic catch below keeps handling every other error exactly as
+                            // before.
+                            if await sdkSynchronizer.isMigrationSyncBlocked() {
+                                await send(.initialization(.migrationSyncDeferredByGate))
+                            } else {
+                                do {
+                                    try await sdkSynchronizer.start(false)
+                                } catch ZcashError.migrationSyncBlocked {
+                                    // Reactive half — `start` itself raced the gate (blocked in the
+                                    // window between the proactive check above and the SDK's own
+                                    // attempt). Same silent deferral.
+                                    await send(.initialization(.migrationSyncDeferredByGate))
+                                }
+                            }
 
                             var selectedAccount: WalletAccount?
                             
@@ -570,6 +1097,15 @@ extension Root {
                 // sends Home, right alongside it.
                 let hasPendingMigrationDeepLink = state.pendingMigrationDeepLink
                 state.pendingMigrationDeepLink = false
+                // R8-T5 (S4): the stashed tap's account rides along on replay too — see
+                // `pendingMigrationDeepLinkAccountUUID`'s doc.
+                let pendingMigrationDeepLinkAccountUUID = state.pendingMigrationDeepLinkAccountUUID
+                state.pendingMigrationDeepLinkAccountUUID = nil
+
+                // MOB-1496 (R8-T4, #7): the SAME checkpoint replays a `.migrationBackgroundSession`
+                // that arrived before this — see `pendingMigrationBackgroundSession`'s doc.
+                let pendingMigrationBackgroundSession = state.pendingMigrationBackgroundSession
+                state.pendingMigrationBackgroundSession = nil
 
                 return .run { send in
                     // Delay the splash overlay dismissal
@@ -578,7 +1114,10 @@ extension Root {
                         await send(.destination(.updateDestination(Root.DestinationState.Destination.home)))
                     }
                     if hasPendingMigrationDeepLink {
-                        await send(.initialization(.appDelegate(.migrationNotificationTapped)))
+                        await send(.initialization(.appDelegate(.migrationNotificationTapped(accountUUID: pendingMigrationDeepLinkAccountUUID))))
+                    }
+                    if let pendingMigrationBackgroundSession {
+                        await send(.initialization(.migrationBackgroundSession(pendingMigrationBackgroundSession)))
                     }
                 }
                 .cancellable(id: state.CancelId, cancelInFlight: true)
@@ -858,87 +1397,319 @@ extension Root {
 
     /// The migration BG session's decision tree (spec "Root: BG session decision tree"), checked
     /// in this exact order:
+    /// 0. No candidate accounts (MOB-1496: e.g. a background-only cold launch that raced wallet
+    ///    initialization) — nothing to evaluate against; complete WITHOUT notifying, but (R8-T4
+    ///    #7) DOES re-arm, same as branch 1 below — see that branch's doc for why this changed.
     /// 1. Ironwood not yet activated (MOB-1483) — there is no migration work to do
-    ///    pre-activation. Complete the session immediately: no notification, no executor call,
-    ///    and deliberately no re-arm — a task chain armed before activation (or before this gate
-    ///    landed) is left to lapse here rather than kept alive; the next arm happens once
-    ///    `isIronwoodActivated()` flips true (self-healing).
-    /// 2. Plan broken (invalid transfer, or expired-attention state) — notify, do NOT re-arm.
-    /// 3. Sync required before the next transfer — either skip (deferred-after-broadcast) or run a
-    ///    sync-only session that never broadcasts, reusing the existing `power_wifi_sync` sync-kick
-    ///    machinery verbatim (`state.bgTask` + `.retryStart`; `synchronizerStateChanged` completes
-    ///    the task on `.upToDate`/`.stopped`/`.error`).
-    /// 4. Otherwise, send: `executeNextPendingMigrationTransfer` and notify/re-arm per outcome.
+    ///    pre-activation. Complete the session immediately: no notification, no executor call.
+    ///    R8-T4 (#7): DOES re-arm now — `.migrationBackgroundSession`'s own guard (see its doc)
+    ///    means this branch only ever runs POST-hydration, so `isIronwoodActivated()` here reflects
+    ///    the wallet's REAL activation state, not a cold-launch artifact (a not-yet-`prepare`d
+    ///    `latestState()` reads tip 0, which the fail-safe sentinel misreads as "not activated").
+    ///    Before that guard existed, a cold launch racing this same check could consume the BG
+    ///    request without ever re-arming, permanently killing the wakeup chain — re-arming
+    ///    unconditionally here removes that dependency on an untrusted read entirely; a genuinely
+    ///    not-yet-activated network just gets an inexpensive, harmless re-check next window.
+    /// 2. MOB-1496 (W5): every OTHER candidate account (the wallet's accounts, selected first, then
+    ///    stored order — `MigrationDerivations.candidateAccountUUIDs`) is independently classified
+    ///    (`classifyMigrationAccount`) into `.nothingToDo`/`.planBroken`/`.syncNeeded`/
+    ///    `.broadcastCandidate`/`.activeNoCandidate`/`.unreadable`, then `MigrationSessionPlanner
+    ///    .plan(_:)` resolves the WHOLE session to exactly one action:
+    ///    - Any plan-broken account -> ONE `.planNeedsUpdate` notification for the whole session
+    ///      (not per account); continue evaluating the rest (does not itself block a healthy
+    ///      account's own sync/broadcast).
+    ///    - Else any sync-needed account -> a sync-only session (skip if the SDK's own
+    ///      `isMigrationSyncBlocked()` wallet-scope privacy gate; else the existing sync-kick path,
+    ///      reusing the `power_wifi_sync` machinery verbatim). ALL broadcasts deferred this session
+    ///      — ZIP-0318: a background session either syncs or broadcasts, never both. Sync serves
+    ///      every account at once.
+    ///    - Else any broadcast candidate -> exactly ONE broadcast this session (ZIP-0318: no more
+    ///      than one overdue transfer sent at wallet open) — `executeNextPendingMigrationTransfer`
+    ///      + notify/re-arm per outcome, now parameterized by the WINNING account. A thrown
+    ///      `ZcashError.migrationRecordFailedAfterBroadcast` (MOB-1496 W3) is routed through the
+    ///      SAME landed-broadcast handling as a `.success` result — the broadcast DID land, only
+    ///      the engine's own recording of it failed, so the session must not re-send or treat it as
+    ///      a `networkError`. Height-due semantics: the classification's `nextExecutableAfterHeight`
+    ///      is for ORDERING/re-arm math only — `executeNextPendingMigrationTransfer`'s own
+    ///      nil-return (nothing actually due yet) is the sole due-ness authority. A landed broadcast
+    ///      that completes the WINNER only `cancelAll`s/announces `.migrationComplete` when EVERY
+    ///      OTHER classified account is ALSO done (`MigrationSessionPlanner.allAccountsAreDone`, the
+    ///      SAME predicate the "nothing anywhere" cancelAll gate below uses, so the two can't drift)
+    ///      — otherwise it's an ordinary `.transferComplete` + re-arm, so another account's still-
+    ///      active run is never orphaned (fix-wave finding 1).
+    ///    - Else (nothing anywhere): a plan-broken-only session does NOT re-arm (the user's own
+    ///      Recovery-flow re-arms once the plan is fixed); otherwise `cancelAll` when EVERY
+    ///      classified account is `.complete`/`.notStarted` (no active run left anywhere —
+    ///      preserves the single-account complete->cancelAll precedent), else re-arm.
     /// Every branch except the sync-only session completes `handle` itself (that session's
     /// completion is the existing `synchronizerStateChanged` machinery, exactly like the
-    /// `power_wifi_sync` task it mirrors).
+    /// `power_wifi_sync` task it mirrors) — R8-T4 (#11): via the guarded
+    /// `.migrationBackgroundSessionCompleted` round-trip for the branches below that reach it, so a
+    /// concurrent `.migrationBackgroundTaskExpired` can never double-complete the same task (see
+    /// that action's doc). Branches 0/1 above complete `handle` directly instead — they're
+    /// synchronous/instantaneous (no SDK read, no broadcast), so they never set
+    /// `state.activeMigrationBackgroundSessionHandle` in the first place (see below) and have
+    /// nothing for expiration to race against.
+    ///
+    /// MOB-1496: every migration SDK read here is `async throws` (the real per-account surface) —
+    /// the whole tree now runs inside one `.run`, and the "sync required, not deferred" branch
+    /// sends `.migrationBackgroundSyncOnly(handle)` back into the reducer to mutate `state.bgTask`
+    /// (effects can't mutate `state` directly). Every SDK read is wrapped so a thrown error
+    /// degrades to "treat as false/skip" and completes the session rather than crashing a
+    /// background launch.
+    ///
+    /// R8-T4 (#11): the tree below (branch 2's fan-out/resolution, the only branch that can
+    /// genuinely run long — e.g. mid-broadcast) is `.cancellable(id:
+    /// state.migrationBackgroundSessionCancelId)`, and `handle` is stored in
+    /// `state.activeMigrationBackgroundSessionHandle` for that effect's whole lifetime — both new
+    /// specifically so `.migrationBackgroundTaskExpired` can cancel it and complete it directly
+    /// (`state.bgTask` stays `nil` for this plan; only the sync-only hand-off populates it).
     private func migrationBackgroundSessionEffect(
         state: inout Root.State,
         handle: MigrationBGSessionHandle
     ) -> Effect<Root.Action> {
         if !migrationManager.isIronwoodActivated() {
-            return .run { _ in handle.complete(true) }
-        }
-
-        let migrationState = sdkSynchronizer.getMigrationState()
-        let isPlanBroken = sdkSynchronizer.hasInvalidMigrationTransfers()
-            || migrationState == MigrationState.requiresAttention(AttentionReason.transferExpired)
-
-        if isPlanBroken {
-            return .run { [userNotifications] _ in
-                await userNotifications.scheduleMigrationNotification(MigrationNotification.planNeedsUpdate, nil)
+            return .run { [migrationBGScheduler] _ in
+                await migrationBGScheduler.scheduleNextWindow()
                 handle.complete(true)
             }
         }
 
-        if sdkSynchronizer.isSyncRequiredBeforeNextMigrationTransfer() {
-            if migrationManager.isSyncDeferredAfterBroadcast() {
-                return .run { [migrationBGScheduler] _ in
-                    await migrationBGScheduler.scheduleNextWindow()
-                    handle.complete(true)
-                }
+        let accountUUIDs = MigrationDerivations.candidateAccountUUIDs(
+            selectedAccountUUID: state.selectedWalletAccount?.id,
+            walletAccounts: state.walletAccounts
+        )
+        guard !accountUUIDs.isEmpty else {
+            LoggerProxy.event("BGTask migration session: no accounts yet, completing.")
+            return .run { [migrationBGScheduler] _ in
+                await migrationBGScheduler.scheduleNextWindow()
+                handle.complete(true)
             }
+        }
 
-            // Sync-only session: never broadcasts. Re-arm up front, then reuse the
-            // `power_wifi_sync` handler's own sync-kick verbatim (`state.bgTask` + `.retryStart`) —
-            // `synchronizerStateChanged` completes `state.bgTask` on `.upToDate`/`.stopped`/`.error`
-            // exactly as it does for that task. `handle.rawTask` may be `nil` in tests (spy
-            // handles); that completion is then a no-op, which is acceptable — this branch is
-            // asserted on the arm + kick + stash, not on task completion.
-            state.bgTask = handle.rawTask
-            return .concatenate(
-                .run { [migrationBGScheduler] _ in await migrationBGScheduler.scheduleNextWindow() },
-                .send(.initialization(.retryStart))
+        state.activeMigrationBackgroundSessionHandle = handle
+
+        return .run { [migrationManager, sdkSynchronizer, migrationBGScheduler, userNotifications, accountUUIDs] send in
+            await Self.runMigrationSession(
+                accountUUIDs: accountUUIDs,
+                handle: handle,
+                send: send,
+                dependencies: MigrationSessionDependencies(
+                    migrationManager: migrationManager,
+                    sdkSynchronizer: sdkSynchronizer,
+                    migrationBGScheduler: migrationBGScheduler,
+                    userNotifications: userNotifications
+                )
+            )
+        }
+        .cancellable(id: state.migrationBackgroundSessionCancelId, cancelInFlight: true)
+    }
+
+    /// MOB-1496 (fix-wave, review MINOR-4): classifies every account, resolves the session's single
+    /// action via `MigrationSessionPlanner`, and carries it out. Extracted out of
+    /// `migrationBackgroundSessionEffect`'s `.run` closure — split into this and the three handlers
+    /// below (one per plan action) purely to keep each function's cyclomatic complexity low WITHOUT
+    /// a `swiftlint:disable` (not on `SWIFTLINT.md`'s approved-exceptions list); behavior is
+    /// byte-for-byte the same as the single giant closure this replaced.
+    private static func runMigrationSession(
+        accountUUIDs: [AccountUUID],
+        handle: MigrationBGSessionHandle,
+        send: Send<Root.Action>,
+        dependencies: MigrationSessionDependencies
+    ) async {
+        var classifications: [(accountUUID: AccountUUID, classification: MigrationAccountClassification)] = []
+        for accountUUID in accountUUIDs {
+            let classification = await classifyMigrationAccount(accountUUID, sdkSynchronizer: dependencies.sdkSynchronizer)
+            classifications.append((accountUUID, classification))
+        }
+
+        let plan = MigrationSessionPlanner.plan(classifications)
+
+        if plan.notifyPlanNeedsUpdate {
+            // R8-T5 (S4): attributed to the plan-broken account, NOT the session's broadcast winner
+            // — a different, healthy account may be the one broadcasting this very session (see
+            // `MigrationSessionPlanner.Plan.planBrokenAccountUUID`'s doc).
+            let planBrokenAccountUUIDString = plan.planBrokenAccountUUID.map { Data($0.id).hexEncodedString() }
+            await dependencies.userNotifications.scheduleMigrationNotification(
+                MigrationNotification.planNeedsUpdate,
+                nil,
+                planBrokenAccountUUIDString
             )
         }
 
-        return .run { [migrationManager, sdkSynchronizer, migrationBGScheduler, userNotifications] _ in
-            let options = migrationManager.networkPrivacyOptions()
-            let result = await sdkSynchronizer.executeNextPendingMigrationTransfer(options)
+        switch plan.action {
+        case .syncOnly:
+            await completeSyncOnlySession(handle: handle, send: send, dependencies: dependencies)
+            return
+
+        case .broadcast(let winnerAccountUUID):
+            await executeBroadcastAction(winnerAccountUUID, classifications: classifications, dependencies: dependencies)
+
+        case .cancelAll:
+            await dependencies.migrationBGScheduler.cancelAll()
+
+        case .rearm:
+            await dependencies.migrationBGScheduler.scheduleNextWindow()
+
+        case .none:
+            break
+        }
+
+        // R8-T4 (#11): round-trips into the reducer instead of calling `handle.complete(true)`
+        // directly — the reducer clears `state.activeMigrationBackgroundSessionHandle` FIRST, so a
+        // concurrent `.migrationBackgroundTaskExpired` (which guards on that same slot) can never
+        // complete this same `BGProcessingTask` a second time. See
+        // `InitializationAction.migrationBackgroundSessionCompleted`'s doc.
+        await send(.initialization(.migrationBackgroundSessionCompleted(true)))
+    }
+
+    /// The `.syncOnly` plan action: skip the sync session outright while the SDK's wallet-scope
+    /// privacy gate reports blocked (MOB-1496 W3 — same outward behavior the retired app-side
+    /// `isSyncDeferredAfterBroadcast` flag produced), else kick the same sync path
+    /// `power_wifi_sync` uses by handing `handle` back into the reducer as
+    /// `.migrationBackgroundSyncOnly` (which stashes `state.bgTask` — effects can't mutate `state`
+    /// directly). Either way the session ends here — the caller does NOT complete `handle` again
+    /// afterward.
+    private static func completeSyncOnlySession(
+        handle: MigrationBGSessionHandle,
+        send: Send<Root.Action>,
+        dependencies: MigrationSessionDependencies
+    ) async {
+        if await dependencies.sdkSynchronizer.isMigrationSyncBlocked() {
+            await dependencies.migrationBGScheduler.scheduleNextWindow()
+            // R8-T4 (#11): see `runMigrationSession`'s twin comment above.
+            await send(.initialization(.migrationBackgroundSessionCompleted(true)))
+            return
+        }
+
+        await send(.initialization(.migrationBackgroundSyncOnly(handle)))
+    }
+
+    /// The `.broadcast(winner:)` plan action: read the winning account's atomic network-snapshot
+    /// options AT EXECUTE TIME (MOB-1496 W4 — never a stale/local value; a missing snapshot this
+    /// deep into a BG session self-heals by creating one on the spot, and `createNetworkSnapshot`
+    /// logs its own fallback path when the benchmark comes back empty) and attempt the single
+    /// broadcast this session is allowed. `executeNextPendingMigrationTransfer`'s own nil-return
+    /// remains the sole due-ness authority (the classification height was for ordering/re-arm math
+    /// only) — nil, or any other throw, re-arms without a possibly-wrong notification and does NOT
+    /// try another candidate (one broadcast per session, full stop).
+    private static func executeBroadcastAction(
+        _ winnerAccountUUID: AccountUUID,
+        classifications: [(accountUUID: AccountUUID, classification: MigrationAccountClassification)],
+        dependencies: MigrationSessionDependencies
+    ) async {
+        let options = await dependencies.migrationManager.migrationNetworkOptions(winnerAccountUUID)
+        do {
+            let result = try await dependencies.sdkSynchronizer.executeNextPendingMigrationTransfer(winnerAccountUUID, options)
 
             switch result {
             case .success:
-                migrationManager.recordMigrationBroadcast()
-
-                if sdkSynchronizer.getMigrationState() == MigrationState.complete {
-                    await userNotifications.scheduleMigrationNotification(MigrationNotification.migrationComplete, nil)
-                    await migrationBGScheduler.cancelAll()
-                } else {
-                    let notification = Self.transferCompleteNotification(sdkSynchronizer: sdkSynchronizer)
-                    await userNotifications.scheduleMigrationNotification(notification, nil)
-                    await migrationBGScheduler.scheduleNextWindow()
+                // [MOB-1496] W2: persist the sent record + reconcile (this op's success is one of
+                // `reconcile()`'s triggers).
+                if let result {
+                    await handleLandedBroadcast(winnerAccountUUID, result, classifications: classifications, dependencies: dependencies)
                 }
 
             case .networkError, .invalidNote, .expired:
-                let nextNumber = (sdkSynchronizer.getMigrationProgress()?.completedTransfers ?? 0) + 1
-                await userNotifications.scheduleMigrationNotification(MigrationNotification.transferWaiting(number: nextNumber), nil)
-                await migrationBGScheduler.scheduleNextWindow()
+                let progress = (try? await dependencies.sdkSynchronizer.getMigrationProgress(winnerAccountUUID)) ?? nil
+                let nextNumber = (progress?.completedTransfers ?? 0) + 1
+                // R8-T5 (S4): attributed to the winning account this broadcast attempt was for.
+                await dependencies.userNotifications.scheduleMigrationNotification(
+                    MigrationNotification.transferWaiting(number: nextNumber),
+                    nil,
+                    Data(winnerAccountUUID.id).hexEncodedString()
+                )
+                await dependencies.migrationBGScheduler.scheduleNextWindow()
 
             case nil:
-                await migrationBGScheduler.scheduleNextWindow()
+                await dependencies.migrationBGScheduler.scheduleNextWindow()
             }
+        } catch ZcashError.migrationRecordFailedAfterBroadcast(_) {
+            // [MOB-1496] The broadcast DID land; only the engine's own recording of it failed —
+            // route through the SAME handling as a `.success` result, with an unknown txId
+            // (`MigrationScheduleStorage` maps an empty string to `nil`). The BG session must not
+            // re-send (this isn't a networkError) and must not skip the notification/re-arm a
+            // landed transfer deserves. Mirrors `MigrationSendingStore`/`MigrationNoteSplitStore`'s
+            // identical foreground rationale for this same error.
+            await handleLandedBroadcast(
+                winnerAccountUUID,
+                MigrationTransferResult.success(txId: ""),
+                classifications: classifications,
+                dependencies: dependencies
+            )
+        } catch {
+            // A throwing broadcast attempt for any OTHER reason is not itself a definite outcome to
+            // notify about — treat it like the `nil` "nothing executed" case: re-arm the next
+            // window and let that session's own outcome (or the engine's self-heal) settle it,
+            // without a possibly-wrong notification.
+            LoggerProxy.error("BGTask migration session: executeNextPendingMigrationTransfer failed \(error)")
+            await dependencies.migrationBGScheduler.scheduleNextWindow()
+        }
+    }
 
-            handle.complete(true)
+    /// [MOB-1496] Shared by the `.success` outcome and the
+    /// `ZcashError.migrationRecordFailedAfterBroadcast` catch clause above — the broadcast landed
+    /// either way (only the engine's own recording of it failed in the latter case), so both paths
+    /// persist the sent record, reconcile, and notify/re-arm (or cancel-on-complete) identically.
+    /// Mirrors the same rationale `MigrationSendingStore`/`MigrationNoteSplitStore` already apply
+    /// for their own foreground broadcasts. Parameterized by `accountUUID` — the session's single
+    /// winning account, not necessarily the selected one (MOB-1496 W5).
+    ///
+    /// Fix-wave finding 1 (review IMPORTANT-1): the winner completing must NOT `cancelAll`/announce
+    /// `.migrationComplete` while another classified account still has an active run — only when
+    /// EVERY OTHER account this session already classified is ALSO done
+    /// (`MigrationSessionPlanner.allAccountsAreDone`, the SAME predicate `plan(_:)` uses for its own
+    /// `.cancelAll` gate, reused here so the two sites cannot drift) does this cancel/notify-
+    /// complete. An empty "other accounts" list (the single-account case) is vacuously done,
+    /// preserving the original single-account complete->cancelAll behavior exactly. `.unreadable`
+    /// never counts as done (see `isDoneClassification`), so one unreadable account blocks a
+    /// premature cancelAll too.
+    ///
+    /// MOB-1496: `MigrationState.complete` is per-RUN now, never "the whole migration is done" —
+    /// the final engine caps how much a single run covers (a per-run cap, or funds arriving
+    /// mid-run), so this landed broadcast completing the STORED run may still leave more to
+    /// migrate. `isMigrationRemainderPending` below reflects the once-per-transition evaluation
+    /// `reconcile()` (just above) already ran for this exact `.complete` transition — see
+    /// `MigrationManagerImpl.evaluateMigrationRemainder`'s doc for why it runs there and not here
+    /// (a fresh propose on every landed broadcast would race a commit the user is mid-review of).
+    /// Non-empty fires `.migrationBatchComplete` instead of `.migrationComplete`; `cancelAll()`
+    /// still runs in BOTH cases — nothing is broadcastable until the user consents to a NEW run
+    /// (even one with more to migrate), and that run's own confirm/commit is what re-arms
+    /// scheduling. A `nil`-evaluated flag (the in-`reconcile()` propose itself threw) reads as
+    /// `false` and fires `.migrationComplete` — accepted, since the banner/flag both self-heal on a
+    /// later reconcile once the propose eventually succeeds.
+    private static func handleLandedBroadcast(
+        _ accountUUID: AccountUUID,
+        _ result: MigrationTransferResult,
+        classifications: [(accountUUID: AccountUUID, classification: MigrationAccountClassification)],
+        dependencies: MigrationSessionDependencies
+    ) async {
+        await dependencies.migrationManager.recordTransferBroadcast(accountUUID, result)
+        // MOB-1496: this is also where the once-per-transition remainder evaluation runs (inside
+        // `MigrationManagerImpl.reconcile()`) — by the time this call returns,
+        // `isMigrationRemainderPending` below already reflects a fresh propose if this broadcast
+        // just moved the account into `.complete` for the first time.
+        await dependencies.migrationManager.reconcile()
+
+        let migrationState = try? await dependencies.sdkSynchronizer.getMigrationState(accountUUID)
+        let otherAccounts = classifications.filter { $0.accountUUID != accountUUID }
+        let everyOtherAccountDone = MigrationSessionPlanner.allAccountsAreDone(otherAccounts)
+
+        // R8-T5 (S4): both branches below attribute to `accountUUID` — the account whose broadcast
+        // just landed, which is what either notification is actually reporting on.
+        let accountUUIDString = Data(accountUUID.id).hexEncodedString()
+
+        if migrationState == MigrationState.complete && everyOtherAccountDone {
+            let remainder = dependencies.migrationManager.isMigrationRemainderPending(accountUUID)
+            let notification = remainder ? MigrationNotification.migrationBatchComplete : MigrationNotification.migrationComplete
+            await dependencies.userNotifications.scheduleMigrationNotification(notification, nil, accountUUIDString)
+            // Nothing is broadcastable until the user consents to a new run, whether or not more
+            // remains — that new run's own confirm/commit re-arms scheduling.
+            await dependencies.migrationBGScheduler.cancelAll()
+        } else {
+            let notification = await Self.transferCompleteNotification(accountUUID: accountUUID, sdkSynchronizer: dependencies.sdkSynchronizer)
+            await dependencies.userNotifications.scheduleMigrationNotification(notification, nil, accountUUIDString)
+            await dependencies.migrationBGScheduler.scheduleNextWindow()
         }
     }
 
@@ -946,8 +1717,16 @@ extension Root {
     /// state: `number`/`total`/`remaining` from `getMigrationProgress()`, `nextInHours` from the
     /// same cadence-window derivation `MigrationBGSchedulerClient`'s `arm(margin:)` uses (§8.3's
     /// next-window margin, `estimateTimestamp` as the preferred source), rounded to hours.
-    private static func transferCompleteNotification(sdkSynchronizer: SDKSynchronizerClient) -> MigrationNotification {
-        let progress = sdkSynchronizer.getMigrationProgress()
+    private static func transferCompleteNotification(
+        accountUUID: AccountUUID,
+        sdkSynchronizer: SDKSynchronizerClient
+    ) async -> MigrationNotification {
+        // Flatten the `try?`-around-an-Optional-returning-throwing-function double-optional
+        // (`MigrationProgress??`) down to a plain `MigrationProgress?` — a read failure and "no
+        // progress in flight" both mean the same thing to this notification (fall back to 0/0/zero).
+        let progressResult = try? await sdkSynchronizer.getMigrationProgress(accountUUID)
+        let progress = progressResult ?? nil
+
         let preferredExecutableAt = progress?.nextTransferReadyAtHeight.flatMap { height in
             sdkSynchronizer.estimateTimestamp(height).map { Date(timeIntervalSince1970: $0) }
         }
@@ -967,15 +1746,133 @@ extension Root {
         )
     }
 
+    // MARK: - R8-T6 fix-wave (Critical-1): send-wait hold release on external flow teardown
+
+    /// `migrationSendWaitActive` (the `.retryStart` fence flag set/cleared around
+    /// `MigrationSendingStore`'s send-now WAITING phase — see the `.retryStart` proactive check
+    /// above) is a process-global `@Shared(.inMemory(...))`. The ONLY clears that flag from
+    /// INSIDE the flow are `MigrationSendingStore`'s own `.sendNowGateResolved(.allowed)` and
+    /// `.waitCancelTapped` handlers — both require the `.sending(.waiting)` element to still be
+    /// alive and to run its own exit. An external teardown (Root discarding/replacing the
+    /// migration flow's state from OUTSIDE that store — e.g. a migration-notification tap
+    /// resetting the flow via `openMigrationCoordFlow` below, or the flow being popped out from
+    /// under it) bypasses those exits entirely: the flag is stranded `true` forever, and every
+    /// future `.retryStart` silently re-defers (permanent silent sync stop — see this fix-wave's
+    /// report for the full trace).
+    ///
+    /// Called at every such external-teardown site, BEFORE the reset/pop itself. Safe to call
+    /// unconditionally: a no-op (no nudge) when the flag isn't set. When it IS set, clears it and
+    /// ALWAYS fires the SAME `refreshMigrationSyncGate()` nudge `.waitCancelTapped` already uses,
+    /// so the existing `.migrationSyncGateChanged` resume machinery (above) restarts sync exactly
+    /// as if the user had tapped Cancel themselves.
+    ///
+    /// R8 final cumulative review (Finding 1): the nudge used to be gated on
+    /// `migrationStoppedSyncForBroadcast` ALSO being set — but that flag can be legitimately
+    /// consumed WHILE the hold is still live: an UNRELATED `.migrationSyncGateChanged(false)`
+    /// (e.g. a different lane's failure nudge, or a prior broadcast's SDK gate expiring mid-wait)
+    /// satisfies `shouldResume` purely off `migrationStoppedSyncForBroadcast`, clears THAT flag,
+    /// and replays `.retryStart` — which re-defers on the still-live hold and sets
+    /// `syncDeferredByMigrationGate`. A helper that only nudges when `migrationStoppedSyncForBroadcast`
+    /// is (still) set would then find it already `false` and skip the nudge — stranding
+    /// `syncDeferredByMigrationGate` with no future `.migrationSyncGateChanged` arrival left to
+    /// consume it (sync stays stopped until the next foreground event). The nudge is now
+    /// unconditional on clearing a LIVE hold, independent of either flag's value: it re-pushes the
+    /// current gate reading, and `.migrationSyncGateChanged`'s `shouldResume` already handles BOTH
+    /// `syncDeferredByMigrationGate` and `migrationStoppedSyncForBroadcast` — whichever (if either)
+    /// is actually stranded gets consumed by this one nudge. A spurious nudge when NEITHER flag is
+    /// stranded is a genuine no-op: with no real SDK gate transition (`isGenuineChange` false) and
+    /// both flags already clear (`shouldResume` false), `.migrationSyncGateChanged`'s own guard
+    /// (`isGenuineChange || shouldResume`) returns `.none` before touching any state — so this can
+    /// never manufacture a spurious resume/reconcile out of nothing.
+    func releaseSendWaitHold() -> Effect<Root.Action> {
+        @Shared(.inMemory(.migrationSendWaitActive)) var migrationSendWaitActive: Bool = false
+        guard migrationSendWaitActive else { return .none }
+
+        $migrationSendWaitActive.withLock { $0 = false }
+
+        return .run { [migrationManager] _ in await migrationManager.refreshMigrationSyncGate() }
+    }
+
+    // MARK: - MOB-1496: Keystone migration-run abandon reconciliation on external flow teardown
+
+    /// Mirrors `releaseSendWaitHold()`'s placement above for a DIFFERENT external-teardown hazard:
+    /// the final migration engine creates a Keystone commit's ENTIRE run — preparation (note-split)
+    /// transactions and the schedule's own transfers alike — the moment its PCZTs are built
+    /// (`SDKSynchronizerClient.proposeNoteSplitPCZTs`, called unconditionally by
+    /// `MigrationCommitPipeline.proposeKeystoneBatch`), and always resumes a stored non-terminal run
+    /// on the next attempt, ignoring any newer preview (see `SDKSynchronizerInterface`'s doc). If
+    /// `state.migrationCoordFlowState` is torn down here — from OUTSIDE the flow, the same class of
+    /// site `releaseSendWaitHold()` guards — while a Keystone ceremony (`pendingKeystoneSigning`) is
+    /// still live, the run it already built is left stranded: a later re-entry would silently resume
+    /// signing those same, by-then-stale PCZTs instead of proposing a fresh preview.
+    ///
+    /// `pendingKeystoneSigning` is only ever set once its PCZTs successfully built (see
+    /// `MigrationCoordFlowCoordinator`'s three setters), so its presence here is exactly "a PCZT batch
+    /// was proposed and never resolved" — cancel it via `restartCurrentMigrationStep`, discarding the
+    /// fresh schedule it returns (the user re-runs the ceremony from a fresh preview on their next
+    /// attempt — same v1 semantics as `MigrationCoordFlowCoordinator.keystoneScanAbandoned`'s in-flow
+    /// twin). Read BEFORE the caller resets/replaces `migrationCoordFlowState`. Fire-and-forget: a
+    /// failure here just leaves the stray run for the next attempt to encounter and cancel itself,
+    /// same as today.
+    func cancelAbandonedKeystoneMigrationRun(state: Root.State) -> Effect<Root.Action> {
+        guard state.migrationCoordFlowState.pendingKeystoneSigning != nil,
+              let accountUUID = state.selectedWalletAccount?.id else {
+            return .none
+        }
+
+        return .run { [sdkSynchronizer] _ in
+            _ = try? await sdkSynchronizer.restartCurrentMigrationStep(accountUUID, false)
+        }
+    }
+
     // MARK: - MOB-1467: Migration notification-tap deep link
 
     /// Exactly the SmartBanner-tap routing (`RootCoordinator`'s
     /// `.home(.smartBanner(.migrationScreenRequested))`): fresh flow state, open the migration
     /// path. Shared by the immediate (Home already up) and deferred (fired from
-    /// `checkBackupPhraseValidation` once initialization reaches Home) call sites.
-    private func migrationNotificationTappedRoutingEffect(state: inout Root.State) -> Effect<Root.Action> {
+    /// `checkBackupPhraseValidation` once initialization reaches Home) call sites, and by
+    /// `.migrationNotificationRoute` below.
+    ///
+    /// R8-T6 fix-wave (Critical-1): this is itself an external-teardown site (a live
+    /// `.sending(.waiting)` element may be sitting under the flow state this wholesale-replaces —
+    /// the migration-notification tap does not require the migration flow to be closed first) —
+    /// `releaseSendWaitHold()` runs BEFORE the reset. MOB-1496: same reasoning applies to a live
+    /// Keystone signing ceremony — `cancelAbandonedKeystoneMigrationRun(state:)` also runs BEFORE the
+    /// reset, reading `pendingKeystoneSigning` off the ABOUT-TO-BE-DISCARDED state.
+    private func openMigrationCoordFlow(state: inout Root.State) -> Effect<Root.Action> {
+        let releaseEffect = releaseSendWaitHold()
+        let cancelEffect = cancelAbandonedKeystoneMigrationRun(state: state)
         state.migrationCoordFlowState = MigrationCoordFlow.State.initial
         state.path = Root.State.Path.migrationCoordFlow
-        return .none
+        return .merge(releaseEffect, cancelEffect)
+    }
+
+    /// R8-T5 (S4): `accountUUID` is the tapped notification's payload account (hex-encoded, matching
+    /// every compose site's own `Data.hexEncodedString()` encoding). When it resolves to a wallet
+    /// account that ISN'T already selected, that account is switched to FIRST — via the house
+    /// account-switch action (`.home(.walletAccountTapped(_:))`, the SAME one `WalletAccountsSheet`'s
+    /// tap uses; `RootCoordinator`'s handler does the real work: the `@Shared` write plus balance/
+    /// contacts/metadata refresh, never hand-rolled here) — THEN the flow opens.
+    /// `.concatenate` orders the two dispatches so the switch action's reducer pass (the synchronous
+    /// `@Shared` write) is fully applied before `.migrationNotificationRoute` opens the flow — see
+    /// `RootMigrationRoutingTests.migrationNotificationTappedWithDifferentAccountSwitchesBeforeRouting`'s
+    /// own doc for why that test verifies the OUTCOME rather than empirically proving the order
+    /// (`TestStore` would be the tool for that, but it requires `Root.State: Equatable`, which it
+    /// isn't). A nil/unresolvable/already-selected payload skips the switch and opens the flow
+    /// immediately in this SAME pass, exactly as before S4.
+    private func migrationNotificationTappedRoutingEffect(
+        state: inout Root.State,
+        accountUUID: String?
+    ) -> Effect<Root.Action> {
+        if let accountUUID,
+           let targetAccount = state.walletAccounts.first(where: { Data($0.id.id).hexEncodedString() == accountUUID }),
+           targetAccount != state.selectedWalletAccount {
+            return .concatenate(
+                .send(.home(.walletAccountTapped(targetAccount))),
+                .send(.initialization(.migrationNotificationRoute))
+            )
+        }
+
+        return openMigrationCoordFlow(state: &state)
     }
 }

@@ -4,10 +4,18 @@
 //
 //  Stateful simulated implementation of the Orchard -> Ironwood migration SDK surface (MOB-1480).
 //  `MigrationSimulatorClient.liveValue` (Phase B) wires its closures to the shared instance of
-//  this engine so the whole migration UI is walkable end-to-end before the real SDK exists
-//  (MOB-1455). Every piece of actual derivation logic is factored into
+//  this engine so the whole migration UI is walkable end-to-end without a funded wallet or a live
+//  network reaching Ironwood activation — the real SDK is wired in (MOB-1495/1496), but exercising
+//  it for real still needs both of those. Every piece of actual derivation logic is factored into
 //  `MigrationSimulatorEngineDerivations` (pure, table-testable); this type is left with locking,
 //  persistence, the state stream, and the one real timer (the note-split confirm delay).
+//
+//  MOB-1496: adapted onto the real SDK's model types (`MigrationTransferProposal`,
+//  `MigrationTransferResult`, `MigrationAttentionReason`, `MigrationNetworkPrivacyOptions`) and
+//  Keystone PCZT wrapper types (`MigrationUnsignedTransferPczt`/`MigrationSignedTransferPczt`) —
+//  the SDK's `MigrationAttentionReason` has no `.transferStalled` case, so "stalled" is now a pure
+//  derivation elsewhere (`MigrationDerivations.bannerVariant`) rather than a state this engine
+//  ever constructs; see `rescheduleOverdue()`'s doc for how the old `rescheduleStalled()` adapts.
 //
 //  Thread-safety: the snapshot is guarded by an `OSAllocatedUnfairLock` and the state subject is
 //  internally synchronized, so the type is `@unchecked Sendable`. The transient "currently
@@ -117,11 +125,11 @@ final class MigrationSimulatorEngine: @unchecked Sendable {
         return NoteSplitProposal(outputNotes: notes, fee: MigrationSimulatorEngineDerivations.Constants.fee)
     }
 
-    func submitSplit(_ proposal: NoteSplitProposal) async -> TransferResult {
+    func submitSplit(_ proposal: NoteSplitProposal) async -> MigrationTransferResult {
         await submitSplitCore(outputNotes: proposal.outputNotes)
     }
 
-    func submitSignedSplit(_ pczt: Pczt) async -> TransferResult {
+    func submitSignedSplit(_ pczt: Data) async -> MigrationTransferResult {
         let proposal = await prepareSplit()
         return await submitSplitCore(outputNotes: proposal.outputNotes)
     }
@@ -139,12 +147,15 @@ final class MigrationSimulatorEngine: @unchecked Sendable {
         withSnapshot { $0.mode = mode }
     }
 
-    /// Stamps each `TransferProposal`'s height fields with a synthetic height derived from its
-    /// `dueAt` (MOB-1480, supersedes spec §9.1 as an improvement): `nextExecutableAfterHeight` and
-    /// `anchorHeight` both carry `dueAt`'s synthetic height, `expiryHeight` is one synthetic day
-    /// past it. `dueAt` uses the exact same formula `signAndStore()` will seed
+    /// Stamps each `MigrationTransferProposal`'s height fields with a synthetic height derived
+    /// from its `dueAt` (MOB-1480, supersedes spec §9.1 as an improvement): `nextExecutableAfterHeight`
+    /// and `anchorHeight` both carry `dueAt`'s synthetic height, `expiryHeight` is one synthetic
+    /// day past it. `dueAt` uses the exact same formula `signAndStore()` will seed
     /// `SimulatorTransfer.dueAt` with (`MigrationSimulatorEngineDerivations.dueAt`), so a
-    /// transfer's proposed height and its later-stored due time never drift apart.
+    /// transfer's proposed height and its later-stored due time never drift apart. Serves BOTH
+    /// `proposeMigrationTransfers` (scheduled mode) and `proposeImmediateMigration` (immediate
+    /// mode) — the branch below is keyed on the snapshot's OWN `mode`, not a caller-supplied flag,
+    /// so either simulator override can call this identically (MOB-1496).
     func propose() async -> MigrationSchedule {
         withSnapshot { snapshot in
             let now = self.simNow(snapshot)
@@ -152,7 +163,7 @@ final class MigrationSimulatorEngine: @unchecked Sendable {
             if snapshot.mode == MigrationMode.immediate {
                 let dueAt = MigrationSimulatorEngineDerivations.dueAt(forTransferAt: 0, isImmediate: true, now: now)
                 let height = MigrationSimulatorEngineDerivations.syntheticHeight(for: dueAt)
-                let proposal = TransferProposal(
+                let proposal = MigrationTransferProposal(
                     id: MigrationSimulatorEngineDerivations.makeTransferId(index: 0),
                     amount: snapshot.orchardBalance,
                     anchorHeight: height,
@@ -176,10 +187,10 @@ final class MigrationSimulatorEngine: @unchecked Sendable {
                 )
                 notes = previewed.isEmpty ? [snapshot.orchardBalance] : previewed
             }
-            let transfers = notes.enumerated().map { index, note -> TransferProposal in
+            let transfers = notes.enumerated().map { index, note -> MigrationTransferProposal in
                 let dueAt = MigrationSimulatorEngineDerivations.dueAt(forTransferAt: index, isImmediate: false, now: now)
                 let height = MigrationSimulatorEngineDerivations.syntheticHeight(for: dueAt)
-                return TransferProposal(
+                return MigrationTransferProposal(
                     id: MigrationSimulatorEngineDerivations.makeTransferId(index: index),
                     amount: note,
                     anchorHeight: height,
@@ -219,13 +230,13 @@ final class MigrationSimulatorEngine: @unchecked Sendable {
         withSnapshot { $0.syncRequired = required }
     }
 
-    func executeNext(_ options: NetworkPrivacyOptions) async -> TransferResult? {
+    func executeNext(_ options: MigrationNetworkPrivacyOptions) async -> MigrationTransferResult? {
         let pendingIndex = withSnapshot { snapshot in
             snapshot.transfers.filter { $0.sentAt == nil }.min(by: { $0.index < $1.index })?.index
         }
         guard let targetIndex = pendingIndex else { return nil }
 
-        let armed = withSnapshot { snapshot -> TransferResult? in
+        let armed = withSnapshot { snapshot -> MigrationTransferResult? in
             guard let armed = snapshot.armedTransferResult else { return nil }
             snapshot.armedTransferResult = nil
             return armed
@@ -261,7 +272,7 @@ final class MigrationSimulatorEngine: @unchecked Sendable {
     /// "Migrate anyway" on Migration Complete: broadcasts the dust remainder as one final
     /// transfer. Same broadcast latency as `performSend`; `nil` when there is nothing sweepable
     /// (no dust, or already locked) so the Sending screen's failure sheet surfaces misuse.
-    func migrateDust() async -> TransferResult? {
+    func migrateDust() async -> MigrationTransferResult? {
         let hasSweepableDust = withSnapshot { snapshot in
             snapshot.dustRemainder.amount > 0 && !snapshot.isDustLocked
         }
@@ -269,12 +280,12 @@ final class MigrationSimulatorEngine: @unchecked Sendable {
 
         try? await Task.sleep(for: .seconds(MigrationSimulatorEngineDerivations.Constants.broadcastLatency))
 
-        return withSnapshot { snapshot -> TransferResult? in
+        return withSnapshot { snapshot -> MigrationTransferResult? in
             guard snapshot.dustRemainder.amount > 0, !snapshot.isDustLocked else { return nil }
             snapshot.dustRemainder = Zatoshi.zero
             snapshot.orchardBalance = Zatoshi.zero
             snapshot.lastBackgroundRunSummary = "dust migrated"
-            return TransferResult.success(txId: MigrationSimulatorEngineDerivations.makeTxId(prefix: "dust", discriminator: "sweep"))
+            return MigrationTransferResult.success(txId: MigrationSimulatorEngineDerivations.makeTxId(prefix: "dust", discriminator: "sweep"))
         }
     }
 
@@ -298,62 +309,75 @@ final class MigrationSimulatorEngine: @unchecked Sendable {
         return await propose()
     }
 
-    func rescheduleStalled() async {
-        withSnapshot { snapshot in
-            guard case MigrationState.requiresAttention(let reason) = snapshot.state,
-                  case AttentionReason.transferStalled = reason else { return }
-
-            let now = self.simNow(snapshot)
-            let unsentInOrder = snapshot.transfers.filter { $0.sentAt == nil }.sorted { $0.index < $1.index }
-            for (offset, transfer) in unsentInOrder.enumerated() {
-                guard let index = snapshot.transfers.firstIndex(where: { $0.id == transfer.id }) else { continue }
-                let step = MigrationSimulatorEngineDerivations.Constants.transferSpacing * Double(offset + 1)
-                snapshot.transfers[index].dueAt = now.addingTimeInterval(step)
-            }
-            snapshot.state = MigrationState.inProgress(MigrationSimulatorEngineDerivations.computeProgress(for: snapshot))
-            snapshot.lastBackgroundRunSummary = "rescheduled stalled transfer"
-        }
-    }
-
-    func recreateInvalid() async {
+    /// MOB-1496: simulator counterpart of the real SDK's `rescheduleOverdueMigrationTransfer(
+    /// accountUUID:)`. The real member is a pure read (reports the next height-due proposal so the
+    /// host can re-arm its own background window — "the local decision not to broadcast before
+    /// that window IS the reschedule", per the SDK's own doc), but the coordinator's `.reschedule`
+    /// flow (`MigrationCoordFlowCoordinator.swift`) expects an actual state change it can then
+    /// re-read rows/summary from — so, matching this engine's existing "make the UI outcome
+    /// observable" precedent (`lockDust`'s pause, `performSend`'s broadcast latency), this pushes
+    /// the earliest overdue transfer's `dueAt` forward by one `transferSpacing` step (un-stalling
+    /// it) and returns a `MigrationTransferProposal` built from the result — a no-op (returns
+    /// `nil`) when nothing is actually overdue. Was named `rescheduleStalled()` pre-MOB-1496, back
+    /// when the engine could set a literal `.transferStalled` state; that state no longer exists
+    /// (see the file-level doc), so this now keys off `hasOverdue()`'s time math instead.
+    func rescheduleOverdue() async -> MigrationTransferProposal? {
         withSnapshot { snapshot in
             let now = self.simNow(snapshot)
-            if case MigrationState.requiresAttention(let reason) = snapshot.state {
-                if case AttentionReason.invalidTransfer(let transferId) = reason,
-                   let index = snapshot.transfers.firstIndex(where: { $0.id == transferId }) {
-                    let step = MigrationSimulatorEngineDerivations.Constants.transferSpacing
-                    snapshot.transfers[index].dueAt = now.addingTimeInterval(step)
-                } else if case AttentionReason.transferExpired = reason {
-                    for index in snapshot.transfers.indices {
-                        let transfer = snapshot.transfers[index]
-                        let expiryWindow = MigrationSimulatorEngineDerivations.Constants.expiryWindow
-                        guard transfer.sentAt == nil, now > transfer.dueAt.addingTimeInterval(expiryWindow) else { continue }
-                        snapshot.transfers[index].dueAt = now.addingTimeInterval(
-                            MigrationSimulatorEngineDerivations.Constants.transferSpacing
-                        )
-                    }
-                }
+            guard MigrationSimulatorEngineDerivations.hasOverdue(snapshot: snapshot, now: now),
+                  let earliest = snapshot.transfers.filter({ $0.sentAt == nil }).min(by: { $0.index < $1.index }),
+                  let index = snapshot.transfers.firstIndex(where: { $0.id == earliest.id }) else {
+                return nil
             }
+
+            let step = MigrationSimulatorEngineDerivations.Constants.transferSpacing
+            let newDueAt = now.addingTimeInterval(step)
+            snapshot.transfers[index].dueAt = newDueAt
             snapshot.state = MigrationState.inProgress(MigrationSimulatorEngineDerivations.computeProgress(for: snapshot))
-            snapshot.lastBackgroundRunSummary = "recreated invalid/expired transfer(s)"
+            snapshot.lastBackgroundRunSummary = "rescheduled overdue transfer"
+
+            let height = MigrationSimulatorEngineDerivations.syntheticHeight(for: newDueAt)
+            return MigrationTransferProposal(
+                id: snapshot.transfers[index].id,
+                amount: snapshot.transfers[index].amount,
+                anchorHeight: height,
+                nextExecutableAfterHeight: height,
+                expiryHeight: height + MigrationSimulatorEngineDerivations.Constants.syntheticExpiryOffset
+            )
         }
     }
 
     // MARK: - Keystone (PCZT)
 
-    func fabricateNoteSplitPCZT() -> Pczt {
+    /// MOB-1496 (final engine, plural preps): fabricates the simulator's one-and-only preparation
+    /// (note-split) entry as a genuine `MigrationUnsignedTransferPczt` — an engine-style id
+    /// (`MigrationSimulatorEngineDerivations.makeNoteSplitId`) paired with the same deterministic
+    /// fabricated bytes the pre-plural version returned bare. Superseded the singular
+    /// `fabricateNoteSplitPCZT() -> Data` this replaces: the final engine returns a
+    /// `[MigrationUnsignedTransferPczt]` prep subset (empty when none are needed) rather than one raw
+    /// blob, so the simulator's fabrication mirrors that shape — always exactly one element, since the
+    /// simulator only ever models a single split.
+    func fabricateNoteSplitPCZTs() -> [MigrationUnsignedTransferPczt] {
         let balance = orchardBalance()
-        return MigrationSimulatorEngineDerivations.fabricatePczt(index: -1, amount: balance)
+        return [
+            MigrationUnsignedTransferPczt(
+                id: MigrationSimulatorEngineDerivations.makeNoteSplitId(index: 0),
+                pczt: MigrationSimulatorEngineDerivations.fabricatePczt(index: -1, amount: balance)
+            )
+        ]
     }
 
-    func fabricateMigrationPCZTs(_ schedule: MigrationSchedule) -> [Pczt] {
+    func fabricateMigrationPCZTs(_ schedule: MigrationSchedule) -> [MigrationUnsignedTransferPczt] {
         schedule.transfers.enumerated().map { index, transfer in
-            MigrationSimulatorEngineDerivations.fabricatePczt(index: index, amount: transfer.amount)
+            MigrationUnsignedTransferPczt(
+                id: transfer.id,
+                pczt: MigrationSimulatorEngineDerivations.fabricatePczt(index: index, amount: transfer.amount)
+            )
         }
     }
 
-    func storeSignedBatch(_ pczts: [Pczt]) {
-        withSnapshot { $0.signedBatchCount = pczts.count }
+    func storeSignedBatch(_ signed: [MigrationSignedTransferPczt]) {
+        withSnapshot { $0.signedBatchCount = signed.count }
     }
 
     // MARK: - Lifecycle
@@ -413,7 +437,7 @@ final class MigrationSimulatorEngine: @unchecked Sendable {
         }
     }
 
-    func armTransferResult(_ result: TransferResult) {
+    func armTransferResult(_ result: MigrationTransferResult) {
         withSnapshot { $0.armedTransferResult = result }
     }
 
@@ -484,44 +508,50 @@ private extension MigrationSimulatorEngine {
     /// Applies a (just-consumed) armed result to `targetIndex`, bypassing due-gating entirely —
     /// arming a result is a deliberate debug action meant to force the NEXT `executeNext` call's
     /// outcome regardless of timing.
-    func apply(_ armed: TransferResult, toPendingIndex targetIndex: Int) async -> TransferResult {
+    ///
+    /// MOB-1496: the `.networkError` case used to escalate `state` to a literal
+    /// `.requiresAttention(.transferStalled)` — that case no longer exists on the SDK's
+    /// `MigrationAttentionReason`, so it now just leaves `state` at `.inProgress` (recomputed) and
+    /// relies on the `dueAt` shift below (past `overdueGrace`) for `hasOverdue()`'s time math to
+    /// pick up, exactly like `MigrationSimulatorEngineDerivations.applyPreset`'s `.transferStalled`
+    /// case.
+    func apply(_ armed: MigrationTransferResult, toPendingIndex targetIndex: Int) async -> MigrationTransferResult {
         switch armed {
-        case TransferResult.invalidNote:
+        case MigrationTransferResult.invalidNote:
             return withSnapshot { snapshot in
                 guard let transfer = snapshot.transfers.first(where: { $0.index == targetIndex }) else {
-                    return TransferResult.invalidNote
+                    return MigrationTransferResult.invalidNote
                 }
-                snapshot.state = MigrationState.requiresAttention(AttentionReason.invalidTransfer(transferId: transfer.id))
+                snapshot.state = MigrationState.requiresAttention(MigrationAttentionReason.invalidTransfer(transferId: transfer.id))
                 snapshot.lastBackgroundRunSummary = "armed invalidNote -> transfer \(targetIndex + 1) invalid"
-                return TransferResult.invalidNote
+                return MigrationTransferResult.invalidNote
             }
 
-        case TransferResult.expired:
+        case MigrationTransferResult.expired:
             return withSnapshot { snapshot in
                 let now = self.simNow(snapshot)
                 if let index = snapshot.transfers.firstIndex(where: { $0.index == targetIndex }) {
                     let pastExpiry = -(MigrationSimulatorEngineDerivations.Constants.expiryWindow + 1)
                     snapshot.transfers[index].dueAt = now.addingTimeInterval(pastExpiry)
                 }
-                snapshot.state = MigrationState.requiresAttention(AttentionReason.transferExpired)
+                snapshot.state = MigrationState.requiresAttention(MigrationAttentionReason.transferExpired)
                 snapshot.lastBackgroundRunSummary = "armed expired -> transfer \(targetIndex + 1) expired"
-                return TransferResult.expired
+                return MigrationTransferResult.expired
             }
 
-        case TransferResult.networkError(let retryable):
+        case MigrationTransferResult.networkError(let retryable):
             return withSnapshot { snapshot in
                 let now = self.simNow(snapshot)
                 if let index = snapshot.transfers.firstIndex(where: { $0.index == targetIndex }) {
-                    snapshot.transfers[index].dueAt = now.addingTimeInterval(-MigrationSimulatorEngineDerivations.Constants.overdueGrace)
+                    let pastOverdue = -(MigrationSimulatorEngineDerivations.Constants.overdueGrace + 1)
+                    snapshot.transfers[index].dueAt = now.addingTimeInterval(pastOverdue)
                 }
-                snapshot.state = MigrationState.requiresAttention(
-                    AttentionReason.transferStalled(transferNumber: targetIndex + 1)
-                )
-                snapshot.lastBackgroundRunSummary = "armed networkError -> stalled"
-                return TransferResult.networkError(retryable: retryable)
+                snapshot.state = MigrationState.inProgress(MigrationSimulatorEngineDerivations.computeProgress(for: snapshot))
+                snapshot.lastBackgroundRunSummary = "armed networkError -> overdue"
+                return MigrationTransferResult.networkError(retryable: retryable)
             }
 
-        case TransferResult.success:
+        case MigrationTransferResult.success:
             return await performSend(targetIndex: targetIndex)
         }
     }
@@ -529,11 +559,11 @@ private extension MigrationSimulatorEngine {
     /// Simulates ~1.5s of broadcast latency (`isBroadcasting` set on the target row throughout),
     /// then marks it sent, decrements the balance, and rolls the whole migration to `.complete`
     /// once every transfer has been sent.
-    func performSend(targetIndex: Int) async -> TransferResult {
+    func performSend(targetIndex: Int) async -> MigrationTransferResult {
         guard let transferId = withSnapshot({ snapshot in
             snapshot.transfers.first(where: { $0.index == targetIndex })?.id
         }) else {
-            return TransferResult.success(txId: MigrationSimulatorEngineDerivations.makeTxId(prefix: "xfer", discriminator: "missing"))
+            return MigrationTransferResult.success(txId: MigrationSimulatorEngineDerivations.makeTxId(prefix: "xfer", discriminator: "missing"))
         }
 
         broadcastingId.withLock { $0 = transferId }
@@ -543,7 +573,7 @@ private extension MigrationSimulatorEngine {
         return withSnapshot { snapshot in
             guard let index = snapshot.transfers.firstIndex(where: { $0.id == transferId }),
                   snapshot.transfers[index].sentAt == nil else {
-                return TransferResult.success(txId: MigrationSimulatorEngineDerivations.makeTxId(prefix: "xfer", discriminator: transferId))
+                return MigrationTransferResult.success(txId: MigrationSimulatorEngineDerivations.makeTxId(prefix: "xfer", discriminator: transferId))
             }
 
             let now = self.simNow(snapshot)
@@ -561,21 +591,21 @@ private extension MigrationSimulatorEngine {
                 snapshot.state = MigrationState.inProgress(MigrationSimulatorEngineDerivations.computeProgress(for: snapshot))
                 snapshot.lastBackgroundRunSummary = "sent #\(index + 1) of \(total)"
             }
-            return TransferResult.success(txId: MigrationSimulatorEngineDerivations.makeTxId(prefix: "xfer", discriminator: transferId))
+            return MigrationTransferResult.success(txId: MigrationSimulatorEngineDerivations.makeTxId(prefix: "xfer", discriminator: transferId))
         }
     }
 
     /// Shared core for `submitSplit`/`submitSignedSplit`: consumes `armedSplitFailure` if set
     /// (returning a network error with NO state change), otherwise commits `outputNotes` and arms
     /// the 15s confirm task.
-    func submitSplitCore(outputNotes: [Zatoshi]) async -> TransferResult {
+    func submitSplitCore(outputNotes: [Zatoshi]) async -> MigrationTransferResult {
         let shouldFail = withSnapshot { snapshot -> Bool in
             guard snapshot.armedSplitFailure else { return false }
             snapshot.armedSplitFailure = false
             return true
         }
         if shouldFail {
-            return TransferResult.networkError(retryable: true)
+            return MigrationTransferResult.networkError(retryable: true)
         }
 
         withSnapshot { snapshot in
@@ -584,7 +614,7 @@ private extension MigrationSimulatorEngine {
             snapshot.splitSubmittedAt = self.simNow(snapshot)
         }
         armSplitConfirmTask()
-        return TransferResult.success(
+        return MigrationTransferResult.success(
             txId: MigrationSimulatorEngineDerivations.makeTxId(prefix: "split", discriminator: "\(outputNotes.count)")
         )
     }

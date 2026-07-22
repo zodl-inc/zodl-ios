@@ -27,14 +27,17 @@ import ComposableArchitecture
     }
 
     @MainActor @Test func initWithPcztsPopulatesState() async {
-        let pczts: [Pczt] = [Data([0xAA]), Data([0xBB])]
+        let pczts: [MigrationUnsignedTransferPczt] = [
+            MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xAA])),
+            MigrationUnsignedTransferPczt(id: "t1", pczt: Data([0xBB]))
+        ]
         let state = MigrationKeystoneSign.State(pczts: pczts)
 
         #expect(state.pczts == pczts)
     }
 
     @MainActor @Test func onAppearProducesNoStateChangeOrEffects() async {
-        let store = TestStore(initialState: MigrationKeystoneSign.State(pczts: [Pczt()])) {
+        let store = TestStore(initialState: MigrationKeystoneSign.State(pczts: [MigrationUnsignedTransferPczt(id: "t0", pczt: Data())])) {
             MigrationKeystoneSign()
         }
 
@@ -42,7 +45,7 @@ import ComposableArchitecture
     }
 
     @MainActor @Test func getSignatureTappedEmitsDelegateGetSignature() async {
-        let store = TestStore(initialState: MigrationKeystoneSign.State(pczts: [Pczt()])) {
+        let store = TestStore(initialState: MigrationKeystoneSign.State(pczts: [MigrationUnsignedTransferPczt(id: "t0", pczt: Data())])) {
             MigrationKeystoneSign()
         }
 
@@ -51,7 +54,7 @@ import ComposableArchitecture
     }
 
     @MainActor @Test func rejectTappedEmitsDelegateRejected() async {
-        let store = TestStore(initialState: MigrationKeystoneSign.State(pczts: [Pczt()])) {
+        let store = TestStore(initialState: MigrationKeystoneSign.State(pczts: [MigrationUnsignedTransferPczt(id: "t0", pczt: Data())])) {
             MigrationKeystoneSign()
         }
 
@@ -60,7 +63,7 @@ import ComposableArchitecture
     }
 
     @MainActor @Test func delegateActionProducesNoStateChangeOrEffects() async {
-        let store = TestStore(initialState: MigrationKeystoneSign.State(pczts: [Pczt()])) {
+        let store = TestStore(initialState: MigrationKeystoneSign.State(pczts: [MigrationUnsignedTransferPczt(id: "t0", pczt: Data())])) {
             MigrationKeystoneSign()
         }
 

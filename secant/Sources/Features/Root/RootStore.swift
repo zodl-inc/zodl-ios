@@ -50,6 +50,20 @@ struct Root {
         var CancelFlexaId = UUID()
         var shieldingProcessorCancelId = UUID()
         var automaticServerRefreshCancelId = UUID()
+        /// MOB-1496 (W2): the migration gate-flip reconcile trigger's own subscription
+        /// (`sdkSynchronizer.migrationSyncBlockedStream()`), started together with `CancelStateId`'s
+        /// `stateStream()` subscription in `.registerForSynchronizersUpdate` (both `.merge`d from
+        /// the same action) — but not stopped alongside it. This id relies solely on its own
+        /// `cancelInFlight: true` to supersede the previous subscription when
+        /// `.registerForSynchronizersUpdate` re-runs; unlike `CancelStateId`, it has no explicit
+        /// `.cancel(id:)` teardown anywhere (e.g. on background entry, only
+        /// `CancelStateId`/`CancelTransactionsStateId` are cancelled explicitly).
+        var migrationSyncGateCancelId = UUID()
+        /// MOB-1496 (R8-T4, #11): the migration BG session tree's own cancel id — separate from
+        /// `bgTask`'s implicit lifetime, since the tree's `MigrationBGSessionHandle` is tracked via
+        /// `activeMigrationBackgroundSessionHandle` below, not `bgTask` (which stays reserved for the
+        /// plain sync BG task and the sync-only hand-off, per `MigrationBGSessionHandle`'s doc).
+        var migrationBackgroundSessionCancelId = UUID()
 
         @Shared(.inMemory(.addressBookContacts)) var addressBookContacts: AddressBookContacts = .empty
         @Presents var alert: AlertState<Action>?
@@ -80,6 +94,28 @@ struct Root {
         /// and fires from `checkBackupPhraseValidation`'s existing "did we just reach Home"
         /// checkpoint once initialization completes. Cleared immediately after firing.
         var pendingMigrationDeepLink = false
+        /// R8-T5 (S4): the ACCOUNT a stashed `.migrationNotificationTapped` tap carried (`nil` for a
+        /// legacy/no-account payload) — paired with `pendingMigrationDeepLink` above so the deferred
+        /// replay from `checkBackupPhraseValidation` can switch accounts exactly like the immediate-
+        /// routing path does. Only meaningful while `pendingMigrationDeepLink` is `true`; cleared
+        /// alongside it.
+        var pendingMigrationDeepLinkAccountUUID: String? = nil
+        /// MOB-1496 (R8-T4, #7): set by `.migrationBackgroundSession` when it arrives before the app
+        /// has reached Home (`appInitializationState != .initialized`) — a cold launch racing this
+        /// dispatch would otherwise evaluate `migrationBackgroundSessionEffect`'s early-return checks
+        /// (`isIronwoodActivated()`, `walletAccounts`) against unhydrated state and misread them as
+        /// "nothing to do," consuming the BG request without re-arming. Mirrors
+        /// `pendingMigrationDeepLink` exactly: replayed from the SAME `checkBackupPhraseValidation`
+        /// checkpoint once initialization completes, then cleared.
+        var pendingMigrationBackgroundSession: MigrationBGSessionHandle?
+        /// MOB-1496 (R8-T4, #11): the migration BG session tree's own handle, stored for the duration
+        /// of that tree's `.cancellable(id: migrationBackgroundSessionCancelId)` effect so
+        /// `.migrationBackgroundTaskExpired` can complete it directly — `bgTask` stays `nil` for this
+        /// plan (only the sync-only hand-off populates it; see `MigrationBGSessionHandle`'s doc).
+        /// Cleared by whichever of normal completion (`.migrationBackgroundSessionCompleted`) or
+        /// expiration reaches it first — the other then finds `nil` and no-ops, so the two completion
+        /// paths can never double-complete the same `BGProcessingTask`.
+        var activeMigrationBackgroundSessionHandle: MigrationBGSessionHandle?
         var pendingServerCandidate: PendingServerCandidate?
         var phraseDisplayState: RecoveryPhraseDisplay.State
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
@@ -96,6 +132,20 @@ struct Root {
         var walletConfig: WalletConfig
         @Shared(.inMemory(.walletStatus)) var walletStatus: WalletStatus = .none
         var wasRestoringWhenDisconnected = false
+        /// MOB-1496 (W2): tracks whether the last-observed `synchronizerStateChanged` tick was
+        /// `.upToDate`, so the sync-completion migration-reconcile trigger can detect the EDGE (a
+        /// fresh transition into up-to-date) instead of firing on every tick while already synced.
+        var wasSyncUpToDateForMigration = false
+        /// MOB-1496 (W2): last-pushed `sdkSynchronizer.isMigrationSyncBlocked()` value, compared
+        /// against each `migrationSyncGateChanged` tick so the gate-flip migration-reconcile
+        /// trigger only fires on an actual change.
+        var lastMigrationSyncGateBlocked = false
+        /// MOB-1496 (W3): set when `.retryStart` finds `sdkSynchronizer.isMigrationSyncBlocked()`
+        /// true (proactively, before calling `start`) or catches `ZcashError.migrationSyncBlocked`
+        /// (reactively, from a start that raced the gate) — both silent, no alert. Cleared by the
+        /// `.migrationSyncGateChanged(false)` handler, which then replays `.retryStart` so the
+        /// normal start chain resumes identically to an ungated launch.
+        var syncDeferredByMigrationGate = false
         var welcomeState: Welcome.State
         @Shared(.inMemory(.zashiWalletAccount)) var zashiWalletAccount: WalletAccount? = nil
 
@@ -204,6 +254,10 @@ struct Root {
         case flexaTransactionFailed(String)
         case home(Home.Action)
         case initialization(InitializationAction)
+        /// MOB-1496 (W2): `sdkSynchronizer.migrationSyncBlockedStream()` ticked (paired with an
+        /// initial `isMigrationSyncBlocked()` read — see `.registerForSynchronizersUpdate`) — a
+        /// genuine change from `state.lastMigrationSyncGateBlocked` reconciles migration state.
+        case migrationSyncGateChanged(Bool)
         case notEnoughFreeSpace(NotEnoughFreeSpace.Action)
         case resetZashiFinishProcessing
         case resetZashiKeychainFailed(OSStatus)

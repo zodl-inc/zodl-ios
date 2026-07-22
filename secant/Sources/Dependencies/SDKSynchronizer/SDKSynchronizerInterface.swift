@@ -117,70 +117,138 @@ struct SDKSynchronizerClient: Sendable {
 
     var getTreeState: @Sendable (_ height: UInt64) async throws -> Data
 
-    // MARK: - Migration (Orchard → Ironwood) — stubs until the SDK API exists (MOB-1455)
+    // MARK: - Migration (Orchard → Ironwood) — real SDK wiring (MOB-1496)
     //
-    // Swift mirror of `interface OrchardMigrationSdk` (`MigrationSdk.kt`). Names are qualified
-    // to fit this client's flat namespace (e.g. `stateStream` is already taken by
-    // `SynchronizerState`). Markers: `[draft]` = Kotlin draft 1:1, `[ext]` = proposed SDK
-    // extension not present in the Kotlin draft.
+    // Thin mirror of `any Synchronizer`'s migration surface. Every account-scoped member takes the
+    // migrating account's `AccountUUID` and is `async throws`; `isMigrationSyncBlocked()` and the
+    // two wallet-scope gate members are non-throwing (see `Synchronizer.swift`, ground truth).
 
-    // State — Kotlin: getMigrationState / (Flow suggestion) / getMigrationProgress
-    var getMigrationState: @Sendable () -> MigrationState = { .notStarted }                                   // [draft]
-    var migrationStateStream: @Sendable () -> AnyPublisher<MigrationState, Never> = { Empty().eraseToAnyPublisher() }  // [ext]
-    var getMigrationProgress: @Sendable () -> MigrationProgress? = { nil }                                    // [draft]
-    // Note splitting
-    var isNoteSplitNeeded: @Sendable () -> Bool = { false }                                                   // [draft]
-    var prepareNoteSplit: @Sendable () async -> NoteSplitProposal = { NoteSplitProposal(outputNotes: [], fee: Zatoshi.zero) }  // [draft]
-    var submitNoteSplit: @Sendable (NoteSplitProposal) async -> TransferResult = { _ in TransferResult.success(txId: "") }     // [draft]
-    // Proposal
-    var selectMigrationMode: @Sendable (MigrationMode) -> Void = { _ in }                                     // [ext]
-    var proposeMigrationTransfers: @Sendable () async -> MigrationSchedule = {  // [draft]
-        MigrationSchedule(transfers: [], estimatedDurationHours: 0)
-    }
-    var signAndStoreMigrationSchedule: @Sendable (MigrationSchedule) async -> Void = { _ in }                 // [draft]
-    // Background execution — Kotlin: isSyncRequiredBeforeNextTransfer / executeNextPendingTransfer
-    var isSyncRequiredBeforeNextMigrationTransfer: @Sendable () -> Bool = { false }                           // [draft]
-    var executeNextPendingMigrationTransfer: @Sendable (NetworkPrivacyOptions) async -> TransferResult? = { _ in nil }  // [draft]
-    // On-launch reconciliation — Kotlin: hasOverdueTransfers / hasInvalidTransfers
-    var hasOverdueMigrationTransfers: @Sendable () -> Bool = { false }                                        // [draft]
-    var hasInvalidMigrationTransfers: @Sendable () -> Bool = { false }                                        // [draft]
-    // Recovery
-    var restartCurrentMigrationStep: @Sendable () async -> MigrationSchedule = {  // [draft]
-        MigrationSchedule(transfers: [], estimatedDurationHours: 0)
-    }
-    var rescheduleStalledMigrationTransfer: @Sendable () async -> Void = { }                                  // [ext]
-    var recreateInvalidMigrationTransfer: @Sendable () async -> Void = { }                                    // [ext]
-    // Progress UI
-    var migrationSummary: @Sendable () -> MigrationSummary = { MigrationSummary.zero }                        // [ext]
-    var migrationTransfers: @Sendable () -> [MigrationTransferRow] = { [] }                                   // [ext]
-    // Dust resolution — [ext]: MOB-1487. `lockMigrationDust` marks the identifying Orchard
-    // remainder unspendable instead of migrating it (Migration Complete's "Lock balance");
-    // `migrateMigrationDust` broadcasts the remainder as one final transfer ("Migrate anyway") —
-    // deliberately NOT `executeNextPendingMigrationTransfer`, which a background poll may call
-    // with no pending transfers and must never sweep dust the user hasn't consented to move.
-    // No SDK primitives exist yet; signatures adjust at rust integration.
-    var lockMigrationDust: @Sendable () async throws -> Void = { }
-    var migrateMigrationDust: @Sendable (NetworkPrivacyOptions) async -> TransferResult? = { _ in nil }
-    var isMigrationDustLocked: @Sendable () -> Bool = { false }
-    // [ext] MOB-1487 R3: would a regular send of `amount` draw on (unlocked) Orchard notes? Drives
-    // the send-form privacy disclaimer once Ironwood is active. Real implementation is a
-    // note-selection dry-run; the `false` default keeps production dormant until the SDK lands.
-    var sendRequiresOrchardFunds: @Sendable (Zatoshi) async -> Bool = { _ in false }
+    /// The account's current migration state — also the reconciliation hub.
+    var getMigrationState: @Sendable (AccountUUID) async throws -> MigrationState
+    /// Live migration progress, or `nil` when nothing is in progress.
+    var getMigrationProgress: @Sendable (AccountUUID) async throws -> MigrationProgress?
+    /// Whether the account's Orchard notes must be split before migration. THROWS before the
+    /// wallet's first completed sync (no chain tip known yet).
+    var isNoteSplitNeeded: @Sendable (AccountUUID) async throws -> Bool
+    /// The optimal note split for the account's spendable Orchard balance.
+    var prepareNoteSplit: @Sendable (AccountUUID) async throws -> NoteSplitProposal
+    /// Signs, broadcasts, and records the account's note-split transaction (software path — needs
+    /// the account's USK). Broadcast-bearing: guarded by the transaction guard in the LiveKey.
+    var submitNoteSplit: @Sendable (
+        AccountUUID, NoteSplitProposal, UnifiedSpendingKey, MigrationNetworkPrivacyOptions
+    ) async throws -> MigrationTransferResult
+    /// The full scheduled-migration schedule for the account's spendable Orchard balance.
+    var proposeMigrationTransfers: @Sendable (AccountUUID, _ includeResidual: Bool) async throws -> MigrationSchedule
+    /// The immediate (single-transaction) migration schedule for the account.
+    var proposeImmediateMigration: @Sendable (AccountUUID) async throws -> MigrationSchedule
+    /// The leftover Orchard balance a migration would not cross, when worth offering a choice
+    /// about; `nil` when there is none. THROWS before the wallet's first completed sync.
+    var residualAfterMigration: @Sendable (AccountUUID) async throws -> Zatoshi?
+    /// Pre-signs and persists every transfer of `schedule` in the migration engine (needs the
+    /// account's USK).
+    var signAndStoreMigrationSchedule: @Sendable (AccountUUID, MigrationSchedule, UnifiedSpendingKey) async throws -> Void
+    /// Whether a sync is required before the account's next migration transfer can proceed.
+    var isSyncRequiredBeforeNextMigrationTransfer: @Sendable (AccountUUID) async throws -> Bool
+    /// Broadcasts the next height-due migration transfer, or `nil` when nothing is currently due.
+    /// Broadcast-bearing: guarded by the transaction guard in the LiveKey.
+    var executeNextPendingMigrationTransfer: @Sendable (
+        AccountUUID, MigrationNetworkPrivacyOptions
+    ) async throws -> MigrationTransferResult?
+    /// Wallet-scope: whether ordinary sync should currently be paused for a migration privacy gate.
+    /// Non-throwing (degrades open on internal failure).
+    var isMigrationSyncBlocked: @Sendable () async -> Bool = { false }
+    /// Wallet-scope stream of `isMigrationSyncBlocked()`.
+    var migrationSyncBlockedStream: @Sendable () -> AnyPublisher<Bool, Never> = { Empty().eraseToAnyPublisher() }
+    /// The post-broadcast privacy buffer duration.
+    var migrationPrivacySyncBufferDuration: @Sendable () -> TimeInterval = { 0 }
+    /// Whether the account has a scheduled transfer past its send height but not yet broadcast.
+    var hasOverdueMigrationTransfers: @Sendable (AccountUUID) async throws -> Bool
+    /// Whether the account's migration is in an invalid state (spendable Orchard remains but no
+    /// scheduled transfer covers it).
+    var hasInvalidMigrationTransfers: @Sendable (AccountUUID) async throws -> Bool
+    /// The account's next height-due pending transfer proposal, or `nil` when nothing is pending.
+    var rescheduleOverdueMigrationTransfer: @Sendable (AccountUUID) async throws -> MigrationTransferProposal?
+    /// Re-evaluates the account's remaining spendable Orchard balance and returns a fresh schedule.
+    var restartCurrentMigrationStep: @Sendable (AccountUUID, _ includeResidual: Bool) async throws -> MigrationSchedule
+    /// Re-proposes at a fresh anchor and re-signs the account's active run (needs the USK); returns
+    /// the number refreshed.
+    var refreshStaleMigrationTransfers: @Sendable (
+        AccountUUID, UnifiedSpendingKey, _ includeResidual: Bool
+    ) async throws -> UInt32
+    /// [ext] MOB-1487 R3: would a regular send of `amount` draw on (unlocked) Orchard notes? Drives
+    /// the send-form privacy disclaimer once Ironwood is active. Non-throwing: degrades to `false`
+    /// (matches the pre-real-SDK stub's permissive default) on any read error.
+    var sendRequiresOrchardFunds: @Sendable (AccountUUID, Zatoshi) async -> Bool = { _, _ in false }
+    // Dust resolution — [ext] MOB-1487: `migrateMigrationDust` broadcasts the account's leftover
+    // dust as one final transfer ("Migrate anyway") — deliberately NOT
+    // `executeNextPendingMigrationTransfer`, which a background poll may call with no pending
+    // transfers and must never sweep dust the user hasn't consented to move. `lockMigrationDust`/
+    // `isMigrationDustLocked` are app persistence, not SDK calls — see `MigrationManagerClient`.
+    var migrateMigrationDust: @Sendable (
+        AccountUUID, UnifiedSpendingKey, MigrationNetworkPrivacyOptions
+    ) async throws -> MigrationTransferResult?
     // Keystone (PCZT)
-    var proposeNoteSplitPCZT: @Sendable () async -> Pczt = { Pczt() }                                         // [ext]
-    var proposeMigrationPCZTs: @Sendable (MigrationSchedule) async -> [Pczt] = { _ in [] }                    // [ext]
-    var storeSignedMigrationTransactions: @Sendable ([Pczt]) async -> Void = { _ in }                         // [ext]
-    // Keystone note-split broadcast — [ext]: symmetric with submitNoteSplit; SDK must treat this
-    // broadcast as the migration note split (state -> splitPendingConfirmation).
-    var submitSignedNoteSplit: @Sendable (Pczt) async -> TransferResult = { _ in TransferResult.success(txId: "") }
+    /// Builds the account's whole previewed Keystone migration commit UNSIGNED and returns the
+    /// preparation (note-split) subset for the signing ceremony — empty when no preps are needed.
+    /// MOB-1496 (final engine): this is the RUN-CREATING call — the engine commits the previewed
+    /// plan (every transaction in the run, preps AND the schedule's own transfers, not just the
+    /// subset returned here) the moment it's called, and always resumes a stored non-terminal run on
+    /// the next attempt, ignoring any newer preview. A ceremony abandoned after this call must
+    /// explicitly cancel the run it just created (`restartCurrentMigrationStep`) or a later re-entry
+    /// will silently resume signing these same, by-then-stale PCZTs instead of proposing a fresh one.
+    var proposeNoteSplitPCZTs: @Sendable (AccountUUID) async throws -> [MigrationUnsignedTransferPczt]
+    /// Stores Keystone-signed note-split preparation PCZTs — thin wrap of
+    /// `storeSignedNoteSplitPCZTs(accountUUID:_:)`, discarding the returned
+    /// `PreparedMigrationTransfer` (a storage receipt with a zeroed txid — the broadcastable value
+    /// comes from `broadcastStoredNoteSplit`). All-or-nothing: every signed PCZT in the array is
+    /// applied together. MOB-1496 (final engine): the old singular pair's C-1/C-1b run-shadowing
+    /// hazard — "this store unconditionally starts a new run, so it MUST precede
+    /// `storeSignedMigrationTransactions` or a shadow run strands the schedule" — is GONE: the run is
+    /// created at PCZT-build time (`proposeNoteSplitPCZTs`, above), the engine refuses to double-commit
+    /// a run, and this store and `storeSignedMigrationTransactions` are now order-independent
+    /// per-transaction signature applications over the SAME already-created run. NOTE: the app still
+    /// stores these preps before broadcasting them (`broadcastStoredNoteSplit`) — the resume/retry lane
+    /// depends on stored-before-broadcast — but that ordering is an app-side choice now, not an engine
+    /// requirement. NOT guard-wrapped: local store, no broadcast — same reasoning as
+    /// `storeSignedMigrationTransactions`.
+    var storeSignedNoteSplits: @Sendable (AccountUUID, [MigrationSignedTransferPczt]) async throws -> Void
+    /// Broadcasts the Keystone note-split preps already stored via `storeSignedNoteSplits`, through
+    /// `executeNextPendingMigrationTransfer`. Idempotent by construction — a retry simply re-asks the
+    /// engine what's next-due, never re-stores — unlike the deleted `submitSignedNoteSplit` composite
+    /// this pair replaces, whose retry re-ran the (by-then-already-consumed) store and threw. Guard-
+    /// wrapped: broadcast-bearing.
+    var broadcastStoredNoteSplit: @Sendable (AccountUUID, MigrationNetworkPrivacyOptions) async throws -> MigrationTransferResult
+    var proposeMigrationPCZTs: @Sendable (AccountUUID, MigrationSchedule) async throws -> [MigrationUnsignedTransferPczt]
+    var storeSignedMigrationTransactions: @Sendable (AccountUUID, [MigrationSignedTransferPczt]) async throws -> Void
     // Batch UR encoding of N migration PCZTs into ONE animated-QR session — [ext]: JOINT SDK +
-    // Keystone-team ask; device support unvalidated (feature-spec §14 risk). Stub: nil (screen dormant).
-    var urEncoderForMigrationPCZTBatch: @Sendable ([Pczt]) -> UREncoder? = { _ in nil }
-    // Batch parse of the scanned signed session back into N signed PCZTs — [ext], same ask. Input type
-    // matches the scan-checker plumbing (the accumulated UR; prefer a Data/cbor-based signature if the
-    // URKit type isn't Sendable-friendly — implementer resolves against ScanChecker.swift's shapes).
-    var parseMigrationPCZTBatch: @Sendable (Data) -> [Pczt]? = { _ in nil }
-    // Lifecycle — Kotlin: initializePostUpgrade
-    var initializeMigrationPostUpgrade: @Sendable () -> Void = { }                                            // [draft]
+    // Keystone-team ask; device support unvalidated (feature-spec §14 risk).
+    var urEncoderForMigrationPCZTBatch: @Sendable ([MigrationUnsignedTransferPczt]) -> UREncoder? = { _ in nil }
+    // Batch parse of the scanned signed session back into N signed PCZTs' raw bytes, in scan order.
+    var parseMigrationPCZTBatch: @Sendable (Data) -> [Data]? = { _ in nil }
 }
 
+extension SDKSynchronizerClient {
+    /// MOB-1496 (W3 review fix A): the single stop-before-broadcast guard for EVERY foreground
+    /// migration broadcast lane (`MigrationSendingStore`, `MigrationNoteSplitStore`,
+    /// `MigrationTransferPlanStore`, `MigrationReviewTransferStore`) — hoisted out of four per-store
+    /// duplicates (the original W3 sweep only reached the first two; the silent note-split broadcast
+    /// under the TransferPlan/ReviewTransfer commit CTAs, MOB-1478 W4, was missed). Sync and
+    /// migration broadcasts must never share a session: the SDK's during-sync throw
+    /// (`ZcashError.migrationBroadcastDuringSync`) is only advisory/point-in-time, so callers stop
+    /// proactively instead of relying on it. Idempotent: a no-op when nothing is syncing.
+    ///
+    /// MOB-1496 (W3 review fix B): when this DOES stop an in-flight sync, it also flips the shared
+    /// `migrationStoppedSyncForBroadcast` flag (`@Shared(.inMemory(...))`, same idiom as
+    /// `selectedWalletAccount`) — never when idle. `RootInitialization.swift`'s
+    /// `.migrationSyncGateChanged` handler reads this to guarantee sync resumes once the SDK's
+    /// post-broadcast privacy gate clears, even when no start was concurrently deferred (the
+    /// original W3 mechanism only resumed a start that was itself caught mid-`.retryStart`). See
+    /// that handler's doc for the full mechanism, including the pre-flight-broadcast-failure edge
+    /// where the gate never blocks at all.
+    func stopSyncBeforeMigrationBroadcast() async {
+        guard isSyncing() else { return }
+        stop()
+        @Shared(.inMemory(.migrationStoppedSyncForBroadcast)) var migrationStoppedSyncForBroadcast: Bool = false
+        $migrationStoppedSyncForBroadcast.withLock { $0 = true }
+    }
+}

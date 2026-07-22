@@ -175,10 +175,14 @@ struct MigrationReviewTransferView: View {
         }
     }
 
-    // MARK: - Failure sheet (MOB-1478 W4 — silent note split, immediate mode only)
+    // MARK: - Failure sheet (immediate mode only; MOB-1496 R8-T1 — commit or propose failure)
 
-    /// Mirrors `MigrationNoteSplitView`'s failure sheet exactly (same strings, same Cancel/Retry
-    /// shape) — this screen had no failure path before the silent split moved under its commit.
+    /// Mirrors `MigrationNoteSplitView`'s failure sheet shape (same Cancel/Retry layout) — this
+    /// screen had no failure path before the silent split moved under its commit (MOB-1478 W4;
+    /// removed again in MOB-1496 R8-T1's S1 fix, which made the immediate commit split-free).
+    /// MOB-1496 (R8-T1, S3): the copy now depends on `store.failureReason` — a propose failure
+    /// (nothing was ever broadcast) uses honest "couldn't load" copy instead of the commit
+    /// failure's "couldn't be broadcast" copy.
     @ViewBuilder private var failureSheetContent: some View {
         VStack(spacing: 0) {
             Asset.Assets.Icons.alertOutline.image
@@ -190,13 +194,13 @@ struct MigrationReviewTransferView: View {
                 }
                 .padding(.top, 48)
 
-            Text(localizable: .migrationNoteSplitFailedTitle)
+            Text(failureTitle)
                 .zFont(.semiBold, size: 20, style: Design.Text.primary)
                 .multilineTextAlignment(.center)
                 .padding(.top, 16)
                 .padding(.bottom, 12)
 
-            Text(localizable: .migrationNoteSplitFailedBody)
+            Text(failureBody)
                 .zFont(size: 14, style: Design.Text.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
                 .multilineTextAlignment(.center)
@@ -212,6 +216,20 @@ struct MigrationReviewTransferView: View {
                 store.send(.retryTapped)
             }
             .padding(.bottom, Design.Spacing.sheetBottomSpace)
+        }
+    }
+
+    private var failureTitle: String {
+        switch store.failureReason {
+        case .propose: return String(localizable: .migrationPlanProposeFailedTitle)
+        case .commit, nil: return String(localizable: .migrationNoteSplitFailedTitle)
+        }
+    }
+
+    private var failureBody: String {
+        switch store.failureReason {
+        case .propose: return String(localizable: .migrationPlanProposeFailedBody)
+        case .commit, nil: return String(localizable: .migrationNoteSplitFailedBody)
         }
     }
 }

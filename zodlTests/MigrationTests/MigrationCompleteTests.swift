@@ -12,11 +12,11 @@
 //
 //  MOB-1487 (round 2): adds the dust-resolution machinery. `dustResolution` derives from `dust` at
 //  init (`.offered` when > `.zero`, else `.none`) unless a caller pins it explicitly — covered below
-//  alongside the `lockBalanceTapped` -> `sdkSynchronizer.lockMigrationDust()` -> `.locked`/`.offered`
+//  alongside the `lockBalanceTapped` -> `migrationManager.lockMigrationDust()` -> `.locked`/`.offered`
 //  (+alert) round trip, the `.offered`-only guard on `lockBalanceTapped`, `migrateAnywayTapped`'s
 //  delegate, and the alert dismiss path. `lockMigrationDust` is overridden directly on the
-//  dependency (`$0.sdkSynchronizer.lockMigrationDust = ...`), matching how the other Migration
-//  reducer tests override SDK members. Still no shared/global state -> no `.serialized`.
+//  dependency (`$0.migrationManager.lockMigrationDust = ...`), matching how the other Migration
+//  reducer tests override manager/SDK members. Still no shared/global state -> no `.serialized`.
 //
 //  MOB-1487 (round 3): adds the lock explainer sheet's presentation pair — `lockExplainerHelpTapped`
 //  sets `isLockExplainerPresented` true, `lockExplainerDismissed` sets it false. Neither is gated on
@@ -131,8 +131,7 @@ import ComposableArchitecture
         let store = TestStore(initialState: MigrationComplete.State(dust: Zatoshi(31_000))) {
             MigrationComplete()
         } withDependencies: {
-            $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.lockMigrationDust = { }
+            $0.migrationManager.lockMigrationDust = { }
         }
 
         #expect(store.state.dustResolution == MigrationComplete.State.DustResolution.offered)
@@ -151,8 +150,7 @@ import ComposableArchitecture
         let store = TestStore(initialState: MigrationComplete.State(dust: Zatoshi(31_000))) {
             MigrationComplete()
         } withDependencies: {
-            $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.lockMigrationDust = { throw LockDustFailure() }
+            $0.migrationManager.lockMigrationDust = { throw LockDustFailure() }
         }
         store.exhaustivity = .off
 
