@@ -130,6 +130,7 @@ extension MigrationManagerClient: DependencyKey {
             },
             lockMigrationDust: { try await impl.lockMigrationDust(accountUUID: $0) },
             isMigrationDustLocked: { await impl.isMigrationDustLocked(accountUUID: $0) },
+            migrationLockedAmount: { await impl.migrationLockedAmount(accountUUID: $0) },
             migrationRoundContext: { await impl.migrationRoundContext(accountUUID: $0) },
             stateEvents: { accountUUID in impl.stateEvents(accountUUID: accountUUID) },
             migrationMode: { impl.migrationMode(accountUUID: $0) },
@@ -666,15 +667,25 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// synchronous `UserDefaults` read; degrades to `false` on an unresolvable account or a failed
     /// balance read, same "safe default" convention as `orchardBalanceToMigrate` below.
     func isMigrationDustLocked(accountUUID: AccountUUID?) async -> Bool {
+        await migrationLockedAmount(accountUUID: accountUUID) > Zatoshi.zero
+    }
+
+    /// MOB-1496: the locked remainder amount itself — the account's Orchard
+    /// `PoolBalance.lockedValue`. This is the value the Complete screen's locked confirmation
+    /// shows on re-entry: `migrationSummary().dust` derives from `residualAfterMigration`, which
+    /// re-plans from live *spendable* notes once the migration state is terminal, so it silently
+    /// reads zero after a lock — the locked value is the signal that stays correct. `.zero` on an
+    /// unresolvable account or a failed balance read, same convention as `isMigrationDustLocked`.
+    func migrationLockedAmount(accountUUID: AccountUUID?) async -> Zatoshi {
         if MigrationSimulatorFlag.isEnabled && MigrationSimulatorClient.sharedEngine.isActive {
-            return MigrationSimulatorClient.sharedEngine.isDustLocked()
+            return MigrationSimulatorClient.sharedEngine.lockedDustAmount()
         }
-        guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return false }
+        guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return Zatoshi.zero }
         guard let balances = try? await sdkSynchronizer.getAccountsBalances(),
               let balance = balances[resolvedAccountUUID] else {
-            return false
+            return Zatoshi.zero
         }
-        return balance.orchardBalance.lockedValue > Zatoshi.zero
+        return balance.orchardBalance.lockedValue
     }
 
     /// MOB-1509: per-account persisted prefs (mode, manual delivery) — `nil` resolves the selected

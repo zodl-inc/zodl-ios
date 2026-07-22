@@ -52,13 +52,18 @@ struct MigrationManagerClient: Sendable {
     // through to their LIVE impl, not these no-ops.
     var recordCommittedSchedule: @Sendable (_ accountUUID: AccountUUID?, _ schedule: MigrationSchedule) async -> Void = { _, _ in }
     var recordTransferBroadcast: @Sendable (_ accountUUID: AccountUUID?, _ result: MigrationTransferResult) async -> Void = { _, _ in }
-    // Dust resolution (MOB-1487/MOB-1496: relocated — app persistence, not SDK calls). MOB-1509:
-    // per-account (`nil` resolves the selected account) — two parallel migrations must not share
-    // one lock verdict.
+    // Dust resolution (MOB-1487; MOB-1496: the lock is the SDK's real `lockMigrationResidual`
+    // now, no longer app persistence). MOB-1509: per-account (`nil` resolves the selected
+    // account) — two parallel migrations must not share one lock verdict.
     var lockMigrationDust: @Sendable (_ accountUUID: AccountUUID?) async throws -> Void
     // MOB-1496: async now — derived from a live SDK balance read (the account's Orchard
     // `PoolBalance.lockedValue`) rather than app-persisted storage.
     var isMigrationDustLocked: @Sendable (_ accountUUID: AccountUUID?) async -> Bool = { _ in false }
+    // MOB-1496: the locked remainder amount (the account's Orchard `PoolBalance.lockedValue`).
+    // The Complete screen's locked confirmation shows this on re-entry — `migrationSummary().dust`
+    // re-plans from live spendable notes once the migration state is terminal, so it reads zero
+    // after a lock; the locked value is what still reports the remainder.
+    var migrationLockedAmount: @Sendable (_ accountUUID: AccountUUID?) async -> Zatoshi = { _ in .zero }
     // MOB-1511 (W2): the multi-round labels' context — CURRENT round (app-persisted completed-run
     // count + 1) and the engine's estimated TOTAL rounds, `nil` when the SDK's estimate has zero
     // runs (see `SDKSynchronizerClient.estimateMigrationRunCount`'s doc).

@@ -502,10 +502,43 @@ import ComposableArchitecture
     }
 
     // MOB-1487: a previously locked dust remainder re-enters on the locked confirmation instead
-    // of re-offering resolution — `completeState(isFlowRoot:)` reads `isMigrationDustLocked()` and
-    // pins `dustResolution` to `.locked` (nil otherwise, letting `MigrationComplete.State`'s own
-    // init derive offered/none from `dust`).
+    // of re-offering resolution. MOB-1496: `completeState(isFlowRoot:)` reads the balance-derived
+    // `migrationLockedAmount()` for BOTH the `.locked` routing and the card's amount — after a
+    // real lock, `migrationSummary().dust` re-plans from spendable notes and reads ZERO (the
+    // locked notes are excluded), so the summary alone would render a "0 ZEC" locked card. This
+    // pins the production re-entry shape: dust-less summary + nonzero locked value.
     @MainActor @Test func onAppearWithCompleteRouteAndLockedDustDerivesLockedDustResolution() async {
+        let summary = MigrationSummary(
+            transferred: Zatoshi(1_245_800_000),
+            dust: Zatoshi.zero,
+            transfersSent: 5,
+            transfersTotal: 5,
+            estimatedDurationHours: 24
+        )
+        let store = TestStore(initialState: MigrationCoordFlow.State()) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.migrationManager.reentryRoute = { .complete }
+            $0.sdkSynchronizer = .noOp
+            $0.migrationManager.migrationSummary = { _ in summary }
+            $0.migrationManager.migrationLockedAmount = { _ in Zatoshi(800_000) }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.onAppear)
+        await store.receive(\.pushNextPermissionStep)
+
+        guard case let .complete(completeState) = try? #require(store.state.path.last) else {
+            Issue.record("Expected .complete on the path")
+            return
+        }
+        #expect(completeState.dustResolution == MigrationComplete.State.DustResolution.locked)
+        #expect(completeState.dust == Zatoshi(800_000))
+    }
+
+    // MOB-1496: the counterpart — nothing locked leaves the summary's own dust in charge, so a
+    // nonzero unlocked remainder still lands on the offered resolution with the summary amount.
+    @MainActor @Test func onAppearWithCompleteRouteAndUnlockedDustKeepsSummaryAmount() async {
         let summary = MigrationSummary(
             transferred: Zatoshi(1_245_800_000),
             dust: Zatoshi(800_000),
@@ -519,7 +552,7 @@ import ComposableArchitecture
             $0.migrationManager.reentryRoute = { .complete }
             $0.sdkSynchronizer = .noOp
             $0.migrationManager.migrationSummary = { _ in summary }
-            $0.migrationManager.isMigrationDustLocked = { _ in true }
+            $0.migrationManager.migrationLockedAmount = { _ in Zatoshi.zero }
         }
         store.exhaustivity = .off
 
@@ -530,7 +563,8 @@ import ComposableArchitecture
             Issue.record("Expected .complete on the path")
             return
         }
-        #expect(completeState.dustResolution == MigrationComplete.State.DustResolution.locked)
+        #expect(completeState.dustResolution == MigrationComplete.State.DustResolution.offered)
+        #expect(completeState.dust == Zatoshi(800_000))
     }
 
     @MainActor @Test func onAppearWithNoteSplitProgressRouteAppendsFlowRootSplittingScreen() async {
