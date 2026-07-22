@@ -12,16 +12,23 @@
 //
 //  MOB-1497 (T2 of the Tor & broadcast-routing requirements round) adds two more axes this file
 //  covers:
-//  - R2/R12 (`isCustomServer`): the identity-custom no-toggle variant. `gotItTapped` proceeds
-//    straight to `.delegate(.gotIt)` regardless of `isTorOn` — R12's disclosure IS the warning, so
-//    there is nothing to gate behind an alert.
+//  - R2/R12 (`isCustomServer`): the identity-custom no-toggle variant.
 //  - R3/R11 (the off-warning alert): a PROVIDER user's `gotItTapped` with the toggle OFF presents a
 //    confirmation `AlertState` (house idiom — `@Presents var alert`) instead of proceeding directly;
 //    ON proceeds directly, unchanged. "Proceed without Tor" clears the alert and emits
 //    `.delegate(.gotIt)` (`isTorOn` stays false — the coordinator reads it from there to persist +
 //    call `confirmProvisionalTorChoice`); "Keep Tor on" (`.alert(.dismiss)`) clears the alert AND
-//    resets `isTorOn` back to `true`, emitting no delegate — the sheet stays up showing ON. Threading
-//    `broadcastHost`/persisting the choice itself is the coordinator's job (`MigrationCoordFlowTests`).
+//    resets `isTorOn` back to `true`, emitting no delegate — the sheet stays up showing ON. Persisting
+//    the choice itself is the coordinator's job (`MigrationCoordFlowTests`).
+//
+//  MOB-1497 (T3) redesigns the custom-server variant and adds this file's third axis:
+//  `continueWithoutTorTapped`/`switchServerTapped`, the two buttons that replace "Got it" for that
+//  variant — both guarded to `state.isCustomServer`, a no-op otherwise. `gotItTapped` itself drops
+//  its `isCustomServer` early-return (the redesigned variant no longer renders that button), so it
+//  now always falls through the provider ON/OFF+alert logic — see the tests right after the R3/R11
+//  cluster below for what that means when sent against an (unreachable-from-the-real-UI)
+//  `isCustomServer == true` state. `broadcastHost`/`showsBroadcastDisclosure` leave `State` in the
+//  same commit — see `MigrationTorSheetStore`'s header doc.
 //
 
 import Testing
@@ -37,11 +44,10 @@ import ComposableArchitecture
 
         #expect(state.isTorOn == true)
         #expect(state.usesFullBalanceCopy == false)
-        // MOB-1497 (T2): provider is the default variant — no sheet presentation ever leaves these
-        // at their bare-init defaults (the coordinator always threads real values), but the defaults
-        // themselves must read as "provider, no host yet" rather than accidentally "custom".
+        // MOB-1497 (T2): provider is the default variant — no sheet presentation ever leaves this at
+        // its bare-init default (the coordinator always threads a real value), but the default itself
+        // must read as "provider" rather than accidentally "custom".
         #expect(state.isCustomServer == false)
-        #expect(state.broadcastHost == "")
     }
 
     @MainActor @Test func initCanOverrideToggleAndBodyCopyVariant() async {
@@ -51,11 +57,10 @@ import ComposableArchitecture
         #expect(state.usesFullBalanceCopy == true)
     }
 
-    @MainActor @Test func initCanSetCustomServerAndBroadcastHost() async {
-        let state = MigrationTorSheet.State(isTorOn: false, isCustomServer: true, broadcastHost: "my.custom.server")
+    @MainActor @Test func initCanSetCustomServer() async {
+        let state = MigrationTorSheet.State(isTorOn: false, isCustomServer: true)
 
         #expect(state.isCustomServer == true)
-        #expect(state.broadcastHost == "my.custom.server")
     }
 
     @MainActor @Test func isTorOnBindingTogglesOff() async {
@@ -96,19 +101,74 @@ import ComposableArchitecture
         await store.send(.delegate(.gotIt))
     }
 
-    // MARK: - MOB-1497 (T2, R2/R12): identity-custom bypasses the toggle/alert entirely
+    // MARK: - MOB-1497 (T3): continueWithoutTorTapped / switchServerTapped (custom-server variant only)
 
-    @MainActor @Test func gotItTappedForCustomServerEmitsDelegateGotItDirectlyRegardlessOfToggle() async {
-        // `isTorOn` is whatever the coordinator forced it to (false, per T1's data-side R2) — the
-        // custom variant has no toggle to read, so `gotItTapped` must not even look at it.
-        let store = TestStore(initialState: MigrationTorSheet.State(isTorOn: false, isCustomServer: true, broadcastHost: "custom.example.com")) {
+    @MainActor @Test func continueWithoutTorTappedOnCustomServerEmitsGotIt() async {
+        let store = TestStore(initialState: MigrationTorSheet.State(isCustomServer: true)) {
+            MigrationTorSheet()
+        }
+
+        await store.send(.continueWithoutTorTapped)
+        await store.receive(.delegate(.gotIt))
+    }
+
+    @MainActor @Test func continueWithoutTorTappedOnProviderIsIgnored() async {
+        // Unreachable via the real UI (the provider sheet never renders this button) — guarded
+        // anyway, so a stray send is a documented no-op rather than an unchecked assumption.
+        let store = TestStore(initialState: MigrationTorSheet.State()) {
+            MigrationTorSheet()
+        }
+
+        await store.send(.continueWithoutTorTapped)
+    }
+
+    @MainActor @Test func switchServerTappedOnCustomServerEmitsSwitchServerDelegate() async {
+        let store = TestStore(initialState: MigrationTorSheet.State(isCustomServer: true)) {
+            MigrationTorSheet()
+        }
+
+        await store.send(.switchServerTapped)
+        await store.receive(.delegate(.switchServer))
+    }
+
+    @MainActor @Test func switchServerTappedOnProviderIsIgnored() async {
+        let store = TestStore(initialState: MigrationTorSheet.State()) {
+            MigrationTorSheet()
+        }
+
+        await store.send(.switchServerTapped)
+    }
+
+    // MARK: - MOB-1497 (T3): gotItTapped no longer short-circuits for identity-custom
+
+    /// The old `isCustomServer` early-return is gone — the redesigned variant doesn't render "Got
+    /// it" any more (`continueWithoutTorTapped`/`switchServerTapped` replace it), so a direct
+    /// `gotItTapped` now just falls through the SAME ON/OFF+alert logic every provider tap already
+    /// used. With the default toggle (ON), that means proceeding straight through — the same
+    /// observable outcome the old shortcut produced for this one combination; the divergence only
+    /// shows up with the toggle OFF (see the alert test right below).
+    @MainActor @Test func gotItTappedOnCustomServerStateNoLongerShortCircuits() async {
+        let store = TestStore(initialState: MigrationTorSheet.State(isCustomServer: true)) {
             MigrationTorSheet()
         }
 
         await store.send(.gotItTapped)
         await store.receive(.delegate(.gotIt))
+    }
 
-        #expect(store.state.alert == nil)
+    /// The actual proof the shortcut is gone: before this change, an identity-custom `gotItTapped`
+    /// emitted `.delegate(.gotIt)` unconditionally, the toggle value never even inspected. Now, with
+    /// the toggle showing OFF, it falls into the exact same off-warning alert a provider tap would
+    /// show — dead code from the real UI (the custom variant never renders a toggle to turn OFF in
+    /// the first place), but the reducer no longer has a dedicated branch to special-case it away.
+    @MainActor @Test func gotItTappedOnCustomServerWithToggleOffFallsThroughToOffWarningAlert() async {
+        let store = TestStore(initialState: MigrationTorSheet.State(isTorOn: false, isCustomServer: true)) {
+            MigrationTorSheet()
+        }
+
+        await store.send(.gotItTapped) {
+            $0.alert = AlertState.migrationTorOffWarning(usesFullBalanceCopy: false, proceedAction: .offWarningProceedTapped)
+        }
     }
 
     // MARK: - MOB-1497 (T2, R3/R11): provider off-warning

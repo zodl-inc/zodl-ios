@@ -239,6 +239,64 @@ struct MigrationFailureRoutingTests {
         }
     }
 
+    // MARK: - MigrationFailureRoutingStorage: pending background Tor prompt (MOB-1497 T5)
+
+    @Test func pendingBackgroundTorPromptDefaultsFalse() throws {
+        try withRoutingStorage("testPendingBackgroundTorPromptDefaultsFalse") { storage in
+            #expect(storage.pendingBackgroundTorPrompt(for: Self.accountUUID(18)) == false)
+        }
+    }
+
+    @Test func setPendingBackgroundTorPromptSetsAndClearsTheFlag() throws {
+        try withRoutingStorage("testSetPendingBackgroundTorPromptSetsAndClearsTheFlag") { storage in
+            let accountUUID = Self.accountUUID(19)
+
+            storage.setPendingBackgroundTorPrompt(true, for: accountUUID)
+            #expect(storage.pendingBackgroundTorPrompt(for: accountUUID) == true)
+
+            storage.setPendingBackgroundTorPrompt(false, for: accountUUID)
+            #expect(storage.pendingBackgroundTorPrompt(for: accountUUID) == false)
+        }
+    }
+
+    /// A landed broadcast is the freshest signal that Tor is reachable right now — it clears the
+    /// pending prompt exactly as it clears the Tor-hold indicator (both share `markHadBroadcast`'s
+    /// lifecycle — see that method's doc).
+    @Test func markHadBroadcastClearsThePendingBackgroundTorPrompt() throws {
+        try withRoutingStorage("testMarkHadBroadcastClearsThePendingBackgroundTorPrompt") { storage in
+            let accountUUID = Self.accountUUID(20)
+            storage.setPendingBackgroundTorPrompt(true, for: accountUUID)
+
+            storage.markHadBroadcast(for: accountUUID)
+
+            #expect(storage.pendingBackgroundTorPrompt(for: accountUUID) == false)
+        }
+    }
+
+    /// The run-end trio (`acknowledgeComplete`/`resetPersistedFlags`/`reconcile`) clears the pending
+    /// prompt alongside the flag/episode/indicator via `clear`.
+    @Test func clearAlsoClearsThePendingBackgroundTorPrompt() throws {
+        try withRoutingStorage("testClearAlsoClearsThePendingBackgroundTorPrompt") { storage in
+            let accountUUID = Self.accountUUID(21)
+            storage.markHadBroadcast(for: accountUUID)
+            storage.setPendingBackgroundTorPrompt(true, for: accountUUID)
+
+            storage.clear(for: accountUUID)
+
+            #expect(storage.pendingBackgroundTorPrompt(for: accountUUID) == false)
+        }
+    }
+
+    @Test func perAccountPendingBackgroundTorPromptsAreIsolated() throws {
+        try withRoutingStorage("testPerAccountPendingBackgroundTorPromptsAreIsolated") { storage in
+            let accountA = Self.accountUUID(22)
+            let accountB = Self.accountUUID(23)
+            storage.setPendingBackgroundTorPrompt(true, for: accountA)
+
+            #expect(storage.pendingBackgroundTorPrompt(for: accountB) == false)
+        }
+    }
+
     // MARK: - routeBroadcastFailure: defensive no-active-snapshot fallback
 
     @Test func routeBroadcastFailureWithNoSnapshotAtAllReturnsPlainRetry() async throws {
@@ -381,6 +439,37 @@ struct MigrationFailureRoutingTests {
             // R7 final review, Important-1: THE positive pin — `.torHold` is the one route that sets
             // the persisted indicator, which the waiting/stalled surfaces read.
             #expect(storages.failureRoutingStorage.torHoldActive(for: account.id) == true)
+        }
+    }
+
+    // MARK: - routeBroadcastFailure never arms the T5 pending-background-Tor-prompt latch (MOB-1497)
+    //
+    // The latch is a BACKGROUND-only concern — armed by `RootInitialization.executeBroadcastAction`,
+    // NEVER by `routeBroadcastFailure` itself. A DIRECT `routeBroadcastFailure` call is exactly what
+    // the FOREGROUND MigrationSending/NoteSplit lanes make, and those have their own on-screen failure
+    // UI — so a direct call must leave the latch untouched on BOTH Tor-class routes. The latch is left
+    // at its default (false) going in, so an accidental arm would flip it.
+
+    @Test func routeBroadcastFailureNeverArmsThePendingBackgroundTorPromptOnFirstRunChoice() async throws {
+        try await withImpl("testRouteBroadcastFailureNeverArmsThePendingBackgroundTorPromptOnFirstRunChoice") { impl, account, storages in
+            storages.snapshotStorage.recordSnapshot(Self.snapshot(broadcastHost: "us.zec.stardust.rest"), for: account.id)
+
+            let route = await impl.routeBroadcastFailure(accountUUID: account.id, failureClass: MigrationBroadcastFailureClass.torUnavailable)
+
+            #expect(route == MigrationBroadcastFailureRoute.torFirstRunChoice)
+            #expect(storages.failureRoutingStorage.pendingBackgroundTorPrompt(for: account.id) == false)
+        }
+    }
+
+    @Test func routeBroadcastFailureNeverArmsThePendingBackgroundTorPromptOnTorHold() async throws {
+        try await withImpl("testRouteBroadcastFailureNeverArmsThePendingBackgroundTorPromptOnTorHold") { impl, account, storages in
+            storages.snapshotStorage.recordSnapshot(Self.snapshot(broadcastHost: "us.zec.stardust.rest"), for: account.id)
+            storages.failureRoutingStorage.markHadBroadcast(for: account.id)
+
+            let route = await impl.routeBroadcastFailure(accountUUID: account.id, failureClass: MigrationBroadcastFailureClass.torUnavailable)
+
+            #expect(route == MigrationBroadcastFailureRoute.torHold)
+            #expect(storages.failureRoutingStorage.pendingBackgroundTorPrompt(for: account.id) == false)
         }
     }
 

@@ -18,6 +18,11 @@
 //  `onAppearWithMultipleOverdueExecutesExactlyOneTransfer`. `.serialized`: several cases drive the
 //  process-global `@Shared(.inMemory(.selectedWalletAccount))`.
 //
+//  MOB-1497 (T8, Q3'26 canvas): `isManualStepLane` defaults to false and is settable via init, same
+//  as `isDustLane`/`entersViaSendNow` — but unlike those two, it drives no SDK branching at all, only
+//  `sentSubtitle`'s "sent"-vs-"migrated" wording (asserted directly against both branches, since a
+//  view-only assertion isn't possible here without UI-testing infrastructure this repo doesn't have).
+//
 
 import Testing
 import Foundation
@@ -72,6 +77,8 @@ import ComposableArchitecture
         // R7-T3 (MOB-1497)
         #expect(state.failureKind == nil)
         #expect(state.alert == nil)
+        // MOB-1497 (T8)
+        #expect(state.isManualStepLane == false)
     }
 
     @MainActor @Test func isDustLaneDefaultsFalseButCanBeSetTrueViaInit() async {
@@ -83,6 +90,46 @@ import ComposableArchitecture
         // Unrelated defaults are untouched by the new trailing init parameter.
         #expect(dustLaneState.phase == MigrationSending.State.Phase.sending)
         #expect(dustLaneState.totalCount == 1)
+    }
+
+    // MARK: - MOB-1497 (T8, Q3'26 canvas): manual per-transfer lane -> "sent" success wording
+
+    @MainActor @Test func isManualStepLaneDefaultsFalseButCanBeSetTrueViaInit() async {
+        let defaultState = MigrationSending.State()
+        let manualStepState = MigrationSending.State(isManualStepLane: true)
+
+        #expect(defaultState.isManualStepLane == false)
+        #expect(manualStepState.isManualStepLane == true)
+        // Unrelated defaults are untouched by the new trailing init parameter.
+        #expect(manualStepState.phase == MigrationSending.State.Phase.sending)
+        #expect(manualStepState.totalCount == 1)
+    }
+
+    /// The manual-delivery per-transfer lane (TransferPlan's `.manual` variant sending its first
+    /// transfer, or a later `MigrationReviewTransfer.State.Mode.manualStep` confirm) reads as one
+    /// transfer among several the user is walking through by hand, so its success screen says the
+    /// ZEC was "sent" rather than "migrated".
+    @MainActor @Test func sentSubtitleIsTransferWordingForManualStepLane() async {
+        let state = MigrationSending.State(isManualStepLane: true)
+
+        #expect(state.sentSubtitle == String(localizable: .migrationSendingSentSubtitleTransfer))
+    }
+
+    /// Every other lane — the default (immediate full sweep / plan-first review), the dust "Migrate
+    /// anyway" sweep, and the Status screen's "Send now" resume of an already-scheduled transfer —
+    /// still reads as part of one larger migration run, so it keeps the pre-existing "migrated"
+    /// wording. Flipping `isManualStepLane` is the only thing that changes the mapping — this would
+    /// fail if that selection were ever reversed.
+    @MainActor @Test func sentSubtitleIsMigratedWordingForEveryOtherLane() async {
+        #expect(MigrationSending.State().sentSubtitle == String(localizable: .migrationSendingSentSubtitleMigrated))
+        #expect(
+            MigrationSending.State(isDustLane: true).sentSubtitle
+                == String(localizable: .migrationSendingSentSubtitleMigrated)
+        )
+        #expect(
+            MigrationSending.State(entersViaSendNow: true).sentSubtitle
+                == String(localizable: .migrationSendingSentSubtitleMigrated)
+        )
     }
 
     @MainActor @Test func closeTappedEmitsDelegateClosed() async {

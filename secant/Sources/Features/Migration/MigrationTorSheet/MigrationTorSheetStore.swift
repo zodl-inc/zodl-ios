@@ -21,10 +21,11 @@
 //  moves there — see `MigrationCoordFlowCoordinator`'s header doc):
 //  - R2/R12 (`isCustomServer`): identity-custom users get the no-toggle "unavailable" variant instead
 //    of the toggle card — the view swaps in different body copy (`MigrationTorSheetView`), and
-//    `gotItTapped` proceeds straight to `.delegate(.gotIt)` regardless of `isTorOn` (there is no
-//    toggle to warn about; R12's disclosure IS the warning).
+//    (pre-T3) `gotItTapped` proceeded straight to `.delegate(.gotIt)` regardless of `isTorOn` — see
+//    T3 below, which replaces this.
 //  - R13 (`broadcastHost`): the formed snapshot's broadcast endpoint host, shown under the toggle
-//    (provider) or folded into the unavailable-variant body (custom).
+//    (provider) or folded into the unavailable-variant body (custom) — see T3 below, which removes
+//    this field from `State` entirely.
 //  - R3/R11 (the off-warning `alert`): a PROVIDER user's `gotItTapped` with the toggle OFF presents a
 //    confirmation alert (house `AlertState` idiom, mirroring `ServerSetup`'s migration-privacy
 //    warning / `MigrationComplete`'s failure alert) instead of proceeding directly. "Proceed without
@@ -32,8 +33,26 @@
 //    coordinator reads it from there to persist the choice and call `confirmProvisionalTorChoice`.
 //    "Keep Tor on" (the alert's `.cancel`-role button, dispatched as the bare `.alert(.dismiss)`)
 //    clears the alert AND resets `isTorOn` back to `true` — the sheet stays up showing ON, and no
-//    delegate is emitted (nothing to resume). ON confirms proceed directly, unchanged, exactly like
-//    the custom variant.
+//    delegate is emitted (nothing to resume). ON confirms proceed directly, unchanged.
+//
+//  MOB-1497 (T3): redesigns the custom-server ("identity-custom") variant per the refreshed canvas
+//  (4207:10692 / dark 4207:10875) — the no-toggle "unavailable" body is joined by a
+//  `MigrationRisksCard` ("What are the risks?"), and two new actions replace the shared "Got it"
+//  button for that variant: `continueWithoutTorTapped` (destructive1 "Continue without Tor",
+//  proceeds exactly like the old custom-server "Got it" did — `.send(.delegate(.gotIt))`) and
+//  `switchServerTapped` (primary "Switch Server", a NEW `Delegate.switchServer` case — the
+//  coordinator wiring for it lands in T4; this commit only produces the delegate). Both are guarded
+//  to `state.isCustomServer`; a stray tap from a provider sheet — unreachable via the real UI, which
+//  never renders these buttons there — is a no-op. `gotItTapped` drops its `isCustomServer`
+//  early-return: the custom variant no longer renders that button at all, so the case now only ever
+//  fires from the provider toggle sheet, falling straight through the existing ON/OFF+alert logic
+//  unchanged. `broadcastHost`/`showsBroadcastDisclosure` also leave `State` entirely — the redesigned
+//  variant has no disclosure line of its own (nor does the provider toggle card any more; see
+//  `MigrationTorSheetView`'s doc), so neither field has a reader left on the sheet itself. R13 still
+//  surfaces, exactly as before, via the TransferPlan/ReviewTransfer confirm footers —
+//  `MigrationCoordFlowCoordinator.confirmTorSheet` now re-peeks the formed snapshot through the same
+//  non-forming `broadcastDisclosureHost` helper the sheet-SKIPPED routes already used, instead of
+//  reading it back off this sheet's (now-trimmed) state.
 //
 
 import ComposableArchitecture
@@ -50,54 +69,46 @@ struct MigrationTorSheet {
         /// selects the gradual/full R11 exposure text (unavailable-variant body / off-warning
         /// message) — "full" == immediate (this flag `true`), "gradual" == scheduled (`false`).
         var usesFullBalanceCopy = false
-        /// MOB-1497 (T2, R2/R12): true when the account's sync server is identity-custom — threaded
-        /// in by the coordinator from the formed snapshot's `syncProvider` at presentation time. The
-        /// view swaps the toggle card for the no-toggle unavailable presentation, and `gotItTapped`
-        /// proceeds unconditionally (no alert — there is no toggle to warn about).
+        /// MOB-1497 (T2/T3, R2/R12): true when the account's sync server is identity-custom —
+        /// threaded in by the coordinator from the formed snapshot's `syncProvider` at presentation
+        /// time. The view swaps the toggle card for the redesigned no-toggle "unavailable"
+        /// presentation (T3: risks card + "Continue without Tor" / "Switch Server", replacing the old
+        /// Got it + inline disclosure).
         var isCustomServer = false
-        /// MOB-1497 (T2, R13): the formed snapshot's broadcast endpoint host, threaded in by the
-        /// coordinator at presentation time. Empty until a snapshot has been formed — the coordinator
-        /// always forms one before presenting, so a live sheet never actually shows it empty.
-        var broadcastHost = ""
-        /// R7-T2 fix-wave 1 (Important-1): true iff the formed snapshot's broadcast server differs
-        /// from its sync server (`broadcastProvider != syncProvider`), threaded in by the coordinator
-        /// alongside `broadcastHost`. Gates the R13 disclosure line INDEPENDENTLY of `isCustomServer`
-        /// — that flag only decides the R2/R12 no-toggle unavailable variant. Testnet and the
-        /// defensive same-server fallback (`MigrationManagerLiveKey.createNetworkSnapshot`'s
-        /// empty-candidates branch) both set `broadcastProvider == syncProvider` while still
-        /// classifying as a normal provider (`isCustomServer == false`) — those users keep the toggle
-        /// sheet but must not see a disclosure line claiming a "different server" that isn't true.
-        var showsBroadcastDisclosure = true
         @Presents var alert: AlertState<Action>?
 
         init(
             isTorOn: Bool = true,
             usesFullBalanceCopy: Bool = false,
-            isCustomServer: Bool = false,
-            broadcastHost: String = "",
-            showsBroadcastDisclosure: Bool? = nil
+            isCustomServer: Bool = false
         ) {
             self.isTorOn = isTorOn
             self.usesFullBalanceCopy = usesFullBalanceCopy
             self.isCustomServer = isCustomServer
-            self.broadcastHost = broadcastHost
-            // Undeclared callers infer `!isCustomServer` — the pre-fix gate's exact rule — so any
-            // caller that only ever set `isCustomServer` (every call site before this fix-wave) keeps
-            // its original disclosure behavior without needing to learn about this new axis.
-            self.showsBroadcastDisclosure = showsBroadcastDisclosure ?? !isCustomServer
         }
     }
 
     enum Action: BindableAction, Equatable {
         case alert(PresentationAction<Action>)
         case binding(BindingAction<State>)
+        /// MOB-1497 (T3): the custom-server variant's destructive "Continue without Tor" button —
+        /// guarded to that variant only (`state.isCustomServer`); a provider tap is a no-op (its own
+        /// "continue without Tor" affordance is the off-warning alert's `offWarningProceedTapped`).
+        case continueWithoutTorTapped
         case delegate(Delegate)
         case gotItTapped
         /// MOB-1497 (T2, R3/R11): the off-warning alert's "Proceed without Tor" button.
         case offWarningProceedTapped
+        /// MOB-1497 (T3): the custom-server variant's primary "Switch Server" button — guarded to
+        /// that variant only (`state.isCustomServer`); the coordinator wiring for it lands in T4, so
+        /// this commit only ever produces the delegate.
+        case switchServerTapped
 
         enum Delegate: Equatable {
             case gotIt
+            /// MOB-1497 (T3): the custom-server variant's "Switch Server" button. Coordinator
+            /// handling lands in T4.
+            case switchServer
         }
     }
 
@@ -124,16 +135,23 @@ struct MigrationTorSheet {
             case .binding:
                 return .none
 
+            case .continueWithoutTorTapped:
+                // MOB-1497 (T3): the custom variant's own CTA — same `.delegate(.gotIt)` contract the
+                // removed `gotItTapped` shortcut used to produce for this case. Unreachable from a
+                // provider sheet (that variant never renders this button), guarded anyway.
+                guard state.isCustomServer else { return .none }
+                return .send(.delegate(.gotIt))
+
             case .delegate:
                 return .none
 
             case .gotItTapped:
-                // R12's disclosure IS the warning for a custom server — there's no toggle, so no
-                // alert gate either; proceed unconditionally.
-                guard !state.isCustomServer else {
-                    return .send(.delegate(.gotIt))
-                }
-                // Provider + ON: proceeds directly, same as always.
+                // MOB-1497 (T3): the custom-server shortcut that used to live here is gone — the
+                // redesigned unavailable variant no longer renders a "Got it" button at all
+                // (`continueWithoutTorTapped`/`switchServerTapped` replace it), so this case now only
+                // ever fires from the PROVIDER toggle sheet in practice. Sending it directly against
+                // an `isCustomServer == true` state (e.g. from a test) simply falls through the same
+                // ON/OFF logic below — there is no dedicated branch left to bypass it with.
                 guard !state.isTorOn else {
                     return .send(.delegate(.gotIt))
                 }
@@ -144,6 +162,11 @@ struct MigrationTorSheet {
             case .offWarningProceedTapped:
                 state.alert = nil
                 return .send(.delegate(.gotIt))
+
+            case .switchServerTapped:
+                // MOB-1497 (T3): guarded the same way as `continueWithoutTorTapped` above.
+                guard state.isCustomServer else { return .none }
+                return .send(.delegate(.switchServer))
             }
         }
     }

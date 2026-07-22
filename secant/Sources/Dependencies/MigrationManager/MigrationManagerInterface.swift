@@ -8,6 +8,10 @@
 //  `MigrationProgress`, …) — this client is the single place that turns that state plus app-side
 //  flags into what the UI actually shows.
 //
+//  MOB-1497 (T5): adds the per-account "pending background Tor prompt" latch
+//  (`isPendingBackgroundTorPrompt`/`setPendingBackgroundTorPrompt`) — armed only by the background
+//  broadcast lane when a broadcast fails on a Tor-class route, read on foreground by T6.
+//
 
 import Foundation
 @preconcurrency import Combine
@@ -151,6 +155,27 @@ struct MigrationManagerClient: Sendable {
     // selected account, same convention as `migrationNetworkOptions` above. `= { _ in false }` is a
     // required macro default, not a test fallback (see the `recordCommittedSchedule` note above).
     var isMigrationTorHoldActive: @Sendable (_ accountUUID: AccountUUID?) -> Bool = { _ in false }
+    // MOB-1497 (T5): per-account persisted "a BACKGROUND migration broadcast attempt failed on a
+    // Tor-class route (R14 `.torFirstRunChoice` / R15 `.torHold`), and the user hasn't yet been shown
+    // the resulting prompt" latch. UNLIKE `isMigrationTorHoldActive` above (a non-sticky reflection of
+    // the last route that `routeBroadcastFailure` maintains on EVERY lane), this is a STICKY,
+    // BACKGROUND-ONLY flag: armed solely by the background broadcast lane
+    // (`RootInitialization.executeBroadcastAction`) — foreground broadcast failures have their own
+    // on-screen failure UI and must never arm it. Read on app foreground by T6 to present the
+    // "Couldn't Connect to Tor" sheet over Home. Cleared on any landed broadcast and at run
+    // teardown/completion (alongside the Tor-hold indicator — see `MigrationFailureRoutingStorage
+    // .markHadBroadcast`/`.clear`), and explicitly by T6 on user resolution via
+    // `setPendingBackgroundTorPrompt` below. The account is always concrete here (the BG lane's winner,
+    // T6's per-account read), so — unlike `isMigrationTorHoldActive` — there is NO `nil`-resolves-
+    // selected convention. `= { _ in false }` is a required macro default (non-throwing, non-Void
+    // return), not a test fallback (see the `recordCommittedSchedule` note above).
+    var isPendingBackgroundTorPrompt: @Sendable (_ accountUUID: AccountUUID) -> Bool = { _ in false }
+    // MOB-1497 (T5): sets (`isPending: true`, only ever from the background lane's Tor-class chokepoint)
+    // or clears (`isPending: false`, T6's user-resolution path) the latch above. `async` for T6's call
+    // site even though the underlying write is a synchronous `UserDefaults` store. No explicit default —
+    // a Void-returning closure the macro can synthesize one for (mirrors `acknowledgeComplete`/
+    // `setManualDelivery`).
+    var setPendingBackgroundTorPrompt: @Sendable (_ accountUUID: AccountUUID, _ isPending: Bool) async -> Void
     // MOB-1497 (R7-T3, R14): the R11-warning-gated, doc-sanctioned exception to R4's run-immutability
     // for "Tor unavailable on the first broadcast of the run" — mutates ONLY `useTor` on `accountUUID`'s
     // (`nil` resolves the selected account) ACTIVE network snapshot (committed if one exists, else the
