@@ -9,6 +9,7 @@
 //
 
 import ComposableArchitecture
+import Foundation
 @preconcurrency import ZcashLightClientKit
 
 @Reducer
@@ -44,7 +45,8 @@ struct MigrationEntry {
         /// no-op here — the coordinator consumes this and exits the flow via `flowFinished`
         /// (mirrors `SendForm.dismissRequired`).
         case dismissRequired
-        /// Inert for now; the "Find out more" destination (O-7) is undecided.
+        /// Opens the Ironwood migration support article (O-7 destination, MOB-1508) in the
+        /// system browser.
         case findOutMoreTapped
         case modeTapped(MigrationMode)
         case nextTapped
@@ -55,7 +57,10 @@ struct MigrationEntry {
         }
     }
 
+    static let findOutMoreURLString = "https://support.zodl.com/article/42-moving-your-funds-to-ironwood"
+
     @Dependency(\.migrationManager) var migrationManager
+    @Dependency(\.openURL) var openURL
 
     init() { }
 
@@ -73,7 +78,8 @@ struct MigrationEntry {
                 return .none
 
             case .findOutMoreTapped:
-                return .none
+                guard let url = URL(string: MigrationEntry.findOutMoreURLString) else { return .none }
+                return .run { _ in await openURL(url) }
 
             case .modeTapped(let mode):
                 state.selectedMode = mode
