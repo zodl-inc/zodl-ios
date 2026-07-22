@@ -132,6 +132,20 @@ import ComposableArchitecture
         )
     }
 
+    // MARK: - MOB-1513 (Lane A2): immediateProposal defaults + init
+
+    @MainActor @Test func immediateProposalDefaultsNilButCanBeSetViaInit() async {
+        let proposal = ImmediateMigrationProposal(proposal: .testOnlyFakeProposal(totalFee: 0), amount: Zatoshi.zero, fee: Zatoshi.zero)
+        let defaultState = MigrationSending.State()
+        let immediateState = MigrationSending.State(immediateProposal: proposal)
+
+        #expect(defaultState.immediateProposal == nil)
+        #expect(immediateState.immediateProposal == proposal)
+        // Unrelated defaults are untouched by the new trailing init parameter.
+        #expect(immediateState.phase == MigrationSending.State.Phase.sending)
+        #expect(immediateState.totalCount == 1)
+    }
+
     @MainActor @Test func closeTappedEmitsDelegateClosed() async {
         let store = TestStore(initialState: MigrationSending.State(phase: .success)) {
             MigrationSending()
@@ -348,6 +362,230 @@ import ComposableArchitecture
         }
 
         #expect(capturedOptions.value == sentinel)
+    }
+
+    // MARK: - MOB-1513 (Lane A2): immediate lane — genuine create+sign+submit happens HERE
+
+    /// The immediate lane's `onAppear` performs the ACTUAL create+sign+submit
+    /// (`MigrationCommitPipeline.commitImmediateSoftware` -> `createAndSubmitProposedTransactions`)
+    /// instead of `executeNextPendingMigrationTransfer` — there is no engine-stored transaction for
+    /// that call to serve. On success: create THEN record (order-asserted), the hex-string txid
+    /// becomes `state.txId`, the shared `.transferResult` success handler's bookkeeping
+    /// (`recordTransferBroadcast`/`reconcile`/`scheduleNextWindow`) fires exactly as for every other
+    /// lane, and — UNLIKE the engine lanes — `refreshMigrationSyncGate` IS called even on success:
+    /// `createAndSubmitProposedTransactions` never touches the SDK's own migration-sync privacy gate,
+    /// so nothing else would ever prompt `RootInitialization`'s resume-once-clear machinery to
+    /// re-check the stop this screen made before broadcasting.
+    @MainActor @Test func onAppearWithImmediateProposalCreatesAndSubmitsRecordsInOrderAndReachesSentPhase() async {
+        let callOrder = LockIsolated<[String]>([])
+        let recordedTxIds = LockIsolated<[(AccountUUID, Data)]>([])
+        let recordTransferBroadcastCalls = LockIsolated<[(AccountUUID?, MigrationTransferResult)]>([])
+        let reconcileCalls = LockIsolated<Int>(0)
+        let scheduleNextWindowCalls = LockIsolated<Int>(0)
+        // MOB-1513: the correctness fix this test locks in — see this file's header doc.
+        let refreshMigrationSyncGateCalls = LockIsolated<Int>(0)
+        let account = walletAccount(keystone: false, idByte: 0)
+        let proposal = ImmediateMigrationProposal(
+            proposal: .testOnlyFakeProposal(totalFee: 15_000),
+            amount: Zatoshi(1_245_800_000),
+            fee: Zatoshi(15_000)
+        )
+        let store = TestStore(initialState: MigrationSending.State(totalCount: 1, immediateProposal: proposal)) {
+            MigrationSending()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.createAndSubmitProposedTransactions = { proposedProposal, _ in
+                callOrder.withValue { $0.append("create") }
+                #expect(proposedProposal == proposal.proposal)
+                return .success(txIds: ["aabbccdd"])
+            }
+            $0.sdkSynchronizer.recordImmediateMigration = { accountUUID, txid in
+                callOrder.withValue { $0.append("record") }
+                recordedTxIds.withValue { $0.append((accountUUID, txid)) }
+            }
+            $0.migrationManager.recordTransferBroadcast = { accountUUID, result in
+                recordTransferBroadcastCalls.withValue { $0.append((accountUUID, result)) }
+            }
+            $0.migrationManager.reconcile = { reconcileCalls.withValue { $0 += 1 } }
+            $0.migrationManager.refreshMigrationSyncGate = { refreshMigrationSyncGateCalls.withValue { $0 += 1 } }
+            $0.migrationBGScheduler.scheduleNextWindow = { scheduleNextWindowCalls.withValue { $0 += 1 } }
+            withDependenciesUSKDerivable(&$0)
+        }
+
+        await store.send(.onAppear)
+        await store.receive(\.transferResult) {
+            $0.sentCount = 1
+            $0.txId = "aabbccdd"
+        }
+        await store.receive(\.allTransfersSent) {
+            $0.phase = .success
+        }
+
+        #expect(callOrder.value == ["create", "record"])
+        #expect(recordedTxIds.value.count == 1)
+        #expect(recordedTxIds.value.first?.0 == account.id)
+        // "aabbccdd" hex-decoded forward is [0xAA,0xBB,0xCC,0xDD]; `recordImmediateMigration` wants
+        // the RAW/internal byte order, which is that decoded sequence reversed.
+        #expect(recordedTxIds.value.first?.1 == Data([0xDD, 0xCC, 0xBB, 0xAA]))
+        #expect(recordTransferBroadcastCalls.value.count == 1)
+        #expect(recordTransferBroadcastCalls.value.first?.1 == MigrationTransferResult.success(txId: "aabbccdd"))
+        #expect(reconcileCalls.value == 1)
+        #expect(scheduleNextWindowCalls.value == 1)
+        #expect(refreshMigrationSyncGateCalls.value == 1)
+    }
+
+    /// Failure ⇒ no record call: a non-`.success` submit outcome must never call
+    /// `recordImmediateMigration` — recording a sweep that never broadcast would corrupt the
+    /// platform migration state machine's bookkeeping.
+    @MainActor @Test func onAppearWithImmediateProposalOnSubmitFailureNeverRecordsAndPresentsFailureSheet() async {
+        let recordCalls = LockIsolated<Int>(0)
+        let refreshMigrationSyncGateCalls = LockIsolated<Int>(0)
+        let proposal = ImmediateMigrationProposal(
+            proposal: .testOnlyFakeProposal(totalFee: 15_000),
+            amount: Zatoshi(1_245_800_000),
+            fee: Zatoshi(15_000)
+        )
+        let store = TestStore(initialState: MigrationSending.State(totalCount: 1, immediateProposal: proposal)) {
+            MigrationSending()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.createAndSubmitProposedTransactions = { _, _ in .failure(txIds: [], code: -9, description: "rejected") }
+            $0.sdkSynchronizer.recordImmediateMigration = { _, _ in recordCalls.withValue { $0 += 1 } }
+            $0.migrationManager.routeBroadcastFailure = { _, _ in MigrationBroadcastFailureRoute.plainRetry }
+            $0.migrationManager.refreshMigrationSyncGate = { refreshMigrationSyncGateCalls.withValue { $0 += 1 } }
+            withDependenciesUSKDerivable(&$0)
+        }
+
+        await store.send(.onAppear)
+        await store.receive(\.broadcastFailureRouted) {
+            $0.failureKind = MigrationBroadcastFailureRoute.plainRetry
+        }
+        await store.receive(\.transferResult) {
+            $0.isFailurePresented = true
+        }
+
+        #expect(recordCalls.value == 0)
+        #expect(store.state.sentCount == 0)
+        #expect(refreshMigrationSyncGateCalls.value == 1)
+    }
+
+    /// Lane discrimination twin of `onAppearWithoutDustLaneExecutesScheduledTransferNotMigrateMigrationDust`:
+    /// an immediate-proposal state must never fall through to the engine's own delivery member —
+    /// there is nothing stored in the engine for it to serve.
+    @MainActor @Test func onAppearWithImmediateProposalNeverCallsExecuteNextPendingMigrationTransfer() async {
+        let executeNextCalls = LockIsolated<Int>(0)
+        let proposal = ImmediateMigrationProposal(
+            proposal: .testOnlyFakeProposal(totalFee: 15_000),
+            amount: Zatoshi(1_245_800_000),
+            fee: Zatoshi(15_000)
+        )
+        let store = TestStore(initialState: MigrationSending.State(totalCount: 1, immediateProposal: proposal)) {
+            MigrationSending()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in
+                executeNextCalls.withValue { $0 += 1 }
+                return MigrationTransferResult.success(txId: "should-not-be-called")
+            }
+            $0.sdkSynchronizer.createAndSubmitProposedTransactions = { _, _ in .success(txIds: ["ff00"]) }
+            $0.sdkSynchronizer.recordImmediateMigration = { _, _ in }
+            $0.migrationManager.recordTransferBroadcast = { _, _ in }
+            $0.migrationManager.reconcile = { }
+            $0.migrationManager.refreshMigrationSyncGate = { }
+            $0.migrationBGScheduler.scheduleNextWindow = { }
+            withDependenciesUSKDerivable(&$0)
+        }
+
+        await store.send(.onAppear)
+        await store.receive(\.transferResult) {
+            $0.sentCount = 1
+            $0.txId = "ff00"
+        }
+        await store.receive(\.allTransfersSent) {
+            $0.phase = .success
+        }
+
+        #expect(executeNextCalls.value == 0)
+    }
+
+    /// R9-T4-style hoist (mirrors `onAppearWithDustLaneDeriveUSKFailureReportsNilResultWithoutRoutingOrNudgingOrBroadcasting`):
+    /// a Keystone account can never reach this branch in practice (the coordinator only threads
+    /// `immediateProposal` for a software confirm), but the same defensive guard applies — no USK
+    /// derivation attempted, no broadcast, no routing/nudging.
+    @MainActor @Test func onAppearWithImmediateProposalAndKeystoneAccountNeverDerivesUSKOrCallsCreateAndSubmit() async {
+        let createCalls = LockIsolated<Int>(0)
+        let routeBroadcastFailureCalls = LockIsolated<Int>(0)
+        let refreshMigrationSyncGateCalls = LockIsolated<Int>(0)
+        let proposal = ImmediateMigrationProposal(
+            proposal: .testOnlyFakeProposal(totalFee: 15_000),
+            amount: Zatoshi(1_245_800_000),
+            fee: Zatoshi(15_000)
+        )
+        var state = MigrationSending.State(totalCount: 1, immediateProposal: proposal)
+        state.$selectedWalletAccount.withLock { $0 = walletAccount(keystone: true, idByte: 9) }
+        let store = TestStore(initialState: state) {
+            MigrationSending()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.createAndSubmitProposedTransactions = { _, _ in
+                createCalls.withValue { $0 += 1 }
+                return .success(txIds: ["should-not-be-called"])
+            }
+            $0.migrationManager.routeBroadcastFailure = { _, _ in
+                routeBroadcastFailureCalls.withValue { $0 += 1 }
+                return MigrationBroadcastFailureRoute.plainRetry
+            }
+            $0.migrationManager.refreshMigrationSyncGate = { refreshMigrationSyncGateCalls.withValue { $0 += 1 } }
+        }
+
+        await store.send(.onAppear)
+        await store.receive(\.transferResult) {
+            $0.isFailurePresented = true
+        }
+
+        #expect(createCalls.value == 0)
+        #expect(routeBroadcastFailureCalls.value == 0)
+        #expect(refreshMigrationSyncGateCalls.value == 0)
+    }
+
+    /// Same stop-before-broadcast treatment as every other lane (order-asserted, mirrors
+    /// `onAppearWhileSyncingStopsSyncBeforeExecutingScheduledTransfer`).
+    @MainActor @Test func onAppearWithImmediateProposalWhileSyncingStopsSyncBeforeSubmitting() async {
+        let callOrder = LockIsolated<[String]>([])
+        let proposal = ImmediateMigrationProposal(
+            proposal: .testOnlyFakeProposal(totalFee: 15_000),
+            amount: Zatoshi(1_245_800_000),
+            fee: Zatoshi(15_000)
+        )
+        let store = TestStore(initialState: MigrationSending.State(totalCount: 1, immediateProposal: proposal)) {
+            MigrationSending()
+        } withDependencies: {
+            $0.sdkSynchronizer = SDKSynchronizerClient.mocked(
+                stop: { callOrder.withValue { $0.append("stop") } },
+                isSyncing: { true }
+            )
+            $0.sdkSynchronizer.createAndSubmitProposedTransactions = { _, _ in
+                callOrder.withValue { $0.append("create") }
+                return .success(txIds: ["aa"])
+            }
+            $0.sdkSynchronizer.recordImmediateMigration = { _, _ in }
+            $0.migrationManager.recordTransferBroadcast = { _, _ in }
+            $0.migrationManager.reconcile = { }
+            $0.migrationManager.refreshMigrationSyncGate = { }
+            $0.migrationBGScheduler.scheduleNextWindow = { }
+            withDependenciesUSKDerivable(&$0)
+        }
+
+        await store.send(.onAppear)
+        await store.receive(\.transferResult) {
+            $0.sentCount = 1
+            $0.txId = "aa"
+        }
+        await store.receive(\.allTransfersSent) {
+            $0.phase = .success
+        }
+
+        #expect(callOrder.value == ["stop", "create"])
     }
 
     // MARK: - Dust lane (MOB-1487): "Migrate anyway" sweeps the remainder, not the scheduled path

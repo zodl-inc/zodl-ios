@@ -192,6 +192,15 @@ struct MigrationCoordFlow {
         /// teardown that runs AFTER an account switch (the cross-account notification tap) still
         /// cancels the stranded run on the account that built it, not the newly selected one.
         var pendingKeystoneSigningAccountUUID: AccountUUID?
+        /// MOB-1513 (H3 guard): the account THIS flow instance opened for — recorded synchronously
+        /// at `.onAppear`'s genuine-flow-start branch (`state.path.isEmpty`), alongside arming
+        /// `migrationManager.setMigrationFlowPresented`. Every close/replace site reads this back
+        /// (never re-derives from `selectedWalletAccount`, which can move on mid-flow — the
+        /// `.home(.walletAccountTapped)` teardown runs BEFORE the switch, but relying on that
+        /// ordering is exactly the fragility this field avoids) to disarm the SAME account's signal
+        /// it armed. Identical "record the owner, don't trust the account selected at close time"
+        /// precedent as `pendingKeystoneSigningAccountUUID` above.
+        var presentedMigrationFlowAccountUUID: AccountUUID?
         /// MOB-1510: firmware version detected on the scanned batch entry that failed the
         /// minimum-firmware gate — `nil` when that entry carried no version stamp at all (firmware
         /// older than the stamping feature). Drives the copy on `KeystoneFirmwareUpdateContent`,
@@ -290,6 +299,14 @@ struct MigrationCoordFlow {
             signedPreps: [MigrationSignedTransferPczt]?,
             pendingScheduleStore: PendingScheduleStore?
         )
+        /// MOB-1513: the immediate lane's Keystone post-signing submit
+        /// (`MigrationCommitPipeline.commitImmediateKeystone`, dispatched from
+        /// `submitImmediateKeystoneTransaction`) succeeded — pops back to the signing source exactly
+        /// like `resumeAfterKeystoneSigning`'s no-preps branch, but pushes `MigrationSending.State`
+        /// ALREADY in `.success` phase with the real txid (the broadcast already happened here, not
+        /// on that screen's `onAppear` — see `submitImmediateKeystoneTransaction`'s doc for why the
+        /// Keystone lane can't defer to the Sending screen the way the software lane does).
+        case keystoneImmediateSubmitted(txId: String)
         /// Internal: MOB-1496 (W6 §3) — the Keystone dust lane's upfront propose
         /// (`.complete(.delegate(.migrateAnyway))`'s Keystone fork) came back with a non-empty
         /// schedule and its PCZTs — pushes the existing Keystone signing context as a batch-of-1 (no

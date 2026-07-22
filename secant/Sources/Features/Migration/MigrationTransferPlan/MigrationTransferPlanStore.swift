@@ -349,7 +349,6 @@ struct MigrationTransferPlan {
         .run { send in
             do {
                 try await MigrationCommitPipeline.commitSoftware(
-                    mode: MigrationCommitMode.scheduled,
                     schedule: schedule,
                     account: account,
                     zip32AccountIndex: zip32AccountIndex,

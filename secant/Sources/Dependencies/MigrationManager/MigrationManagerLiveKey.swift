@@ -153,6 +153,9 @@ extension MigrationManagerClient: DependencyKey {
             isCompleteAcknowledged: { accountUUID in impl.isCompleteAcknowledged(accountUUID: accountUUID) },
             acknowledgeComplete: { accountUUID in await impl.acknowledgeComplete(accountUUID: accountUUID) },
             isMigrationRemainderPending: { accountUUID in impl.isMigrationRemainderPending(accountUUID: accountUUID) },
+            setMigrationFlowPresented: { accountUUID, isPresented in
+                impl.setMigrationFlowPresented(accountUUID: accountUUID, isPresented: isPresented)
+            },
             sendGate: { await impl.sendGate() },
             recordSyncCompleted: { impl.recordSyncCompleted() },
             migrationSyncGateFeed: { impl.migrationSyncGateFeed() },
@@ -279,6 +282,41 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// `.notStarted` seed: a first real reconcile reading `.notStarted`/no-balance pushes nothing
     /// (value unchanged).
     private let lastPushedHasBalance = OSAllocatedUnfairLock<[AccountUUID: Bool]>(initialState: [:])
+
+    /// MOB-1513 (H3 guard): in-memory (never persisted — a flow being on screen doesn't survive
+    /// relaunch, and shouldn't) set of accounts CURRENTLY showing a propose-consuming migration
+    /// screen. `reconcile()` reads this per-account (`isMigrationFlowPresented`) to decide whether
+    /// to skip `evaluateMigrationRemainder` — see that method's doc for the plan-cache hazard this
+    /// closes.
+    ///
+    /// Armed (`setMigrationFlowPresented(_, true)`) from exactly one production site:
+    /// `MigrationCoordFlowCoordinator.onAppear`'s genuine-flow-start branch (`state.path.isEmpty`).
+    ///
+    /// Disarmed (`setMigrationFlowPresented(_, false)`) from every production close/replace site
+    /// for `Root.State.Path.migrationCoordFlow`, verified exhaustively against HEAD while
+    /// implementing this guard:
+    ///   - `RootCoordinator.tearDownMigrationCoordFlow` — the shared helper `.flowFinished`,
+    ///     `.switchServerRequested`, and the inline teardown inside `.home(.walletAccountTapped)`
+    ///     all three route through.
+    ///   - `RootCoordinator`'s `.migrationCoordFlow(.path(.element(_, .sending(.delegate
+    ///     (.viewTransaction)))))` case — closes `state.path` directly (the flow is already past
+    ///     commit by the time this fires) WITHOUT routing through `tearDownMigrationCoordFlow`, so
+    ///     it disarms independently rather than being missed.
+    ///   - `RootInitialization.openMigrationCoordFlow` (the notification-tap deep link) —
+    ///     wholesale-REPLACES `migrationCoordFlowState` with a fresh `.initial`, discarding
+    ///     whatever was recorded, and can fire while the flow is ALREADY open (R8-T6 already
+    ///     established this exact hazard class for the send-wait-hold flag — see
+    ///     `notificationTapTeardownReleasesLiveSendWaitHoldAndUnfencesRetryStart`'s doc); disarms
+    ///     the OLD recorded account here, before the reset discards the only record of which
+    ///     account it was armed for.
+    ///
+    /// Every one of these reads back `MigrationCoordFlow.State.presentedMigrationFlowAccountUUID`
+    /// — the account THIS flow instance recorded as its owner at open — rather than whatever
+    /// `Root.State.selectedWalletAccount` happens to read at close time, so an account switch
+    /// racing the close can never disarm (or arm) the wrong account's signal. Mirrors
+    /// `MigrationCoordFlow.State.pendingKeystoneSigningAccountUUID`'s identical "record the owner,
+    /// don't trust the account selected at close time" precedent.
+    private let presentedFlowAccountUUIDs = OSAllocatedUnfairLock<Set<AccountUUID>>(initialState: [])
 
     /// R8-T3 (#23): every underlying SDK/storage read below happens exactly ONCE — the pre-fix
     /// version read `state` via `normalizedState`'s own `migrationState` call and AGAIN inside
@@ -1155,10 +1193,22 @@ final class MigrationManagerImpl: @unchecked Sendable {
                     // per-reconcile re-propose unsafe. Already-evaluated (true OR false) accounts
                     // skip straight past this, regardless of how many more reconciles run before
                     // the account eventually leaves `.complete`.
-                    // MOB-1511 (W2): the completed-rounds counter rides the SAME exactly-once gate
-                    // — one increment per run completion, however many reconciles observe it.
-                    gateStorage.incrementCompletedRounds(for: accountUUID)
-                    await evaluateMigrationRemainder(for: accountUUID)
+                    //
+                    // MOB-1513 (H3 guard): the gate above gets this call down to once per
+                    // transition, but says nothing about WHEN that one call may land — a migration
+                    // screen for this SAME account may be mid-review of an uncommitted propose
+                    // right now (see `evaluateMigrationRemainder`'s doc for the exact hazard). Skip
+                    // the WHOLE branch (evaluate AND its paired rounds increment) while that's true
+                    // for this account — neither `remainderPending` nor `completedRounds` update
+                    // this pass, so they stay paired; the account is left exactly as if this pass
+                    // had never observed the transition, and the NEXT reconcile pass (there are
+                    // many call sites) retries once the flow closes. Delayed, never lost.
+                    if !isMigrationFlowPresented(accountUUID: accountUUID) {
+                        // MOB-1511 (W2): the completed-rounds counter rides the SAME exactly-once
+                        // gate — one increment per run completion, however many reconciles observe it.
+                        gateStorage.incrementCompletedRounds(for: accountUUID)
+                        await evaluateMigrationRemainder(for: accountUUID)
+                    }
                 }
 
                 // MOB-1496 (W2): a run abandoned/reset out from under a stale persisted schedule —
@@ -1209,6 +1259,43 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// On a THROW, persists NOTHING — the flag is left `nil` so a LATER reconcile pass retries
     /// (self-healing: a transient propose failure must not wrongly freeze the flag at a stale
     /// value, and must not be mistaken for "evaluated, genuinely nothing pending").
+    ///
+    /// MOB-1513 (H3, guarded): the "once per transition" gate above is confirmed — this is called
+    /// ONLY when `state == .complete` AND `remainderPending(for:) == nil`, never on every
+    /// `reconcile()` pass. But `reconcile()` itself is called from many, unrelated places —
+    /// `RootInitialization.swift` (foreground entry, `.retryStart`, the BG session's
+    /// `handleLandedBroadcast`, `.migrationSyncGateChanged`), `MigrationCoordFlowCoordinator.swift`
+    /// (right after a schedule/note-split store, ×3), `MigrationCommitPipeline.swift`,
+    /// `MigrationSendingStore.swift`, `MigrationNoteSplitStore.swift` — none of which know whether
+    /// SOME OTHER account's flow currently has an uncommitted `proposeMigrationTransfers` result on
+    /// screen. `reconcile()` walks EVERY candidate account each time it runs, so the one guaranteed
+    /// call this gate allows could land while the user is reviewing a plan for the SAME account that
+    /// reached `.complete` — e.g. "Migrate Anyway" (`MigrationCoordFlowCoordinator.migrateAnyway`/
+    /// `MigrationComplete`'s `dustResolution`), whose visibility is driven by `migrationSummary`'s
+    /// OWN independent residual read (`scheduleStorage`/`residualAfterMigration`), NOT by this
+    /// method's `remainderPending` flag — so a user can reach and act on that screen (kicking off
+    /// its OWN fresh propose) before this evaluation has run even once. If BOTH proposes were in
+    /// flight for the same account, whichever landed second would win the SDK's plan cache and the
+    /// other's eventual commit would fail `migrationPlanStale`.
+    ///
+    /// GUARDED now: `reconcile()`'s caller (see the call site above) skips this entire branch —
+    /// including the paired `completedRounds` increment — while `isMigrationFlowPresented
+    /// (accountUUID:)` reads `true` for this account. That signal is armed by
+    /// `MigrationCoordFlowCoordinator.onAppear`'s genuine-flow-start branch
+    /// (`state.path.isEmpty`) and disarmed by every production close/replace site for
+    /// `Root.State.Path.migrationCoordFlow` — see `presentedFlowAccountUUIDs`'s doc for the full,
+    /// verified list (it ended up being FOUR sites, not three: `RootCoordinator
+    /// .tearDownMigrationCoordFlow`, shared by `.flowFinished`/`.switchServerRequested`/the inline
+    /// `.home(.walletAccountTapped)` teardown; `RootCoordinator`'s `.sending(.delegate
+    /// (.viewTransaction))` case, which closes the path WITHOUT routing through that helper; and
+    /// `RootInitialization.openMigrationCoordFlow`, which can wholesale-replace
+    /// `migrationCoordFlowState` while the flow is already open). A skip never loses the
+    /// evaluation — `remainderPending` stays `nil` (un-evaluated), so the NEXT `reconcile()` pass
+    /// (there are many call sites) retries once the flag clears: delayed, never lost. Missing a
+    /// disarm site would leave the flag stuck `true` forever, permanently blocking this account's
+    /// remainder evaluation — worse than the race this guard closes — which is why every site above
+    /// was verified against HEAD rather than assumed from the three the original (unguarded) version
+    /// of this doc named.
     private func evaluateMigrationRemainder(for accountUUID: AccountUUID) async {
         guard let schedule = try? await sdkSynchronizer.proposeMigrationTransfers(accountUUID, false) else { return }
         gateStorage.setRemainderPending(!schedule.transfers.isEmpty, for: accountUUID)
@@ -1339,6 +1426,31 @@ final class MigrationManagerImpl: @unchecked Sendable {
     func isMigrationRemainderPending(accountUUID: AccountUUID?) -> Bool {
         guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return false }
         return gateStorage.remainderPending(for: resolvedAccountUUID) ?? false
+    }
+
+    /// MOB-1513 (H3 guard): arms/disarms `accountUUID`'s entry in `presentedFlowAccountUUIDs` — see
+    /// that property's doc for the full production call-site list. `nil` is a no-op either
+    /// direction: there is no account to key the signal to, and every caller already resolves the
+    /// concrete account it means before calling — this never falls back to `selectedWalletAccount`
+    /// (doing so could silently arm/disarm the WRONG account's signal during an in-flight account
+    /// switch, which is exactly the stranding hazard this guard exists to avoid).
+    func setMigrationFlowPresented(accountUUID: AccountUUID?, isPresented: Bool) {
+        guard let resolvedAccountUUID = accountUUID else { return }
+        presentedFlowAccountUUIDs.withLock { accountUUIDs in
+            if isPresented {
+                accountUUIDs.insert(resolvedAccountUUID)
+            } else {
+                accountUUIDs.remove(resolvedAccountUUID)
+            }
+        }
+    }
+
+    /// MOB-1513 (H3 guard): reads whether `accountUUID` currently has a propose-consuming migration
+    /// screen on screen — see `presentedFlowAccountUUIDs`'s doc. `reconcile()`'s own gate (below)
+    /// is the one production reader; exposed (not `private`) so tests can round-trip the flag
+    /// directly against the impl, mirroring `isPendingBackgroundTorPrompt`'s precedent.
+    func isMigrationFlowPresented(accountUUID: AccountUUID) -> Bool {
+        presentedFlowAccountUUIDs.withLock { $0.contains(accountUUID) }
     }
 
     /// MOB-1480: the migration SDK simulator's debug panel "Reset app migration flags" control.
