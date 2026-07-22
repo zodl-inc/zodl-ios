@@ -665,7 +665,14 @@ struct MigrationFailureRoutingTests {
             }
             #expect(exhaustedRoute == MigrationBroadcastFailureRoute.providerExhausted(torEnabled: false))
 
-            await impl.recordTransferBroadcast(accountUUID: account.id, result: MigrationTransferResult.success(txId: "tx-landed"))
+            // MOB-1513 (B4): `recordTransferBroadcast` reads the migration state for its
+            // prep-phase guard — `.noOp` answers `.notStarted` (not the split phase), keeping the
+            // schedule-append path this test exercises.
+            await withDependencies {
+                $0.sdkSynchronizer = .noOp
+            } operation: {
+                await impl.recordTransferBroadcast(accountUUID: account.id, result: MigrationTransferResult.success(txId: "tx-landed"))
+            }
             #expect(storages.failureRoutingStorage.episodeHosts(for: account.id).isEmpty)
             #expect(storages.failureRoutingStorage.hadBroadcast(for: account.id) == true)
 
@@ -697,7 +704,12 @@ struct MigrationFailureRoutingTests {
             #expect(route == MigrationBroadcastFailureRoute.torHold)
             #expect(storages.failureRoutingStorage.torHoldActive(for: account.id) == true)
 
-            await impl.recordTransferBroadcast(accountUUID: account.id, result: MigrationTransferResult.success(txId: "tx-after-hold"))
+            // MOB-1513 (B4): see the prep-phase-guard note above — `.noOp` reads `.notStarted`.
+            await withDependencies {
+                $0.sdkSynchronizer = .noOp
+            } operation: {
+                await impl.recordTransferBroadcast(accountUUID: account.id, result: MigrationTransferResult.success(txId: "tx-after-hold"))
+            }
 
             #expect(storages.failureRoutingStorage.torHoldActive(for: account.id) == false)
         }
@@ -758,7 +770,12 @@ struct MigrationFailureRoutingTests {
 
     @Test func recordTransferBroadcastSuccessSetsHadBroadcast() async throws {
         try await withImpl("testRecordTransferBroadcastSuccessSetsHadBroadcast") { impl, account, storages in
-            await impl.recordTransferBroadcast(accountUUID: account.id, result: MigrationTransferResult.success(txId: "tx-0"))
+            // MOB-1513 (B4): see the prep-phase-guard note above — `.noOp` reads `.notStarted`.
+            await withDependencies {
+                $0.sdkSynchronizer = .noOp
+            } operation: {
+                await impl.recordTransferBroadcast(accountUUID: account.id, result: MigrationTransferResult.success(txId: "tx-0"))
+            }
 
             #expect(storages.failureRoutingStorage.hadBroadcast(for: account.id) == true)
         }
@@ -766,7 +783,12 @@ struct MigrationFailureRoutingTests {
 
     @Test func recordTransferBroadcastNonSuccessDoesNotSetHadBroadcast() async throws {
         try await withImpl("testRecordTransferBroadcastNonSuccessDoesNotSetHadBroadcast") { impl, account, storages in
-            await impl.recordTransferBroadcast(accountUUID: account.id, result: MigrationTransferResult.networkError(retryable: true))
+            // MOB-1513 (B4): see the prep-phase-guard note above — `.noOp` reads `.notStarted`.
+            await withDependencies {
+                $0.sdkSynchronizer = .noOp
+            } operation: {
+                await impl.recordTransferBroadcast(accountUUID: account.id, result: MigrationTransferResult.networkError(retryable: true))
+            }
 
             #expect(storages.failureRoutingStorage.hadBroadcast(for: account.id) == false)
         }

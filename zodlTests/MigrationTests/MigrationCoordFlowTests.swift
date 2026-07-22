@@ -567,25 +567,6 @@ import ComposableArchitecture
         #expect(completeState.dust == Zatoshi(800_000))
     }
 
-    @MainActor @Test func onAppearWithNoteSplitProgressRouteAppendsFlowRootSplittingScreen() async {
-        let store = TestStore(initialState: MigrationCoordFlow.State()) {
-            MigrationCoordFlow()
-        } withDependencies: {
-            $0.migrationManager.reentryRoute = { .noteSplitProgress }
-        }
-        store.exhaustivity = .off
-
-        await store.send(.onAppear)
-        await store.receive(\.pushNextPermissionStep)
-
-        guard case let .noteSplit(noteSplitState) = try? #require(store.state.path.last) else {
-            Issue.record("Expected .noteSplit on the path")
-            return
-        }
-        #expect(noteSplitState.phase == MigrationNoteSplit.State.Phase.splitting)
-        #expect(noteSplitState.isFlowRoot == true)
-    }
-
     @MainActor @Test func onAppearWithReviewManualRouteAppendsFlowRootManualStepReviewScreen() async {
         let rows: [MigrationTransferRow] = [
             MigrationTransferRow(id: "0", index: 0, amount: Zatoshi(1_000), status: .sent, hoursFromNow: 0),

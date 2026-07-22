@@ -130,13 +130,12 @@ struct SDKSynchronizerClient: Sendable {
     /// Whether the account's Orchard notes must be split before migration. THROWS before the
     /// wallet's first completed sync (no chain tip known yet).
     var isNoteSplitNeeded: @Sendable (AccountUUID) async throws -> Bool
-    /// The optimal note split for the account's spendable Orchard balance.
+    /// The optimal note split for the account's spendable Orchard balance — propose-side caching
+    /// for the sign-only commit chain (MOB-1513 B4: `signAndStoreMigrationSchedule` echo-validates
+    /// the split against the plan cache this call writes; the old broadcast-bearing
+    /// `submitNoteSplit` monolith is retired — preps broadcast via
+    /// `executeNextPendingMigrationTransfer`).
     var prepareNoteSplit: @Sendable (AccountUUID) async throws -> NoteSplitProposal
-    /// Signs, broadcasts, and records the account's note-split transaction (software path — needs
-    /// the account's USK). Broadcast-bearing: guarded by the transaction guard in the LiveKey.
-    var submitNoteSplit: @Sendable (
-        AccountUUID, NoteSplitProposal, UnifiedSpendingKey, MigrationNetworkPrivacyOptions
-    ) async throws -> MigrationTransferResult
     /// The full scheduled-migration schedule for the account's spendable Orchard balance.
     var proposeMigrationTransfers: @Sendable (AccountUUID, _ includeResidual: Bool) async throws -> MigrationSchedule
     /// MOB-1513: proposes the immediate (single-transaction) migration — an ordinary send-max
@@ -232,24 +231,18 @@ struct SDKSynchronizerClient: Sendable {
     /// Stores Keystone-signed note-split preparation PCZTs — thin wrap of
     /// `storeSignedNoteSplitPCZTs(accountUUID:_:)`, discarding the returned
     /// `PreparedMigrationTransfer` (a storage receipt with a zeroed txid — the broadcastable value
-    /// comes from `broadcastStoredNoteSplit`). All-or-nothing: every signed PCZT in the array is
+    /// is served by the next-due lane, `executeNextPendingMigrationTransfer`). All-or-nothing: every signed PCZT in the array is
     /// applied together. MOB-1496 (final engine): the old singular pair's C-1/C-1b run-shadowing
     /// hazard — "this store unconditionally starts a new run, so it MUST precede
     /// `storeSignedMigrationTransactions` or a shadow run strands the schedule" — is GONE: the run is
     /// created at PCZT-build time (`proposeNoteSplitPCZTs`, above), the engine refuses to double-commit
     /// a run, and this store and `storeSignedMigrationTransactions` are now order-independent
     /// per-transaction signature applications over the SAME already-created run. NOTE: the app still
-    /// stores these preps before broadcasting them (`broadcastStoredNoteSplit`) — the resume/retry lane
-    /// depends on stored-before-broadcast — but that ordering is an app-side choice now, not an engine
-    /// requirement. NOT guard-wrapped: local store, no broadcast — same reasoning as
-    /// `storeSignedMigrationTransactions`.
+    /// stores these preps before broadcasting them (via the next-due lane) — MOB-1513 B4's
+    /// first-delivery kick depends on stored-before-broadcast — but that ordering is an app-side
+    /// choice now, not an engine requirement. NOT guard-wrapped: local store, no broadcast — same
+    /// reasoning as `storeSignedMigrationTransactions`.
     var storeSignedNoteSplits: @Sendable (AccountUUID, [MigrationSignedTransferPczt]) async throws -> Void
-    /// Broadcasts the Keystone note-split preps already stored via `storeSignedNoteSplits`, through
-    /// `executeNextPendingMigrationTransfer`. Idempotent by construction — a retry simply re-asks the
-    /// engine what's next-due, never re-stores — unlike the deleted `submitSignedNoteSplit` composite
-    /// this pair replaces, whose retry re-ran the (by-then-already-consumed) store and threw. Guard-
-    /// wrapped: broadcast-bearing.
-    var broadcastStoredNoteSplit: @Sendable (AccountUUID, MigrationNetworkPrivacyOptions) async throws -> MigrationTransferResult
     var proposeMigrationPCZTs: @Sendable (AccountUUID, MigrationSchedule) async throws -> [MigrationUnsignedTransferPczt]
     var storeSignedMigrationTransactions: @Sendable (AccountUUID, [MigrationSignedTransferPczt]) async throws -> Void
     // Batch UR encoding of N migration PCZTs into ONE animated-QR session — [ext]: JOINT SDK +
