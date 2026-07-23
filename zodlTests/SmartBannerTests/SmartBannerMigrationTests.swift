@@ -516,6 +516,11 @@ import ComposableArchitecture
     // synced — so the banner opens on the next tick, with no timer. Red before the fix: the
     // empty-slot gate doesn't run, so the re-check never fires and (in exhaustive mode) none of the
     // asserted follow-up actions are produced.
+    //
+    // B2 fix wave: the empty-slot arm is now gated on `isIronwoodActivated()` (it fired the full
+    // `bannerVariant` hydration on every ~2 s `.upToDate` tick even pre-activation, where there is no
+    // migration to open). The two tests below exercise the ACTIVATED empty-slot arm (unchanged
+    // behavior); the pre-activation "no hydration" case has its own test after them.
 
     @MainActor @Test func syncReachingUpToDateWithEmptySlotOpensRequiredMigrationBanner() async {
         let account = walletAccount(idByte: 34)
@@ -525,13 +530,21 @@ import ComposableArchitecture
         state.priorityContent = nil
         state.priorityContentRequested = nil
         state.isOpen = false
+        // Pre-latched activated (B2 fix wave): the empty-slot arm is now activation-gated, and pre-
+        // latching keeps THIS `.synchronizerStateChanged` from ALSO reading as a first-observation
+        // activation flip (which would fire its own re-evaluation) — isolating the upToDate re-check.
+        state.lastObservedIronwoodActivation = true
         // `.complete`, not the `State()` default (`.required`), so the re-check landing `.required`
         // below is an observable change — same observability idiom as the occupied-slot tests above.
         state.migrationBannerVariant = MigrationBannerVariant.complete
         let store = TestStore(initialState: state) {
             SmartBanner()
         } withDependencies: {
-            $0.migrationManager.isIronwoodActivated = { false }
+            // MOB-1513 (B2 fix wave): the empty-slot re-check is now gated on Ironwood activation —
+            // this scenario (a post-restore migratable balance surfacing) is inherently post-
+            // activation, so it runs on the activated path. The occupied-slot Defect-B tests above
+            // keep `false`; only the empty-slot arm gained the gate.
+            $0.migrationManager.isIronwoodActivated = { true }
             $0.migrationManager.bannerVariant = { accountUUID in
                 #expect(accountUUID == account.id)
                 return MigrationBannerVariant.required
@@ -543,7 +556,8 @@ import ComposableArchitecture
         upToDateState.syncStatus = SyncStatus.upToDate
 
         await store.send(.synchronizerStateChanged(upToDateState.redacted)) {
-            $0.lastObservedIronwoodActivation = false
+            // `lastObservedIronwoodActivation` is unchanged — pre-latched `true` above, so this tick
+            // is a steady-state activated observation, not a flip.
             $0.isSyncTimedOutAutoAppeareDisabled = false
             $0.lastKnownBlocksRemaining = -1
             $0.synchronizerStatusSnapshot = SyncStatusSnapshot.snapshotFor(state: SyncStatus.upToDate)
@@ -577,10 +591,16 @@ import ComposableArchitecture
         state.priorityContent = nil
         state.priorityContentRequested = nil
         state.isOpen = false
+        // Pre-latched activated (B2 fix wave): see the companion test above — keeps this tick from
+        // reading as a first-observation activation flip, isolating the upToDate empty-slot re-check.
+        state.lastObservedIronwoodActivation = true
         let store = TestStore(initialState: state) {
             SmartBanner()
         } withDependencies: {
-            $0.migrationManager.isIronwoodActivated = { false }
+            // MOB-1513 (B2 fix wave): the empty-slot re-check is now activation-gated, so this
+            // activated-path companion keeps `true` — the pre-activation "no hydration" behavior has
+            // its own test below.
+            $0.migrationManager.isIronwoodActivated = { true }
             $0.migrationManager.bannerVariant = { _ in nil }
         }
         store.dependencies.mainQueue = .immediate
@@ -589,7 +609,7 @@ import ComposableArchitecture
         upToDateState.syncStatus = SyncStatus.upToDate
 
         await store.send(.synchronizerStateChanged(upToDateState.redacted)) {
-            $0.lastObservedIronwoodActivation = false
+            // Unchanged — pre-latched `true` above, so this is a steady-state activated observation.
             $0.isSyncTimedOutAutoAppeareDisabled = false
             $0.lastKnownBlocksRemaining = -1
             $0.synchronizerStatusSnapshot = SyncStatusSnapshot.snapshotFor(state: SyncStatus.upToDate)
@@ -598,6 +618,51 @@ import ComposableArchitecture
         await store.receive(\.openBannerRequest)
         await store.receive(\.migrationVariantUpdated)
         // Nil variant with an empty slot: nothing opens, the slot stays empty.
+        #expect(store.state.priorityContent == nil)
+        #expect(!store.state.isOpen)
+    }
+
+    /// B2 fix wave: PRE-ACTIVATION, an empty-slot `.upToDate` tick must perform NO migration
+    /// hydration. The arm is migration-specific and there is nothing to open before Ironwood
+    /// activates, yet the pre-fix arm ran the full `bannerVariant` hydration (5 async reads incl. a
+    /// rust `migrationState`) on EVERY ~2 s re-emission, forever, on every synced wallet. With
+    /// `isIronwoodActivated()` false the arm is gated out: `bannerVariant` is never called (asserted
+    /// via a call counter) and — exhaustive mode — no `.closeBanner`/`.migrationVariantUpdated`
+    /// follows; the slot stays empty. Red under the ungated arm (it would call `bannerVariant` and
+    /// drive the open sequence).
+    @MainActor @Test func syncReachingUpToDateWithEmptySlotPreActivationDoesNoMigrationHydration() async {
+        let account = walletAccount(idByte: 36)
+        let bannerVariantCalls = LockIsolated<Int>(0)
+        var state = SmartBanner.State()
+        state.$selectedWalletAccount.withLock { $0 = account }
+        state.priorityContent = nil
+        state.priorityContentRequested = nil
+        state.isOpen = false
+        let store = TestStore(initialState: state) {
+            SmartBanner()
+        } withDependencies: {
+            $0.migrationManager.isIronwoodActivated = { false }
+            $0.migrationManager.bannerVariant = { _ in
+                bannerVariantCalls.withValue { $0 += 1 }
+                return nil
+            }
+        }
+        store.dependencies.mainQueue = .immediate
+
+        var upToDateState = SynchronizerState.zero
+        upToDateState.syncStatus = SyncStatus.upToDate
+
+        // Only `syncStatusChangedEffect`'s own synchronous mutations run; the empty-slot arm is gated
+        // out (activation false), so NOTHING is received afterwards — exhaustive mode is the proof.
+        await store.send(.synchronizerStateChanged(upToDateState.redacted)) {
+            $0.lastObservedIronwoodActivation = false
+            $0.isSyncTimedOutAutoAppeareDisabled = false
+            $0.lastKnownBlocksRemaining = -1
+            $0.synchronizerStatusSnapshot = SyncStatusSnapshot.snapshotFor(state: SyncStatus.upToDate)
+        }
+
+        // No manager hydration: the five-read `bannerVariant` entry point was never invoked.
+        #expect(bannerVariantCalls.value == 0)
         #expect(store.state.priorityContent == nil)
         #expect(!store.state.isOpen)
     }

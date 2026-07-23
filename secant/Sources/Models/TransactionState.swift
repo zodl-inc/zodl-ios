@@ -51,7 +51,10 @@ struct TransactionState: Equatable, Identifiable {
     var totalReceived: Zatoshi?
     /// MOB-1513 (E1): the SDK's per-transaction note counts, carried so the display amount can adopt
     /// Android's migration-self-send fallback (see `netValue`). Default 0 for the non-SDK inits (a
-    /// pending send, a swap deposit) — none of which is the note-less migration shape.
+    /// pending send, a swap deposit). The swap-deposit init DOES land on the same 0/0 "note-less"
+    /// shape, but it sets `totalReceived = .zero`; `netValue`'s `totalReceived.amount > 0` guard keeps
+    /// that (and any other genuinely amount-less state) on the `zecAmount` path — only a real
+    /// migration crossing, which carries a positive `totalReceived`, takes the fallback.
     var sentNoteCount = 0
     var receivedNoteCount = 0
 
@@ -304,7 +307,7 @@ struct TransactionState: Equatable, Identifiable {
         // (TransactionDetailsView) render this property, so both pick up the fallback consistently.
         // Every other transaction kind keeps at least one note, so the guard leaves them
         // byte-identical.
-        if sentNoteCount == 0, receivedNoteCount == 0, let totalReceived {
+        if sentNoteCount == 0, receivedNoteCount == 0, let totalReceived, totalReceived.amount > 0 {
             return totalReceived.atLeastThreeDecimalsZashiFormatted()
         }
         return zecAmount.atLeastThreeDecimalsZashiFormatted()

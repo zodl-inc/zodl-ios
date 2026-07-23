@@ -3,12 +3,14 @@
 //  zodl
 //
 //  Shared header view for migration screens (MOB-1460): the account badge overlapped by a
-//  circular Ironwood ("coins-swap") mark. Used by MigrationEntry and reused by later migration
-//  screens. MOB-1461 parameterizes the trailing badge so MigrationNoteSplit can swap it per phase
-//  (spinner while splitting, success check once confirmed) while MigrationEntry keeps the default.
-//  MOB-1468 parameterizes the leading brandmark by account vendor: `.zcash` (default) keeps the
-//  ZODL brandmark every existing call site already renders; `.keystone` swaps in the Keystone
-//  brandmark `SignWithKeystoneView`'s account card uses — no new assets.
+//  circular Ironwood ("coins-swap") mark. MOB-1461 added the trailing-badge parameter (a `spinner`
+//  while a phase runs, a `successCheck` once confirmed) for the per-phase splitting screen; MOB-1513
+//  (R2) removed that screen (the split phase folded into Migration Progress), so the live consumers —
+//  MigrationEntry and MigrationReviewTransfer — both render the default `.coinsSwap` badge, and the
+//  spinner/success variants now survive only in this file's previews. MOB-1468 parameterizes the
+//  leading brandmark by account vendor: `.zcash` (default) keeps the ZODL brandmark every existing
+//  call site already renders; `.keystone` swaps in the Keystone brandmark `SignWithKeystoneView`'s
+//  account card uses — no new assets.
 //
 
 import SwiftUI
