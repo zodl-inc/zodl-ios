@@ -27,6 +27,13 @@
 //  purely additive: `windowMissedNote` (the existing "Sending now will delay…" footer) keeps its
 //  copy, position, and gate unchanged.
 //
+//  MOB-1513 (A2): the shared timeline no longer relabels `store.rows`' own index 0 as "Split
+//  Balance" — an ordinary transfer could be `index == 0` too (and, once actually sent, would have
+//  wrongly rendered this screen's "Done"/green treatment below). This screen now passes the store's
+//  synthesized `splitRow` in separately, ahead of `rows` (unchanged: every real transfer, numbered
+//  1..N, its own status/caption untouched) — always COMPLETED, since post-commit the split has
+//  definitely already broadcast.
+//
 
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
@@ -57,11 +64,12 @@ struct MigrationStatusView: View {
                         MigrationTransferTimeline(
                             rows: store.rows,
                             caption: caption(for:),
+                            splitRow: store.splitRow,
                             skeletonPendingCaptions: store.isRescheduling,
                             captionStyle: { row in
                                 // MOB-1511 (W4): the Split Balance row's "Done" renders green,
                                 // matching its check badge; every other caption keeps the default.
-                                row.index == 0 && row.status == .sent
+                                row.kind == .splitBalance
                                     ? Design.Utility.SuccessGreen._600 as Colorable
                                     : Design.Text.tertiary
                             }
@@ -130,8 +138,10 @@ struct MigrationStatusView: View {
     private func caption(for row: MigrationTransferRow) -> String {
         // MOB-1511 (W4, Figma 3480:7638): the completed Split Balance row reads "Done" (green, via
         // `captionStyle` below) instead of a sent-ago timestamp — split completion is a state, not
-        // an event the user tracks by time.
-        if row.index == 0, row.status == .sent {
+        // an event the user tracks by time. MOB-1513 (A2): keyed off `kind` now, not `index == 0` —
+        // an ordinary sent Transfer 1 must keep its own real "Sent Nh ago"/"Sent N min ago" caption
+        // below, not this one.
+        if row.kind == .splitBalance {
             return String(localizable: .migrationStatusDone)
         }
         switch row.status {

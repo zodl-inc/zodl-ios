@@ -89,6 +89,29 @@ struct MigrationStatus {
             !rows.contains { $0.status == MigrationTransferRow.Status.overdue }
         }
 
+        /// MOB-1513 (A2): mirrors `MigrationTransferPlan.State.splitRow` for this post-commit
+        /// screen — but COMPLETED (`.sent`) rather than merely ready, since by the time any
+        /// Status/Resume/reschedule-confirmed presentation is reachable the note-split has
+        /// definitely already broadcast (a precondition of scheduling any transfer at all — see
+        /// `MigrationTransferTimeline`'s header doc for the shared-component side of this fix).
+        /// `nil` before any rows have loaded. Computed off `rows` (not stored) so it can never
+        /// drift from whatever `rows` currently holds — including the coordinator's own re-entry
+        /// hydration (`statusResumeState`/`statusProgressState`), which constructs `rows` directly
+        /// without going through `.statusLoaded` — and so it doesn't force every
+        /// `.statusLoaded`/`.rescheduleCompleted` call site (and every existing exhaustive
+        /// `TestStore` assertion) to separately track a parallel stored field.
+        var splitRow: MigrationTransferRow? {
+            guard !rows.isEmpty else { return nil }
+            return MigrationTransferRow(
+                id: "split-balance",
+                index: -1,
+                amount: rows.reduce(Zatoshi.zero) { $0 + $1.amount },
+                status: .sent,
+                hoursFromNow: 0,
+                kind: .splitBalance
+            )
+        }
+
         init(
             presentation: Presentation = .progress,
             rows: IdentifiedArrayOf<MigrationTransferRow> = [],

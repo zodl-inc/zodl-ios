@@ -97,6 +97,37 @@ import ComposableArchitecture
         #expect(state.remainingCount == 0)
     }
 
+    // MARK: - MOB-1513 (A2): synthesized COMPLETED split row (post-commit)
+
+    /// Default state (no rows loaded yet): nothing to summarize, so no split row either.
+    @MainActor @Test func splitRowIsNilBeforeAnyRowsHaveLoaded() async {
+        let state = MigrationStatus.State()
+
+        #expect(state.splitRow == nil)
+    }
+
+    /// The defect this fixes (status-screen half): the shared timeline component used to relabel
+    /// `rows[0]` as "Split Balance" — an ORDINARY transfer, showing its own status/amount instead
+    /// of the real note-split's. Post-commit, the split has definitely already broadcast (a
+    /// precondition of scheduling any transfer at all), so the synthesized row here is always
+    /// COMPLETED (`.sent`) — never merely "ready" the way the pre-commit Plan screen's is.
+    @MainActor @Test func remainingCountStaysTransferOnlyEvenThoughASplitRowIsSynthesized() async {
+        var state = MigrationStatus.State()
+        state.rows = [
+            MigrationTransferRow(id: "0", index: 0, amount: Zatoshi(1_000), status: .sent, hoursFromNow: 18),
+            MigrationTransferRow(id: "1", index: 1, amount: Zatoshi(2_000), status: .active, hoursFromNow: 0)
+        ]
+
+        // The split row exists alongside these two transfers, rendered completed...
+        #expect(state.splitRow?.kind == MigrationTransferRow.Kind.splitBalance)
+        #expect(state.splitRow?.status == .sent)
+        #expect(state.splitRow?.amount == Zatoshi(3_000))
+        // ...but `remainingCount` (and, by the same `rows`-only construction, `isSendNowDisabled`)
+        // keeps counting ONLY the transfers — the split is a separate field, never folded into
+        // `rows` itself, so these counts can't shift.
+        #expect(state.remainingCount == 1)
+    }
+
     @MainActor @Test func delegateActionProducesNoStateChangeOrEffects() async {
         let store = TestStore(initialState: MigrationStatus.State()) {
             MigrationStatus()
@@ -228,6 +259,38 @@ import ComposableArchitecture
         #expect(store.state.rows[id: "1"]?.isBroadcasting == true)
         // R8-T6: row "1" is `.active`, not `.overdue` -> still no due transfer -> CTA disabled.
         #expect(store.state.isSendNowDisabled == true)
+
+        stateStream.send(completion: .finished)
+        await store.finish()
+    }
+
+    @MainActor @Test func onAppearSynthesizesCompletedSplitRowAheadOfTransfers() async {
+        let stateStream = PassthroughSubject<MigrationState, Never>()
+        let rows: [MigrationTransferRow] = [
+            MigrationTransferRow(id: "0", index: 0, amount: Zatoshi(351_220_000), status: .sent, hoursFromNow: 6),
+            MigrationTransferRow(id: "1", index: 1, amount: Zatoshi(287_410_000), status: .active, hoursFromNow: 0)
+        ]
+        let store = TestStore(initialState: MigrationStatus.State()) {
+            MigrationStatus()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.migrationManager.migrationTransfers = { _ in rows }
+            $0.migrationManager.migrationSummary = { _ in MigrationSummary.zero }
+            $0.migrationManager.stateEvents = { _ in stateStream.eraseToAnyPublisher() }
+            $0.migrationManager.isMigrationTorHoldActive = { _ in false }
+        }
+
+        await store.send(.onAppear)
+        await store.receive(\.statusLoaded) {
+            $0.rows = IdentifiedArrayOf(uniqueElements: rows)
+        }
+
+        #expect(store.state.splitRow?.kind == MigrationTransferRow.Kind.splitBalance)
+        #expect(store.state.splitRow?.status == .sent)
+        #expect(store.state.splitRow?.amount == Zatoshi(351_220_000 + 287_410_000))
+        // The two real transfers are untouched — same statuses/amounts `migrationTransfers()`
+        // returned, no third "split" entry folded in.
+        #expect(store.state.rows.count == 2)
 
         stateStream.send(completion: .finished)
         await store.finish()
