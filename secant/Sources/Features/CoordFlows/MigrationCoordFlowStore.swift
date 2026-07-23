@@ -201,6 +201,21 @@ struct MigrationCoordFlow {
         /// teardown that runs AFTER an account switch (the cross-account notification tap) still
         /// cancels the stranded run on the account that built it, not the newly selected one.
         var pendingKeystoneSigningAccountUUID: AccountUUID?
+        /// MOB-1513 (E3): the ≤35-per-QR-session slices a batch ABOVE the cap
+        /// (`keystoneMaxPCZTsPerRound`) is signed across, in order (preparation PCZTs first, round 0
+        /// — see `chunkKeystoneBatch`). NON-EMPTY only while a genuinely multi-round ceremony is in
+        /// flight: a batch at or below the cap stays a single session and never populates these, so
+        /// every downstream step behaves exactly as the pre-E3 single-session ceremony did. Reset on
+        /// completion, rejection, and abandonment. In-memory, like the rest of the ceremony state —
+        /// process death mid-ceremony restarts it (the documented existing behavior).
+        var keystoneRounds: [[MigrationUnsignedTransferPczt]] = []
+        /// MOB-1513 (E3): 0-based index of the round currently on the `keystoneSign` screen. `0` for a
+        /// single-round ceremony (which never advances) and the ONLY round the firmware gate runs on.
+        var keystoneRoundIndex = 0
+        /// MOB-1513 (E3): the re-paired signed entries accumulated across every APPLIED round — handed
+        /// as ONE fully-accumulated batch to the same store entry the single-round ceremony used, once
+        /// the last round is applied (completion only then, never mid-ceremony).
+        var keystoneAccumulatedSigned: [MigrationSignedTransferPczt] = []
         /// MOB-1513 (H3 guard): the account THIS flow instance opened for — recorded synchronously
         /// at `.onAppear`'s genuine-flow-start branch (`state.path.isEmpty`), alongside arming
         /// `migrationManager.setMigrationFlowPresented`. Every close/replace site reads this back
@@ -334,6 +349,14 @@ struct MigrationCoordFlow {
         /// `keystoneSign` element inline in the `.path(.element(...))` case would race
         /// `.forEach(\.path, action:)`'s delivery of that same action to the (then-missing) element.
         case keystoneSignRejected
+        /// Internal: MOB-1513 (E3) — a multi-round Keystone ceremony finished a round with more
+        /// rounds to go. Advances to the next round: pops `scan` (real round-trip only; the
+        /// simulator bypass never pushed one) and re-arms `keystoneSign` with the next slice. Sent
+        /// (not done inline in the `.scan(.foundPCZTBatch)` / `.simulateSignature` handler) for the
+        /// SAME reason `keystoneSignRejected`/`keystoneScanAbandoned` defer THEIR pops — popping the
+        /// element `.forEach(\.path)` is about to deliver the current action to would race it into a
+        /// "missing element" runtime error.
+        case keystoneAdvanceToNextRound
         /// Internal: an empty/mismatched scanned batch, OR a split-store failure (MOB-1496 C-1 fix,
         /// final review R6 — nothing was stored, so there is nothing to resume), abandons the signing
         /// session — pops back to the initiating screen (deferred like `keystoneSignRejected`) and

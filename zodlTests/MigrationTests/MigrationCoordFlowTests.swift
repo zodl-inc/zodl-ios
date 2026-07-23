@@ -1327,6 +1327,223 @@ import ComposableArchitecture
         #expect(signState.pczts == pczts)
     }
 
+    // MARK: - MOB-1513 (E3): Keystone ≤35-per-QR-session cap + multi-round ceremony
+
+    /// A batch ABOVE the 35-per-session cap is sliced into rounds — the `keystoneSign` screen is
+    /// armed with ONLY round 0 (35 PCZTs), the remaining rounds are stashed, and the accumulator
+    /// starts empty. Red-first: a 36-item batch produces 2 rounds (1 today).
+    @MainActor @Test func keystoneSignRequestedAboveCapChunksIntoRoundsAndPushesOnlyRoundZero() async {
+        let account = walletAccount(keystone: true, idByte: 30)
+        var state = MigrationCoordFlow.State()
+        state.$selectedWalletAccount.withLock { $0 = account }
+        state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .scheduled)))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        }
+        store.exhaustivity = .off
+
+        let pczts = (0..<36).map { MigrationUnsignedTransferPczt(id: "t\($0)", pczt: Data([UInt8(truncatingIfNeeded: $0)])) }
+        await store.send(.path(.element(id: 0, action: .transferPlan(.delegate(.keystoneSignRequested(pczts))))))
+
+        #expect(store.state.keystoneRounds.count == 2)
+        #expect(store.state.keystoneRounds.map(\.count) == [35, 1])
+        #expect(store.state.keystoneRoundIndex == 0)
+        #expect(store.state.keystoneAccumulatedSigned.isEmpty)
+        guard case let .keystoneSign(signState) = try? #require(store.state.path.last) else {
+            Issue.record("Expected .keystoneSign pushed on top")
+            return
+        }
+        // The screen (and thus the QR encoder) carries at most 35 PCZTs — round 0 only.
+        #expect(signState.pczts.count == 35)
+        #expect(signState.pczts == store.state.keystoneRounds[0])
+    }
+
+    /// A batch AT or below the cap stays a single QR session: the multi-round state is never
+    /// populated, and the whole batch is pushed unchanged (byte-identical to the pre-E3 ceremony,
+    /// keeping every existing single-round test valid).
+    @MainActor @Test func keystoneSignRequestedAtOrBelowCapStaysSingleRoundWithEmptyMultiRoundState() async {
+        let account = walletAccount(keystone: true, idByte: 31)
+        var state = MigrationCoordFlow.State()
+        state.$selectedWalletAccount.withLock { $0 = account }
+        state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .scheduled)))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        }
+        store.exhaustivity = .off
+
+        let pczts: [MigrationUnsignedTransferPczt] = [
+            MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xAA])),
+            MigrationUnsignedTransferPczt(id: "t1", pczt: Data([0xBB]))
+        ]
+        await store.send(.path(.element(id: 0, action: .transferPlan(.delegate(.keystoneSignRequested(pczts))))))
+
+        #expect(store.state.keystoneRounds.isEmpty)
+        #expect(store.state.keystoneRoundIndex == 0)
+        guard case let .keystoneSign(signState) = try? #require(store.state.path.last) else {
+            Issue.record("Expected .keystoneSign pushed on top")
+            return
+        }
+        #expect(signState.pczts == pczts)
+    }
+
+    /// A multi-round ceremony accumulates each round's signed entries and completes ONLY after the
+    /// last round: round 0's signing advances to round 1 (re-arming `keystoneSign` with round 1's
+    /// slice) with no store, and round 1's signing hands the FULLY-accumulated batch to the same
+    /// `storeSignedMigrationTransactions` entry the single-round ceremony used. Driven through the
+    /// simulator bypass (no `scan`/firmware bytes needed to exercise the accumulate/advance loop).
+    @MainActor @Test func multiRoundSimulatorCeremonyAccumulatesAcrossRoundsAndStoresFullBatchOnlyAfterLastRound() async {
+        let storeCalls = LockIsolated<[[MigrationSignedTransferPczt]]>([])
+        let round0: [MigrationUnsignedTransferPczt] = [
+            MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xA0])),
+            MigrationUnsignedTransferPczt(id: "t1", pczt: Data([0xA1]))
+        ]
+        let round1: [MigrationUnsignedTransferPczt] = [
+            MigrationUnsignedTransferPczt(id: "t2", pczt: Data([0xA2]))
+        ]
+        var state = MigrationCoordFlow.State()
+        state.pendingKeystoneSigning = .planCommit
+        state.pendingKeystoneSigningAccountUUID = Self.defaultAccount.id
+        state.keystoneRounds = [round0, round1]
+        state.keystoneRoundIndex = 0
+        state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .scheduled)))
+        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: round0)))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, stored in
+                storeCalls.withValue { $0.append(stored) }
+            }
+            $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in nil }
+            $0.migrationBGScheduler.scheduleFirstWindow = { }
+            $0.migrationManager.reconcile = { }
+            $0.migrationManager.migrationSummary = { _ in MigrationSummary.zero }
+            $0.migrationManager.migrationNetworkOptions = { _ in Self.defaultNetworkPrivacyOptions }
+            $0.migrationManager.refreshMigrationSyncGate = { }
+        }
+        store.exhaustivity = .off
+
+        // Round 0: accumulate, then advance to round 1 (deferred) — NO store yet.
+        await store.send(.path(.element(id: 1, action: .keystoneSign(.delegate(.simulateSignature)))))
+        await store.receive(\.keystoneAdvanceToNextRound)
+        #expect(storeCalls.value.isEmpty)
+        #expect(store.state.keystoneRoundIndex == 1)
+        #expect(store.state.keystoneAccumulatedSigned.map(\.id) == ["t0", "t1"])
+        guard case let .keystoneSign(round1State) = try? #require(store.state.path.last) else {
+            Issue.record("Expected .keystoneSign still on top, re-armed with round 1")
+            return
+        }
+        #expect(round1State.pczts == round1)
+
+        // Round 1 (last): store the FULLY-accumulated batch, reset the multi-round state.
+        await store.send(.path(.element(id: 1, action: .keystoneSign(.delegate(.simulateSignature)))))
+        await store.receive(\.keystoneSigningSubmitted)
+
+        #expect(storeCalls.value.count == 1)
+        #expect(storeCalls.value.first?.map(\.id) == ["t0", "t1", "t2"])
+        #expect(store.state.keystoneRounds.isEmpty)
+        #expect(store.state.keystoneRoundIndex == 0)
+        #expect(store.state.keystoneAccumulatedSigned.isEmpty)
+    }
+
+    /// The REAL QR round-trip's inter-round advance is safe: finishing round 0 via `scan` pops the
+    /// `scan` element and re-arms `keystoneSign` with round 1's slice — WITHOUT the store running yet.
+    /// The pop is deferred to `.keystoneAdvanceToNextRound` so it never races `.forEach`'s delivery of
+    /// the `.scan(.foundPCZTBatch)` action into a "missing element" crash.
+    @MainActor @Test func realScanMultiRoundAdvancesToNextRoundByPoppingScanAndReArmingKeystoneSign() async {
+        let storeCalls = LockIsolated<[[MigrationSignedTransferPczt]]>([])
+        let round0: [MigrationUnsignedTransferPczt] = [
+            MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xA0])),
+            MigrationUnsignedTransferPczt(id: "t1", pczt: Data([0xA1]))
+        ]
+        let round1: [MigrationUnsignedTransferPczt] = [MigrationUnsignedTransferPczt(id: "t2", pczt: Data([0xA2]))]
+        let round0Signed: [Data] = [
+            Data([0xA0]) + Self.validKeystoneFirmwareStamp,
+            Data([0xA1]) + Self.validKeystoneFirmwareStamp
+        ]
+        var state = MigrationCoordFlow.State()
+        state.pendingKeystoneSigning = .planCommit
+        state.pendingKeystoneSigningAccountUUID = Self.defaultAccount.id
+        state.keystoneRounds = [round0, round1]
+        state.keystoneRoundIndex = 0
+        state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .scheduled)))
+        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: round0)))
+        state.path.append(.scan(Scan.State.initial))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, stored in
+                storeCalls.withValue { $0.append(stored) }
+            }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 2, action: .scan(.foundPCZTBatch(round0Signed)))))
+        await store.receive(\.keystoneAdvanceToNextRound)
+
+        // No store yet, scan popped, keystoneSign re-armed with round 1, accumulator carries round 0.
+        #expect(storeCalls.value.isEmpty)
+        #expect(store.state.keystoneRoundIndex == 1)
+        #expect(store.state.path.count == 2)
+        #expect(store.state.keystoneAccumulatedSigned.map(\.id) == ["t0", "t1"])
+        guard case let .keystoneSign(round1State) = try? #require(store.state.path.last) else {
+            Issue.record("Expected .keystoneSign back on top (scan popped), re-armed with round 1")
+            return
+        }
+        #expect(round1State.pczts == round1)
+    }
+
+    /// The minimum-firmware gate runs on ROUND 0 ONLY — the same device signs every round of a
+    /// ceremony, so firmware can't change between rounds (Android's rationale). A LATER round whose
+    /// scanned batch is unstamped (which would trip the gate on round 0 and abandon) proceeds
+    /// straight to the store instead.
+    @MainActor @Test func firmwareGateRunsOnRoundZeroOnlyLaterRoundsSkipIt() async {
+        let storeCalls = LockIsolated<[[MigrationSignedTransferPczt]]>([])
+        let round0Signed: [MigrationSignedTransferPczt] = [
+            MigrationSignedTransferPczt(id: "t0", pczt: Data([0xA0]) + Self.validKeystoneFirmwareStamp),
+            MigrationSignedTransferPczt(id: "t1", pczt: Data([0xA1]) + Self.validKeystoneFirmwareStamp)
+        ]
+        let round1Unsigned: [MigrationUnsignedTransferPczt] = [MigrationUnsignedTransferPczt(id: "t2", pczt: Data([0xA2]))]
+        // Deliberately UNSTAMPED — this would abandon on round 0.
+        let round1Scanned: [Data] = [Data([0xC2])]
+        var state = MigrationCoordFlow.State()
+        state.pendingKeystoneSigning = .planCommit
+        state.pendingKeystoneSigningAccountUUID = Self.defaultAccount.id
+        state.keystoneRounds = [
+            [MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xA0])), MigrationUnsignedTransferPczt(id: "t1", pczt: Data([0xA1]))],
+            round1Unsigned
+        ]
+        state.keystoneRoundIndex = 1
+        state.keystoneAccumulatedSigned = round0Signed
+        state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .scheduled)))
+        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: round1Unsigned)))
+        state.path.append(.scan(Scan.State.initial))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, stored in
+                storeCalls.withValue { $0.append(stored) }
+            }
+            $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in nil }
+            $0.migrationBGScheduler.scheduleFirstWindow = { }
+            $0.migrationManager.reconcile = { }
+            $0.migrationManager.migrationSummary = { _ in MigrationSummary.zero }
+            $0.migrationManager.migrationNetworkOptions = { _ in Self.defaultNetworkPrivacyOptions }
+            $0.migrationManager.refreshMigrationSyncGate = { }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 2, action: .scan(.foundPCZTBatch(round1Scanned)))))
+        await store.receive(\.keystoneSigningSubmitted)
+
+        // Proceeded to the store (never abandoned), and the firmware-update prompt stayed down.
+        #expect(store.state.isKeystoneFirmwareUpdatePresented == false)
+        #expect(storeCalls.value.count == 1)
+        #expect(storeCalls.value.first?.map(\.id) == ["t0", "t1", "t2"])
+    }
+
     @MainActor @Test func reviewTransferKeystoneSignRequestedSetsImmediateReviewContextAndPushesKeystoneSign() async {
         let account = walletAccount(keystone: true, idByte: 22)
         var state = MigrationCoordFlow.State()
