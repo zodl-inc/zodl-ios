@@ -19,6 +19,11 @@ struct SmartBanner {
         static let remindMe2weeks: TimeInterval = 86_400 * 14
         static let remindMeMonth: TimeInterval = 86_400 * 30
         static let smartBannerSyncingBlocksThreshold: BlockHeight = 3456
+        // MOB-1513 (A1): bounded post-restore migration re-poll — every `migrationRepollInterval`,
+        // up to `migrationRepollMaxAttempts` times (3s * 40 = 120s total), matching the SDK's
+        // bounded/best-effort post-restore balance hold.
+        static let migrationRepollInterval: TimeInterval = 3
+        static let migrationRepollMaxAttempts = 40
     }
     
     @ObservableState
@@ -53,6 +58,7 @@ struct SmartBanner {
         var CancelStateStreamId = UUID()
         var CancelMigrationStateStreamId = UUID()
         var CancelShieldingProcessorId = UUID()
+        var CancelMigrationRepollId = UUID()
 
         var isScanProgressComplete = false
         var delay = 1.5
@@ -168,6 +174,7 @@ struct SmartBanner {
         case walletBackupTapped
     }
 
+    @Dependency(\.continuousClock) var clock
     @Dependency(\.mainQueue) var mainQueue
     @Dependency(\.migrationManager) var migrationManager
     @Dependency(\.networkMonitor) var networkMonitor
@@ -226,7 +233,14 @@ struct SmartBanner {
                     .cancel(id: state.CancelNetworkMonitorId),
                     .cancel(id: state.CancelStateStreamId),
                     .cancel(id: state.CancelMigrationStateStreamId),
-                    .cancel(id: state.CancelShieldingProcessorId)
+                    .cancel(id: state.CancelShieldingProcessorId),
+                    // MOB-1513 (A1 fix wave 1): a post-restore migration repoll armed just before
+                    // leaving Home must not keep running off-lifecycle — it would otherwise fire its
+                    // `bannerVariant` hydration (and, on success, `reconcile()`) up to 120s after the
+                    // screen is gone, and — with `CancelStateStreamId` also torn down above — no
+                    // later sync transition could end it early either; only success or the attempt
+                    // cap could, absent this.
+                    .cancel(id: state.CancelMigrationRepollId)
                 )
 
             case .binding(\.isShieldingAcknowledged):
@@ -282,6 +296,11 @@ struct SmartBanner {
                         .cancel(id: state.CancelMigrationStateStreamId),
                         migrationStateStreamEffect(accountUUID: newMigrationAccountUUID, cancelID: state.CancelMigrationStateStreamId)
                     ),
+                    // MOB-1513 (A1): an account switch must stop a post-restore migration re-poll
+                    // in flight for the OLD account outright — the decision belongs to whichever
+                    // account armed it, and the walk below (`.evaluatePriority1`) restarts fresh for
+                    // the newly selected one.
+                    .cancel(id: state.CancelMigrationRepollId),
                     .run { send in
                         await send(.closeBanner(true), animation: .easeInOut(duration: Constants.easeInOutDuration))
                         try? await mainQueue.sleep(for: .seconds(1))
@@ -398,8 +417,22 @@ struct SmartBanner {
                 // walk racing the first chain-tip fetch is the scenario `ironwoodActivationFlipEffect`
                 // exists to correct).
                 let activationFlipEffect = ironwoodActivationFlipEffect(state: &state)
+                // MOB-1513 (A1): snapshot the syncStatus BEFORE `syncStatusChangedEffect` runs, so a
+                // genuine transition — of ANY kind, not just the one that may arm a fresh post-restore
+                // repoll below — can cancel a STALE repoll left over from an EARLIER transition
+                // first. `.concatenate` (not a sibling `.merge` entry) guarantees that cancel settles
+                // BEFORE `syncStatusEffect` runs, so a tick that re-arms a fresh repoll under the
+                // SAME cancel id can never race its own cancellation — see
+                // `postRestoreMigrationRecheckEffect` below for the arm itself.
+                let previousSyncStatus = state.synchronizerStatusSnapshot.syncStatus
                 let syncStatusEffect = syncStatusChangedEffect(state: &state, latestState: latestState)
-                return .merge(activationFlipEffect, syncStatusEffect)
+                guard state.synchronizerStatusSnapshot.syncStatus != previousSyncStatus else {
+                    return .merge(activationFlipEffect, syncStatusEffect)
+                }
+                return .concatenate(
+                    .cancel(id: state.CancelMigrationRepollId),
+                    .merge(activationFlipEffect, syncStatusEffect)
+                )
 
             case .migrationStateChanged:
                 // The stream only tells us migration state changed, not what it resolved to — the
@@ -707,6 +740,56 @@ struct SmartBanner {
         return .send(.reevaluateMigrationOnActivationFlip)
     }
 
+    // MARK: - MOB-1513 (A1): bounded post-restore migration re-poll
+
+    /// Arms when a restore/resync (`priority3`/`priority45`) transitions to `.upToDate` — the
+    /// restored balance can still be invisible to `bannerVariant` for a bounded window after the
+    /// SDK reports sync complete (its post-restore hold is bounded/best-effort, ~120s cap), so a
+    /// single immediate re-read landing nil is not reliable proof there is nothing to migrate.
+    ///
+    /// Closes the restoring/syncing banner, re-reads `bannerVariant` once immediately, and — ONLY
+    /// if that lands nil AND Ironwood is activated — re-reads every `migrationRepollInterval` up to
+    /// `migrationRepollMaxAttempts` times. The first non-nil result (immediate or polled) feeds the
+    /// EXISTING `.migrationVariantUpdated` funnel, whose rank-guarded `openBannerRequest` already
+    /// displaces a lower-ranked banner (e.g. currency conversion) — no parallel banner-opening path.
+    /// A polled success ALSO fires `migrationManager.reconcile()` exactly once, so stateEvents/BG
+    /// scheduling catch up; the immediate (non-polled) path leaves `reconcile()` untouched, same as
+    /// before this fix. If the cap is reached with no success, the loop simply ends — no dispatch —
+    /// leaving the walk's own decision (whatever currently occupies the slot) exactly as it stood;
+    /// a later reactive push or foreground reconcile is still free to raise migration whenever the
+    /// manager resolves it.
+    ///
+    /// Cancellation: wrapped in `.cancellable(id:cancelInFlight:)` under the SAME id every time —
+    /// `.walletAccountChanged` cancels it explicitly on an account switch, and
+    /// `.synchronizerStateChanged` cancels it ahead of EVERY subsequent sync-status transition (see
+    /// that case's own doc comment) — either a fresh arm here supersedes the stale one, or a
+    /// transition that doesn't re-arm still tears it down. `cancelInFlight: true` additionally
+    /// supersedes a still-running PRIOR poll if this arm fires again before an intervening
+    /// transition could have cancelled it.
+    private func postRestoreMigrationRecheckEffect(accountUUID: AccountUUID?, cancelID: UUID) -> Effect<Action> {
+        let isIronwoodActivated = migrationManager.isIronwoodActivated()
+        return .run { send in
+            await send(.closeBanner(true), animation: .easeInOut(duration: Constants.easeInOutDuration))
+            if let variant = await migrationManager.bannerVariant(accountUUID) {
+                await send(.migrationVariantUpdated(variant))
+                return
+            }
+            guard isIronwoodActivated else {
+                await send(.migrationVariantUpdated(nil))
+                return
+            }
+            for _ in 0..<Constants.migrationRepollMaxAttempts {
+                try await clock.sleep(for: .seconds(Constants.migrationRepollInterval))
+                if let polledVariant = await migrationManager.bannerVariant(accountUUID) {
+                    await migrationManager.reconcile()
+                    await send(.migrationVariantUpdated(polledVariant))
+                    return
+                }
+            }
+        }
+        .cancellable(id: cancelID, cancelInFlight: true)
+    }
+
     /// The pre-MOB-1483 body of `.synchronizerStateChanged`, unchanged — extracted verbatim so it
     /// can be merged with `ironwoodActivationFlipEffect` above instead of racing it for the
     /// case's single return value.
@@ -747,22 +830,42 @@ struct SmartBanner {
                 // MOB-1513 (B2 fix wave): the empty-slot re-check is migration-specific, so
                 // pre-activation it has nothing to open — yet the pre-fix arm fired the full
                 // `bannerVariant` hydration (5 async reads incl. a rust `migrationState`) on EVERY
-                // ~2 s `.upToDate` re-emission, forever, on every synced wallet. Gate ONLY the
-                // empty-slot disjunct on the sync, cached `isIronwoodActivated()`: pre-activation the
-                // empty slot falls through to the normal (pre-B2) handling below, doing no manager
-                // hydration. The occupied-slot cases and the ACTIVATED empty-slot re-check (whose
-                // ~2 s cadence is the spec'd design) are unchanged.
+                // genuine `.upToDate` TRANSITION, forever, on every synced wallet. (There is exactly
+                // ONE such transition per sync-status change, not a periodic ~2s timer: this whole
+                // block sits inside the `syncStatus != previous` guard above, and the SDK's
+                // `SyncStatus` equality makes repeated `.upToDate` samples compare equal — see A1's
+                // note on `postRestoreMigrationRecheckEffect` below for the corrected mechanism.)
+                // Gate ONLY the empty-slot disjunct on the sync, cached `isIronwoodActivated()`:
+                // pre-activation the empty slot falls through to the normal (pre-B2) handling below,
+                // doing no manager hydration. The occupied-slot cases are unchanged; the ACTIVATED
+                // empty-slot re-check still runs once per genuine transition, same as before B2
+                // gated it.
                 let emptySlotMigrationRecheckArmed = state.priorityContent == nil && migrationManager.isIronwoodActivated()
-                if state.priorityContent == .priority3 || state.priorityContent == .priority45 || state.priorityContent == .priority4 || emptySlotMigrationRecheckArmed {
+                // MOB-1513 (A1): priority3/priority45 (a restore/resync just completed) get their
+                // OWN arm, ahead of the other disjuncts below — see `postRestoreMigrationRecheckEffect`
+                // for why: a restore's recovered balance can still be invisible to `bannerVariant` for
+                // a bounded window after the SDK reports `.upToDate` (its post-restore hold is
+                // bounded/best-effort, ~120s cap), so a single immediate re-read landing nil is not
+                // reliable proof there is nothing to migrate. The other disjuncts (priority4, the
+                // empty slot) keep the plain one-shot re-check below, unchanged.
+                if state.priorityContent == .priority3 || state.priorityContent == .priority45 {
+                    return postRestoreMigrationRecheckEffect(
+                        accountUUID: state.selectedWalletAccount?.id,
+                        cancelID: state.CancelMigrationRepollId
+                    )
+                }
+                if state.priorityContent == .priority4 || emptySlotMigrationRecheckArmed {
                     // MOB-1513 (B2): the empty-slot case (`priorityContent == nil`, now gated on
-                    // activation above) runs the SAME re-check. After a restore the slot is often empty at the moment the recovery
-                    // balance finally surfaces (the SDK's E2-FIX holds that balance across the
-                    // post-restore summary gap, so it is available early); the synchronizer re-emits
-                    // `.upToDate` ~every 2s while synced, so this deterministic app-side trigger
-                    // opens "Migration Required" on the next tick with no timer. On an empty slot the
+                    // activation above) runs the SAME re-check. After a restore the slot is often
+                    // empty at the moment the recovery balance finally surfaces (the SDK's E2-FIX
+                    // holds that balance across the post-restore summary gap, so it is available
+                    // early); this deterministic app-side trigger opens "Migration Required" on THIS
+                    // transition — there is no periodic timer to lean on (see the corrected note
+                    // above), just the one genuine transition into `.upToDate`. On an empty slot the
                     // `.closeBanner(true)` below is a harmless no-op, and a nil re-check variant opens
                     // nothing — so this never conjures a banner out of nothing. The occupied-slot
-                    // preemption cases (priority3/priority45/priority4) are unchanged.
+                    // preemption case (priority4) is unchanged. (priority3/priority45 now run the
+                    // bounded-poll arm above instead, for the reason given there.)
                     //
                     // MOB-1513 (Defect B): closing here used to leave the slot empty with NO
                     // re-evaluation — on an Ironwood-migration account this let currency-conversion
