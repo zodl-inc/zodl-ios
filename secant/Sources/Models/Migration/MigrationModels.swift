@@ -55,19 +55,52 @@ struct MigrationTransferRow: Equatable, Sendable, Codable, Identifiable {
         case expired
     }
 
+    /// MOB-1513 (A2): which kind of row this is — a genuine element of `schedule.transfers`
+    /// (numbered "Transfer N", the ordinary active/pending/overdue/etc. badge machinery) or the
+    /// synthesized "Split Balance" row a caller opts into ahead of them. The note-split is a real,
+    /// separate broadcast (immediate at commit) that is never itself an element of
+    /// `schedule.transfers` — see `MigrationTransferTimeline`'s header doc for the fix this
+    /// replaced (a silent index-0 relabel that let an ordinary transfer masquerade as the split).
+    /// `.transfer` is the default so every existing construction site (all of them genuine
+    /// schedule/sent-record rows) needs no change.
+    enum Kind: Equatable, Sendable, Codable {
+        case transfer
+        case splitBalance
+    }
+
     var id: String
     /// 0-based position in the schedule.
     var index: Int
     var amount: Zatoshi
     var status: Status
-    /// 0 = ready now; meaningful for pending rows.
+    /// 0 = ready now; meaningful for pending rows. Coarse (whole-hour) — the forward-ETA caption
+    /// prefers `minutesFromNow` when set; the BACKWARD "Sent Nh ago" / "Overdue Nh ago" captions
+    /// read this directly.
     var hoursFromNow: Int
+    /// MOB-1513 (B3): minute-precise FORWARD ETA for a pending/active row — the block-delta value
+    /// `MigrationETA.minutesFromNow(scheduledHeight:currentTip:)` computes, so a sub-hour transfer
+    /// renders "in ~N mins" instead of flooring to `hoursFromNow` and hitting the old "~10 mins"
+    /// fallback. MOB-1513 (A3): `MigrationDerivations.transferRows` now sets this for every non-sent
+    /// row derived from a committed schedule (Status/Progress/Resume included), from that row's own
+    /// `nextExecutableAfterHeight` — so it's `nil` only on the W1 progress-only fallback
+    /// (`synthesizedTransferRows`, no committed schedule persisted yet), where the caption falls
+    /// back to `hoursFromNow`'s coarse position-based estimate. Backward ("ago") captions never
+    /// read this. See `forwardETAMinutes`.
+    var minutesFromNow: Int?
     /// Precise "sent N minutes ago" recency for a `.sent` row under an hour old; `nil` keeps the
     /// existing `hoursFromNow`-based caption (0 = "sent recently", otherwise "Sent Nh ago").
     var sentMinutesAgo: Int?
     /// True for the row currently broadcasting to the network — same `.active` badge as a
     /// merely-queued row, captioned "Sending now" instead of an ETA.
     var isBroadcasting: Bool
+    /// See `Kind`'s doc.
+    var kind: Kind
+
+    /// The value the forward-ETA caption buckets: the minute-precise `minutesFromNow` when present,
+    /// else the coarse `hoursFromNow` promoted to minutes (the synthetic-cadence surfaces).
+    var forwardETAMinutes: Int {
+        minutesFromNow ?? hoursFromNow * 60
+    }
 
     init(
         id: String,
@@ -75,16 +108,20 @@ struct MigrationTransferRow: Equatable, Sendable, Codable, Identifiable {
         amount: Zatoshi,
         status: Status,
         hoursFromNow: Int,
+        minutesFromNow: Int? = nil,
         sentMinutesAgo: Int? = nil,
-        isBroadcasting: Bool = false
+        isBroadcasting: Bool = false,
+        kind: Kind = .transfer
     ) {
         self.id = id
         self.index = index
         self.amount = amount
         self.status = status
         self.hoursFromNow = hoursFromNow
+        self.minutesFromNow = minutesFromNow
         self.sentMinutesAgo = sentMinutesAgo
         self.isBroadcasting = isBroadcasting
+        self.kind = kind
     }
 }
 

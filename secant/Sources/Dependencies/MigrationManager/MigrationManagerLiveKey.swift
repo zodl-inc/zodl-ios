@@ -501,8 +501,9 @@ final class MigrationManagerImpl: @unchecked Sendable {
     }
 
     /// MOB-1496 W2: derives from the persisted committed schedule + live reads (`getMigrationState`,
-    /// `hasOverdueMigrationTransfers`), via `MigrationDerivations.transferRows`. No payload
-    /// persisted falls back to the W1 progress-only approximation, kept verbatim below.
+    /// `hasOverdueMigrationTransfers`), via `MigrationDerivations.transferRows` — which also takes
+    /// the live chain tip (MOB-1513 A3) for each row's real forward ETA. No payload persisted falls
+    /// back to the W1 progress-only approximation, kept verbatim below.
     ///
     func migrationTransfers(accountUUID: AccountUUID?) async -> [MigrationTransferRow] {
         guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return [] }
@@ -521,7 +522,8 @@ final class MigrationManagerImpl: @unchecked Sendable {
             committedSchedule: committedSchedule,
             state: state,
             hasOverdueMigrationTransfers: hasOverdue,
-            now: Date()
+            now: Date(),
+            currentTip: sdkSynchronizer.latestState().latestBlockHeight
         )
     }
 
@@ -564,7 +566,8 @@ final class MigrationManagerImpl: @unchecked Sendable {
             committedSchedule: committedSchedule,
             state: state,
             hasOverdueMigrationTransfers: hasOverdue,
-            now: Date()
+            now: Date(),
+            currentTip: sdkSynchronizer.latestState().latestBlockHeight
         )
     }
 
@@ -1823,21 +1826,43 @@ enum MigrationDerivations {
     /// 5. the first non-sent row otherwise -> `.active`.
     /// 6. every other non-sent row -> `.pending`.
     ///
-    /// `hoursFromNow`: sent rows carry "hours ago" (floor) + `sentMinutesAgo` (sub-hour precision);
-    /// non-sent rows keep W1's index-cadence estimate, now computed over the row's 0-based position AMONG
-    /// non-sent rows (`rowIndexAmongNonSent × 6`, so the first non-sent row is always `0`).
+    /// `hoursFromNow`/`minutesFromNow` (MOB-1513 A3): sent rows carry "hours ago" (floor) +
+    /// `sentMinutesAgo` (sub-hour precision) — unchanged. Non-sent rows now carry the REAL forward
+    /// ETA: a block delta between the row's own `nextExecutableAfterHeight` (threaded through
+    /// `RowSeed` from the matching schedule transfer — leading rows are always `.sent` and never
+    /// reach this branch, so their height is an unused placeholder) and `currentTip`, via
+    /// `MigrationETA.minutesFromNow(scheduledHeight:currentTip:)` — the same helper, fed the same
+    /// tip source (`sdkSynchronizer.latestState().latestBlockHeight`), the Transfer Plan screen's
+    /// `MigrationTransferPlanStore.apply` already uses. `minutesFromNow` carries the minute-precise
+    /// value (so a sub-hour transfer reads "in ~N mins"); `hoursFromNow` keeps a coarse whole-hour
+    /// copy (`minutes / 60`) for callers that only read that field. A height at/behind `currentTip`
+    /// (or an unknown `currentTip <= 0`) floors to `0` — "Ready now" — per `minutesFromNow`'s own
+    /// fail-safe. This replaces the old W1 index-cadence placeholder (`nonSentPosition × 6h`), which
+    /// never read the schedule's real heights at all.
+    ///
+    /// R7's refresh lane (`refreshStaleMigrationTransfers`) persists its RETURNED schedule via
+    /// `recordCommittedSchedule` before this derivation ever runs again (see
+    /// `MigrationCoordFlowCoordinator`'s recovery-refresh lane) — since this function takes
+    /// `committedSchedule` as a plain input and caches nothing, a post-refresh call always
+    /// re-derives every row's ETA from the freshly-persisted heights, never a stale pre-refresh one.
+    ///
     /// Amounts come from the persisted proposal (schedule rows) or the sent record itself (leading
     /// rows) — never from live progress.
     static func transferRows(
         committedSchedule: MigrationCommittedSchedule,
         state: MigrationState,
         hasOverdueMigrationTransfers: Bool,
-        now: Date
+        now: Date,
+        currentTip: BlockHeight
     ) -> [MigrationTransferRow] {
         struct RowSeed {
             let transferId: String
             let amount: Zatoshi
             let sentRecord: MigrationCommittedSchedule.SentRecord?
+            /// The height after which the engine may broadcast this transfer — `0` (unused
+            /// placeholder) for leading rows, which always carry a `sentRecord` and so never reach
+            /// the forward-ETA branch below.
+            let nextExecutableAfterHeight: BlockHeight
         }
 
         let scheduleTransferIds = Set(committedSchedule.schedule.transfers.map { $0.id })
@@ -1848,15 +1873,19 @@ enum MigrationDerivations {
 
         let leadingRows: [RowSeed] = committedSchedule.sentRecords
             .filter { !scheduleTransferIds.contains($0.transferId) }
-            .map { RowSeed(transferId: $0.transferId, amount: $0.amount, sentRecord: $0) }
+            .map { RowSeed(transferId: $0.transferId, amount: $0.amount, sentRecord: $0, nextExecutableAfterHeight: 0) }
         let scheduleRows: [RowSeed] = committedSchedule.schedule.transfers.map { transfer in
-            RowSeed(transferId: transfer.id, amount: transfer.amount, sentRecord: sentRecordsByTransferId[transfer.id])
+            RowSeed(
+                transferId: transfer.id,
+                amount: transfer.amount,
+                sentRecord: sentRecordsByTransferId[transfer.id],
+                nextExecutableAfterHeight: transfer.nextExecutableAfterHeight
+            )
         }
 
         let seeds = leadingRows + scheduleRows
         let firstNonSentIndex = seeds.firstIndex { $0.sentRecord == nil }
 
-        var nonSentPosition = 0
         return seeds.enumerated().map { index, seed in
             if let sentRecord = seed.sentRecord {
                 let elapsedMinutes = max(0, Int(now.timeIntervalSince(sentRecord.sentAt) / 60))
@@ -1876,15 +1905,15 @@ enum MigrationDerivations {
                 state: state,
                 hasOverdueMigrationTransfers: hasOverdueMigrationTransfers
             )
-            let hoursFromNow = max(0, nonSentPosition * 6)
-            nonSentPosition += 1
+            let minutesFromNow = MigrationETA.minutesFromNow(scheduledHeight: seed.nextExecutableAfterHeight, currentTip: currentTip)
 
             return MigrationTransferRow(
                 id: seed.transferId,
                 index: index,
                 amount: seed.amount,
                 status: status,
-                hoursFromNow: hoursFromNow
+                hoursFromNow: minutesFromNow / 60,
+                minutesFromNow: minutesFromNow
             )
         }
     }

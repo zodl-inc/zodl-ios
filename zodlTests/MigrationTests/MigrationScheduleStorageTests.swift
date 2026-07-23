@@ -20,12 +20,20 @@ struct MigrationScheduleStorageTests {
         AccountUUID(id: [UInt8](repeating: byte, count: 16))
     }
 
-    private static func transfer(id: String, amount: Int64, anchorHeight: BlockHeight = 100) -> MigrationTransferProposal {
+    /// `nextExecutableAfterHeight` defaults to `anchorHeight` (every pre-A3 call site's behavior,
+    /// unchanged) — pass it explicitly to control a row's real forward ETA independently of its
+    /// anchor (MOB-1513 A3).
+    private static func transfer(
+        id: String,
+        amount: Int64,
+        anchorHeight: BlockHeight = 100,
+        nextExecutableAfterHeight: BlockHeight? = nil
+    ) -> MigrationTransferProposal {
         MigrationTransferProposal(
             id: id,
             amount: Zatoshi(amount),
             anchorHeight: anchorHeight,
-            nextExecutableAfterHeight: anchorHeight,
+            nextExecutableAfterHeight: nextExecutableAfterHeight ?? anchorHeight,
             expiryHeight: anchorHeight + 100
         )
     }
@@ -223,8 +231,13 @@ struct MigrationScheduleStorageTests {
     // MARK: - Derivation: transferRows row-status precedence
 
     @Test func transferRowsFirstNonSentIsActiveWhenNothingIsWrong() {
+        // MOB-1513 (A3): t0 sits AT the tip (ready now); t1 is 48 blocks out (48 × 75s = 3,600s =
+        // 1h) — a real per-transfer height now drives the ETA, not the row's position.
         let schedule = MigrationSchedule(
-            transfers: [Self.transfer(id: "t0", amount: 100), Self.transfer(id: "t1", amount: 200)],
+            transfers: [
+                Self.transfer(id: "t0", amount: 100, nextExecutableAfterHeight: 1_000),
+                Self.transfer(id: "t1", amount: 200, nextExecutableAfterHeight: 1_048)
+            ],
             estimatedDurationHours: 12
         )
         let committed = MigrationCommittedSchedule(schedule: schedule, sentRecords: [], committedAt: Date())
@@ -233,14 +246,17 @@ struct MigrationScheduleStorageTests {
             committedSchedule: committed,
             state: MigrationState.readyToPropose,
             hasOverdueMigrationTransfers: false,
-            now: Date()
+            now: Date(),
+            currentTip: 1_000
         )
 
         #expect(rows.map(\.status) == [MigrationTransferRow.Status.active, MigrationTransferRow.Status.pending])
         #expect(rows.map(\.id) == ["t0", "t1"])
         #expect(rows.map(\.index) == [0, 1])
         #expect(rows[0].hoursFromNow == 0)
-        #expect(rows[1].hoursFromNow == 6)
+        #expect(rows[0].minutesFromNow == 0)
+        #expect(rows[1].hoursFromNow == 1)
+        #expect(rows[1].minutesFromNow == 60)
         #expect(rows.map(\.amount) == [Zatoshi(100), Zatoshi(200)])
     }
 
@@ -255,7 +271,8 @@ struct MigrationScheduleStorageTests {
             committedSchedule: committed,
             state: MigrationState.readyToPropose,
             hasOverdueMigrationTransfers: true,
-            now: Date()
+            now: Date(),
+            currentTip: 100
         )
 
         #expect(rows.map(\.status) == [MigrationTransferRow.Status.overdue, MigrationTransferRow.Status.pending])
@@ -278,7 +295,8 @@ struct MigrationScheduleStorageTests {
             committedSchedule: committed,
             state: MigrationState.requiresAttention(MigrationAttentionReason.invalidTransfer(transferId: "t1")),
             hasOverdueMigrationTransfers: false,
-            now: Date()
+            now: Date(),
+            currentTip: 100
         )
 
         #expect(rows.map(\.status) == [
@@ -303,7 +321,8 @@ struct MigrationScheduleStorageTests {
             committedSchedule: committed,
             state: MigrationState.requiresAttention(MigrationAttentionReason.invalidTransfer(transferId: "t0")),
             hasOverdueMigrationTransfers: false,
-            now: Date()
+            now: Date(),
+            currentTip: 100
         )
 
         #expect(rows.map(\.status) == [MigrationTransferRow.Status.invalid, MigrationTransferRow.Status.pending])
@@ -320,7 +339,8 @@ struct MigrationScheduleStorageTests {
             committedSchedule: committed,
             state: MigrationState.requiresAttention(MigrationAttentionReason.transferExpired),
             hasOverdueMigrationTransfers: false,
-            now: Date()
+            now: Date(),
+            currentTip: 100
         )
 
         #expect(rows.map(\.status) == [MigrationTransferRow.Status.expired, MigrationTransferRow.Status.pending])
@@ -343,16 +363,19 @@ struct MigrationScheduleStorageTests {
                 MigrationProgress(completedTransfers: 1, totalTransfers: 2, remainingOrchard: .zero, nextTransferReadyAtHeight: nil)
             ),
             hasOverdueMigrationTransfers: false,
-            now: sentAt.addingTimeInterval(600)
+            now: sentAt.addingTimeInterval(600),
+            currentTip: 100
         )
 
         #expect(rows.count == 2)
         #expect(rows[0].status == MigrationTransferRow.Status.sent)
         #expect(rows[0].sentMinutesAgo == 10)
         #expect(rows[0].hoursFromNow == 0)
-        // The second (and now only non-sent) row is the first non-sent row -> `.active`.
+        // The second (and now only non-sent) row is the first non-sent row -> `.active`. Its
+        // height (100, t1's default) sits AT the tip (100) -> ready now.
         #expect(rows[1].status == MigrationTransferRow.Status.active)
         #expect(rows[1].hoursFromNow == 0)
+        #expect(rows[1].minutesFromNow == 0)
     }
 
     @Test func transferRowsSentRowHoursAgoDropsSentMinutesAgoPastOneHour() {
@@ -367,7 +390,8 @@ struct MigrationScheduleStorageTests {
             committedSchedule: committed,
             state: MigrationState.complete,
             hasOverdueMigrationTransfers: false,
-            now: sentAt.addingTimeInterval(2 * 3_600 + 300)
+            now: sentAt.addingTimeInterval(2 * 3_600 + 300),
+            currentTip: 100
         )
 
         #expect(rows[0].hoursFromNow == 2)
@@ -383,12 +407,14 @@ struct MigrationScheduleStorageTests {
             MigrationCommittedSchedule.SentRecord(transferId: "old0", amount: Zatoshi(10), txId: "tx-old0", sentAt: Date(timeIntervalSince1970: 1_000)),
             MigrationCommittedSchedule.SentRecord(transferId: "old1", amount: Zatoshi(20), txId: "tx-old1", sentAt: Date(timeIntervalSince1970: 2_000))
         ]
+        // MOB-1513 (A3): distinct real heights against a tip of 1_000 — new0 is AT the tip (ready
+        // now), new1/new2/new3 are 48/96/192 blocks out (× 75s/block = 1h/2h/4h).
         let newSchedule = MigrationSchedule(
             transfers: [
-                Self.transfer(id: "new0", amount: 100),
-                Self.transfer(id: "new1", amount: 200),
-                Self.transfer(id: "new2", amount: 300),
-                Self.transfer(id: "new3", amount: 400)
+                Self.transfer(id: "new0", amount: 100, nextExecutableAfterHeight: 1_000),
+                Self.transfer(id: "new1", amount: 200, nextExecutableAfterHeight: 1_048),
+                Self.transfer(id: "new2", amount: 300, nextExecutableAfterHeight: 1_096),
+                Self.transfer(id: "new3", amount: 400, nextExecutableAfterHeight: 1_192)
             ],
             estimatedDurationHours: 24
         )
@@ -400,7 +426,8 @@ struct MigrationScheduleStorageTests {
                 MigrationProgress(completedTransfers: 2, totalTransfers: 4, remainingOrchard: .zero, nextTransferReadyAtHeight: nil)
             ),
             hasOverdueMigrationTransfers: false,
-            now: Date(timeIntervalSince1970: 3_000)
+            now: Date(timeIntervalSince1970: 3_000),
+            currentTip: 1_000
         )
 
         #expect(rows.count == 6)
@@ -414,9 +441,11 @@ struct MigrationScheduleStorageTests {
             MigrationTransferRow.Status.pending,
             MigrationTransferRow.Status.pending
         ])
-        // Pending cadence counts among NON-SENT rows only: new1 is the 2nd non-sent row (6h), new2
-        // the 3rd (12h), new3 the 4th (18h) — new0 (the 1st non-sent / active row) is 0h.
-        #expect(rows.map(\.hoursFromNow) == [0, 0, 0, 6, 12, 18])
+        // old0/old1 (sent) keep their elapsed-time-since-`sentAt` math, untouched by A3 (both under
+        // an hour old here, so both floor to 0h). new0/new1/new2/new3 (non-sent) now read their
+        // REAL per-transfer height against the tip — 0h/1h/2h/4h — not a `position × 6h` cadence.
+        #expect(rows.map(\.hoursFromNow) == [0, 0, 0, 1, 2, 4])
+        #expect(rows.map(\.minutesFromNow) == [nil, nil, 0, 60, 120, 240])
     }
 
     @Test func transferRowsWithNoPriorSentRecordsOutsideScheduleRendersScheduleRowsOnly() {
@@ -427,11 +456,101 @@ struct MigrationScheduleStorageTests {
             committedSchedule: committed,
             state: MigrationState.readyToPropose,
             hasOverdueMigrationTransfers: false,
-            now: Date()
+            now: Date(),
+            currentTip: 100
         )
 
         #expect(rows.count == 1)
         #expect(rows[0].id == "t0")
+    }
+
+    // MARK: - Derivation: transferRows real forward ETA (MOB-1513 A3)
+
+    @Test func transferRowsSubHourPendingRowCarriesMinutePrecision() {
+        // 20 blocks × 75s = 1,500s = 25 minutes — under an hour, so the row must carry the
+        // minute-precise value (the caption reads "in ~25 mins", never floored to 0h).
+        let schedule = MigrationSchedule(
+            transfers: [Self.transfer(id: "t0", amount: 100, nextExecutableAfterHeight: 1_020)],
+            estimatedDurationHours: 1
+        )
+        let committed = MigrationCommittedSchedule(schedule: schedule, sentRecords: [], committedAt: Date())
+
+        let rows = MigrationDerivations.transferRows(
+            committedSchedule: committed,
+            state: MigrationState.notStarted,
+            hasOverdueMigrationTransfers: false,
+            now: Date(),
+            currentTip: 1_000
+        )
+
+        #expect(rows[0].status == MigrationTransferRow.Status.active)
+        #expect(rows[0].minutesFromNow == 25)
+        #expect(rows[0].hoursFromNow == 0)
+    }
+
+    @Test func transferRowsBehindTipHeightReadsAsReadyNow() {
+        // An overdue transfer's scheduled height sits BEHIND the live tip —
+        // `MigrationETA.minutesFromNow` floors that to `0` ("Ready now"), never negative.
+        let schedule = MigrationSchedule(
+            transfers: [Self.transfer(id: "t0", amount: 100, nextExecutableAfterHeight: 900)],
+            estimatedDurationHours: 1
+        )
+        let committed = MigrationCommittedSchedule(schedule: schedule, sentRecords: [], committedAt: Date())
+
+        let rows = MigrationDerivations.transferRows(
+            committedSchedule: committed,
+            state: MigrationState.notStarted,
+            hasOverdueMigrationTransfers: true,
+            now: Date(),
+            currentTip: 1_000
+        )
+
+        #expect(rows[0].status == MigrationTransferRow.Status.overdue)
+        #expect(rows[0].minutesFromNow == 0)
+        #expect(rows[0].hoursFromNow == 0)
+    }
+
+    @Test func transferRowsRederivesFromRefreshedHeightsNotStalePreRefreshOnes() {
+        // R7's refresh lane (`refreshStaleMigrationTransfers`) persists its RETURNED schedule via
+        // `recordCommittedSchedule` before this derivation ever runs again (see
+        // `MigrationCoordFlowCoordinator`'s recovery-refresh lane) — this derivation takes
+        // `committedSchedule` as a plain input and caches nothing, so re-deriving against the
+        // freshly-persisted (refreshed) heights must produce a fresh ETA, never the stale
+        // pre-refresh one, even at the identical tip.
+        let tip = 1_000
+
+        let staleSchedule = MigrationSchedule(
+            transfers: [Self.transfer(id: "t0", amount: 100, nextExecutableAfterHeight: 900)],
+            estimatedDurationHours: 1
+        )
+        let staleCommitted = MigrationCommittedSchedule(schedule: staleSchedule, sentRecords: [], committedAt: Date())
+        let staleRows = MigrationDerivations.transferRows(
+            committedSchedule: staleCommitted,
+            state: MigrationState.requiresAttention(MigrationAttentionReason.transferExpired),
+            hasOverdueMigrationTransfers: false,
+            now: Date(),
+            currentTip: tip
+        )
+        #expect(staleRows[0].minutesFromNow == 0)
+
+        // The refresh rebuilds the transfer in place with a fresh, FUTURE height and re-commits
+        // (`recordCommittedSchedule` replaces `schedule` wholesale — see
+        // `recordCommittedScheduleReplacesSchedulePreservingSentRecordsOnRecommit` above).
+        let refreshedSchedule = MigrationSchedule(
+            transfers: [Self.transfer(id: "t0", amount: 100, nextExecutableAfterHeight: 1_096)],
+            estimatedDurationHours: 2
+        )
+        let refreshedCommitted = MigrationCommittedSchedule(schedule: refreshedSchedule, sentRecords: [], committedAt: Date())
+        let refreshedRows = MigrationDerivations.transferRows(
+            committedSchedule: refreshedCommitted,
+            state: MigrationState.notStarted,
+            hasOverdueMigrationTransfers: false,
+            now: Date(),
+            currentTip: tip
+        )
+
+        #expect(refreshedRows[0].minutesFromNow == 120)
+        #expect(refreshedRows[0].hoursFromNow == 2)
     }
 
     // MARK: - Derivation: summary math

@@ -27,6 +27,13 @@
 //  purely additive: `windowMissedNote` (the existing "Sending now will delay…" footer) keeps its
 //  copy, position, and gate unchanged.
 //
+//  MOB-1513 (A2): the shared timeline no longer relabels `store.rows`' own index 0 as "Split
+//  Balance" — an ordinary transfer could be `index == 0` too (and, once actually sent, would have
+//  wrongly rendered this screen's "Done"/green treatment below). This screen now passes the store's
+//  synthesized `splitRow` in separately, ahead of `rows` (unchanged: every real transfer, numbered
+//  1..N, its own status/caption untouched) — always COMPLETED, since post-commit the split has
+//  definitely already broadcast.
+//
 
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
@@ -57,11 +64,12 @@ struct MigrationStatusView: View {
                         MigrationTransferTimeline(
                             rows: store.rows,
                             caption: caption(for:),
+                            splitRow: store.splitRow,
                             skeletonPendingCaptions: store.isRescheduling,
                             captionStyle: { row in
                                 // MOB-1511 (W4): the Split Balance row's "Done" renders green,
                                 // matching its check badge; every other caption keeps the default.
-                                row.index == 0 && row.status == .sent
+                                row.kind == .splitBalance
                                     ? Design.Utility.SuccessGreen._600 as Colorable
                                     : Design.Text.tertiary
                             }
@@ -130,8 +138,10 @@ struct MigrationStatusView: View {
     private func caption(for row: MigrationTransferRow) -> String {
         // MOB-1511 (W4, Figma 3480:7638): the completed Split Balance row reads "Done" (green, via
         // `captionStyle` below) instead of a sent-ago timestamp — split completion is a state, not
-        // an event the user tracks by time.
-        if row.index == 0, row.status == .sent {
+        // an event the user tracks by time. MOB-1513 (A2): keyed off `kind` now, not `index == 0` —
+        // an ordinary sent Transfer 1 must keep its own real "Sent Nh ago"/"Sent N min ago" caption
+        // below, not this one.
+        if row.kind == .splitBalance {
             return String(localizable: .migrationStatusDone)
         }
         switch row.status {
@@ -149,12 +159,15 @@ struct MigrationStatusView: View {
             // (MOB-1478 W7) — same `.active` badge, distinct caption.
             return String(localizable: .migrationStatusSendingNow)
         default:
-            // Pending/queued-active rows: "~Nh" ETA per the frames (S10-progress Transfer 4 =
-            // "~12 hours"). A ready-now row renders "~10 mins", matching the Transfer Plan screen's
-            // treatment.
-            return row.hoursFromNow == 0
-                ? String(localizable: .migrationPlanEtaFirst)
-                : String(localizable: .migrationPlanEtaHours(row.hoursFromNow))
+            // Pending/queued-active rows: the shared forward-ETA granularity per the frames
+            // (S10-progress Transfer 4 = "~12 hours"). MOB-1513 (B3): a ready-now row now renders
+            // "Ready now" (was the "~10 mins" `migrationPlanEtaFirst` fallback), bucketed by the same
+            // `MigrationETA` helper every forward surface uses. MOB-1513 (A3): `minutesFromNow` now
+            // carries the real, minute-precise ETA (the committed schedule's own per-transfer
+            // height against the live tip) for rows backed by a committed schedule, so a sub-hour
+            // transfer reads "in ~N mins" here too; it's nil only on the W1 progress-only fallback
+            // (no committed schedule yet), where `forwardETAMinutes` falls back to `hoursFromNow`.
+            return MigrationETA.caption(minutesFromNow: row.forwardETAMinutes, phrasing: .bare)
         }
     }
 
