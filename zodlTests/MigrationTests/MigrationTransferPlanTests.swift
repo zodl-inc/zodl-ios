@@ -203,7 +203,8 @@ import ComposableArchitecture
             $0.schedule = schedule
         }
 
-        // Row count is N+1 once the split is counted alongside the two real transfers above.
+        // Row count stays N (the two transfers above) — the split is the separate synthesized
+        // `splitRow`, not an element of `rows`.
         #expect(store.state.rows.count == 2)
         #expect(store.state.splitRow?.kind == MigrationTransferRow.Kind.splitBalance)
         // Android parity: the split row's amount is the SUM of every listed transfer.

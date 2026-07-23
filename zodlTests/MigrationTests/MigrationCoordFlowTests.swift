@@ -316,11 +316,13 @@ import ComposableArchitecture
     }
 
     @MainActor @Test func onAppearWithStatusResumeRouteAppendsFlowRootStatusScreenInResumePresentation() async {
-        // R8-T5 (#13): `hoursFromNow: 0` here is the REAL value `MigrationDerivations.transferRows`
-        // always produces for the first non-sent (= stalled) row — `nonSentPosition × 6`, `0` BY
-        // CONSTRUCTION — no longer meaningful for `stalledHoursAgo` (see below); this fixture used to
-        // hand-pick `5` here directly, which happened to mask the bug this row's real construction
-        // has (the mock bypassed the real derivation entirely).
+        // R8-T5 (#13): `hoursFromNow: 0` here models the REAL value `MigrationDerivations.transferRows`
+        // produces for a GENUINELY overdue row — MOB-1513 A3 replaced the old `nonSentPosition × 6`
+        // placeholder cadence with a height-vs-tip ETA that floors to `0` once the row's height is
+        // at-or-behind the tip (always true for the stalled row here), not `0` BY CONSTRUCTION for
+        // every first non-sent row — no longer meaningful for `stalledHoursAgo` (see below); this
+        // fixture used to hand-pick `5` here directly, which happened to mask the bug this row's real
+        // construction has (the mock bypassed the real derivation entirely).
         let rows: [MigrationTransferRow] = [
             MigrationTransferRow(id: "0", index: 0, amount: Zatoshi(1_000), status: .sent, hoursFromNow: 0),
             MigrationTransferRow(id: "1", index: 1, amount: Zatoshi(1_000), status: .overdue, hoursFromNow: 0)

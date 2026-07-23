@@ -153,7 +153,8 @@ struct MigrationStatusView: View {
                 ? String(localizable: .migrationStatusSentRecently)
                 : String(localizable: .migrationPlanSentAgo(row.hoursFromNow))
         case .overdue:
-            return String(localizable: .migrationStatusOverdueAgo(row.hoursFromNow))
+            // hoursFromNow is A3's forward ETA; overdue copy needs elapsed, which rows don't carry — 0 keeps it truthful-enough as "just overdue".
+            return String(localizable: .migrationStatusOverdueAgo(0))
         case .active where row.isBroadcasting:
             // The single row actually being broadcast right now, as opposed to merely next-in-queue
             // (MOB-1478 W7) — same `.active` badge, distinct caption.
