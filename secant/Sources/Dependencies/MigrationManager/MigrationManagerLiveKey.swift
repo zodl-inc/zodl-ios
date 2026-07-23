@@ -1173,7 +1173,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// (not a broadcast/server-switch).
     func refreshMigrationSyncGate() async {
         let isBlocked = await sdkSynchronizer.isMigrationSyncBlocked()
-        migrationSyncGateContinuation.withLock { $0?.yield(isBlocked) }
+        _ = migrationSyncGateContinuation.withLock { $0?.yield(isBlocked) }
     }
 
     /// Re-reads `getMigrationState` for EVERY candidate account (R8-T3 #17 — was selected + first
