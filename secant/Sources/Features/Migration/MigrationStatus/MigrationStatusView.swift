@@ -149,12 +149,12 @@ struct MigrationStatusView: View {
             // (MOB-1478 W7) — same `.active` badge, distinct caption.
             return String(localizable: .migrationStatusSendingNow)
         default:
-            // Pending/queued-active rows: "~Nh" ETA per the frames (S10-progress Transfer 4 =
-            // "~12 hours"). A ready-now row renders "~10 mins", matching the Transfer Plan screen's
-            // treatment.
-            return row.hoursFromNow == 0
-                ? String(localizable: .migrationPlanEtaFirst)
-                : String(localizable: .migrationPlanEtaHours(row.hoursFromNow))
+            // Pending/queued-active rows: the shared forward-ETA granularity per the frames
+            // (S10-progress Transfer 4 = "~12 hours"). MOB-1513 (B3): a ready-now row now renders
+            // "Ready now" (was the "~10 mins" `migrationPlanEtaFirst` fallback), bucketed by the same
+            // `MigrationETA` helper every forward surface uses. These rows carry only the coarse
+            // whole-hour cadence (`minutesFromNow` nil), so `forwardETAMinutes` reads `hoursFromNow`.
+            return MigrationETA.caption(minutesFromNow: row.forwardETAMinutes, phrasing: .bare)
         }
     }
 

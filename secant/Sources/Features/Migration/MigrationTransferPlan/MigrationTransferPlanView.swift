@@ -166,22 +166,22 @@ struct MigrationTransferPlanView: View {
         case .active:
             return store.variant == .recreated
                 ? String(localizable: .migrationPlanReadyNow)
-                : eta(hoursFromNow: row.hoursFromNow)
+                : forwardETA(for: row)
         default:
-            return eta(hoursFromNow: row.hoursFromNow)
+            return forwardETA(for: row)
         }
     }
 
-    /// Scheduled/fresh plans use the new "in ~N hours" phrasing; recreated and manual plans keep
-    /// today's "~N hours" (frames differ — followed as drawn).
-    private func eta(hoursFromNow: Int) -> String {
-        guard hoursFromNow > 0 else {
-            return String(localizable: .migrationPlanEtaFirst)
-        }
-
-        return store.variant == .scheduled
-            ? String(localizable: .migrationPlanEtaHoursIn(hoursFromNow))
-            : String(localizable: .migrationPlanEtaHours(hoursFromNow))
+    /// MOB-1513 (B3): the forward ETA, bucketed by the shared `MigrationETA` helper (Ready now / in
+    /// ~N mins / in ~N hours) off the row's minute-precise `forwardETAMinutes` — replacing the old
+    /// whole-hour `eta` that floored every future height to `0` and rendered the "~10 mins"
+    /// (`migrationPlanEtaFirst`) fallback. Scheduled/fresh plans use the "in ~…" phrasing; recreated
+    /// and manual plans keep the bare "~…" (frames differ — followed as drawn).
+    private func forwardETA(for row: MigrationTransferRow) -> String {
+        MigrationETA.caption(
+            minutesFromNow: row.forwardETAMinutes,
+            phrasing: store.variant == .scheduled ? .inPrefixed : .bare
+        )
     }
 
     // MARK: - Randomized-amounts footer (MOB-1497 T8)

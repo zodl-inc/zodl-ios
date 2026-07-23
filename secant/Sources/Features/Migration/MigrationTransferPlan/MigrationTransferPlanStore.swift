@@ -381,28 +381,30 @@ struct MigrationTransferPlan {
 
     /// Populates `rows`/`totalDurationHours`/`schedule` from a `MigrationSchedule`, whether it was
     /// freshly proposed or injected by the coordinator. The first transfer is `.active` (ready now);
-    /// the rest are `.pending`. `hoursFromNow` comes from `estimateTimestamp` where the SDK can
-    /// resolve a height to a timestamp; unresolved heights default to `0`.
+    /// the rest are `.pending`.
+    ///
+    /// MOB-1513 (B3): each row's forward ETA is a block delta against the LIVE chain tip
+    /// (`latestState().latestBlockHeight`, the established synchronous tip accessor) at 75 s/block —
+    /// `MigrationETA.minutesFromNow`. This replaces `estimateTimestamp`, which returns nil for every
+    /// FUTURE migration height (beyond the newest bundled checkpoint), flooring every row to 0 and
+    /// rendering the "~10 mins" fallback. `minutesFromNow` carries the minute-precise value (so a
+    /// sub-hour transfer reads "in ~N mins"); `hoursFromNow` keeps the coarse whole-hour copy.
     private func apply(_ schedule: MigrationSchedule, to state: inout State) {
+        let tip = sdkSynchronizer.latestState().latestBlockHeight
         state.rows = IdentifiedArrayOf(
             uniqueElements: schedule.transfers.enumerated().map { index, transfer in
-                MigrationTransferRow(
+                let minutes = MigrationETA.minutesFromNow(scheduledHeight: transfer.nextExecutableAfterHeight, currentTip: tip)
+                return MigrationTransferRow(
                     id: transfer.id,
                     index: index,
                     amount: transfer.amount,
                     status: index == 0 ? .active : .pending,
-                    hoursFromNow: hoursFromNow(forHeightReadyAt: transfer.nextExecutableAfterHeight)
+                    hoursFromNow: minutes / 60,
+                    minutesFromNow: minutes
                 )
             }
         )
         state.totalDurationHours = schedule.estimatedDurationHours
         state.schedule = schedule
-    }
-
-    private func hoursFromNow(forHeightReadyAt height: BlockHeight) -> Int {
-        guard let readyTimestamp = sdkSynchronizer.estimateTimestamp(height) else { return 0 }
-
-        let seconds = Date(timeIntervalSince1970: readyTimestamp).timeIntervalSinceNow
-        return max(0, Int(seconds / 3_600))
     }
 }

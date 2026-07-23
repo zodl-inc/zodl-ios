@@ -11393,23 +11393,6 @@
         }
       }
     },
-    "migrationPlan.etaFirst" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "~10 mins"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "~10 min"
-          }
-        }
-      }
-    },
     "migrationPlan.etaHours" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -11434,6 +11417,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "in ~%1$lld hours"
+          }
+        }
+      }
+    },
+    "migrationPlan.etaMins" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "~%1$lld mins"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "~%1$lld min"
+          }
+        }
+      }
+    },
+    "migrationPlan.etaMinsIn" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "in ~%1$lld mins"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "en ~%1$lld min"
           }
         }
       }
