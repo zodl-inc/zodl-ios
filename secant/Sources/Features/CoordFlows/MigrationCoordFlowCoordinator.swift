@@ -33,12 +33,11 @@
 //  - W8: `nextPermissionStepResult()` picks the Notifications variant off `isManualDelivery()`.
 //  - W10: the Keystone scan push sets `instructions`/`forceLibraryToHide`.
 //
-//  MOB-1480 adds a simulator-only Keystone bypass (no physical device required): `MigrationKeystoneSign
-//  Store`'s "Simulate signed result" button delegates `.simulateSignature`, handled here by reading
-//  the batch straight off the already-pushed `keystoneSign` element (the bypass never pushes `scan`,
-//  so there is no scanned result to read instead) and running the identical store/resume chain the
-//  real round-trip uses. `resumeAfterKeystoneSigning` pops 1 or 2 path elements depending on whether
-//  `scan` is actually on top, so that one shared resume path stays correct for both callers.
+//  MOB-1480 added a simulator-only Keystone bypass (a "Simulate signed result" button skipping the
+//  physical-device round-trip); removed by MOB-1458 along with the rest of the migration debug
+//  simulator. `resumeAfterKeystoneSigning`'s pop-count read (top-of-path `.scan` -> pop 2, else pop
+//  1) predates that removal and is left as a defensive read of actual path state rather than an
+//  assumption.
 //
 //  MOB-1487 (round 3): the scheduled/private path routed ALL migration transactions over Tor
 //  unconditionally, per the Core/Wallet decision (2026-07-16) — no sheet, no opt-out on that path.
@@ -54,7 +53,7 @@
 //  on immediate, "your balance" on scheduled). At real-SDK time, Tor-unavailable remains a fail +
 //  retry — no direct-connection fallback.
 //
-//  MOB-1496 (W6): the Keystone `.scan(.foundPCZTBatch)`/`.simulateSignature` store step re-pairs +
+//  MOB-1496 (W6): the Keystone `.scan(.foundPCZTBatch)` store step re-pairs +
 //  validates the scanned batch (`MigrationCoordFlow.rePairedKeystoneBatch`) before storing anything —
 //  any mismatch (short/long/empty) abandons the session exactly like `keystoneScanAbandoned` already
 //  did for an empty batch. It then splits any note-split sentinel entry out of the re-paired batch
@@ -85,11 +84,10 @@
 //  MOB-1496 (final review R6, C-1 fix): W6's store order was backwards against the real engine —
 //  `storeSignedNoteSplitPCZT` unconditionally starts a NEW run, while `storeSignedMigrationTransactions`
 //  uses-or-creates the active (newest non-terminal) run; storing the schedule first let the split's
-//  later store create a second run that shadowed the schedule's forever. The `.scan(.foundPCZTBatch)`/
-//  `.simulateSignature` store step now stores the split FIRST (when present) — creating the run the
-//  schedule store then joins — and abandons (same `keystoneScanAbandoned` semantics the re-pair-failure
-//  guard already used, generalized to pop the right number of elements for either caller) if that
-//  store itself fails, since nothing was persisted yet. The old `submitSignedNoteSplit` composite
+//  later store create a second run that shadowed the schedule's forever. The `.scan(.foundPCZTBatch)`
+//  store step now stores the split FIRST (when present) — creating the run the schedule store then
+//  joins — and abandons (same `keystoneScanAbandoned` semantics the re-pair-failure guard already
+//  used) if that store itself fails, since nothing was persisted yet. The old `submitSignedNoteSplit` composite
 //  (store-then-broadcast in one call, with no memory of a prior success) is deleted in favor of
 //  `storeSignedNoteSplit`/`broadcastStoredNoteSplit`: the coordinator only ever calls the former, and
 //  `resumeAfterKeystoneSigning` pushes `MigrationNoteSplit` with `splitStored: true` so its retry lane
@@ -637,9 +635,7 @@ extension MigrationCoordFlow {
                 // MOB-1510: every entry in the batch was witnessed by the SAME physical device in
                 // the SAME signing ceremony, so one entry signed by out-of-date firmware means the
                 // whole ceremony was — check all of them, not just the first, before storing
-                // anything. Simulator-only `.simulateSignature` deliberately skips this: it never
-                // touches a real device (testnet-only, see `MigrationSimulatorFlag`), so there is no
-                // firmware to gate. MOB-1513 (E3): in a multi-round ceremony this runs on ROUND 0
+                // anything. MOB-1513 (E3): in a multi-round ceremony this runs on ROUND 0
                 // ONLY — the same device signs every round, so firmware can't change between them
                 // (Android's rationale). A single-round ceremony is always round 0.
                 if state.keystoneRoundIndex == 0 {
@@ -703,68 +699,6 @@ extension MigrationCoordFlow {
                     scheduleEntries: scheduleEntries
                 )
 
-                // MARK: - Keystone signing (MOB-1480): simulator-only bypass
-
-            case .path(.element(id: let id, action: .keystoneSign(.delegate(.simulateSignature)))):
-                guard let context = state.pendingKeystoneSigning else { return .none }
-                guard case let .keystoneSign(signState) = state.path[id: id] else { return .none }
-                guard let accountUUID = state.selectedWalletAccount?.id else { return .none }
-
-                // Simulator-only bypass: no physical device exists to scan a QR back, so the batch
-                // is read straight off the already-pushed `keystoneSign` element's own state instead
-                // of arriving via `.scan(.foundPCZTBatch)`. Unlike that real path (which abandons an
-                // empty batch as a no-partial-storage safeguard against a failed scan), this button
-                // exists purely to exercise the resume chain for manual QA, so an empty batch falls
-                // back to a single fabricated placeholder rather than abandoning — the coordinator
-                // never inspects PCZT contents either way. "Signing" is pretending the unsigned
-                // bytes are already signed (MOB-1496 — same fabricated-data spirit as before).
-                let signedPczts: [MigrationSignedTransferPczt] = signState.pczts.isEmpty
-                    ? [MigrationSignedTransferPczt(id: "simulated", pczt: Data())]
-                    : signState.pczts.map { MigrationSignedTransferPczt(id: $0.id, pczt: $0.pczt) }
-
-                // MOB-1513: same immediate-lane divergence as the real round-trip above (always a
-                // single round — never accumulates).
-                if case .immediateReview = context {
-                    return submitImmediateKeystoneTransaction(
-                        accountUUID: accountUUID,
-                        unsignedPczt: signState.pczts.first?.pczt ?? Data(),
-                        signedPczt: signedPczts.first?.pczt ?? Data()
-                    )
-                }
-
-                // MOB-1513 (E3): same multi-round fold as the real round-trip above — a round advance
-                // defers to `.keystoneAdvanceToNextRound` too (which finds no `scan` on top for the
-                // bypass and updates `keystoneSign` in place, no pop).
-                let accumulated: [MigrationSignedTransferPczt]
-                switch foldKeystoneRound(signedPczts, state: &state) {
-                case .advance:
-                    return .send(.keystoneAdvanceToNextRound)
-                case .complete(let full):
-                    accumulated = full
-                }
-
-                // [MOB-1496] W2: same schedule lookup as the real round-trip above, but the
-                // simulator bypass never pushes `scan` — only `keystoneSign` sits above the
-                // schedule-bearing element.
-                let schedule = pendingKeystoneSchedule(context: context, depthBelowTop: 1, state: state)
-                // [MOB-1496] (final engine, plural preps): same sentinel-prefix split as the real
-                // round-trip above — the fabricated "simulated" placeholder id (used only when
-                // `signState.pczts` was itself empty) never carries the prefix, so it always lands in
-                // `scheduleEntries`.
-                let (prepEntries, scheduleEntries) = MigrationCoordFlow.splitKeystoneBatch(accumulated)
-                resetKeystoneRounds(state: &state)
-
-                // [MOB-1496] R8-T2 (#20): was a token-identical twin of the real round-trip's store
-                // effect above (two prior ordering fixes, C-1/C-1b, had to be applied to both in
-                // lockstep) — both now call the same helper.
-                return storeKeystoneSignedBatch(
-                    context: context,
-                    accountUUID: accountUUID,
-                    schedule: schedule,
-                    prepEntries: prepEntries,
-                    scheduleEntries: scheduleEntries
-                )
-
             case .keystoneSigningSubmitted(let context, let pendingScheduleStore):
                 return resumeAfterKeystoneSigning(
                     context: context,
@@ -819,10 +753,9 @@ extension MigrationCoordFlow {
                 // abandoning here without cancelling would leave that run stranded — a later re-entry
                 // would silently resume signing these same, by-then-stale PCZTs. This fires from BOTH
                 // the real round-trip's re-pair-failure guard above AND the split-store-failure branch
-                // of either Keystone store effect (including the simulator bypass) — v1 semantics hold
-                // for all of them: abandon discards everything, the user re-runs the ceremony from a
-                // fresh preview, so cancelling the stray run is correct here regardless of which path
-                // sent this action.
+                // of the Keystone store effect — v1 semantics hold for both: abandon discards
+                // everything, the user re-runs the ceremony from a fresh preview, so cancelling the
+                // stray run is correct here regardless of which guard sent this action.
                 let hadPendingCeremony = state.pendingKeystoneSigning != nil
                 state.pendingKeystoneSigning = nil
                 state.pendingKeystoneSigningAccountUUID = nil
@@ -832,8 +765,7 @@ extension MigrationCoordFlow {
                 resetKeystoneRounds(state: &state)
                 // MOB-1496 (C-1 fix): as well as the real round-trip's re-pair-failure guard above
                 // (`.scan` always on top there — pop 2, unchanged), this now also fires from the
-                // split-store-failure branch of EITHER Keystone store effect above, including the
-                // simulator bypass, which never pushes `.scan` (pop 1) — mirrors
+                // split-store-failure branch of the Keystone store effect above — mirrors
                 // `resumeAfterKeystoneSigning`'s identical "how many elements are actually on top"
                 // check.
                 let topElementIsScan = state.path.last?.is(\.scan) == true
@@ -1394,12 +1326,11 @@ extension MigrationCoordFlow {
     /// `state.pendingKeystoneScheduleStore` — MOB-1496 C-1b: the schedule may only store after a
     /// prep broadcast lands) — see `runFirstDeliveryKick`'s doc.
     ///
-    /// MOB-1480: how much to pop depends on which caller reached here. The real QR round-trip
-    /// pushes `scan` on top of `keystoneSign` (2 elements to unwind back to the signing source); the
-    /// simulator-only bypass (`keystoneSign(.delegate(.simulateSignature))`) never pushes `scan` at
-    /// all (1 element to unwind). Rather than trust the caller, this reads the actual top of the
-    /// path — `.scan` on top means the real round-trip ran (unchanged behavior, still always finds
-    /// `.scan` there), anything else means the bypass ran.
+    /// The real QR round-trip pushes `scan` on top of `keystoneSign` (2 elements to unwind back to
+    /// the signing source). Rather than trust the caller, this reads the actual top of the path —
+    /// `.scan` on top (the QR round-trip's only shape) pops 2; anything else pops 1, a defensive
+    /// fallback that predates the MOB-1458 removal of a former simulator-only bypass caller that
+    /// never pushed `scan`.
     ///
     /// Clears `pendingKeystoneSigning` in every case.
     private func resumeAfterKeystoneSigning(
@@ -1432,14 +1363,13 @@ extension MigrationCoordFlow {
 
         case .immediateReview:
             // MOB-1513/MOB-1496 (W-B): unreachable in practice — `submitImmediateKeystoneTransaction`
-            // intercepts `.immediateReview` at BOTH of `resumeAfterKeystoneSigning`'s callers (the
-            // real `.scan(.foundPCZTBatch)` round-trip and the `.simulateSignature` bypass) before
-            // either ever reaches this function, for BOTH producers of this context (the
-            // entry-screen immediate lane and "Migrate anyway") — the immediate lane's single
-            // ordinary-send PCZT (`createPCZTFromProposal`) never carries note-split preps for the
-            // split-routing branch above to route here either. Kept only for this switch's
-            // exhaustiveness; if it ever DID run, it would incorrectly push a fresh `.sending`
-            // broadcast attempt for a transaction `submitImmediateKeystoneTransaction` already
+            // intercepts `.immediateReview` at the real `.scan(.foundPCZTBatch)` round-trip, the sole
+            // caller of `resumeAfterKeystoneSigning`, before it ever reaches this function, for BOTH
+            // producers of this context (the entry-screen immediate lane and "Migrate anyway") — the
+            // immediate lane's single ordinary-send PCZT (`createPCZTFromProposal`) never carries
+            // note-split preps for the split-routing branch above to route here either. Kept only for
+            // this switch's exhaustiveness; if it ever DID run, it would incorrectly push a fresh
+            // `.sending` broadcast attempt for a transaction `submitImmediateKeystoneTransaction` already
             // submitted.
             let sendingState = MigrationSending.State(totalCount: 1)
             state.path.append(.sending(sendingState))
@@ -1449,10 +1379,11 @@ extension MigrationCoordFlow {
 
     // MARK: - MOB-1496 (R8-T2 #20): shared Keystone signed-batch store sequence
 
-    /// The store sequence for a signed Keystone batch — shared by the real `.scan(.foundPCZTBatch)`
-    /// round-trip and the `.simulateSignature` bypass, which ran this as token-identical twins before
-    /// this extraction (two prior ordering fixes, C-1/C-1b — see this file's header comment — had to
-    /// be applied to both in lockstep; the next such change would have silently forked them again).
+    /// The store sequence for a signed Keystone batch — called by the real `.scan(.foundPCZTBatch)`
+    /// round-trip (its only caller since MOB-1458 removed the simulator-only bypass that used to
+    /// share it; the two ran this as token-identical twins before this extraction, when two prior
+    /// ordering fixes, C-1/C-1b — see this file's header comment — had to be applied to both in
+    /// lockstep).
     ///
     /// No preps: stores the schedule immediately, exactly as before. R8-T2 (#5 fix): success
     /// bookkeeping (`.keystoneSigningSubmitted`, which drives `resumeAfterKeystoneSigning` into
@@ -1528,10 +1459,9 @@ extension MigrationCoordFlow {
     // MARK: - MOB-1513: Keystone signing — immediate lane's post-signing submit
 
     /// The immediate lane's Keystone post-signing step — intercepted BEFORE `storeKeystoneSignedBatch`
-    /// at both call sites above (the real `.scan(.foundPCZTBatch)` round-trip and the
-    /// `.simulateSignature` bypass), since it diverges from `storeKeystoneSignedBatch`'s
-    /// schedule-store semantics entirely: an `ImmediateMigrationProposal` is engine-external, so there
-    /// is no `MigrationSchedule` to store and no engine run this ceremony ever created (`proposeKeystoneBatch`,
+    /// at the real `.scan(.foundPCZTBatch)` round-trip above, since it diverges from
+    /// `storeKeystoneSignedBatch`'s schedule-store semantics entirely: an `ImmediateMigrationProposal`
+    /// is engine-external, so there is no `MigrationSchedule` to store and no engine run this ceremony ever created (`proposeKeystoneBatch`,
     /// `storeSignedMigrationTransactions`, and the whole "run created at PCZT-build time" story this
     /// file's header documents at length are ALL specific to the engine's own schedule/prep machinery
     /// — `createPCZTFromProposal` never touches any of it). Instead, the signed PCZT is proved and
@@ -1575,18 +1505,17 @@ extension MigrationCoordFlow {
     // MARK: - MOB-1496 (W2): schedule lookup for the Keystone store-success write point
 
     /// Locates the `MigrationSchedule` that was signed for `context`, read off the `.transferPlan`
-    /// element still beneath `keystoneSign` (+ `scan`, on the real round-trip) at the point the signed
-    /// PCZTs are about to be stored — `depthBelowTop` is how many elements sit above it on the path (2
-    /// for the real scan round-trip: `scan` + `keystoneSign`; 1 for the simulator bypass, which never
-    /// pushes `scan`) — mirrors how `signState.pczts` above reads the unsigned batch off the same
-    /// stack position. `nil` when that element carries no schedule of its own (a fixture/test state
-    /// that never populated one) — the caller then skips `recordCommittedSchedule` rather than
-    /// persisting nothing.
+    /// element still beneath `keystoneSign` + `scan` at the point the signed PCZTs are about to be
+    /// stored — `depthBelowTop` is how many elements sit above it on the path (2 for the real scan
+    /// round-trip: `scan` + `keystoneSign`) — mirrors how `signState.pczts` above reads the unsigned
+    /// batch off the same stack position. `nil` when that element carries no schedule of its own (a
+    /// fixture/test state that never populated one) — the caller then skips `recordCommittedSchedule`
+    /// rather than persisting nothing.
     ///
     /// MOB-1513/MOB-1496 (W-B): `.immediateReview` always returns `nil` — `MigrationReviewTransfer
     /// .State` (and, since W-B, "Migrate anyway") carry no engine schedule at all; the immediate
     /// lane's `ImmediateMigrationProposal` is engine-external. This branch is unreachable in
-    /// practice — both call sites above intercept `.immediateReview` via
+    /// practice — the call site above intercepts `.immediateReview` via
     /// `submitImmediateKeystoneTransaction` before ever reaching this function — but stays for the
     /// switch's exhaustiveness.
     private func pendingKeystoneSchedule(
@@ -1624,10 +1553,10 @@ extension MigrationCoordFlow {
         state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: rounds[0])))
     }
 
-    /// Advances a multi-round ceremony to the next signing round: pops the `scan` element (present
-    /// only on the real QR round-trip — the simulator bypass never pushes one) and re-arms the
-    /// `keystoneSign` element beneath with the next round's slice, so the user signs it in a fresh QR
-    /// session. `keystoneRoundIndex` has already been checked to have a next round by the caller.
+    /// Advances a multi-round ceremony to the next signing round: pops the `scan` element pushed by
+    /// the real QR round-trip and re-arms the `keystoneSign` element beneath with the next round's
+    /// slice, so the user signs it in a fresh QR session. `keystoneRoundIndex` has already been
+    /// checked to have a next round by the caller.
     private func advanceToNextKeystoneRound(state: inout MigrationCoordFlow.State) {
         state.keystoneRoundIndex += 1
         if state.path.last?.is(\.scan) == true {

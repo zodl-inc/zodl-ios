@@ -77,7 +77,6 @@ struct WalletBalances {
         case balanceUpdated(AccountBalance?)
         case exchangeRateRefreshTapped
         case exchangeRateEvent(ExchangeRateClient.EchangeRateEvent)
-        case migrationSimulatorLongPressed
         case onAppear
         case onDisappear
         case synchronizerStateChanged(RedactableSynchronizerState)
@@ -129,12 +128,6 @@ struct WalletBalances {
                 )
                 
             case .availableBalanceTapped:
-                return .none
-
-            case .migrationSimulatorLongPressed:
-                // Debug-only entry gesture (MOB-1480); the parent (`Home`) intercepts this to
-                // present the migration simulator panel when `MigrationSimulatorFlag.isEnabled`,
-                // mirroring the `.exchangeRateRefreshTapped` interception below.
                 return .none
 
             case .exchangeRateRefreshTapped:

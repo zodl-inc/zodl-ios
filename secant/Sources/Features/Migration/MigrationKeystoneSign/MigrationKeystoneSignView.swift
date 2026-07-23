@@ -9,11 +9,6 @@
 //  (secondary/destructive) / Get Signature (primary). Reuses `SignWithKeystoneView`'s existing
 //  localized keys — zero new *localized* strings.
 //
-//  MOB-1480 adds one tertiary "Simulate signed result (simulator)" button (iff `store
-//  .isSimulatorBypassVisible`), between the QR/copy content and Reject/Get Signature — a
-//  deliberate inline English literal (dev-only control, not added to `Localizable.xcstrings`;
-//  approved spec §6/§7 deviation from the localization rule).
-//
 
 import SwiftUI
 import ComposableArchitecture
@@ -53,19 +48,6 @@ struct MigrationKeystoneSignView: View {
                             .fixedSize(horizontal: false, vertical: true)
                             .padding(.top, 4)
                     }
-                }
-
-                if store.isSimulatorBypassVisible {
-                    // MOB-1480: deliberate inline English literal — dev-only simulator control,
-                    // approved spec §6/§7 deviation from the Localizable.xcstrings rule (not added
-                    // there; do not localize).
-                    ZashiButton(
-                        "Simulate signed result (simulator)",
-                        type: .tertiary
-                    ) {
-                        store.send(.simulateSignatureTapped)
-                    }
-                    .padding(.top, 16)
                 }
 
                 Spacer()

@@ -319,8 +319,7 @@ struct MigrationManagerClient: Sendable {
     // `reconcile`'s no-op but is not a test fallback (see the `recordCommittedSchedule` note).
     var clearAbandonedNetworkSnapshot: @Sendable (_ accountUUID: AccountUUID?) async -> Void = { _ in }
     // Debug/testnet-only: clears every persisted migration flag this client owns (mode, manual
-    // delivery, network privacy, complete-acknowledged) — consumed by the migration SDK simulator's
-    // debug panel "Reset app migration flags" control (MOB-1480). MOB-1496 (W-A): no longer
+    // delivery, network privacy, complete-acknowledged). MOB-1496 (W-A): no longer
     // includes dust-locked — "Lock balance" is now a genuine SDK-side lock, not app-persisted state.
     var resetPersistedFlags: @Sendable () -> Void
 }

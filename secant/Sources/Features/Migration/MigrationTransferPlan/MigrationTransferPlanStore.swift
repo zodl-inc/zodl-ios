@@ -354,7 +354,7 @@ struct MigrationTransferPlan {
     /// schedule entry's engine id share the same id-space, so each prep entry is wrapped under a
     /// `keystoneNoteSplitSentinelPrefix` + its own engine id so it can still be told apart in the same
     /// typed batch/QR ceremony. MOB-1496 (W6): on the signed side, `MigrationCoordFlowCoordinator`'s
-    /// `.scan(.foundPCZTBatch)`/`.simulateSignature` handlers split the prefixed entries back out
+    /// `.scan(.foundPCZTBatch)` handler splits the prefixed entries back out
     /// (stripping the prefix) before storing — only the schedule's own engine-id-paired entries reach
     /// `storeSignedMigrationTransactions`, and the preps route through the dedicated
     /// dedicated `storeSignedNoteSplits` store — see that coordinator's doc for the full mechanism,

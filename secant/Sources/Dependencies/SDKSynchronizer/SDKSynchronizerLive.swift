@@ -69,7 +69,7 @@ extension SDKSynchronizerClient: DependencyKey {
             synchronizer = SDKSynchronizer(initializer: initializer)
         }
 
-        var client = SDKSynchronizerClient(
+        let client = SDKSynchronizerClient(
             stateStream: { synchronizer.stateStream },
             eventStream: { synchronizer.eventStream },
             exchangeRateUSDStream: { synchronizer.exchangeRateUSDStream },
@@ -439,13 +439,6 @@ extension SDKSynchronizerClient: DependencyKey {
             // batch format lands.
             parseMigrationPCZTBatch: { _ in nil }
         )
-
-        // MOB-1480: routes the migration member block above (plus `estimateTimestamp`) through
-        // the shared simulator engine on testnet builds — see `SDKSynchronizerClient+Simulated`.
-        // The stub construction above stays byte-identical either way.
-        if MigrationSimulatorFlag.isEnabled {
-            client.applySimulatedMigration(engine: MigrationSimulatorClient.sharedEngine)
-        }
 
         return client
     }
