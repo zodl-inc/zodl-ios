@@ -31,9 +31,9 @@
 //  see `migrationBackgroundSessionEffect`'s own doc for the ordered classification/resolution.
 //  Two consequences for every single-account test below:
 //  (1) `getMigrationState`'s default (`.noOp`'s `.notStarted`) now short-circuits an account straight
-//      into "nothing to do" BEFORE the plan-broken/sync-required checks ever run — every test whose
+//      into "nothing to do" BEFORE the plan-broken checks ever run — every test whose
 //      account needs to reach one of those checks now sets `getMigrationState` to a non-`.complete`/
-//      `.notStarted`/`.readyToPropose` state explicitly (`baseNoOpDependencies` deliberately leaves
+//      `.notStarted` state explicitly (`baseNoOpDependencies` deliberately leaves
 //      the bare default alone — see its own doc for why).
 //  (2) A brand-new probe, `rescheduleOverdueMigrationTransfer`, gates broadcast candidacy (its
 //      non-nil return is what makes an account a candidate at all — see the tree's own "height-due
@@ -46,12 +46,12 @@
 //      relative ordering overrides it explicitly per account too.
 //  New tests below (`MARK: - Branch 1.5/4.5 (MOB-1496 W5): multi-account fan-out`) cover the
 //  multi-account resolution itself: earliest-height/overdue/tie-break candidate selection,
-//  per-account `migrationNetworkOptions` threading, sync-needed deferring every broadcast, plan-
+//  per-account `migrationNetworkOptions` threading, plan-
 //  broken not blocking a healthy account's broadcast, and the all-complete/one-active cancelAll
 //  split. Further additions (`MARK: - Fix wave`) pin the review's findings: the nil-probe/
-//  `activeNoCandidate` path itself, the invariant that a winner completing must NOT `cancelAll`/
-//  announce `.migrationComplete` while another account is still active (finding 1), its sibling
-//  legitimate-cancelAll case, and the planner-level `readyToPropose` nuance.
+//  `activeNoCandidate` path itself, and the invariant that a winner completing must NOT `cancelAll`/
+//  announce `.migrationComplete` while another account is still active (finding 1) plus its sibling
+//  legitimate-cancelAll case.
 //
 
 import Foundation
@@ -121,7 +121,7 @@ import ComposableArchitecture
     }
 
     /// A minimal "account has an active run" progress payload — used wherever a test just needs to
-    /// escape the tree's `.complete`/`.notStarted`/`.readyToPropose` "nothing to do" bucket without
+    /// escape the tree's `.complete`/`.notStarted` "nothing to do" bucket without
     /// caring about the progress fields themselves. `nonisolated`: referenced from inside
     /// `@Sendable` dependency-closure overrides below, which run off the main actor —
     /// `MigrationProgress` is itself `Sendable`, so no `(unsafe)` is needed.
@@ -342,114 +342,6 @@ import ComposableArchitecture
             #expect(notifications.withValue { $0 } == [MigrationNotification.planNeedsUpdate])
             #expect(scheduleNextWindowCalls.withValue { $0 } == 0)
             #expect(completeCalls.withValue { $0 } == [true])
-        }
-    }
-
-    // MARK: - Branch 3: Sync required
-
-    /// MOB-1496 (W3): the SDK's own wallet-scope privacy gate (`isMigrationSyncBlocked() == true`)
-    /// replaces the retired app-side `isSyncDeferredAfterBroadcast` flag: skip even the sync —
-    /// re-arm only, complete the session. `state.bgTask` must NOT be touched (no sync-only session
-    /// runs).
-    @Test func syncRequiredButMigrationSyncBlockedOnlyRearms() async {
-        let scheduleNextWindowCalls = LockIsolated<Int>(0)
-        let completeCalls = LockIsolated<[Bool]>([])
-
-        await withDependencies {
-            $0.defaultInMemoryStorage = InMemoryStorage()
-        } operation: {
-            let store = Store(initialState: Self.selectedAccountState()) {
-                Root()
-            } withDependencies: {
-                baseNoOpDependencies(&$0)
-                // MOB-1496 (W5): escape the "nothing to do" bucket — `.requiresAttention
-                // (.syncRequiredBeforeNext)` is the thematically exact state for this test, and (like
-                // every OTHER `MigrationAttentionReason` besides `.transferExpired`/`.invalidTransfer`)
-                // does not also trip the plan-broken state check.
-                $0.sdkSynchronizer.getMigrationState = { _ in
-                    MigrationState.requiresAttention(MigrationAttentionReason.syncRequiredBeforeNext)
-                }
-                $0.sdkSynchronizer.isSyncRequiredBeforeNextMigrationTransfer = { _ in true }
-                $0.sdkSynchronizer.isMigrationSyncBlocked = { true }
-                $0.migrationBGScheduler.scheduleNextWindow = { scheduleNextWindowCalls.withValue { $0 += 1 } }
-            }
-
-            let handle = MigrationBGSessionHandle(rawTask: nil) { success in completeCalls.withValue { $0.append(success) } }
-            store.send(.initialization(.migrationBackgroundSession(handle)))
-            await waitForRootStore { completeCalls.withValue { !$0.isEmpty } }
-
-            #expect(scheduleNextWindowCalls.withValue { $0 } == 1)
-            #expect(completeCalls.withValue { $0 } == [true])
-            #expect(store.state.bgTask == nil)
-        }
-    }
-
-    /// Not deferred: a sync-only session. Re-arms up front, stashes `state.bgTask =
-    /// handle.rawTask`, and kicks the same sync path `power_wifi_sync` uses (`.retryStart`) —
-    /// asserted here by actually observing `sdkSynchronizer.start` fire (past `.retryStart`'s
-    /// disk-space guard — overridden true, `RootMigrationRoutingTests`' `initialSetupsInvoke
-    /// MigrationReconcile` precedent — and its own `latestState().syncStatus.isPrepared` guard,
-    /// opened via a mutated `SynchronizerState.zero` with `.upToDate` status). This branch never
-    /// completes `handle` itself — that's the existing `synchronizerStateChanged` machinery's job,
-    /// exactly as for the `power_wifi_sync` task it mirrors — so `completeCalls` stays empty here.
-    /// MOB-1496: the decision tree now sends `.migrationBackgroundSyncOnly(handle)` back into the
-    /// reducer to do the `state.bgTask` stash (effects can't mutate `state` directly) — observed
-    /// here exactly the same way (`store.state.bgTask`), since that's an implementation detail of
-    /// how the stash happens, not what's being asserted.
-    ///
-    /// MOB-1496 (W3): `isMigrationSyncBlocked` is explicit `false` here (redundant with
-    /// `.mocked(...)`'s own built-in default, kept for clarity) — it gates BOTH this branch's own
-    /// skip check AND `.retryStart`'s new proactive check downstream of `.migrationBackgroundSyncOnly`;
-    /// this test's `startCalls` assertion below proves neither one blocks the sync-only kick.
-    @Test func syncRequiredNotDeferredRearmsAndStashesBgTaskForSyncOnlySession() async {
-        let scheduleNextWindowCalls = LockIsolated<Int>(0)
-        let startCalls = LockIsolated<[Bool]>([])
-        let completeCalls = LockIsolated<[Bool]>([])
-
-        let preparedState: SynchronizerState = {
-            var state = SynchronizerState.zero
-            state.syncStatus = SyncStatus.upToDate
-            return state
-        }()
-
-        await withDependencies {
-            $0.defaultInMemoryStorage = InMemoryStorage()
-        } operation: {
-            let store = Store(initialState: Self.selectedAccountState()) {
-                Root()
-            } withDependencies: {
-                baseNoOpDependencies(&$0)
-                // `latestState`/`start` are non-`@DependencyClient` `let` fields on
-                // `SDKSynchronizerClient` (no per-field override) — replace the whole client via
-                // its `.mocked(...)` builder (same defaults as `.noOp` for every other field), then
-                // layer the ordinary `var` overrides below on top.
-                $0.sdkSynchronizer = SDKSynchronizerClient.mocked(
-                    latestState: { preparedState },
-                    start: { _ in startCalls.withValue { $0.append(true) } }
-                )
-                // MOB-1496 (W5): escape the "nothing to do" bucket — see the twin comment in
-                // `syncRequiredButMigrationSyncBlockedOnlyRearms` above.
-                $0.sdkSynchronizer.getMigrationState = { _ in
-                    MigrationState.requiresAttention(MigrationAttentionReason.syncRequiredBeforeNext)
-                }
-                $0.sdkSynchronizer.isSyncRequiredBeforeNextMigrationTransfer = { _ in true }
-                $0.sdkSynchronizer.isMigrationSyncBlocked = { false }
-                $0.migrationBGScheduler.scheduleNextWindow = { scheduleNextWindowCalls.withValue { $0 += 1 } }
-                $0.diskSpaceChecker.hasEnoughFreeSpaceForSync = { true }
-            }
-
-            let handle = MigrationBGSessionHandle(rawTask: nil) { success in completeCalls.withValue { $0.append(success) } }
-            store.send(.initialization(.migrationBackgroundSession(handle)))
-            await waitForRootStore { startCalls.withValue { !$0.isEmpty } }
-
-            // Arm.
-            #expect(scheduleNextWindowCalls.withValue { $0 } == 1)
-            // Stash: `state.bgTask` takes on `handle.rawTask` (`nil` here — the spy handle shape).
-            #expect(store.state.bgTask == nil)
-            // Kick: `.retryStart` ran all the way to `sdkSynchronizer.start(true)`.
-            #expect(startCalls.withValue { $0 } == [true])
-            // This branch does not itself complete the handle.
-            #expect(completeCalls.withValue { $0 }.isEmpty)
         }
     }
 
@@ -1030,54 +922,6 @@ import ComposableArchitecture
         }
     }
 
-    /// ZIP-0318: a background session either syncs or broadcasts, never both — one account needing
-    /// sync defers EVERY account's broadcast this session, even a healthy due account.
-    @Test func oneSyncNeededAndOtherDueProducesSyncOnlySessionWithZeroBroadcasts() async {
-        let selected = Self.walletAccount()
-        let second = Self.secondAccount()
-        let executedCount = LockIsolated<Int>(0)
-        let startCalls = LockIsolated<[Bool]>([])
-        let scheduleNextWindowCalls = LockIsolated<Int>(0)
-
-        let preparedState: SynchronizerState = {
-            var state = SynchronizerState.zero
-            state.syncStatus = SyncStatus.upToDate
-            return state
-        }()
-
-        await withDependencies {
-            $0.defaultInMemoryStorage = InMemoryStorage()
-        } operation: {
-            let store = Store(initialState: Self.twoAccountState()) {
-                Root()
-            } withDependencies: {
-                baseNoOpDependencies(&$0)
-                $0.sdkSynchronizer = SDKSynchronizerClient.mocked(
-                    latestState: { preparedState },
-                    start: { _ in startCalls.withValue { $0.append(true) } }
-                )
-                $0.sdkSynchronizer.getMigrationState = { _ in MigrationState.inProgress(Self.placeholderProgress) }
-                $0.sdkSynchronizer.isSyncRequiredBeforeNextMigrationTransfer = { accountUUID in accountUUID == selected.id }
-                $0.sdkSynchronizer.isMigrationSyncBlocked = { false }
-                $0.sdkSynchronizer.rescheduleOverdueMigrationTransfer = { _ in Self.proposal(nextExecutableAfterHeight: 100) }
-                $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in
-                    executedCount.withValue { $0 += 1 }
-                    return MigrationTransferResult.success(txId: "should-not-be-called")
-                }
-                $0.migrationBGScheduler.scheduleNextWindow = { scheduleNextWindowCalls.withValue { $0 += 1 } }
-                $0.diskSpaceChecker.hasEnoughFreeSpaceForSync = { true }
-            }
-
-            let handle = MigrationBGSessionHandle(rawTask: nil) { _ in }
-            store.send(.initialization(.migrationBackgroundSession(handle)))
-            await waitForRootStore { startCalls.withValue { !$0.isEmpty } }
-
-            #expect(executedCount.withValue { $0 } == 0)
-            #expect(scheduleNextWindowCalls.withValue { $0 } == 1)
-            #expect(startCalls.withValue { $0 } == [true])
-        }
-    }
-
     /// One account's plan-broken state posts a single `.planNeedsUpdate` notification for the whole
     /// session, but does NOT turn the session sync-only or block a healthy account's own broadcast.
     ///
@@ -1201,8 +1045,7 @@ import ComposableArchitecture
     }
 
     // MARK: - Fix wave (review findings): nil-probe coverage + winner-completes-while-another-
-    // account-is-active invariant (finding 1) + its sibling legitimate-cancelAll case + the
-    // planner-level `readyToPropose` nuance.
+    // account-is-active invariant (finding 1) + its sibling legitimate-cancelAll case.
 
     /// IMPORTANT-2: an active (`.inProgress`) account whose `rescheduleOverdueMigrationTransfer`
     /// probe returns nil is `.activeNoCandidate` — never a broadcast candidate, and (unlike
@@ -1445,42 +1288,6 @@ import ComposableArchitecture
         }
     }
 
-    /// MINOR-3: the planner's cancel-all gate requires `.nothingToDo(state)` with `state ==
-    /// .complete || .notStarted` — a `.readyToPropose` account (real balance, no committed plan
-    /// yet) is deliberately EXCLUDED, so it must force a re-arm instead of `cancelAll`, keeping the
-    /// wakeup chain alive in case the user eventually commits a plan. Only `MigrationCadence
-    /// .planRearm`'s adjacent nuance had store-independent coverage before this; `MigrationSessionPlanner`
-    /// itself is `private`, so this pins it the only way available — via the Root store.
-    @Test func oneCompleteOneReadyToProposeDoesNotCancelAllAndRearms() async {
-        let cancelAllCalls = LockIsolated<Int>(0)
-        let scheduleNextWindowCalls = LockIsolated<Int>(0)
-        let completeCalls = LockIsolated<[Bool]>([])
-
-        await withDependencies {
-            $0.defaultInMemoryStorage = InMemoryStorage()
-        } operation: {
-            let selected = Self.walletAccount()
-            let store = Store(initialState: Self.twoAccountState()) {
-                Root()
-            } withDependencies: {
-                baseNoOpDependencies(&$0)
-                $0.sdkSynchronizer.getMigrationState = { accountUUID in
-                    accountUUID == selected.id ? MigrationState.complete : MigrationState.readyToPropose
-                }
-                $0.migrationBGScheduler.cancelAll = { cancelAllCalls.withValue { $0 += 1 } }
-                $0.migrationBGScheduler.scheduleNextWindow = { scheduleNextWindowCalls.withValue { $0 += 1 } }
-            }
-
-            let handle = MigrationBGSessionHandle(rawTask: nil) { success in completeCalls.withValue { $0.append(success) } }
-            store.send(.initialization(.migrationBackgroundSession(handle)))
-            await waitForRootStore { completeCalls.withValue { !$0.isEmpty } }
-
-            #expect(cancelAllCalls.withValue { $0 } == 0)
-            #expect(scheduleNextWindowCalls.withValue { $0 } == 1)
-            #expect(completeCalls.withValue { $0 } == [true])
-        }
-    }
-
     // MARK: - Expiration
 
     /// `.migrationBackgroundTaskExpired` must re-arm — an expired session must never orphan the
@@ -1715,72 +1522,6 @@ import ComposableArchitecture
             await waitForRootStore { stopCalls.withValue { $0 } == 1 }
 
             #expect(completeCalls.withValue { $0 } == [true])
-        }
-    }
-
-    // MARK: - R8 final cumulative review (Finding 2): guard the sync-only hand-off
-
-    /// `completeSyncOnlySession` sends `.migrationBackgroundSyncOnly(handle)` back into the reducer
-    /// to do its `state.bgTask` stash — but `.migrationBackgroundTaskExpired` can win the race
-    /// against that in-flight send (which survives the tree's own `.cancellable` cancellation),
-    /// completing the session FIRST via its guarded active-session branch (clearing
-    /// `activeMigrationBackgroundSessionHandle` — see `normalCompletionThenLateExpirationOnlyCompletesOnce`
-    /// above for the identical "drive the first event for real, then manually deliver the second to
-    /// represent a late arrival" technique used to simulate this deterministically). The hand-off
-    /// must then be a no-op: no `state.bgTask` adoption, no re-arm, no `.retryStart` kick, and no
-    /// second completion of any kind. FAILS against HEAD f6882a1e — the hand-off adopts/kicks
-    /// unconditionally, re-arming a SECOND time and reaching `start()`.
-    @Test func migrationBackgroundSyncOnlyGuardsAgainstAnAlreadyCompletedSession() async {
-        let completeCalls = LockIsolated<[Bool]>([])
-        let scheduleNextWindowCalls = LockIsolated<Int>(0)
-        let startCalls = LockIsolated<[Bool]>([])
-
-        await withDependencies {
-            $0.defaultInMemoryStorage = InMemoryStorage()
-        } operation: {
-            let handle = MigrationBGSessionHandle(rawTask: nil) { success in completeCalls.withValue { $0.append(success) } }
-
-            // As if `migrationBackgroundSessionEffect` had already stashed this handle for a
-            // genuinely mid-flight session (the real precondition for either expiration branch or
-            // the sync-only hand-off to matter at all).
-            var initialState = Self.selectedAccountState()
-            initialState.activeMigrationBackgroundSessionHandle = handle
-
-            let store = Store(initialState: initialState) {
-                Root()
-            } withDependencies: {
-                baseNoOpDependencies(&$0)
-                $0.diskSpaceChecker.hasEnoughFreeSpaceForSync = { true }
-                $0.sdkSynchronizer = SDKSynchronizerClient.mocked(
-                    latestState: { Self.preparedState },
-                    start: { _ in startCalls.withValue { $0.append(true) } }
-                )
-                $0.sdkSynchronizer.isMigrationSyncBlocked = { false }
-                $0.migrationBGScheduler.scheduleNextWindow = { scheduleNextWindowCalls.withValue { $0 += 1 } }
-            }
-
-            // `.migrationBackgroundTaskExpired` wins the race: completes the handle via the guarded
-            // ACTIVE-session branch, clears the live-session marker, re-arms once.
-            store.send(.initialization(.appDelegate(.migrationBackgroundTaskExpired)))
-            await waitForRootStore { completeCalls.withValue { !$0.isEmpty } }
-
-            #expect(completeCalls.withValue { $0 } == [false])
-            #expect(store.state.activeMigrationBackgroundSessionHandle == nil)
-            await waitForRootStore { scheduleNextWindowCalls.withValue { $0 } == 1 }
-            #expect(scheduleNextWindowCalls.withValue { $0 } == 1)
-
-            // The sync-only hand-off `completeSyncOnlySession` had already sent is delivered anyway,
-            // AFTER expiration already cleared the live-session marker.
-            store.send(.initialization(.migrationBackgroundSyncOnly(handle)))
-            // Let any (erroneous, if the guard were missing) adoption/re-arm/kick effects settle
-            // before asserting their absence — same idiom as `notificationTapTeardownWithNoHoldActiveNeverNudgesGate`
-            // in `RootMigrationRoutingTests`.
-            try? await Task.sleep(nanoseconds: 300_000_000)
-
-            // No re-arm beyond expiration's own, no `.retryStart` kick, and no second completion.
-            #expect(scheduleNextWindowCalls.withValue { $0 } == 1)
-            #expect(startCalls.withValue { $0 }.isEmpty)
-            #expect(completeCalls.withValue { $0 } == [false])
         }
     }
 

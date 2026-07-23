@@ -120,7 +120,7 @@ enum MigrationCadence {
             // FIRST, before any of `state`/`progress`/`nextExecutableAfterHeight` (all placeholders
             // for this entry) are consulted.
             guard !account.isUnreadable else {
-                representativeState = MigrationState.readyToPropose
+                representativeState = MigrationState.splitPendingConfirmation
                 continue
             }
 

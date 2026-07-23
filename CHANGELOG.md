@@ -15,6 +15,7 @@ directly impact users rather than highlighting other crucial architectural updat
 - [MOB-1496] The Ironwood migration's "Lock balance" and "Migrate anyway" choices at Migration Complete now use the real wallet engine: locking a leftover balance genuinely marks it unspendable instead of a cosmetic flag, and migrating it anyway sends it through the same reliable transfer path as an immediate migration, for both the ZODL software wallet and Keystone hardware wallets. Re-opening the migration screen after locking a balance no longer overstates how much is left to migrate. Gated behind Ironwood network activation and not yet in a released build.
 - [MOB-1496] Multi-round Ironwood migrations now show the real total round count ("Round N of M") on the transfer plan and Home banner, using the wallet engine's own estimate instead of always just "Round N". Gated behind Ironwood network activation and not yet in a released build.
 - [MOB-1496] The Migration Scheduled screen now shows the real transfer total, transfer count, and duration instead of placeholder zeros, and — when a small dust remainder is left behind in Orchard — a new card explains that it stayed below the transfer threshold and will migrate in a future batch. Gated behind Ironwood network activation and not yet in a released build.
+- [MOB-1458] The wallet engine can now rebuild expired migration transfers in place — keeping the same funding note on a fresh schedule — instead of requiring a full restart; this lands in the migration recovery flow in a follow-up release. Gated behind Ironwood network activation and not yet in a released build.
 
 ### Added
 - [MOB-1458] The app now builds against the Ironwood-capable Zcash SDK (local development path) and can sync with the new Slipstream engine, selected by a feature flag that is on by default on this line. Funds in the Ironwood pool are counted in all shielded balances (spendable, pending, and total).
@@ -50,6 +51,7 @@ directly impact users rather than highlighting other crucial architectural updat
 ### Removed
 - [MOB-1513] The "Splitting Funds" screen is removed — it isn't part of the final designs. While the balance split confirms, the Home banner now shows "Migration Progress" with the transfer ring (instead of a confusing "Migration Required" title after the plan was already confirmed), and tapping it opens the Migration Progress screen, whose Split Balance row tracks the split until it completes. Gated behind Ironwood network activation and not yet in a released build.
 - [MOB-1458] Remove the internal migration simulator debug tool.
+- [MOB-1458] The migration background session no longer defers to a separate "sync required" pre-check before sending — the wallet engine now enforces sync-vs-broadcast sequencing internally. No observable behavior change.
 
 ## 3.7.3 build 1 (20026-07-12)
 

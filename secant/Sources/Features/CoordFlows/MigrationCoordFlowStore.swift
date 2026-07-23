@@ -65,8 +65,8 @@
 //  engine's `record_transfer_result` prep branch (`context.rs:1299-1303`) UNCONDITIONALLY overwrites
 //  the run's phase to `WaitingDenomConfirmations` the instant the split's broadcast is recorded — so
 //  storing the schedule (which sets `BroadcastScheduled`) BEFORE that broadcast, as the C-1 fix did,
-//  gets silently clobbered the moment the broadcast lands; the run then parks at `.readyToPropose`
-//  forever once the split mines (`context.rs:361-378`, unconditional — no pending-rows check), and the
+//  gets silently clobbered the moment the broadcast lands; the run then never advances again
+//  once the split mines (`context.rs:361-378`, unconditional — no pending-rows check), and the
 //  committed schedule never executes. Step 0 of the fix-wave-2 report traced the denom-advance guard
 //  and found it fires from phase ∈ {`PreparingDenominations`, `WaitingDenomConfirmations`} — NOT
 //  `BroadcastScheduled` — so a schedule store performed right after the split's broadcast SUCCEEDS

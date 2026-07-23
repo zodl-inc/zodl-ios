@@ -51,38 +51,6 @@ struct MigrationManagerTests {
         #expect(variant == nil)
     }
 
-    @Test func readyToProposeWithPositiveBalanceIsRequired() {
-        let variant = MigrationDerivations.bannerVariant(
-            isIronwoodActivated: true,
-            state: MigrationState.readyToPropose,
-            hasOverdue: false,
-            isManualDelivery: false,
-            isNextTransferDue: false,
-            orchardBalance: Zatoshi(500),
-            isCompleteAcknowledged: false,
-            isMigrationRemainderPending: false,
-            transferRows: []
-        )
-
-        #expect(variant == MigrationBannerVariant.required)
-    }
-
-    @Test func readyToProposeWithZeroBalanceIsNil() {
-        let variant = MigrationDerivations.bannerVariant(
-            isIronwoodActivated: true,
-            state: MigrationState.readyToPropose,
-            hasOverdue: false,
-            isManualDelivery: false,
-            isNextTransferDue: false,
-            orchardBalance: Zatoshi.zero,
-            isCompleteAcknowledged: false,
-            isMigrationRemainderPending: false,
-            transferRows: []
-        )
-
-        #expect(variant == nil)
-    }
-
     /// MOB-1513 (B4): a committed run whose preps haven't all mined yet reads as PROGRESS ("0 of N"
     /// ring), never the old "Migration Required"-titled `.splitting` variant — the run IS running,
     /// and "Required" post-confirm was exactly QA's confusion. Counts derive from the row list
@@ -284,33 +252,6 @@ struct MigrationManagerTests {
         )
 
         #expect(variant == MigrationBannerVariant.inProgress(done: 2, total: 5, round: nil, totalRounds: nil))
-    }
-
-    @Test func requiresAttentionSyncRequiredBeforeNextRendersAsPlainProgress() {
-        // The LiveKey normalizes `.requiresAttention(.syncRequiredBeforeNext)` into
-        // `.inProgress(progress)` using its own `getMigrationProgress()` snapshot before calling
-        // the pure function (`syncRequiredBeforeNext` itself carries no progress payload) — so at
-        // this layer it is indistinguishable from a plain `.inProgress` state.
-        let progress = MigrationProgress(
-            completedTransfers: 3,
-            totalTransfers: 6,
-            remainingOrchard: Zatoshi(1_000),
-            nextTransferReadyAtHeight: 100
-        )
-
-        let variant = MigrationDerivations.bannerVariant(
-            isIronwoodActivated: true,
-            state: MigrationState.inProgress(progress),
-            hasOverdue: false,
-            isManualDelivery: false,
-            isNextTransferDue: false,
-            orchardBalance: Zatoshi.zero,
-            isCompleteAcknowledged: false,
-            isMigrationRemainderPending: false,
-            transferRows: []
-        )
-
-        #expect(variant == MigrationBannerVariant.inProgress(done: 3, total: 6, round: nil, totalRounds: nil))
     }
 
     // MOB-1496: the SDK's `MigrationAttentionReason` has no `.transferStalled` case — "stalled" is
@@ -1071,21 +1012,6 @@ struct MigrationManagerTests {
         let route = MigrationDerivations.reentryRoute(
             isIronwoodActivated: true,
             state: MigrationState.notStarted,
-            hasInvalid: false,
-            hasOverdue: false,
-            isManualDelivery: false,
-            isNextTransferDue: false,
-            isCompleteAcknowledged: false,
-            progress: nil
-        )
-
-        #expect(route == MigrationReentryRoute.entry)
-    }
-
-    @Test func readyToProposeIsEntry() {
-        let route = MigrationDerivations.reentryRoute(
-            isIronwoodActivated: true,
-            state: MigrationState.readyToPropose,
             hasInvalid: false,
             hasOverdue: false,
             isManualDelivery: false,
@@ -2179,7 +2105,7 @@ struct MigrationManagerTests {
                 }
             )
             $0.sdkSynchronizer.getMigrationState = { _ in MigrationState.complete }
-            $0.sdkSynchronizer.proposeMigrationTransfers = { _, _ in
+            $0.sdkSynchronizer.proposeMigrationTransfers = { _ in
                 MigrationSchedule(
                     transfers: [
                         MigrationTransferProposal(id: "t0", amount: Zatoshi(100), anchorHeight: 10, nextExecutableAfterHeight: 10, expiryHeight: 20)
@@ -2231,7 +2157,7 @@ struct MigrationManagerTests {
                 }
             )
             $0.sdkSynchronizer.getMigrationState = { _ in MigrationState.complete }
-            $0.sdkSynchronizer.proposeMigrationTransfers = { _, _ in MigrationSchedule(transfers: [], estimatedDurationHours: 0) }
+            $0.sdkSynchronizer.proposeMigrationTransfers = { _ in MigrationSchedule(transfers: [], estimatedDurationHours: 0) }
         } operation: {
             let impl = MigrationManagerImpl(gateStorage: storage)
             await impl.reconcile()
@@ -2285,7 +2211,7 @@ struct MigrationManagerTests {
                 }
             )
             $0.sdkSynchronizer.getMigrationState = { _ in MigrationState.complete }
-            $0.sdkSynchronizer.proposeMigrationTransfers = { _, _ in throw SomeError() }
+            $0.sdkSynchronizer.proposeMigrationTransfers = { _ in throw SomeError() }
         } operation: {
             await impl.reconcile()
         }
@@ -2338,7 +2264,7 @@ struct MigrationManagerTests {
                 }
             )
             $0.sdkSynchronizer.getMigrationState = { _ in MigrationState.complete }
-            $0.sdkSynchronizer.proposeMigrationTransfers = { _, _ in
+            $0.sdkSynchronizer.proposeMigrationTransfers = { _ in
                 proposeCalls.withValue { $0 += 1 }
                 return MigrationSchedule(transfers: [], estimatedDurationHours: 0)
             }
@@ -2442,7 +2368,7 @@ struct MigrationManagerTests {
                 }
             )
             $0.sdkSynchronizer.getMigrationState = { _ in MigrationState.complete }
-            $0.sdkSynchronizer.proposeMigrationTransfers = { _, _ in
+            $0.sdkSynchronizer.proposeMigrationTransfers = { _ in
                 proposeCalls.withValue { $0 += 1 }
                 return MigrationSchedule(transfers: [], estimatedDurationHours: 0)
             }
@@ -2498,7 +2424,7 @@ struct MigrationManagerTests {
                 }
             )
             $0.sdkSynchronizer.getMigrationState = { _ in MigrationState.complete }
-            $0.sdkSynchronizer.proposeMigrationTransfers = { _, _ in
+            $0.sdkSynchronizer.proposeMigrationTransfers = { _ in
                 proposeCalls.withValue { $0 += 1 }
                 return MigrationSchedule(transfers: [], estimatedDurationHours: 0)
             }
@@ -2522,7 +2448,7 @@ struct MigrationManagerTests {
                 }
             )
             $0.sdkSynchronizer.getMigrationState = { _ in MigrationState.complete }
-            $0.sdkSynchronizer.proposeMigrationTransfers = { _, _ in
+            $0.sdkSynchronizer.proposeMigrationTransfers = { _ in
                 proposeCalls.withValue { $0 += 1 }
                 return MigrationSchedule(transfers: [], estimatedDurationHours: 0)
             }

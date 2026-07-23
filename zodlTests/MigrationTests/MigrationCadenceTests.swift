@@ -217,16 +217,17 @@ import Foundation
         #expect(plan.winnerAccountUUID == nil)
     }
 
-    /// `.readyToPropose`/`.inProgress`/`.requiresAttention` all count as an active run — proven here
-    /// via `.readyToPropose` specifically (no height available yet, but still active).
-    @Test func readyToProposeCountsAsActiveEvenWithoutAHeight() {
+    /// `.splitPendingConfirmation`/`.inProgress`/`.requiresAttention` all count as an active run —
+    /// proven here via `.splitPendingConfirmation` specifically (a bare, no-payload active state
+    /// with no height available yet, but still active).
+    @Test func splitPendingConfirmationCountsAsActiveEvenWithoutAHeight() {
         let inputs = [
-            MigrationCadence.AccountRearmInput(accountUUID: Self.accountUUID(), state: MigrationState.readyToPropose, progress: nil, nextExecutableAfterHeight: nil)
+            MigrationCadence.AccountRearmInput(accountUUID: Self.accountUUID(), state: MigrationState.splitPendingConfirmation, progress: nil, nextExecutableAfterHeight: nil)
         ]
 
         let plan = MigrationCadence.planRearm(inputs)
 
-        #expect(plan.representativeState == MigrationState.readyToPropose)
+        #expect(plan.representativeState == MigrationState.splitPendingConfirmation)
         #expect(plan.earliestNextExecutableAfterHeight == nil)
     }
 
@@ -311,7 +312,7 @@ import Foundation
     }
 
     /// An active account contributes `hasActiveRun`/`representativeState` even when NEITHER height
-    /// source is available (mirrors `readyToProposeCountsAsActiveEvenWithoutAHeight`, but for an
+    /// source is available (mirrors `splitPendingConfirmationCountsAsActiveEvenWithoutAHeight`, but for an
     /// `.inProgress` account with a progress payload carrying no ready height yet).
     @Test func activeAccountWithNeitherHeightSourceStillCountsAsActive() {
         let inputs = [

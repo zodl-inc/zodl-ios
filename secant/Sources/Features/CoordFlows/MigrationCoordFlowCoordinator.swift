@@ -68,7 +68,7 @@
 //  MOB-1496 (W-B): "Migrate anyway" (`.complete(.delegate(.migrateAnyway))`) is rewired onto the
 //  same immediate (send-max) lane the entry-screen migration uses, for BOTH vendors — the old
 //  engine-schedule-based dust composite (`SDKSynchronizerClient.migrateMigrationDust`,
-//  `proposeMigrationTransfers(includeResidual: true)`, `KeystoneSigningContext.dust`,
+//  `proposeMigrationTransfers`'s old residual-folding variant, `KeystoneSigningContext.dust`,
 //  `.keystoneDustPCZTsProposed`) is retired entirely. Unlock-first is LOAD-BEARING: locked notes
 //  are excluded from send-max note selection, so `unlockMigrationResidual` must run before
 //  `proposeImmediateMigration` — a residual locked via "Lock balance" would otherwise propose
@@ -98,12 +98,12 @@
 //  left a deeper one — the engine's `record_transfer_result` prep branch (`context.rs:1299-1303`)
 //  UNCONDITIONALLY overwrites the run's phase to `WaitingDenomConfirmations` once the split's
 //  broadcast is recorded, clobbering the `BroadcastScheduled` phase C-1's early schedule store had
-//  just set; the run then parks at `.readyToPropose` forever once the split mines
+//  just set; the run then never advances again once the split mines
 //  (`context.rs:361-378`), stranding the committed schedule. Step 0 of the fix-wave-2 report traced
 //  the denom-advance guard (fires from `PreparingDenominations`/`WaitingDenomConfirmations`, never
 //  `BroadcastScheduled`) and found storing the schedule right after the split's broadcast SUCCEEDS —
 //  not waiting for on-chain confirmation — is the earliest point provably safe (mining cannot occur in
-//  that synchronous window). The `.scan(.foundPCZTBatch)`/`.simulateSignature` store step now stores
+//  that synchronous window). The `.scan(.foundPCZTBatch)` store step now stores
 //  ONLY the split up front when one is present, stashing the already-signed schedule entries in
 //  `pendingKeystoneScheduleStore` instead of storing them immediately; `storeDeferredKeystoneSchedule`
 //  runs the deferred `storeSignedMigrationTransactions` -> `recordCommittedSchedule` -> `reconcile()`
@@ -775,7 +775,7 @@ extension MigrationCoordFlow {
                 return .run { [sdkSynchronizer, accountUUID] _ in
                     // Fire-and-forget: a failure here just leaves the stray run for the next attempt
                     // to encounter (and cancel) itself, same as today.
-                    _ = try? await sdkSynchronizer.restartCurrentMigrationStep(accountUUID, false)
+                    _ = try? await sdkSynchronizer.restartCurrentMigrationStep(accountUUID)
                 }
 
                 // MARK: - Keystone firmware update (MOB-1510)
@@ -907,12 +907,11 @@ extension MigrationCoordFlow {
 
             case .path(.element(id: _, action: .recovery(.delegate(.recreate)))):
                 guard let accountUUID = state.selectedWalletAccount?.id else { return .none }
-                // `includeResidual: false` by design, same as the initial plan proposal
-                // (`MigrationTransferPlanStore.onAppear`) — the re-created plan doesn't fold the
-                // dust remainder in either; it stays on the separate post-completion "Migrate
-                // anyway" lane.
+                // The re-created plan doesn't fold the dust remainder in — same as the initial plan
+                // proposal (`MigrationTransferPlanStore.onAppear`); it stays on the separate
+                // post-completion "Migrate anyway" lane.
                 return .run { [sdkSynchronizer, migrationManager, accountUUID] send in
-                    let restarted = try? await sdkSynchronizer.restartCurrentMigrationStep(accountUUID, includeResidual: false)
+                    let restarted = try? await sdkSynchronizer.restartCurrentMigrationStep(accountUUID)
                     if restarted != nil {
                         // [MOB-1496] W2: reconcile so the fresh restart's state transition (e.g.
                         // off `.requiresAttention`) is observed promptly. The actual schedule
@@ -1436,7 +1435,7 @@ extension MigrationCoordFlow {
             // machine and found a prep's own broadcast-success record
             // (`record_transfer_result`, `context.rs:1299-1303`) UNCONDITIONALLY overwrites the run's
             // phase — a schedule store performed here, before the preps even broadcast, gets
-            // clobbered the instant a broadcast lands, stranding the run at `.readyToPropose` once
+            // clobbered the instant a broadcast lands, stranding the run so it never advances again once
             // the prep mines (`context.rs:361-378`). The schedule rides along in
             // `pendingScheduleStore` instead; MOB-1513 (B4): the deferred store now runs inside the
             // post-confirm first-delivery kick (`runFirstDeliveryKick`), right after its prep

@@ -3656,8 +3656,7 @@ import ComposableArchitecture
             MigrationCoordFlow()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.restartCurrentMigrationStep = { _, includeResidual in
-                #expect(includeResidual == false)
+            $0.sdkSynchronizer.restartCurrentMigrationStep = { _ in
                 restartCalls.withValue { $0 += 1 }
                 return schedule
             }
@@ -3693,7 +3692,7 @@ import ComposableArchitecture
             MigrationCoordFlow()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.restartCurrentMigrationStep = { _, _ in
+            $0.sdkSynchronizer.restartCurrentMigrationStep = { _ in
                 MigrationSchedule(transfers: [], estimatedDurationHours: 0)
             }
             $0.migrationManager.reconcile = { reconcileCalls.withValue { $0 += 1 } }
@@ -3721,7 +3720,7 @@ import ComposableArchitecture
             MigrationCoordFlow()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.restartCurrentMigrationStep = { _, _ in throw RestartFailure() }
+            $0.sdkSynchronizer.restartCurrentMigrationStep = { _ in throw RestartFailure() }
             $0.migrationManager.reconcile = { reconcileCalls.withValue { $0 += 1 } }
         }
         store.exhaustivity = .off
@@ -4016,7 +4015,7 @@ import ComposableArchitecture
     // later re-entry would silently resume signing the same, by-then-stale PCZTs.
 
     @MainActor @Test func keystoneScanAbandonedWithPendingCeremonyCancelsStrayMigrationRunExactlyOnce() async {
-        let restartCalls = LockIsolated<[(AccountUUID, Bool)]>([])
+        let restartCalls = LockIsolated<[AccountUUID]>([])
         var state = MigrationCoordFlow.State()
         state.pendingKeystoneSigning = .planCommit
         state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .scheduled)))
@@ -4025,8 +4024,8 @@ import ComposableArchitecture
             MigrationCoordFlow()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.restartCurrentMigrationStep = { accountUUID, includeResidual in
-                restartCalls.withValue { $0.append((accountUUID, includeResidual)) }
+            $0.sdkSynchronizer.restartCurrentMigrationStep = { accountUUID in
+                restartCalls.withValue { $0.append(accountUUID) }
                 return MigrationSchedule(transfers: [], estimatedDurationHours: 0)
             }
         }
@@ -4041,10 +4040,7 @@ import ComposableArchitecture
             return
         }
         #expect(restartCalls.value.count == 1)
-        #expect(restartCalls.value.first?.0 == Self.defaultAccount.id)
-        // `includeResidual: false` — matches `MigrationRecovery`'s `.recreate` restart, the other
-        // live caller of this member.
-        #expect(restartCalls.value.first?.1 == false)
+        #expect(restartCalls.value.first == Self.defaultAccount.id)
     }
 
     /// Twin of the test above with NO ceremony context — abandoning a batch that was never actually
@@ -4061,7 +4057,7 @@ import ComposableArchitecture
             MigrationCoordFlow()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.restartCurrentMigrationStep = { _, _ in
+            $0.sdkSynchronizer.restartCurrentMigrationStep = { _ in
                 restartCalls.withValue { $0 += 1 }
                 return MigrationSchedule(transfers: [], estimatedDurationHours: 0)
             }
@@ -4186,7 +4182,7 @@ import ComposableArchitecture
             MigrationCoordFlow()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.restartCurrentMigrationStep = { _, _ in
+            $0.sdkSynchronizer.restartCurrentMigrationStep = { _ in
                 restartCalls.withValue { $0 += 1 }
                 return restartedSchedule
             }

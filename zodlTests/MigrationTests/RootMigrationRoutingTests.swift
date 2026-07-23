@@ -118,7 +118,7 @@ import ComposableArchitecture
     // coordinator (e.g. the flow finished some other way while a ceremony was still stashed).
 
     @Test func migrationCoordFlowFinishedWithLivePendingKeystoneSigningCancelsStrayMigrationRun() async {
-        let restartCalls = LockIsolated<[(AccountUUID, Bool)]>([])
+        let restartCalls = LockIsolated<[AccountUUID]>([])
         let account = Self.walletAccount(idByte: 40)
         await withDependencies {
             $0.defaultInMemoryStorage = InMemoryStorage()
@@ -132,8 +132,8 @@ import ComposableArchitecture
                 Root()
             } withDependencies: {
                 baseNoOpDependencies(&$0)
-                $0.sdkSynchronizer.restartCurrentMigrationStep = { accountUUID, includeResidual in
-                    restartCalls.withValue { $0.append((accountUUID, includeResidual)) }
+                $0.sdkSynchronizer.restartCurrentMigrationStep = { accountUUID in
+                    restartCalls.withValue { $0.append(accountUUID) }
                     return MigrationSchedule(transfers: [], estimatedDurationHours: 0)
                 }
             }
@@ -144,8 +144,7 @@ import ComposableArchitecture
             #expect(store.state.path == nil)
             await waitForRootStore { restartCalls.withValue { $0.count } == 1 }
             #expect(restartCalls.withValue { $0.count } == 1)
-            #expect(restartCalls.withValue { $0.first?.0 } == account.id)
-            #expect(restartCalls.withValue { $0.first?.1 } == false)
+            #expect(restartCalls.withValue { $0.first } == account.id)
         }
     }
 
@@ -153,7 +152,7 @@ import ComposableArchitecture
     /// is still live must cancel the stray run on A — the ceremony's RECORDED owner — not on B,
     /// which the tap path has already switched the selection to by the time the teardown runs.
     @Test func crossAccountNotificationTapCancelsStrayRunOnCeremonyOwner() async {
-        let restartCalls = LockIsolated<[(AccountUUID, Bool)]>([])
+        let restartCalls = LockIsolated<[AccountUUID]>([])
         let accountA = Self.walletAccount(idByte: 44)
         let accountB = Self.walletAccount(idByte: 45)
         await withDependencies {
@@ -171,8 +170,8 @@ import ComposableArchitecture
                 Root()
             } withDependencies: {
                 baseNoOpDependencies(&$0)
-                $0.sdkSynchronizer.restartCurrentMigrationStep = { accountUUID, includeResidual in
-                    restartCalls.withValue { $0.append((accountUUID, includeResidual)) }
+                $0.sdkSynchronizer.restartCurrentMigrationStep = { accountUUID in
+                    restartCalls.withValue { $0.append(accountUUID) }
                     return MigrationSchedule(transfers: [], estimatedDurationHours: 0)
                 }
             }
@@ -186,8 +185,7 @@ import ComposableArchitecture
             // Exactly one cancel, on the OWNER: the switch's defensive teardown fires it for A and
             // clears the ceremony, so the flow-open's own cancel pass finds nothing left to cancel.
             #expect(restartCalls.withValue { $0.count } == 1)
-            #expect(restartCalls.withValue { $0.first?.0 } == accountA.id)
-            #expect(restartCalls.withValue { $0.first?.1 } == false)
+            #expect(restartCalls.withValue { $0.first } == accountA.id)
             #expect(store.state.migrationCoordFlowState.pendingKeystoneSigning == nil)
         }
     }
@@ -196,7 +194,7 @@ import ComposableArchitecture
     /// tears the flow down first — cancelling a live ceremony on its recorded owner — instead of
     /// silently repointing the flow's live handlers at the newly selected account.
     @Test func walletAccountSwitchWithOpenMigrationFlowTearsDownAndCancelsOwnersCeremony() async {
-        let restartCalls = LockIsolated<[(AccountUUID, Bool)]>([])
+        let restartCalls = LockIsolated<[AccountUUID]>([])
         let accountA = Self.walletAccount(idByte: 46)
         let accountB = Self.walletAccount(idByte: 47)
         await withDependencies {
@@ -213,8 +211,8 @@ import ComposableArchitecture
                 Root()
             } withDependencies: {
                 baseNoOpDependencies(&$0)
-                $0.sdkSynchronizer.restartCurrentMigrationStep = { accountUUID, includeResidual in
-                    restartCalls.withValue { $0.append((accountUUID, includeResidual)) }
+                $0.sdkSynchronizer.restartCurrentMigrationStep = { accountUUID in
+                    restartCalls.withValue { $0.append(accountUUID) }
                     return MigrationSchedule(transfers: [], estimatedDurationHours: 0)
                 }
             }
@@ -227,8 +225,7 @@ import ComposableArchitecture
             #expect(store.state.path == nil)
             #expect(store.state.migrationCoordFlowState.pendingKeystoneSigning == nil)
             #expect(store.state.migrationCoordFlowState.pendingKeystoneSigningAccountUUID == nil)
-            #expect(restartCalls.withValue { $0.first?.0 } == accountA.id)
-            #expect(restartCalls.withValue { $0.first?.1 } == false)
+            #expect(restartCalls.withValue { $0.first } == accountA.id)
         }
     }
 
@@ -280,7 +277,7 @@ import ComposableArchitecture
                 Root()
             } withDependencies: {
                 baseNoOpDependencies(&$0)
-                $0.sdkSynchronizer.restartCurrentMigrationStep = { _, _ in
+                $0.sdkSynchronizer.restartCurrentMigrationStep = { _ in
                     restartCalls.withValue { $0 += 1 }
                     return MigrationSchedule(transfers: [], estimatedDurationHours: 0)
                 }

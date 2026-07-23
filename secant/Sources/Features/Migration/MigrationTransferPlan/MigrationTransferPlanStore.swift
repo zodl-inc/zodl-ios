@@ -280,7 +280,7 @@ struct MigrationTransferPlan {
                     return roundContextEffect
                 }
 
-                // `includeResidual: false` by design: the scheduled plan never folds the Orchard
+                // By design, the scheduled plan never folds the Orchard
                 // remainder into its own run — dust stays on the separate, post-completion
                 // "Migrate anyway" lane (MOB-1496 W-B: unlock + `proposeImmediateMigration`, in
                 // `MigrationCoordFlowCoordinator`, for both vendors). This screen is only ever
@@ -391,7 +391,7 @@ struct MigrationTransferPlan {
 
         return .run { send in
             do {
-                let schedule = try await sdkSynchronizer.proposeMigrationTransfers(accountUUID, false)
+                let schedule = try await sdkSynchronizer.proposeMigrationTransfers(accountUUID)
                 await send(.transfersProposed(schedule))
             } catch {
                 await send(.transferProposalFailed)
@@ -421,7 +421,7 @@ struct MigrationTransferPlan {
         return .run { send in
             for retry in 0...Constants.proposeRetryMaxRetries {
                 do {
-                    let schedule = try await sdkSynchronizer.proposeMigrationTransfers(accountUUID, false)
+                    let schedule = try await sdkSynchronizer.proposeMigrationTransfers(accountUUID)
                     if !schedule.transfers.isEmpty {
                         await send(.transfersProposed(schedule))
                         return

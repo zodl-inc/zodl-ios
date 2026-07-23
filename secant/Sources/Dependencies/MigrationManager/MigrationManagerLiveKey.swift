@@ -331,8 +331,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
     private let presentedFlowAccountUUIDs = OSAllocatedUnfairLock<Set<AccountUUID>>(initialState: [])
 
     /// R8-T3 (#23): every underlying SDK/storage read below happens exactly ONCE — the pre-fix
-    /// version read `state` via `normalizedState`'s own `migrationState` call and AGAIN inside
-    /// `migrationTransfers`'s has-schedule branch, `hasOverdue` inside `migrationTransfers` and
+    /// version read `hasOverdue` inside `migrationTransfers` and
     /// AGAIN directly here, `progress` inside `isNextTransferDue` (and, on the W1-fallback path,
     /// inside `migrationTransfers` too) — PLUS an unused `hasInvalidMigrationTransfers` read whose
     /// result fed a `MigrationDerivations.bannerVariant` parameter the function's body never
@@ -359,7 +358,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
         let hasOverdue = await hasOverdueTask
         let balance = await balanceTask
 
-        let state = normalizedState(rawState: rawState, progress: progress)
+        let state = rawState
         let rows = bannerTransferRows(resolvedAccountUUID: resolvedAccountUUID, state: state, hasOverdue: hasOverdue, progress: progress)
         // MOB-1511 (W2): the multi-round context for the round-aware banner arms.
         let roundContext = await migrationRoundContext(accountUUID: resolvedAccountUUID)
@@ -415,7 +414,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
 
 
     /// R8-T3 (#23): same one-read-each treatment as `bannerVariant` above — the pre-fix version
-    /// read `progress` up to 3x (once inside `normalizedState`'s conditional branch, once directly
+    /// read `progress` up to 2x (once directly
     /// here, once again inside `isNextTransferDue`). Unlike `bannerVariant`'s `hasInvalid`,
     /// `reentryRoute`'s OWN `hasInvalid` read stays: `MigrationDerivations.reentryRoute` genuinely
     /// branches on it (row 1, `.recovery`).
@@ -432,7 +431,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
         let hasInvalid = await hasInvalidTask
         let hasOverdue = await hasOverdueTask
 
-        let state = normalizedState(rawState: rawState, progress: progress)
+        let state = rawState
 
         return MigrationDerivations.reentryRoute(
             isIronwoodActivated: isIronwoodActivated(),
@@ -1253,7 +1252,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
     }
 
     /// MOB-1496: asks the engine directly whether anything remains for `accountUUID` beyond the run
-    /// that just reached `.complete` — a fresh, non-committing `proposeMigrationTransfers(_, false)`;
+    /// that just reached `.complete` — a fresh, non-committing `proposeMigrationTransfers(_:)`;
     /// an empty schedule means genuinely done, a non-empty one means more remains (surfaced via
     /// `bannerVariant`'s `.complete` arm as `MigrationBannerVariant.required`, and via the BG
     /// session's `handleLandedBroadcast` as a `.migrationBatchComplete` notification instead of
@@ -1311,7 +1310,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// was verified against HEAD rather than assumed from the three the original (unguarded) version
     /// of this doc named.
     private func evaluateMigrationRemainder(for accountUUID: AccountUUID) async {
-        guard let schedule = try? await sdkSynchronizer.proposeMigrationTransfers(accountUUID, false) else { return }
+        guard let schedule = try? await sdkSynchronizer.proposeMigrationTransfers(accountUUID) else { return }
         gateStorage.setRemainderPending(!schedule.transfers.isEmpty, for: accountUUID)
     }
 
@@ -1496,24 +1495,6 @@ final class MigrationManagerImpl: @unchecked Sendable {
         }
     }
 
-    /// `.requiresAttention(.syncRequiredBeforeNext)` carries no progress payload of its own, but
-    /// per spec it renders identically to a plain `.inProgress(p)` banner — so it's normalized to
-    /// that shape here from an already-fetched `rawState`/`progress` pair (R8-T3 #23: `bannerVariant`
-    /// and `reentryRoute` both fetch these once themselves now, rather than this function doing its
-    /// own redundant `migrationState`/`migrationProgress` reads). `rawState`'s own read failure is
-    /// the caller's concern (each defaults it to `.notStarted`, or short-circuits first — see
-    /// `bannerVariant`/`reentryRoute`). MOB-1496: `.syncRequiredBeforeNext` itself is never actually
-    /// emitted by the final migration engine either — this normalization is kept purely for
-    /// exhaustiveness (and the migration SDK simulator, which still models the reason) rather than
-    /// any real-engine behavior it needs to cover.
-    private func normalizedState(rawState: MigrationState, progress: MigrationProgress?) -> MigrationState {
-        guard case MigrationState.requiresAttention(MigrationAttentionReason.syncRequiredBeforeNext) = rawState,
-              let progress else {
-            return rawState
-        }
-        return MigrationState.inProgress(progress)
-    }
-
     /// "Next due" (manual): ready height already reached (or unknown / no progress -> not due).
     /// R8-T3 (#23): takes an already-fetched `progress` instead of reading it itself — `bannerVariant`/
     /// `reentryRoute` both already have one in hand by the time they need this.
@@ -1652,9 +1633,7 @@ enum MigrationDerivations {
         guard isIronwoodActivated else { return nil }
 
         switch state {
-        // `.readyToPropose` is never actually emitted by the final migration engine — kept here
-        // only for exhaustiveness / the migration SDK simulator, which still models it.
-        case MigrationState.notStarted, MigrationState.readyToPropose:
+        case MigrationState.notStarted:
             return orchardBalance > Zatoshi.zero ? MigrationBannerVariant.required : nil
 
         case MigrationState.splitPendingConfirmation:
@@ -1707,13 +1686,6 @@ enum MigrationDerivations {
             case MigrationAttentionReason.transferExpired:
                 let (first, last) = expiredBounds(transferRows: transferRows)
                 return MigrationBannerVariant.transfersExpired(first: first, last: last)
-
-            case MigrationAttentionReason.syncRequiredBeforeNext:
-                // Normalized to `.inProgress` by the LiveKey before this function is ever called
-                // with this state — this branch only exists so the switch stays exhaustive. (Never
-                // actually emitted by the final migration engine either — see `normalizedState`'s
-                // doc — so in production this arm is unreachable, not merely pre-empted.)
-                return nil
             }
 
         case MigrationState.complete:

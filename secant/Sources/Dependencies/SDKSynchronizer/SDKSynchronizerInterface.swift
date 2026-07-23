@@ -137,7 +137,7 @@ struct SDKSynchronizerClient: Sendable {
     /// `executeNextPendingMigrationTransfer`).
     var prepareNoteSplit: @Sendable (AccountUUID) async throws -> NoteSplitProposal
     /// The full scheduled-migration schedule for the account's spendable Orchard balance.
-    var proposeMigrationTransfers: @Sendable (AccountUUID, _ includeResidual: Bool) async throws -> MigrationSchedule
+    var proposeMigrationTransfers: @Sendable (AccountUUID) async throws -> MigrationSchedule
     /// MOB-1513: proposes the immediate (single-transaction) migration — an ordinary send-max
     /// proposal (NOT an engine-held schedule; no plan-cache staleness applies to it). Execute it via
     /// `createAndSubmitProposedTransactions(proposal.proposal, usk)` (software) or
@@ -169,8 +169,6 @@ struct SDKSynchronizerClient: Sendable {
     /// Pre-signs and persists every transfer of `schedule` in the migration engine (needs the
     /// account's USK).
     var signAndStoreMigrationSchedule: @Sendable (AccountUUID, MigrationSchedule, UnifiedSpendingKey) async throws -> Void
-    /// Whether a sync is required before the account's next migration transfer can proceed.
-    var isSyncRequiredBeforeNextMigrationTransfer: @Sendable (AccountUUID) async throws -> Bool
     /// Broadcasts the next height-due migration transfer, or `nil` when nothing is currently due.
     /// Broadcast-bearing: guarded by the transaction guard in the LiveKey.
     var executeNextPendingMigrationTransfer: @Sendable (
@@ -191,7 +189,7 @@ struct SDKSynchronizerClient: Sendable {
     /// The account's next height-due pending transfer proposal, or `nil` when nothing is pending.
     var rescheduleOverdueMigrationTransfer: @Sendable (AccountUUID) async throws -> MigrationTransferProposal?
     /// Re-evaluates the account's remaining spendable Orchard balance and returns a fresh schedule.
-    var restartCurrentMigrationStep: @Sendable (AccountUUID, _ includeResidual: Bool) async throws -> MigrationSchedule
+    var restartCurrentMigrationStep: @Sendable (AccountUUID) async throws -> MigrationSchedule
     /// MOB-1511 (W2): the engine's estimate of how many migration runs ("rounds") migrating the
     /// account's CURRENT spendable Orchard balance would take in total
     /// (`Synchronizer.estimateMigrationRuns(accountUUID:)` -> `MigrationRunEstimate.runCount`,
@@ -204,11 +202,29 @@ struct SDKSynchronizerClient: Sendable {
     /// later run can need more or fewer rounds than an earlier read implied, e.g. if funds arrive
     /// or notes get spent between reads.
     var estimateMigrationRunCount: @Sendable (AccountUUID) async throws -> Int? = { _ in nil }
-    /// Re-proposes at a fresh anchor and re-signs the account's active run (needs the USK); returns
-    /// the number refreshed.
+    /// Rebuilds every EXPIRED transfer of the account's stored migration run in place through the
+    /// engine and returns the run's FULL transfer schedule as stored AFTER the refresh (unchanged
+    /// when nothing had expired; empty when no run is stored or the run is terminal). Each rebuilt
+    /// transfer re-spends the SAME funding note (recovered by nullifier identity, never an
+    /// equal-value substitute) on a fresh schedule — a fresh scheduled height, a fresh expiry, and a
+    /// freshly drawn boundary anchor.
+    ///
+    /// `usk`: `nil` is the external-signer (Keystone) lane — the rebuilt rows are left UNSIGNED in
+    /// place (same funding note; fresh scheduled height, expiry, drawn boundary; rows return to
+    /// `AwaitingSignature`) and flow through the existing `createUnsigned`/`storeSigned` ceremony. A
+    /// software account passes its real `usk`, which signs each rebuilt transfer anew in-process.
+    /// NEVER pass `nil` for a software account — the rebuilt rows would strand awaiting a ceremony
+    /// that never comes.
+    ///
+    /// Returns the atomically-persisted post-refresh `MigrationSchedule` — the stored truth the
+    /// caller must re-display and use for any subsequent consent echo
+    /// (`signAndStoreMigrationSchedule`, the unsigned-transfer PCZT serve path): echoing a
+    /// pre-refresh copy fails the verified echo with `migrationPlanStale` from then on. Persistence
+    /// is all-or-nothing; a throw (e.g. the funding note was spent outside the migration —
+    /// `restartCurrentMigrationStep` is the escape hatch) persisted none of the batch's rebuilds.
     var refreshStaleMigrationTransfers: @Sendable (
-        AccountUUID, UnifiedSpendingKey, _ includeResidual: Bool
-    ) async throws -> UInt32
+        AccountUUID, UnifiedSpendingKey?
+    ) async throws -> MigrationSchedule
     /// [ext] MOB-1487 R3: would a regular send of `amount` draw on (unlocked) Orchard notes? Drives
     /// the send-form privacy disclaimer once Ironwood is active. Non-throwing: degrades to `false`
     /// (matches the pre-real-SDK stub's permissive default) on any read error.

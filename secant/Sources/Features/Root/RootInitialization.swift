@@ -51,19 +51,17 @@ extension MigrationBGSessionHandle: Equatable {
 /// and consumed by `MigrationSessionPlanner.plan(_:)` to pick the session's single action. Mirrors
 /// the ordered classification the spec's "Per-account background decision tree" describes.
 private enum MigrationAccountClassification: Equatable {
-    /// `complete`/`notStarted`/`readyToPropose` — no broadcast, no sync need for this account.
+    /// `complete`/`notStarted` — no broadcast, no sync need for this account.
     case nothingToDo(MigrationState)
     /// `hasInvalidMigrationTransfers` OR state is `.requiresAttention(.transferExpired)` /
     /// `.requiresAttention(.invalidTransfer)`.
     case planBroken
-    /// `isSyncRequiredBeforeNextMigrationTransfer` is true.
-    case syncNeeded
     /// `rescheduleOverdueMigrationTransfer` returned a proposal — a candidate for this session's
     /// single broadcast, ordered by `isOverdue` then `nextExecutableAfterHeight`. Due-ness itself is
     /// NOT decided here (see `migrationBackgroundSessionEffect`'s "height-due semantics" doc) —
     /// `executeNextPendingMigrationTransfer`'s own nil-return is the authority.
     case broadcastCandidate(nextExecutableAfterHeight: BlockHeight, isOverdue: Bool)
-    /// An active run (not `nothingToDo`/`planBroken`/`syncNeeded`) whose reschedule probe came back
+    /// An active run (not `nothingToDo`/`planBroken`) whose reschedule probe came back
     /// nil — nothing pending to order against this session, but still an active run (excluded from
     /// the "every account complete/notStarted" cancel-all trigger).
     case activeNoCandidate
@@ -96,9 +94,7 @@ private func classifyMigrationAccount(
     }
 
     switch migrationState {
-    // `.readyToPropose` is never actually emitted by the final migration engine — kept here only
-    // for exhaustiveness / the migration SDK simulator, which still models it.
-    case MigrationState.complete, MigrationState.notStarted, MigrationState.readyToPropose:
+    case MigrationState.complete, MigrationState.notStarted:
         return MigrationAccountClassification.nothingToDo(migrationState)
     default:
         break
@@ -107,7 +103,7 @@ private func classifyMigrationAccount(
     // MOB-1513 (B1): peel off an immediate (send-max) run in flight before the broadcast-candidate
     // probes below — its single transaction is already broadcast and it has no scheduled transfers,
     // so it is no-BG-work (never a candidate, never re-arms; see `.immediateInFlight`'s doc). Done
-    // ahead of the plan-broken / sync-required / reschedule reads, which are all meaningless for an
+    // ahead of the plan-broken / reschedule reads, which are all meaningless for an
     // immediate run and would otherwise leave it as `.activeNoCandidate`, spuriously re-arming.
     if case let MigrationState.inProgress(progress) = migrationState, progress.isImmediate {
         return MigrationAccountClassification.immediateInFlight
@@ -129,15 +125,6 @@ private func classifyMigrationAccount(
 
     if hasInvalid || isPlanBrokenByState {
         return MigrationAccountClassification.planBroken
-    }
-
-    guard let isSyncRequired = try? await sdkSynchronizer.isSyncRequiredBeforeNextMigrationTransfer(accountUUID) else {
-        LoggerProxy.error("BGTask migration session: sync-required check failed for an account")
-        return MigrationAccountClassification.unreadable
-    }
-
-    if isSyncRequired {
-        return MigrationAccountClassification.syncNeeded
     }
 
     // Double-optional flatten: `rescheduleOverdueMigrationTransfer` already returns an Optional on
@@ -176,7 +163,6 @@ private enum MigrationSessionPlanner {
         let action: Action
 
         enum Action: Equatable {
-            case syncOnly
             case broadcast(winner: AccountUUID)
             case cancelAll
             case rearm
@@ -190,21 +176,15 @@ private enum MigrationSessionPlanner {
     /// Session resolution, checked in this exact order (spec "Session resolution"):
     /// 1. Any `planNeedsUpdate` account -> notify once for the whole session; continue evaluating
     ///    the rest (a plan-broken account doesn't block a healthy account's own broadcast/sync).
-    /// 2. Any `syncNeeded` account -> sync-only session; ALL broadcasts deferred (ZIP: never both).
-    /// 3. Else any `broadcastCandidate` -> pick exactly one (prefer overdue; earliest
+    /// 2. Any `broadcastCandidate` -> pick exactly one (prefer overdue; earliest
     ///    `nextExecutableAfterHeight`; tie -> earliest in `classifications`' own order, i.e. the
     ///    selected account, since callers pass accounts selected-first).
-    /// 4. Nothing else fired: plan-broken-only -> `.none` (no rearm, no cancel); else cancelAll when
+    /// 3. Nothing else fired: plan-broken-only -> `.none` (no rearm, no cancel); else cancelAll when
     ///    EVERY classified account is `.complete`/`.notStarted` (no active run anywhere); else rearm.
     static func plan(_ classifications: [(accountUUID: AccountUUID, classification: MigrationAccountClassification)]) -> Plan {
-        let hasSyncNeeded = classifications.contains { if case .syncNeeded = $0.classification { return true } else { return false } }
         // R8-T5 (S4): the FIRST plan-broken account (selected-first order) — non-nil exactly when a
         // plan-broken account exists, so this doubles as the old `hasPlanBroken` check too.
         let planBrokenAccountUUID = classifications.first { if case .planBroken = $0.classification { return true } else { return false } }?.accountUUID
-
-        if hasSyncNeeded {
-            return Plan(notifyPlanNeedsUpdate: planBrokenAccountUUID != nil, planBrokenAccountUUID: planBrokenAccountUUID, action: Plan.Action.syncOnly)
-        }
 
         if let winner = pickBroadcastWinner(classifications) {
             return Plan(
@@ -228,9 +208,9 @@ private enum MigrationSessionPlanner {
     }
 
     /// A single account's classification counts as "done" (no active run) for the cancel-all gate
-    /// below — `.complete`/`.notStarted` only. `.readyToPropose` (a real balance, no committed plan
-    /// yet) and `.unreadable` (an unknown true state) both deliberately do NOT count as done, so
-    /// either one blocks a premature cancelAll and keeps the wakeup chain alive instead.
+    /// below — `.complete`/`.notStarted` only. `.unreadable` (an unknown true state) deliberately
+    /// does NOT count as done, so it blocks a premature cancelAll and keeps the wakeup chain alive
+    /// instead.
     ///
     /// MOB-1496 (fix-wave, review IMPORTANT-1): also reused by `handleLandedBroadcast`'s own
     /// post-broadcast complete-check, via `allAccountsAreDone` below, so the two "is everyone
@@ -362,18 +342,13 @@ extension Root {
         /// `migrationNotificationTappedRoutingEffect`'s doc.
         case migrationNotificationRoute
         /// MOB-1496 (R8-T4, #11): the migration BG session tree's own "I'm done" round-trip —
-        /// effects can't mutate `state` directly, so both `runMigrationSession`'s normal-completion
-        /// tail and `completeSyncOnlySession`'s gate-blocked branch send this instead of calling
+        /// effects can't mutate `state` directly, so `runMigrationSession`'s normal-completion
+        /// tail sends this instead of calling
         /// `handle.complete(_:)` inline. The reducer guards on `state
         /// .activeMigrationBackgroundSessionHandle` being non-nil before completing AND clears it
         /// first — see that state property's doc for why (double-complete safety against
         /// `.migrationBackgroundTaskExpired`).
         case migrationBackgroundSessionCompleted(Bool)
-        /// MOB-1496: the migration BG decision tree's "sync required, not deferred" branch needs to
-        /// mutate `state.bgTask` — effects can't do that directly, so the async decision tree
-        /// (`migrationBackgroundSessionEffect`'s `.run`) sends this back into the reducer instead of
-        /// setting it inline the way the pre-real-SDK synchronous version did.
-        case migrationBackgroundSyncOnly(MigrationBGSessionHandle)
         /// MOB-1496 (W3): `.retryStart`'s `.run` effect can't mutate `state` directly — sent back
         /// into the reducer (proactively, before ever calling `start`, or reactively after `start`
         /// throws `ZcashError.migrationSyncBlocked`) to set `state.syncDeferredByMigrationGate`.
@@ -498,37 +473,6 @@ extension Root {
                 }
                 return migrationBackgroundSessionEffect(state: &state, handle: handle)
 
-            case .initialization(.migrationBackgroundSyncOnly(let handle)):
-                // R8 final cumulative review (Finding 2): `completeSyncOnlySession` sends this
-                // hand-off back into the reducer — but `.migrationBackgroundTaskExpired` can win the
-                // race and complete the session FIRST (its guarded active-session branch clears
-                // `activeMigrationBackgroundSessionHandle` — see that action's doc) while this send
-                // is already in flight and survives the tree's own cancellation. Guard on the SAME
-                // live-session marker before adopting anything: `nil` means expiration already
-                // completed/re-armed this session, so adopting `handle` into `state.bgTask` here
-                // would resurrect a task iOS already considers done (risking a second
-                // `setTaskCompleted` on it from a later completion path) and kick a sync start
-                // inside a dead BG window.
-                guard state.activeMigrationBackgroundSessionHandle != nil else { return .none }
-
-                // Sync-only session: never broadcasts. Re-arm up front, then reuse the
-                // `power_wifi_sync` handler's own sync-kick verbatim (`state.bgTask` + `.retryStart`)
-                // — `synchronizerStateChanged` completes `state.bgTask` on
-                // `.upToDate`/`.stopped`/`.error` exactly as it does for that task. `handle.rawTask`
-                // may be `nil` in tests (spy handles); that completion is then a no-op, which is
-                // acceptable — this branch is asserted on the arm + kick + stash, not on task
-                // completion.
-                state.bgTask = handle.rawTask
-                // MOB-1496 (R8-T4, #11): this hand-off transitions the handle's completion out of
-                // `activeMigrationBackgroundSessionHandle`'s tracking and into `bgTask`'s existing
-                // one (just set above) — clear it here so a LATER expiration falls through to the
-                // untouched sync-bgTask tail below instead of trying to complete via a stale handle.
-                state.activeMigrationBackgroundSessionHandle = nil
-                return .concatenate(
-                    .run { [migrationBGScheduler] _ in await migrationBGScheduler.scheduleNextWindow() },
-                    .send(.initialization(.retryStart))
-                )
-
             case .initialization(.migrationBackgroundSessionCompleted(let success)):
                 // MOB-1496 (R8-T4, #11): guard-on-nil — whichever of THIS (normal completion) or
                 // `.migrationBackgroundTaskExpired` reaches the (single-threaded) reducer first wins;
@@ -551,8 +495,8 @@ extension Root {
 
                 // MOB-1496 (R8-T4, #11): an ACTIVE session tree is genuinely mid-flight (possibly
                 // mid-broadcast) — cancel the tree, complete via the STORED handle (never `state
-                // .bgTask`, which stays `nil` for this plan — see `MigrationBGSessionHandle`'s doc),
-                // clear the stash, and re-arm. `handle.complete(false)` here races
+                // .bgTask`, which a migration BG session never populates — see
+                // `MigrationBGSessionHandle`'s doc), clear the stash, and re-arm. `handle.complete(false)` here races
                 // `.migrationBackgroundSessionCompleted`'s own guard (see its doc); whichever gets
                 // to the slot first wins, so the two can never double-complete.
                 if let activeMigrationBackgroundSessionHandle = state.activeMigrationBackgroundSessionHandle {
@@ -1591,17 +1535,12 @@ extension Root {
     ///    not-yet-activated network just gets an inexpensive, harmless re-check next window.
     /// 2. MOB-1496 (W5): every OTHER candidate account (the wallet's accounts, selected first, then
     ///    stored order — `MigrationDerivations.candidateAccountUUIDs`) is independently classified
-    ///    (`classifyMigrationAccount`) into `.nothingToDo`/`.planBroken`/`.syncNeeded`/
+    ///    (`classifyMigrationAccount`) into `.nothingToDo`/`.planBroken`/
     ///    `.broadcastCandidate`/`.activeNoCandidate`/`.immediateInFlight`/`.unreadable`, then
     ///    `MigrationSessionPlanner.plan(_:)` resolves the WHOLE session to exactly one action:
     ///    - Any plan-broken account -> ONE `.planNeedsUpdate` notification for the whole session
     ///      (not per account); continue evaluating the rest (does not itself block a healthy
     ///      account's own sync/broadcast).
-    ///    - Else any sync-needed account -> a sync-only session (skip if the SDK's own
-    ///      `isMigrationSyncBlocked()` wallet-scope privacy gate; else the existing sync-kick path,
-    ///      reusing the `power_wifi_sync` machinery verbatim). ALL broadcasts deferred this session
-    ///      — ZIP-0318: a background session either syncs or broadcasts, never both. Sync serves
-    ///      every account at once.
     ///    - Else any broadcast candidate -> exactly ONE broadcast this session (ZIP-0318: no more
     ///      than one overdue transfer sent at wallet open) — `executeNextPendingMigrationTransfer`
     ///      + notify/re-arm per outcome, now parameterized by the WINNING account. A thrown
@@ -1620,7 +1559,7 @@ extension Root {
     ///      Recovery-flow re-arms once the plan is fixed); otherwise `cancelAll` when EVERY
     ///      classified account is `.complete`/`.notStarted` (no active run left anywhere —
     ///      preserves the single-account complete->cancelAll precedent), else re-arm.
-    /// Every branch except the sync-only session completes `handle` itself (that session's
+    /// Every branch completes `handle` itself (that session's
     /// completion is the existing `synchronizerStateChanged` machinery, exactly like the
     /// `power_wifi_sync` task it mirrors) — R8-T4 (#11): via the guarded
     /// `.migrationBackgroundSessionCompleted` round-trip for the branches below that reach it, so a
@@ -1631,9 +1570,7 @@ extension Root {
     /// nothing for expiration to race against.
     ///
     /// MOB-1496: every migration SDK read here is `async throws` (the real per-account surface) —
-    /// the whole tree now runs inside one `.run`, and the "sync required, not deferred" branch
-    /// sends `.migrationBackgroundSyncOnly(handle)` back into the reducer to mutate `state.bgTask`
-    /// (effects can't mutate `state` directly). Every SDK read is wrapped so a thrown error
+    /// the whole tree now runs inside one `.run`. Every SDK read is wrapped so a thrown error
     /// degrades to "treat as false/skip" and completes the session rather than crashing a
     /// background launch.
     ///
@@ -1642,7 +1579,8 @@ extension Root {
     /// state.migrationBackgroundSessionCancelId)`, and `handle` is stored in
     /// `state.activeMigrationBackgroundSessionHandle` for that effect's whole lifetime — both new
     /// specifically so `.migrationBackgroundTaskExpired` can cancel it and complete it directly
-    /// (`state.bgTask` stays `nil` for this plan; only the sync-only hand-off populates it).
+    /// (a migration BG session never touches `state.bgTask` — that slot belongs to the separate
+    /// `power_wifi_sync` task).
     private func migrationBackgroundSessionEffect(
         state: inout Root.State,
         handle: MigrationBGSessionHandle
@@ -1717,10 +1655,6 @@ extension Root {
         }
 
         switch plan.action {
-        case .syncOnly:
-            await completeSyncOnlySession(handle: handle, send: send, dependencies: dependencies)
-            return
-
         case .broadcast(let winnerAccountUUID):
             await executeBroadcastAction(winnerAccountUUID, classifications: classifications, dependencies: dependencies)
 
@@ -1740,28 +1674,6 @@ extension Root {
         // complete this same `BGProcessingTask` a second time. See
         // `InitializationAction.migrationBackgroundSessionCompleted`'s doc.
         await send(.initialization(.migrationBackgroundSessionCompleted(true)))
-    }
-
-    /// The `.syncOnly` plan action: skip the sync session outright while the SDK's wallet-scope
-    /// privacy gate reports blocked (MOB-1496 W3 — same outward behavior the retired app-side
-    /// `isSyncDeferredAfterBroadcast` flag produced), else kick the same sync path
-    /// `power_wifi_sync` uses by handing `handle` back into the reducer as
-    /// `.migrationBackgroundSyncOnly` (which stashes `state.bgTask` — effects can't mutate `state`
-    /// directly). Either way the session ends here — the caller does NOT complete `handle` again
-    /// afterward.
-    private static func completeSyncOnlySession(
-        handle: MigrationBGSessionHandle,
-        send: Send<Root.Action>,
-        dependencies: MigrationSessionDependencies
-    ) async {
-        if await dependencies.sdkSynchronizer.isMigrationSyncBlocked() {
-            await dependencies.migrationBGScheduler.scheduleNextWindow()
-            // R8-T4 (#11): see `runMigrationSession`'s twin comment above.
-            await send(.initialization(.migrationBackgroundSessionCompleted(true)))
-            return
-        }
-
-        await send(.initialization(.migrationBackgroundSyncOnly(handle)))
     }
 
     /// The `.broadcast(winner:)` plan action: read the winning account's atomic network-snapshot
@@ -2215,7 +2127,7 @@ extension Root {
         }
 
         return .run { [sdkSynchronizer] _ in
-            _ = try? await sdkSynchronizer.restartCurrentMigrationStep(accountUUID, false)
+            _ = try? await sdkSynchronizer.restartCurrentMigrationStep(accountUUID)
         }
     }
 

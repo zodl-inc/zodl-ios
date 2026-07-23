@@ -108,8 +108,7 @@ import ComposableArchitecture
             MigrationTransferPlan()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.proposeMigrationTransfers = { _, includeResidual in
-                #expect(includeResidual == false)
+            $0.sdkSynchronizer.proposeMigrationTransfers = { _ in
                 return schedule
             }
             $0.migrationManager.migrationRoundContext = { _ in (1, nil) }
@@ -141,7 +140,7 @@ import ComposableArchitecture
             MigrationTransferPlan()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.proposeMigrationTransfers = { _, _ in
+            $0.sdkSynchronizer.proposeMigrationTransfers = { _ in
                 proposeCalls.withValue { $0 += 1 }
                 return MigrationSchedule(transfers: [], estimatedDurationHours: 0)
             }
@@ -175,7 +174,7 @@ import ComposableArchitecture
             MigrationTransferPlan()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.proposeMigrationTransfers = { _, _ in
+            $0.sdkSynchronizer.proposeMigrationTransfers = { _ in
                 called.setValue(true)
                 return MigrationSchedule(transfers: [], estimatedDurationHours: 0)
             }
@@ -214,7 +213,7 @@ import ComposableArchitecture
             // `latestState` is a non-`@DependencyClient` `let` — replace the whole client via
             // `.mocked(...)` (noOp defaults otherwise), then layer the `var` overrides.
             $0.sdkSynchronizer = SDKSynchronizerClient.mocked(latestState: { tipState })
-            $0.sdkSynchronizer.proposeMigrationTransfers = { _, _ in schedule }
+            $0.sdkSynchronizer.proposeMigrationTransfers = { _ in schedule }
             $0.migrationManager.migrationRoundContext = { _ in (1, nil) }
         }
 
@@ -712,7 +711,7 @@ import ComposableArchitecture
             MigrationTransferPlan()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.proposeMigrationTransfers = { _, _ in throw ProposeFailure() }
+            $0.sdkSynchronizer.proposeMigrationTransfers = { _ in throw ProposeFailure() }
             $0.sdkSynchronizer.signAndStoreMigrationSchedule = { _, _, _ in signAndStoreCalls.withValue { $0 += 1 } }
             $0.migrationManager.migrationRoundContext = { _ in (1, nil) }
         }
@@ -751,7 +750,7 @@ import ComposableArchitecture
             MigrationTransferPlan()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.proposeMigrationTransfers = { _, _ in
+            $0.sdkSynchronizer.proposeMigrationTransfers = { _ in
                 let call = proposeCalls.withValue {
                     $0 += 1
                     return $0
@@ -1083,7 +1082,7 @@ import ComposableArchitecture
             MigrationTransferPlan()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.proposeMigrationTransfers = { _, _ in schedule }
+            $0.sdkSynchronizer.proposeMigrationTransfers = { _ in schedule }
         }
 
         await store.send(.retryTapped) {
@@ -1116,7 +1115,7 @@ import ComposableArchitecture
         } withDependencies: {
             $0.continuousClock = clock
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.proposeMigrationTransfers = { _, _ in
+            $0.sdkSynchronizer.proposeMigrationTransfers = { _ in
                 proposeCalls.withValue { $0 += 1 }
                 return MigrationSchedule(transfers: [], estimatedDurationHours: 0)
             }
@@ -1160,7 +1159,7 @@ import ComposableArchitecture
         } withDependencies: {
             $0.continuousClock = clock
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.proposeMigrationTransfers = { _, _ in
+            $0.sdkSynchronizer.proposeMigrationTransfers = { _ in
                 let call = proposeCalls.withValue {
                     $0 += 1
                     return $0
@@ -1204,7 +1203,7 @@ import ComposableArchitecture
         } withDependencies: {
             $0.continuousClock = clock
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.proposeMigrationTransfers = { _, _ in
+            $0.sdkSynchronizer.proposeMigrationTransfers = { _ in
                 proposeCalls.withValue { $0 += 1 }
                 throw HardFailure()
             }
