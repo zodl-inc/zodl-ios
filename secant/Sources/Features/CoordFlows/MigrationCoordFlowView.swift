@@ -88,6 +88,8 @@ struct MigrationCoordFlowView: View {
                     .padding(.bottom, Design.Spacing.sheetBottomSpace)
                 }
             }
+            // MOB-1458 (Task 2): the expired-recovery refresh-failure alert (restart-or-cancel).
+            .alert($store.scope(state: \.alert, action: \.alert))
         }
         .applyScreenBackground()
         .onAppear {
