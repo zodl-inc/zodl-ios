@@ -512,15 +512,16 @@ import ComposableArchitecture
     // priority45/priority4) occupied the slot. B2 extends the same `.upToDate` re-check to the
     // EMPTY-slot case: right after a restore, the slot is often empty when the recovery balance
     // finally surfaces (the SDK's E2-FIX now holds that balance across the post-restore summary
-    // gap, so it is available early), and the synchronizer re-emits `.upToDate` ~every 2s while
-    // synced — so the banner opens on the next tick, with no timer. Red before the fix: the
+    // gap, so it is available early), and the re-check fires on that ONE genuine `.upToDate`
+    // transition — there is no periodic timer; A1's bounded 3s re-poll (below) is what covers the
+    // window if that single immediate read still lands nil. Red before the fix: the
     // empty-slot gate doesn't run, so the re-check never fires and (in exhaustive mode) none of the
     // asserted follow-up actions are produced.
     //
     // B2 fix wave: the empty-slot arm is now gated on `isIronwoodActivated()` (it fired the full
-    // `bannerVariant` hydration on every ~2 s `.upToDate` tick even pre-activation, where there is no
-    // migration to open). The two tests below exercise the ACTIVATED empty-slot arm (unchanged
-    // behavior); the pre-activation "no hydration" case has its own test after them.
+    // `bannerVariant` hydration on every genuine `.upToDate` transition even pre-activation, where
+    // there is no migration to open). The two tests below exercise the ACTIVATED empty-slot arm
+    // (unchanged behavior); the pre-activation "no hydration" case has its own test after them.
 
     @MainActor @Test func syncReachingUpToDateWithEmptySlotOpensRequiredMigrationBanner() async {
         let account = walletAccount(idByte: 34)
@@ -625,7 +626,9 @@ import ComposableArchitecture
     /// B2 fix wave: PRE-ACTIVATION, an empty-slot `.upToDate` tick must perform NO migration
     /// hydration. The arm is migration-specific and there is nothing to open before Ironwood
     /// activates, yet the pre-fix arm ran the full `bannerVariant` hydration (5 async reads incl. a
-    /// rust `migrationState`) on EVERY ~2 s re-emission, forever, on every synced wallet. With
+    /// rust `migrationState`) on EVERY genuine `.upToDate` transition, forever, on every synced
+    /// wallet (there is no periodic timer driving this — the SDK's `SyncStatus` equality makes
+    /// repeated `.upToDate` samples compare equal, so only an actual transition re-fires it). With
     /// `isIronwoodActivated()` false the arm is gated out: `bannerVariant` is never called (asserted
     /// via a call counter) and — exhaustive mode — no `.closeBanner`/`.migrationVariantUpdated`
     /// follows; the slot stays empty. Red under the ungated arm (it would call `bannerVariant` and

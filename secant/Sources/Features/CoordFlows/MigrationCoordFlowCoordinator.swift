@@ -2124,11 +2124,13 @@ extension MigrationCoordFlow {
 
     /// R8-T5 (#13): the resume screen's "was scheduled N hours ago" header / "Overdue · Nh ago" row
     /// caption used to read `stalledRow?.hoursFromNow` — but `MigrationTransferRow.hoursFromNow` is a
-    /// FORWARD-looking, position-based ETA for FUTURE (pending) rows (`MigrationDerivations
-    /// .transferRows`: `nonSentPosition × 6`, unchanged by this fix — future-row semantics stay
-    /// exactly as they are), and is therefore `0` BY CONSTRUCTION for the first non-sent row, which
-    /// is always the STALLED (overdue) one on this screen. Reusing it here read as "0 hours ago"
-    /// forever on the real SDK path.
+    /// FORWARD-looking ETA derived from the row's committed schedule height against the live chain
+    /// tip (`MigrationDerivations.transferRows`, MOB-1513 A3 — no longer the old `nonSentPosition × 6`
+    /// placeholder cadence this doc used to cite). It floors to `0` once the row's height is
+    /// at-or-behind the tip, which is always true for the STALLED (overdue) row this screen shows —
+    /// but is no longer `0` BY CONSTRUCTION for every first non-sent row in general: one with a
+    /// future committed height now legitimately carries a nonzero forward ETA. Reusing it here read
+    /// as "0 hours ago" forever on the real SDK path.
     ///
     /// The honest source: the engine's live `rescheduleOverdueMigrationTransfer` probe — the SAME
     /// call `MigrationBGSchedulerImpl.arm`/`RootInitialization.classifyMigrationAccount` already use
