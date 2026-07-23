@@ -330,6 +330,12 @@ struct MigrationReviewTransfer {
     /// the hard `migrationProvingUnavailable`, which by SDK contract means proving failed hard).
     /// Deliberately keyed on the typed ZcashError CASE, never a message substring — every other error
     /// (address lookup, proposal decode, ...) is a genuine failure that surfaces immediately.
+    ///
+    /// Known over-match: the FFI throws this same case for EVERY null send-max return, including a
+    /// genuine balance-below-fee wallet (the rust side collapses causes into one error string). Such
+    /// a wallet retries for the full window before showing the same failure sheet it gets today —
+    /// a bounded latency trade accepted in review; the ordinary send-max exposes no finer-grained
+    /// case to key on without message matching.
     static func isWalletNotReadyYet(_ error: Error) -> Bool {
         guard let zcashError = error as? ZcashError else { return false }
         if case .rustProposeSendMaxTransfer = zcashError {
