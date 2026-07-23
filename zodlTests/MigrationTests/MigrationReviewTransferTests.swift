@@ -240,12 +240,16 @@ import ComposableArchitecture
             }
         }
 
-        await store.send(.confirmTapped)
+        await store.send(.confirmTapped) {
+            $0.isConfirming = true
+        }
         await store.receive(
             .delegate(
                 .keystoneSignRequested([MigrationUnsignedTransferPczt(id: MigrationReviewTransfer.immediateKeystonePcztId, pczt: pcztBytes)])
             )
-        )
+        ) {
+            $0.isConfirming = false
+        }
 
         #expect(createPCZTCalls.value.count == 1)
         #expect(createPCZTCalls.value.first?.0 == state.selectedWalletAccount?.id)
@@ -307,8 +311,11 @@ import ComposableArchitecture
             $0.sdkSynchronizer.createPCZTFromProposal = { _, _ in throw CreatePCZTFailure() }
         }
 
-        await store.send(.confirmTapped)
+        await store.send(.confirmTapped) {
+            $0.isConfirming = true
+        }
         await store.receive(\.noteSplitFailed) {
+            $0.isConfirming = false
             $0.isFailurePresented = true
             $0.failureReason = MigrationReviewTransfer.State.FailureReason.commit
         }
@@ -370,10 +377,12 @@ import ComposableArchitecture
         }
 
         await store.send(.retryTapped) {
+            $0.isConfirming = true
             $0.isFailurePresented = false
             $0.failureReason = nil
         }
         await store.receive(\.transferProposed) {
+            $0.isConfirming = false
             $0.amount = Zatoshi(1_245_800_000)
             $0.fee = Zatoshi(15_000)
             $0.immediateProposal = proposal
@@ -423,6 +432,7 @@ import ComposableArchitecture
         }
 
         await store.send(.retryTapped) {
+            $0.isConfirming = true
             $0.isFailurePresented = false
             $0.failureReason = nil
         }
@@ -430,9 +440,186 @@ import ComposableArchitecture
             .delegate(
                 .keystoneSignRequested([MigrationUnsignedTransferPczt(id: MigrationReviewTransfer.immediateKeystonePcztId, pczt: pcztBytes)])
             )
-        )
+        ) {
+            $0.isConfirming = false
+        }
 
         #expect(proposeCalls.value == 0)
         #expect(createPCZTCalls.value == 1)
+    }
+
+    // MARK: - MOB-1513 (B4): confirm loading + single-flight (Keystone propose leg)
+
+    /// Same treatment as `MigrationTransferPlan`'s confirm (B4): the Keystone fork's PCZT build is
+    /// async, so Confirm shows a loader (`isConfirming`) and a second tap while it's in flight is a
+    /// complete no-op; the flag clears once the batch is handed to the coordinator so a later
+    /// pop-back (rejected signature) re-enables Confirm. The software/manual-step confirms delegate
+    /// synchronously and never need the flag.
+    @MainActor @Test func confirmTappedKeystoneSetsIsConfirmingAndIgnoresSecondTapWhilePcztBuildInFlight() async {
+        let createPCZTCalls = LockIsolated<Int>(0)
+        let (releaseStream, releaseContinuation) = AsyncStream<Void>.makeStream()
+        let proposal = immediateProposal(amount: Zatoshi(1_245_800_000), fee: Zatoshi(15_000))
+        let pcztBytes = Data([0xAB])
+        var state = MigrationReviewTransfer.State(mode: .immediate)
+        state.immediateProposal = proposal
+        state.$selectedWalletAccount.withLock { $0 = walletAccount(keystone: true, idByte: 21) }
+        let store = TestStore(initialState: state) {
+            MigrationReviewTransfer()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.createPCZTFromProposal = { _, _ in
+                createPCZTCalls.withValue { $0 += 1 }
+                for await _ in releaseStream { break }
+                return pcztBytes
+            }
+        }
+
+        await store.send(.confirmTapped) {
+            $0.isConfirming = true
+        }
+        // Second tap while the PCZT build is in flight: a complete no-op.
+        await store.send(.confirmTapped)
+
+        releaseContinuation.yield()
+        releaseContinuation.finish()
+
+        await store.receive(
+            .delegate(
+                .keystoneSignRequested([MigrationUnsignedTransferPczt(id: MigrationReviewTransfer.immediateKeystonePcztId, pczt: pcztBytes)])
+            )
+        ) {
+            $0.isConfirming = false
+        }
+
+        #expect(createPCZTCalls.value == 1)
+    }
+
+    /// A failed PCZT build must clear the loading flag alongside presenting the failure sheet, so
+    /// Retry is tappable again.
+    @MainActor @Test func confirmTappedKeystonePcztBuildFailureClearsIsConfirming() async {
+        struct PcztFailure: Error { }
+        let proposal = immediateProposal(amount: Zatoshi(1_245_800_000), fee: Zatoshi(15_000))
+        var state = MigrationReviewTransfer.State(mode: .immediate)
+        state.immediateProposal = proposal
+        state.$selectedWalletAccount.withLock { $0 = walletAccount(keystone: true, idByte: 22) }
+        let store = TestStore(initialState: state) {
+            MigrationReviewTransfer()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.createPCZTFromProposal = { _, _ in throw PcztFailure() }
+        }
+
+        await store.send(.confirmTapped) {
+            $0.isConfirming = true
+        }
+        await store.receive(\.noteSplitFailed) {
+            $0.isConfirming = false
+            $0.isFailurePresented = true
+            $0.failureReason = MigrationReviewTransfer.State.FailureReason.commit
+        }
+    }
+
+    // MARK: - MOB-1513 (E2-FIX): bounded quiet retry at entry when the wallet isn't ready yet
+
+    /// E2 window: right after a restore the send-max builder can't select any spendable Orchard
+    /// notes yet, so `proposeImmediateMigration` throws `ZcashError.rustProposeSendMaxTransfer` (the
+    /// typed "no migratable funds yet" surface). Instead of surfacing the failure sheet immediately
+    /// (today's behavior), the entry propose stays quietly in its loading state and re-proposes on
+    /// the clock, only surfacing the EXISTING propose-failure sheet once the bounded window expires.
+    @MainActor @Test func onAppearImmediateWhenNoSpendableNotesRetriesQuietlyThenSurfacesOnExpiry() async {
+        let clock = TestClock()
+        let proposeCalls = LockIsolated<Int>(0)
+        let store = TestStore(initialState: MigrationReviewTransfer.State(mode: .immediate)) {
+            MigrationReviewTransfer()
+        } withDependencies: {
+            $0.continuousClock = clock
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.proposeImmediateMigration = { _ in
+                proposeCalls.withValue { $0 += 1 }
+                throw ZcashError.rustProposeSendMaxTransfer("Error while sending funds: insufficient funds")
+            }
+        }
+
+        await store.send(.onAppear)
+        // Quiet: the failure sheet must NOT appear on the first not-ready outcome (today it would).
+        #expect(store.state.isFailurePresented == false)
+
+        await clock.advance(by: .seconds(3))
+        #expect(store.state.isFailurePresented == false)
+
+        // Past the bounded window: the existing propose-failure sheet finally surfaces.
+        await clock.advance(by: .seconds(120))
+        await store.receive(\.transferProposalFailed) {
+            $0.isFailurePresented = true
+            $0.failureReason = MigrationReviewTransfer.State.FailureReason.propose
+        }
+
+        // Multiple attempts happened — not a single immediate surface.
+        #expect(proposeCalls.value >= 2)
+    }
+
+    /// A later attempt within the window succeeds → the proposal is applied and the flow proceeds
+    /// exactly as a first-attempt success would, with no failure sheet ever shown.
+    @MainActor @Test func onAppearImmediateWhenNotReadyThenBecomesAvailableProposesOnLaterAttempt() async {
+        let clock = TestClock()
+        let proposeCalls = LockIsolated<Int>(0)
+        let proposal = immediateProposal(amount: Zatoshi(1_245_800_000), fee: Zatoshi(15_000))
+        let store = TestStore(initialState: MigrationReviewTransfer.State(mode: .immediate)) {
+            MigrationReviewTransfer()
+        } withDependencies: {
+            $0.continuousClock = clock
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.proposeImmediateMigration = { _ in
+                let call = proposeCalls.withValue {
+                    $0 += 1
+                    return $0
+                }
+                if call < 3 {
+                    throw ZcashError.rustProposeSendMaxTransfer("not ready yet")
+                }
+                return proposal
+            }
+        }
+
+        await store.send(.onAppear)
+        #expect(store.state.isFailurePresented == false)
+
+        await clock.advance(by: .seconds(3))
+        await clock.advance(by: .seconds(3))
+        await store.receive(\.transferProposed) {
+            $0.amount = Zatoshi(1_245_800_000)
+            $0.fee = Zatoshi(15_000)
+            $0.immediateProposal = proposal
+        }
+
+        #expect(store.state.isFailurePresented == false)
+        #expect(proposeCalls.value == 3)
+    }
+
+    /// Conservative classification: a propose failure that is NOT the typed not-ready surface (any
+    /// other error) is a genuine failure — it surfaces immediately through the existing error path,
+    /// with zero retries.
+    @MainActor @Test func onAppearImmediateWhenProposeThrowsNonWindowErrorSurfacesImmediatelyWithoutRetrying() async {
+        struct HardFailure: Error { }
+        let clock = TestClock()
+        let proposeCalls = LockIsolated<Int>(0)
+        let store = TestStore(initialState: MigrationReviewTransfer.State(mode: .immediate)) {
+            MigrationReviewTransfer()
+        } withDependencies: {
+            $0.continuousClock = clock
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.proposeImmediateMigration = { _ in
+                proposeCalls.withValue { $0 += 1 }
+                throw HardFailure()
+            }
+        }
+
+        await store.send(.onAppear)
+        await store.receive(\.transferProposalFailed) {
+            $0.isFailurePresented = true
+            $0.failureReason = MigrationReviewTransfer.State.FailureReason.propose
+        }
+
+        #expect(proposeCalls.value == 1)
     }
 }

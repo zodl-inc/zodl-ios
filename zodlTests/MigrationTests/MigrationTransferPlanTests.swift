@@ -1058,4 +1058,124 @@ import ComposableArchitecture
             $0.schedule = schedule
         }
     }
+
+    // MARK: - MOB-1513 (E2-FIX): bounded quiet retry at entry when the wallet isn't ready yet
+
+    /// E2 window: right after a restore the propose comes back with an EMPTY schedule (the engine's
+    /// non-throwing "nothing to migrate yet / nothing due" answer while notes aren't witnessable).
+    /// Instead of silently populating an empty plan (today's behavior), the entry propose stays
+    /// quietly in its loading state and re-proposes on the clock, only surfacing the EXISTING
+    /// propose-failure sheet once the bounded window expires.
+    @MainActor @Test func onAppearWhenProposeReturnsEmptyScheduleRetriesQuietlyThenSurfacesOnExpiry() async {
+        let clock = TestClock()
+        let proposeCalls = LockIsolated<Int>(0)
+        let store = TestStore(initialState: MigrationTransferPlan.State(variant: .scheduled)) {
+            MigrationTransferPlan()
+        } withDependencies: {
+            $0.continuousClock = clock
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.proposeMigrationTransfers = { _, _ in
+                proposeCalls.withValue { $0 += 1 }
+                return MigrationSchedule(transfers: [], estimatedDurationHours: 0)
+            }
+            $0.migrationManager.migrationRoundContext = { _ in (1, nil) }
+        }
+
+        await store.send(.onAppear)
+        await store.receive(\.roundContextLoaded)
+        // Quiet: neither an empty plan nor a failure sheet appears on the first empty outcome.
+        #expect(store.state.isFailurePresented == false)
+        #expect(store.state.rows.isEmpty)
+
+        await clock.advance(by: .seconds(3))
+        #expect(store.state.isFailurePresented == false)
+
+        // Past the bounded window: the existing propose-failure sheet finally surfaces.
+        await clock.advance(by: .seconds(120))
+        await store.receive(\.transferProposalFailed) {
+            $0.isFailurePresented = true
+            $0.failureReason = MigrationTransferPlan.State.FailureReason.propose
+        }
+
+        #expect(proposeCalls.value >= 2)
+        #expect(store.state.schedule == nil)
+    }
+
+    /// A later attempt within the window returns a non-empty schedule → rows populate and the flow
+    /// proceeds exactly as a first-attempt success would, with no failure sheet ever shown.
+    @MainActor @Test func onAppearWhenEmptyScheduleThenBecomesAvailableProposesOnLaterAttempt() async {
+        let clock = TestClock()
+        let proposeCalls = LockIsolated<Int>(0)
+        let schedule = MigrationSchedule(
+            transfers: [
+                MigrationTransferProposal(id: "t0", amount: Zatoshi(500_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200),
+                MigrationTransferProposal(id: "t1", amount: Zatoshi(300_000_000), anchorHeight: 100, nextExecutableAfterHeight: 150, expiryHeight: 250)
+            ],
+            estimatedDurationHours: 24
+        )
+        let store = TestStore(initialState: MigrationTransferPlan.State(variant: .scheduled)) {
+            MigrationTransferPlan()
+        } withDependencies: {
+            $0.continuousClock = clock
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.proposeMigrationTransfers = { _, _ in
+                let call = proposeCalls.withValue {
+                    $0 += 1
+                    return $0
+                }
+                if call < 3 {
+                    return MigrationSchedule(transfers: [], estimatedDurationHours: 0)
+                }
+                return schedule
+            }
+            $0.migrationManager.migrationRoundContext = { _ in (1, nil) }
+        }
+
+        await store.send(.onAppear)
+        await store.receive(\.roundContextLoaded)
+        #expect(store.state.isFailurePresented == false)
+
+        await clock.advance(by: .seconds(3))
+        await clock.advance(by: .seconds(3))
+        await store.receive(\.transfersProposed) {
+            $0.rows = [
+                MigrationTransferRow(id: "t0", index: 0, amount: Zatoshi(500_000_000), status: .active, hoursFromNow: 0, minutesFromNow: 0),
+                MigrationTransferRow(id: "t1", index: 1, amount: Zatoshi(300_000_000), status: .pending, hoursFromNow: 0, minutesFromNow: 0)
+            ]
+            $0.totalDurationHours = 24
+            $0.schedule = schedule
+        }
+
+        #expect(store.state.isFailurePresented == false)
+        #expect(proposeCalls.value == 3)
+    }
+
+    /// Conservative classification: a propose THROW (as opposed to the non-throwing empty schedule)
+    /// is a genuine failure — it surfaces immediately through the existing error path, with zero
+    /// retries.
+    @MainActor @Test func onAppearWhenProposeThrowsNonWindowErrorSurfacesImmediatelyWithoutRetrying() async {
+        struct HardFailure: Error { }
+        let clock = TestClock()
+        let proposeCalls = LockIsolated<Int>(0)
+        let store = TestStore(initialState: MigrationTransferPlan.State(variant: .scheduled)) {
+            MigrationTransferPlan()
+        } withDependencies: {
+            $0.continuousClock = clock
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.proposeMigrationTransfers = { _, _ in
+                proposeCalls.withValue { $0 += 1 }
+                throw HardFailure()
+            }
+            $0.migrationManager.migrationRoundContext = { _ in (1, nil) }
+        }
+
+        await store.send(.onAppear)
+        await store.receive(\.roundContextLoaded)
+        await store.receive(\.transferProposalFailed) {
+            $0.isFailurePresented = true
+            $0.failureReason = MigrationTransferPlan.State.FailureReason.propose
+        }
+
+        #expect(proposeCalls.value == 1)
+    }
 }

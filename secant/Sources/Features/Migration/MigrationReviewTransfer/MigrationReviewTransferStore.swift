@@ -148,6 +148,24 @@ struct MigrationReviewTransfer {
     /// single entry positionally (`.first`), matching the batch's guaranteed one-element shape.
     static let immediateKeystonePcztId = "immediate"
 
+    /// MOB-1513 (E2-FIX): single-flight + dismiss-cancellation id for the bounded entry-retry loop
+    /// (`proposeWithRetryEffect`). `cancelInFlight` restarts the window on a re-appearance; TCA's
+    /// automatic teardown cancels it when the screen is popped.
+    private enum CancelID: Hashable {
+        case proposeRetry
+    }
+
+    /// MOB-1513 (E2-FIX): the bounded entry-retry cadence — see `proposeWithRetryEffect`.
+    private enum Constants {
+        /// Re-propose at this cadence while the wallet isn't ready yet.
+        static let proposeRetryInterval: Duration = .seconds(3)
+        /// At most this many re-attempts after the first — `proposeRetryMaxRetries` ×
+        /// `proposeRetryInterval` ≈ a 60 s window from the first attempt (the post-restore
+        /// not-yet-witnessable window is ~30 s; 60 s is a 2× safety margin).
+        static let proposeRetryMaxRetries = 20
+    }
+
+    @Dependency(\.continuousClock) var clock
     @Dependency(\.sdkSynchronizer) var sdkSynchronizer
 
     init() { }
@@ -214,10 +232,11 @@ struct MigrationReviewTransfer {
             case .onAppear:
                 guard case .immediate = state.mode else { return .none }
                 // MOB-1513: cache guard — an already-populated proposal (a re-appearance, e.g. after
-                // backgrounding) is never re-proposed. `retryTapped`'s explicit propose-failure branch
-                // above is the only other place that calls `proposeEffect`.
+                // backgrounding) is never re-proposed. MOB-1513 (E2-FIX): the entry propose is the
+                // bounded, quiet retry (`proposeWithRetryEffect`); an explicit Retry stays the
+                // single-attempt `proposeEffect`.
                 guard state.immediateProposal == nil else { return .none }
-                return proposeEffect(accountUUID: state.selectedWalletAccount?.id)
+                return proposeWithRetryEffect(accountUUID: state.selectedWalletAccount?.id)
 
             case .transferProposalFailed:
                 state.isFailurePresented = true
@@ -251,9 +270,9 @@ struct MigrationReviewTransfer {
     }
 
     /// MOB-1513: proposes a fresh `ImmediateMigrationProposal` via `proposeImmediateMigration` —
-    /// shared by `onAppear`'s first-run proposal and `retryTapped`'s re-proposal after a propose
-    /// failure. Throws through to `.transferProposalFailed` instead of silently falling back to a
-    /// placeholder proposal.
+    /// `retryTapped`'s SINGLE-attempt re-proposal after a propose failure (an explicit user tap, not
+    /// a flow entry). Throws through to `.transferProposalFailed` instead of silently falling back to
+    /// a placeholder proposal. `onAppear`'s entry propose uses `proposeWithRetryEffect` instead.
     private func proposeEffect(accountUUID: AccountUUID?) -> Effect<Action> {
         guard let accountUUID else { return .none }
 
@@ -265,5 +284,57 @@ struct MigrationReviewTransfer {
                 await send(.transferProposalFailed)
             }
         }
+    }
+
+    /// MOB-1513 (E2-FIX): the bounded, quiet propose used at FLOW ENTRY (`onAppear`). Right after a
+    /// restore there is a short window (~30 s, mostly hidden by the SDK's balance hold) where the
+    /// migration banner can appear while the wallet's notes are not yet witnessable — the send-max
+    /// builder then finds no spendable Orchard notes and `proposeImmediateMigration` throws
+    /// `ZcashError.rustProposeSendMaxTransfer`. On that ONE outcome this keeps the screen in its
+    /// existing loading state and re-proposes every `proposeRetryInterval`, for up to
+    /// `proposeRetryMaxRetries` re-attempts (~60 s from the first). The first success proceeds
+    /// normally (`.transferProposed`); EVERY OTHER error surfaces immediately through the existing
+    /// `.transferProposalFailed` path (unchanged), and an exhausted window surfaces that SAME propose-
+    /// failure sheet — the retry only DEFERS today's error path, it never replaces or hides it.
+    ///
+    /// Single-flight + dismiss-cancellable via `CancelID.proposeRetry` (`cancelInFlight` restarts the
+    /// window on a re-appearance; TCA cancels the loop when the screen is popped). `try await
+    /// clock.sleep` (not `try?`) so a cancellation exits the loop promptly instead of spinning.
+    private func proposeWithRetryEffect(accountUUID: AccountUUID?) -> Effect<Action> {
+        guard let accountUUID else { return .none }
+
+        return .run { send in
+            for retry in 0...Constants.proposeRetryMaxRetries {
+                do {
+                    let proposal = try await sdkSynchronizer.proposeImmediateMigration(accountUUID)
+                    await send(.transferProposed(proposal))
+                    return
+                } catch {
+                    guard Self.isWalletNotReadyYet(error) else {
+                        await send(.transferProposalFailed)
+                        return
+                    }
+                }
+                guard retry < Constants.proposeRetryMaxRetries else { break }
+                try await clock.sleep(for: Constants.proposeRetryInterval)
+            }
+            await send(.transferProposalFailed)
+        }
+        .cancellable(id: CancelID.proposeRetry, cancelInFlight: true)
+    }
+
+    /// MOB-1513 (E2-FIX): the ONLY propose outcome the bounded entry retry treats as "the wallet's
+    /// notes aren't witnessable yet." `proposeImmediateMigration` builds an ordinary send-max, so a
+    /// no-spendable-notes result is a `ZcashError.rustProposeSendMaxTransfer` throw (the engine's own
+    /// transient "not witnessable yet" state surfaces as this nothing-to-select build failure, NOT as
+    /// the hard `migrationProvingUnavailable`, which by SDK contract means proving failed hard).
+    /// Deliberately keyed on the typed ZcashError CASE, never a message substring — every other error
+    /// (address lookup, proposal decode, ...) is a genuine failure that surfaces immediately.
+    static func isWalletNotReadyYet(_ error: Error) -> Bool {
+        guard let zcashError = error as? ZcashError else { return false }
+        if case .rustProposeSendMaxTransfer = zcashError {
+            return true
+        }
+        return false
     }
 }
