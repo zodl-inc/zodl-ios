@@ -161,6 +161,24 @@ struct MigrationTransferPlan {
         }
     }
 
+    /// MOB-1513 (E2-FIX): single-flight + dismiss-cancellation id for the bounded entry-retry loop
+    /// (`proposeWithRetryEffect`). `cancelInFlight` restarts the window on a re-appearance; TCA's
+    /// automatic teardown cancels it when the screen is popped.
+    private enum CancelID: Hashable {
+        case proposeRetry
+    }
+
+    /// MOB-1513 (E2-FIX): the bounded entry-retry cadence — see `proposeWithRetryEffect`.
+    private enum Constants {
+        /// Re-propose at this cadence while the wallet isn't ready yet.
+        static let proposeRetryInterval: Duration = .seconds(3)
+        /// At most this many re-attempts after the first — `proposeRetryMaxRetries` ×
+        /// `proposeRetryInterval` ≈ a 60 s window from the first attempt (the post-restore
+        /// not-yet-witnessable window is ~30 s; 60 s is a 2× safety margin).
+        static let proposeRetryMaxRetries = 20
+    }
+
+    @Dependency(\.continuousClock) var clock
     @Dependency(\.derivationTool) var derivationTool
     @Dependency(\.migrationManager) var migrationManager
     @Dependency(\.mnemonic) var mnemonic
@@ -270,8 +288,10 @@ struct MigrationTransferPlan {
                 // `MigrationReviewTransfer` instead), so `proposeMigrationTransfers` (not
                 // `proposeImmediateMigration`) is always correct here.
                 // `.concatenate` (not `.merge`): the round load answers instantly today, and a
-                // deterministic receive order keeps exhaustive TestStores stable.
-                return .concatenate(roundContextEffect, proposeEffect(accountUUID: state.selectedWalletAccount?.id))
+                // deterministic receive order keeps exhaustive TestStores stable. MOB-1513 (E2-FIX):
+                // the entry propose is the bounded, quiet retry (`proposeWithRetryEffect`); an
+                // explicit Retry stays the single-attempt `proposeEffect`.
+                return .concatenate(roundContextEffect, proposeWithRetryEffect(accountUUID: state.selectedWalletAccount?.id))
 
             case .roundContextLoaded(let round, let totalRounds):
                 // MOB-1511 (W2): shown only for a genuinely multi-round migration — a later round
@@ -362,10 +382,10 @@ struct MigrationTransferPlan {
         }
     }
 
-    /// MOB-1496 (R8-T1, S3): proposes a fresh schedule via `proposeMigrationTransfers` — shared by
-    /// `onAppear`'s first-run proposal and `retryTapped`'s re-proposal after a propose failure.
-    /// Throws through to `.transferProposalFailed` instead of silently falling back to an empty
-    /// schedule.
+    /// MOB-1496 (R8-T1, S3): proposes a fresh schedule via `proposeMigrationTransfers` —
+    /// `retryTapped`'s SINGLE-attempt re-proposal after a propose failure (an explicit user tap, not
+    /// a flow entry). Throws through to `.transferProposalFailed` instead of silently falling back to
+    /// an empty schedule. `onAppear`'s entry propose uses `proposeWithRetryEffect` instead.
     private func proposeEffect(accountUUID: AccountUUID?) -> Effect<Action> {
         guard let accountUUID else { return .none }
 
@@ -377,6 +397,48 @@ struct MigrationTransferPlan {
                 await send(.transferProposalFailed)
             }
         }
+    }
+
+    /// MOB-1513 (E2-FIX): the bounded, quiet propose used at FLOW ENTRY (`onAppear`). Right after a
+    /// restore there is a short window (~30 s, mostly hidden by the SDK's balance hold) where the
+    /// migration banner can appear while the wallet's notes are not yet witnessable — the engine then
+    /// has nothing to schedule and `proposeMigrationTransfers` returns a NON-throwing EMPTY schedule
+    /// (its "nothing to migrate yet / nothing due" answer, the same surface the SDK maps the transient
+    /// "not witnessable yet" state to). On that ONE outcome this keeps the screen in its existing
+    /// loading state and re-proposes every `proposeRetryInterval`, for up to `proposeRetryMaxRetries`
+    /// re-attempts (~60 s from the first). The first non-empty schedule proceeds normally
+    /// (`.transfersProposed`); a propose THROW is a genuine failure that surfaces immediately through
+    /// the existing `.transferProposalFailed` path (unchanged), and an exhausted window surfaces that
+    /// SAME propose-failure sheet rather than silently populating an empty plan — the retry only
+    /// DEFERS to today's error path, it never hides a real problem.
+    ///
+    /// Single-flight + dismiss-cancellable via `CancelID.proposeRetry` (`cancelInFlight` restarts the
+    /// window on a re-appearance; TCA cancels the loop when the screen is popped). `try await
+    /// clock.sleep` (not `try?`) so a cancellation exits the loop promptly instead of spinning.
+    private func proposeWithRetryEffect(accountUUID: AccountUUID?) -> Effect<Action> {
+        guard let accountUUID else { return .none }
+
+        return .run { send in
+            for retry in 0...Constants.proposeRetryMaxRetries {
+                do {
+                    let schedule = try await sdkSynchronizer.proposeMigrationTransfers(accountUUID, false)
+                    if !schedule.transfers.isEmpty {
+                        await send(.transfersProposed(schedule))
+                        return
+                    }
+                    // Empty schedule: the wallet isn't ready yet — stay quiet and retry below.
+                } catch {
+                    // A THROW is a genuine failure, not the transient empty "nothing due" — surface
+                    // it immediately through the existing propose-failure path.
+                    await send(.transferProposalFailed)
+                    return
+                }
+                guard retry < Constants.proposeRetryMaxRetries else { break }
+                try await clock.sleep(for: Constants.proposeRetryInterval)
+            }
+            await send(.transferProposalFailed)
+        }
+        .cancellable(id: CancelID.proposeRetry, cancelInFlight: true)
     }
 
     /// Populates `rows`/`totalDurationHours`/`schedule` from a `MigrationSchedule`, whether it was
