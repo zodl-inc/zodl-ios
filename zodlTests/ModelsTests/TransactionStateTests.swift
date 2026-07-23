@@ -84,4 +84,26 @@ import Foundation
 
         #expect(transaction.netValue == Zatoshi(10_000).atLeastThreeDecimalsZashiFormatted())
     }
+
+    /// Guard hardening (E1): the note-less shape with a ZERO `totalReceived` — the swap-deposit init's
+    /// `0/0` notes plus `totalReceived == .zero` — is NOT a migration crossing, so it must render via
+    /// `zecAmount`, not the (zero) `totalReceived`. Pre-hardening the guard matched on presence alone
+    /// and returned the misleading zero; the `totalReceived.amount > 0` guard keeps it on the
+    /// net-value path. Observably red before the guard: `totalReceived` (.zero -> "0.000") differs
+    /// from `zecAmount`.
+    @Test func noNotesWithZeroTotalReceivedFallsBackToNetValue() {
+        var transaction = TransactionState(
+            fee: Zatoshi(10_000),
+            id: "no-notes-zero-total",
+            status: .paid,
+            zecAmount: Zatoshi(10_000),
+            isSentTransaction: true
+        )
+        transaction.sentNoteCount = 0
+        transaction.receivedNoteCount = 0
+        transaction.totalReceived = .zero
+
+        #expect(transaction.netValue == Zatoshi(10_000).atLeastThreeDecimalsZashiFormatted())
+        #expect(transaction.netValue != Zatoshi.zero.atLeastThreeDecimalsZashiFormatted())
+    }
 }

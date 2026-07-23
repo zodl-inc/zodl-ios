@@ -2323,6 +2323,80 @@ import ComposableArchitecture
         #expect(store.state.pendingKeystoneScheduleStore == nil)
     }
 
+    /// B4 fix wave, CROSS-ACCOUNT COLLISION PIN (MOB-1509 parallel migrations): `MigrationCoordFlow`
+    /// is ONE permanent `Scope` child of Root, so two accounts migrating in parallel share this
+    /// single coordinator. Account A arms its state-event re-arm (its kick exhausted with the deferred
+    /// store still pending); account B then arms its OWN re-arm (`cancelInFlight: true`) and lands its
+    /// deferred store (`.cancel(id:)`). With a payload-free `CancelID` BOTH of B's teardowns hit the
+    /// shared id and kill A's still-armed re-arm, stranding A's run. Keying the id by account isolates
+    /// them: A's re-arm must survive B entirely and still resolve on A's OWN later `stateEvents`
+    /// emission. RED under the payload-free id — A's re-arm is cancelled, so A's emission produces no
+    /// `.deferredKeystoneScheduleResolveDue` and the receive below times out.
+    @MainActor @Test func deferredScheduleRearmIsPerAccountAndSurvivesAParallelAccountsRearmAndStore() async {
+        let accountA = AccountUUID(id: [UInt8](repeating: 1, count: 16))
+        let accountB = AccountUUID(id: [UInt8](repeating: 2, count: 16))
+        let stateSubjectA = PassthroughSubject<MigrationState, Never>()
+        let stateSubjectB = PassthroughSubject<MigrationState, Never>()
+        let storedAccounts = LockIsolated<[AccountUUID]>([])
+        let pendingA = MigrationCoordFlow.PendingScheduleStore(
+            accountUUID: accountA,
+            scheduleEntries: [MigrationSignedTransferPczt(id: "a0", pczt: Data([0xA0]))],
+            schedule: nil
+        )
+        let pendingB = MigrationCoordFlow.PendingScheduleStore(
+            accountUUID: accountB,
+            scheduleEntries: [MigrationSignedTransferPczt(id: "b0", pczt: Data([0xB0]))],
+            schedule: nil
+        )
+        let store = TestStore(initialState: MigrationCoordFlow.State()) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.continuousClock = ImmediateClock()
+            $0.sdkSynchronizer = .noOp
+            // A's re-arm resolution: next-due is exhausted (the prep already landed on another lane),
+            // so the probe answers `nil` and the deferred store runs.
+            $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in nil }
+            $0.sdkSynchronizer.storeSignedMigrationTransactions = { account, _ in
+                storedAccounts.withValue { $0.append(account) }
+            }
+            $0.migrationManager.reconcile = { }
+            $0.migrationManager.migrationNetworkOptions = { _ in Self.defaultNetworkPrivacyOptions }
+            $0.migrationManager.refreshMigrationSyncGate = { }
+            $0.migrationManager.stateEvents = { account in
+                account == accountA
+                    ? stateSubjectA.eraseToAnyPublisher()
+                    : stateSubjectB.eraseToAnyPublisher()
+            }
+        }
+        store.exhaustivity = .off
+
+        // Account A arms its re-arm.
+        await store.send(.firstDeliveryKickFailed(pendingScheduleStore: pendingA, accountUUID: accountA))
+        // Account B then arms its own re-arm (`cancelInFlight: true`) ...
+        await store.send(.firstDeliveryKickFailed(pendingScheduleStore: pendingB, accountUUID: accountB))
+        // ... and lands its deferred store (`.cancel(id:)`). Under a payload-free id, either of these
+        // B steps would already have torn down A's re-arm.
+        await store.send(.deferredKeystoneScheduleStored(accountB))
+
+        // A's own later state event must STILL drive A's re-arm to resolve and store A's schedule.
+        stateSubjectA.send(
+            MigrationState.inProgress(
+                MigrationProgress(completedTransfers: 0, totalTransfers: 1, remainingOrchard: Zatoshi(500_000_000), nextTransferReadyAtHeight: nil)
+            )
+        )
+
+        await store.receive(\.deferredKeystoneScheduleResolveDue)
+        await store.receive(\.deferredKeystoneScheduleStored)
+
+        // ONLY account A's schedule stored on A's re-arm — B's store was the direct send above.
+        #expect(storedAccounts.value == [accountA])
+
+        // Both re-arms are now cancelled by their own stores; completing the subjects is a no-op that
+        // documents there is nothing left subscribed.
+        stateSubjectA.send(completion: .finished)
+        stateSubjectB.send(completion: .finished)
+    }
+
     /// B4 fix wave (coverage gap): the `.manual` variant's kick arm — a Keystone MANUAL commit with
     /// preps pushes Sending (that screen keeps owning the manual lane's own delivery) AND fires the
     /// kick, since only the kick holds the deferred schedule store.

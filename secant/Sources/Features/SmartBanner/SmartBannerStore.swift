@@ -744,9 +744,18 @@ struct SmartBanner {
                 // sample (which can still be >= the show threshold if the SDK skipped
                 // a final low-remainder update) and spuriously re-show the banner.
                 state.lastKnownBlocksRemaining = -1
-                if state.priorityContent == .priority3 || state.priorityContent == .priority45 || state.priorityContent == .priority4 || state.priorityContent == nil {
-                    // MOB-1513 (B2): the empty-slot case (`priorityContent == nil`) runs the SAME
-                    // re-check. After a restore the slot is often empty at the moment the recovery
+                // MOB-1513 (B2 fix wave): the empty-slot re-check is migration-specific, so
+                // pre-activation it has nothing to open — yet the pre-fix arm fired the full
+                // `bannerVariant` hydration (5 async reads incl. a rust `migrationState`) on EVERY
+                // ~2 s `.upToDate` re-emission, forever, on every synced wallet. Gate ONLY the
+                // empty-slot disjunct on the sync, cached `isIronwoodActivated()`: pre-activation the
+                // empty slot falls through to the normal (pre-B2) handling below, doing no manager
+                // hydration. The occupied-slot cases and the ACTIVATED empty-slot re-check (whose
+                // ~2 s cadence is the spec'd design) are unchanged.
+                let emptySlotMigrationRecheckArmed = state.priorityContent == nil && migrationManager.isIronwoodActivated()
+                if state.priorityContent == .priority3 || state.priorityContent == .priority45 || state.priorityContent == .priority4 || emptySlotMigrationRecheckArmed {
+                    // MOB-1513 (B2): the empty-slot case (`priorityContent == nil`, now gated on
+                    // activation above) runs the SAME re-check. After a restore the slot is often empty at the moment the recovery
                     // balance finally surfaces (the SDK's E2-FIX holds that balance across the
                     // post-restore summary gap, so it is available early); the synchronizer re-emits
                     // `.upToDate` ~every 2s while synced, so this deterministic app-side trigger
