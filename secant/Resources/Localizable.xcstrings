@@ -11568,6 +11568,17 @@
         }
       }
     },
+    "migrationPlan.staleRefreshed" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your migration plan was refreshed — review it before confirming."
+          }
+        }
+      }
+    },
     "migrationPlan.titleConfirm" : {
       "extractionState" : "manual",
       "localizations" : {

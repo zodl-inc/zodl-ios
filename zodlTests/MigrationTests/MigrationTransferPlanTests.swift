@@ -1219,4 +1219,199 @@ import ComposableArchitecture
 
         #expect(proposeCalls.value == 1)
     }
+
+    // MARK: - MOB-1458 (Task 3): migrationPlanStale defensive recovery on the pre-commit consent-echo paths
+
+    /// `ZcashError.migrationPlanStale` from the software commit's consent echo
+    /// (`signAndStoreMigrationSchedule`) is caught SPECIFICALLY — instead of the generic
+    /// `.noteSplitFailed` failure sheet, a fresh `proposeMigrationTransfers` re-propose silently
+    /// replaces the displayed (now-stale) schedule, and a toast tells the user to review it
+    /// before re-confirming. Nothing is signed or stored (`recordCommittedSchedule`/`reconcile`
+    /// never called).
+    ///
+    /// Toast is `@Shared(.inMemory(.toast))` — following the established codebase idiom for
+    /// asserting it (`WalletBirthdayTests`/`AddressDetailsTests`), this test turns exhaustivity
+    /// off and asserts the resulting state via `#expect` instead of the trailing closure.
+    @MainActor @Test func confirmTappedWhenCommitThrowsMigrationPlanStaleReProposesFreshScheduleShowsNoticeAndCommitsNothing() async {
+        let staleSchedule = MigrationSchedule(
+            transfers: [
+                MigrationTransferProposal(id: "stale", amount: Zatoshi(500_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
+            ],
+            estimatedDurationHours: 24
+        )
+        let freshSchedule = MigrationSchedule(
+            transfers: [
+                MigrationTransferProposal(id: "fresh", amount: Zatoshi(400_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
+            ],
+            estimatedDurationHours: 20
+        )
+        let signCalls = LockIsolated<Int>(0)
+        let proposeCalls = LockIsolated<Int>(0)
+        let recordCommittedScheduleCalls = LockIsolated<Int>(0)
+        let reconcileCalls = LockIsolated<Int>(0)
+        var state = MigrationTransferPlan.State()
+        state.schedule = staleSchedule
+        let store = TestStore(initialState: state) {
+            MigrationTransferPlan()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.signAndStoreMigrationSchedule = { _, _, _ in
+                signCalls.withValue { $0 += 1 }
+                throw ZcashError.migrationPlanStale
+            }
+            $0.sdkSynchronizer.proposeMigrationTransfers = { _ in
+                proposeCalls.withValue { $0 += 1 }
+                return freshSchedule
+            }
+            $0.migrationManager.recordCommittedSchedule = { _, _ in recordCommittedScheduleCalls.withValue { $0 += 1 } }
+            $0.migrationManager.reconcile = { reconcileCalls.withValue { $0 += 1 } }
+            withDependenciesUSKDerivable(&$0)
+        }
+        store.exhaustivity = .off
+
+        await store.send(.confirmTapped)
+        await store.receive(\.planStaleRefreshed)
+
+        #expect(store.state.schedule == freshSchedule)
+        #expect(
+            store.state.rows == [
+                MigrationTransferRow(id: "fresh", index: 0, amount: Zatoshi(400_000_000), status: .active, hoursFromNow: 0, minutesFromNow: 0)
+            ]
+        )
+        #expect(store.state.totalDurationHours == 20)
+        #expect(store.state.isConfirming == false)
+        #expect(store.state.isFailurePresented == false)
+        #expect(store.state.toast == .topDelayed(String(localizable: .migrationPlanStaleRefreshed)))
+        #expect(signCalls.value == 1)
+        #expect(proposeCalls.value == 1)
+        #expect(recordCommittedScheduleCalls.value == 0)
+        #expect(reconcileCalls.value == 0)
+    }
+
+    /// The Keystone propose leg gets the same treatment: `ZcashError.migrationPlanStale` from
+    /// `proposeMigrationPCZTs` (inside `proposeKeystoneBatch`) re-proposes a fresh schedule instead
+    /// of delegating a stale batch to the coordinator for signing.
+    @MainActor @Test func confirmTappedWithKeystoneAccountWhenProposeMigrationPCZTsThrowsMigrationPlanStaleReProposesFreshScheduleShowsNoticeWithoutDelegating() async {
+        let staleSchedule = MigrationSchedule(
+            transfers: [
+                MigrationTransferProposal(id: "stale", amount: Zatoshi(500_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
+            ],
+            estimatedDurationHours: 24
+        )
+        let freshSchedule = MigrationSchedule(
+            transfers: [
+                MigrationTransferProposal(id: "fresh", amount: Zatoshi(300_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
+            ],
+            estimatedDurationHours: 18
+        )
+        let proposeMigrationPCZTsCalls = LockIsolated<Int>(0)
+        let proposeMigrationTransfersCalls = LockIsolated<Int>(0)
+        var state = MigrationTransferPlan.State(variant: .scheduled)
+        state.schedule = staleSchedule
+        state.$selectedWalletAccount.withLock { $0 = walletAccount(keystone: true, idByte: 30) }
+        let store = TestStore(initialState: state) {
+            MigrationTransferPlan()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.proposeMigrationPCZTs = { _, _ in
+                proposeMigrationPCZTsCalls.withValue { $0 += 1 }
+                throw ZcashError.migrationPlanStale
+            }
+            $0.sdkSynchronizer.proposeMigrationTransfers = { _ in
+                proposeMigrationTransfersCalls.withValue { $0 += 1 }
+                return freshSchedule
+            }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.confirmTapped)
+        await store.receive(\.planStaleRefreshed)
+
+        #expect(store.state.schedule == freshSchedule)
+        #expect(
+            store.state.rows == [
+                MigrationTransferRow(id: "fresh", index: 0, amount: Zatoshi(300_000_000), status: .active, hoursFromNow: 0, minutesFromNow: 0)
+            ]
+        )
+        #expect(store.state.isConfirming == false)
+        #expect(store.state.isFailurePresented == false)
+        #expect(store.state.toast == .topDelayed(String(localizable: .migrationPlanStaleRefreshed)))
+        #expect(proposeMigrationPCZTsCalls.value == 1)
+        #expect(proposeMigrationTransfersCalls.value == 1)
+    }
+
+    /// Regression: a DIFFERENT `ZcashError` case on the software commit path — proving the new
+    /// catch clause is scoped to `.migrationPlanStale` specifically, not "any `ZcashError`" — keeps
+    /// today's generic failure-sheet handling and never re-proposes.
+    @MainActor @Test func confirmTappedWhenCommitThrowsADifferentZcashErrorKeepsExistingFailureHandling() async {
+        let schedule = MigrationSchedule(
+            transfers: [
+                MigrationTransferProposal(id: "t0", amount: Zatoshi(500_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
+            ],
+            estimatedDurationHours: 24
+        )
+        let proposeCalls = LockIsolated<Int>(0)
+        var state = MigrationTransferPlan.State()
+        state.schedule = schedule
+        let store = TestStore(initialState: state) {
+            MigrationTransferPlan()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.signAndStoreMigrationSchedule = { _, _, _ in throw ZcashError.migrationSyncBlocked }
+            $0.sdkSynchronizer.proposeMigrationTransfers = { _ in
+                proposeCalls.withValue { $0 += 1 }
+                return schedule
+            }
+            $0.migrationManager.recordCommittedSchedule = { _, _ in }
+            withDependenciesUSKDerivable(&$0)
+        }
+
+        await store.send(.confirmTapped) {
+            $0.isConfirming = true
+        }
+        await store.receive(\.noteSplitFailed) {
+            $0.isConfirming = false
+            $0.isFailurePresented = true
+            $0.failureReason = MigrationTransferPlan.State.FailureReason.commit
+        }
+
+        #expect(proposeCalls.value == 0)
+    }
+
+    /// Regression: same specificity proof on the Keystone propose leg — a different `ZcashError`
+    /// case from `proposeMigrationPCZTs` still routes to the existing failure sheet, never
+    /// re-proposing.
+    @MainActor @Test func confirmTappedWithKeystoneAccountWhenProposeThrowsADifferentZcashErrorKeepsExistingFailureHandling() async {
+        let schedule = MigrationSchedule(
+            transfers: [
+                MigrationTransferProposal(id: "t0", amount: Zatoshi(500_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
+            ],
+            estimatedDurationHours: 24
+        )
+        let proposeTransfersCalls = LockIsolated<Int>(0)
+        var state = MigrationTransferPlan.State(variant: .scheduled)
+        state.schedule = schedule
+        state.$selectedWalletAccount.withLock { $0 = walletAccount(keystone: true, idByte: 31) }
+        let store = TestStore(initialState: state) {
+            MigrationTransferPlan()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.proposeMigrationPCZTs = { _, _ in throw ZcashError.migrationSyncBlocked }
+            $0.sdkSynchronizer.proposeMigrationTransfers = { _ in
+                proposeTransfersCalls.withValue { $0 += 1 }
+                return schedule
+            }
+        }
+
+        await store.send(.confirmTapped) {
+            $0.isConfirming = true
+        }
+        await store.receive(\.noteSplitFailed) {
+            $0.isConfirming = false
+            $0.isFailurePresented = true
+            $0.failureReason = MigrationTransferPlan.State.FailureReason.commit
+        }
+
+        #expect(proposeTransfersCalls.value == 0)
+    }
 }

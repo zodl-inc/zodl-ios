@@ -39,6 +39,21 @@
 //  preparation PCZTs first, so the whole batch (preps + all N transfers) signs in the same QR
 //  ceremony.
 //
+//  MOB-1458 (Task 3): both pre-commit consent-echo calls — `commitSoftware`'s
+//  `signAndStoreMigrationSchedule` and `requestKeystoneSignature`'s `proposeKeystoneBatch`
+//  (`proposeMigrationPCZTs`) — echo-validate the schedule they're handed against the engine's
+//  one-slot plan cache and throw `ZcashError.migrationPlanStale` when it no longer matches (a
+//  process restart between propose and confirm, a balance change underneath the preview, or a
+//  concurrent propose overwriting the cache). That case is now caught SPECIFICALLY on both paths
+//  (`refreshAfterPlanStale`) instead of falling into the generic futile-retry failure sheet: a
+//  fresh `proposeMigrationTransfers` re-propose (the same call `proposeEffect`'s Retry makes)
+//  replaces the stale schedule, `.planStaleRefreshed` re-displays it exactly like a normal
+//  propose, and a toast tells the user to review it before re-confirming. Nothing is signed or
+//  stored on this path — a thrown commit persists nothing (see `commitSoftware`'s own doc), and
+//  the re-propose never blindly re-signs the stale copy (ZIP 318 draws fresh schedule randomness
+//  on every proposal, so the SDK never silently signs a plan the user was not shown). Any OTHER
+//  thrown error on either path keeps the existing `.noteSplitFailed` handling unchanged.
+//
 
 import Foundation
 import ComposableArchitecture
@@ -108,6 +123,11 @@ struct MigrationTransferPlan {
         var failureReason: FailureReason?
 
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
+        /// MOB-1458 (Task 3): the app-wide toast idiom — `.planStaleRefreshed` uses it to tell the
+        /// user their displayed schedule was silently replaced with a fresh one and needs a look
+        /// before they re-confirm. Rendered globally by `RootView`'s `.toast()`, so this screen
+        /// needs no view-level wiring of its own.
+        @Shared(.inMemory(.toast)) var toast: Toast.Edge? = nil
 
         init(
             variant: Variant = .scheduled,
@@ -144,6 +164,12 @@ struct MigrationTransferPlan {
         case retryTapped
         /// `signAndStoreMigrationSchedule` completed.
         case scheduleSigned
+        /// MOB-1458 (Task 3): the software commit's or the Keystone propose's consent echo found
+        /// the displayed schedule stale (`ZcashError.migrationPlanStale`) — `refreshAfterPlanStale`
+        /// already re-proposed a fresh one; populates rows/duration from it (like
+        /// `transfersProposed`) and shows a toast telling the user to review it before
+        /// re-confirming. Nothing was signed or stored.
+        case planStaleRefreshed(MigrationSchedule)
         /// MOB-1496 (R8-T1, S3): `proposeMigrationTransfers()` threw — presents the failure sheet;
         /// `schedule`/`rows` are left untouched (never a silent empty-schedule fallback).
         case transferProposalFailed
@@ -304,6 +330,15 @@ struct MigrationTransferPlan {
                 state.isConfirming = false
                 return .send(.delegate(.confirmed))
 
+            case .planStaleRefreshed(let schedule):
+                // MOB-1458 (Task 3): mirrors `.transfersProposed` — the fresh schedule replaces
+                // the stale one on screen — plus the toast telling the user to review it before
+                // tapping Confirm again.
+                state.isConfirming = false
+                apply(schedule, to: &state)
+                state.$toast.withLock { $0 = .topDelayed(String(localizable: .migrationPlanStaleRefreshed)) }
+                return .none
+
             case .transferProposalFailed:
                 state.isConfirming = false
                 state.isFailurePresented = true
@@ -321,7 +356,9 @@ struct MigrationTransferPlan {
     /// The software commit — sign-only since MOB-1513 (B4): a success is `.scheduleSigned`, any
     /// thrown error is the plain generic `.noteSplitFailed` (nothing was persisted — see
     /// `MigrationCommitPipeline.commitSoftware`'s doc). No broadcast happens here any more, so
-    /// there is no failure to classify/route either.
+    /// there is no failure to classify/route either. MOB-1458 (Task 3): `ZcashError
+    /// .migrationPlanStale` is caught SPECIFICALLY ahead of that generic catch — see
+    /// `refreshAfterPlanStale`'s doc.
     private func commitEffect(schedule: MigrationSchedule, account: WalletAccount, zip32AccountIndex: Zip32AccountIndex) -> Effect<Action> {
         .run { send in
             do {
@@ -337,9 +374,34 @@ struct MigrationTransferPlan {
                     networkType: zcashSDKEnvironment.network().networkType
                 )
                 await send(.scheduleSigned)
+            } catch ZcashError.migrationPlanStale {
+                await refreshAfterPlanStale(accountUUID: account.id, send: send)
             } catch {
                 await send(.noteSplitFailed)
             }
+        }
+    }
+
+    /// MOB-1458 (Task 3): shared plan-stale recovery for BOTH pre-commit consent-echo paths
+    /// (`commitEffect`'s `signAndStoreMigrationSchedule` echo, `requestKeystoneSignature`'s
+    /// `proposeMigrationPCZTs` echo). `ZcashError.migrationPlanStale` means the schedule the user
+    /// was shown no longer matches the engine's one-slot plan cache — the process restarted
+    /// between propose and confirm, the wallet's balance changed underneath the preview, or a
+    /// concurrent propose overwrote the cache. ZIP 318 draws fresh schedule randomness on every
+    /// proposal, so the SDK deliberately never signs a plan the user was not shown — the only
+    /// honest recovery is a fresh `proposeMigrationTransfers` re-propose (the SAME call
+    /// `proposeEffect`'s explicit Retry makes), re-displayed via `.planStaleRefreshed`, never a
+    /// blind re-sign/re-propose-and-immediately-recommit of the stale copy. The re-propose's OWN
+    /// failure (a throw; an empty schedule is deliberately unfiltered here too — exactly like
+    /// `proposeEffect`, since `confirmTapped`'s own zero-transfer guard is the single source of
+    /// truth for "nothing to sign") falls through to the EXISTING propose-failure sheet
+    /// (`.transferProposalFailed`) rather than inventing a second failure surface.
+    private func refreshAfterPlanStale(accountUUID: AccountUUID, send: Send<Action>) async {
+        do {
+            let schedule = try await sdkSynchronizer.proposeMigrationTransfers(accountUUID)
+            await send(.planStaleRefreshed(schedule))
+        } catch {
+            await send(.transferProposalFailed)
         }
     }
 
@@ -367,6 +429,8 @@ struct MigrationTransferPlan {
     /// failure, so this never delegates a silently empty/partial batch; both route to the SAME
     /// failure sheet the software fork uses, and Retry re-runs this same propose. `mode` is no longer
     /// passed — the shared pipeline folds preps unconditionally now, mode-independent.
+    /// MOB-1458 (Task 3): `ZcashError.migrationPlanStale` is caught SPECIFICALLY ahead of the
+    /// generic catch, exactly like `commitEffect` — see `refreshAfterPlanStale`'s doc.
     private func requestKeystoneSignature(for schedule: MigrationSchedule, account: WalletAccount) -> Effect<Action> {
         .run { send in
             do {
@@ -376,6 +440,8 @@ struct MigrationTransferPlan {
                     sdkSynchronizer: sdkSynchronizer
                 )
                 await send(.delegate(.keystoneSignRequested(pczts)))
+            } catch ZcashError.migrationPlanStale {
+                await refreshAfterPlanStale(accountUUID: account.id, send: send)
             } catch {
                 await send(.noteSplitFailed)
             }
