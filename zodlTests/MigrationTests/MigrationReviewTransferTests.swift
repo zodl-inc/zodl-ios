@@ -518,4 +518,108 @@ import ComposableArchitecture
             $0.failureReason = MigrationReviewTransfer.State.FailureReason.commit
         }
     }
+
+    // MARK: - MOB-1513 (E2-FIX): bounded quiet retry at entry when the wallet isn't ready yet
+
+    /// E2 window: right after a restore the send-max builder can't select any spendable Orchard
+    /// notes yet, so `proposeImmediateMigration` throws `ZcashError.rustProposeSendMaxTransfer` (the
+    /// typed "no migratable funds yet" surface). Instead of surfacing the failure sheet immediately
+    /// (today's behavior), the entry propose stays quietly in its loading state and re-proposes on
+    /// the clock, only surfacing the EXISTING propose-failure sheet once the bounded window expires.
+    @MainActor @Test func onAppearImmediateWhenNoSpendableNotesRetriesQuietlyThenSurfacesOnExpiry() async {
+        let clock = TestClock()
+        let proposeCalls = LockIsolated<Int>(0)
+        let store = TestStore(initialState: MigrationReviewTransfer.State(mode: .immediate)) {
+            MigrationReviewTransfer()
+        } withDependencies: {
+            $0.continuousClock = clock
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.proposeImmediateMigration = { _ in
+                proposeCalls.withValue { $0 += 1 }
+                throw ZcashError.rustProposeSendMaxTransfer("Error while sending funds: insufficient funds")
+            }
+        }
+
+        await store.send(.onAppear)
+        // Quiet: the failure sheet must NOT appear on the first not-ready outcome (today it would).
+        #expect(store.state.isFailurePresented == false)
+
+        await clock.advance(by: .seconds(3))
+        #expect(store.state.isFailurePresented == false)
+
+        // Past the bounded window: the existing propose-failure sheet finally surfaces.
+        await clock.advance(by: .seconds(120))
+        await store.receive(\.transferProposalFailed) {
+            $0.isFailurePresented = true
+            $0.failureReason = MigrationReviewTransfer.State.FailureReason.propose
+        }
+
+        // Multiple attempts happened — not a single immediate surface.
+        #expect(proposeCalls.value >= 2)
+    }
+
+    /// A later attempt within the window succeeds → the proposal is applied and the flow proceeds
+    /// exactly as a first-attempt success would, with no failure sheet ever shown.
+    @MainActor @Test func onAppearImmediateWhenNotReadyThenBecomesAvailableProposesOnLaterAttempt() async {
+        let clock = TestClock()
+        let proposeCalls = LockIsolated<Int>(0)
+        let proposal = immediateProposal(amount: Zatoshi(1_245_800_000), fee: Zatoshi(15_000))
+        let store = TestStore(initialState: MigrationReviewTransfer.State(mode: .immediate)) {
+            MigrationReviewTransfer()
+        } withDependencies: {
+            $0.continuousClock = clock
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.proposeImmediateMigration = { _ in
+                let call = proposeCalls.withValue {
+                    $0 += 1
+                    return $0
+                }
+                if call < 3 {
+                    throw ZcashError.rustProposeSendMaxTransfer("not ready yet")
+                }
+                return proposal
+            }
+        }
+
+        await store.send(.onAppear)
+        #expect(store.state.isFailurePresented == false)
+
+        await clock.advance(by: .seconds(3))
+        await clock.advance(by: .seconds(3))
+        await store.receive(\.transferProposed) {
+            $0.amount = Zatoshi(1_245_800_000)
+            $0.fee = Zatoshi(15_000)
+            $0.immediateProposal = proposal
+        }
+
+        #expect(store.state.isFailurePresented == false)
+        #expect(proposeCalls.value == 3)
+    }
+
+    /// Conservative classification: a propose failure that is NOT the typed not-ready surface (any
+    /// other error) is a genuine failure — it surfaces immediately through the existing error path,
+    /// with zero retries.
+    @MainActor @Test func onAppearImmediateWhenProposeThrowsNonWindowErrorSurfacesImmediatelyWithoutRetrying() async {
+        struct HardFailure: Error { }
+        let clock = TestClock()
+        let proposeCalls = LockIsolated<Int>(0)
+        let store = TestStore(initialState: MigrationReviewTransfer.State(mode: .immediate)) {
+            MigrationReviewTransfer()
+        } withDependencies: {
+            $0.continuousClock = clock
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.proposeImmediateMigration = { _ in
+                proposeCalls.withValue { $0 += 1 }
+                throw HardFailure()
+            }
+        }
+
+        await store.send(.onAppear)
+        await store.receive(\.transferProposalFailed) {
+            $0.isFailurePresented = true
+            $0.failureReason = MigrationReviewTransfer.State.FailureReason.propose
+        }
+
+        #expect(proposeCalls.value == 1)
+    }
 }
