@@ -162,8 +162,11 @@ struct MigrationStatusView: View {
             // Pending/queued-active rows: the shared forward-ETA granularity per the frames
             // (S10-progress Transfer 4 = "~12 hours"). MOB-1513 (B3): a ready-now row now renders
             // "Ready now" (was the "~10 mins" `migrationPlanEtaFirst` fallback), bucketed by the same
-            // `MigrationETA` helper every forward surface uses. These rows carry only the coarse
-            // whole-hour cadence (`minutesFromNow` nil), so `forwardETAMinutes` reads `hoursFromNow`.
+            // `MigrationETA` helper every forward surface uses. MOB-1513 (A3): `minutesFromNow` now
+            // carries the real, minute-precise ETA (the committed schedule's own per-transfer
+            // height against the live tip) for rows backed by a committed schedule, so a sub-hour
+            // transfer reads "in ~N mins" here too; it's nil only on the W1 progress-only fallback
+            // (no committed schedule yet), where `forwardETAMinutes` falls back to `hoursFromNow`.
             return MigrationETA.caption(minutesFromNow: row.forwardETAMinutes, phrasing: .bare)
         }
     }

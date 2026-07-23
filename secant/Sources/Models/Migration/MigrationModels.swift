@@ -80,9 +80,12 @@ struct MigrationTransferRow: Equatable, Sendable, Codable, Identifiable {
     /// MOB-1513 (B3): minute-precise FORWARD ETA for a pending/active row — the block-delta value
     /// `MigrationETA.minutesFromNow(scheduledHeight:currentTip:)` computes, so a sub-hour transfer
     /// renders "in ~N mins" instead of flooring to `hoursFromNow` and hitting the old "~10 mins"
-    /// fallback. `nil` on surfaces that only carry the coarse position-based cadence (the
-    /// Status/Progress synthetic rows), where the caption falls back to `hoursFromNow`. Backward
-    /// ("ago") captions never read this. See `forwardETAMinutes`.
+    /// fallback. MOB-1513 (A3): `MigrationDerivations.transferRows` now sets this for every non-sent
+    /// row derived from a committed schedule (Status/Progress/Resume included), from that row's own
+    /// `nextExecutableAfterHeight` — so it's `nil` only on the W1 progress-only fallback
+    /// (`synthesizedTransferRows`, no committed schedule persisted yet), where the caption falls
+    /// back to `hoursFromNow`'s coarse position-based estimate. Backward ("ago") captions never
+    /// read this. See `forwardETAMinutes`.
     var minutesFromNow: Int?
     /// Precise "sent N minutes ago" recency for a `.sent` row under an hour old; `nil` keeps the
     /// existing `hoursFromNow`-based caption (0 = "sent recently", otherwise "Sent Nh ago").
