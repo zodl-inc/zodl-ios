@@ -341,6 +341,14 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// uses.
     func bannerVariant(accountUUID: AccountUUID?) async -> MigrationBannerVariant? {
         guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return nil }
+        // MOB-1513 (B2 fix wave): pre-activation there is no migration banner to derive — the pure
+        // `MigrationDerivations.bannerVariant` already returns nil for `isIronwoodActivated == false`
+        // (checked ahead of every row). Short-circuit BEFORE the five async reads below (rust
+        // `migrationState`, progress, overdue, orchard balance, round context) rather than issuing
+        // them and discarding the result: each is a pure read, so moving the exit earlier only saves
+        // work and the return value is unchanged. Callers consume the returned variant only, never a
+        // side effect of those reads.
+        guard isIronwoodActivated() else { return nil }
         guard let rawState = await migrationState(accountUUID: resolvedAccountUUID) else { return nil }
 
         async let progressTask = migrationProgress(accountUUID: resolvedAccountUUID)

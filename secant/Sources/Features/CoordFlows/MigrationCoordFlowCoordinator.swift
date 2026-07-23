@@ -495,9 +495,9 @@ extension MigrationCoordFlow {
                 // MOB-1513 (B4): the first-delivery kick's deferred Keystone schedule store landed —
                 // the entries are durably in the engine now, so the stash can be released and any
                 // armed state-event re-arm cancelled (a no-op when none is armed — the happy path).
-            case .deferredKeystoneScheduleStored:
+            case .deferredKeystoneScheduleStored(let accountUUID):
                 state.pendingKeystoneScheduleStore = nil
-                return .cancel(id: MigrationCoordFlow.CancelID.deferredScheduleStoreRearm)
+                return .cancel(id: MigrationCoordFlow.CancelID.deferredScheduleStoreRearm(accountUUID))
 
                 // MOB-1513 (B4 fix wave): the kick exhausted its bounded attempts with the deferred
                 // store still pending — arm the SILENT state-event re-arm. Payload rides the action/
@@ -515,7 +515,7 @@ extension MigrationCoordFlow {
                             )
                         }
                 }
-                .cancellable(id: MigrationCoordFlow.CancelID.deferredScheduleStoreRearm, cancelInFlight: true)
+                .cancellable(id: MigrationCoordFlow.CancelID.deferredScheduleStoreRearm(accountUUID), cancelInFlight: true)
 
             case .deferredKeystoneScheduleResolveDue(let pendingScheduleStore, let accountUUID):
                 return .run { send in
@@ -1355,7 +1355,7 @@ extension MigrationCoordFlow {
             await migrationManager.recordCommittedSchedule(pendingScheduleStore.accountUUID, schedule)
         }
         await migrationManager.reconcile()
-        await send(.deferredKeystoneScheduleStored)
+        await send(.deferredKeystoneScheduleStored(pendingScheduleStore.accountUUID))
         return true
     }
 
@@ -1716,10 +1716,14 @@ extension MigrationCoordFlow {
     // MARK: - MOB-1513 (B4 fix wave): first-delivery kick retry knobs + re-arm cancellation
 
     /// Effect-cancellation ids for the coordinator's own long-lived effects.
-    enum CancelID {
+    enum CancelID: Hashable {
         /// The state-event re-arm `.firstDeliveryKickFailed` starts — cancelled by
-        /// `.deferredKeystoneScheduleStored` once the deferred store lands.
-        case deferredScheduleStoreRearm
+        /// `.deferredKeystoneScheduleStored` once THAT account's deferred store lands. Keyed by
+        /// account (B4 fix wave): `MigrationCoordFlow` is one permanent `Scope` child of Root, so two
+        /// accounts migrating in parallel (MOB-1509) share this single coordinator. A payload-free id
+        /// let account B's `cancelInFlight` arm — or its store's `.cancel` — tear down account A's
+        /// still-armed re-arm, stranding A's run; keying by account isolates each re-arm subscription.
+        case deferredScheduleStoreRearm(AccountUUID)
     }
 
     /// Total broadcast attempts one kick makes when a Keystone deferred schedule store is pending

@@ -11486,6 +11486,12 @@
             "state" : "translated",
             "value" : "in ~%1$lld hours"
           }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "en ~%1$lld horas"
+          }
         }
       }
     },

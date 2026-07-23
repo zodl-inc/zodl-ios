@@ -311,10 +311,14 @@ struct MigrationCoordFlow {
         )
         /// Internal: MOB-1513 (B4) — the first-delivery kick's deferred Keystone schedule store
         /// succeeded (`storeSignedMigrationTransactions` -> `recordCommittedSchedule` ->
-        /// `reconcile`) — releases `pendingKeystoneScheduleStore` and cancels any armed
+        /// `reconcile`) — releases `pendingKeystoneScheduleStore` and cancels THIS account's armed
         /// state-event re-arm. Never sent on a kick failure (broadcast or store), which leaves the
-        /// stash intact.
-        case deferredKeystoneScheduleStored
+        /// stash intact. B4 fix wave (cross-account collision): carries the account so the reducer's
+        /// `.cancel` targets the PER-ACCOUNT `CancelID` — a parallel account's re-arm (MOB-1509)
+        /// must not be torn down by this account's store. The account rides the action, never re-read
+        /// from state: the re-arm resolution path can fire this after a flow teardown has already
+        /// reset the coordinator's state copy.
+        case deferredKeystoneScheduleStored(AccountUUID)
         /// Internal: MOB-1513 (B4 fix wave) — the first-delivery kick exhausted its bounded
         /// attempts with a Keystone deferred schedule store still pending. Arms the SILENT
         /// state-event re-arm (`.deferredKeystoneScheduleResolveDue` per
