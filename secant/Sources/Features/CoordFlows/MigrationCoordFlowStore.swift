@@ -143,6 +143,14 @@ struct MigrationCoordFlow {
         /// `ImmediateMigrationProposal`'s single PCZT, engine-external, with no schedule for
         /// `pendingKeystoneSchedule` to read back.
         case immediateReview
+        /// MOB-1458 (Task 2): the expired-transfer recovery's Keystone lane. `refreshStaleMigration`
+        /// `Transfers(nil)` rebuilt the expired rows UNSIGNED in place and returned the run's full
+        /// post-refresh schedule; the ceremony launches straight off the Recovery screen (there is
+        /// no `.transferPlan` element on the path to read the schedule back from, unlike
+        /// `.planCommit`), so the RETURNED schedule rides the context. `pendingKeystoneSchedule`
+        /// hands that SAME schedule to `recordCommittedSchedule`, and `resumeCommittedMigrationChain`
+        /// lands the ceremony on the Scheduled screen hydrated from it — mirroring the software lane.
+        case recoveryRefresh(schedule: MigrationSchedule)
     }
 
     /// MOB-1496 (C-1b fix, fix-wave 2): the ALREADY-SIGNED schedule payload a Keystone-with-split
@@ -252,6 +260,13 @@ struct MigrationCoordFlow {
         /// the effect — this STATE copy resets at flow teardown, the armed effect does not).
         /// In-memory only — see `runFirstDeliveryKick`'s doc for the accepted app-death loss window.
         var pendingKeystoneScheduleStore: PendingScheduleStore?
+        /// MOB-1458 (Task 2): the expired-recovery refresh-failure alert (`refreshStaleMigration`
+        /// `Transfers` — or the Keystone batch propose that follows it — threw). Its primary action
+        /// restarts the step (the existing restart path -> plan screen); cancel dismisses. A
+        /// coordinator-owned `@Presents`/`.ifLet` destination, unlike the Tor/firmware sheets' manual
+        /// `Bool`-toggled idiom, because an alert with real button actions is exactly what
+        /// `@Presents` + `AlertState` is for.
+        @Presents var alert: AlertState<Action.Alert>?
         /// MOB-1496: the real per-account SDK surface needs a concrete `AccountUUID` for nearly
         /// every migration call the coordinator makes.
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
@@ -385,15 +400,47 @@ struct MigrationCoordFlow {
         /// action (rather than done inline at the send site) because forming is async and R13
         /// requires the endpoint to exist ON the choice surface the moment it appears.
         case torSheetStateReady(MigrationTorSheet.State, destination: PendingTorDestination)
+        /// MOB-1458 (Task 2): the expired-recovery refresh-failure alert's presentation actions
+        /// (`.presented(.restartRequested)` -> restart the step; `.dismiss` -> cancel).
+        case alert(PresentationAction<Alert>)
+        /// MOB-1458 (Task 2): the expired-transfer recovery's SOFTWARE lane failed to derive the USK
+        /// or `refreshStaleMigrationTransfers` threw — surface the refresh-failure alert. Also the
+        /// Keystone lane's refresh/propose-failure sink.
+        case recoveryRefreshFailed
+        /// MOB-1458 (Task 2): the expired-transfer recovery's KEYSTONE lane refreshed (nil usk) and
+        /// proposed the rebuilt rows' PCZT batch off the RETURNED schedule — arms
+        /// `.recoveryRefresh(schedule:)` (carrying that schedule as the sole downstream echo source)
+        /// and enters the existing QR ceremony, mirroring
+        /// `.migrateAnywayImmediateKeystonePCZTProposed`'s shape for the immediate lane.
+        case recoveryRefreshKeystonePCZTProposed(pczts: [MigrationUnsignedTransferPczt], schedule: MigrationSchedule)
+        /// MOB-1458 (Task 2): restart the current migration step — the `.invalidTransfer` recovery
+        /// lane's behavior AND the expired-recovery failure alert's primary action. Restarts via
+        /// `restartCurrentMigrationStep`, reconciles on success, and pushes the re-created plan (the
+        /// pre-Task-2 recovery-recreate behavior, factored out so both entry points share it).
+        case recoveryRestartRequested
+
+        /// MOB-1458 (Task 2): the expired-recovery refresh-failure alert's own action type — a
+        /// dedicated `Equatable` enum (not the store's own non-`Equatable` `Action`) so
+        /// `AlertState<Action.Alert>` satisfies `State`'s `Equatable` conformance.
+        @CasePathable
+        enum Alert: Equatable {
+            /// "Restart the step" — routes to `.recoveryRestartRequested`.
+            case restartRequested
+        }
     }
 
     // MOB-1513 (B4 fix wave): paces the first-delivery kick's bounded in-kick broadcast retries.
     @Dependency(\.continuousClock) var clock
+    // MOB-1458 (Task 2): the software expired-recovery lane derives the account's USK in-process
+    // (via `MigrationSpendingKeyDerivation.deriveUSK`) to pass to `refreshStaleMigrationTransfers`.
+    @Dependency(\.derivationTool) var derivationTool
     @Dependency(\.migrationBGScheduler) var migrationBGScheduler
     @Dependency(\.migrationManager) var migrationManager
+    @Dependency(\.mnemonic) var mnemonic
     @Dependency(\.sdkSynchronizer) var sdkSynchronizer
     @Dependency(\.userNotifications) var userNotifications
     @Dependency(\.walletStorage) var walletStorage
+    @Dependency(\.zcashSDKEnvironment) var zcashSDKEnvironment
 
     init() { }
 
@@ -410,5 +457,30 @@ struct MigrationCoordFlow {
 
         Reduce { _, _ in .none }
             .forEach(\.path, action: \.path)
+            .ifLet(\.$alert, action: \.alert)
+    }
+}
+
+// MARK: - MOB-1458 (Task 2): expired-recovery refresh-failure alert
+
+extension AlertState where Action == MigrationCoordFlow.Action.Alert {
+    /// Shown when the expired-transfer recovery's `refreshStaleMigrationTransfers` (or the Keystone
+    /// batch propose that immediately follows it) throws — the expired transfers could not be
+    /// rebuilt in place (e.g. a funding note was spent outside the migration / ZRUST0116). The
+    /// primary action restarts the step (the existing restart path, landing on the plan screen);
+    /// cancel dismisses. No automatic retry loop.
+    static func recoveryRefreshFailed() -> AlertState {
+        AlertState {
+            TextState(String(localizable: .migrationRecoveryRefreshFailedTitle))
+        } actions: {
+            ButtonState(action: .restartRequested) {
+                TextState(String(localizable: .migrationRecoveryRefreshFailedRestart))
+            }
+            ButtonState(role: .cancel) {
+                TextState(String(localizable: .generalCancel))
+            }
+        } message: {
+            TextState(String(localizable: .migrationRecoveryRefreshFailedMessage))
+        }
     }
 }

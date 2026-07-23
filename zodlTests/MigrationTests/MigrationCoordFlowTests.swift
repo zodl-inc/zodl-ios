@@ -4153,11 +4153,13 @@ import ComposableArchitecture
 
     // MARK: - MOB-1496 (W6 §6): Keystone recovery — recreate routes through the PCZT batch session
 
-    /// Recovery -> `.recreate` -> `restartCurrentMigrationStep` -> re-created plan -> confirm: for a
-    /// Keystone account this must route through the SAME PCZT batch session the fresh-entry plan
-    /// uses (`MigrationTransferPlanStore.confirmTapped` already forks on vendor before signing —
-    /// this proves the COORDINATOR side of that round trip, from the recreated plan's
-    /// `keystoneSignRequested` delegate through to a committed, scheduled store).
+    /// MOB-1458 (Task 2): the `.invalidTransfer` (`.notesSpent`) recovery lane keeps the pre-Task-2
+    /// restart behavior. Recovery -> `.recreate` -> `restartCurrentMigrationStep` -> re-created plan
+    /// -> confirm: for a Keystone account this must route through the SAME PCZT batch session the
+    /// fresh-entry plan uses (`MigrationTransferPlanStore.confirmTapped` already forks on vendor
+    /// before signing — this proves the COORDINATOR side of that round trip, from the recreated
+    /// plan's `keystoneSignRequested` delegate through to a committed, scheduled store). The
+    /// `.transferExpired` lane refreshes instead — covered by the refresh-lane tests below.
     @MainActor @Test func recoveryRecreateForKeystoneAccountRoutesThroughKeystoneBatchSessionToStoreAndSchedule() async {
         let restartCalls = LockIsolated<Int>(0)
         let storeCalls = LockIsolated<[[MigrationSignedTransferPczt]]>([])
@@ -4177,7 +4179,7 @@ import ComposableArchitecture
 
         var state = MigrationCoordFlow.State()
         state.$selectedWalletAccount.withLock { $0 = walletAccount(keystone: true, idByte: 30) }
-        state.path.append(.recovery(MigrationRecovery.State(reason: .expired, isFlowRoot: true)))
+        state.path.append(.recovery(MigrationRecovery.State(reason: .notesSpent, isFlowRoot: true)))
         let store = TestStore(initialState: state) {
             MigrationCoordFlow()
         } withDependencies: {
@@ -4322,6 +4324,364 @@ import ComposableArchitecture
 
         #expect(storeCalls.value == [[MigrationSignedTransferPczt(id: "r0", pczt: Data([0x11, 0x99]) + Self.validKeystoneFirmwareStamp)]])
         #expect(storeSignedNoteSplitCalls.value == [[MigrationSignedTransferPczt(id: "p0", pczt: Data([0x22, 0x99]) + Self.validKeystoneFirmwareStamp)]])
+    }
+
+    // MARK: - MOB-1458 (Task 2): expired-recovery refresh-first lane (software + Keystone)
+
+    /// `.transferExpired` recovery, SOFTWARE account: rebuilds the expired transfers IN PLACE via
+    /// `refreshStaleMigrationTransfers` with a NON-nil usk (the engine re-signs each rebuilt row),
+    /// does NOT call `restartCurrentMigrationStep`, reconciles, and lands straight on the Scheduled
+    /// screen hydrated from the RETURNED schedule (never the consent plan screen — amounts unchanged).
+    @MainActor @Test func expiredRecoverySoftwareRefreshesInPlaceAndPushesScheduledWithReturnedSchedule() async {
+        let refreshedSchedule = MigrationSchedule(
+            transfers: [
+                MigrationTransferProposal(id: "s0", amount: Zatoshi(3_000_000), anchorHeight: 500, nextExecutableAfterHeight: 500, expiryHeight: 600)
+            ],
+            estimatedDurationHours: 8
+        )
+        let refreshUskNonNil = LockIsolated<[Bool]>([])
+        let restartCalls = LockIsolated<Int>(0)
+        let reconcileCalls = LockIsolated<Int>(0)
+        let recordCommittedScheduleCalls = LockIsolated<[MigrationSchedule]>([])
+
+        // The suite's `init()` selects a software account (`Self.defaultAccount`, zcash vendor,
+        // zip32 index 0), so the software lane runs without setting an account here.
+        var state = MigrationCoordFlow.State()
+        state.path.append(.recovery(MigrationRecovery.State(reason: .expired, isFlowRoot: true)))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.refreshStaleMigrationTransfers = { _, usk in
+                refreshUskNonNil.withValue { $0.append(usk != nil) }
+                return refreshedSchedule
+            }
+            $0.sdkSynchronizer.restartCurrentMigrationStep = { _ in
+                restartCalls.withValue { $0 += 1 }
+                return MigrationSchedule(transfers: [], estimatedDurationHours: 0)
+            }
+            // Software-lane USK derivation deps — same set as `recreatedPlanConfirmDoesSign`
+            // (a real `UnifiedSpendingKey` has no public initializer; it must be derived).
+            $0.derivationTool = .liveValue
+            $0.mnemonic = .mock
+            $0.walletStorage = .noOp
+            $0.zcashSDKEnvironment = .testnet
+            $0.migrationManager.recordCommittedSchedule = { _, schedule in recordCommittedScheduleCalls.withValue { $0.append(schedule) } }
+            $0.migrationManager.reconcile = { reconcileCalls.withValue { $0 += 1 } }
+            $0.migrationManager.migrationSummary = { _ in MigrationSummary.zero }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 0, action: .recovery(.delegate(.recreate)))))
+        await store.receive(\.pushHydratedPathState)
+        await store.finish()
+
+        #expect(refreshUskNonNil.value == [true])
+        #expect(restartCalls.value == 0)
+        #expect(reconcileCalls.value == 1)
+        // The RETURNED schedule is persisted as the committed truth — otherwise the app renders the
+        // STALE pre-refresh schedule (duration/timing) from `committedSchedule`.
+        #expect(recordCommittedScheduleCalls.value == [refreshedSchedule])
+        #expect(store.state.path.count == 2)
+        guard case let .scheduled(scheduledState) = try? #require(store.state.path.last) else {
+            Issue.record("Expected .scheduled pushed on top of .recovery")
+            return
+        }
+        // summary.transferred (zero) + the RETURNED schedule's own transfer sum.
+        #expect(scheduledState.totalAmount == Zatoshi(3_000_000))
+        guard case .recovery = try? #require(store.state.path.first) else {
+            Issue.record("Expected .recovery retained beneath .scheduled")
+            return
+        }
+    }
+
+    /// `.transferExpired` recovery, KEYSTONE account: refreshes with a NIL usk (rebuilt rows return
+    /// UNSIGNED), then proposes the rebuilt batch off the RETURNED schedule (echoed into
+    /// `proposeMigrationPCZTs`) and enters the existing QR ceremony with the context carrying that
+    /// schedule.
+    @MainActor @Test func expiredRecoveryKeystoneRefreshesWithNilUskAndEntersCeremonyEchoingReturnedSchedule() async {
+        let refreshedSchedule = MigrationSchedule(
+            transfers: [
+                MigrationTransferProposal(id: "k0", amount: Zatoshi(4_000_000), anchorHeight: 700, nextExecutableAfterHeight: 700, expiryHeight: 800)
+            ],
+            estimatedDurationHours: 10
+        )
+        let refreshUskNonNil = LockIsolated<[Bool]>([])
+        let restartCalls = LockIsolated<Int>(0)
+        let proposeScheduleArgs = LockIsolated<[MigrationSchedule]>([])
+        let scheduleUnsigned: [MigrationUnsignedTransferPczt] = [MigrationUnsignedTransferPczt(id: "k0", pczt: Data([0x44]))]
+
+        var state = MigrationCoordFlow.State()
+        state.$selectedWalletAccount.withLock { $0 = walletAccount(keystone: true, idByte: 40) }
+        state.path.append(.recovery(MigrationRecovery.State(reason: .expired, isFlowRoot: true)))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.refreshStaleMigrationTransfers = { _, usk in
+                refreshUskNonNil.withValue { $0.append(usk != nil) }
+                return refreshedSchedule
+            }
+            $0.sdkSynchronizer.restartCurrentMigrationStep = { _ in
+                restartCalls.withValue { $0 += 1 }
+                return MigrationSchedule(transfers: [], estimatedDurationHours: 0)
+            }
+            $0.sdkSynchronizer.proposeNoteSplitPCZTs = { _ in [] }
+            $0.sdkSynchronizer.proposeMigrationPCZTs = { _, schedule in
+                proposeScheduleArgs.withValue { $0.append(schedule) }
+                return scheduleUnsigned
+            }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 0, action: .recovery(.delegate(.recreate)))))
+        await store.receive(\.recoveryRefreshKeystonePCZTProposed)
+        await store.finish()
+
+        #expect(refreshUskNonNil.value == [false])
+        #expect(restartCalls.value == 0)
+        #expect(proposeScheduleArgs.value == [refreshedSchedule])
+        #expect(store.state.pendingKeystoneSigning == MigrationCoordFlow.KeystoneSigningContext.recoveryRefresh(schedule: refreshedSchedule))
+        guard case let .keystoneSign(signState) = try? #require(store.state.path.last) else {
+            Issue.record("Expected .keystoneSign pushed to start the QR ceremony")
+            return
+        }
+        #expect(signState.pczts == scheduleUnsigned)
+    }
+
+    /// `.transferExpired` recovery, KEYSTONE account, full ceremony: the QR round-trip stores ONLY
+    /// the rebuilt rows (`storeSignedMigrationTransactions`), records the RETURNED schedule as the
+    /// committed truth, and lands on the Scheduled screen (mirroring the software lane — no
+    /// consent plan screen, retained recovery beneath).
+    @MainActor @Test func expiredRecoveryKeystoneCeremonyStoresRebuiltRowsRecordsReturnedScheduleAndSchedules() async {
+        let refreshedSchedule = MigrationSchedule(
+            transfers: [
+                MigrationTransferProposal(id: "k0", amount: Zatoshi(4_000_000), anchorHeight: 700, nextExecutableAfterHeight: 700, expiryHeight: 800)
+            ],
+            estimatedDurationHours: 10
+        )
+        let storeCalls = LockIsolated<[[MigrationSignedTransferPczt]]>([])
+        let recordCommittedScheduleCalls = LockIsolated<[MigrationSchedule]>([])
+        let unsigned: [MigrationUnsignedTransferPczt] = [MigrationUnsignedTransferPczt(id: "k0", pczt: Data([0x44]))]
+        let signed: [Data] = [Data([0x44, 0x99]) + Self.validKeystoneFirmwareStamp]
+        let expectedStored: [MigrationSignedTransferPczt] = [
+            MigrationSignedTransferPczt(id: "k0", pczt: Data([0x44, 0x99]) + Self.validKeystoneFirmwareStamp)
+        ]
+
+        var state = MigrationCoordFlow.State()
+        state.$selectedWalletAccount.withLock { $0 = walletAccount(keystone: true, idByte: 41) }
+        state.path.append(.recovery(MigrationRecovery.State(reason: .expired, isFlowRoot: true)))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.refreshStaleMigrationTransfers = { _, _ in refreshedSchedule }
+            $0.sdkSynchronizer.proposeNoteSplitPCZTs = { _ in [] }
+            $0.sdkSynchronizer.proposeMigrationPCZTs = { _, _ in unsigned }
+            $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, stored in storeCalls.withValue { $0.append(stored) } }
+            $0.migrationManager.reconcile = { }
+            $0.migrationManager.recordCommittedSchedule = { _, schedule in recordCommittedScheduleCalls.withValue { $0.append(schedule) } }
+            $0.migrationManager.migrationSummary = { _ in MigrationSummary.zero }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 0, action: .recovery(.delegate(.recreate)))))
+        await store.receive(\.recoveryRefreshKeystonePCZTProposed)
+
+        guard let signId = store.state.path.ids.last else {
+            Issue.record("Expected a KeystoneSign element id")
+            return
+        }
+        await store.send(.path(.element(id: signId, action: .keystoneSign(.delegate(.getSignature)))))
+        guard let scanId = store.state.path.ids.last else {
+            Issue.record("Expected a Scan element id")
+            return
+        }
+        await store.send(.path(.element(id: scanId, action: .scan(.foundPCZTBatch(signed)))))
+        await store.receive(\.keystoneSigningSubmitted)
+        await store.receive(\.pushHydratedPathState)
+        await store.finish()
+
+        #expect(storeCalls.value == [expectedStored])
+        #expect(recordCommittedScheduleCalls.value == [refreshedSchedule])
+        guard case .scheduled = try? #require(store.state.path.last) else {
+            Issue.record("Expected .scheduled after the Keystone recovery ceremony")
+            return
+        }
+        guard case .recovery = try? #require(store.state.path.first) else {
+            Issue.record("Expected .recovery retained beneath .scheduled")
+            return
+        }
+    }
+
+    /// A refresh throw (e.g. a funding note spent outside the migration / ZRUST0116) surfaces the
+    /// restart-or-cancel alert and navigates nowhere — no automatic retry.
+    @MainActor @Test func expiredRecoverySoftwareRefreshFailureShowsRestartAlertAndDoesNotNavigate() async {
+        struct RefreshFailure: Error { }
+        let restartCalls = LockIsolated<Int>(0)
+
+        var state = MigrationCoordFlow.State()
+        state.path.append(.recovery(MigrationRecovery.State(reason: .expired, isFlowRoot: true)))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.refreshStaleMigrationTransfers = { _, _ in throw RefreshFailure() }
+            $0.sdkSynchronizer.restartCurrentMigrationStep = { _ in
+                restartCalls.withValue { $0 += 1 }
+                return MigrationSchedule(transfers: [], estimatedDurationHours: 0)
+            }
+            $0.derivationTool = .liveValue
+            $0.mnemonic = .mock
+            $0.walletStorage = .noOp
+            $0.zcashSDKEnvironment = .testnet
+            $0.migrationManager.reconcile = { }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 0, action: .recovery(.delegate(.recreate)))))
+        await store.receive(\.recoveryRefreshFailed)
+        await store.finish()
+
+        #expect(store.state.alert != nil)
+        #expect(restartCalls.value == 0)
+        #expect(store.state.path.count == 1)
+        guard case .recovery = try? #require(store.state.path.last) else {
+            Issue.record("Expected .recovery still on top — no navigation on a refresh failure")
+            return
+        }
+    }
+
+    /// The refresh-failure alert's primary action restarts the step through the EXISTING restart path
+    /// (`restartCurrentMigrationStep` -> reconcile -> re-created plan screen).
+    @MainActor @Test func expiredRecoveryRefreshFailureAlertRestartRestartsStepAndPushesPlan() async {
+        struct RefreshFailure: Error { }
+        let restartCalls = LockIsolated<Int>(0)
+        let restartedSchedule = MigrationSchedule(
+            transfers: [
+                MigrationTransferProposal(id: "r0", amount: Zatoshi(1_000_000), anchorHeight: 10, nextExecutableAfterHeight: 10, expiryHeight: 20)
+            ],
+            estimatedDurationHours: 5
+        )
+
+        var state = MigrationCoordFlow.State()
+        state.path.append(.recovery(MigrationRecovery.State(reason: .expired, isFlowRoot: true)))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.refreshStaleMigrationTransfers = { _, _ in throw RefreshFailure() }
+            $0.sdkSynchronizer.restartCurrentMigrationStep = { _ in
+                restartCalls.withValue { $0 += 1 }
+                return restartedSchedule
+            }
+            $0.derivationTool = .liveValue
+            $0.mnemonic = .mock
+            $0.walletStorage = .noOp
+            $0.zcashSDKEnvironment = .testnet
+            $0.migrationManager.reconcile = { }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 0, action: .recovery(.delegate(.recreate)))))
+        await store.receive(\.recoveryRefreshFailed)
+        #expect(store.state.alert != nil)
+
+        await store.send(.alert(.presented(.restartRequested)))
+        await store.receive(\.recoveryRestartRequested)
+        await store.receive(\.pushHydratedPathState)
+        await store.finish()
+
+        #expect(restartCalls.value == 1)
+        guard case let .transferPlan(planState) = try? #require(store.state.path.last) else {
+            Issue.record("Expected .transferPlan pushed after the alert's restart action")
+            return
+        }
+        #expect(planState.variant == MigrationTransferPlan.State.Variant.recreated)
+        #expect(planState.injectedSchedule == restartedSchedule)
+    }
+
+    /// Cancelling the refresh-failure alert dismisses it and makes no further calls (no restart, no
+    /// navigation) — no automatic retry loop.
+    @MainActor @Test func expiredRecoveryRefreshFailureAlertCancelMakesNoFurtherCalls() async {
+        struct RefreshFailure: Error { }
+        let restartCalls = LockIsolated<Int>(0)
+
+        var state = MigrationCoordFlow.State()
+        state.path.append(.recovery(MigrationRecovery.State(reason: .expired, isFlowRoot: true)))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.refreshStaleMigrationTransfers = { _, _ in throw RefreshFailure() }
+            $0.sdkSynchronizer.restartCurrentMigrationStep = { _ in
+                restartCalls.withValue { $0 += 1 }
+                return MigrationSchedule(transfers: [], estimatedDurationHours: 0)
+            }
+            $0.derivationTool = .liveValue
+            $0.mnemonic = .mock
+            $0.walletStorage = .noOp
+            $0.zcashSDKEnvironment = .testnet
+            $0.migrationManager.reconcile = { }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 0, action: .recovery(.delegate(.recreate)))))
+        await store.receive(\.recoveryRefreshFailed)
+        #expect(store.state.alert != nil)
+
+        await store.send(.alert(.dismiss))
+        await store.finish()
+
+        #expect(restartCalls.value == 0)
+        #expect(store.state.alert == nil)
+        #expect(store.state.path.count == 1)
+    }
+
+    /// Regression: `.invalidTransfer` (`.notesSpent`) recovery keeps the pre-Task-2 restart behavior
+    /// and NEVER refreshes — `refreshStaleMigrationTransfers` is a spontaneous-call hazard for this
+    /// lane specifically.
+    @MainActor @Test func invalidTransferRecoveryStillRestartsAndNeverRefreshes() async {
+        let restartCalls = LockIsolated<Int>(0)
+        let refreshCalls = LockIsolated<Int>(0)
+        let restartedSchedule = MigrationSchedule(
+            transfers: [
+                MigrationTransferProposal(id: "r0", amount: Zatoshi(1_000_000), anchorHeight: 10, nextExecutableAfterHeight: 10, expiryHeight: 20)
+            ],
+            estimatedDurationHours: 5
+        )
+
+        var state = MigrationCoordFlow.State()
+        state.path.append(.recovery(MigrationRecovery.State(reason: .notesSpent, isFlowRoot: true)))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.restartCurrentMigrationStep = { _ in
+                restartCalls.withValue { $0 += 1 }
+                return restartedSchedule
+            }
+            $0.sdkSynchronizer.refreshStaleMigrationTransfers = { _, _ in
+                refreshCalls.withValue { $0 += 1 }
+                return MigrationSchedule(transfers: [], estimatedDurationHours: 0)
+            }
+            $0.migrationManager.reconcile = { }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 0, action: .recovery(.delegate(.recreate)))))
+        await store.receive(\.recoveryRestartRequested)
+        await store.receive(\.pushHydratedPathState)
+        await store.finish()
+
+        #expect(restartCalls.value == 1)
+        #expect(refreshCalls.value == 0)
+        guard case let .transferPlan(planState) = try? #require(store.state.path.last) else {
+            Issue.record("Expected .transferPlan pushed (restart lane)")
+            return
+        }
+        #expect(planState.variant == MigrationTransferPlan.State.Variant.recreated)
+        #expect(planState.injectedSchedule == restartedSchedule)
     }
 }
 

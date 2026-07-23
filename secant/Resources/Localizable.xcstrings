@@ -11704,6 +11704,39 @@
         }
       }
     },
+    "migrationRecovery.refreshFailedMessage" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The expired transfers couldn\u2019t be rebuilt. You can restart this migration step and try again, or cancel for now."
+          }
+        }
+      }
+    },
+    "migrationRecovery.refreshFailedRestart" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Restart Step"
+          }
+        }
+      }
+    },
+    "migrationRecovery.refreshFailedTitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn\u2019t Reschedule Transfers"
+          }
+        }
+      }
+    },
     "migrationRecovery.titleExpired" : {
       "extractionState" : "manual",
       "localizations" : {

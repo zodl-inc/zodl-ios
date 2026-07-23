@@ -905,11 +905,99 @@ extension MigrationCoordFlow {
 
                 // MARK: - Recovery
 
+                // MOB-1458 (Task 2): the recovery `.recreate` primary action splits on the attention
+                // reason the recovery screen carries (`.expired` == `.transferExpired`, `.notesSpent`
+                // == `.invalidTransfer` — see `MigrationManagerLiveKey.reentryRoute`). The reason is
+                // read off the `.recovery` element on top of the path (the visible screen when its own
+                // button fired), mirroring how `.transferPlan(.delegate(.confirmed))` peeks its plan
+                // state.
+                //
+                // - `.transferExpired`: rebuild the expired transfers IN PLACE first via
+                //   `refreshStaleMigrationTransfers` — software re-signs (real usk) and lands straight
+                //   on the Scheduled screen (already committed + re-signed, amounts unchanged, no new
+                //   consent); Keystone re-serves ONLY the rebuilt rows through the existing QR ceremony
+                //   (nil usk). A full restart is offered only as the failure alert's fallback.
+                // - `.invalidTransfer`: keep the pre-Task-2 restart behavior (`.recoveryRestartRequested`).
             case .path(.element(id: _, action: .recovery(.delegate(.recreate)))):
+                guard let account = state.selectedWalletAccount else { return .none }
+                guard case let .recovery(recoveryState) = state.path.last else { return .none }
+
+                switch recoveryState.reason {
+                case .notesSpent:
+                    return .send(.recoveryRestartRequested)
+
+                case .expired:
+                    // Keystone: refresh with a nil usk (rebuilt rows return UNSIGNED), then propose the
+                    // rebuilt batch off the RETURNED schedule and drive the existing QR ceremony. The
+                    // returned schedule is the ONLY value echoed downstream (into `proposeKeystoneBatch`
+                    // and, at store time, `recordCommittedSchedule`).
+                    guard account.vendor != WalletAccount.Vendor.keystone else {
+                        return .run { [sdkSynchronizer, account] send in
+                            do {
+                                let schedule = try await sdkSynchronizer.refreshStaleMigrationTransfers(account.id, nil)
+                                let pczts = try await MigrationCommitPipeline.proposeKeystoneBatch(
+                                    schedule: schedule,
+                                    account: account,
+                                    sdkSynchronizer: sdkSynchronizer
+                                )
+                                await send(.recoveryRefreshKeystonePCZTProposed(pczts: pczts, schedule: schedule))
+                            } catch {
+                                await send(.recoveryRefreshFailed)
+                            }
+                        }
+                    }
+
+                    // Software: derive the account's real usk and refresh — the engine re-signs every
+                    // rebuilt transfer in place, so on success the run is committed + re-signed and the
+                    // flow lands directly on the Scheduled screen with the returned schedule (NOT the
+                    // consent plan screen — amounts are unchanged, there is no new consent decision).
+                    // A nil usk here would strand the rebuilt rows awaiting a ceremony that never comes,
+                    // so a software account must never take the Keystone branch above. A missing
+                    // `zip32AccountIndex` on a software account is a "can't happen" — but route it to the
+                    // same failure alert rather than a silent `.none`, so the recover button never dies
+                    // without feedback.
+                    guard let zip32AccountIndex = account.zip32AccountIndex else {
+                        return .send(.recoveryRefreshFailed)
+                    }
+                    let networkType = zcashSDKEnvironment.network().networkType
+                    return .run { [sdkSynchronizer, migrationManager, walletStorage, mnemonic, derivationTool, networkType, zip32AccountIndex, account] send in
+                        do {
+                            let usk = try MigrationSpendingKeyDerivation.deriveUSK(
+                                zip32AccountIndex: zip32AccountIndex,
+                                walletStorage: walletStorage,
+                                mnemonic: mnemonic,
+                                derivationTool: derivationTool,
+                                networkType: networkType
+                            )
+                            let schedule = try await sdkSynchronizer.refreshStaleMigrationTransfers(account.id, usk)
+                            // Persist the RETURNED schedule as the committed truth BEFORE reconcile —
+                            // the SDK keeps no app-facing schedule post-refresh (the refreshed heights/
+                            // duration live only in the returned value; see MIGRATING.md), and
+                            // `migrationSummary`/`migrationTransfers`/the Home banner all render from the
+                            // locally persisted `committedSchedule`. Without this the app would keep
+                            // showing the STALE pre-refresh schedule. Matches `commitSoftware`'s
+                            // sign -> record -> reconcile order and the Keystone lane's store-time record.
+                            await migrationManager.recordCommittedSchedule(account.id, schedule)
+                            // Reconcile on success, mirroring the restart path — the refresh's state
+                            // transition (e.g. off `.requiresAttention`) is observed promptly, and
+                            // `scheduledState`'s summary read below now sees the fresh schedule.
+                            await migrationManager.reconcile()
+                            let scheduled = await scheduledState(accountUUID: account.id, schedule: schedule)
+                            await send(.pushHydratedPathState(.scheduled(scheduled)))
+                        } catch {
+                            await send(.recoveryRefreshFailed)
+                        }
+                    }
+                }
+
+                // MOB-1458 (Task 2): the `.invalidTransfer` recovery lane AND the expired-recovery
+                // failure alert's "restart the step" action both land here — the pre-Task-2
+                // recovery-recreate behavior, factored out so both share it. The re-created plan
+                // doesn't fold the dust remainder in — same as the initial plan proposal
+                // (`MigrationTransferPlanStore.onAppear`); it stays on the separate post-completion
+                // "Migrate anyway" lane.
+            case .recoveryRestartRequested:
                 guard let accountUUID = state.selectedWalletAccount?.id else { return .none }
-                // The re-created plan doesn't fold the dust remainder in — same as the initial plan
-                // proposal (`MigrationTransferPlanStore.onAppear`); it stays on the separate
-                // post-completion "Migrate anyway" lane.
                 return .run { [sdkSynchronizer, migrationManager, accountUUID] send in
                     let restarted = try? await sdkSynchronizer.restartCurrentMigrationStep(accountUUID)
                     if restarted != nil {
@@ -932,6 +1020,30 @@ extension MigrationCoordFlow {
                     let planState = recreatedPlanState(schedule: restarted)
                     await send(.pushHydratedPathState(.transferPlan(planState)))
                 }
+
+                // MOB-1458 (Task 2): the Keystone expired-recovery refresh succeeded and proposed the
+                // rebuilt batch — arm `.recoveryRefresh(schedule:)` (the returned schedule is the sole
+                // downstream echo source) and enter the existing QR ceremony. Mirrors
+                // `.migrateAnywayImmediateKeystonePCZTProposed`'s shape.
+            case .recoveryRefreshKeystonePCZTProposed(let pczts, let schedule):
+                state.pendingKeystoneSigning = .recoveryRefresh(schedule: schedule)
+                state.pendingKeystoneSigningAccountUUID = state.selectedWalletAccount?.id
+                beginKeystoneCeremony(pczts: pczts, state: &state)
+                return .none
+
+                // MOB-1458 (Task 2): a refresh (or the Keystone batch propose after it) threw — offer
+                // the restart-or-cancel alert. No automatic retry.
+            case .recoveryRefreshFailed:
+                state.alert = AlertState.recoveryRefreshFailed()
+                return .none
+
+                // MOB-1458 (Task 2): the refresh-failure alert's primary action restarts the step;
+                // cancel (`.dismiss`) is handled by `.ifLet` and makes no further calls.
+            case .alert(.presented(.restartRequested)):
+                return .send(.recoveryRestartRequested)
+
+            case .alert:
+                return .none
 
                 // MARK: - Flow-root closes / terminal delegates -> .flowFinished
 
@@ -1373,6 +1485,21 @@ extension MigrationCoordFlow {
             let sendingState = MigrationSending.State(totalCount: 1)
             state.path.append(.sending(sendingState))
             return .none
+
+        case .recoveryRefresh(let schedule):
+            // MOB-1458 (Task 2): the Keystone expired-recovery ceremony lands on the SAME Scheduled
+            // screen the software lane pushes, hydrated from the RETURNED post-refresh schedule
+            // (`scheduledState`). No first-delivery kick / `scheduleFirstWindow` here (unlike a fresh
+            // `planCommit`): a refresh re-spends existing funding notes on fresh scheduled heights and
+            // never builds preparation (note-split) transactions, so `storeKeystoneSignedBatch` always
+            // took its no-preps branch (schedule already stored + recorded + reconciled, no deferred
+            // store to run) and the rebuilt transfers deliver via the existing next-due machinery —
+            // exactly like the software lane, keeping the two recovery lanes symmetric.
+            let accountUUID = state.selectedWalletAccount?.id
+            return .run { [schedule, accountUUID] send in
+                let scheduled = await scheduledState(accountUUID: accountUUID, schedule: schedule)
+                await send(.pushHydratedPathState(.scheduled(scheduled)))
+            }
         }
     }
 
@@ -1529,6 +1656,12 @@ extension MigrationCoordFlow {
 
         case .immediateReview:
             return nil
+
+        case .recoveryRefresh(let schedule):
+            // MOB-1458 (Task 2): the ceremony launched off the Recovery screen with no `.transferPlan`
+            // element on the path — the RETURNED post-refresh schedule rides the context itself, so
+            // `storeKeystoneSignedBatch` records exactly it (the only value echoed downstream).
+            return schedule
         }
     }
 
