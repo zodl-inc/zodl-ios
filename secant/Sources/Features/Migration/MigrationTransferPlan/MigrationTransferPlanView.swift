@@ -32,9 +32,16 @@
 //  and a richer shape: `ZashiInfoCallout(style: .plain, ...)` ("Amounts randomized to reduce
 //  linkability" / "...Confirm once — no per-transfer prompts.") replaces the old single-line
 //  `migrationPlanRandomizedNote` row (whose key was already removed with it, so there's nothing to
-//  orphan here). Also opts the shared timeline into `usesNeutralCheckForReadyFirstStep` — this
-//  screen's row 0 ("Split Balance") shows the new neutral check while `.active`/not yet sent; the
-//  Status screen deliberately does not opt in (see `MigrationTransferTimeline`'s header doc).
+//  orphan here).
+//
+//  MOB-1513 (A2): the shared timeline no longer relabels `store.rows`' own index 0 as "Split
+//  Balance" — that let an ordinary crossing transfer masquerade as the split (wrong amount, its own
+//  multi-hour ETA instead of "Ready now"), while the real note-split (broadcast at commit) had no
+//  row of its own and real Transfer 1 was hidden. This screen now passes the store's synthesized
+//  `splitRow` in separately, ahead of `rows` (unchanged: every real transfer, numbered 1..N with
+//  its own real forward ETA). The `.recreated`-only hardcoded "Ready now" caption bypass below is
+//  retired along with it — it only ever existed to paper over the same conflation for THAT variant;
+//  every transfer row's caption is the real `forwardETA` now, on every variant.
 //
 
 import ComposableArchitecture
@@ -75,7 +82,7 @@ struct MigrationTransferPlanView: View {
                         MigrationTransferTimeline(
                             rows: store.rows,
                             caption: caption(for:),
-                            usesNeutralCheckForReadyFirstStep: true
+                            splitRow: store.splitRow
                         )
                     }
                     .padding(.vertical, 1)
@@ -155,6 +162,13 @@ struct MigrationTransferPlanView: View {
     }
 
     private func caption(for row: MigrationTransferRow) -> String {
+        // MOB-1513 (A2): the split row always routes through the shared `MigrationETA.caption`
+        // path below (its `minutesFromNow == 0` buckets to "Ready now") — never the `.recreated`
+        // hardcoded bypass the `.active` case used to carry (see this file's header doc for why
+        // that bypass is retired along with the row-0 relabel it existed to paper over).
+        if row.kind == .splitBalance {
+            return forwardETA(for: row)
+        }
         switch row.status {
         case .sent:
             if let sentMinutesAgo = row.sentMinutesAgo {
@@ -163,10 +177,6 @@ struct MigrationTransferPlanView: View {
             return row.hoursFromNow == 0
                 ? String(localizable: .migrationStatusSentRecently)
                 : String(localizable: .migrationPlanSentAgo(row.hoursFromNow))
-        case .active:
-            return store.variant == .recreated
-                ? String(localizable: .migrationPlanReadyNow)
-                : forwardETA(for: row)
         default:
             return forwardETA(for: row)
         }

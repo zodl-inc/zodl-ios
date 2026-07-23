@@ -121,6 +121,33 @@ import Foundation
         #expect(decoded.isBroadcasting == true)
     }
 
+    // MARK: - MOB-1513 (A2): synthesized split-row `kind`
+
+    /// `.transfer` is the default so every existing construction site (all of them genuine
+    /// `schedule.transfers`/sent-record rows) needs no change.
+    @Test func migrationTransferRowDefaultsToTransferKind() {
+        let row = MigrationTransferRow(id: "row-0", index: 0, amount: Zatoshi(100), status: .sent, hoursFromNow: 0)
+
+        #expect(row.kind == .transfer)
+    }
+
+    @Test func migrationTransferRowCodableRoundTripWithSplitBalanceKind() throws {
+        let original = MigrationTransferRow(
+            id: "split-balance",
+            index: -1,
+            amount: Zatoshi(800_000_000),
+            status: .active,
+            hoursFromNow: 0,
+            minutesFromNow: 0,
+            kind: .splitBalance
+        )
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(MigrationTransferRow.self, from: data)
+
+        #expect(decoded == original)
+        #expect(decoded.kind == .splitBalance)
+    }
+
     @Test func migrationSummaryZeroIsAllZero() {
         let zero = MigrationSummary.zero
         #expect(zero.transferred == Zatoshi.zero)
