@@ -379,8 +379,9 @@ struct MigrationCoordFlow {
         /// final review R6 — nothing was stored, so there is nothing to resume), abandons the signing
         /// session — pops back to the initiating screen (deferred like `keystoneSignRejected`) and
         /// clears the context. Pop count adapts to the caller: 2 (`scan` + `keystoneSign`) for the
-        /// real round-trip, where `scan` is always the acting/top element; 1 (`keystoneSign` only) for
-        /// the simulator bypass, which never pushes `scan`.
+        /// real round-trip, where `scan` is always the acting/top element; 1 (`keystoneSign` only) is a
+        /// defensive fallback that predates the MOB-1458 removal of a former simulator-only bypass
+        /// caller that never pushed `scan`.
         case keystoneScanAbandoned
         /// MOB-1510: `zashiSheet`'s `isPresented` binding changed for the firmware-update prompt —
         /// mirrors `torSheetPresentationChanged`'s contract. `false` clears `detectedKeystoneFirmware`

@@ -43,16 +43,36 @@ struct MigrationRecoveryView: View {
                     .padding(.vertical, 1)
                 }
 
-                ZashiButton(String(localizable: .migrationNoteSplitContinue)) {
-                    store.send(.continueTapped)
+                // MOB-1458 (final review I3): disabled+spinner while a recovery is in flight — the
+                // established button-loading idiom (mirrors `MigrationTransferPlanView`'s `isConfirming`
+                // confirm button) so a double-tap can't start a second refresh/restart.
+                if store.isRecovering {
+                    ZashiButton(
+                        String(localizable: .migrationNoteSplitContinue),
+                        accessoryView:
+                            ProgressView()
+                            .progressViewStyle(
+                                CircularProgressViewStyle(
+                                    tint: Asset.Colors.secondary.color
+                                )
+                            )
+                    ) { }
+                    .padding(.top, 16)
+                    .padding(.bottom, 24)
+                    .disabled(store.isRecovering)
+                } else {
+                    ZashiButton(String(localizable: .migrationNoteSplitContinue)) {
+                        store.send(.continueTapped)
+                    }
+                    .padding(.top, 16)
+                    .padding(.bottom, 24)
                 }
-                .padding(.top, 16)
-                .padding(.bottom, 24)
             }
             .screenHorizontalPadding()
             .applyPresentationModifier(store: store)
         }
         .applyScreenBackground()
+        .onAppear { store.send(.onAppear) }
     }
 
     // MARK: - Title + description

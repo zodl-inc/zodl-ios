@@ -108,8 +108,7 @@ import ComposableArchitecture
             MigrationTransferPlan()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.proposeMigrationTransfers = { _, includeResidual in
-                #expect(includeResidual == false)
+            $0.sdkSynchronizer.proposeMigrationTransfers = { _ in
                 return schedule
             }
             $0.migrationManager.migrationRoundContext = { _ in (1, nil) }
@@ -119,8 +118,8 @@ import ComposableArchitecture
         await store.receive(\.roundContextLoaded)
         await store.receive(\.transfersProposed) {
             $0.rows = [
-                MigrationTransferRow(id: "t0", index: 0, amount: Zatoshi(500_000_000), status: .active, hoursFromNow: 0),
-                MigrationTransferRow(id: "t1", index: 1, amount: Zatoshi(300_000_000), status: .pending, hoursFromNow: 0)
+                MigrationTransferRow(id: "t0", index: 0, amount: Zatoshi(500_000_000), status: .active, hoursFromNow: 0, minutesFromNow: 0),
+                MigrationTransferRow(id: "t1", index: 1, amount: Zatoshi(300_000_000), status: .pending, hoursFromNow: 0, minutesFromNow: 0)
             ]
             $0.totalDurationHours = 24
             $0.schedule = schedule
@@ -141,7 +140,7 @@ import ComposableArchitecture
             MigrationTransferPlan()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.proposeMigrationTransfers = { _, _ in
+            $0.sdkSynchronizer.proposeMigrationTransfers = { _ in
                 proposeCalls.withValue { $0 += 1 }
                 return MigrationSchedule(transfers: [], estimatedDurationHours: 0)
             }
@@ -150,7 +149,7 @@ import ComposableArchitecture
 
         await store.send(.onAppear) {
             $0.rows = [
-                MigrationTransferRow(id: "t0", index: 0, amount: Zatoshi(200_000_000), status: .active, hoursFromNow: 0)
+                MigrationTransferRow(id: "t0", index: 0, amount: Zatoshi(200_000_000), status: .active, hoursFromNow: 0, minutesFromNow: 0)
             ]
             $0.totalDurationHours = 12
             $0.schedule = schedule
@@ -175,7 +174,7 @@ import ComposableArchitecture
             MigrationTransferPlan()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.proposeMigrationTransfers = { _, _ in
+            $0.sdkSynchronizer.proposeMigrationTransfers = { _ in
                 called.setValue(true)
                 return MigrationSchedule(transfers: [], estimatedDurationHours: 0)
             }
@@ -186,6 +185,48 @@ import ComposableArchitecture
         await store.receive(\.roundContextLoaded)
 
         #expect(called.value == false)
+    }
+
+    // MARK: - MOB-1513 (B3): minute-precise forward ETA from the live chain tip
+
+    /// B3 root cause: `apply` converted a transfer's execution height via `estimateTimestamp`, which
+    /// returns nil for every FUTURE height (beyond the newest bundled checkpoint) — floored to 0,
+    /// rendered as the "~10 mins" fallback. The fix derives a block delta against the LIVE chain tip
+    /// (`latestState().latestBlockHeight`) at 75 s/block: a transfer 96 blocks ahead of the tip is
+    /// exactly 120 minutes (2 hours) out. A ready-at-tip transfer is 0.
+    @MainActor @Test func onAppearComputesMinutePreciseForwardETAFromChainTipNotEstimateTimestamp() async {
+        let schedule = MigrationSchedule(
+            transfers: [
+                MigrationTransferProposal(id: "t0", amount: Zatoshi(500_000_000), anchorHeight: 1_000, nextExecutableAfterHeight: 1_000, expiryHeight: 2_000),
+                MigrationTransferProposal(id: "t1", amount: Zatoshi(300_000_000), anchorHeight: 1_000, nextExecutableAfterHeight: 1_096, expiryHeight: 2_000)
+            ],
+            estimatedDurationHours: 24
+        )
+        let tipState: SynchronizerState = {
+            var state = SynchronizerState.zero
+            state.latestBlockHeight = 1_000
+            return state
+        }()
+        let store = TestStore(initialState: MigrationTransferPlan.State(variant: .scheduled)) {
+            MigrationTransferPlan()
+        } withDependencies: {
+            // `latestState` is a non-`@DependencyClient` `let` — replace the whole client via
+            // `.mocked(...)` (noOp defaults otherwise), then layer the `var` overrides.
+            $0.sdkSynchronizer = SDKSynchronizerClient.mocked(latestState: { tipState })
+            $0.sdkSynchronizer.proposeMigrationTransfers = { _ in schedule }
+            $0.migrationManager.migrationRoundContext = { _ in (1, nil) }
+        }
+
+        await store.send(.onAppear)
+        await store.receive(\.roundContextLoaded)
+        await store.receive(\.transfersProposed) {
+            $0.rows = [
+                MigrationTransferRow(id: "t0", index: 0, amount: Zatoshi(500_000_000), status: .active, hoursFromNow: 0, minutesFromNow: 0),
+                MigrationTransferRow(id: "t1", index: 1, amount: Zatoshi(300_000_000), status: .pending, hoursFromNow: 2, minutesFromNow: 120)
+            ]
+            $0.totalDurationHours = 24
+            $0.schedule = schedule
+        }
     }
 
     // MARK: - confirmTapped: sign + store, then delegate
@@ -670,7 +711,7 @@ import ComposableArchitecture
             MigrationTransferPlan()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.proposeMigrationTransfers = { _, _ in throw ProposeFailure() }
+            $0.sdkSynchronizer.proposeMigrationTransfers = { _ in throw ProposeFailure() }
             $0.sdkSynchronizer.signAndStoreMigrationSchedule = { _, _, _ in signAndStoreCalls.withValue { $0 += 1 } }
             $0.migrationManager.migrationRoundContext = { _ in (1, nil) }
         }
@@ -709,7 +750,7 @@ import ComposableArchitecture
             MigrationTransferPlan()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.proposeMigrationTransfers = { _, _ in
+            $0.sdkSynchronizer.proposeMigrationTransfers = { _ in
                 let call = proposeCalls.withValue {
                     $0 += 1
                     return $0
@@ -737,7 +778,7 @@ import ComposableArchitecture
         await store.receive(\.transfersProposed) {
             $0.isConfirming = false
             $0.rows = [
-                MigrationTransferRow(id: "t0", index: 0, amount: Zatoshi(500_000_000), status: .active, hoursFromNow: 0)
+                MigrationTransferRow(id: "t0", index: 0, amount: Zatoshi(500_000_000), status: .active, hoursFromNow: 0, minutesFromNow: 0)
             ]
             $0.totalDurationHours = 24
             $0.schedule = schedule
@@ -1041,7 +1082,7 @@ import ComposableArchitecture
             MigrationTransferPlan()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.proposeMigrationTransfers = { _, _ in schedule }
+            $0.sdkSynchronizer.proposeMigrationTransfers = { _ in schedule }
         }
 
         await store.send(.retryTapped) {
@@ -1052,7 +1093,7 @@ import ComposableArchitecture
         await store.receive(\.transfersProposed) {
             $0.isConfirming = false
             $0.rows = [
-                MigrationTransferRow(id: "t0", index: 0, amount: Zatoshi(200_000_000), status: .active, hoursFromNow: 0)
+                MigrationTransferRow(id: "t0", index: 0, amount: Zatoshi(200_000_000), status: .active, hoursFromNow: 0, minutesFromNow: 0)
             ]
             $0.totalDurationHours = 12
             $0.schedule = schedule
@@ -1074,7 +1115,7 @@ import ComposableArchitecture
         } withDependencies: {
             $0.continuousClock = clock
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.proposeMigrationTransfers = { _, _ in
+            $0.sdkSynchronizer.proposeMigrationTransfers = { _ in
                 proposeCalls.withValue { $0 += 1 }
                 return MigrationSchedule(transfers: [], estimatedDurationHours: 0)
             }
@@ -1118,7 +1159,7 @@ import ComposableArchitecture
         } withDependencies: {
             $0.continuousClock = clock
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.proposeMigrationTransfers = { _, _ in
+            $0.sdkSynchronizer.proposeMigrationTransfers = { _ in
                 let call = proposeCalls.withValue {
                     $0 += 1
                     return $0
@@ -1162,7 +1203,7 @@ import ComposableArchitecture
         } withDependencies: {
             $0.continuousClock = clock
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.proposeMigrationTransfers = { _, _ in
+            $0.sdkSynchronizer.proposeMigrationTransfers = { _ in
                 proposeCalls.withValue { $0 += 1 }
                 throw HardFailure()
             }
@@ -1177,5 +1218,211 @@ import ComposableArchitecture
         }
 
         #expect(proposeCalls.value == 1)
+    }
+
+    // MARK: - MOB-1458 (Task 3): migrationPlanStale defensive recovery on the pre-commit consent-echo paths
+
+    /// `ZcashError.migrationPlanStale` from the software commit's consent echo
+    /// (`signAndStoreMigrationSchedule`) is caught SPECIFICALLY — instead of the generic
+    /// `.noteSplitFailed` failure sheet, a fresh `proposeMigrationTransfers` re-propose silently
+    /// replaces the displayed (now-stale) schedule, and a toast tells the user to review it
+    /// before re-confirming. Nothing is signed or stored (`recordCommittedSchedule`/`reconcile`
+    /// never called).
+    ///
+    /// Toast is `@Shared(.inMemory(.toast))` — following the established codebase idiom for
+    /// asserting it (`WalletBirthdayTests`/`AddressDetailsTests`), this test turns exhaustivity
+    /// off and asserts the resulting state via `#expect` instead of the trailing closure.
+    @MainActor @Test func confirmTappedWhenCommitThrowsMigrationPlanStaleReProposesFreshScheduleShowsNoticeAndCommitsNothing() async {
+        let staleSchedule = MigrationSchedule(
+            transfers: [
+                MigrationTransferProposal(id: "stale", amount: Zatoshi(500_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
+            ],
+            estimatedDurationHours: 24
+        )
+        let freshSchedule = MigrationSchedule(
+            transfers: [
+                MigrationTransferProposal(id: "fresh", amount: Zatoshi(400_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
+            ],
+            estimatedDurationHours: 20
+        )
+        let signCalls = LockIsolated<Int>(0)
+        let proposeCalls = LockIsolated<Int>(0)
+        let recordCommittedScheduleCalls = LockIsolated<Int>(0)
+        let reconcileCalls = LockIsolated<Int>(0)
+        var state = MigrationTransferPlan.State()
+        state.schedule = staleSchedule
+        let store = TestStore(initialState: state) {
+            MigrationTransferPlan()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.signAndStoreMigrationSchedule = { _, _, _ in
+                signCalls.withValue { $0 += 1 }
+                throw ZcashError.migrationPlanStale
+            }
+            $0.sdkSynchronizer.proposeMigrationTransfers = { _ in
+                proposeCalls.withValue { $0 += 1 }
+                return freshSchedule
+            }
+            $0.migrationManager.recordCommittedSchedule = { _, _ in recordCommittedScheduleCalls.withValue { $0 += 1 } }
+            $0.migrationManager.reconcile = { reconcileCalls.withValue { $0 += 1 } }
+            withDependenciesUSKDerivable(&$0)
+        }
+        store.exhaustivity = .off
+
+        await store.send(.confirmTapped)
+        await store.receive(\.planStaleRefreshed)
+
+        #expect(store.state.schedule == freshSchedule)
+        #expect(
+            store.state.rows == [
+                MigrationTransferRow(id: "fresh", index: 0, amount: Zatoshi(400_000_000), status: .active, hoursFromNow: 0, minutesFromNow: 0)
+            ]
+        )
+        #expect(store.state.totalDurationHours == 20)
+        #expect(store.state.isConfirming == false)
+        #expect(store.state.isFailurePresented == false)
+        #expect(store.state.toast == .topDelayed(String(localizable: .migrationPlanStaleRefreshed)))
+        #expect(signCalls.value == 1)
+        #expect(proposeCalls.value == 1)
+        #expect(recordCommittedScheduleCalls.value == 0)
+        #expect(reconcileCalls.value == 0)
+    }
+
+    /// MOB-1458 (final review I1): the Keystone propose leg's plan-stale recovery RESTARTS (not
+    /// re-proposes). `proposeKeystoneBatch`'s run-creating `proposeNoteSplitPCZTs` means a plain
+    /// re-propose can never converge on the committed run (infinite toast loop), so the Keystone catch
+    /// calls `restartCurrentMigrationStep` — which both cancels any stranded run AND returns a fresh,
+    /// committable preview — and feeds its schedule through the SAME `.planStaleRefreshed` apply+toast.
+    /// (The stateless `proposeNoteSplitPCZTs → []` mock can't reproduce the non-convergence itself; the
+    /// achievable, load-bearing assertion is the pinned call CHOICE: restart, never re-propose.)
+    @MainActor @Test func confirmTappedWithKeystoneAccountWhenProposeMigrationPCZTsThrowsMigrationPlanStaleRestartsFreshScheduleShowsNoticeWithoutDelegating() async {
+        let staleSchedule = MigrationSchedule(
+            transfers: [
+                MigrationTransferProposal(id: "stale", amount: Zatoshi(500_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
+            ],
+            estimatedDurationHours: 24
+        )
+        let freshSchedule = MigrationSchedule(
+            transfers: [
+                MigrationTransferProposal(id: "fresh", amount: Zatoshi(300_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
+            ],
+            estimatedDurationHours: 18
+        )
+        let proposeMigrationPCZTsCalls = LockIsolated<Int>(0)
+        let restartCalls = LockIsolated<Int>(0)
+        let proposeMigrationTransfersCalls = LockIsolated<Int>(0)
+        var state = MigrationTransferPlan.State(variant: .scheduled)
+        state.schedule = staleSchedule
+        state.$selectedWalletAccount.withLock { $0 = walletAccount(keystone: true, idByte: 30) }
+        let store = TestStore(initialState: state) {
+            MigrationTransferPlan()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.proposeMigrationPCZTs = { _, _ in
+                proposeMigrationPCZTsCalls.withValue { $0 += 1 }
+                throw ZcashError.migrationPlanStale
+            }
+            $0.sdkSynchronizer.restartCurrentMigrationStep = { _ in
+                restartCalls.withValue { $0 += 1 }
+                return freshSchedule
+            }
+            // Pinned NOT to be called on the Keystone leg — a re-propose here would loop forever.
+            $0.sdkSynchronizer.proposeMigrationTransfers = { _ in
+                proposeMigrationTransfersCalls.withValue { $0 += 1 }
+                return freshSchedule
+            }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.confirmTapped)
+        await store.receive(\.planStaleRefreshed)
+
+        #expect(store.state.schedule == freshSchedule)
+        #expect(
+            store.state.rows == [
+                MigrationTransferRow(id: "fresh", index: 0, amount: Zatoshi(300_000_000), status: .active, hoursFromNow: 0, minutesFromNow: 0)
+            ]
+        )
+        #expect(store.state.isConfirming == false)
+        #expect(store.state.isFailurePresented == false)
+        #expect(store.state.toast == .topDelayed(String(localizable: .migrationPlanStaleRefreshed)))
+        #expect(proposeMigrationPCZTsCalls.value == 1)
+        #expect(restartCalls.value == 1)
+        #expect(proposeMigrationTransfersCalls.value == 0)
+    }
+
+    /// Regression: a DIFFERENT `ZcashError` case on the software commit path — proving the new
+    /// catch clause is scoped to `.migrationPlanStale` specifically, not "any `ZcashError`" — keeps
+    /// today's generic failure-sheet handling and never re-proposes.
+    @MainActor @Test func confirmTappedWhenCommitThrowsADifferentZcashErrorKeepsExistingFailureHandling() async {
+        let schedule = MigrationSchedule(
+            transfers: [
+                MigrationTransferProposal(id: "t0", amount: Zatoshi(500_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
+            ],
+            estimatedDurationHours: 24
+        )
+        let proposeCalls = LockIsolated<Int>(0)
+        var state = MigrationTransferPlan.State()
+        state.schedule = schedule
+        let store = TestStore(initialState: state) {
+            MigrationTransferPlan()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.signAndStoreMigrationSchedule = { _, _, _ in throw ZcashError.migrationSyncBlocked }
+            $0.sdkSynchronizer.proposeMigrationTransfers = { _ in
+                proposeCalls.withValue { $0 += 1 }
+                return schedule
+            }
+            $0.migrationManager.recordCommittedSchedule = { _, _ in }
+            withDependenciesUSKDerivable(&$0)
+        }
+
+        await store.send(.confirmTapped) {
+            $0.isConfirming = true
+        }
+        await store.receive(\.noteSplitFailed) {
+            $0.isConfirming = false
+            $0.isFailurePresented = true
+            $0.failureReason = MigrationTransferPlan.State.FailureReason.commit
+        }
+
+        #expect(proposeCalls.value == 0)
+    }
+
+    /// Regression: same specificity proof on the Keystone propose leg — a different `ZcashError`
+    /// case from `proposeMigrationPCZTs` still routes to the existing failure sheet, never
+    /// re-proposing.
+    @MainActor @Test func confirmTappedWithKeystoneAccountWhenProposeThrowsADifferentZcashErrorKeepsExistingFailureHandling() async {
+        let schedule = MigrationSchedule(
+            transfers: [
+                MigrationTransferProposal(id: "t0", amount: Zatoshi(500_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
+            ],
+            estimatedDurationHours: 24
+        )
+        let proposeTransfersCalls = LockIsolated<Int>(0)
+        var state = MigrationTransferPlan.State(variant: .scheduled)
+        state.schedule = schedule
+        state.$selectedWalletAccount.withLock { $0 = walletAccount(keystone: true, idByte: 31) }
+        let store = TestStore(initialState: state) {
+            MigrationTransferPlan()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.proposeMigrationPCZTs = { _, _ in throw ZcashError.migrationSyncBlocked }
+            $0.sdkSynchronizer.proposeMigrationTransfers = { _ in
+                proposeTransfersCalls.withValue { $0 += 1 }
+                return schedule
+            }
+        }
+
+        await store.send(.confirmTapped) {
+            $0.isConfirming = true
+        }
+        await store.receive(\.noteSplitFailed) {
+            $0.isConfirming = false
+            $0.isFailurePresented = true
+            $0.failureReason = MigrationTransferPlan.State.FailureReason.commit
+        }
+
+        #expect(proposeTransfersCalls.value == 0)
     }
 }

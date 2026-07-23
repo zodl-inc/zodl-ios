@@ -2240,6 +2240,18 @@ extension Root {
             return .none
         }
 
+        // MOB-1458 (final review C1): a `.recoveryRefresh` ceremony operates on the long-committed,
+        // possibly partially-delivered run that the expired-transfer refresh rebuilt in place — it did
+        // NOT create that run (unlike `.planCommit`/`.immediateReview`, whose PCZT-build created it).
+        // An external teardown/reopen (`RootCoordinator`'s flow-teardown sites, the notification-tap
+        // reopen) cancelling it would discard the user's committed run without consent. Skip; the
+        // rebuilt rows re-expire and recovery re-offers, matching the in-flow
+        // `MigrationCoordFlowCoordinator.keystoneScanAbandoned` twin and the documented process-death
+        // behavior.
+        if case .recoveryRefresh? = state.migrationCoordFlowState.pendingKeystoneSigning {
+            return .none
+        }
+
         return .run { [sdkSynchronizer] _ in
             _ = try? await sdkSynchronizer.restartCurrentMigrationStep(accountUUID, false)
         }

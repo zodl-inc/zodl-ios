@@ -232,6 +232,49 @@ import ComposableArchitecture
         }
     }
 
+    /// MOB-1458 (final review C1): the same external teardown, but with a `.recoveryRefresh` ceremony
+    /// in flight — the flow still tears down (path cleared, context reset), but
+    /// `cancelAbandonedKeystoneMigrationRun` must NOT `restartCurrentMigrationStep`: a recovery-refresh
+    /// ceremony operates on the long-committed run the expired-transfer refresh rebuilt in place, so
+    /// cancelling it here would discard the user's committed run without consent.
+    @Test func walletAccountSwitchDuringRecoveryRefreshCeremonyTearsDownWithoutCancellingTheCommittedRun() async {
+        let restartCalls = LockIsolated<[AccountUUID]>([])
+        let accountA = Self.walletAccount(idByte: 52)
+        let accountB = Self.walletAccount(idByte: 53)
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            var initialState = Root.State.initial
+            initialState.path = Root.State.Path.migrationCoordFlow
+            initialState.$selectedWalletAccount.withLock { $0 = accountA }
+            initialState.$walletAccounts.withLock { $0 = [accountA, accountB] }
+            initialState.migrationCoordFlowState.pendingKeystoneSigning = MigrationCoordFlow.KeystoneSigningContext.recoveryRefresh(
+                schedule: MigrationSchedule(transfers: [], estimatedDurationHours: 0)
+            )
+            initialState.migrationCoordFlowState.pendingKeystoneSigningAccountUUID = accountA.id
+
+            let store = Store(initialState: initialState) {
+                Root()
+            } withDependencies: {
+                baseNoOpDependencies(&$0)
+                $0.sdkSynchronizer.restartCurrentMigrationStep = { accountUUID in
+                    restartCalls.withValue { $0.append(accountUUID) }
+                    return MigrationSchedule(transfers: [], estimatedDurationHours: 0)
+                }
+            }
+
+            store.send(.home(.walletAccountTapped(accountB)))
+            await waitForRootStore { store.state.path == nil }
+
+            #expect(store.state.selectedWalletAccount == accountB)
+            #expect(store.state.path == nil)
+            #expect(store.state.migrationCoordFlowState.pendingKeystoneSigning == nil)
+            // The recovery-refresh run must survive the teardown — no cancel.
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            #expect(restartCalls.withValue { $0.isEmpty })
+        }
+    }
+
     /// MOB-1511 (W3): the Tor-failure notification's tap switches to the tapped account and
     /// surfaces the Tor-failure sheet over Home — it must NOT open the migration coord flow.
     @Test func torFailureNotificationTapChecksPromptInsteadOfOpeningFlow() async {
