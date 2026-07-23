@@ -667,6 +667,475 @@ import ComposableArchitecture
         #expect(!store.state.isOpen)
     }
 
+    // MARK: - Bounded post-restore migration re-poll (MOB-1513 A1)
+    //
+    // The Defect-B/B2 re-check above is a SINGLE immediate re-read: if a restore/resync just
+    // completed (priority3/priority45) and that immediate read lands nil, the pre-fix code accepted
+    // the nil and moved on — but the SDK's post-restore balance hold is bounded/best-effort, so the
+    // restored balance can still be invisible to `bannerVariant` for a short window after `.upToDate`
+    // fires. Nothing re-asked for the rest of the session, so currency-conversion (priority8) could
+    // latch the slot instead. A1 adds a bounded, cancellable re-poll (every 3s, up to 40 attempts)
+    // for ONLY the priority3/priority45 case, gated on Ironwood activation. Red before the fix: the
+    // immediate nil read is accepted as final, so nothing re-reads `bannerVariant` on a clock tick.
+
+    @MainActor @Test func syncReachingUpToDateAfterRestoreWithNilVariantStartsBoundedRepollAndDisplacesCurrencyConversion() async {
+        let account = walletAccount(idByte: 40)
+        var state = SmartBanner.State()
+        state.$selectedWalletAccount.withLock { $0 = account }
+        state.priorityContent = .priority3
+        state.priorityContentRequested = .priority3
+        state.isOpen = true
+        state.lastKnownBlocksRemaining = 5_000
+        // Pre-latched activated — isolates the upToDate re-check from the separate MOB-1483
+        // activation-flip mechanism, same idiom as the B2 empty-slot tests above.
+        state.lastObservedIronwoodActivation = true
+        // `.complete`, not the `State()` default (`.required`), so the resolved `.required` variant
+        // below is an observable change — same idiom as the other tests in this file.
+        state.migrationBannerVariant = MigrationBannerVariant.complete
+        let clock = TestClock()
+        let bannerVariantCalls = LockIsolated<Int>(0)
+        let reconcileCalls = LockIsolated<Int>(0)
+        let store = TestStore(initialState: state) {
+            SmartBanner()
+        } withDependencies: {
+            $0.continuousClock = clock
+            $0.migrationManager.isIronwoodActivated = { true }
+            $0.migrationManager.bannerVariant = { accountUUID in
+                #expect(accountUUID == account.id)
+                let callNumber = bannerVariantCalls.withValue { count -> Int in
+                    count += 1
+                    return count
+                }
+                // Nil for the immediate re-read and the first poll tick; `.required` from the
+                // second poll tick onward ("stubbed nil twice then `.required`").
+                return callNumber <= 2 ? nil : MigrationBannerVariant.required
+            }
+            $0.migrationManager.reconcile = {
+                reconcileCalls.withValue { $0 += 1 }
+            }
+        }
+        store.dependencies.mainQueue = .immediate
+
+        var upToDateState = SynchronizerState.zero
+        upToDateState.syncStatus = SyncStatus.upToDate
+
+        await store.send(.synchronizerStateChanged(upToDateState.redacted)) {
+            $0.isSyncTimedOutAutoAppeareDisabled = false
+            $0.lastKnownBlocksRemaining = -1
+            $0.synchronizerStatusSnapshot = SyncStatusSnapshot.snapshotFor(state: SyncStatus.upToDate)
+        }
+        await store.receive(\.closeBanner) {
+            $0.isOpen = false
+            $0.priorityContentRequested = nil
+            $0.priorityContent = nil
+        }
+        await store.receive(\.openBannerRequest)
+
+        // The immediate re-read (call 1) is nil — nothing claims the slot yet. Some OTHER walk
+        // trigger (RootTransactions/RootInitialization, out of scope here) lands on currency
+        // conversion in the meantime — exactly the race this fix closes.
+        await store.send(.triggerPriority(.priority8)) {
+            $0.priorityContentRequested = .priority8
+        }
+        await store.receive(\.openBannerRequest) {
+            $0.priorityContent = .priority8
+        }
+        await store.receive(\.openBanner) {
+            $0.delay = 1.0
+            $0.isOpen = true
+        }
+        #expect(bannerVariantCalls.value == 1)
+
+        // First poll tick (call 2): still nil, no dispatch.
+        await clock.advance(by: .seconds(3))
+        #expect(bannerVariantCalls.value == 2)
+
+        // Second poll tick (call 3): `.required` — displaces the showing currency-conversion
+        // banner through the EXISTING `.migrationVariantUpdated` funnel and its rank-guarded
+        // `openBannerRequest`, exactly like the Defect-B/B2 tests above.
+        await clock.advance(by: .seconds(3))
+        #expect(bannerVariantCalls.value == 3)
+
+        await store.receive(\.migrationVariantUpdated) {
+            $0.migrationBannerVariant = MigrationBannerVariant.required
+        }
+        await store.receive(\.triggerPriority) {
+            $0.priorityContentRequested = .priorityMigration
+        }
+        await store.receive(\.openBannerRequest)
+        await store.receive(\.closeBanner) {
+            $0.isOpen = false
+        }
+        await store.receive(\.openBannerRequest) {
+            $0.priorityContent = .priorityMigration
+        }
+        await store.receive(\.openBanner) {
+            $0.delay = 1.0
+            $0.isOpen = true
+        }
+
+        #expect(reconcileCalls.value == 1)
+    }
+
+    /// All 40 poll attempts land nil: the loop stops at the cap — no more `bannerVariant` reads
+    /// after that, no matter how far the clock advances afterward.
+    @MainActor @Test func syncReachingUpToDateAfterRestoreWithAllPollsNilStopsAtTheAttemptCap() async {
+        let account = walletAccount(idByte: 41)
+        var state = SmartBanner.State()
+        state.$selectedWalletAccount.withLock { $0 = account }
+        state.priorityContent = .priority45
+        state.priorityContentRequested = .priority45
+        state.isOpen = true
+        state.lastObservedIronwoodActivation = true
+        let clock = TestClock()
+        let bannerVariantCalls = LockIsolated<Int>(0)
+        let store = TestStore(initialState: state) {
+            SmartBanner()
+        } withDependencies: {
+            $0.continuousClock = clock
+            $0.migrationManager.isIronwoodActivated = { true }
+            $0.migrationManager.bannerVariant = { _ in
+                bannerVariantCalls.withValue { $0 += 1 }
+                return nil
+            }
+        }
+        store.dependencies.mainQueue = .immediate
+        store.exhaustivity = .off
+
+        var upToDateState = SynchronizerState.zero
+        upToDateState.syncStatus = SyncStatus.upToDate
+
+        await store.send(.synchronizerStateChanged(upToDateState.redacted))
+        await store.receive(\.closeBanner)
+        await store.receive(\.openBannerRequest)
+        #expect(bannerVariantCalls.value == 1)
+
+        // Drain the entire 40-attempt / 120s budget in one advance — TestClock cascades through
+        // every sequential sleep as long as the total advance covers them all.
+        await clock.advance(by: .seconds(3 * 40))
+        #expect(bannerVariantCalls.value == 1 + 40)
+
+        // The cap is reached — advancing further must not trigger any more reads.
+        await clock.advance(by: .seconds(3 * 5))
+        #expect(bannerVariantCalls.value == 1 + 40)
+    }
+
+    /// An account switch mid-poll cancels the loop outright — no later reads fire for the OLD
+    /// account, no matter how far the clock advances afterward.
+    @MainActor @Test func walletAccountChangedMidPollCancelsTheRepoll() async {
+        let accountA = walletAccount(idByte: 42)
+        let accountB = walletAccount(idByte: 43)
+        var state = SmartBanner.State()
+        state.$selectedWalletAccount.withLock { $0 = accountA }
+        state.priorityContent = .priority3
+        state.priorityContentRequested = .priority3
+        state.isOpen = true
+        state.lastObservedIronwoodActivation = true
+        let clock = TestClock()
+        let bannerVariantCalls = LockIsolated<Int>(0)
+        let store = TestStore(initialState: state) {
+            SmartBanner()
+        } withDependencies: {
+            $0.continuousClock = clock
+            $0.migrationManager.isIronwoodActivated = { true }
+            $0.migrationManager.bannerVariant = { _ in
+                bannerVariantCalls.withValue { $0 += 1 }
+                return nil
+            }
+            $0.migrationManager.stateEvents = { _ in Empty<MigrationState, Never>().eraseToAnyPublisher() }
+            // `.walletAccountChanged` also re-walks the priority ladder for the new account — safe,
+            // non-trapping stand-ins for the unrelated parts of that path (same idiom as the
+            // subscription re-keying test further below).
+            $0.walletStorage = .noOp
+            $0.sdkSynchronizer = .noOp
+        }
+        store.dependencies.mainQueue = .immediate
+        store.exhaustivity = .off
+
+        var upToDateState = SynchronizerState.zero
+        upToDateState.syncStatus = SyncStatus.upToDate
+
+        await store.send(.synchronizerStateChanged(upToDateState.redacted))
+        await store.receive(\.closeBanner)
+        await store.receive(\.openBannerRequest)
+
+        await clock.advance(by: .seconds(3))
+        let callsBeforeSwitch = bannerVariantCalls.value
+        #expect(callsBeforeSwitch >= 2, "the immediate read plus at least one poll tick happened")
+
+        store.state.$selectedWalletAccount.withLock { $0 = accountB }
+        await store.send(.walletAccountChanged)
+        let callsRightAfterSwitch = bannerVariantCalls.value
+
+        // The account switch cancels the in-flight repoll for account A — advancing the clock as
+        // far as the full budget would have gone must not produce any FURTHER reads (the
+        // `.walletAccountChanged` re-walk's own single read, if any, already happened above).
+        await clock.advance(by: .seconds(3 * 40))
+        #expect(bannerVariantCalls.value == callsRightAfterSwitch)
+    }
+
+    /// Fix wave 1 (review Minor): leaving Home (`.onDisappear`) must ALSO cancel the post-restore
+    /// repoll, exactly like the four sibling cancellables it already tears down — otherwise a poll
+    /// armed just before leaving keeps running its `bannerVariant` hydration off-lifecycle for up
+    /// to 120s, and can even fire `reconcile()` after the screen is gone. With the state stream
+    /// also cancelled on disappear, no LATER sync transition could end it early either — only
+    /// success or the attempt cap could, absent this fix. Proves cancellation by absence, same idiom
+    /// as `walletAccountChangedMidPollCancelsTheRepoll` above.
+    @MainActor @Test func onDisappearMidPollCancelsTheRepoll() async {
+        let account = walletAccount(idByte: 47)
+        var state = SmartBanner.State()
+        state.$selectedWalletAccount.withLock { $0 = account }
+        state.priorityContent = .priority3
+        state.priorityContentRequested = .priority3
+        state.isOpen = true
+        state.lastObservedIronwoodActivation = true
+        let clock = TestClock()
+        let bannerVariantCalls = LockIsolated<Int>(0)
+        let reconcileCalls = LockIsolated<Int>(0)
+        let store = TestStore(initialState: state) {
+            SmartBanner()
+        } withDependencies: {
+            $0.continuousClock = clock
+            $0.migrationManager.isIronwoodActivated = { true }
+            $0.migrationManager.bannerVariant = { _ in
+                bannerVariantCalls.withValue { $0 += 1 }
+                return nil
+            }
+            $0.migrationManager.reconcile = {
+                reconcileCalls.withValue { $0 += 1 }
+            }
+        }
+        store.dependencies.mainQueue = .immediate
+        store.exhaustivity = .off
+
+        var upToDateState = SynchronizerState.zero
+        upToDateState.syncStatus = SyncStatus.upToDate
+
+        await store.send(.synchronizerStateChanged(upToDateState.redacted))
+        await store.receive(\.closeBanner)
+        await store.receive(\.openBannerRequest)
+
+        await clock.advance(by: .seconds(3))
+        let callsBeforeDisappear = bannerVariantCalls.value
+        #expect(callsBeforeDisappear >= 2, "the immediate read plus at least one poll tick happened")
+
+        await store.send(.onDisappear)
+
+        // Leaving Home cancels the in-flight repoll — advancing the clock as far as the full
+        // budget would have gone must not produce any further reads, and `reconcile()` must never
+        // fire off-lifecycle.
+        await clock.advance(by: .seconds(3 * 40))
+        #expect(bannerVariantCalls.value == callsBeforeDisappear)
+        #expect(reconcileCalls.value == 0)
+    }
+
+    /// A non-restore `.upToDate` transition — the slot is empty rather than showing priority3/
+    /// priority45 — must NOT arm the bounded poll even when activated: it keeps the plain one-shot
+    /// re-check (Defect-B/B2 above) unchanged. A synced wallet with genuinely no orchard funds must
+    /// never run a 40-read loop on every launch.
+    @MainActor @Test func syncReachingUpToDateWithEmptySlotActivatedAndNilVariantDoesNotStartRepoll() async {
+        let account = walletAccount(idByte: 44)
+        var state = SmartBanner.State()
+        state.$selectedWalletAccount.withLock { $0 = account }
+        state.priorityContent = nil
+        state.priorityContentRequested = nil
+        state.isOpen = false
+        state.lastObservedIronwoodActivation = true
+        let clock = TestClock()
+        let bannerVariantCalls = LockIsolated<Int>(0)
+        let store = TestStore(initialState: state) {
+            SmartBanner()
+        } withDependencies: {
+            $0.continuousClock = clock
+            $0.migrationManager.isIronwoodActivated = { true }
+            $0.migrationManager.bannerVariant = { _ in
+                bannerVariantCalls.withValue { $0 += 1 }
+                return nil
+            }
+        }
+        store.dependencies.mainQueue = .immediate
+
+        var upToDateState = SynchronizerState.zero
+        upToDateState.syncStatus = SyncStatus.upToDate
+
+        await store.send(.synchronizerStateChanged(upToDateState.redacted)) {
+            $0.isSyncTimedOutAutoAppeareDisabled = false
+            $0.lastKnownBlocksRemaining = -1
+            $0.synchronizerStatusSnapshot = SyncStatusSnapshot.snapshotFor(state: SyncStatus.upToDate)
+        }
+        await store.receive(\.closeBanner)
+        await store.receive(\.openBannerRequest)
+        await store.receive(\.migrationVariantUpdated)
+        #expect(bannerVariantCalls.value == 1)
+
+        // No poll was armed — advancing the clock produces no further reads.
+        await clock.advance(by: .seconds(3 * 40))
+        #expect(bannerVariantCalls.value == 1)
+        #expect(store.state.priorityContent == nil)
+    }
+
+    /// Companion: priority4 (an ordinary sync, not a restore/resync) transitioning to `.upToDate`
+    /// also keeps the plain one-shot re-check — no poll armed.
+    @MainActor @Test func syncReachingUpToDateFromPriority4ActivatedAndNilVariantDoesNotStartRepoll() async {
+        var state = SmartBanner.State()
+        state.priorityContent = .priority4
+        state.priorityContentRequested = .priority4
+        state.isOpen = true
+        state.lastKnownBlocksRemaining = 5_000
+        state.lastObservedIronwoodActivation = true
+        let clock = TestClock()
+        let bannerVariantCalls = LockIsolated<Int>(0)
+        let store = TestStore(initialState: state) {
+            SmartBanner()
+        } withDependencies: {
+            $0.continuousClock = clock
+            $0.migrationManager.isIronwoodActivated = { true }
+            $0.migrationManager.bannerVariant = { _ in
+                bannerVariantCalls.withValue { $0 += 1 }
+                return nil
+            }
+        }
+        store.dependencies.mainQueue = .immediate
+
+        var upToDateState = SynchronizerState.zero
+        upToDateState.syncStatus = SyncStatus.upToDate
+
+        await store.send(.synchronizerStateChanged(upToDateState.redacted)) {
+            $0.isSyncTimedOutAutoAppeareDisabled = false
+            $0.lastKnownBlocksRemaining = -1
+            $0.synchronizerStatusSnapshot = SyncStatusSnapshot.snapshotFor(state: SyncStatus.upToDate)
+        }
+        await store.receive(\.closeBanner) {
+            $0.isOpen = false
+            $0.priorityContentRequested = nil
+            $0.priorityContent = nil
+        }
+        await store.receive(\.openBannerRequest)
+        await store.receive(\.migrationVariantUpdated)
+        #expect(bannerVariantCalls.value == 1)
+
+        await clock.advance(by: .seconds(3 * 40))
+        #expect(bannerVariantCalls.value == 1)
+    }
+
+    /// Success stops the loop — once a poll tick lands non-nil, no further `bannerVariant` reads
+    /// happen even if the clock keeps advancing.
+    @MainActor @Test func syncReachingUpToDateAfterRestoreRepollSuccessStopsFurtherReads() async {
+        let account = walletAccount(idByte: 45)
+        var state = SmartBanner.State()
+        state.$selectedWalletAccount.withLock { $0 = account }
+        state.priorityContent = .priority45
+        state.priorityContentRequested = .priority45
+        state.isOpen = true
+        state.lastObservedIronwoodActivation = true
+        // `.complete`, not the `State()` default (`.required`), so the resolved `.required` variant
+        // below is an observable change — same idiom as the other tests in this file.
+        state.migrationBannerVariant = MigrationBannerVariant.complete
+        let clock = TestClock()
+        let bannerVariantCalls = LockIsolated<Int>(0)
+        let reconcileCalls = LockIsolated<Int>(0)
+        let store = TestStore(initialState: state) {
+            SmartBanner()
+        } withDependencies: {
+            $0.continuousClock = clock
+            $0.migrationManager.isIronwoodActivated = { true }
+            $0.migrationManager.bannerVariant = { accountUUID in
+                #expect(accountUUID == account.id)
+                let callNumber = bannerVariantCalls.withValue { count -> Int in
+                    count += 1
+                    return count
+                }
+                return callNumber == 1 ? nil : MigrationBannerVariant.required
+            }
+            $0.migrationManager.reconcile = {
+                reconcileCalls.withValue { $0 += 1 }
+            }
+        }
+        store.dependencies.mainQueue = .immediate
+
+        var upToDateState = SynchronizerState.zero
+        upToDateState.syncStatus = SyncStatus.upToDate
+
+        await store.send(.synchronizerStateChanged(upToDateState.redacted)) {
+            $0.isSyncTimedOutAutoAppeareDisabled = false
+            $0.lastKnownBlocksRemaining = -1
+            $0.synchronizerStatusSnapshot = SyncStatusSnapshot.snapshotFor(state: SyncStatus.upToDate)
+        }
+        await store.receive(\.closeBanner) {
+            $0.isOpen = false
+            $0.priorityContentRequested = nil
+            $0.priorityContent = nil
+        }
+        await store.receive(\.openBannerRequest)
+        #expect(bannerVariantCalls.value == 1)
+
+        await clock.advance(by: .seconds(3))
+        await store.receive(\.migrationVariantUpdated) {
+            $0.migrationBannerVariant = MigrationBannerVariant.required
+        }
+        await store.receive(\.triggerPriority) {
+            $0.priorityContentRequested = .priorityMigration
+        }
+        await store.receive(\.openBannerRequest) {
+            $0.priorityContent = .priorityMigration
+        }
+        await store.receive(\.openBanner) {
+            $0.delay = 1.0
+            $0.isOpen = true
+        }
+        #expect(bannerVariantCalls.value == 2)
+        #expect(reconcileCalls.value == 1)
+
+        // Success stops the loop — advancing further produces no more reads.
+        await clock.advance(by: .seconds(3 * 40))
+        #expect(bannerVariantCalls.value == 2)
+        #expect(reconcileCalls.value == 1)
+    }
+
+    /// Beyond the brief's required cases: a fresh sync-status transition mid-poll (e.g. a new resync
+    /// starting) must ALSO cancel the in-flight repoll from the PRIOR transition — "a fresh
+    /// transition restarts the decision from scratch" per the design guardrails, not just the
+    /// account-switch case above.
+    @MainActor @Test func subsequentSyncStatusTransitionMidPollCancelsTheRepoll() async {
+        let account = walletAccount(idByte: 46)
+        var state = SmartBanner.State()
+        state.$selectedWalletAccount.withLock { $0 = account }
+        state.priorityContent = .priority3
+        state.priorityContentRequested = .priority3
+        state.isOpen = true
+        state.lastObservedIronwoodActivation = true
+        let clock = TestClock()
+        let bannerVariantCalls = LockIsolated<Int>(0)
+        let store = TestStore(initialState: state) {
+            SmartBanner()
+        } withDependencies: {
+            $0.continuousClock = clock
+            $0.migrationManager.isIronwoodActivated = { true }
+            $0.migrationManager.bannerVariant = { _ in
+                bannerVariantCalls.withValue { $0 += 1 }
+                return nil
+            }
+        }
+        store.dependencies.mainQueue = .immediate
+        store.exhaustivity = .off
+
+        var upToDateState = SynchronizerState.zero
+        upToDateState.syncStatus = SyncStatus.upToDate
+        await store.send(.synchronizerStateChanged(upToDateState.redacted))
+
+        await clock.advance(by: .seconds(3))
+        #expect(bannerVariantCalls.value == 2)
+
+        // A fresh sync-status transition (a new resync starting) restarts the decision from
+        // scratch — it must cancel the in-flight repoll from the PRIOR transition.
+        var syncingState = SynchronizerState.zero
+        syncingState.syncStatus = SyncStatus.syncing(0.5, true)
+        await store.send(.synchronizerStateChanged(syncingState.redacted))
+
+        await clock.advance(by: .seconds(3 * 40))
+        #expect(bannerVariantCalls.value == 2)
+    }
+
     // MARK: - Reactive trigger: Ironwood-activation flip (MOB-1483)
 
     /// First-ever observation, gate closed: latches `false` and triggers nothing — no
