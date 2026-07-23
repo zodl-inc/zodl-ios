@@ -60,8 +60,17 @@ struct MigrationTransferRow: Equatable, Sendable, Codable, Identifiable {
     var index: Int
     var amount: Zatoshi
     var status: Status
-    /// 0 = ready now; meaningful for pending rows.
+    /// 0 = ready now; meaningful for pending rows. Coarse (whole-hour) — the forward-ETA caption
+    /// prefers `minutesFromNow` when set; the BACKWARD "Sent Nh ago" / "Overdue Nh ago" captions
+    /// read this directly.
     var hoursFromNow: Int
+    /// MOB-1513 (B3): minute-precise FORWARD ETA for a pending/active row — the block-delta value
+    /// `MigrationETA.minutesFromNow(scheduledHeight:currentTip:)` computes, so a sub-hour transfer
+    /// renders "in ~N mins" instead of flooring to `hoursFromNow` and hitting the old "~10 mins"
+    /// fallback. `nil` on surfaces that only carry the coarse position-based cadence (the
+    /// Status/Progress synthetic rows), where the caption falls back to `hoursFromNow`. Backward
+    /// ("ago") captions never read this. See `forwardETAMinutes`.
+    var minutesFromNow: Int?
     /// Precise "sent N minutes ago" recency for a `.sent` row under an hour old; `nil` keeps the
     /// existing `hoursFromNow`-based caption (0 = "sent recently", otherwise "Sent Nh ago").
     var sentMinutesAgo: Int?
@@ -69,12 +78,19 @@ struct MigrationTransferRow: Equatable, Sendable, Codable, Identifiable {
     /// merely-queued row, captioned "Sending now" instead of an ETA.
     var isBroadcasting: Bool
 
+    /// The value the forward-ETA caption buckets: the minute-precise `minutesFromNow` when present,
+    /// else the coarse `hoursFromNow` promoted to minutes (the synthetic-cadence surfaces).
+    var forwardETAMinutes: Int {
+        minutesFromNow ?? hoursFromNow * 60
+    }
+
     init(
         id: String,
         index: Int,
         amount: Zatoshi,
         status: Status,
         hoursFromNow: Int,
+        minutesFromNow: Int? = nil,
         sentMinutesAgo: Int? = nil,
         isBroadcasting: Bool = false
     ) {
@@ -83,6 +99,7 @@ struct MigrationTransferRow: Equatable, Sendable, Codable, Identifiable {
         self.amount = amount
         self.status = status
         self.hoursFromNow = hoursFromNow
+        self.minutesFromNow = minutesFromNow
         self.sentMinutesAgo = sentMinutesAgo
         self.isBroadcasting = isBroadcasting
     }

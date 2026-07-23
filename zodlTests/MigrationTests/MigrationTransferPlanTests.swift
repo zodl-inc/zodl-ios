@@ -119,8 +119,8 @@ import ComposableArchitecture
         await store.receive(\.roundContextLoaded)
         await store.receive(\.transfersProposed) {
             $0.rows = [
-                MigrationTransferRow(id: "t0", index: 0, amount: Zatoshi(500_000_000), status: .active, hoursFromNow: 0),
-                MigrationTransferRow(id: "t1", index: 1, amount: Zatoshi(300_000_000), status: .pending, hoursFromNow: 0)
+                MigrationTransferRow(id: "t0", index: 0, amount: Zatoshi(500_000_000), status: .active, hoursFromNow: 0, minutesFromNow: 0),
+                MigrationTransferRow(id: "t1", index: 1, amount: Zatoshi(300_000_000), status: .pending, hoursFromNow: 0, minutesFromNow: 0)
             ]
             $0.totalDurationHours = 24
             $0.schedule = schedule
@@ -150,7 +150,7 @@ import ComposableArchitecture
 
         await store.send(.onAppear) {
             $0.rows = [
-                MigrationTransferRow(id: "t0", index: 0, amount: Zatoshi(200_000_000), status: .active, hoursFromNow: 0)
+                MigrationTransferRow(id: "t0", index: 0, amount: Zatoshi(200_000_000), status: .active, hoursFromNow: 0, minutesFromNow: 0)
             ]
             $0.totalDurationHours = 12
             $0.schedule = schedule
@@ -186,6 +186,48 @@ import ComposableArchitecture
         await store.receive(\.roundContextLoaded)
 
         #expect(called.value == false)
+    }
+
+    // MARK: - MOB-1513 (B3): minute-precise forward ETA from the live chain tip
+
+    /// B3 root cause: `apply` converted a transfer's execution height via `estimateTimestamp`, which
+    /// returns nil for every FUTURE height (beyond the newest bundled checkpoint) — floored to 0,
+    /// rendered as the "~10 mins" fallback. The fix derives a block delta against the LIVE chain tip
+    /// (`latestState().latestBlockHeight`) at 75 s/block: a transfer 96 blocks ahead of the tip is
+    /// exactly 120 minutes (2 hours) out. A ready-at-tip transfer is 0.
+    @MainActor @Test func onAppearComputesMinutePreciseForwardETAFromChainTipNotEstimateTimestamp() async {
+        let schedule = MigrationSchedule(
+            transfers: [
+                MigrationTransferProposal(id: "t0", amount: Zatoshi(500_000_000), anchorHeight: 1_000, nextExecutableAfterHeight: 1_000, expiryHeight: 2_000),
+                MigrationTransferProposal(id: "t1", amount: Zatoshi(300_000_000), anchorHeight: 1_000, nextExecutableAfterHeight: 1_096, expiryHeight: 2_000)
+            ],
+            estimatedDurationHours: 24
+        )
+        let tipState: SynchronizerState = {
+            var state = SynchronizerState.zero
+            state.latestBlockHeight = 1_000
+            return state
+        }()
+        let store = TestStore(initialState: MigrationTransferPlan.State(variant: .scheduled)) {
+            MigrationTransferPlan()
+        } withDependencies: {
+            // `latestState` is a non-`@DependencyClient` `let` — replace the whole client via
+            // `.mocked(...)` (noOp defaults otherwise), then layer the `var` overrides.
+            $0.sdkSynchronizer = SDKSynchronizerClient.mocked(latestState: { tipState })
+            $0.sdkSynchronizer.proposeMigrationTransfers = { _, _ in schedule }
+            $0.migrationManager.migrationRoundContext = { _ in (1, nil) }
+        }
+
+        await store.send(.onAppear)
+        await store.receive(\.roundContextLoaded)
+        await store.receive(\.transfersProposed) {
+            $0.rows = [
+                MigrationTransferRow(id: "t0", index: 0, amount: Zatoshi(500_000_000), status: .active, hoursFromNow: 0, minutesFromNow: 0),
+                MigrationTransferRow(id: "t1", index: 1, amount: Zatoshi(300_000_000), status: .pending, hoursFromNow: 2, minutesFromNow: 120)
+            ]
+            $0.totalDurationHours = 24
+            $0.schedule = schedule
+        }
     }
 
     // MARK: - confirmTapped: sign + store, then delegate
@@ -737,7 +779,7 @@ import ComposableArchitecture
         await store.receive(\.transfersProposed) {
             $0.isConfirming = false
             $0.rows = [
-                MigrationTransferRow(id: "t0", index: 0, amount: Zatoshi(500_000_000), status: .active, hoursFromNow: 0)
+                MigrationTransferRow(id: "t0", index: 0, amount: Zatoshi(500_000_000), status: .active, hoursFromNow: 0, minutesFromNow: 0)
             ]
             $0.totalDurationHours = 24
             $0.schedule = schedule
@@ -1052,7 +1094,7 @@ import ComposableArchitecture
         await store.receive(\.transfersProposed) {
             $0.isConfirming = false
             $0.rows = [
-                MigrationTransferRow(id: "t0", index: 0, amount: Zatoshi(200_000_000), status: .active, hoursFromNow: 0)
+                MigrationTransferRow(id: "t0", index: 0, amount: Zatoshi(200_000_000), status: .active, hoursFromNow: 0, minutesFromNow: 0)
             ]
             $0.totalDurationHours = 12
             $0.schedule = schedule
