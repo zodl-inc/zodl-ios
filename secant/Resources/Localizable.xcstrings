@@ -55,176 +55,6 @@
     "%@%%" : {
 
     },
-    "migrationBanner.nextRoundInfo" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Round %1$lld · More funds to migrate"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Ronda %1$lld · Más fondos para migrar"
-          }
-        }
-      }
-    },
-    "migrationBanner.nextRoundInfoTotal" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Round %1$lld of %2$lld · More funds to migrate"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Ronda %1$lld de %2$lld · Más fondos para migrar"
-          }
-        }
-      }
-    },
-    "migrationBanner.progressInfoRound" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Round %1$lld · %2$lld of %3$lld transfers done · %4$lld%% complete"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Ronda %1$lld · %2$lld de %3$lld transferencias hechas · %4$lld%% completado"
-          }
-        }
-      }
-    },
-    "migrationBanner.progressInfoRoundTotal" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Round %1$lld of %2$lld · %3$lld of %4$lld transfers done · %5$lld%% complete"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Ronda %1$lld de %2$lld · %3$lld de %4$lld transferencias hechas · %5$lld%% completado"
-          }
-        }
-      }
-    },
-    "migrationEntry.immediateNote" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "All funds transferred in this transaction will be revealed on-chain."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Todos los fondos transferidos en esta transacción se revelarán en la cadena."
-          }
-        }
-      }
-    },
-    "migrationEntry.privacyDisclaimerTitle" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Privacy Disclaimer"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Aviso de privacidad"
-          }
-        }
-      }
-    },
-    "migrationNotification.torFailureTitle" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Migration Failure"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Fallo de migración"
-          }
-        }
-      }
-    },
-    "migrationPlan.roundN" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Round %1$lld"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Ronda %1$lld"
-          }
-        }
-      }
-    },
-    "migrationPlan.roundNOfM" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Round %1$lld of %2$lld"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Ronda %1$lld de %2$lld"
-          }
-        }
-      }
-    },
-    "migrationStatus.done" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Done"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Hecho"
-          }
-        }
-      }
-    },
     "~%@ %@" : {
       "localizations" : {
         "en" : {
@@ -9648,12 +9478,6 @@
         }
       }
     },
-    "LLDB, to fire the real background task: e -l objc -- (void)[[BGTaskScheduler sharedScheduler] _simulateLaunchForTaskWithIdentifier:@\"co.electriccoin.migration_transfer\"]" : {
-
-    },
-    "Loading…" : {
-
-    },
     "localAuthentication.reason" : {
       "comment" : "MARK: - Local authentication",
       "extractionState" : "manual",
@@ -9996,6 +9820,40 @@
         }
       }
     },
+    "migrationBanner.nextRoundInfo" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Round %1$lld · More funds to migrate"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ronda %1$lld · Más fondos para migrar"
+          }
+        }
+      }
+    },
+    "migrationBanner.nextRoundInfoTotal" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Round %1$lld of %2$lld · More funds to migrate"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ronda %1$lld de %2$lld · Más fondos para migrar"
+          }
+        }
+      }
+    },
     "migrationBanner.progressInfo" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -10009,6 +9867,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "%1$lld de %2$lld transferencias hechas ~ %3$lld%% completo"
+          }
+        }
+      }
+    },
+    "migrationBanner.progressInfoRound" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Round %1$lld · %2$lld of %3$lld transfers done · %4$lld%% complete"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ronda %1$lld · %2$lld de %3$lld transferencias hechas · %4$lld%% completado"
+          }
+        }
+      }
+    },
+    "migrationBanner.progressInfoRoundTotal" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Round %1$lld of %2$lld · %3$lld of %4$lld transfers done · %5$lld%% complete"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ronda %1$lld de %2$lld · %3$lld de %4$lld transferencias hechas · %5$lld%% completado"
           }
         }
       }
@@ -10503,6 +10395,23 @@
         }
       }
     },
+    "migrationEntry.immediateNote" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "All funds transferred in this transaction will be revealed on-chain."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Todos los fondos transferidos en esta transacción se revelarán en la cadena."
+          }
+        }
+      }
+    },
     "migrationEntry.immediateTitle" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -10533,6 +10442,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Transferencias divididas en el tiempo · Programadas en segundo plano · Máxima privacidad"
+          }
+        }
+      }
+    },
+    "migrationEntry.privacyDisclaimerTitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Privacy Disclaimer"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aviso de privacidad"
           }
         }
       }
@@ -10690,40 +10616,6 @@
         }
       }
     },
-    "migrationFailure.torHold.body" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "The migration is on hold until Tor can be re-established. Remaining transfers are paused — retrying keeps Tor on."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "La migración está en pausa hasta que se pueda restablecer Tor. Las transferencias restantes están pausadas; reintentar mantiene Tor activado."
-          }
-        }
-      }
-    },
-    "migrationFailure.torHold.title" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Tor Connection Lost"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Conexión Tor perdida"
-          }
-        }
-      }
-    },
     "migrationFailure.torHold.bannerInfo" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -10741,6 +10633,23 @@
         }
       }
     },
+    "migrationFailure.torHold.body" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The migration is on hold until Tor can be re-established. Remaining transfers are paused — retrying keeps Tor on."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La migración está en pausa hasta que se pueda restablecer Tor. Las transferencias restantes están pausadas; reintentar mantiene Tor activado."
+          }
+        }
+      }
+    },
     "migrationFailure.torHold.statusNote" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -10754,6 +10663,23 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Esperando una conexión Tor. Las transferencias se reanudan automáticamente en cuanto Tor esté disponible: reintentar nunca desactiva Tor."
+          }
+        }
+      }
+    },
+    "migrationFailure.torHold.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tor Connection Lost"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Conexión Tor perdida"
           }
         }
       }
@@ -11089,6 +11015,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Migration plan needs update"
+          }
+        }
+      }
+    },
+    "migrationNotification.torFailureTitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Migration Failure"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Fallo de migración"
           }
         }
       }
@@ -11534,6 +11477,40 @@
         }
       }
     },
+    "migrationPlan.roundN" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Round %1$lld"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ronda %1$lld"
+          }
+        }
+      }
+    },
+    "migrationPlan.roundNOfM" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Round %1$lld of %2$lld"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ronda %1$lld de %2$lld"
+          }
+        }
+      }
+    },
     "migrationPlan.sentAgo" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -11721,7 +11698,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "The expired transfers couldn\u2019t be rebuilt. You can restart this migration step and try again, or cancel for now."
+            "value" : "The expired transfers couldn’t be rebuilt. You can restart this migration step and try again, or cancel for now."
           }
         }
       }
@@ -11743,7 +11720,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Couldn\u2019t Reschedule Transfers"
+            "value" : "Couldn’t Reschedule Transfers"
           }
         }
       }
@@ -12235,6 +12212,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Tu saldo se divide en %1$lld transferencias durante ~%2$lld horas. Quedan %3$lld transferencias pendientes."
+          }
+        }
+      }
+    },
+    "migrationStatus.done" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Done"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hecho"
           }
         }
       }
@@ -12815,9 +12809,6 @@
         }
       }
     },
-    "No transfers scheduled yet." : {
-
-    },
     "notEnoughFreeSpace.dataAvailable" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -12903,9 +12894,6 @@
           }
         }
       }
-    },
-    "Orchard ZEC" : {
-
     },
     "osStatusError.error" : {
       "extractionState" : "manual",
@@ -18113,9 +18101,6 @@
           }
         }
       }
-    },
-    "Strings on this screen are intentionally left in English — it's a debug-only tool, never shown outside testnet builds, and isn't part of the localized catalogue." : {
-
     },
     "supportData.appVersionItem.bundleIdentifier" : {
       "extractionState" : "manual",
