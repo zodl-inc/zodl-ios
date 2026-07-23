@@ -1288,10 +1288,14 @@ import ComposableArchitecture
         #expect(reconcileCalls.value == 0)
     }
 
-    /// The Keystone propose leg gets the same treatment: `ZcashError.migrationPlanStale` from
-    /// `proposeMigrationPCZTs` (inside `proposeKeystoneBatch`) re-proposes a fresh schedule instead
-    /// of delegating a stale batch to the coordinator for signing.
-    @MainActor @Test func confirmTappedWithKeystoneAccountWhenProposeMigrationPCZTsThrowsMigrationPlanStaleReProposesFreshScheduleShowsNoticeWithoutDelegating() async {
+    /// MOB-1458 (final review I1): the Keystone propose leg's plan-stale recovery RESTARTS (not
+    /// re-proposes). `proposeKeystoneBatch`'s run-creating `proposeNoteSplitPCZTs` means a plain
+    /// re-propose can never converge on the committed run (infinite toast loop), so the Keystone catch
+    /// calls `restartCurrentMigrationStep` — which both cancels any stranded run AND returns a fresh,
+    /// committable preview — and feeds its schedule through the SAME `.planStaleRefreshed` apply+toast.
+    /// (The stateless `proposeNoteSplitPCZTs → []` mock can't reproduce the non-convergence itself; the
+    /// achievable, load-bearing assertion is the pinned call CHOICE: restart, never re-propose.)
+    @MainActor @Test func confirmTappedWithKeystoneAccountWhenProposeMigrationPCZTsThrowsMigrationPlanStaleRestartsFreshScheduleShowsNoticeWithoutDelegating() async {
         let staleSchedule = MigrationSchedule(
             transfers: [
                 MigrationTransferProposal(id: "stale", amount: Zatoshi(500_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
@@ -1305,6 +1309,7 @@ import ComposableArchitecture
             estimatedDurationHours: 18
         )
         let proposeMigrationPCZTsCalls = LockIsolated<Int>(0)
+        let restartCalls = LockIsolated<Int>(0)
         let proposeMigrationTransfersCalls = LockIsolated<Int>(0)
         var state = MigrationTransferPlan.State(variant: .scheduled)
         state.schedule = staleSchedule
@@ -1317,6 +1322,11 @@ import ComposableArchitecture
                 proposeMigrationPCZTsCalls.withValue { $0 += 1 }
                 throw ZcashError.migrationPlanStale
             }
+            $0.sdkSynchronizer.restartCurrentMigrationStep = { _ in
+                restartCalls.withValue { $0 += 1 }
+                return freshSchedule
+            }
+            // Pinned NOT to be called on the Keystone leg — a re-propose here would loop forever.
             $0.sdkSynchronizer.proposeMigrationTransfers = { _ in
                 proposeMigrationTransfersCalls.withValue { $0 += 1 }
                 return freshSchedule
@@ -1337,7 +1347,8 @@ import ComposableArchitecture
         #expect(store.state.isFailurePresented == false)
         #expect(store.state.toast == .topDelayed(String(localizable: .migrationPlanStaleRefreshed)))
         #expect(proposeMigrationPCZTsCalls.value == 1)
-        #expect(proposeMigrationTransfersCalls.value == 1)
+        #expect(restartCalls.value == 1)
+        #expect(proposeMigrationTransfersCalls.value == 0)
     }
 
     /// Regression: a DIFFERENT `ZcashError` case on the software commit path — proving the new

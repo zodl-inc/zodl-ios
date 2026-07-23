@@ -4683,6 +4683,181 @@ import ComposableArchitecture
         #expect(planState.variant == MigrationTransferPlan.State.Variant.recreated)
         #expect(planState.injectedSchedule == restartedSchedule)
     }
+
+    // MARK: - MOB-1458 (final review): C1 abandon-never-cancels, I2 deferred-store, I3 single-flight
+
+    /// C1: abandoning a `.recoveryRefresh` Keystone ceremony (here via an empty/mismatched scan)
+    /// pops back to Recovery and clears the context like any abandon — but must NOT
+    /// `restartCurrentMigrationStep`, because that ceremony operates on the long-committed run the
+    /// expired-transfer refresh rebuilt in place (it did not create it). Cancelling would discard the
+    /// user's committed run without consent.
+    @MainActor @Test func expiredRecoveryKeystoneCeremonyAbandonDoesNotCancelTheCommittedRun() async {
+        let restartCalls = LockIsolated<Int>(0)
+        let schedule = MigrationSchedule(
+            transfers: [
+                MigrationTransferProposal(id: "k0", amount: Zatoshi(4_000_000), anchorHeight: 700, nextExecutableAfterHeight: 700, expiryHeight: 800)
+            ],
+            estimatedDurationHours: 10
+        )
+        let unsigned: [MigrationUnsignedTransferPczt] = [MigrationUnsignedTransferPczt(id: "k0", pczt: Data([0x44]))]
+
+        var state = MigrationCoordFlow.State()
+        state.$selectedWalletAccount.withLock { $0 = walletAccount(keystone: true, idByte: 42) }
+        state.pendingKeystoneSigning = .recoveryRefresh(schedule: schedule)
+        state.path.append(.recovery(MigrationRecovery.State(reason: .expired, isFlowRoot: true)))
+        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: unsigned)))
+        state.path.append(.scan(Scan.State.initial))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.restartCurrentMigrationStep = { _ in
+                restartCalls.withValue { $0 += 1 }
+                return MigrationSchedule(transfers: [], estimatedDurationHours: 0)
+            }
+        }
+        store.exhaustivity = .off
+
+        // Empty scanned batch → re-pair fails → `.keystoneScanAbandoned`.
+        await store.send(.path(.element(id: 2, action: .scan(.foundPCZTBatch([])))))
+        await store.receive(\.keystoneScanAbandoned)
+        await store.finish()
+
+        #expect(restartCalls.value == 0)
+        #expect(store.state.pendingKeystoneSigning == nil)
+        guard case .recovery = try? #require(store.state.path.last) else {
+            Issue.record("Expected .recovery back on top after abandon (scan + keystoneSign popped)")
+            return
+        }
+    }
+
+    /// I2 (defensive): a `.recoveryRefresh` resume with a non-nil `pendingKeystoneScheduleStore` (as
+    /// a preps-carrying refresh would leave) must run the first-delivery kick — broadcasting the prep
+    /// and running the deferred `storeSignedMigrationTransactions` + `recordCommittedSchedule` — not
+    /// drop them while the UI reports success.
+    @MainActor @Test func recoveryRefreshResumeWithDeferredScheduleStoreRunsTheKickAndRecordsSchedule() async {
+        let schedule = MigrationSchedule(
+            transfers: [
+                MigrationTransferProposal(id: "k0", amount: Zatoshi(4_000_000), anchorHeight: 700, nextExecutableAfterHeight: 700, expiryHeight: 800)
+            ],
+            estimatedDurationHours: 10
+        )
+        let scheduleEntries: [MigrationSignedTransferPczt] = [MigrationSignedTransferPczt(id: "k0", pczt: Data([0x44, 0x99]))]
+        let storeCalls = LockIsolated<[[MigrationSignedTransferPczt]]>([])
+        let recordCommittedScheduleCalls = LockIsolated<[MigrationSchedule]>([])
+        let account = walletAccount(keystone: true, idByte: 43)
+        let stash = MigrationCoordFlow.PendingScheduleStore(
+            accountUUID: account.id,
+            scheduleEntries: scheduleEntries,
+            schedule: schedule
+        )
+
+        var state = MigrationCoordFlow.State()
+        state.$selectedWalletAccount.withLock { $0 = account }
+        state.pendingKeystoneSigning = .recoveryRefresh(schedule: schedule)
+        state.path.append(.recovery(MigrationRecovery.State(reason: .expired, isFlowRoot: true)))
+        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: [])))
+        state.path.append(.scan(Scan.State.initial))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, stored in storeCalls.withValue { $0.append(stored) } }
+            // A prep broadcast lands, so the deferred schedule store runs.
+            $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in MigrationTransferResult.success(txId: "prep-tx") }
+            $0.migrationBGScheduler.scheduleFirstWindow = { }
+            $0.migrationManager.reconcile = { }
+            $0.migrationManager.recordTransferBroadcast = { _, _ in }
+            $0.migrationManager.recordCommittedSchedule = { _, schedule in recordCommittedScheduleCalls.withValue { $0.append(schedule) } }
+            $0.migrationManager.migrationSummary = { _ in MigrationSummary.zero }
+            $0.migrationManager.migrationNetworkOptions = { _ in Self.defaultNetworkPrivacyOptions }
+            $0.migrationManager.refreshMigrationSyncGate = { }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.keystoneSigningSubmitted(context: .recoveryRefresh(schedule: schedule), pendingScheduleStore: stash))
+        await store.receive(\.pushHydratedPathState)
+        await store.receive(\.deferredKeystoneScheduleStored)
+        await store.finish()
+
+        #expect(storeCalls.value == [scheduleEntries])
+        #expect(recordCommittedScheduleCalls.value == [schedule])
+        guard case .scheduled = try? #require(store.state.path.last) else {
+            Issue.record("Expected .scheduled after the recovery-refresh resume ran the deferred store")
+            return
+        }
+    }
+
+    /// I3: a second Recovery `.recreate` that arrives while one is already in flight
+    /// (`isRecovering == true`) is a no-op — no second refresh/restart, no duplicate navigation.
+    @MainActor @Test func recoveryRecreateWhileAlreadyRecoveringIsNoOp() async {
+        let refreshCalls = LockIsolated<Int>(0)
+        let restartCalls = LockIsolated<Int>(0)
+
+        var recoveryState = MigrationRecovery.State(reason: .expired, isFlowRoot: true)
+        recoveryState.isRecovering = true
+        var state = MigrationCoordFlow.State()
+        state.path.append(.recovery(recoveryState))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.refreshStaleMigrationTransfers = { _, _ in
+                refreshCalls.withValue { $0 += 1 }
+                return MigrationSchedule(transfers: [], estimatedDurationHours: 0)
+            }
+            $0.sdkSynchronizer.restartCurrentMigrationStep = { _ in
+                restartCalls.withValue { $0 += 1 }
+                return MigrationSchedule(transfers: [], estimatedDurationHours: 0)
+            }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 0, action: .recovery(.delegate(.recreate)))))
+        await store.finish()
+
+        #expect(refreshCalls.value == 0)
+        #expect(restartCalls.value == 0)
+        #expect(store.state.path.count == 1)
+    }
+
+    /// I3: the coordinator SETS `isRecovering` on the recovery element synchronously when handling
+    /// `.recreate` (button disables / spinner), and CLEARS it on the failure alert so Cancel/Restart
+    /// leave a usable button.
+    @MainActor @Test func recoveryRefreshSetsIsRecoveringAndClearsItOnFailure() async {
+        struct RefreshFailure: Error { }
+
+        var state = MigrationCoordFlow.State()
+        state.path.append(.recovery(MigrationRecovery.State(reason: .expired, isFlowRoot: true)))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.refreshStaleMigrationTransfers = { _, _ in throw RefreshFailure() }
+            $0.derivationTool = .liveValue
+            $0.mnemonic = .mock
+            $0.walletStorage = .noOp
+            $0.zcashSDKEnvironment = .testnet
+            $0.migrationManager.reconcile = { }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 0, action: .recovery(.delegate(.recreate)))))
+        // Set synchronously by the handler — the async refresh failure is buffered until received below.
+        guard case let .recovery(midState) = store.state.path.last else {
+            Issue.record("Expected .recovery on top after .recreate")
+            return
+        }
+        #expect(midState.isRecovering == true)
+
+        await store.receive(\.recoveryRefreshFailed)
+        #expect(store.state.alert != nil)
+        guard case let .recovery(afterState) = store.state.path.last else {
+            Issue.record("Expected .recovery still on top under the alert")
+            return
+        }
+        #expect(afterState.isRecovering == false)
+    }
 }
 
 // MARK: - MOB-1496 (W6 §2): re-pair validation + sentinel split — pure function table

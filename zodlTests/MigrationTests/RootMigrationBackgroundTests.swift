@@ -1632,8 +1632,8 @@ import ComposableArchitecture
 
     // MARK: - MOB-1496 (W3): `.retryStart` deferral (SDK-owned broadcast->sync privacy gate)
 
-    /// `preparedState` opens `.retryStart`'s own `isPrepared` guard (mirrors
-    /// `syncRequiredNotDeferredRearmsAndStashesBgTaskForSyncOnlySession`'s fixture above).
+    /// `preparedState` opens `.retryStart`'s own `isPrepared` guard — a `SynchronizerState` whose
+    /// `syncStatus` is `.upToDate`, i.e. past the not-yet-prepared gate.
     private static let preparedState: SynchronizerState = {
         var state = SynchronizerState.zero
         state.syncStatus = SyncStatus.upToDate

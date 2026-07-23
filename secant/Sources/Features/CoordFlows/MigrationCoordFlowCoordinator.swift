@@ -756,7 +756,8 @@ extension MigrationCoordFlow {
                 // of the Keystone store effect — v1 semantics hold for both: abandon discards
                 // everything, the user re-runs the ceremony from a fresh preview, so cancelling the
                 // stray run is correct here regardless of which guard sent this action.
-                let hadPendingCeremony = state.pendingKeystoneSigning != nil
+                let pendingContext = state.pendingKeystoneSigning
+                let hadPendingCeremony = pendingContext != nil
                 state.pendingKeystoneSigning = nil
                 state.pendingKeystoneSigningAccountUUID = nil
                 // MOB-1513 (E3): abandoning discards any accumulated multi-round progress too — a
@@ -772,6 +773,18 @@ extension MigrationCoordFlow {
                 state.path.removeLast(topElementIsScan ? 2 : 1)
 
                 guard hadPendingCeremony, let accountUUID = state.selectedWalletAccount?.id else { return .none }
+                // MOB-1458 (final review C1): the abandon-cancels-the-stray-run premise above
+                // ("`pendingKeystoneSigning != nil` ⇒ THIS ceremony created the run ⇒ cancelling is a
+                // safe abandon") holds for `.planCommit`/`.immediateReview`, whose ceremony's own
+                // `proposeKeystoneBatch`/`createPCZTFromProposal` created the run — but NOT for
+                // `.recoveryRefresh`, whose ceremony operates on the long-committed, possibly
+                // partially-delivered run that the EXPIRED-transfer refresh rebuilt in place (refresh
+                // only rebuilds expired rows; it does not create the run). Cancelling here (a QR
+                // re-pair mismatch, the firmware gate, or a store failure) would discard the user's
+                // committed run without consent — and restart was demoted to an explicit alert choice
+                // this very round. Skip the cancel; the rebuilt rows simply re-expire and recovery
+                // re-offers, matching the documented process-death behavior.
+                if case .recoveryRefresh? = pendingContext { return .none }
                 return .run { [sdkSynchronizer, accountUUID] _ in
                     // Fire-and-forget: a failure here just leaves the stray run for the next attempt
                     // to encounter (and cancel) itself, same as today.
@@ -918,9 +931,19 @@ extension MigrationCoordFlow {
                 //   consent); Keystone re-serves ONLY the rebuilt rows through the existing QR ceremony
                 //   (nil usk). A full restart is offered only as the failure alert's fallback.
                 // - `.invalidTransfer`: keep the pre-Task-2 restart behavior (`.recoveryRestartRequested`).
-            case .path(.element(id: _, action: .recovery(.delegate(.recreate)))):
+                //
+                // MOB-1458 (final review I3): single-flight — set `isRecovering` on the recovery
+                // element (disabling its Continue button, showing a spinner) and no-op a second
+                // `.recreate` that arrives while one is already in flight. The coordinator owns the
+                // async work, so it owns the flag, exactly like `.status(.delegate(.reschedule))` sets
+                // `isRescheduling`. The flag is cleared on the failure alert below and reset by the
+                // recovery screen's own `.onAppear` when it re-appears after navigating away.
+            case .path(.element(id: let id, action: .recovery(.delegate(.recreate)))):
+                guard case .recovery(var recoveryState) = state.path[id: id] else { return .none }
+                guard !recoveryState.isRecovering else { return .none }
                 guard let account = state.selectedWalletAccount else { return .none }
-                guard case let .recovery(recoveryState) = state.path.last else { return .none }
+                recoveryState.isRecovering = true
+                state.path[id: id] = .recovery(recoveryState)
 
                 switch recoveryState.reason {
                 case .notesSpent:
@@ -1034,6 +1057,13 @@ extension MigrationCoordFlow {
                 // MOB-1458 (Task 2): a refresh (or the Keystone batch propose after it) threw — offer
                 // the restart-or-cancel alert. No automatic retry.
             case .recoveryRefreshFailed:
+                // MOB-1458 (final review I3): clear the in-flight flag before presenting the alert —
+                // the alert shows OVER the still-top recovery screen (no navigation, so its own
+                // `.onAppear` won't fire to reset it), and Cancel must leave a tappable Continue button.
+                if let recoveryId = state.path.ids.last, case .recovery(var recoveryState) = state.path[id: recoveryId] {
+                    recoveryState.isRecovering = false
+                    state.path[id: recoveryId] = .recovery(recoveryState)
+                }
                 state.alert = AlertState.recoveryRefreshFailed()
                 return .none
 
@@ -1488,17 +1518,38 @@ extension MigrationCoordFlow {
 
         case .recoveryRefresh(let schedule):
             // MOB-1458 (Task 2): the Keystone expired-recovery ceremony lands on the SAME Scheduled
-            // screen the software lane pushes, hydrated from the RETURNED post-refresh schedule
-            // (`scheduledState`). No first-delivery kick / `scheduleFirstWindow` here (unlike a fresh
-            // `planCommit`): a refresh re-spends existing funding notes on fresh scheduled heights and
-            // never builds preparation (note-split) transactions, so `storeKeystoneSignedBatch` always
-            // took its no-preps branch (schedule already stored + recorded + reconciled, no deferred
-            // store to run) and the rebuilt transfers deliver via the existing next-due machinery —
-            // exactly like the software lane, keeping the two recovery lanes symmetric.
+            // screen the software lane pushes, hydrated from the RETURNED post-refresh schedule.
+            //
+            // NORMAL refresh (no preps): `storeKeystoneSignedBatch` already stored + recorded +
+            // reconciled the schedule inline (`pendingKeystoneScheduleStore == nil`), so this is the
+            // no-kick, software-symmetric landing — a refresh re-spends existing funding notes on
+            // fresh scheduled heights and the rebuilt transfers deliver via the existing next-due
+            // machinery.
+            //
+            // MOB-1458 (final review I2, defensive): if a refresh ever DID serve preparation
+            // (note-split) entries (candidate path: a prior `.keystoneSignRejected` left the run's
+            // preps unsigned → they expire → a recovery refresh re-serves them),
+            // `storeKeystoneSignedBatch` deferred the schedule store into `pendingKeystoneScheduleStore`
+            // — so run the SAME first-delivery kick the `planCommit` lane uses (broadcast the prep, then
+            // the deferred `storeSignedMigrationTransactions` + `recordCommittedSchedule`), and hydrate
+            // via `deferredScheduledState`, rather than dropping the signed transfers + committed
+            // schedule on the floor while the UI reports success. Whether that path is engine-reachable
+            // is unconfirmed; this is cheap and harmless if unreachable. Split into two effects so the
+            // NORMAL (no-stash) path never even CAPTURES `migrationBGScheduler` — reading an
+            // `@Dependency` at capture time resolves it, which would otherwise force every no-preps
+            // recovery test to stub a BG-scheduler member it never calls.
             let accountUUID = state.selectedWalletAccount?.id
-            return .run { [schedule, accountUUID] send in
-                let scheduled = await scheduledState(accountUUID: accountUUID, schedule: schedule)
+            guard let pendingScheduleStore = state.pendingKeystoneScheduleStore else {
+                return .run { [accountUUID, schedule] send in
+                    let scheduled = await scheduledState(accountUUID: accountUUID, schedule: schedule)
+                    await send(.pushHydratedPathState(.scheduled(scheduled)))
+                }
+            }
+            return .run { [migrationBGScheduler, accountUUID, schedule, pendingScheduleStore] send in
+                let scheduled = await deferredScheduledState(accountUUID: accountUUID, schedule: schedule)
                 await send(.pushHydratedPathState(.scheduled(scheduled)))
+                await migrationBGScheduler.scheduleFirstWindow()
+                await runFirstDeliveryKick(accountUUID: accountUUID, pendingScheduleStore: pendingScheduleStore, send: send)
             }
         }
     }

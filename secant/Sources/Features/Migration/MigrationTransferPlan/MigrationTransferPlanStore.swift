@@ -382,16 +382,18 @@ struct MigrationTransferPlan {
         }
     }
 
-    /// MOB-1458 (Task 3): shared plan-stale recovery for BOTH pre-commit consent-echo paths
-    /// (`commitEffect`'s `signAndStoreMigrationSchedule` echo, `requestKeystoneSignature`'s
-    /// `proposeMigrationPCZTs` echo). `ZcashError.migrationPlanStale` means the schedule the user
-    /// was shown no longer matches the engine's one-slot plan cache — the process restarted
-    /// between propose and confirm, the wallet's balance changed underneath the preview, or a
-    /// concurrent propose overwrote the cache. ZIP 318 draws fresh schedule randomness on every
-    /// proposal, so the SDK deliberately never signs a plan the user was not shown — the only
-    /// honest recovery is a fresh `proposeMigrationTransfers` re-propose (the SAME call
-    /// `proposeEffect`'s explicit Retry makes), re-displayed via `.planStaleRefreshed`, never a
-    /// blind re-sign/re-propose-and-immediately-recommit of the stale copy. The re-propose's OWN
+    /// MOB-1458 (Task 3): the SOFTWARE leg's plan-stale recovery (`commitEffect`'s
+    /// `signAndStoreMigrationSchedule` echo). MOB-1458 (final review I1): the Keystone leg no longer
+    /// shares this — it uses `restartAfterPlanStale` instead, because its `proposeKeystoneBatch`
+    /// run-creates before the echo and so cannot converge on a re-propose. `ZcashError
+    /// .migrationPlanStale` means the schedule the user was shown no longer matches the engine's
+    /// one-slot plan cache — the process restarted between propose and confirm, the wallet's balance
+    /// changed underneath the preview, or a concurrent propose overwrote the cache. ZIP 318 draws
+    /// fresh schedule randomness on every proposal, so the SDK deliberately never signs a plan the
+    /// user was not shown — the honest software-leg recovery is a fresh `proposeMigrationTransfers`
+    /// re-propose (the SAME call `proposeEffect`'s explicit Retry makes; the software commit did NOT
+    /// run-create anything, so a re-propose converges), re-displayed via `.planStaleRefreshed`, never
+    /// a blind re-sign/re-propose-and-immediately-recommit of the stale copy. The re-propose's OWN
     /// failure (a throw; an empty schedule is deliberately unfiltered here too — exactly like
     /// `proposeEffect`, since `confirmTapped`'s own zero-transfer guard is the single source of
     /// truth for "nothing to sign") falls through to the EXISTING propose-failure sheet
@@ -399,6 +401,27 @@ struct MigrationTransferPlan {
     private func refreshAfterPlanStale(accountUUID: AccountUUID, send: Send<Action>) async {
         do {
             let schedule = try await sdkSynchronizer.proposeMigrationTransfers(accountUUID)
+            await send(.planStaleRefreshed(schedule))
+        } catch {
+            await send(.transferProposalFailed)
+        }
+    }
+
+    /// MOB-1458 (final review I1): the KEYSTONE leg's plan-stale recovery — `restartCurrentMigrationStep`,
+    /// not the software leg's `proposeMigrationTransfers` re-propose. `requestKeystoneSignature`'s
+    /// `proposeKeystoneBatch` calls `proposeNoteSplitPCZTs` (run-CREATING, persists an unsigned run)
+    /// BEFORE the echo-verified `proposeMigrationPCZTs`, whose echo checks against the STORED committed
+    /// run — and the SDK's contract (`ZcashRustBackendWelding`/`MIGRATING.md`) is that re-proposing
+    /// cannot converge on an already-committed run: a plain re-propose here would strand the run and
+    /// loop the plan-stale toast forever (each round draws fresh randomness that still mismatches the
+    /// committed cache). `restartCurrentMigrationStep` is the one call that BOTH cancels any stranded
+    /// run AND returns a fresh, committable preview — so it converges in a single round. Its returned
+    /// schedule feeds the SAME `.planStaleRefreshed` action (apply + toast) the software leg uses; its
+    /// own throw falls through to the existing `.transferProposalFailed` sheet, exactly like
+    /// `refreshAfterPlanStale`.
+    private func restartAfterPlanStale(accountUUID: AccountUUID, send: Send<Action>) async {
+        do {
+            let schedule = try await sdkSynchronizer.restartCurrentMigrationStep(accountUUID)
             await send(.planStaleRefreshed(schedule))
         } catch {
             await send(.transferProposalFailed)
@@ -441,7 +464,10 @@ struct MigrationTransferPlan {
                 )
                 await send(.delegate(.keystoneSignRequested(pczts)))
             } catch ZcashError.migrationPlanStale {
-                await refreshAfterPlanStale(accountUUID: account.id, send: send)
+                // MOB-1458 (final review I1): the KEYSTONE leg recovers via restart, NOT re-propose —
+                // `proposeKeystoneBatch`'s run-creating `proposeNoteSplitPCZTs` means a re-propose can
+                // never converge on the committed run (infinite toast loop). See `restartAfterPlanStale`.
+                await restartAfterPlanStale(accountUUID: account.id, send: send)
             } catch {
                 await send(.noteSplitFailed)
             }
