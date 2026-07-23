@@ -28,7 +28,6 @@ directly impact users rather than highlighting other crucial architectural updat
 - [MOB-1467] Scheduled Ironwood migration transfers can now send from background tasks, with local notifications for progress, required actions, and manual-mode send reminders — dormant until the migration SDK ships.
 - [MOB-1468] Keystone hardware-wallet accounts can complete the Ironwood migration — transfers are signed by QR in a single batched session — dormant until the migration SDK and Keystone batch support ship.
 - [MOB-1483] The Ironwood migration is only offered once the network has actually activated Ironwood — before the chain tip reaches the activation height there is no migration banner, no way into the flow, and no migration background work or notifications. The offer appears automatically once the activated network is detected, without restarting the app.
-- [MOB-1480] Testnet builds gain a migration simulator: long-press the balance on the home screen to open a debug menu that walks every Ironwood migration path — scenario presets, failure injection, simulated time, on-demand background-delivery runs with real notifications, and a simulated Keystone signing pass. Off outside testnet builds; production behavior is unchanged.
 - [MOB-1487] When a small Orchard remainder is left after migrating, Migration Complete now explains the privacy risk and offers a choice: lock the remainder so it stays unspendable, or migrate it anyway with one final transfer. A help button explains what locking does (local to this wallet; restoring removes it; unlocking comes in a future release). Dormant until the migration SDK ships.
 - [MOB-1487] The send form warns when a send would spend Orchard funds after Ironwood activates, recommending migration first to avoid revealing the amount on-chain, with the Review button picking up a warning style. Dormant until the migration SDK ships.
 - [MOB-1496] Keystone hardware-wallet accounts can complete every part of the Ironwood migration by QR — including migrating a leftover Orchard remainder ("Migrate anyway") — signed together with the rest of the migration in the same single batched session, even when that batch includes a note split; a scan that comes back corrupted or incomplete is safely abandoned rather than partially processed. Gated behind Ironwood network activation and not yet in a released build.
@@ -53,6 +52,7 @@ directly impact users rather than highlighting other crucial architectural updat
 
 ### Removed
 - [MOB-1513] The "Splitting Funds" screen is removed — it isn't part of the final designs. While the balance split confirms, the Home banner now shows "Migration Progress" with the transfer ring (instead of a confusing "Migration Required" title after the plan was already confirmed), and tapping it opens the Migration Progress screen, whose Split Balance row tracks the split until it completes. Gated behind Ironwood network activation and not yet in a released build.
+- [MOB-1458] Remove the internal migration simulator debug tool.
 
 ## 3.7.3 build 1 (20026-07-12)
 

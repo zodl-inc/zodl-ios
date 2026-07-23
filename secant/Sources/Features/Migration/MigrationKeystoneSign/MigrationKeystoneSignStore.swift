@@ -17,11 +17,6 @@
 //  `pcztForUI == nil`. The coordinator consumes both delegates (`.getSignature` -> scan ->
 //  submit/store, `.rejected` -> deferred pop) — MOB-1468.
 //
-//  MOB-1480 adds a simulator-only bypass: a "Simulate signed result" button, visible iff
-//  `MigrationSimulatorFlag.isEnabled && migrationSimulator.readout().isActive` (computed once in
-//  `onAppear`), delegates `.simulateSignature` so the coordinator can feed the exact post-scan path
-//  with the batch already carried in `State.pczts` — no physical Keystone device required.
-//
 
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
@@ -31,9 +26,6 @@ struct MigrationKeystoneSign {
     @ObservableState
     struct State: Equatable {
         var pczts: [MigrationUnsignedTransferPczt] = []
-        /// MOB-1480: drives the simulator-only "Simulate signed result" button's visibility — set
-        /// once in `onAppear`, never touched anywhere else.
-        var isSimulatorBypassVisible = false
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
 
         init(pczts: [MigrationUnsignedTransferPczt] = []) {
@@ -46,19 +38,12 @@ struct MigrationKeystoneSign {
         case getSignatureTapped
         case onAppear
         case rejectTapped
-        /// MOB-1480: the simulator-only "Simulate signed result" button tap (visible iff
-        /// `State.isSimulatorBypassVisible`). The coordinator handles the delegate by mirroring the
-        /// real scanned-batch path, minus the scan step itself.
-        case simulateSignatureTapped
 
         enum Delegate: Equatable {
             case getSignature
             case rejected
-            case simulateSignature
         }
     }
-
-    @Dependency(\.migrationSimulator) var migrationSimulator
 
     init() { }
 
@@ -72,14 +57,10 @@ struct MigrationKeystoneSign {
                 return .send(.delegate(.getSignature))
 
             case .onAppear:
-                state.isSimulatorBypassVisible = MigrationSimulatorFlag.isEnabled && migrationSimulator.readout().isActive
                 return .none
 
             case .rejectTapped:
                 return .send(.delegate(.rejected))
-
-            case .simulateSignatureTapped:
-                return .send(.delegate(.simulateSignature))
             }
         }
     }

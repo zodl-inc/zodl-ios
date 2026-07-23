@@ -106,14 +106,6 @@ struct HomeView: View {
                     InAppBrowserView(url: url)
                 }
             }
-            .sheet(item: $store.scope(state: \.migrationSimulator, action: \.migrationSimulator)) { panelStore in
-                // The sheet content closure is escaping — needs its own `WithPerceptionTracking`
-                // so reads inside the presented store register with TCA's observation system
-                // (same precedent as `SettingsView`'s `votingCoordFlow` `fullScreenCover(item:)`).
-                WithPerceptionTracking {
-                    MigrationSimulatorPanelView(store: panelStore)
-                }
-            }
             .zashiSheet(isPresented: $store.accountSwitchRequest, horizontalPadding: Design.Spacing.edgeToEdgeSpacing) {
                 accountSwitchContent()
             }

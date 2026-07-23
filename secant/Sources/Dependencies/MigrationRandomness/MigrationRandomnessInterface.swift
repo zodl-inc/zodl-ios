@@ -4,10 +4,7 @@
 //
 //  Minimal injectable randomness seam (MOB-1497 — R7's uniform-random broadcast-endpoint pick, which
 //  replaces the old benchmark-based selection in `MigrationManagerLiveKey.createNetworkSnapshot`).
-//  There was no existing house RNG seam to reuse: the migration SDK simulator's `SplitMix64`
-//  (`MigrationSimulatorModels.swift`) is a seedable generator, but it is purpose-built for
-//  reproducible note-split derivation and is not exposed as a `@Dependency`; nothing else in the app
-//  injects randomness.
+//  There was no existing house RNG seam to reuse: nothing else in the app injects randomness.
 //
 //  Exposes exactly the one primitive `createNetworkSnapshot` needs — a uniformly random index into a
 //  non-empty candidate list — rather than a raw `RandomNumberGenerator`. A raw generator is awkward

@@ -3558,8 +3558,8 @@ struct MigrationManagerTests {
         #expect(hasInvalidCalls.withValue { $0 } == 0)
     }
 
-    /// `resetPersistedFlags()` (the migration SDK simulator's debug "Reset app migration flags"
-    /// control) clears every KNOWN account's persisted schedule, not just the selected one. R8-T3
+    /// `resetPersistedFlags()` (the debug-only "Reset app migration flags"
+    /// reset) clears every KNOWN account's persisted schedule, not just the selected one. R8-T3
     /// (S2): also clears every known account's own per-account acknowledged flag now (the flag
     /// itself moved off `MigrationGateStorage.resetPersistedFlags()`'s wallet-wide reach).
     @Test func resetPersistedFlagsClearsEveryKnownAccountsPersistedSchedule() throws {

@@ -105,7 +105,7 @@ import ComposableArchitecture
     /// MOB-1496 (W6): `migrationManager.migrationNetworkOptions(_:)` has no macro default (unlike the
     /// SDK synchronizer's `.noOp`) — any test that reaches the note-split-broadcast or dust-execute
     /// branch must mock it explicitly or trip `unimplemented`. Same fixture shape as
-    /// `MigrationTransferPlanTests`/`SimulatedSDKSynchronizerTests`.
+    /// `MigrationTransferPlanTests`.
     private static let defaultNetworkPrivacyOptions = MigrationNetworkPrivacyOptions(
         useTor: false,
         submissionEndpoint: LightWalletEndpoint(address: "", port: 0)
@@ -623,7 +623,7 @@ import ComposableArchitecture
         #expect(store.state.mode == MigrationMode.immediate)
         #expect(setMigrationModeCalls.value == [MigrationMode.immediate])
         // MOB-1496: `selectMigrationMode` had no real-SDK counterpart — `setMigrationMode` above is
-        // the only mode-setting call now (see `SDKSynchronizerClient+Simulated.swift`'s doc).
+        // the only mode-setting call now.
         // MOB-1487 (round 3): the flag-on shortcut now also persists — previously only the sheet's
         // own confirm did (a pre-existing gap; a background send reads the persisted copy, not this
         // in-memory state). MOB-1496 (W4): the coordinator no longer materializes/stashes
@@ -1386,66 +1386,6 @@ import ComposableArchitecture
         #expect(signState.pczts == pczts)
     }
 
-    /// A multi-round ceremony accumulates each round's signed entries and completes ONLY after the
-    /// last round: round 0's signing advances to round 1 (re-arming `keystoneSign` with round 1's
-    /// slice) with no store, and round 1's signing hands the FULLY-accumulated batch to the same
-    /// `storeSignedMigrationTransactions` entry the single-round ceremony used. Driven through the
-    /// simulator bypass (no `scan`/firmware bytes needed to exercise the accumulate/advance loop).
-    @MainActor @Test func multiRoundSimulatorCeremonyAccumulatesAcrossRoundsAndStoresFullBatchOnlyAfterLastRound() async {
-        let storeCalls = LockIsolated<[[MigrationSignedTransferPczt]]>([])
-        let round0: [MigrationUnsignedTransferPczt] = [
-            MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xA0])),
-            MigrationUnsignedTransferPczt(id: "t1", pczt: Data([0xA1]))
-        ]
-        let round1: [MigrationUnsignedTransferPczt] = [
-            MigrationUnsignedTransferPczt(id: "t2", pczt: Data([0xA2]))
-        ]
-        var state = MigrationCoordFlow.State()
-        state.pendingKeystoneSigning = .planCommit
-        state.pendingKeystoneSigningAccountUUID = Self.defaultAccount.id
-        state.keystoneRounds = [round0, round1]
-        state.keystoneRoundIndex = 0
-        state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .scheduled)))
-        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: round0)))
-        let store = TestStore(initialState: state) {
-            MigrationCoordFlow()
-        } withDependencies: {
-            $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, stored in
-                storeCalls.withValue { $0.append(stored) }
-            }
-            $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in nil }
-            $0.migrationBGScheduler.scheduleFirstWindow = { }
-            $0.migrationManager.reconcile = { }
-            $0.migrationManager.migrationSummary = { _ in MigrationSummary.zero }
-            $0.migrationManager.migrationNetworkOptions = { _ in Self.defaultNetworkPrivacyOptions }
-            $0.migrationManager.refreshMigrationSyncGate = { }
-        }
-        store.exhaustivity = .off
-
-        // Round 0: accumulate, then advance to round 1 (deferred) — NO store yet.
-        await store.send(.path(.element(id: 1, action: .keystoneSign(.delegate(.simulateSignature)))))
-        await store.receive(\.keystoneAdvanceToNextRound)
-        #expect(storeCalls.value.isEmpty)
-        #expect(store.state.keystoneRoundIndex == 1)
-        #expect(store.state.keystoneAccumulatedSigned.map(\.id) == ["t0", "t1"])
-        guard case let .keystoneSign(round1State) = try? #require(store.state.path.last) else {
-            Issue.record("Expected .keystoneSign still on top, re-armed with round 1")
-            return
-        }
-        #expect(round1State.pczts == round1)
-
-        // Round 1 (last): store the FULLY-accumulated batch, reset the multi-round state.
-        await store.send(.path(.element(id: 1, action: .keystoneSign(.delegate(.simulateSignature)))))
-        await store.receive(\.keystoneSigningSubmitted)
-
-        #expect(storeCalls.value.count == 1)
-        #expect(storeCalls.value.first?.map(\.id) == ["t0", "t1", "t2"])
-        #expect(store.state.keystoneRounds.isEmpty)
-        #expect(store.state.keystoneRoundIndex == 0)
-        #expect(store.state.keystoneAccumulatedSigned.isEmpty)
-    }
-
     /// The REAL QR round-trip's inter-round advance is safe: finishing round 0 via `scan` pops the
     /// `scan` element and re-arms `keystoneSign` with round 1's slice — WITHOUT the store running yet.
     /// The pop is deferred to `.keystoneAdvanceToNextRound` so it never races `.forEach`'s delivery of
@@ -1756,47 +1696,6 @@ import ComposableArchitecture
         #expect(store.state.path.count == 1)
         guard case .transferPlan = try? #require(store.state.path.last) else {
             Issue.record("Expected pop back to .transferPlan (scan + sign removed) — an honest failure, not a false 'Migration Scheduled'")
-            return
-        }
-    }
-
-    /// [MOB-1496] R8-T2 (#5-b): same fix, through the simulator-only bypass — proves it lives in the
-    /// shared `storeKeystoneSignedBatch` helper both callers use, not just the real round-trip. Never
-    /// pushes `.scan`, so only 1 element (`keystoneSign`) unwinds — mirrors
-    /// `keystoneSignSimulateSignatureWithSplitStoreFailureAbandonsSessionWithoutScanPopped`'s pop-count
-    /// proof for the split-store-failure branch.
-    @MainActor @Test func keystoneSignSimulateSignatureAbandonsSessionWithoutSubmittingWhenStoreFails() async {
-        struct StoreFailure: Error { }
-        let recordCommittedScheduleCalls = LockIsolated<Int>(0)
-        let reconcileCalls = LockIsolated<Int>(0)
-        let scheduleFirstWindowCalls = LockIsolated<Int>(0)
-        var state = MigrationCoordFlow.State()
-        state.pendingKeystoneSigning = .planCommit
-        state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .scheduled)))
-        state.path.append(
-            .keystoneSign(MigrationKeystoneSign.State(pczts: [MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xAA]))]))
-        )
-        let store = TestStore(initialState: state) {
-            MigrationCoordFlow()
-        } withDependencies: {
-            $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, _ in throw StoreFailure() }
-            $0.migrationBGScheduler.scheduleFirstWindow = { scheduleFirstWindowCalls.withValue { $0 += 1 } }
-            $0.migrationManager.recordCommittedSchedule = { _, _ in recordCommittedScheduleCalls.withValue { $0 += 1 } }
-            $0.migrationManager.reconcile = { reconcileCalls.withValue { $0 += 1 } }
-        }
-        store.exhaustivity = .off
-
-        await store.send(.path(.element(id: 1, action: .keystoneSign(.delegate(.simulateSignature)))))
-        await store.receive(\.keystoneScanAbandoned)
-
-        #expect(recordCommittedScheduleCalls.value == 0)
-        #expect(reconcileCalls.value == 0)
-        #expect(scheduleFirstWindowCalls.value == 0)
-        #expect(store.state.pendingKeystoneSigning == nil)
-        #expect(store.state.path.count == 1)
-        guard case .transferPlan = try? #require(store.state.path.last) else {
-            Issue.record("Expected pop back to .transferPlan (keystoneSign removed, no .scan was ever pushed)")
             return
         }
     }
@@ -2579,54 +2478,12 @@ import ComposableArchitecture
         }
     }
 
-    /// Same split-store-failure abandon, but from the simulator-only bypass — which never pushes
-    /// `.scan`, so only 1 element (`keystoneSign`) needs popping, not 2. Proves
-    /// `keystoneScanAbandoned`'s generalized pop count is correct for this caller too.
-    @MainActor @Test func keystoneSignSimulateSignatureWithSplitStoreFailureAbandonsSessionWithoutScanPopped() async {
-        struct SplitStoreFailure: Error { }
-        let scheduleStoreCalls = LockIsolated<Int>(0)
-        var state = MigrationCoordFlow.State()
-        state.pendingKeystoneSigning = .planCommit
-        state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .scheduled)))
-        state.path.append(
-            .keystoneSign(
-                MigrationKeystoneSign.State(pczts: [
-                    MigrationUnsignedTransferPczt(id: "note-split#p0", pczt: Data([0x01])),
-                    MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xAA]))
-                ])
-            )
-        )
-        let store = TestStore(initialState: state) {
-            MigrationCoordFlow()
-        } withDependencies: {
-            $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.storeSignedNoteSplits = { _, _ in throw SplitStoreFailure() }
-            $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, _ in scheduleStoreCalls.withValue { $0 += 1 } }
-            // Never actually called on this (abandon) path, but the `.run` effect's capture list
-            // still resolves `migrationManager` when constructed — swift-dependencies requires SOME
-            // override to be registered before a test context may touch it at all.
-            $0.migrationManager.reconcile = { }
-        }
-        store.exhaustivity = .off
-
-        await store.send(.path(.element(id: 1, action: .keystoneSign(.delegate(.simulateSignature)))))
-        await store.receive(\.keystoneScanAbandoned)
-
-        #expect(scheduleStoreCalls.value == 0)
-        #expect(store.state.pendingKeystoneSigning == nil)
-        #expect(store.state.path.count == 1)
-        guard case .transferPlan = try? #require(store.state.path.last) else {
-            Issue.record("Expected pop back to .transferPlan (keystoneSign removed, no .scan was ever pushed)")
-            return
-        }
-    }
-
     /// MOB-1513: the pre-existing `noteSplitContinuedAfterImmediateReviewKeystoneSplitRoutingResumesToSendingAndClearsPendingResume`
     /// test covered `.immediateReview` carrying a note-split sentinel entry through the generic
     /// split-routing machinery (`storeKeystoneSignedBatch`/`resumeAfterKeystoneSigning`). That
     /// scenario is now impossible to reach: the immediate lane's Keystone PCZT is a single ordinary-
     /// send PCZT (`createPCZTFromProposal`), which never carries a note-split sentinel, AND
-    /// `.scan(.foundPCZTBatch)`/`.simulateSignature` both intercept `.immediateReview` via
+    /// `.scan(.foundPCZTBatch)` intercepts `.immediateReview` via
     /// `submitImmediateKeystoneTransaction` BEFORE `storeKeystoneSignedBatch` (and its split-routing)
     /// ever runs — see `foundPCZTBatchForImmediateReviewContextAddsProofsSubmitsRecordsAndPushesSendingSuccess`
     /// below for the lane's real post-signing coverage now.
@@ -4147,123 +4004,6 @@ import ComposableArchitecture
         await store.finish()
 
         #expect(acknowledgeCalls.value == [Self.defaultAccount.id])
-    }
-
-    // MARK: - MOB-1480: Keystone signing — simulator-only bypass (no `.scan` ever pushed)
-
-    /// MOB-1513: same immediate-lane divergence as the real round-trip
-    /// (`foundPCZTBatchForImmediateReviewContextAddsProofsSubmitsRecordsAndPushesSendingSuccess`) —
-    /// `addProofsToPCZT` + `createAndSubmitTransactionFromPCZT` fire instead of
-    /// `storeSignedMigrationTransactions`, and the Sending screen is pushed already in `.success`
-    /// phase. The old test this replaces (`...RecordsCommittedScheduleAndReconciles`) no longer
-    /// applies at all — `MigrationReviewTransfer.State` has no `schedule` field left to inject, and
-    /// `recordCommittedSchedule` is a scheduled-lane-only call the immediate lane never makes.
-    @MainActor @Test func keystoneSignSimulateSignatureForImmediateReviewContextAddsProofsSubmitsRecordsAndPushesSendingSuccessWithoutScan() async {
-        let addProofsCalls = LockIsolated<[Data]>([])
-        let submitCalls = LockIsolated<[(Data, Data)]>([])
-        let recordedTxIds = LockIsolated<[(AccountUUID, Data)]>([])
-        let unsigned: [MigrationUnsignedTransferPczt] = [MigrationUnsignedTransferPczt(id: MigrationReviewTransfer.immediateKeystonePcztId, pczt: Data([0xEE]))]
-        var state = MigrationCoordFlow.State()
-        state.pendingKeystoneSigning = .immediateReview
-        state.path.append(.reviewTransfer(MigrationReviewTransfer.State(mode: .immediate)))
-        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: unsigned)))
-        let store = TestStore(initialState: state) {
-            MigrationCoordFlow()
-        } withDependencies: {
-            $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.addProofsToPCZT = { pczt in
-                addProofsCalls.withValue { $0.append(pczt) }
-                return pczt
-            }
-            $0.sdkSynchronizer.createAndSubmitTransactionFromPCZT = { proofed, sig in
-                submitCalls.withValue { $0.append((proofed, sig)) }
-                return .success(txIds: ["cd34"])
-            }
-            $0.sdkSynchronizer.recordImmediateMigration = { accountUUID, txid in
-                recordedTxIds.withValue { $0.append((accountUUID, txid)) }
-            }
-        }
-        store.exhaustivity = .off
-
-        // No `.scan` element on the path at all — the bypass button lives on `keystoneSign` itself
-        // and the coordinator reads the batch straight off that element instead of a scanned
-        // result. Deliberately NOT asserting `isSimulatorBypassVisible` here: this test target
-        // (zodl-internal) always has `MigrationSimulatorFlag.isEnabled == false`, so the button
-        // would never actually be visible in this build — the coordinator's handler is
-        // intentionally not flag-gated (only the button's visibility is), so driving the delegate
-        // directly is the correct boundary to test. "Signing" is pretending the unsigned bytes are
-        // already signed (same id/bytes).
-        await store.send(.path(.element(id: 1, action: .keystoneSign(.delegate(.simulateSignature)))))
-        await store.receive(\.keystoneImmediateSubmitted)
-
-        #expect(addProofsCalls.value == [Data([0xEE])])
-        #expect(submitCalls.value.count == 1)
-        #expect(submitCalls.value.first?.1 == Data([0xEE]))
-        #expect(recordedTxIds.value.count == 1)
-        #expect(recordedTxIds.value.first?.0 == Self.defaultAccount.id)
-
-        #expect(store.state.pendingKeystoneSigning == nil)
-        #expect(store.state.path.count == 2)
-        guard case let .sending(sendingState) = try? #require(store.state.path.last) else {
-            Issue.record("Expected .sending pushed on top of the retained .reviewTransfer element")
-            return
-        }
-        #expect(sendingState.phase == MigrationSending.State.Phase.success)
-        #expect(sendingState.txId == "cd34")
-        #expect(sendingState.totalCount == 1)
-        guard case .reviewTransfer = try? #require(store.state.path[id: 0]) else {
-            Issue.record("Expected .reviewTransfer retained at the bottom (only keystoneSign popped)")
-            return
-        }
-    }
-
-    @MainActor @Test func keystoneSignSimulateSignatureWithEmptyBatchFallsBackToPlaceholderAndResumesPlanCommit() async {
-        let storeCalls = LockIsolated<[[MigrationSignedTransferPczt]]>([])
-        var state = MigrationCoordFlow.State()
-        state.pendingKeystoneSigning = .planCommit
-        state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .scheduled)))
-        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: [])))
-        let store = TestStore(initialState: state) {
-            MigrationCoordFlow()
-        } withDependencies: {
-            $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, stored in storeCalls.withValue { $0.append(stored) } }
-            // MOB-1513 (B4): kick stubs — a nil next-due keeps the post-landing kick a silent no-op.
-            $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in nil }
-            $0.migrationBGScheduler.scheduleFirstWindow = { }
-            // MOB-1496 (W2): see `foundPCZTBatchForPlanCommitContextStoresPopsAndPushesScheduledForScheduledVariant`'s comment.
-            $0.migrationManager.reconcile = { }
-            // MOB-1458 (W-E): the post-commit chain now hydrates `.scheduled` via
-            // `migrationManager.migrationSummary` before pushing — harmless zero, unasserted here.
-            $0.migrationManager.migrationSummary = { _ in MigrationSummary.zero }
-            $0.migrationManager.migrationNetworkOptions = { _ in Self.defaultNetworkPrivacyOptions }
-            $0.migrationManager.refreshMigrationSyncGate = { }
-        }
-        store.exhaustivity = .off
-
-        // Unlike the real `.scan(.foundPCZTBatch([]))` path (which abandons the session — see
-        // `foundPCZTBatchWithEmptyArrayForPlanCommitContextAbandonsSessionWithoutStoring` above),
-        // the simulator bypass falls back to a single fabricated placeholder entry instead: this
-        // button exists purely to exercise the resume chain for manual QA, never a real signing
-        // session that could legitimately fail to decode.
-        await store.send(.path(.element(id: 1, action: .keystoneSign(.delegate(.simulateSignature)))))
-        await store.receive(\.keystoneSigningSubmitted)
-        // MOB-1458 (W-E): see `transferPlanPostConfirmChain`'s doc — the `.scheduled` push is now
-        // hydrated (an async peek), landing via its own action rather than synchronously here.
-        await store.receive(\.pushHydratedPathState)
-        await store.finish()
-
-        #expect(storeCalls.value == [[MigrationSignedTransferPczt(id: "simulated", pczt: Data())]])
-        #expect(store.state.pendingKeystoneSigning == nil)
-        #expect(store.state.path.count == 2)
-        guard case .scheduled = try? #require(store.state.path.last) else {
-            Issue.record("Expected .scheduled pushed on top of the retained .transferPlan element")
-            return
-        }
-        guard case .transferPlan = try? #require(store.state.path[id: 0]) else {
-            Issue.record("Expected .transferPlan retained at the bottom (only keystoneSign popped)")
-            return
-        }
     }
 
     // MARK: - MOB-1496 (abandon reconciliation): keystoneScanAbandoned cancels a stray engine run

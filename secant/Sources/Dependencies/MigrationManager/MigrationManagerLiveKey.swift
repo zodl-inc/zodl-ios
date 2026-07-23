@@ -447,12 +447,6 @@ final class MigrationManagerImpl: @unchecked Sendable {
     }
 
     func orchardBalanceToMigrate(accountUUID: AccountUUID?) async -> Zatoshi {
-        // MOB-1480: simulator active -> its own balance replaces the real per-account SDK read
-        // (the simulated migration has no real funds to look up against `accountUUID`).
-        if MigrationSimulatorFlag.isEnabled && MigrationSimulatorClient.sharedEngine.isActive {
-            return MigrationSimulatorClient.sharedEngine.orchardBalance()
-        }
-
         guard let accountUUID else { return .zero }
 
         guard let balances = try? await sdkSynchronizer.getAccountsBalances(),
@@ -472,16 +466,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// or pre-commit — the SDK retains no proposal list to derive from either) falls back to the W1
     /// progress-only approximation, kept verbatim below rather than deleted.
     ///
-    /// Simulator reach-around: the simulator engine's own purpose-built `summary()` (real
-    /// sent/pending amounts, durations, etc. — the whole point of the simulator's demo data) is far
-    /// richer than anything derivable through the real SDK members while the simulator is standing
-    /// in for it — reading through them anyway would silently downgrade every simulated QA session.
-    /// Gated exactly like `orchardBalanceToMigrate`'s existing reach-around.
     func migrationSummary(accountUUID: AccountUUID?) async -> MigrationSummary {
-        if MigrationSimulatorFlag.isEnabled && MigrationSimulatorClient.sharedEngine.isActive {
-            return MigrationSimulatorClient.sharedEngine.summary()
-        }
-
         guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return MigrationSummary.zero }
 
         guard let committedSchedule = scheduleStorage.committedSchedule(for: resolvedAccountUUID) else {
@@ -519,15 +504,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// `hasOverdueMigrationTransfers`), via `MigrationDerivations.transferRows`. No payload
     /// persisted falls back to the W1 progress-only approximation, kept verbatim below.
     ///
-    /// Simulator reach-around — see `migrationSummary`'s doc: the engine's own `transferRows()`
-    /// carries real per-row status (sent/active/overdue/invalid/expired, broadcasting, precise
-    /// recency) the persisted-schedule derivation intentionally doesn't reproduce (no broadcasting
-    /// flag, no sub-hour simulated cadence).
     func migrationTransfers(accountUUID: AccountUUID?) async -> [MigrationTransferRow] {
-        if MigrationSimulatorFlag.isEnabled && MigrationSimulatorClient.sharedEngine.isActive {
-            return MigrationSimulatorClient.sharedEngine.transferRows()
-        }
-
         guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return [] }
 
         guard let committedSchedule = scheduleStorage.committedSchedule(for: resolvedAccountUUID) else {
@@ -578,10 +555,6 @@ final class MigrationManagerImpl: @unchecked Sendable {
         hasOverdue: Bool,
         progress: MigrationProgress?
     ) -> [MigrationTransferRow] {
-        if MigrationSimulatorFlag.isEnabled && MigrationSimulatorClient.sharedEngine.isActive {
-            return MigrationSimulatorClient.sharedEngine.transferRows()
-        }
-
         guard let committedSchedule = scheduleStorage.committedSchedule(for: resolvedAccountUUID) else {
             guard let progress else { return [] }
             return Self.synthesizedTransferRows(progress: progress)
@@ -665,18 +638,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// account's own `PoolBalance.lockedValue` (see `isMigrationDustLocked` below), not a local
     /// flag. The returned locked total is discarded here — this member is `Void`-returning; a
     /// caller that needs the amount reads it back via balance, same as everywhere else in the app.
-    /// Simulator reach-around unchanged: still reaches around to the engine's own dust model
-    /// (`MigrationSimulatorEngine.lockDust()`), matching its pre-relocation wiring in
-    /// `SDKSynchronizerClient+Simulated` — kept here (rather than folded into the SDK client's own
-    /// simulated override) because the simulator has no live-balance derivation for
-    /// `isMigrationDustLocked` below to reach around to either.
     func lockMigrationDust(accountUUID: AccountUUID?) async throws {
-        if MigrationSimulatorFlag.isEnabled && MigrationSimulatorClient.sharedEngine.isActive {
-            try await Task.sleep(for: .seconds(0.5))
-            MigrationSimulatorClient.sharedEngine.lockDust()
-            return
-        }
-
         guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return }
         _ = try await sdkSynchronizer.lockMigrationResidual(resolvedAccountUUID)
     }
@@ -696,9 +658,6 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// reads zero after a lock — the locked value is the signal that stays correct. `.zero` on an
     /// unresolvable account or a failed balance read, same convention as `isMigrationDustLocked`.
     func migrationLockedAmount(accountUUID: AccountUUID?) async -> Zatoshi {
-        if MigrationSimulatorFlag.isEnabled && MigrationSimulatorClient.sharedEngine.isActive {
-            return MigrationSimulatorClient.sharedEngine.lockedDustAmount()
-        }
         guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return Zatoshi.zero }
         guard let balances = try? await sdkSynchronizer.getAccountsBalances(),
               let balance = balances[resolvedAccountUUID] else {
@@ -1369,12 +1328,9 @@ final class MigrationManagerImpl: @unchecked Sendable {
     }
 
     /// R8-T3 (#24): per-account lookup against `reconcile()`'s ONE hoisted `getAccountsBalances()`
-    /// read — mirrors `orchardBalanceToMigrate`'s own derivation (including the simulator
-    /// reach-around) without re-issuing the full-wallet read itself.
+    /// read — mirrors `orchardBalanceToMigrate`'s own derivation without re-issuing the full-wallet
+    /// read itself.
     private func reconcileOrchardBalance(from walletBalances: [AccountUUID: AccountBalance]?, accountUUID: AccountUUID) -> Zatoshi {
-        if MigrationSimulatorFlag.isEnabled && MigrationSimulatorClient.sharedEngine.isActive {
-            return MigrationSimulatorClient.sharedEngine.orchardBalance()
-        }
         guard let balance = walletBalances?[accountUUID] else { return .zero }
         // MOB-1496 (W-D): same locked-exclusion as `orchardBalanceToMigrate` above — a "Lock
         // balance" transition must never re-flip `hasBalanceToMigrate` from false to true.
@@ -1510,7 +1466,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
         presentedFlowAccountUUIDs.withLock { $0.contains(accountUUID) }
     }
 
-    /// MOB-1480: the migration SDK simulator's debug panel "Reset app migration flags" control.
+    /// Debug/testnet-only "Reset app migration flags" reset.
     /// MOB-1496 (W2): also clears every candidate account's persisted schedule — a debug reset must
     /// leave no stale committed-schedule payload behind either. MOB-1496 (W4): and its network
     /// snapshot; MOB-1497 (R7-T3): and its failure-routing state (had-broadcast flag + R16
@@ -1562,14 +1518,6 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// R8-T3 (#23): takes an already-fetched `progress` instead of reading it itself — `bannerVariant`/
     /// `reentryRoute` both already have one in hand by the time they need this.
     private func isNextTransferDue(progress: MigrationProgress?) -> Bool {
-        // MOB-1480: `nextTransferReadyAtHeight` is a synthetic (epoch-seconds) height while the
-        // simulator is active, which can never compare true against the real chain's
-        // `latestBlockHeight` below — ask the engine directly instead (ignoring `progress`, which
-        // would carry that same synthetic value).
-        if MigrationSimulatorFlag.isEnabled && MigrationSimulatorClient.sharedEngine.isActive {
-            return MigrationSimulatorClient.sharedEngine.isNextTransferDue()
-        }
-
         guard let readyAtHeight = progress?.nextTransferReadyAtHeight else {
             return false
         }
@@ -1584,12 +1532,6 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// `SDKSynchronizerClient.transactionStatesFromZcashTransactions`). Not `private`: wired
     /// directly to `MigrationManagerClient.isIronwoodActivated` in `live()`.
     func isIronwoodActivated() -> Bool {
-        // An active simulator bypasses the real-chain gate (MOB-1483 spec §5, same idiom as the
-        // simulator hooks above): a fresh-install/offline testnet run has tip == 0 and would
-        // otherwise hide the simulated migration behind the fail-safe sentinel.
-        if MigrationSimulatorFlag.isEnabled && MigrationSimulatorClient.sharedEngine.isActive {
-            return true
-        }
         let tip = sdkSynchronizer.latestState().latestBlockHeight
         return tip > 0 && tip >= zcashSDKEnvironment.ironwoodActivationHeight()
     }
@@ -1881,9 +1823,8 @@ enum MigrationDerivations {
     /// 5. the first non-sent row otherwise -> `.active`.
     /// 6. every other non-sent row -> `.pending`.
     ///
-    /// `hoursFromNow`: sent rows carry "hours ago" (floor) + `sentMinutesAgo` (sub-hour precision,
-    /// matching `MigrationSimulatorEngineDerivations.captionFields`'s `.sent` case); non-sent rows
-    /// keep W1's index-cadence estimate, now computed over the row's 0-based position AMONG
+    /// `hoursFromNow`: sent rows carry "hours ago" (floor) + `sentMinutesAgo` (sub-hour precision);
+    /// non-sent rows keep W1's index-cadence estimate, now computed over the row's 0-based position AMONG
     /// non-sent rows (`rowIndexAmongNonSent × 6`, so the first non-sent row is always `0`).
     /// Amounts come from the persisted proposal (schedule rows) or the sent record itself (leading
     /// rows) — never from live progress.
@@ -2227,8 +2168,8 @@ final class MigrationGateStorage: @unchecked Sendable {
     /// weight now that the flag is per-account (`acknowledgedStorage`), kept here only so no stray
     /// value lingers. The actual per-account acknowledged flags are cleared by
     /// `MigrationManagerImpl.resetPersistedFlags()`, which knows the account set this storage does
-    /// not. Backs the migration SDK simulator's debug panel "Reset app migration flags" control
-    /// (MOB-1480). Deliberately leaves `migrationLastSyncCompletedAt` alone: the send gate's timing
+    /// not. Backs the debug-only "Reset app migration flags" reset.
+    /// Deliberately leaves `migrationLastSyncCompletedAt` alone: the send gate's timing
     /// window is a short-lived value, not a durable app flag, and expires (the buffer elapses) on
     /// its own — same reasoning the retired `migrationSyncGateUntil` followed pre-MOB-1496 (W3).
     /// MOB-1496 (W-A): no longer touches `.migrationDustLocked` — "Lock balance" is now a genuine

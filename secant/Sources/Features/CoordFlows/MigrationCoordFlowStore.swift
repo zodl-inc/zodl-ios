@@ -36,9 +36,9 @@
 //  MOB-1496 (W6) fixes a latent real-SDK break in the Keystone batch flow: the note-split PCZT used
 //  to ride the WHOLE signed batch into `storeSignedMigrationTransactions` (the schedule-PCZT store —
 //  all-or-nothing, keyed by engine-issued ids only), but a `"note-split"` sentinel is not an engine
-//  id, so the real engine would reject the whole store. The `.scan(.foundPCZTBatch)`/
-//  `.simulateSignature` store step now re-pairs + validates the scanned batch before storing
-//  anything (`MigrationCoordFlow.rePairedKeystoneBatch`), splits any sentinel entry out
+//  id, so the real engine would reject the whole store. The `.scan(.foundPCZTBatch)` store step now
+//  re-pairs + validates the scanned batch before storing anything
+//  (`MigrationCoordFlow.rePairedKeystoneBatch`), splits any sentinel entry out
 //  (`MigrationCoordFlow.splitKeystoneBatch`), stores ONLY the schedule's engine-id entries, and — iff
 //  a split was present — routes it to a freshly pushed `MigrationNoteSplit` screen via that screen's
 //  OWN existing Keystone resubmit lane, never a new UI. `pendingKeystoneSplitResume` stashes what to
@@ -354,9 +354,8 @@ struct MigrationCoordFlow {
         /// `.forEach(\.path, action:)`'s delivery of that same action to the (then-missing) element.
         case keystoneSignRejected
         /// Internal: MOB-1513 (E3) — a multi-round Keystone ceremony finished a round with more
-        /// rounds to go. Advances to the next round: pops `scan` (real round-trip only; the
-        /// simulator bypass never pushed one) and re-arms `keystoneSign` with the next slice. Sent
-        /// (not done inline in the `.scan(.foundPCZTBatch)` / `.simulateSignature` handler) for the
+        /// rounds to go. Advances to the next round: pops `scan` and re-arms `keystoneSign` with the
+        /// next slice. Sent (not done inline in the `.scan(.foundPCZTBatch)` handler) for the
         /// SAME reason `keystoneSignRejected`/`keystoneScanAbandoned` defer THEIR pops — popping the
         /// element `.forEach(\.path)` is about to deliver the current action to would race it into a
         /// "missing element" runtime error.

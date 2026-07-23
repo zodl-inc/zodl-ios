@@ -272,20 +272,6 @@ extension Root {
                 state.path = .migrationCoordFlow
                 return .none
 
-                // MARK: - Migration Simulator Panel (MOB-1480, debug-only)
-
-            case .home(.migrationSimulator(.presented(.delegate(.openMigrationFlow)))):
-                state.migrationCoordFlowState = MigrationCoordFlow.State.initial
-                state.path = .migrationCoordFlow
-                return .none
-
-            case .home(.migrationSimulator(.presented(.delegate(.runBackgroundSession)))):
-                return .send(
-                    .initialization(
-                        .migrationBackgroundSession(MigrationBGSessionHandle(rawTask: nil, complete: { _ in }))
-                    )
-                )
-
             case .migrationCoordFlow(.flowFinished):
                 // `.flowFinished` is the Root-side terminal signal for every flow-root close
                 // (Sending's own exit, and recovery/scheduled/reviewTransfer/complete's own delegates
