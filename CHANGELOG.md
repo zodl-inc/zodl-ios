@@ -7,6 +7,7 @@ directly impact users rather than highlighting other crucial architectural updat
 ## [Unreleased]
 
 ### Changed
+- [MOB-1513] Signing a Keystone hardware-wallet migration now caps each QR session at 35 transactions and walks a larger migration through multiple sign-and-scan rounds (splits first), so a big batch can't overwhelm the device. Gated behind Ironwood network activation and not yet in a released build.
 - [MOB-1507] Temporarily hidden the Beta: Coinholder Polling option in Settings behind a feature flag. Nothing was removed — the feature can be re-enabled by flipping the flag.
 - [MOB-1508] The "Find out more" link on the Move to Ironwood screen now opens the migration support article in the browser. Gated behind Ironwood network activation and not yet in a released build.
 - [MOB-1509] Running the ZODL software wallet and a Keystone wallet migration in parallel is now fully independent: each account keeps its own migration mode, delivery style, and locked-dust state, and switching wallets always shows the selected account's migration UI. Gated behind Ironwood network activation and not yet in a released build.
