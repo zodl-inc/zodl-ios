@@ -239,7 +239,7 @@ enum MigrationCommitPipeline {
     ) async throws -> [MigrationUnsignedTransferPczt] {
         var pczts: [MigrationUnsignedTransferPczt] = []
 
-        let preps = try await sdkSynchronizer.proposeNoteSplitPCZTs(account.id)
+        let preps = try await sdkSynchronizer.proposeNoteSplitPCZTs(account.id, schedule)
         pczts.append(
             contentsOf: preps.map {
                 MigrationUnsignedTransferPczt(id: MigrationCoordFlow.keystoneNoteSplitSentinelPrefix + $0.id, pczt: $0.pczt)

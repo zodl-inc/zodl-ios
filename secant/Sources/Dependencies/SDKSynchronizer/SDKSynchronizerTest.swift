@@ -84,11 +84,11 @@ extension SDKSynchronizerClient: TestDependencyKey {
         isNoteSplitNeeded: unimplemented("\(Self.self).isNoteSplitNeeded", placeholder: false),
         prepareNoteSplit: unimplemented(
             "\(Self.self).prepareNoteSplit",
-            placeholder: NoteSplitProposal(outputNotes: [], fee: Zatoshi.zero)
+            placeholder: NoteSplitProposal(outputNotes: [], fee: Zatoshi.zero, proposalHandle: 0)
         ),
         proposeMigrationTransfers: unimplemented(
             "\(Self.self).proposeMigrationTransfers",
-            placeholder: MigrationSchedule(transfers: [], estimatedDurationHours: 0)
+            placeholder: MigrationSchedule(transfers: [], estimatedDurationHours: 0, proposalHandle: 0)
         ),
         proposeImmediateMigration: unimplemented(
             "\(Self.self).proposeImmediateMigration",
@@ -108,14 +108,14 @@ extension SDKSynchronizerClient: TestDependencyKey {
         rescheduleOverdueMigrationTransfer: unimplemented("\(Self.self).rescheduleOverdueMigrationTransfer", placeholder: nil),
         restartCurrentMigrationStep: unimplemented(
             "\(Self.self).restartCurrentMigrationStep",
-            placeholder: MigrationSchedule(transfers: [], estimatedDurationHours: 0)
+            placeholder: MigrationSchedule(transfers: [], estimatedDurationHours: 0, proposalHandle: 0)
         ),
         // MOB-1511 (W2): the live value is a real SDK-backed estimate now — this test default
         // answers nil quietly (rather than flagging unimplemented) to mean "no estimate available".
         estimateMigrationRunCount: { _ in nil },
         refreshStaleMigrationTransfers: unimplemented(
             "\(Self.self).refreshStaleMigrationTransfers",
-            placeholder: MigrationSchedule(transfers: [], estimatedDurationHours: 0)
+            placeholder: MigrationSchedule(transfers: [], estimatedDurationHours: 0, proposalHandle: 0)
         ),
         sendRequiresOrchardFunds: unimplemented("\(Self.self).sendRequiresOrchardFunds", placeholder: false),
         proposeNoteSplitPCZTs: unimplemented("\(Self.self).proposeNoteSplitPCZTs", placeholder: []),
@@ -190,8 +190,8 @@ extension SDKSynchronizerClient {
         getMigrationProgress: { _ in nil },
         migrationTransactionStatuses: { _ in [] },
         isNoteSplitNeeded: { _ in false },
-        prepareNoteSplit: { _ in NoteSplitProposal(outputNotes: [], fee: Zatoshi.zero) },
-        proposeMigrationTransfers: { _ in MigrationSchedule(transfers: [], estimatedDurationHours: 0) },
+        prepareNoteSplit: { _ in NoteSplitProposal(outputNotes: [], fee: Zatoshi.zero, proposalHandle: 0) },
+        proposeMigrationTransfers: { _ in MigrationSchedule(transfers: [], estimatedDurationHours: 0, proposalHandle: 0) },
         proposeImmediateMigration: { _ in ImmediateMigrationProposal(proposal: .testOnlyFakeProposal(totalFee: 0), amount: Zatoshi.zero, fee: Zatoshi.zero) },
         recordImmediateMigration: { _, _ in },
         residualAfterMigration: { _ in nil },
@@ -205,11 +205,11 @@ extension SDKSynchronizerClient {
         hasOverdueMigrationTransfers: { _ in false },
         hasInvalidMigrationTransfers: { _ in false },
         rescheduleOverdueMigrationTransfer: { _ in nil },
-        restartCurrentMigrationStep: { _ in MigrationSchedule(transfers: [], estimatedDurationHours: 0) },
+        restartCurrentMigrationStep: { _ in MigrationSchedule(transfers: [], estimatedDurationHours: 0, proposalHandle: 0) },
         estimateMigrationRunCount: { _ in nil },
-        refreshStaleMigrationTransfers: { _, _ in MigrationSchedule(transfers: [], estimatedDurationHours: 0) },
+        refreshStaleMigrationTransfers: { _, _ in MigrationSchedule(transfers: [], estimatedDurationHours: 0, proposalHandle: 0) },
         sendRequiresOrchardFunds: { _, _ in false },
-        proposeNoteSplitPCZTs: { _ in [] },
+        proposeNoteSplitPCZTs: { _, _ in [] },
         storeSignedNoteSplits: { _, _ in },
         proposeMigrationPCZTs: { _, _ in [] },
         storeSignedMigrationTransactions: { _, _ in },
@@ -409,8 +409,8 @@ extension SDKSynchronizerClient {
             getMigrationProgress: { _ in nil },
             migrationTransactionStatuses: { _ in [] },
             isNoteSplitNeeded: { _ in false },
-            prepareNoteSplit: { _ in NoteSplitProposal(outputNotes: [], fee: Zatoshi.zero) },
-            proposeMigrationTransfers: { _ in MigrationSchedule(transfers: [], estimatedDurationHours: 0) },
+            prepareNoteSplit: { _ in NoteSplitProposal(outputNotes: [], fee: Zatoshi.zero, proposalHandle: 0) },
+            proposeMigrationTransfers: { _ in MigrationSchedule(transfers: [], estimatedDurationHours: 0, proposalHandle: 0) },
             proposeImmediateMigration: { _ in ImmediateMigrationProposal(proposal: .testOnlyFakeProposal(totalFee: 0), amount: Zatoshi.zero, fee: Zatoshi.zero) },
             recordImmediateMigration: { _, _ in },
             residualAfterMigration: { _ in nil },
@@ -424,11 +424,11 @@ extension SDKSynchronizerClient {
             hasOverdueMigrationTransfers: { _ in false },
             hasInvalidMigrationTransfers: { _ in false },
             rescheduleOverdueMigrationTransfer: { _ in nil },
-            restartCurrentMigrationStep: { _ in MigrationSchedule(transfers: [], estimatedDurationHours: 0) },
+            restartCurrentMigrationStep: { _ in MigrationSchedule(transfers: [], estimatedDurationHours: 0, proposalHandle: 0) },
             estimateMigrationRunCount: { _ in nil },
-            refreshStaleMigrationTransfers: { _, _ in MigrationSchedule(transfers: [], estimatedDurationHours: 0) },
+            refreshStaleMigrationTransfers: { _, _ in MigrationSchedule(transfers: [], estimatedDurationHours: 0, proposalHandle: 0) },
             sendRequiresOrchardFunds: { _, _ in false },
-            proposeNoteSplitPCZTs: { _ in [] },
+            proposeNoteSplitPCZTs: { _, _ in [] },
             storeSignedNoteSplits: { _, _ in },
             proposeMigrationPCZTs: { _, _ in [] },
             storeSignedMigrationTransactions: { _, _ in },

@@ -1565,7 +1565,8 @@ import ComposableArchitecture
         let signed: [Data] = [Data([0xAA, 0x01])]
         let schedule = MigrationSchedule(
             transfers: [MigrationTransferProposal(id: "t0", amount: Zatoshi(500_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)],
-            estimatedDurationHours: 24
+            estimatedDurationHours: 24,
+                    proposalHandle: 1
         )
         var planState = MigrationTransferPlan.State(variant: .scheduled)
         planState.schedule = schedule
@@ -1630,7 +1631,8 @@ import ComposableArchitecture
         var planState = MigrationTransferPlan.State(variant: .scheduled)
         planState.schedule = MigrationSchedule(
             transfers: [MigrationTransferProposal(id: "t0", amount: Zatoshi(1), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)],
-            estimatedDurationHours: 1
+            estimatedDurationHours: 1,
+                    proposalHandle: 1
         )
         var state = MigrationCoordFlow.State()
         state.pendingKeystoneSigning = .planCommit
@@ -1898,7 +1900,8 @@ import ComposableArchitecture
         let signed: [Data] = [Data([0x01, 0x99]), Data([0xAA, 0x99])]
         let schedule = MigrationSchedule(
             transfers: [MigrationTransferProposal(id: "t0", amount: Zatoshi(500_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)],
-            estimatedDurationHours: 24
+            estimatedDurationHours: 24,
+                    proposalHandle: 1
         )
         var planState = MigrationTransferPlan.State(variant: .scheduled)
         planState.schedule = schedule
@@ -2184,7 +2187,8 @@ import ComposableArchitecture
         let signed: [Data] = [Data([0x01, 0x99]), Data([0xAA, 0x99])]
         let schedule = MigrationSchedule(
             transfers: [MigrationTransferProposal(id: "t0", amount: Zatoshi(500_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)],
-            estimatedDurationHours: 24
+            estimatedDurationHours: 24,
+                    proposalHandle: 1
         )
         var planState = MigrationTransferPlan.State(variant: .scheduled)
         planState.schedule = schedule
@@ -2339,7 +2343,8 @@ import ComposableArchitecture
         let scheduleStoreCalls = LockIsolated<Int>(0)
         let schedule = MigrationSchedule(
             transfers: [MigrationTransferProposal(id: "t0", amount: Zatoshi(500_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)],
-            estimatedDurationHours: 24
+            estimatedDurationHours: 24,
+                    proposalHandle: 1
         )
         var planState = MigrationTransferPlan.State(variant: .manual)
         planState.schedule = schedule
@@ -2409,7 +2414,8 @@ import ComposableArchitecture
                 MigrationTransferProposal(id: "t0", amount: Zatoshi(500_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200),
                 MigrationTransferProposal(id: "t1", amount: Zatoshi(300_000_000), anchorHeight: 100, nextExecutableAfterHeight: 150, expiryHeight: 250)
             ],
-            estimatedDurationHours: 30
+            estimatedDurationHours: 30,
+                    proposalHandle: 1
         )
         var planState = MigrationTransferPlan.State(variant: .scheduled)
         planState.schedule = schedule
@@ -2490,7 +2496,8 @@ import ComposableArchitecture
         var planState = MigrationTransferPlan.State(variant: .scheduled)
         planState.schedule = MigrationSchedule(
             transfers: [MigrationTransferProposal(id: "t0", amount: Zatoshi(500_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)],
-            estimatedDurationHours: 24
+            estimatedDurationHours: 24,
+                    proposalHandle: 1
         )
         var state = MigrationCoordFlow.State()
         state.pendingKeystoneSigning = .planCommit
@@ -3479,7 +3486,8 @@ import ComposableArchitecture
                 MigrationTransferProposal(id: "t0", amount: Zatoshi(500_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200),
                 MigrationTransferProposal(id: "t1", amount: Zatoshi(300_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
             ],
-            estimatedDurationHours: 30
+            estimatedDurationHours: 30,
+                    proposalHandle: 1
         )
         var planState = MigrationTransferPlan.State(variant: .scheduled)
         planState.schedule = schedule
@@ -3530,7 +3538,8 @@ import ComposableArchitecture
             transfers: [
                 MigrationTransferProposal(id: "t2", amount: Zatoshi(200_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
             ],
-            estimatedDurationHours: 12
+            estimatedDurationHours: 12,
+                    proposalHandle: 1
         )
         var planState = MigrationTransferPlan.State(variant: .recreated)
         planState.schedule = schedule
@@ -3614,7 +3623,8 @@ import ComposableArchitecture
             transfers: [
                 MigrationTransferProposal(id: "t0", amount: Zatoshi(500_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
             ],
-            estimatedDurationHours: 24
+            estimatedDurationHours: 24,
+                    proposalHandle: 1
         )
         var planState = MigrationTransferPlan.State(variant: .manual, requiresSigning: true)
         planState.schedule = schedule
@@ -3885,7 +3895,8 @@ import ComposableArchitecture
             transfers: [
                 MigrationTransferProposal(id: "t0", amount: Zatoshi(500_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
             ],
-            estimatedDurationHours: 24
+            estimatedDurationHours: 24,
+                    proposalHandle: 1
         )
         let restartCalls = LockIsolated<Int>(0)
         var state = MigrationCoordFlow.State()
@@ -3931,7 +3942,7 @@ import ComposableArchitecture
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
             $0.sdkSynchronizer.restartCurrentMigrationStep = { _ in
-                MigrationSchedule(transfers: [], estimatedDurationHours: 0)
+                MigrationSchedule(transfers: [], estimatedDurationHours: 0, proposalHandle: 0)
             }
             $0.migrationManager.reconcile = { reconcileCalls.withValue { $0 += 1 } }
         }
@@ -3980,7 +3991,8 @@ import ComposableArchitecture
             transfers: [
                 MigrationTransferProposal(id: "t0", amount: Zatoshi(500_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
             ],
-            estimatedDurationHours: 24
+            estimatedDurationHours: 24,
+                    proposalHandle: 1
         )
         var planState = MigrationTransferPlan.State(variant: .recreated)
         planState.schedule = schedule
@@ -4264,7 +4276,7 @@ import ComposableArchitecture
             $0.sdkSynchronizer = .noOp
             $0.sdkSynchronizer.restartCurrentMigrationStep = { accountUUID in
                 restartCalls.withValue { $0.append(accountUUID) }
-                return MigrationSchedule(transfers: [], estimatedDurationHours: 0)
+                return MigrationSchedule(transfers: [], estimatedDurationHours: 0, proposalHandle: 0)
             }
         }
         store.exhaustivity = .off
@@ -4297,7 +4309,7 @@ import ComposableArchitecture
             $0.sdkSynchronizer = .noOp
             $0.sdkSynchronizer.restartCurrentMigrationStep = { _ in
                 restartCalls.withValue { $0 += 1 }
-                return MigrationSchedule(transfers: [], estimatedDurationHours: 0)
+                return MigrationSchedule(transfers: [], estimatedDurationHours: 0, proposalHandle: 0)
             }
         }
         store.exhaustivity = .off
@@ -4406,7 +4418,8 @@ import ComposableArchitecture
             transfers: [
                 MigrationTransferProposal(id: "r0", amount: Zatoshi(2_000_000), anchorHeight: 300, nextExecutableAfterHeight: 300, expiryHeight: 400)
             ],
-            estimatedDurationHours: 12
+            estimatedDurationHours: 12,
+                    proposalHandle: 1
         )
         let unsigned: [MigrationUnsignedTransferPczt] = [MigrationUnsignedTransferPczt(id: "r0", pczt: Data([0x11]))]
         let signed: [Data] = [Data([0x11, 0x99])]
@@ -4526,7 +4539,8 @@ import ComposableArchitecture
             transfers: [
                 MigrationTransferProposal(id: "r0", amount: Zatoshi(2_000_000), anchorHeight: 300, nextExecutableAfterHeight: 300, expiryHeight: 400)
             ],
-            estimatedDurationHours: 12
+            estimatedDurationHours: 12,
+                    proposalHandle: 1
         )
         let unsigned: [MigrationUnsignedTransferPczt] = [
             MigrationUnsignedTransferPczt(id: "note-split#p0", pczt: Data([0x22])),
@@ -4591,7 +4605,8 @@ import ComposableArchitecture
             transfers: [
                 MigrationTransferProposal(id: "s0", amount: Zatoshi(3_000_000), anchorHeight: 500, nextExecutableAfterHeight: 500, expiryHeight: 600)
             ],
-            estimatedDurationHours: 8
+            estimatedDurationHours: 8,
+                    proposalHandle: 1
         )
         let refreshUskNonNil = LockIsolated<[Bool]>([])
         let restartCalls = LockIsolated<Int>(0)
@@ -4612,7 +4627,7 @@ import ComposableArchitecture
             }
             $0.sdkSynchronizer.restartCurrentMigrationStep = { _ in
                 restartCalls.withValue { $0 += 1 }
-                return MigrationSchedule(transfers: [], estimatedDurationHours: 0)
+                return MigrationSchedule(transfers: [], estimatedDurationHours: 0, proposalHandle: 0)
             }
             // Software-lane USK derivation deps — same set as `recreatedPlanConfirmDoesSign`
             // (a real `UnifiedSpendingKey` has no public initializer; it must be derived).
@@ -4658,7 +4673,8 @@ import ComposableArchitecture
             transfers: [
                 MigrationTransferProposal(id: "k0", amount: Zatoshi(4_000_000), anchorHeight: 700, nextExecutableAfterHeight: 700, expiryHeight: 800)
             ],
-            estimatedDurationHours: 10
+            estimatedDurationHours: 10,
+                    proposalHandle: 1
         )
         let refreshUskNonNil = LockIsolated<[Bool]>([])
         let restartCalls = LockIsolated<Int>(0)
@@ -4678,9 +4694,9 @@ import ComposableArchitecture
             }
             $0.sdkSynchronizer.restartCurrentMigrationStep = { _ in
                 restartCalls.withValue { $0 += 1 }
-                return MigrationSchedule(transfers: [], estimatedDurationHours: 0)
+                return MigrationSchedule(transfers: [], estimatedDurationHours: 0, proposalHandle: 0)
             }
-            $0.sdkSynchronizer.proposeNoteSplitPCZTs = { _ in [] }
+            $0.sdkSynchronizer.proposeNoteSplitPCZTs = { _, _ in [] }
             $0.sdkSynchronizer.proposeMigrationPCZTs = { _, schedule in
                 proposeScheduleArgs.withValue { $0.append(schedule) }
                 return scheduleUnsigned
@@ -4712,7 +4728,8 @@ import ComposableArchitecture
             transfers: [
                 MigrationTransferProposal(id: "k0", amount: Zatoshi(4_000_000), anchorHeight: 700, nextExecutableAfterHeight: 700, expiryHeight: 800)
             ],
-            estimatedDurationHours: 10
+            estimatedDurationHours: 10,
+                    proposalHandle: 1
         )
         let storeCalls = LockIsolated<[[MigrationSignedTransferPczt]]>([])
         let recordCommittedScheduleCalls = LockIsolated<[MigrationSchedule]>([])
@@ -4731,7 +4748,7 @@ import ComposableArchitecture
             $0.sdkSynchronizer = .noOp
             $0.sdkSynchronizer.applyKeystoneBatchSignatures = stubApply(signed)
             $0.sdkSynchronizer.refreshStaleMigrationTransfers = { _, _ in refreshedSchedule }
-            $0.sdkSynchronizer.proposeNoteSplitPCZTs = { _ in [] }
+            $0.sdkSynchronizer.proposeNoteSplitPCZTs = { _, _ in [] }
             $0.sdkSynchronizer.proposeMigrationPCZTs = { _, _ in unsigned }
             $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, stored in storeCalls.withValue { $0.append(stored) } }
             $0.migrationManager.reconcile = { }
@@ -4792,7 +4809,7 @@ import ComposableArchitecture
             $0.sdkSynchronizer.refreshStaleMigrationTransfers = { _, _ in throw RefreshFailure() }
             $0.sdkSynchronizer.restartCurrentMigrationStep = { _ in
                 restartCalls.withValue { $0 += 1 }
-                return MigrationSchedule(transfers: [], estimatedDurationHours: 0)
+                return MigrationSchedule(transfers: [], estimatedDurationHours: 0, proposalHandle: 0)
             }
             $0.derivationTool = .liveValue
             $0.mnemonic = .mock
@@ -4824,7 +4841,8 @@ import ComposableArchitecture
             transfers: [
                 MigrationTransferProposal(id: "r0", amount: Zatoshi(1_000_000), anchorHeight: 10, nextExecutableAfterHeight: 10, expiryHeight: 20)
             ],
-            estimatedDurationHours: 5
+            estimatedDurationHours: 5,
+                    proposalHandle: 1
         )
 
         var state = MigrationCoordFlow.State()
@@ -4879,7 +4897,7 @@ import ComposableArchitecture
             $0.sdkSynchronizer.refreshStaleMigrationTransfers = { _, _ in throw RefreshFailure() }
             $0.sdkSynchronizer.restartCurrentMigrationStep = { _ in
                 restartCalls.withValue { $0 += 1 }
-                return MigrationSchedule(transfers: [], estimatedDurationHours: 0)
+                return MigrationSchedule(transfers: [], estimatedDurationHours: 0, proposalHandle: 0)
             }
             $0.derivationTool = .liveValue
             $0.mnemonic = .mock
@@ -4911,7 +4929,8 @@ import ComposableArchitecture
             transfers: [
                 MigrationTransferProposal(id: "r0", amount: Zatoshi(1_000_000), anchorHeight: 10, nextExecutableAfterHeight: 10, expiryHeight: 20)
             ],
-            estimatedDurationHours: 5
+            estimatedDurationHours: 5,
+                    proposalHandle: 1
         )
 
         var state = MigrationCoordFlow.State()
@@ -4926,7 +4945,7 @@ import ComposableArchitecture
             }
             $0.sdkSynchronizer.refreshStaleMigrationTransfers = { _, _ in
                 refreshCalls.withValue { $0 += 1 }
-                return MigrationSchedule(transfers: [], estimatedDurationHours: 0)
+                return MigrationSchedule(transfers: [], estimatedDurationHours: 0, proposalHandle: 0)
             }
             $0.migrationManager.reconcile = { }
         }
@@ -4960,7 +4979,8 @@ import ComposableArchitecture
             transfers: [
                 MigrationTransferProposal(id: "k0", amount: Zatoshi(4_000_000), anchorHeight: 700, nextExecutableAfterHeight: 700, expiryHeight: 800)
             ],
-            estimatedDurationHours: 10
+            estimatedDurationHours: 10,
+                    proposalHandle: 1
         )
         let unsigned: [MigrationUnsignedTransferPczt] = [MigrationUnsignedTransferPczt(id: "k0", pczt: Data([0x44]))]
 
@@ -4976,7 +4996,7 @@ import ComposableArchitecture
             $0.sdkSynchronizer = .noOp
             $0.sdkSynchronizer.restartCurrentMigrationStep = { _ in
                 restartCalls.withValue { $0 += 1 }
-                return MigrationSchedule(transfers: [], estimatedDurationHours: 0)
+                return MigrationSchedule(transfers: [], estimatedDurationHours: 0, proposalHandle: 0)
             }
         }
         store.exhaustivity = .off
@@ -5010,7 +5030,8 @@ import ComposableArchitecture
             transfers: [
                 MigrationTransferProposal(id: "k0", amount: Zatoshi(4_000_000), anchorHeight: 700, nextExecutableAfterHeight: 700, expiryHeight: 800)
             ],
-            estimatedDurationHours: 10
+            estimatedDurationHours: 10,
+                    proposalHandle: 1
         )
         let scheduleEntries: [MigrationSignedTransferPczt] = [MigrationSignedTransferPczt(id: "k0", pczt: Data([0x44, 0x99]))]
         let storeCalls = LockIsolated<[[MigrationSignedTransferPczt]]>([])
@@ -5074,11 +5095,11 @@ import ComposableArchitecture
             $0.sdkSynchronizer = .noOp
             $0.sdkSynchronizer.refreshStaleMigrationTransfers = { _, _ in
                 refreshCalls.withValue { $0 += 1 }
-                return MigrationSchedule(transfers: [], estimatedDurationHours: 0)
+                return MigrationSchedule(transfers: [], estimatedDurationHours: 0, proposalHandle: 0)
             }
             $0.sdkSynchronizer.restartCurrentMigrationStep = { _ in
                 restartCalls.withValue { $0 += 1 }
-                return MigrationSchedule(transfers: [], estimatedDurationHours: 0)
+                return MigrationSchedule(transfers: [], estimatedDurationHours: 0, proposalHandle: 0)
             }
         }
         store.exhaustivity = .off

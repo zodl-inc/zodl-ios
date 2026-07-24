@@ -676,7 +676,8 @@ struct MigrationManagerTests {
             transfers: [
                 MigrationTransferProposal(id: "t0", amount: Zatoshi(100), anchorHeight: 1, nextExecutableAfterHeight: 1, expiryHeight: 9)
             ],
-            estimatedDurationHours: 6
+            estimatedDurationHours: 6,
+                    proposalHandle: 1
         )
         scheduleStorage.recordCommittedSchedule(schedule, for: account, now: Date())
 
@@ -704,7 +705,8 @@ struct MigrationManagerTests {
             transfers: [
                 MigrationTransferProposal(id: "t0", amount: Zatoshi(100), anchorHeight: 1, nextExecutableAfterHeight: 1, expiryHeight: 9)
             ],
-            estimatedDurationHours: 6
+            estimatedDurationHours: 6,
+                    proposalHandle: 1
         )
         scheduleStorage.recordCommittedSchedule(schedule, for: account, now: Date())
         let progress = MigrationProgress(
@@ -736,7 +738,8 @@ struct MigrationManagerTests {
             transfers: [
                 MigrationTransferProposal(id: "t0", amount: Zatoshi(100), anchorHeight: 1, nextExecutableAfterHeight: 1, expiryHeight: 9)
             ],
-            estimatedDurationHours: 6
+            estimatedDurationHours: 6,
+                    proposalHandle: 1
         )
         scheduleStorage.recordCommittedSchedule(schedule, for: account, now: Date())
 
@@ -2110,7 +2113,8 @@ struct MigrationManagerTests {
                     transfers: [
                         MigrationTransferProposal(id: "t0", amount: Zatoshi(100), anchorHeight: 10, nextExecutableAfterHeight: 10, expiryHeight: 20)
                     ],
-                    estimatedDurationHours: 6
+                    estimatedDurationHours: 6,
+                                    proposalHandle: 1
                 )
             }
         } operation: {
@@ -2157,7 +2161,7 @@ struct MigrationManagerTests {
                 }
             )
             $0.sdkSynchronizer.getMigrationState = { _ in MigrationState.complete }
-            $0.sdkSynchronizer.proposeMigrationTransfers = { _ in MigrationSchedule(transfers: [], estimatedDurationHours: 0) }
+            $0.sdkSynchronizer.proposeMigrationTransfers = { _ in MigrationSchedule(transfers: [], estimatedDurationHours: 0, proposalHandle: 0) }
         } operation: {
             let impl = MigrationManagerImpl(gateStorage: storage)
             await impl.reconcile()
@@ -2266,7 +2270,7 @@ struct MigrationManagerTests {
             $0.sdkSynchronizer.getMigrationState = { _ in MigrationState.complete }
             $0.sdkSynchronizer.proposeMigrationTransfers = { _ in
                 proposeCalls.withValue { $0 += 1 }
-                return MigrationSchedule(transfers: [], estimatedDurationHours: 0)
+                return MigrationSchedule(transfers: [], estimatedDurationHours: 0, proposalHandle: 0)
             }
         } operation: {
             let impl = MigrationManagerImpl(gateStorage: storage)
@@ -2370,7 +2374,7 @@ struct MigrationManagerTests {
             $0.sdkSynchronizer.getMigrationState = { _ in MigrationState.complete }
             $0.sdkSynchronizer.proposeMigrationTransfers = { _ in
                 proposeCalls.withValue { $0 += 1 }
-                return MigrationSchedule(transfers: [], estimatedDurationHours: 0)
+                return MigrationSchedule(transfers: [], estimatedDurationHours: 0, proposalHandle: 0)
             }
         } operation: {
             await impl.reconcile()
@@ -2426,7 +2430,7 @@ struct MigrationManagerTests {
             $0.sdkSynchronizer.getMigrationState = { _ in MigrationState.complete }
             $0.sdkSynchronizer.proposeMigrationTransfers = { _ in
                 proposeCalls.withValue { $0 += 1 }
-                return MigrationSchedule(transfers: [], estimatedDurationHours: 0)
+                return MigrationSchedule(transfers: [], estimatedDurationHours: 0, proposalHandle: 0)
             }
         } operation: {
             // First pass: flow still presented — skipped.
@@ -2450,7 +2454,7 @@ struct MigrationManagerTests {
             $0.sdkSynchronizer.getMigrationState = { _ in MigrationState.complete }
             $0.sdkSynchronizer.proposeMigrationTransfers = { _ in
                 proposeCalls.withValue { $0 += 1 }
-                return MigrationSchedule(transfers: [], estimatedDurationHours: 0)
+                return MigrationSchedule(transfers: [], estimatedDurationHours: 0, proposalHandle: 0)
             }
         } operation: {
             // Second pass: flag clear — the deferred evaluate finally runs.
@@ -2618,7 +2622,8 @@ struct MigrationManagerTests {
 
         let schedule = MigrationSchedule(
             transfers: [MigrationTransferProposal(id: "t0", amount: Zatoshi(100), anchorHeight: 10, nextExecutableAfterHeight: 10, expiryHeight: 20)],
-            estimatedDurationHours: 6
+            estimatedDurationHours: 6,
+                    proposalHandle: 1
         )
         scheduleStorage.recordCommittedSchedule(schedule, for: account.id, now: Date())
         #expect(scheduleStorage.hasStoredPayload(for: account.id) == true)
@@ -2690,7 +2695,8 @@ struct MigrationManagerTests {
 
         let schedule = MigrationSchedule(
             transfers: [MigrationTransferProposal(id: "t0", amount: Zatoshi(100), anchorHeight: 10, nextExecutableAfterHeight: 10, expiryHeight: 20)],
-            estimatedDurationHours: 6
+            estimatedDurationHours: 6,
+                    proposalHandle: 1
         )
         scheduleStorage.recordCommittedSchedule(schedule, for: account.id, now: Date())
         // Provisional: no `committedAt` — the default `someNetworkSnapshot()` shape.
@@ -2888,7 +2894,8 @@ struct MigrationManagerTests {
         // fresh install reusing a restored seed) — the engine no longer knows anything about it.
         let schedule = MigrationSchedule(
             transfers: [MigrationTransferProposal(id: "t0", amount: Zatoshi(100), anchorHeight: 10, nextExecutableAfterHeight: 10, expiryHeight: 20)],
-            estimatedDurationHours: 6
+            estimatedDurationHours: 6,
+                    proposalHandle: 1
         )
         scheduleStorage.recordCommittedSchedule(schedule, for: softwareAccount.id, now: Date())
         // MOB-1497 rebase: COMMITTED, not provisional — `reconcile()`'s stale-`.notStarted` clear
@@ -3029,7 +3036,8 @@ struct MigrationManagerTests {
 
         let schedule = MigrationSchedule(
             transfers: [MigrationTransferProposal(id: "t0", amount: Zatoshi(100), anchorHeight: 10, nextExecutableAfterHeight: 10, expiryHeight: 20)],
-            estimatedDurationHours: 6
+            estimatedDurationHours: 6,
+                    proposalHandle: 1
         )
 
         await withDependencies {
@@ -3119,7 +3127,8 @@ struct MigrationManagerTests {
 
         let schedule = MigrationSchedule(
             transfers: [MigrationTransferProposal(id: "t0", amount: Zatoshi(100), anchorHeight: 10, nextExecutableAfterHeight: 10, expiryHeight: 20)],
-            estimatedDurationHours: 6
+            estimatedDurationHours: 6,
+                    proposalHandle: 1
         )
         scheduleStorage.recordCommittedSchedule(schedule, for: account.id, now: Date())
         // MOB-1496 (W4): a "Migrate anyway" dust mini-run after this clear must take a FRESH
@@ -3181,7 +3190,8 @@ struct MigrationManagerTests {
 
         let schedule = MigrationSchedule(
             transfers: [MigrationTransferProposal(id: "t0", amount: Zatoshi(100), anchorHeight: 10, nextExecutableAfterHeight: 10, expiryHeight: 20)],
-            estimatedDurationHours: 6
+            estimatedDurationHours: 6,
+                    proposalHandle: 1
         )
         scheduleStorage.recordCommittedSchedule(schedule, for: account.id, now: Date())
         snapshotStorage.recordSnapshot(Self.someNetworkSnapshot(), for: account.id)
@@ -3357,7 +3367,8 @@ struct MigrationManagerTests {
         $selectedWalletAccount.withLock { $0 = account }
         let schedule = MigrationSchedule(
             transfers: [MigrationTransferProposal(id: "t0", amount: Zatoshi(100), anchorHeight: 10, nextExecutableAfterHeight: 10, expiryHeight: 20)],
-            estimatedDurationHours: 6
+            estimatedDurationHours: 6,
+                    proposalHandle: 1
         )
         scheduleStorage.recordCommittedSchedule(schedule, for: account.id, now: Date())
         snapshotStorage.recordSnapshot(Self.someNetworkSnapshot(), for: account.id)
@@ -3534,7 +3545,8 @@ struct MigrationManagerTests {
 
         let schedule = MigrationSchedule(
             transfers: [MigrationTransferProposal(id: "t0", amount: Zatoshi(100), anchorHeight: 10, nextExecutableAfterHeight: 10, expiryHeight: 20)],
-            estimatedDurationHours: 6
+            estimatedDurationHours: 6,
+                    proposalHandle: 1
         )
         scheduleStorage.recordCommittedSchedule(schedule, for: selected.id, now: Date())
         scheduleStorage.recordCommittedSchedule(schedule, for: keystone.id, now: Date())
@@ -4215,7 +4227,8 @@ struct MigrationManagerTests {
 
         let schedule = MigrationSchedule(
             transfers: [MigrationTransferProposal(id: "t0", amount: Zatoshi(100), anchorHeight: 10, nextExecutableAfterHeight: 10, expiryHeight: 20)],
-            estimatedDurationHours: 6
+            estimatedDurationHours: 6,
+                    proposalHandle: 1
         )
         let impl = MigrationManagerImpl(scheduleStorage: scheduleStorage, snapshotStorage: snapshotStorage)
         await impl.recordCommittedSchedule(accountUUID: account, schedule: schedule)
@@ -5077,7 +5090,8 @@ struct MigrationManagerTests {
             transfers: [
                 MigrationTransferProposal(id: "t0", amount: Zatoshi(100), anchorHeight: 1, nextExecutableAfterHeight: 1, expiryHeight: 9)
             ],
-            estimatedDurationHours: 6
+            estimatedDurationHours: 6,
+                    proposalHandle: 1
         )
         scheduleStorage.recordCommittedSchedule(schedule, for: account, now: Date())
 
@@ -5151,7 +5165,8 @@ struct MigrationManagerTests {
             transfers: [
                 MigrationTransferProposal(id: "t0", amount: Zatoshi(100), anchorHeight: 1, nextExecutableAfterHeight: 1, expiryHeight: 9)
             ],
-            estimatedDurationHours: 6
+            estimatedDurationHours: 6,
+                    proposalHandle: 1
         )
         scheduleStorage.recordCommittedSchedule(schedule, for: account, now: Date())
 

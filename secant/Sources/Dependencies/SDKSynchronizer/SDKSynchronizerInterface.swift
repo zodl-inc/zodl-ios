@@ -249,7 +249,7 @@ struct SDKSynchronizerClient: Sendable {
     /// the next attempt, ignoring any newer preview. A ceremony abandoned after this call must
     /// explicitly cancel the run it just created (`restartCurrentMigrationStep`) or a later re-entry
     /// will silently resume signing these same, by-then-stale PCZTs instead of proposing a fresh one.
-    var proposeNoteSplitPCZTs: @Sendable (AccountUUID) async throws -> [MigrationUnsignedTransferPczt]
+    var proposeNoteSplitPCZTs: @Sendable (AccountUUID, MigrationSchedule) async throws -> [MigrationUnsignedTransferPczt]
     /// Stores Keystone-signed note-split preparation PCZTs — thin wrap of
     /// `storeSignedNoteSplitPCZTs(accountUUID:_:)`, discarding the returned
     /// `PreparedMigrationTransfer` (a storage receipt with a zeroed txid — the broadcastable value

@@ -414,8 +414,8 @@ extension SDKSynchronizerClient: DependencyKey {
                 }
                 return SDKSynchronizerClient.requiresOrchardFunds(amount: amount, balance: balance)
             },
-            proposeNoteSplitPCZTs: { accountUUID in
-                try await synchronizer.createUnsignedNoteSplitPCZTs(accountUUID: accountUUID)
+            proposeNoteSplitPCZTs: { accountUUID, schedule in
+                try await synchronizer.createUnsignedNoteSplitPCZTs(accountUUID: accountUUID, for: schedule)
             },
             storeSignedNoteSplits: { accountUUID, signed in
                 // Run-creating call moved to `createUnsignedNoteSplitPCZTs` above (final engine) —

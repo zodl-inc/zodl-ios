@@ -859,7 +859,8 @@ struct MigrationFailureRoutingTests {
         try await withImpl("testReconcileClearsFailureRoutingStateAlongsideAStaleNotStartedSchedule") { impl, account, storages in
             let schedule = MigrationSchedule(
                 transfers: [MigrationTransferProposal(id: "t0", amount: Zatoshi(100), anchorHeight: 10, nextExecutableAfterHeight: 10, expiryHeight: 20)],
-                estimatedDurationHours: 6
+                estimatedDurationHours: 6,
+                            proposalHandle: 1
             )
             storages.scheduleStorage.recordCommittedSchedule(schedule, for: account.id, now: Date())
             storages.failureRoutingStorage.markHadBroadcast(for: account.id)

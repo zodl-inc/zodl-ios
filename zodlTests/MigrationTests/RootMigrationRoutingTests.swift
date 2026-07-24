@@ -113,7 +113,7 @@ import ComposableArchitecture
                 baseNoOpDependencies(&$0)
                 $0.sdkSynchronizer.restartCurrentMigrationStep = { accountUUID in
                     restartCalls.withValue { $0.append(accountUUID) }
-                    return MigrationSchedule(transfers: [], estimatedDurationHours: 0)
+                    return MigrationSchedule(transfers: [], estimatedDurationHours: 0, proposalHandle: 0)
                 }
             }
 
@@ -150,7 +150,7 @@ import ComposableArchitecture
                 baseNoOpDependencies(&$0)
                 $0.sdkSynchronizer.restartCurrentMigrationStep = { _ in
                     restartCalls.withValue { $0 += 1 }
-                    return MigrationSchedule(transfers: [], estimatedDurationHours: 0)
+                    return MigrationSchedule(transfers: [], estimatedDurationHours: 0, proposalHandle: 0)
                 }
             }
 
@@ -222,7 +222,7 @@ import ComposableArchitecture
                 baseNoOpDependencies(&$0)
                 $0.sdkSynchronizer.restartCurrentMigrationStep = { accountUUID in
                     restartCalls.withValue { $0.append(accountUUID) }
-                    return MigrationSchedule(transfers: [], estimatedDurationHours: 0)
+                    return MigrationSchedule(transfers: [], estimatedDurationHours: 0, proposalHandle: 0)
                 }
             }
 
@@ -260,7 +260,7 @@ import ComposableArchitecture
                 baseNoOpDependencies(&$0)
                 $0.sdkSynchronizer.restartCurrentMigrationStep = { accountUUID in
                     restartCalls.withValue { $0.append(accountUUID) }
-                    return MigrationSchedule(transfers: [], estimatedDurationHours: 0)
+                    return MigrationSchedule(transfers: [], estimatedDurationHours: 0, proposalHandle: 0)
                 }
             }
 
@@ -301,7 +301,7 @@ import ComposableArchitecture
                 baseNoOpDependencies(&$0)
                 $0.sdkSynchronizer.restartCurrentMigrationStep = { accountUUID in
                     restartCalls.withValue { $0.append(accountUUID) }
-                    return MigrationSchedule(transfers: [], estimatedDurationHours: 0)
+                    return MigrationSchedule(transfers: [], estimatedDurationHours: 0, proposalHandle: 0)
                 }
             }
 
@@ -334,7 +334,7 @@ import ComposableArchitecture
             initialState.$selectedWalletAccount.withLock { $0 = accountA }
             initialState.$walletAccounts.withLock { $0 = [accountA, accountB] }
             initialState.migrationCoordFlowState.pendingKeystoneSigning = MigrationCoordFlow.KeystoneSigningContext.recoveryRefresh(
-                schedule: MigrationSchedule(transfers: [], estimatedDurationHours: 0)
+                schedule: MigrationSchedule(transfers: [], estimatedDurationHours: 0, proposalHandle: 0)
             )
             initialState.migrationCoordFlowState.pendingKeystoneSigningAccountUUID = accountA.id
 
@@ -344,7 +344,7 @@ import ComposableArchitecture
                 baseNoOpDependencies(&$0)
                 $0.sdkSynchronizer.restartCurrentMigrationStep = { accountUUID in
                     restartCalls.withValue { $0.append(accountUUID) }
-                    return MigrationSchedule(transfers: [], estimatedDurationHours: 0)
+                    return MigrationSchedule(transfers: [], estimatedDurationHours: 0, proposalHandle: 0)
                 }
             }
 
@@ -410,7 +410,7 @@ import ComposableArchitecture
                 baseNoOpDependencies(&$0)
                 $0.sdkSynchronizer.restartCurrentMigrationStep = { _ in
                     restartCalls.withValue { $0 += 1 }
-                    return MigrationSchedule(transfers: [], estimatedDurationHours: 0)
+                    return MigrationSchedule(transfers: [], estimatedDurationHours: 0, proposalHandle: 0)
                 }
             }
 

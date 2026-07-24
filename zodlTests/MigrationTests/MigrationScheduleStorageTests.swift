@@ -86,7 +86,7 @@ struct MigrationScheduleStorageTests {
     @Test func recordCommittedScheduleThenReadReturnsItWithEmptySentRecords() throws {
         try withStorage("testRecordCommittedScheduleThenReadReturnsItWithEmptySentRecords") { storage in
             let accountUUID = Self.accountUUID(2)
-            let schedule = MigrationSchedule(transfers: [Self.transfer(id: "t0", amount: 100)], estimatedDurationHours: 6)
+            let schedule = MigrationSchedule(transfers: [Self.transfer(id: "t0", amount: 100)], estimatedDurationHours: 6, proposalHandle: 0)
             let committedAt = Date(timeIntervalSince1970: 1_000_000)
 
             storage.recordCommittedSchedule(schedule, for: accountUUID, now: committedAt)
@@ -102,7 +102,7 @@ struct MigrationScheduleStorageTests {
     @Test func recordCommittedScheduleReplacesSchedulePreservingSentRecordsOnRecommit() throws {
         try withStorage("testRecordCommittedScheduleReplacesSchedulePreservingSentRecordsOnRecommit") { storage in
             let accountUUID = Self.accountUUID(3)
-            let firstSchedule = MigrationSchedule(transfers: [Self.transfer(id: "t0", amount: 100)], estimatedDurationHours: 6)
+            let firstSchedule = MigrationSchedule(transfers: [Self.transfer(id: "t0", amount: 100)], estimatedDurationHours: 6, proposalHandle: 0)
             storage.recordCommittedSchedule(firstSchedule, for: accountUUID, now: Date(timeIntervalSince1970: 1_000))
             storage.recordTransferBroadcast(
                 MigrationTransferResult.success(txId: "tx0"),
@@ -112,7 +112,7 @@ struct MigrationScheduleStorageTests {
 
             // Simulates a restart / re-created plan: a fresh schedule (new transfer ids) commits
             // over the old one.
-            let secondSchedule = MigrationSchedule(transfers: [Self.transfer(id: "t1", amount: 200)], estimatedDurationHours: 12)
+            let secondSchedule = MigrationSchedule(transfers: [Self.transfer(id: "t1", amount: 200)], estimatedDurationHours: 12, proposalHandle: 0)
             storage.recordCommittedSchedule(secondSchedule, for: accountUUID, now: Date(timeIntervalSince1970: 3_000))
 
             let payload = try #require(storage.committedSchedule(for: accountUUID))
@@ -130,7 +130,8 @@ struct MigrationScheduleStorageTests {
             let accountUUID = Self.accountUUID(4)
             let schedule = MigrationSchedule(
                 transfers: [Self.transfer(id: "t0", amount: 100), Self.transfer(id: "t1", amount: 200)],
-                estimatedDurationHours: 12
+                estimatedDurationHours: 12,
+                proposalHandle: 0
             )
             storage.recordCommittedSchedule(schedule, for: accountUUID, now: Date(timeIntervalSince1970: 1_000))
 
@@ -162,7 +163,7 @@ struct MigrationScheduleStorageTests {
     @Test func recordTransferBroadcastWithEmptyTxIdPersistsNilNotEmptyString() throws {
         try withStorage("testRecordTransferBroadcastWithEmptyTxIdPersistsNilNotEmptyString") { storage in
             let accountUUID = Self.accountUUID(5)
-            let schedule = MigrationSchedule(transfers: [Self.transfer(id: "t0", amount: 100)], estimatedDurationHours: 6)
+            let schedule = MigrationSchedule(transfers: [Self.transfer(id: "t0", amount: 100)], estimatedDurationHours: 6, proposalHandle: 0)
             storage.recordCommittedSchedule(schedule, for: accountUUID, now: Date())
 
             // The "record failed after broadcast" placeholder — the broadcast landed, only the
@@ -176,7 +177,7 @@ struct MigrationScheduleStorageTests {
     @Test func recordTransferBroadcastWithNonSuccessResultAppendsNothing() throws {
         try withStorage("testRecordTransferBroadcastWithNonSuccessResultAppendsNothing") { storage in
             let accountUUID = Self.accountUUID(6)
-            let schedule = MigrationSchedule(transfers: [Self.transfer(id: "t0", amount: 100)], estimatedDurationHours: 6)
+            let schedule = MigrationSchedule(transfers: [Self.transfer(id: "t0", amount: 100)], estimatedDurationHours: 6, proposalHandle: 0)
             storage.recordCommittedSchedule(schedule, for: accountUUID, now: Date())
 
             storage.recordTransferBroadcast(MigrationTransferResult.networkError(retryable: true), for: accountUUID, now: Date())
@@ -198,7 +199,7 @@ struct MigrationScheduleStorageTests {
     @Test func recordTransferBroadcastWhenEveryTransferAlreadySentAppendsNothing() throws {
         try withStorage("testRecordTransferBroadcastWhenEveryTransferAlreadySentAppendsNothing") { storage in
             let accountUUID = Self.accountUUID(8)
-            let schedule = MigrationSchedule(transfers: [Self.transfer(id: "t0", amount: 100)], estimatedDurationHours: 6)
+            let schedule = MigrationSchedule(transfers: [Self.transfer(id: "t0", amount: 100)], estimatedDurationHours: 6, proposalHandle: 0)
             storage.recordCommittedSchedule(schedule, for: accountUUID, now: Date())
             storage.recordTransferBroadcast(MigrationTransferResult.success(txId: "tx0"), for: accountUUID, now: Date())
             storage.recordTransferBroadcast(MigrationTransferResult.success(txId: "tx-extra"), for: accountUUID, now: Date())
@@ -212,7 +213,7 @@ struct MigrationScheduleStorageTests {
     @Test func clearRemovesThePayload() throws {
         try withStorage("testClearRemovesThePayload") { storage in
             let accountUUID = Self.accountUUID(9)
-            let schedule = MigrationSchedule(transfers: [Self.transfer(id: "t0", amount: 100)], estimatedDurationHours: 6)
+            let schedule = MigrationSchedule(transfers: [Self.transfer(id: "t0", amount: 100)], estimatedDurationHours: 6, proposalHandle: 0)
             storage.recordCommittedSchedule(schedule, for: accountUUID, now: Date())
             #expect(storage.hasStoredPayload(for: accountUUID) == true)
 
@@ -226,7 +227,7 @@ struct MigrationScheduleStorageTests {
         try withStorage("testPerAccountPayloadsAreIsolated") { storage in
             let accountA = Self.accountUUID(10)
             let accountB = Self.accountUUID(11)
-            let schedule = MigrationSchedule(transfers: [Self.transfer(id: "t0", amount: 100)], estimatedDurationHours: 6)
+            let schedule = MigrationSchedule(transfers: [Self.transfer(id: "t0", amount: 100)], estimatedDurationHours: 6, proposalHandle: 0)
 
             storage.recordCommittedSchedule(schedule, for: accountA, now: Date())
 
@@ -243,7 +244,7 @@ struct MigrationScheduleStorageTests {
         let userDefaults = try #require(UserDefaults(suiteName: suiteName))
         defer { userDefaults.removePersistentDomain(forName: suiteName) }
         let accountUUID = Self.accountUUID(12)
-        let schedule = MigrationSchedule(transfers: [Self.transfer(id: "t0", amount: 100)], estimatedDurationHours: 6)
+        let schedule = MigrationSchedule(transfers: [Self.transfer(id: "t0", amount: 100)], estimatedDurationHours: 6, proposalHandle: 0)
 
         let firstStorage = MigrationScheduleStorage(userDefaults: userDefaults)
         firstStorage.recordCommittedSchedule(schedule, for: accountUUID, now: Date(timeIntervalSince1970: 1_000))
@@ -264,7 +265,8 @@ struct MigrationScheduleStorageTests {
                 Self.transfer(id: "t0", amount: 100, nextExecutableAfterHeight: 1_000),
                 Self.transfer(id: "t1", amount: 200, nextExecutableAfterHeight: 1_048)
             ],
-            estimatedDurationHours: 12
+            estimatedDurationHours: 12,
+            proposalHandle: 0
         )
         let committed = MigrationCommittedSchedule(schedule: schedule, sentRecords: [], committedAt: Date())
 
@@ -289,7 +291,8 @@ struct MigrationScheduleStorageTests {
     @Test func transferRowsFirstNonSentIsOverdueWhenHasOverdueIsTrue() {
         let schedule = MigrationSchedule(
             transfers: [Self.transfer(id: "t0", amount: 100), Self.transfer(id: "t1", amount: 200)],
-            estimatedDurationHours: 12
+            estimatedDurationHours: 12,
+            proposalHandle: 0
         )
         let committed = MigrationCommittedSchedule(schedule: schedule, sentRecords: [], committedAt: Date())
 
@@ -311,7 +314,8 @@ struct MigrationScheduleStorageTests {
                 Self.transfer(id: "t1", amount: 200),
                 Self.transfer(id: "t2", amount: 300)
             ],
-            estimatedDurationHours: 18
+            estimatedDurationHours: 18,
+            proposalHandle: 0
         )
         let committed = MigrationCommittedSchedule(schedule: schedule, sentRecords: [], committedAt: Date())
 
@@ -339,7 +343,8 @@ struct MigrationScheduleStorageTests {
         // to active/overdue; it stays `.pending` like every row after the first.
         let schedule = MigrationSchedule(
             transfers: [Self.transfer(id: "t0", amount: 100), Self.transfer(id: "t1", amount: 200)],
-            estimatedDurationHours: 12
+            estimatedDurationHours: 12,
+            proposalHandle: 0
         )
         let committed = MigrationCommittedSchedule(schedule: schedule, sentRecords: [], committedAt: Date())
 
@@ -357,7 +362,8 @@ struct MigrationScheduleStorageTests {
     @Test func transferRowsMarksFirstNonSentExpiredWhenStateIsTransferExpired() {
         let schedule = MigrationSchedule(
             transfers: [Self.transfer(id: "t0", amount: 100), Self.transfer(id: "t1", amount: 200)],
-            estimatedDurationHours: 12
+            estimatedDurationHours: 12,
+            proposalHandle: 0
         )
         let committed = MigrationCommittedSchedule(schedule: schedule, sentRecords: [], committedAt: Date())
 
@@ -375,7 +381,8 @@ struct MigrationScheduleStorageTests {
     @Test func transferRowsWithSentRecordMatchingAScheduleTransferReadsSentNotActive() {
         let schedule = MigrationSchedule(
             transfers: [Self.transfer(id: "t0", amount: 100), Self.transfer(id: "t1", amount: 200)],
-            estimatedDurationHours: 12
+            estimatedDurationHours: 12,
+            proposalHandle: 0
         )
         let sentAt = Date(timeIntervalSince1970: 1_000)
         let sentRecords = [
@@ -405,7 +412,7 @@ struct MigrationScheduleStorageTests {
     }
 
     @Test func transferRowsSentRowHoursAgoDropsSentMinutesAgoPastOneHour() {
-        let schedule = MigrationSchedule(transfers: [Self.transfer(id: "t0", amount: 100)], estimatedDurationHours: 6)
+        let schedule = MigrationSchedule(transfers: [Self.transfer(id: "t0", amount: 100)], estimatedDurationHours: 6, proposalHandle: 0)
         let sentAt = Date(timeIntervalSince1970: 1_000)
         let sentRecords = [
             MigrationCommittedSchedule.SentRecord(transferId: "t0", amount: Zatoshi(100), txId: "tx0", sentAt: sentAt)
@@ -442,7 +449,8 @@ struct MigrationScheduleStorageTests {
                 Self.transfer(id: "new2", amount: 300, nextExecutableAfterHeight: 1_096),
                 Self.transfer(id: "new3", amount: 400, nextExecutableAfterHeight: 1_192)
             ],
-            estimatedDurationHours: 24
+            estimatedDurationHours: 24,
+            proposalHandle: 0
         )
         let committed = MigrationCommittedSchedule(schedule: newSchedule, sentRecords: priorSentRecords, committedAt: Date(timeIntervalSince1970: 3_000))
 
@@ -475,7 +483,7 @@ struct MigrationScheduleStorageTests {
     }
 
     @Test func transferRowsWithNoPriorSentRecordsOutsideScheduleRendersScheduleRowsOnly() {
-        let schedule = MigrationSchedule(transfers: [Self.transfer(id: "t0", amount: 100)], estimatedDurationHours: 6)
+        let schedule = MigrationSchedule(transfers: [Self.transfer(id: "t0", amount: 100)], estimatedDurationHours: 6, proposalHandle: 0)
         let committed = MigrationCommittedSchedule(schedule: schedule, sentRecords: [], committedAt: Date())
 
         let rows = MigrationDerivations.transferRows(
@@ -497,7 +505,8 @@ struct MigrationScheduleStorageTests {
         // minute-precise value (the caption reads "in ~25 mins", never floored to 0h).
         let schedule = MigrationSchedule(
             transfers: [Self.transfer(id: "t0", amount: 100, nextExecutableAfterHeight: 1_020)],
-            estimatedDurationHours: 1
+            estimatedDurationHours: 1,
+            proposalHandle: 0
         )
         let committed = MigrationCommittedSchedule(schedule: schedule, sentRecords: [], committedAt: Date())
 
@@ -519,7 +528,8 @@ struct MigrationScheduleStorageTests {
         // `MigrationETA.minutesFromNow` floors that to `0` ("Ready now"), never negative.
         let schedule = MigrationSchedule(
             transfers: [Self.transfer(id: "t0", amount: 100, nextExecutableAfterHeight: 900)],
-            estimatedDurationHours: 1
+            estimatedDurationHours: 1,
+            proposalHandle: 0
         )
         let committed = MigrationCommittedSchedule(schedule: schedule, sentRecords: [], committedAt: Date())
 
@@ -547,7 +557,8 @@ struct MigrationScheduleStorageTests {
 
         let staleSchedule = MigrationSchedule(
             transfers: [Self.transfer(id: "t0", amount: 100, nextExecutableAfterHeight: 900)],
-            estimatedDurationHours: 1
+            estimatedDurationHours: 1,
+            proposalHandle: 0
         )
         let staleCommitted = MigrationCommittedSchedule(schedule: staleSchedule, sentRecords: [], committedAt: Date())
         let staleRows = MigrationDerivations.transferRows(
@@ -564,7 +575,8 @@ struct MigrationScheduleStorageTests {
         // `recordCommittedScheduleReplacesSchedulePreservingSentRecordsOnRecommit` above).
         let refreshedSchedule = MigrationSchedule(
             transfers: [Self.transfer(id: "t0", amount: 100, nextExecutableAfterHeight: 1_096)],
-            estimatedDurationHours: 2
+            estimatedDurationHours: 2,
+            proposalHandle: 0
         )
         let refreshedCommitted = MigrationCommittedSchedule(schedule: refreshedSchedule, sentRecords: [], committedAt: Date())
         let refreshedRows = MigrationDerivations.transferRows(
@@ -588,7 +600,7 @@ struct MigrationScheduleStorageTests {
         // The app's own bookkeeping has no sent record for this transfer yet (the OLD, statuses-less
         // derivation would read it `.active` — see `transferRowsFirstNonSentIsActiveWhenNothingIsWrong`
         // above), but the engine's LIVE status already reports it mined: live truth wins.
-        let schedule = MigrationSchedule(transfers: [Self.transfer(id: "0", amount: 100)], estimatedDurationHours: 6)
+        let schedule = MigrationSchedule(transfers: [Self.transfer(id: "0", amount: 100)], estimatedDurationHours: 6, proposalHandle: 0)
         let committed = MigrationCommittedSchedule(schedule: schedule, sentRecords: [], committedAt: Date())
         let statuses = [Self.status(id: 0, state: MigrationTransactionStatus.State.mined(height: 900))]
 
@@ -615,7 +627,7 @@ struct MigrationScheduleStorageTests {
         // When a sentRecord DOES exist alongside a live `.mined` status, the row stays `.sent` (as
         // it already was) AND keeps its precise elapsed-time math — the live join must not discard
         // real data the app already has.
-        let schedule = MigrationSchedule(transfers: [Self.transfer(id: "0", amount: 100)], estimatedDurationHours: 6)
+        let schedule = MigrationSchedule(transfers: [Self.transfer(id: "0", amount: 100)], estimatedDurationHours: 6, proposalHandle: 0)
         let sentAt = Date(timeIntervalSince1970: 1_000)
         let sentRecords = [MigrationCommittedSchedule.SentRecord(transferId: "0", amount: Zatoshi(100), txId: "tx0", sentAt: sentAt)]
         let committed = MigrationCommittedSchedule(schedule: schedule, sentRecords: sentRecords, committedAt: Date())
@@ -640,7 +652,8 @@ struct MigrationScheduleStorageTests {
         // height wins, reading ready-now.
         let schedule = MigrationSchedule(
             transfers: [Self.transfer(id: "0", amount: 100, nextExecutableAfterHeight: 10_000)],
-            estimatedDurationHours: 6
+            estimatedDurationHours: 6,
+            proposalHandle: 0
         )
         let committed = MigrationCommittedSchedule(schedule: schedule, sentRecords: [], committedAt: Date())
         let statuses = [Self.status(id: 0, state: MigrationTransactionStatus.State.awaitingSignature, scheduledHeight: 900)]
@@ -666,7 +679,8 @@ struct MigrationScheduleStorageTests {
                 Self.transfer(id: "1", amount: 200, nextExecutableAfterHeight: 1_000),
                 Self.transfer(id: "2", amount: 300, nextExecutableAfterHeight: 1_000)
             ],
-            estimatedDurationHours: 12
+            estimatedDurationHours: 12,
+            proposalHandle: 0
         )
         let committed = MigrationCommittedSchedule(schedule: schedule, sentRecords: [], committedAt: Date())
         // Deliberately out of schedule order (2, then 0, then 1), plus a stray preparation-kind
@@ -708,7 +722,8 @@ struct MigrationScheduleStorageTests {
                 Self.transfer(id: "t0", amount: 100, nextExecutableAfterHeight: 1_000),
                 Self.transfer(id: "t1", amount: 200, nextExecutableAfterHeight: 1_048)
             ],
-            estimatedDurationHours: 12
+            estimatedDurationHours: 12,
+            proposalHandle: 0
         )
         let committed = MigrationCommittedSchedule(schedule: schedule, sentRecords: [], committedAt: Date())
 
@@ -735,7 +750,8 @@ struct MigrationScheduleStorageTests {
     @Test func transferRowsBroadcastLiveStateRendersBroadcastingStyling() {
         let schedule = MigrationSchedule(
             transfers: [Self.transfer(id: "0", amount: 100, nextExecutableAfterHeight: 1_048)],
-            estimatedDurationHours: 6
+            estimatedDurationHours: 6,
+            proposalHandle: 0
         )
         let committed = MigrationCommittedSchedule(schedule: schedule, sentRecords: [], committedAt: Date())
         let statuses = [
@@ -763,7 +779,8 @@ struct MigrationScheduleStorageTests {
     @Test func transferRowsLiveBlockedExpiredMarksRowExpiredRegardlessOfPosition() {
         let schedule = MigrationSchedule(
             transfers: [Self.transfer(id: "0", amount: 100), Self.transfer(id: "1", amount: 200)],
-            estimatedDurationHours: 12
+            estimatedDurationHours: 12,
+            proposalHandle: 0
         )
         let committed = MigrationCommittedSchedule(schedule: schedule, sentRecords: [], committedAt: Date())
         // "1" — NOT the first non-sent row — is the one the engine reports expired; per-row live
@@ -786,7 +803,7 @@ struct MigrationScheduleStorageTests {
     }
 
     @Test func transferRowsIgnoresPreparationKindStatusesEntirely() {
-        let schedule = MigrationSchedule(transfers: [Self.transfer(id: "0", amount: 100)], estimatedDurationHours: 6)
+        let schedule = MigrationSchedule(transfers: [Self.transfer(id: "0", amount: 100)], estimatedDurationHours: 6, proposalHandle: 0)
         let committed = MigrationCommittedSchedule(schedule: schedule, sentRecords: [], committedAt: Date())
         // A preparation-kind status sharing the transfer's OWN numeric id must not join to it —
         // only `.transfer`-kind statuses are eligible (preparation transactions are never displayed
@@ -816,7 +833,8 @@ struct MigrationScheduleStorageTests {
     @Test func transferRowsPartialJoinLeavesUnmatchedRowsAndStatusesUnaffected() {
         let schedule = MigrationSchedule(
             transfers: [Self.transfer(id: "0", amount: 100), Self.transfer(id: "1", amount: 200)],
-            estimatedDurationHours: 12
+            estimatedDurationHours: 12,
+            proposalHandle: 0
         )
         let committed = MigrationCommittedSchedule(schedule: schedule, sentRecords: [], committedAt: Date())
         // "1" has no matching status at all (partial join); id 999 matches no schedule OR leading
@@ -858,7 +876,8 @@ struct MigrationScheduleStorageTests {
                 Self.transfer(id: "1", amount: 200),
                 Self.transfer(id: "2", amount: 300)
             ],
-            estimatedDurationHours: 18
+            estimatedDurationHours: 18,
+            proposalHandle: 0
         )
         let committed = MigrationCommittedSchedule(schedule: schedule, sentRecords: [], committedAt: Date())
         let statuses = [
@@ -924,7 +943,8 @@ struct MigrationScheduleStorageTests {
                 Self.transfer(id: "new2", amount: 300),
                 Self.transfer(id: "new3", amount: 400)
             ],
-            estimatedDurationHours: 24
+            estimatedDurationHours: 24,
+            proposalHandle: 0
         )
         let committed = MigrationCommittedSchedule(schedule: newSchedule, sentRecords: priorSentRecords, committedAt: Date())
 
@@ -949,7 +969,8 @@ struct MigrationScheduleStorageTests {
         // in the "still unsent" half of `transfersTotal`.
         let schedule = MigrationSchedule(
             transfers: [Self.transfer(id: "t0", amount: 100), Self.transfer(id: "t1", amount: 200)],
-            estimatedDurationHours: 12
+            estimatedDurationHours: 12,
+            proposalHandle: 0
         )
         let sentRecords = [
             MigrationCommittedSchedule.SentRecord(transferId: "t0", amount: Zatoshi(100), txId: "tx0", sentAt: Date())
@@ -970,7 +991,7 @@ struct MigrationScheduleStorageTests {
     }
 
     @Test func summaryDustFallsBackToZeroWhenResidualUnavailableAndNotComplete() {
-        let schedule = MigrationSchedule(transfers: [Self.transfer(id: "t0", amount: 100)], estimatedDurationHours: 6)
+        let schedule = MigrationSchedule(transfers: [Self.transfer(id: "t0", amount: 100)], estimatedDurationHours: 6, proposalHandle: 0)
         let committed = MigrationCommittedSchedule(schedule: schedule, sentRecords: [], committedAt: Date())
 
         let summary = MigrationDerivations.summary(
@@ -984,7 +1005,7 @@ struct MigrationScheduleStorageTests {
     }
 
     @Test func summaryDustFallsBackToProgressRemainingOrchardWhenCompleteAndResidualUnavailable() {
-        let schedule = MigrationSchedule(transfers: [Self.transfer(id: "t0", amount: 100)], estimatedDurationHours: 6)
+        let schedule = MigrationSchedule(transfers: [Self.transfer(id: "t0", amount: 100)], estimatedDurationHours: 6, proposalHandle: 0)
         let committed = MigrationCommittedSchedule(schedule: schedule, sentRecords: [], committedAt: Date())
         let progress = MigrationProgress(completedTransfers: 1, totalTransfers: 1, remainingOrchard: Zatoshi(777), nextTransferReadyAtHeight: nil)
 
@@ -1000,7 +1021,7 @@ struct MigrationScheduleStorageTests {
     }
 
     @Test func summaryDustPrefersResidualEvenWhenComplete() {
-        let schedule = MigrationSchedule(transfers: [Self.transfer(id: "t0", amount: 100)], estimatedDurationHours: 6)
+        let schedule = MigrationSchedule(transfers: [Self.transfer(id: "t0", amount: 100)], estimatedDurationHours: 6, proposalHandle: 0)
         let committed = MigrationCommittedSchedule(schedule: schedule, sentRecords: [], committedAt: Date())
         let progress = MigrationProgress(completedTransfers: 1, totalTransfers: 1, remainingOrchard: Zatoshi(777), nextTransferReadyAtHeight: nil)
 
@@ -1015,7 +1036,7 @@ struct MigrationScheduleStorageTests {
     }
 
     @Test func summaryDustFallsBackToZeroWhenCompleteAndNeitherResidualNorProgressAreAvailable() {
-        let schedule = MigrationSchedule(transfers: [Self.transfer(id: "t0", amount: 100)], estimatedDurationHours: 6)
+        let schedule = MigrationSchedule(transfers: [Self.transfer(id: "t0", amount: 100)], estimatedDurationHours: 6, proposalHandle: 0)
         let committed = MigrationCommittedSchedule(schedule: schedule, sentRecords: [], committedAt: Date())
 
         let summary = MigrationDerivations.summary(

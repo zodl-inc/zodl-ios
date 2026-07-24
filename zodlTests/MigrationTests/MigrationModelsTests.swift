@@ -53,7 +53,12 @@ import Foundation
                 expiryHeight: 420
             )
         ]
-        let original = MigrationSchedule(transfers: transfers, estimatedDurationHours: 72)
+        // MOB-1513 (R6): a nonzero, non-default `proposalHandle` on purpose -- `0` is ALSO the
+        // decoder's own fallback for a missing key (see the SDK's `MigrationSchedule.init(from:)`),
+        // so a `0` fixture here would pass even if encoding silently dropped the field. A distinctive
+        // nonzero value makes this an actual round-trip check of that field, not just of the ones
+        // that predate it.
+        let original = MigrationSchedule(transfers: transfers, estimatedDurationHours: 72, proposalHandle: 481_516)
 
         let data = try JSONEncoder().encode(original)
         #expect(try JSONDecoder().decode(MigrationSchedule.self, from: data) == original)
