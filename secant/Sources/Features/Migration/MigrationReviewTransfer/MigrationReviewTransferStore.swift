@@ -37,15 +37,19 @@
 //  falling through to the plain `.confirmed` delegate above, it proposes the `ImmediateMigrationProposal`'s
 //  single PCZT via `createPCZTFromProposal(accountUUID:proposal:)` (MOB-1513: the SAME ordinary-send
 //  PCZT builder used elsewhere, not the engine's schedule-based `proposeMigrationPCZTs` this fork used
-//  to call) wrapped as a one-element Keystone signing batch, and delegates
-//  `.keystoneSignRequested([pczt])` for the coordinator to route through `MigrationKeystoneSign` +
-//  `Scan`. The coordinator's own dedicated post-signing step
+//  to call), redacts it for the signer, and delegates `.keystoneImmediateSignRequested(unsigned:redacted:)`
+//  for the coordinator to route through the PRODUCTION single-PCZT ceremony (`MigrationKeystoneSign`
+//  in single-PCZT mode + `Scan` with the production checker) — MOB-1513 (R8): NOT the migration
+//  batch bridge this fork briefly rode, which is scheduled-lane machinery (its apply FFI
+//  numeric-parses engine ids this engine-external PCZT doesn't have; Android's immediate lane is
+//  single-PCZT for the same reason). The coordinator's own dedicated post-signing step
 //  (`MigrationCoordFlowCoordinator.submitImmediateKeystoneTransaction`) adds proofs and submits once the
 //  signature comes back — see that function's doc for why the Keystone lane's actual broadcast can't
 //  defer to the Sending screen the way the software lane's does. The manual-step path (transfers
 //  already signed at plan commit) is unchanged — no PCZT is ever proposed there.
 //
 
+import Foundation
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
 
@@ -140,18 +144,25 @@ struct MigrationReviewTransfer {
         enum Delegate: Equatable {
             case closed
             case confirmed
-            /// MOB-1468 (Keystone): the immediate-mode proposal's PCZT was proposed and needs QR
-            /// signing — a single-element array, the shared shape across the Keystone signing
-            /// sources so the coordinator can treat them symmetrically.
-            case keystoneSignRequested([MigrationUnsignedTransferPczt])
+            /// MOB-1468/MOB-1513 (R8): the immediate-mode proposal's single ordinary-send PCZT was
+            /// proposed AND redacted for the signer — the coordinator routes it through the
+            /// PRODUCTION single-PCZT Keystone ceremony (`urEncoderForPCZT` QR over `redacted`,
+            /// `keystonePCZTScanChecker` scan, the device echoes the full signed PCZT), never the
+            /// migration batch bridge. `unsigned` is the unredacted original the post-scan
+            /// proofs+combine step needs (`MigrationCommitPipeline.commitImmediateKeystone`); the
+            /// redaction is wire-only. R8's root cause for abandoning the batch bridge here: the
+            /// batch apply FFI (`decode_signed_pairs`) numeric-parses every PCZT id, and this lane's
+            /// engine-external PCZT has none — see `MigrationCoordFlowCoordinator`'s Keystone rows.
+            case keystoneImmediateSignRequested(unsigned: Data, redacted: Data)
         }
     }
 
-    /// MOB-1513: the sentinel id the immediate lane's single Keystone-signing PCZT rides under — it
-    /// carries no engine-issued id (unlike the schedule/prep PCZTs `proposeKeystoneBatch` builds),
-    /// since `createPCZTFromProposal` is the ordinary-send PCZT builder, not an engine call. Never
-    /// looked up by id anywhere downstream — the coordinator's post-signing step reads the batch's
-    /// single entry positionally (`.first`), matching the batch's guaranteed one-element shape.
+    /// MOB-1513: the sentinel id the immediate lane's single Keystone-signing PCZT rides under in
+    /// `MigrationKeystoneSign.State.pczts` — it carries no engine-issued id, since
+    /// `createPCZTFromProposal` is the ordinary-send PCZT builder, not an engine call. MOB-1513
+    /// (R8): STATE-ONLY now — it never reaches the SDK (the immediate ceremony's single-PCZT
+    /// reroute bypasses the batch bridge, whose apply FFI numeric-parses ids and would reject this
+    /// string); the coordinator's post-signing step reads the entry positionally (`.first`).
     static let immediateKeystonePcztId = "immediate"
 
     /// MOB-1513 (E2-FIX): single-flight + dismiss-cancellation id for the bounded entry-retry loop
@@ -235,7 +246,7 @@ struct MigrationReviewTransfer {
                 // `immediateProposal` into.
                 return .send(.delegate(.confirmed))
 
-            case .delegate(.keystoneSignRequested):
+            case .delegate(.keystoneImmediateSignRequested):
                 // MOB-1513 (B4): the PCZT is handed to the coordinator (which pushes the QR
                 // ceremony on top) — re-enable Confirm so a pop-back after a rejected signature
                 // lands on a tappable button again.
@@ -280,14 +291,19 @@ struct MigrationReviewTransfer {
     /// `createPCZTFromProposal` (MOB-1513: the ordinary-send PCZT builder — the proposal is
     /// engine-external, so there is no schedule for the engine's `proposeMigrationPCZTs`/
     /// `proposeNoteSplitPCZTs` machinery to build a batch from; a send-max sweep also never needs a
-    /// note split of its own) and hands the resulting one-element batch to the coordinator for QR
-    /// signing.
+    /// note split of its own), redacts it for the signer (MOB-1513 R8 — the production
+    /// `SignWithKeystone` wire copy: witnesses/proprietary cleared, FVK and any pre-existing
+    /// dummy-spend sigs KEPT, exactly what the device's single-PCZT `zcash-pczt` protocol expects),
+    /// and hands both to the coordinator for the production QR ceremony. Either throw surfaces as
+    /// the same commit failure (`.noteSplitFailed` -> failure sheet + Retry), never swallowed.
     private func requestKeystoneSignature(for proposal: ImmediateMigrationProposal, account: WalletAccount) -> Effect<Action> {
         .run { send in
             do {
                 let pczt = try await sdkSynchronizer.createPCZTFromProposal(account.id, proposal.proposal)
-                await send(.delegate(.keystoneSignRequested([MigrationUnsignedTransferPczt(id: Self.immediateKeystonePcztId, pczt: pczt)])))
+                let redacted = try await sdkSynchronizer.redactPCZTForSigner(Pczt(pczt))
+                await send(.delegate(.keystoneImmediateSignRequested(unsigned: pczt, redacted: redacted)))
             } catch {
+                LoggerProxy.error("[MOB-1513] immediate Keystone PCZT build/redact failed: \(error)")
                 await send(.noteSplitFailed)
             }
         }
