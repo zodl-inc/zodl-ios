@@ -4598,9 +4598,14 @@ import ComposableArchitecture
 
     /// `.transferExpired` recovery, SOFTWARE account: rebuilds the expired transfers IN PLACE via
     /// `refreshStaleMigrationTransfers` with a NON-nil usk (the engine re-signs each rebuilt row),
-    /// does NOT call `restartCurrentMigrationStep`, reconciles, and lands straight on the Scheduled
-    /// screen hydrated from the RETURNED schedule (never the consent plan screen — amounts unchanged).
-    @MainActor @Test func expiredRecoverySoftwareRefreshesInPlaceAndPushesScheduledWithReturnedSchedule() async {
+    /// does NOT call `restartCurrentMigrationStep`, records + reconciles the returned schedule
+    /// immediately (record-before-navigation: the SDK already re-signed in place by the time the
+    /// refresh returns), and — MOB-1513 (C7, Figma Error & Recovery row 3) — pushes the SAME Confirm
+    /// Transfer Plan review screen the design now specifies, rather than landing straight on
+    /// Scheduled: `requiresSigning: false` (nothing left to sign) and `isExpiredRecoveryReview: true`
+    /// (the routing discriminator its OWN Confirm reads — see
+    /// `expiredRecoverySoftwareReviewConfirmedPushesScheduledInsteadOfFlowFinished` right below).
+    @MainActor @Test func expiredRecoverySoftwareRefreshesInPlaceAndPushesConfirmReviewWithReturnedSchedule() async {
         let refreshedSchedule = MigrationSchedule(
             transfers: [
                 MigrationTransferProposal(id: "s0", amount: Zatoshi(3_000_000), anchorHeight: 500, nextExecutableAfterHeight: 500, expiryHeight: 600)
@@ -4637,7 +4642,6 @@ import ComposableArchitecture
             $0.zcashSDKEnvironment = .testnet
             $0.migrationManager.recordCommittedSchedule = { _, schedule in recordCommittedScheduleCalls.withValue { $0.append(schedule) } }
             $0.migrationManager.reconcile = { reconcileCalls.withValue { $0 += 1 } }
-            $0.migrationManager.migrationSummary = { _ in MigrationSummary.zero }
         }
         store.exhaustivity = .off
 
@@ -4647,28 +4651,81 @@ import ComposableArchitecture
 
         #expect(refreshUskNonNil.value == [true])
         #expect(restartCalls.value == 0)
+        // record + reconcile ran BEFORE the review screen appears — both driven by the same single
+        // effect, so these counters being right proves the ordering the doc above describes.
         #expect(reconcileCalls.value == 1)
         // The RETURNED schedule is persisted as the committed truth — otherwise the app renders the
         // STALE pre-refresh schedule (duration/timing) from `committedSchedule`.
         #expect(recordCommittedScheduleCalls.value == [refreshedSchedule])
         #expect(store.state.path.count == 2)
-        guard case let .scheduled(scheduledState) = try? #require(store.state.path.last) else {
-            Issue.record("Expected .scheduled pushed on top of .recovery")
+        guard case let .transferPlan(planState) = try? #require(store.state.path.last) else {
+            Issue.record("Expected the Confirm Transfer Plan review screen pushed on top of .recovery")
             return
         }
-        // summary.transferred (zero) + the RETURNED schedule's own transfer sum.
-        #expect(scheduledState.totalAmount == Zatoshi(3_000_000))
+        #expect(planState.variant == MigrationTransferPlan.State.Variant.recreated)
+        #expect(planState.requiresSigning == false)
+        #expect(planState.isExpiredRecoveryReview == true)
+        #expect(planState.injectedSchedule == refreshedSchedule)
+        #expect(planState.pendingKeystoneRecoveryBatch == nil)
         guard case .recovery = try? #require(store.state.path.first) else {
-            Issue.record("Expected .recovery retained beneath .scheduled")
+            Issue.record("Expected .recovery retained beneath the review screen")
+            return
+        }
+    }
+
+    /// MOB-1513 (C7, Figma Error & Recovery row 3): the expired-recovery review screen's OWN
+    /// Confirm — unlike the RESCHEDULED variant's identical `requiresSigning == false`
+    /// (`rescheduledPlanConfirmedInCoordinatorFinishesFlowWithoutPushingScheduled` above) — pushes
+    /// `.scheduled` (hydrated from the schedule the refresh already recorded), rather than finishing
+    /// the flow outright. `isExpiredRecoveryReview` is what tells the two `requiresSigning == false`
+    /// confirms apart; this screen's Confirm never re-signs, re-proposes, or re-records (nothing
+    /// beyond hydrate-and-push runs here).
+    @MainActor @Test func expiredRecoverySoftwareReviewConfirmedPushesScheduledInsteadOfFlowFinished() async {
+        let schedule = MigrationSchedule(
+            transfers: [
+                MigrationTransferProposal(id: "s0", amount: Zatoshi(3_000_000), anchorHeight: 500, nextExecutableAfterHeight: 500, expiryHeight: 600)
+            ],
+            estimatedDurationHours: 8,
+                    proposalHandle: 1
+        )
+        var planState = MigrationTransferPlan.State(variant: .recreated, requiresSigning: false)
+        planState.isExpiredRecoveryReview = true
+        planState.schedule = schedule
+        var state = MigrationCoordFlow.State()
+        state.path.append(.recovery(MigrationRecovery.State(reason: .expired, isFlowRoot: true)))
+        state.path.append(.transferPlan(planState))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.migrationManager.migrationSummary = { _ in MigrationSummary.zero }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 1, action: .transferPlan(.delegate(.confirmed)))))
+        await store.receive(\.pushHydratedPathState)
+
+        #expect(store.state.path.count == 3)
+        guard case let .scheduled(scheduledState) = try? #require(store.state.path.last) else {
+            Issue.record("Expected .scheduled pushed, not .flowFinished")
+            return
+        }
+        // summary.transferred (zero) + this schedule's own transfer sum.
+        #expect(scheduledState.totalAmount == Zatoshi(3_000_000))
+        guard case .transferPlan = try? #require(store.state.path[id: 1]) else {
+            Issue.record("Expected the review .transferPlan retained beneath .scheduled")
             return
         }
     }
 
     /// `.transferExpired` recovery, KEYSTONE account: refreshes with a NIL usk (rebuilt rows return
     /// UNSIGNED), then proposes the rebuilt batch off the RETURNED schedule (echoed into
-    /// `proposeMigrationPCZTs`) and enters the existing QR ceremony with the context carrying that
-    /// schedule.
-    @MainActor @Test func expiredRecoveryKeystoneRefreshesWithNilUskAndEntersCeremonyEchoingReturnedSchedule() async {
+    /// `proposeMigrationPCZTs`). MOB-1513 (C7, Figma Error & Recovery row 3): the ceremony no longer
+    /// starts as soon as the propose succeeds — it pushes the SAME Confirm Transfer Plan review
+    /// screen the software lane gets, with the already-proposed batch riding the pushed screen's
+    /// OWN `pendingKeystoneRecoveryBatch` (not coordinator state — a pop-back without confirming
+    /// then discards it for free). See `expiredRecoveryKeystoneReviewConfirmedStartsCeremony` for
+    /// the screen's OWN Confirm actually starting the ceremony.
+    @MainActor @Test func expiredRecoveryKeystoneRefreshesWithNilUskAndPushesConfirmReviewWithProposedBatch() async {
         let refreshedSchedule = MigrationSchedule(
             transfers: [
                 MigrationTransferProposal(id: "k0", amount: Zatoshi(4_000_000), anchorHeight: 700, nextExecutableAfterHeight: 700, expiryHeight: 800)
@@ -4711,18 +4768,110 @@ import ComposableArchitecture
         #expect(refreshUskNonNil.value == [false])
         #expect(restartCalls.value == 0)
         #expect(proposeScheduleArgs.value == [refreshedSchedule])
-        #expect(store.state.pendingKeystoneSigning == MigrationCoordFlow.KeystoneSigningContext.recoveryRefresh(schedule: refreshedSchedule))
-        guard case let .keystoneSign(signState) = try? #require(store.state.path.last) else {
-            Issue.record("Expected .keystoneSign pushed to start the QR ceremony")
+        // The ceremony hasn't started yet — it only arms once the review screen's OWN Confirm fires.
+        #expect(store.state.pendingKeystoneSigning == nil)
+        guard case let .transferPlan(planState) = try? #require(store.state.path.last) else {
+            Issue.record("Expected the Confirm Transfer Plan review screen pushed, not .keystoneSign")
             return
         }
-        #expect(signState.pczts == scheduleUnsigned)
+        #expect(planState.variant == MigrationTransferPlan.State.Variant.recreated)
+        #expect(planState.requiresSigning == false)
+        #expect(planState.isExpiredRecoveryReview == true)
+        #expect(planState.injectedSchedule == refreshedSchedule)
+        #expect(
+            planState.pendingKeystoneRecoveryBatch ==
+            MigrationTransferPlan.State.PendingKeystoneRecoveryBatch(pczts: scheduleUnsigned, schedule: refreshedSchedule)
+        )
     }
 
-    /// `.transferExpired` recovery, KEYSTONE account, full ceremony: the QR round-trip stores ONLY
-    /// the rebuilt rows (`storeSignedMigrationTransactions`), records the RETURNED schedule as the
-    /// committed truth, and lands on the Scheduled screen (mirroring the software lane — no
-    /// consent plan screen, retained recovery beneath).
+    /// MOB-1513 (C7): the expired-recovery review screen's Confirm, KEYSTONE lane — the batch was
+    /// already proposed before this screen ever showed (`recoveryRefreshKeystonePCZTProposed`) and
+    /// rides on the screen's own `pendingKeystoneRecoveryBatch`; Confirm is what actually arms
+    /// `.recoveryRefresh(schedule:)` and starts the QR ceremony now, not the propose landing.
+    @MainActor @Test func expiredRecoveryKeystoneReviewConfirmedStartsCeremony() async {
+        let schedule = MigrationSchedule(
+            transfers: [
+                MigrationTransferProposal(id: "k0", amount: Zatoshi(4_000_000), anchorHeight: 700, nextExecutableAfterHeight: 700, expiryHeight: 800)
+            ],
+            estimatedDurationHours: 10,
+                    proposalHandle: 1
+        )
+        let unsigned: [MigrationUnsignedTransferPczt] = [MigrationUnsignedTransferPczt(id: "k0", pczt: Data([0x44]))]
+        let account = walletAccount(keystone: true, idByte: 44)
+        var planState = MigrationTransferPlan.State(variant: .recreated, requiresSigning: false)
+        planState.isExpiredRecoveryReview = true
+        planState.injectedSchedule = schedule
+        planState.pendingKeystoneRecoveryBatch = MigrationTransferPlan.State.PendingKeystoneRecoveryBatch(pczts: unsigned, schedule: schedule)
+
+        var state = MigrationCoordFlow.State()
+        state.$selectedWalletAccount.withLock { $0 = account }
+        state.path.append(.recovery(MigrationRecovery.State(reason: .expired, isFlowRoot: true)))
+        state.path.append(.transferPlan(planState))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 1, action: .transferPlan(.delegate(.confirmed)))))
+
+        #expect(store.state.pendingKeystoneSigning == MigrationCoordFlow.KeystoneSigningContext.recoveryRefresh(schedule: schedule))
+        #expect(store.state.pendingKeystoneSigningAccountUUID == account.id)
+        guard case let .keystoneSign(signState) = try? #require(store.state.path.last) else {
+            Issue.record("Expected .keystoneSign pushed by the review screen's Confirm")
+            return
+        }
+        #expect(signState.pczts == unsigned)
+        guard case .transferPlan = try? #require(store.state.path[id: 1]) else {
+            Issue.record("Expected the review .transferPlan retained beneath .keystoneSign")
+            return
+        }
+    }
+
+    /// MOB-1513 (C7): backing out of the Keystone review screen WITHOUT confirming discards the
+    /// already-proposed batch for free — it rides on the screen's own `pendingKeystoneRecoveryBatch`
+    /// (not coordinator state), so popping the element (TCA's own stack teardown) is all it takes;
+    /// no ceremony ever starts (`pendingKeystoneSigning` stays nil throughout), matching
+    /// `keystoneScanAbandoned`'s no-partial-state guarantee for every other point this same ceremony
+    /// can be abandoned.
+    @MainActor @Test func expiredRecoveryKeystoneReviewPopBackDiscardsProposedBatchWithoutStartingCeremony() async {
+        let schedule = MigrationSchedule(
+            transfers: [
+                MigrationTransferProposal(id: "k0", amount: Zatoshi(4_000_000), anchorHeight: 700, nextExecutableAfterHeight: 700, expiryHeight: 800)
+            ],
+            estimatedDurationHours: 10,
+                    proposalHandle: 1
+        )
+        let unsigned: [MigrationUnsignedTransferPczt] = [MigrationUnsignedTransferPczt(id: "k0", pczt: Data([0x44]))]
+        var planState = MigrationTransferPlan.State(variant: .recreated, requiresSigning: false)
+        planState.isExpiredRecoveryReview = true
+        planState.injectedSchedule = schedule
+        planState.pendingKeystoneRecoveryBatch = MigrationTransferPlan.State.PendingKeystoneRecoveryBatch(pczts: unsigned, schedule: schedule)
+
+        var state = MigrationCoordFlow.State()
+        state.$selectedWalletAccount.withLock { $0 = walletAccount(keystone: true, idByte: 45) }
+        state.path.append(.recovery(MigrationRecovery.State(reason: .expired, isFlowRoot: true)))
+        state.path.append(.transferPlan(planState))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.popFrom(id: 1)))
+
+        #expect(store.state.pendingKeystoneSigning == nil)
+        #expect(store.state.path.count == 1)
+        guard case .recovery = try? #require(store.state.path.last) else {
+            Issue.record("Expected .recovery back on top after popping the review screen")
+            return
+        }
+    }
+
+    /// `.transferExpired` recovery, KEYSTONE account, full ceremony: proposes, then — MOB-1513 (C7)
+    /// — the Confirm Transfer Plan review screen's OWN Confirm starts the ceremony, whose QR
+    /// round-trip stores ONLY the rebuilt rows (`storeSignedMigrationTransactions`), records the
+    /// RETURNED schedule as the committed truth, and lands on the Scheduled screen (mirroring the
+    /// software lane — the review screen, not a re-signing consent screen, and recovery both
+    /// retained beneath).
     @MainActor @Test func expiredRecoveryKeystoneCeremonyStoresRebuiltRowsRecordsReturnedScheduleAndSchedules() async {
         let refreshedSchedule = MigrationSchedule(
             transfers: [
@@ -4760,6 +4909,14 @@ import ComposableArchitecture
         await store.send(.path(.element(id: 0, action: .recovery(.delegate(.recreate)))))
         await store.receive(\.recoveryRefreshKeystonePCZTProposed)
 
+        // MOB-1513 (C7): the review screen shows FIRST — its own Confirm is what starts the
+        // ceremony now (see `expiredRecoveryKeystoneReviewConfirmedStartsCeremony`).
+        guard let planId = store.state.path.ids.last else {
+            Issue.record("Expected the Confirm Transfer Plan review screen's element id")
+            return
+        }
+        await store.send(.path(.element(id: planId, action: .transferPlan(.delegate(.confirmed)))))
+
         guard let signId = store.state.path.ids.last else {
             Issue.record("Expected a KeystoneSign element id")
             return
@@ -4784,12 +4941,17 @@ import ComposableArchitecture
 
         #expect(storeCalls.value == [expectedStored])
         #expect(recordCommittedScheduleCalls.value == [refreshedSchedule])
+        #expect(store.state.path.count == 3)
         guard case .scheduled = try? #require(store.state.path.last) else {
             Issue.record("Expected .scheduled after the Keystone recovery ceremony")
             return
         }
+        guard case .transferPlan = try? #require(store.state.path[id: planId]) else {
+            Issue.record("Expected the review .transferPlan retained beneath .scheduled")
+            return
+        }
         guard case .recovery = try? #require(store.state.path.first) else {
-            Issue.record("Expected .recovery retained beneath .scheduled")
+            Issue.record("Expected .recovery retained beneath the review screen")
             return
         }
     }

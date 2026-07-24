@@ -82,6 +82,19 @@ struct MigrationTransferPlan {
             case commit
         }
 
+        /// MOB-1513 (C7, Figma Error & Recovery row 3): the expired-transfer recovery's KEYSTONE
+        /// lane batch, already proposed (`MigrationCommitPipeline.proposeKeystoneBatch`) by the time
+        /// the review screen this rides on exists — carried HERE (rather than on coordinator state,
+        /// where every other pending-ceremony context lives) so popping this screen without
+        /// confirming discards it for free when TCA tears the element down, the same no-partial-
+        /// state guarantee `keystoneScanAbandoned` gives every later stage of the same ceremony. See
+        /// `pendingKeystoneRecoveryBatch` below and `MigrationCoordFlowCoordinator.recreatedPlanState`/
+        /// `expiredRecoveryReviewConfirmed`.
+        struct PendingKeystoneRecoveryBatch: Equatable {
+            let pczts: [MigrationUnsignedTransferPczt]
+            let schedule: MigrationSchedule
+        }
+
         var variant = Variant.scheduled
         var rows: IdentifiedArrayOf<MigrationTransferRow> = []
         var totalDurationHours = 0
@@ -105,6 +118,23 @@ struct MigrationTransferPlan {
         /// `signAndStoreMigrationSchedule` and delegates `.confirmed` directly. The re-created
         /// (recovery) variant signs a fresh schedule, so it keeps the default `true`.
         var requiresSigning = true
+        /// MOB-1513 (C7, Figma Error & Recovery row 3): `true` only for the EXPIRED-transfer
+        /// recovery's review screen (`MigrationCoordFlowCoordinator.recreatedPlanState`, its
+        /// `isExpiredRecoveryReview:` param) — ALSO `requiresSigning == false` like the rescheduled
+        /// variant above (nothing left to sign either way), but this screen's Confirm must route
+        /// differently: push `.scheduled` (software), or resume the already-proposed Keystone
+        /// ceremony (`pendingKeystoneRecoveryBatch` below) — never just acknowledge straight to
+        /// `.flowFinished`. The coordinator reads this off `state.path.last` at
+        /// `.transferPlan(.delegate(.confirmed))` to tell the two `requiresSigning == false`
+        /// screens apart (`variant`/`requiresSigning` alone can't — this screen is also `.recreated`,
+        /// the same variant the pre-existing `.notesSpent`/restart lane uses). This screen never
+        /// signs anything itself either way, so `confirmTapped`'s own logic below needs no awareness
+        /// of it.
+        var isExpiredRecoveryReview = false
+        /// MOB-1513 (C7): non-nil only for the Keystone lane of the expired-recovery review screen
+        /// above — see `PendingKeystoneRecoveryBatch`'s doc for why it lives here. `nil` for the
+        /// software lane (nothing left to sign) and every other variant/screen.
+        var pendingKeystoneRecoveryBatch: PendingKeystoneRecoveryBatch?
         /// MOB-1513 (B4): true while an async confirm leg is in flight — the software commit, the
         /// Keystone PCZT-batch propose, or a propose-failure Retry's re-propose. Drives the Confirm
         /// button's disabled+spinner state AND the `.confirmTapped`/`.retryTapped` single-flight
