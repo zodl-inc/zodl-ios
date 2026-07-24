@@ -66,23 +66,40 @@ struct MigrationCoordFlowView: View {
             ) {
                 MigrationTorSheetView(store: store.scope(state: \.torSheetState, action: \.torSheet))
             }
-            // MOB-1510: the Keystone minimum-firmware gate — `KeystoneFirmwareUpdateContent` is the
-            // same illustration/title/body `KeystoneFirmwareUpdateView` shows on the send-side
-            // coordinators' full-screen path push; there is no `SendConfirmation` in this flow to
-            // scope that view's store from, so the content is presented directly here instead,
-            // mirroring the Tor sheet's own coordinator-owned-sheet idiom above.
+            // MOB-1513: the migration Keystone batch-signing minimum-firmware gate. Mirrors
+            // `KeystoneFirmwareUpdateContent`'s illustration/title/body/button structure (the
+            // single-transaction Keystone flow's own firmware-gate content, `Features/
+            // SendConfirmation/KeystoneFirmwareUpdateView.swift`) but with its OWN copy and floor:
+            // this gate reads `KeystoneBatchDecodeResult.firmwareVersion` from the batch decode
+            // envelope (not a stamp scanned out of signed PCZT bytes) against a DIFFERENT minimum
+            // (3.0.2 vs that flow's 3.0.0) — reusing that view's copy here would report the wrong
+            // required version. There is no `SendConfirmation` in this flow to scope that view's
+            // store from either, so the content is presented directly here, mirroring the Tor
+            // sheet's own coordinator-owned-sheet idiom above.
             .zashiSheet(
                 isPresented: Binding(
-                    get: { store.isKeystoneFirmwareUpdatePresented },
-                    set: { store.send(.keystoneFirmwareUpdatePresentationChanged($0)) }
+                    get: { store.isKeystoneFirmwareGatePresented },
+                    set: { store.send(.keystoneFirmwareGatePresentationChanged($0)) }
                 )
             ) {
                 VStack(spacing: 0) {
-                    KeystoneFirmwareUpdateContent(detectedVersion: store.detectedKeystoneFirmware)
+                    Asset.Assets.Illustrations.failure3.image
+                        .resizable()
+                        .frame(width: 148, height: 148)
                         .padding(.top, 24)
 
-                    ZashiButton(String(localizable: .keystoneFirmwareUpdateClose)) {
-                        store.send(.keystoneFirmwareUpdatePresentationChanged(false))
+                    Text(String(localizable: .migrationKeystoneFirmwareTitle))
+                        .zFont(.semiBold, size: 28, style: Design.Text.primary)
+                        .padding(.top, 16)
+
+                    Text(keystoneFirmwareGateBody)
+                        .zFont(size: 14, style: Design.Text.primary)
+                        .multilineTextAlignment(.center)
+                        .lineSpacing(1.5)
+                        .screenHorizontalPadding()
+
+                    ZashiButton(String(localizable: .migrationKeystoneFirmwareClose)) {
+                        store.send(.keystoneFirmwareGatePresentationChanged(false))
                     }
                     .padding(.top, 32)
                     .padding(.bottom, Design.Spacing.sheetBottomSpace)
@@ -95,6 +112,25 @@ struct MigrationCoordFlowView: View {
         .onAppear {
             store.send(.onAppear)
         }
+    }
+
+    /// MOB-1513: mirrors `KeystoneFirmwareUpdateContent.bodyText`'s specific/legacy split — a
+    /// detected-but-too-low version interpolates both figures, an undetected one (the envelope
+    /// reported none at all) falls back to the floor-only variant.
+    private var keystoneFirmwareGateBody: String {
+        if let detected = store.detectedKeystoneFirmwareVersion {
+            return String(
+                localizable: .migrationKeystoneFirmwareBody(
+                    detected,
+                    MigrationCoordFlow.keystoneMigrationBatchMinimumFirmware.versionString
+                )
+            )
+        }
+        return String(
+            localizable: .migrationKeystoneFirmwareLegacyBody(
+                MigrationCoordFlow.keystoneMigrationBatchMinimumFirmware.versionString
+            )
+        )
     }
 }
 

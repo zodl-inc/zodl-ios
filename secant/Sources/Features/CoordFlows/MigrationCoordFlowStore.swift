@@ -36,11 +36,12 @@
 //  MOB-1496 (W6) fixes a latent real-SDK break in the Keystone batch flow: the note-split PCZT used
 //  to ride the WHOLE signed batch into `storeSignedMigrationTransactions` (the schedule-PCZT store —
 //  all-or-nothing, keyed by engine-issued ids only), but a `"note-split"` sentinel is not an engine
-//  id, so the real engine would reject the whole store. The `.scan(.foundPCZTBatch)` store step now
-//  re-pairs + validates the scanned batch before storing anything
-//  (`MigrationCoordFlow.rePairedKeystoneBatch`), splits any sentinel entry out
-//  (`MigrationCoordFlow.splitKeystoneBatch`), stores ONLY the schedule's engine-id entries, and — iff
-//  a split was present — routes it to a freshly pushed `MigrationNoteSplit` screen via that screen's
+//  id, so the real engine would reject the whole store. The `.scan(.foundKeystoneBatchSignatures)`
+//  store step now applies the device's signatures (`Synchronizer.applyKeystoneBatchSignatures` —
+//  MOB-1513 replaced this file's own app-side re-pairing, `MigrationCoordFlow.rePairedKeystoneBatch`,
+//  once the real SDK bridge landed: the SDK now pairs positionally itself), splits any sentinel entry
+//  out (`MigrationCoordFlow.splitKeystoneBatch`, unchanged), stores ONLY the schedule's engine-id
+//  entries, and — iff a split was present — routes it to a freshly pushed `MigrationNoteSplit` screen via that screen's
 //  OWN existing Keystone resubmit lane, never a new UI. `pendingKeystoneSplitResume` stashes what to
 //  resume with once that screen's `.continued` fires — the same post-commit routing
 //  `resumeAfterKeystoneSigning` would have reached immediately had no split been needed.
@@ -130,7 +131,8 @@ import ComposableArchitecture
 @Reducer
 struct MigrationCoordFlow {
     /// MOB-1468 (Keystone): which signing source is awaiting/mid QR round-trip, so
-    /// `scan(.foundPCZTBatch)` knows which chain to resume once the signed PCZTs come back.
+    /// `scan(.foundKeystoneBatchSignatures)` knows which chain to resume once the applied
+    /// signatures come back.
     enum KeystoneSigningContext: Equatable {
         /// Fresh + re-created plans (`requiresSigning == true`) — the rescheduled variant never
         /// re-signs, so it never reaches this context. MOB-1478 (W4): the batch this context signs
@@ -201,29 +203,14 @@ struct MigrationCoordFlow {
         /// the same run (e.g. immediate's Tor-skip) don't need to re-read the dependency.
         var mode: MigrationMode?
         /// MOB-1468 (Keystone): set when a `.keystoneSignRequested` delegate pushes `keystoneSign`,
-        /// cleared once the QR round-trip resolves (either resumed via `foundPCZTBatch` or backed
-        /// out via `.rejected`).
+        /// cleared once the QR round-trip resolves (either resumed via
+        /// `foundKeystoneBatchSignatures` or backed out via `.rejected`).
         var pendingKeystoneSigning: KeystoneSigningContext?
         /// MOB-1509: the account that OWNS the pending ceremony — recorded beside
         /// `pendingKeystoneSigning` at its three setters and cleared with it, so an external
         /// teardown that runs AFTER an account switch (the cross-account notification tap) still
         /// cancels the stranded run on the account that built it, not the newly selected one.
         var pendingKeystoneSigningAccountUUID: AccountUUID?
-        /// MOB-1513 (E3): the ≤35-per-QR-session slices a batch ABOVE the cap
-        /// (`keystoneMaxPCZTsPerRound`) is signed across, in order (preparation PCZTs first, round 0
-        /// — see `chunkKeystoneBatch`). NON-EMPTY only while a genuinely multi-round ceremony is in
-        /// flight: a batch at or below the cap stays a single session and never populates these, so
-        /// every downstream step behaves exactly as the pre-E3 single-session ceremony did. Reset on
-        /// completion, rejection, and abandonment. In-memory, like the rest of the ceremony state —
-        /// process death mid-ceremony restarts it (the documented existing behavior).
-        var keystoneRounds: [[MigrationUnsignedTransferPczt]] = []
-        /// MOB-1513 (E3): 0-based index of the round currently on the `keystoneSign` screen. `0` for a
-        /// single-round ceremony (which never advances) and the ONLY round the firmware gate runs on.
-        var keystoneRoundIndex = 0
-        /// MOB-1513 (E3): the re-paired signed entries accumulated across every APPLIED round — handed
-        /// as ONE fully-accumulated batch to the same store entry the single-round ceremony used, once
-        /// the last round is applied (completion only then, never mid-ceremony).
-        var keystoneAccumulatedSigned: [MigrationSignedTransferPczt] = []
         /// MOB-1513 (H3 guard): the account THIS flow instance opened for — recorded synchronously
         /// at `.onAppear`'s genuine-flow-start branch (`state.path.isEmpty`), alongside arming
         /// `migrationManager.setMigrationFlowPresented`. Every close/replace site reads this back
@@ -233,13 +220,18 @@ struct MigrationCoordFlow {
         /// it armed. Identical "record the owner, don't trust the account selected at close time"
         /// precedent as `pendingKeystoneSigningAccountUUID` above.
         var presentedMigrationFlowAccountUUID: AccountUUID?
-        /// MOB-1510: firmware version detected on the scanned batch entry that failed the
-        /// minimum-firmware gate — `nil` when that entry carried no version stamp at all (firmware
-        /// older than the stamping feature). Drives the copy on `KeystoneFirmwareUpdateContent`,
-        /// mirrors `torSheetState`/`isTorSheetPresented`'s "coordinator owns its own sheet state"
-        /// idiom rather than an `@Presents`/`ifLet` destination.
-        var detectedKeystoneFirmware: KeystoneFirmwareVersion?
-        var isKeystoneFirmwareUpdatePresented = false
+        /// MOB-1513: the dotted `major.minor.build` firmware version the decode envelope reported
+        /// for a batch that failed the minimum-firmware gate (`nil` when the envelope carried no
+        /// version at all) — a formatted `String` rather than a `KeystoneFirmwareVersion`
+        /// (deliberately: the SDK's own `ZcashLightClientKit.KeystoneFirmwareVersion` and this app's
+        /// unrelated single-transaction-flow `KeystoneFirmwareVersion`, `Features/SendConfirmation/
+        /// KeystoneFirmwareVersion.swift`, share a bare name — formatting once at detection time
+        /// avoids threading either type through `State` and keeps this field trivially Equatable/
+        /// Sendable). Drives the migration-specific firmware-gate sheet's copy; mirrors
+        /// `torSheetState`/`isTorSheetPresented`'s "coordinator owns its own sheet state" idiom
+        /// rather than an `@Presents`/`ifLet` destination.
+        var detectedKeystoneFirmwareVersion: String?
+        var isKeystoneFirmwareGatePresented = false
         /// MOB-1478 (W2): the Tor bottom sheet's own state — always present (not optional), toggled
         /// on screen via `isTorSheetPresented`, mirroring the `ServerSetup`/`serverSetupViewBinding`
         /// precedent in `Root` rather than an `@Presents`/`ifLet` destination (there's exactly one
@@ -310,11 +302,11 @@ struct MigrationCoordFlow {
         /// Internal: sendNow's Sending screen finished (`.closed`) — refresh the `.status` element
         /// beneath with freshly-read rows and pop back to it.
         case sendNowCompleted(rows: [MigrationTransferRow])
-        /// Internal: MOB-1468 Keystone `scan(.foundPCZTBatch)` finished the ceremony's store step —
-        /// pops `scan`+`keystoneSign` and resumes the chain `context` represents. The ceremony
-        /// stores any sentinel-prefixed preparation entries via `storeSignedNoteSplits` first (C-1
-        /// order — see `storeKeystoneSignedBatch`'s doc); a no-prep batch's schedule entries store
-        /// immediately too. MOB-1496 (C-1b fix, fix-wave 2; re-homed by MOB-1513 B4):
+        /// Internal: MOB-1468 Keystone `scan(.foundKeystoneBatchSignatures)` finished the ceremony's
+        /// store step — pops `scan`+`keystoneSign` and resumes the chain `context` represents. The
+        /// ceremony stores any sentinel-prefixed preparation entries via `storeSignedNoteSplits`
+        /// first (C-1 order — see `storeKeystoneSignedBatch`'s doc); a no-prep batch's schedule
+        /// entries store immediately too. MOB-1496 (C-1b fix, fix-wave 2; re-homed by MOB-1513 B4):
         /// `pendingScheduleStore` carries the already-signed schedule entries when (and only when)
         /// preps rode the batch — the schedule is not stored inline then; it rides along to be
         /// stored by the post-confirm first-delivery kick once a prep broadcast succeeds (see
@@ -323,6 +315,21 @@ struct MigrationCoordFlow {
         case keystoneSigningSubmitted(
             context: KeystoneSigningContext,
             pendingScheduleStore: PendingScheduleStore?
+        )
+        /// Internal: MOB-1513 — `applyKeystoneBatchSignatures` returned. `unsignedPczts` is the
+        /// ORIGINAL array handed to `buildKeystoneSignBatchQRParts` (the immediate lane's post-scan
+        /// submit needs its first entry's raw bytes), `signed` is the returned, already-paired
+        /// `[MigrationSignedTransferPczt]` (same order, ids from `unsignedPczts` — no app-side
+        /// re-pairing needed any more, unlike the pre-real-SDK `foundPCZTBatch([Data])` shape this
+        /// replaces). Dispatched from a `.run` effect (the apply call is `async throws`) rather than
+        /// handled inline in the `.scan(.foundKeystoneBatchSignatures)` case, so the path is still
+        /// exactly `[..., keystoneSign, scan]` when this lands — the immediate-lane interception and
+        /// `pendingKeystoneSchedule`'s `depthBelowTop: 2` read both depend on that.
+        case keystoneBatchSignaturesApplied(
+            context: KeystoneSigningContext,
+            accountUUID: AccountUUID,
+            unsignedPczts: [MigrationUnsignedTransferPczt],
+            signed: [MigrationSignedTransferPczt]
         )
         /// Internal: MOB-1513 (B4) — the first-delivery kick's deferred Keystone schedule store
         /// succeeded (`storeSignedMigrationTransactions` -> `recordCommittedSchedule` ->
@@ -368,25 +375,20 @@ struct MigrationCoordFlow {
         /// `keystoneSign` element inline in the `.path(.element(...))` case would race
         /// `.forEach(\.path, action:)`'s delivery of that same action to the (then-missing) element.
         case keystoneSignRejected
-        /// Internal: MOB-1513 (E3) — a multi-round Keystone ceremony finished a round with more
-        /// rounds to go. Advances to the next round: pops `scan` and re-arms `keystoneSign` with the
-        /// next slice. Sent (not done inline in the `.scan(.foundPCZTBatch)` handler) for the
-        /// SAME reason `keystoneSignRejected`/`keystoneScanAbandoned` defer THEIR pops — popping the
-        /// element `.forEach(\.path)` is about to deliver the current action to would race it into a
-        /// "missing element" runtime error.
-        case keystoneAdvanceToNextRound
-        /// Internal: an empty/mismatched scanned batch, OR a split-store failure (MOB-1496 C-1 fix,
-        /// final review R6 — nothing was stored, so there is nothing to resume), abandons the signing
-        /// session — pops back to the initiating screen (deferred like `keystoneSignRejected`) and
-        /// clears the context. Pop count adapts to the caller: 2 (`scan` + `keystoneSign`) for the
-        /// real round-trip, where `scan` is always the acting/top element; 1 (`keystoneSign` only) is a
-        /// defensive fallback that predates the MOB-1458 removal of a former simulator-only bypass
-        /// caller that never pushed `scan`.
+        /// Internal: an apply/decode failure, a build failure, OR a split-store failure (MOB-1496
+        /// C-1 fix, final review R6 — nothing was stored, so there is nothing to resume), abandons
+        /// the signing session — pops back to the initiating screen (deferred like
+        /// `keystoneSignRejected`) and clears the context. Pop count adapts to the caller: 2 (`scan`
+        /// + `keystoneSign`) for the real round-trip, where `scan` is always the acting/top element;
+        /// 1 (`keystoneSign` only) is a defensive fallback that predates the MOB-1458 removal of a
+        /// former simulator-only bypass caller that never pushed `scan` (and now also covers a
+        /// `MigrationKeystoneSign.Delegate.buildFailed`, which never pushes `scan` either).
         case keystoneScanAbandoned
-        /// MOB-1510: `zashiSheet`'s `isPresented` binding changed for the firmware-update prompt —
-        /// mirrors `torSheetPresentationChanged`'s contract. `false` clears `detectedKeystoneFirmware`
-        /// (there is only ever a "Close" affordance here, no warn-on-swipe distinction to make).
-        case keystoneFirmwareUpdatePresentationChanged(Bool)
+        /// MOB-1513: `zashiSheet`'s `isPresented` binding changed for the migration Keystone
+        /// batch-signing minimum-firmware gate — mirrors `torSheetPresentationChanged`'s contract.
+        /// `false` clears `detectedKeystoneFirmwareVersion` (there is only ever a "Close" affordance
+        /// here, no warn-on-swipe distinction to make).
+        case keystoneFirmwareGatePresentationChanged(Bool)
         /// MOB-1478 (W2): the Tor bottom sheet's own actions (toggle binding + "Got it").
         case torSheet(MigrationTorSheet.Action)
         /// MOB-1478 (W2): `zashiSheet`'s `isPresented` binding changed — `true` when presented (the

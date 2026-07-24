@@ -10,11 +10,27 @@
 //  MOB-1468 (Keystone) adds a QR sign/scan round-trip ahead of the two signing sources
 //  (TransferPlan/ReviewTransfer): each delegates `.keystoneSignRequested(pczts)` instead of signing
 //  locally, which sets `pendingKeystoneSigning` and pushes `keystoneSign`; `keystoneSign(.delegate
-//  (.getSignature))` pushes `scan` configured with the migration batch checker; `scan(.foundPCZTBatch
-//  (signed))` stores the signed PCZTs and resumes whichever chain the source represents, popping both
-//  pushed elements and clearing the context. `keystoneSign(.delegate(.rejected))` pops back to the
-//  signing source with its state untouched (no partial storage ever happens on that path). See the
-//  "Keystone signing" section below.
+//  (.getSignature))` pushes `scan` configured with the migration batch checker; `scan(.foundKeystone
+//  BatchSignatures(data:firmwareVersion:))` (MOB-1513: the real SDK batch-signing bridge — see below)
+//  applies the device's signatures onto the ceremony's original PCZTs, stores the result, and resumes
+//  whichever chain the source represents, popping both pushed elements and clearing the context.
+//  `keystoneSign(.delegate(.rejected))` pops back to the signing source with its state untouched (no
+//  partial storage ever happens on that path). See the "Keystone signing" section below.
+//
+//  MOB-1513: replaces the imagined pre-real-SDK shape (the device echoing back signed PCZTs,
+//  `Scan.Action.foundPCZTBatch([Pczt])`, app-side re-pairing via `rePairedKeystoneBatch`, and a
+//  ≤35-PCZTs-per-QR-session multi-round chunker — `chunkKeystoneBatch`/`keystoneRounds`/
+//  `keystoneRoundIndex`/`keystoneAccumulatedSigned`/`.keystoneAdvanceToNextRound`, all REMOVED) with
+//  the real four-call bridge: `buildKeystoneSignBatchQRParts` builds ONE animated QR over the whole
+//  batch (fountain-encoded; the SDK decides the frame count, never the app), the scan screen feeds
+//  each frame to `decodeKeystoneSignBatchPart` (owns its own decode session — no `keystoneHandler`
+//  fountain-decoder involved for this checker), and the completed decode's signatures-only response
+//  applies via `applyKeystoneBatchSignatures`, which does the positional pairing itself. The
+//  minimum-firmware gate now reads the decode envelope's OWN reported version
+//  (`KeystoneBatchDecodeResult.firmwareVersion`) directly, rather than scanning a stamp out of signed
+//  PCZT bytes (`firstUnsupportedKeystoneFirmwareVersion`, also REMOVED) — see the firmware-gate
+//  section's doc for the floor value and why it differs from the single-transaction Keystone flow's
+//  own gate.
 //
 //  MOB-1478 reshapes the scheduled entry chain and the note-split lifecycle:
 //  - W2: the full-screen Network Privacy step is replaced by a coordinator-owned Tor bottom sheet.
@@ -53,9 +69,10 @@
 //  on immediate, "your balance" on scheduled). At real-SDK time, Tor-unavailable remains a fail +
 //  retry — no direct-connection fallback.
 //
-//  MOB-1496 (W6): the Keystone `.scan(.foundPCZTBatch)` store step re-pairs +
-//  validates the scanned batch (`MigrationCoordFlow.rePairedKeystoneBatch`) before storing anything —
-//  any mismatch (short/long/empty) abandons the session exactly like `keystoneScanAbandoned` already
+//  MOB-1496 (W6): the Keystone `.scan(.foundKeystoneBatchSignatures)` store step applied the device's
+//  signatures before storing anything — MOB-1513 moved that pairing itself into the SDK
+//  (`applyKeystoneBatchSignatures`; this file's own app-side `rePairedKeystoneBatch` is gone) — and
+//  a throw from that call abandons the session exactly like `keystoneScanAbandoned` already
 //  did for an empty batch. It then splits any note-split sentinel entry out of the re-paired batch
 //  (`MigrationCoordFlow.splitKeystoneBatch`) so `storeSignedMigrationTransactions` only ever receives
 //  engine-id entries; when a split WAS present, `resumeAfterKeystoneSigning` routes it to a freshly
@@ -84,7 +101,7 @@
 //  MOB-1496 (final review R6, C-1 fix): W6's store order was backwards against the real engine —
 //  `storeSignedNoteSplitPCZT` unconditionally starts a NEW run, while `storeSignedMigrationTransactions`
 //  uses-or-creates the active (newest non-terminal) run; storing the schedule first let the split's
-//  later store create a second run that shadowed the schedule's forever. The `.scan(.foundPCZTBatch)`
+//  later store create a second run that shadowed the schedule's forever. The `.scan(.foundKeystoneBatchSignatures)`
 //  store step now stores the split FIRST (when present) — creating the run the schedule store then
 //  joins — and abandons (same `keystoneScanAbandoned` semantics the re-pair-failure guard already
 //  used) if that store itself fails, since nothing was persisted yet. The old `submitSignedNoteSplit` composite
@@ -103,7 +120,7 @@
 //  the denom-advance guard (fires from `PreparingDenominations`/`WaitingDenomConfirmations`, never
 //  `BroadcastScheduled`) and found storing the schedule right after the split's broadcast SUCCEEDS —
 //  not waiting for on-chain confirmation — is the earliest point provably safe (mining cannot occur in
-//  that synchronous window). The `.scan(.foundPCZTBatch)` store step now stores
+//  that synchronous window). The `.scan(.foundKeystoneBatchSignatures)` store step now stores
 //  ONLY the split up front when one is present, stashing the already-signed schedule entries in
 //  `pendingKeystoneScheduleStore` instead of storing them immediately; `storeDeferredKeystoneSchedule`
 //  runs the deferred `storeSignedMigrationTransactions` -> `recordCommittedSchedule` -> `reconcile()`
@@ -115,7 +132,7 @@
 //  dust lane) are unaffected — see `PendingScheduleStore`'s doc in `MigrationCoordFlowStore.swift`.
 //
 //  MOB-1496 (R8-T2, remediation round 8): three fixes to the Keystone-coordinator cluster, confirmed
-//  by an adversarial whole-PR review. #20 (cleanup, done first): the real `.scan(.foundPCZTBatch)`
+//  by an adversarial whole-PR review. #20 (cleanup, done first): the real `.scan(.foundKeystoneBatchSignatures)`
 //  store effect and the `.simulateSignature` bypass's were token-identical twins — two prior ordering
 //  fixes (C-1/C-1b, above) each had to be applied to both in lockstep. Extracted into the single
 //  `storeKeystoneSignedBatch` helper both now call, so a future ordering change has one call site
@@ -607,8 +624,12 @@ extension MigrationCoordFlow {
                 return .none
 
             case .path(.element(id: _, action: .keystoneSign(.delegate(.getSignature)))):
+                // MOB-1513: the pushed scan session needs THIS ceremony's correlation token, so
+                // `decodeKeystoneSignBatchPart` can reject a scan of an unrelated/stale response.
+                guard case let .keystoneSign(signState)? = state.path.last else { return .none }
                 var scanState = Scan.State.initial
                 scanState.checkers = [.keystoneMigrationBatchScanChecker]
+                scanState.keystoneBatchRequestId = signState.requestId
                 // MOB-1478 (W10): matches the design's single centered flash control (precedent:
                 // `AddKeystoneHWWalletCoordFlowCoordinator` already sets `forceLibraryToHide`).
                 scanState.instructions = String(localizable: .migrationKeystoneScanInstructions)
@@ -616,65 +637,70 @@ extension MigrationCoordFlow {
                 state.path.append(.scan(scanState))
                 return .none
 
-            case .path(.element(id: _, action: .scan(.foundPCZTBatch(let signed)))):
-                guard let context = state.pendingKeystoneSigning else { return .none }
+            case .path(.element(id: _, action: .keystoneSign(.delegate(.buildFailed)))):
+                // MOB-1513: `buildKeystoneSignBatchQRParts` threw — no QR was ever shown, so `.scan`
+                // was never pushed either (the user never got as far as tapping "Get Signature").
+                // Deferred to a follow-up self-action for the same reason `.rejected` defers to
+                // `.keystoneSignRejected`: `.forEach(\.path, action:)` still needs to deliver THIS
+                // action to the `keystoneSign` element after this case returns.
+                return .send(.keystoneScanAbandoned)
 
-                // Empty batch, or a scan that doesn't re-pair 1:1 with the ORIGINAL unsigned batch
-                // (still on the `keystoneSign` element beneath `scan` on the path): abandons the
-                // signing session like a rejection (deferred pop of scan + sign back to the
-                // initiating screen, context cleared) and never stores anything (no-partial-storage
-                // invariant). The user re-initiates from the confirm button. MOB-1496 (W6 §2):
-                // `rePairedKeystoneBatch` is the small pure re-pair-validation function — see its doc
-                // for the exact mismatch table (short/long/empty batches all abandon).
-                guard case let .keystoneSign(signState)? = state.path.dropLast().last,
-                      let signedPczts = MigrationCoordFlow.rePairedKeystoneBatch(signed: signed, unsigned: signState.pczts),
+            case .path(.element(id: _, action: .scan(.foundKeystoneBatchSignatures(let data, let firmwareVersion)))):
+                guard let context = state.pendingKeystoneSigning,
+                      case let .keystoneSign(signState)? = state.path.dropLast().last,
                       let accountUUID = state.selectedWalletAccount?.id else {
                     return .send(.keystoneScanAbandoned)
                 }
 
-                // MOB-1510: every entry in the batch was witnessed by the SAME physical device in
-                // the SAME signing ceremony, so one entry signed by out-of-date firmware means the
-                // whole ceremony was — check all of them, not just the first, before storing
-                // anything. MOB-1513 (E3): in a multi-round ceremony this runs on ROUND 0
-                // ONLY — the same device signs every round, so firmware can't change between them
-                // (Android's rationale). A single-round ceremony is always round 0.
-                if state.keystoneRoundIndex == 0 {
-                    let firmwareCheck = MigrationCoordFlow.firstUnsupportedKeystoneFirmwareVersion(in: signedPczts)
-                    if firmwareCheck.found {
-                        state.detectedKeystoneFirmware = firmwareCheck.version
-                        state.isKeystoneFirmwareUpdatePresented = true
-                        // Reuses the existing abandon machinery unmodified so no stray engine run is
-                        // left behind — same pop-count/cancel semantics as a re-pair failure or a
-                        // rejected scan (see `keystoneScanAbandoned`'s doc); the sheet set above shows
-                        // over whatever screen that abandon lands the user back on.
-                        return .send(.keystoneScanAbandoned)
+                // MOB-1513: the minimum-firmware gate reads the decode envelope's OWN reported
+                // version (`KeystoneBatchDecodeResult.firmwareVersion`) directly — there is only ever
+                // ONE QR session per ceremony now, so this runs exactly once, before applying any
+                // signatures. Below the floor (`ZcashLightClientKit.KeystoneFirmwareVersion` is
+                // `Comparable`), or no version reported at all, presents the firmware-gate sheet and
+                // abandons exactly like an apply failure would (`keystoneScanAbandoned` semantics —
+                // no retry without a physical device firmware update). See
+                // `keystoneMigrationBatchMinimumFirmware`'s doc for why this floor and mechanism
+                // differ from the single-transaction Keystone flow's own gate.
+                guard let firmwareVersion, firmwareVersion >= MigrationCoordFlow.keystoneMigrationBatchMinimumFirmware else {
+                    state.detectedKeystoneFirmwareVersion = firmwareVersion?.versionString
+                    state.isKeystoneFirmwareGatePresented = true
+                    return .send(.keystoneScanAbandoned)
+                }
+
+                // MOB-1513: `applyKeystoneBatchSignatures` does the positional pairing itself now (the
+                // app-side `rePairedKeystoneBatch` this replaced is gone) — but it's `async throws`,
+                // so this hands off to a `.run` effect rather than continuing inline. Both
+                // `unsignedPczts` (needed by the immediate lane's post-scan submit) and the applied
+                // `signed` result ride the follow-up action; nothing here touches `state.path`, so it
+                // is still exactly `[..., keystoneSign, scan]` when `.keystoneBatchSignaturesApplied`
+                // is handled below.
+                let unsignedPczts = signState.pczts
+                return .run { [sdkSynchronizer, unsignedPczts, data] send in
+                    do {
+                        let signed = try await sdkSynchronizer.applyKeystoneBatchSignatures(unsignedPczts, data)
+                        await send(
+                            .keystoneBatchSignaturesApplied(
+                                context: context,
+                                accountUUID: accountUUID,
+                                unsignedPczts: unsignedPczts,
+                                signed: signed
+                            )
+                        )
+                    } catch {
+                        await send(.keystoneScanAbandoned)
                     }
                 }
 
+            case .keystoneBatchSignaturesApplied(let context, let accountUUID, let unsignedPczts, let signed):
                 // MOB-1513: the immediate lane diverges entirely from here on — no engine schedule to
-                // read, no store step at all (nothing was ever proposed through the engine). Its
-                // single engine-external PCZT is always one round, so it never accumulates. See
+                // read, no store step at all (nothing was ever proposed through the engine). See
                 // `submitImmediateKeystoneTransaction`'s doc.
                 if case .immediateReview = context {
                     return submitImmediateKeystoneTransaction(
                         accountUUID: accountUUID,
-                        unsignedPczt: signState.pczts.first?.pczt ?? Data(),
-                        signedPczt: signedPczts.first?.pczt ?? Data()
+                        unsignedPczt: unsignedPczts.first?.pczt ?? Data(),
+                        signedPczt: signed.first?.pczt ?? Data()
                     )
-                }
-
-                // MOB-1513 (E3): fold this round's signed entries in. A genuinely multi-round
-                // ceremony with rounds remaining defers to `.keystoneAdvanceToNextRound` (which pops
-                // `scan`, re-arms `keystoneSign` with the next slice, and awaits the next signature —
-                // the pop is deferred, never inline, so it can't race `.forEach`'s delivery of THIS
-                // scan action); the last (or only) round yields the FULLY-accumulated batch to hand
-                // to the same store entry the single-round ceremony used.
-                let accumulated: [MigrationSignedTransferPczt]
-                switch foldKeystoneRound(signedPczts, state: &state) {
-                case .advance:
-                    return .send(.keystoneAdvanceToNextRound)
-                case .complete(let full):
-                    accumulated = full
                 }
 
                 // [MOB-1496] W2: the schedule that was just signed lives on the `.transferPlan`/
@@ -683,13 +709,12 @@ extension MigrationCoordFlow {
                 // it now, before `resumeAfterKeystoneSigning` (triggered by
                 // `.keystoneSigningSubmitted` below) pops back up past it.
                 let schedule = pendingKeystoneSchedule(context: context, depthBelowTop: 2, state: state)
-                // [MOB-1496] (final engine, plural preps): split the re-paired batch into its
+                // [MOB-1496] (final engine, plural preps): split the signed batch into its
                 // preparation (note-split) entries — zero, one, or many — and the schedule's own
                 // engine-id-paired entries — ONLY the latter are safe to hand to
                 // `storeSignedMigrationTransactions` (all-or-nothing, engine ids only; the real
                 // engine rejects a sentinel-prefixed id outright).
-                let (prepEntries, scheduleEntries) = MigrationCoordFlow.splitKeystoneBatch(accumulated)
-                resetKeystoneRounds(state: &state)
+                let (prepEntries, scheduleEntries) = MigrationCoordFlow.splitKeystoneBatch(signed)
 
                 return storeKeystoneSignedBatch(
                     context: context,
@@ -730,16 +755,7 @@ extension MigrationCoordFlow {
             case .keystoneSignRejected:
                 state.pendingKeystoneSigning = nil
                 state.pendingKeystoneSigningAccountUUID = nil
-                // MOB-1513 (E3): a reject mid-multi-round ceremony discards the accumulated rounds
-                // too (no-op for a single-round ceremony).
-                resetKeystoneRounds(state: &state)
                 let _ = state.path.popLast()
-                return .none
-
-            case .keystoneAdvanceToNextRound:
-                // MOB-1513 (E3): now safe to pop `scan` (this is a self-action, not the `.scan`
-                // action `.forEach` still needs to deliver) — advance to the next signing round.
-                advanceToNextKeystoneRound(state: &state)
                 return .none
 
             case .keystoneScanAbandoned:
@@ -751,24 +767,23 @@ extension MigrationCoordFlow {
                 // `SDKSynchronizerInterface.proposeNoteSplitPCZTs`'s doc). The engine always resumes a
                 // stored non-terminal run on the next attempt, ignoring any newer preview, so
                 // abandoning here without cancelling would leave that run stranded — a later re-entry
-                // would silently resume signing these same, by-then-stale PCZTs. This fires from BOTH
-                // the real round-trip's re-pair-failure guard above AND the split-store-failure branch
-                // of the Keystone store effect — v1 semantics hold for both: abandon discards
-                // everything, the user re-runs the ceremony from a fresh preview, so cancelling the
-                // stray run is correct here regardless of which guard sent this action.
+                // would silently resume signing these same, by-then-stale PCZTs. This fires from the
+                // build failure, the firmware-gate guard, the apply-signature failure, AND the
+                // split-store-failure branch of the Keystone store effect — v1 semantics hold for
+                // all of them: abandon discards everything, the user re-runs the ceremony from a
+                // fresh preview, so cancelling the stray run is correct here regardless of which
+                // guard sent this action.
                 let pendingContext = state.pendingKeystoneSigning
                 let hadPendingCeremony = pendingContext != nil
                 state.pendingKeystoneSigning = nil
                 state.pendingKeystoneSigningAccountUUID = nil
-                // MOB-1513 (E3): abandoning discards any accumulated multi-round progress too — a
-                // fresh confirm re-proposes and re-signs the whole batch from scratch (no-op for a
-                // single-round ceremony).
-                resetKeystoneRounds(state: &state)
-                // MOB-1496 (C-1 fix): as well as the real round-trip's re-pair-failure guard above
-                // (`.scan` always on top there — pop 2, unchanged), this now also fires from the
-                // split-store-failure branch of the Keystone store effect above — mirrors
-                // `resumeAfterKeystoneSigning`'s identical "how many elements are actually on top"
-                // check.
+                // MOB-1496 (C-1 fix): the real round-trip's failure guards above (`.scan` always on
+                // top there — pop 2) and the split-store-failure branch of the Keystone store effect
+                // (no `.scan` pushed — pop 1) both land here — mirrors `resumeAfterKeystoneSigning`'s
+                // identical "how many elements are actually on top" check. MOB-1513: a
+                // `MigrationKeystoneSign.Delegate.buildFailed` abandon never pushed `.scan` either
+                // (the build failed before `.getSignature` could push it), so it takes the same
+                // pop-1 path.
                 let topElementIsScan = state.path.last?.is(\.scan) == true
                 state.path.removeLast(topElementIsScan ? 2 : 1)
 
@@ -779,11 +794,11 @@ extension MigrationCoordFlow {
                 // `proposeKeystoneBatch`/`createPCZTFromProposal` created the run — but NOT for
                 // `.recoveryRefresh`, whose ceremony operates on the long-committed, possibly
                 // partially-delivered run that the EXPIRED-transfer refresh rebuilt in place (refresh
-                // only rebuilds expired rows; it does not create the run). Cancelling here (a QR
-                // re-pair mismatch, the firmware gate, or a store failure) would discard the user's
-                // committed run without consent — and restart was demoted to an explicit alert choice
-                // this very round. Skip the cancel; the rebuilt rows simply re-expire and recovery
-                // re-offers, matching the documented process-death behavior.
+                // only rebuilds expired rows; it does not create the run). Cancelling here (a build
+                // failure, the firmware gate, an apply failure, or a store failure) would discard the
+                // user's committed run without consent — and restart was demoted to an explicit alert
+                // choice this very round. Skip the cancel; the rebuilt rows simply re-expire and
+                // recovery re-offers, matching the documented process-death behavior.
                 if case .recoveryRefresh? = pendingContext { return .none }
                 return .run { [sdkSynchronizer, accountUUID] _ in
                     // Fire-and-forget: a failure here just leaves the stray run for the next attempt
@@ -791,12 +806,12 @@ extension MigrationCoordFlow {
                     _ = try? await sdkSynchronizer.restartCurrentMigrationStep(accountUUID)
                 }
 
-                // MARK: - Keystone firmware update (MOB-1510)
+                // MARK: - Keystone firmware update (MOB-1513)
 
-            case .keystoneFirmwareUpdatePresentationChanged(let isPresented):
-                state.isKeystoneFirmwareUpdatePresented = isPresented
+            case .keystoneFirmwareGatePresentationChanged(let isPresented):
+                state.isKeystoneFirmwareGatePresented = isPresented
                 if !isPresented {
-                    state.detectedKeystoneFirmware = nil
+                    state.detectedKeystoneFirmwareVersion = nil
                 }
                 return .none
 
@@ -1518,7 +1533,7 @@ extension MigrationCoordFlow {
 
         case .immediateReview:
             // MOB-1513/MOB-1496 (W-B): unreachable in practice — `submitImmediateKeystoneTransaction`
-            // intercepts `.immediateReview` at the real `.scan(.foundPCZTBatch)` round-trip, the sole
+            // intercepts `.immediateReview` at the real `.scan(.foundKeystoneBatchSignatures)` round-trip, the sole
             // caller of `resumeAfterKeystoneSigning`, before it ever reaches this function, for BOTH
             // producers of this context (the entry-screen immediate lane and "Migrate anyway") — the
             // immediate lane's single ordinary-send PCZT (`createPCZTFromProposal`) never carries
@@ -1570,7 +1585,7 @@ extension MigrationCoordFlow {
 
     // MARK: - MOB-1496 (R8-T2 #20): shared Keystone signed-batch store sequence
 
-    /// The store sequence for a signed Keystone batch — called by the real `.scan(.foundPCZTBatch)`
+    /// The store sequence for a signed Keystone batch — called by the real `.scan(.foundKeystoneBatchSignatures)`
     /// round-trip (its only caller since MOB-1458 removed the simulator-only bypass that used to
     /// share it; the two ran this as token-identical twins before this extraction, when two prior
     /// ordering fixes, C-1/C-1b — see this file's header comment — had to be applied to both in
@@ -1582,8 +1597,8 @@ extension MigrationCoordFlow {
     /// actually succeeds — the code this replaced discarded a thrown error into a bare `Bool`
     /// (`(try? await ...) != nil`) and fired `.keystoneSigningSubmitted` regardless, landing on the
     /// terminal "Migration Scheduled" screen with nothing stored in the engine and no schedule
-    /// recorded. On failure this abandons instead (`keystoneScanAbandoned` semantics — same as a
-    /// re-pair failure or the prep-store failure below), the honest-failure surface.
+    /// recorded. On failure this abandons instead (`keystoneScanAbandoned` semantics — same as an
+    /// apply-signature failure or the prep-store failure below), the honest-failure surface.
     ///
     /// Preps present (one or many, MOB-1496 final engine's plural `[MigrationUnsignedTransferPczt]`
     /// preparation transactions — superseding the pre-final-engine singular split): unchanged
@@ -1633,8 +1648,8 @@ extension MigrationCoordFlow {
             // post-confirm first-delivery kick (`runFirstDeliveryKick`), right after its prep
             // broadcast lands — the earliest point the trace proved safe.
             guard (try? await sdkSynchronizer.storeSignedNoteSplits(accountUUID, prepEntries)) != nil else {
-                // Nothing was stored at all — abandon exactly like a re-pair failure: nothing to
-                // resume, same `keystoneScanAbandoned` semantics.
+                // Nothing was stored at all — abandon exactly like an apply-signature failure:
+                // nothing to resume, same `keystoneScanAbandoned` semantics.
                 await send(.keystoneScanAbandoned)
                 return
             }
@@ -1650,7 +1665,7 @@ extension MigrationCoordFlow {
     // MARK: - MOB-1513: Keystone signing — immediate lane's post-signing submit
 
     /// The immediate lane's Keystone post-signing step — intercepted BEFORE `storeKeystoneSignedBatch`
-    /// at the real `.scan(.foundPCZTBatch)` round-trip above, since it diverges from
+    /// at the real `.scan(.foundKeystoneBatchSignatures)` round-trip above, since it diverges from
     /// `storeKeystoneSignedBatch`'s schedule-store semantics entirely: an `ImmediateMigrationProposal`
     /// is engine-external, so there is no `MigrationSchedule` to store and no engine run this ceremony ever created (`proposeKeystoneBatch`,
     /// `storeSignedMigrationTransactions`, and the whole "run created at PCZT-build time" story this
@@ -1668,8 +1683,8 @@ extension MigrationCoordFlow {
     /// that screen's `onAppear` to (re-)execute. `totalCount: 1`/success semantics otherwise match the
     /// software lane's identically (see `MigrationSendingStore`'s header doc).
     ///
-    /// On failure, reuses `keystoneScanAbandoned`'s existing pop/cleanup exactly as a re-pair or
-    /// firmware-gate failure would: nothing else to resume, a fresh confirm re-proposes and re-signs
+    /// On failure, reuses `keystoneScanAbandoned`'s existing pop/cleanup exactly as an apply-signature
+    /// or firmware-gate failure would: nothing else to resume, a fresh confirm re-proposes and re-signs
     /// from scratch. This is a deliberate simplification over a "retry just the broadcast" lane (which
     /// would need to persist the already-signed PCZT bytes across a retry, infrastructure this ceremony
     /// doesn't have for a proposal the engine never stored) — flagged in this task's report.
@@ -1730,75 +1745,19 @@ extension MigrationCoordFlow {
         }
     }
 
-    // MARK: - MOB-1513 (E3): Keystone multi-round ceremony (≤35 PCZTs per QR session)
+    // MARK: - MOB-1513: Keystone signing ceremony (one animated QR session per ceremony)
 
-    /// Starts the QR signing ceremony for `pczts`, chunked into ≤35-per-session rounds
-    /// (`chunkKeystoneBatch`). A batch AT or below the cap is a SINGLE round: the multi-round
-    /// accumulator stays empty and the whole batch is pushed unchanged, so every downstream step
-    /// (firmware gate, re-pair, store) behaves exactly as the pre-E3 single-session ceremony did. A
-    /// larger batch stashes all rounds + a fresh accumulator and pushes ONLY round 0's slice onto
-    /// `keystoneSign`, so the screen (and its live QR encoder) never carries more than 35 PCZTs.
+    /// Starts the QR signing ceremony for `pczts` — ONE animated QR session over every PCZT of the
+    /// signing context, no app-side chunking: `Synchronizer.buildKeystoneSignBatchQRParts` is a
+    /// fountain encoder, and the SDK itself decides the frame count. Replaces the pre-real-SDK
+    /// ≤35-per-session chunker (`chunkKeystoneBatch`) and its `keystoneRounds`/`keystoneRoundIndex`/
+    /// `keystoneAccumulatedSigned` state / `.keystoneAdvanceToNextRound` action, all removed —
+    /// Android parity for the batch-signing protocol itself needs none of that app-side bookkeeping.
     private func beginKeystoneCeremony(pczts: [MigrationUnsignedTransferPczt], state: inout MigrationCoordFlow.State) {
-        let rounds = MigrationCoordFlow.chunkKeystoneBatch(pczts)
-        guard rounds.count > 1 else {
-            state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: pczts)))
-            return
-        }
-        state.keystoneRounds = rounds
-        state.keystoneRoundIndex = 0
-        state.keystoneAccumulatedSigned = []
-        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: rounds[0])))
+        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: pczts)))
     }
 
-    /// Advances a multi-round ceremony to the next signing round: pops the `scan` element pushed by
-    /// the real QR round-trip and re-arms the `keystoneSign` element beneath with the next round's
-    /// slice, so the user signs it in a fresh QR session. `keystoneRoundIndex` has already been
-    /// checked to have a next round by the caller.
-    private func advanceToNextKeystoneRound(state: inout MigrationCoordFlow.State) {
-        state.keystoneRoundIndex += 1
-        if state.path.last?.is(\.scan) == true {
-            let _ = state.path.popLast()
-        }
-        guard let keystoneId = state.path.ids.last,
-              case .keystoneSign(var signState) = state.path.last else { return }
-        signState.pczts = state.keystoneRounds[state.keystoneRoundIndex]
-        state.path[id: keystoneId] = .keystoneSign(signState)
-    }
-
-    /// Clears the multi-round accumulator — on completion (the last round applied) and, via the
-    /// abandon/reject paths, on any mid-ceremony exit. A no-op for a single-round ceremony (already
-    /// empty), so it never registers as a state change there.
-    private func resetKeystoneRounds(state: inout MigrationCoordFlow.State) {
-        state.keystoneRounds = []
-        state.keystoneRoundIndex = 0
-        state.keystoneAccumulatedSigned = []
-    }
-
-    /// The outcome of folding a round's signatures into a ceremony — see `foldKeystoneRound`.
-    enum KeystoneRoundOutcome: Equatable {
-        /// The last (or only) round applied — the FULLY-accumulated batch, ready for the store.
-        case complete([MigrationSignedTransferPczt])
-        /// More rounds remain — the caller must send `.keystoneAdvanceToNextRound` (a DEFERRED pop,
-        /// never inline — see that action's doc).
-        case advance
-    }
-
-    /// Folds one round's re-paired signed entries into the ceremony. Returns `.complete` with the
-    /// FULLY-accumulated batch when this was the last (or only) round — ready to hand to
-    /// `storeKeystoneSignedBatch` — or `.advance` when more rounds remain (the caller sends
-    /// `.keystoneAdvanceToNextRound` to move on). A single-round ceremony (`keystoneRounds` empty)
-    /// returns `.complete(signedPczts)` immediately, unchanged from pre-E3.
-    private func foldKeystoneRound(
-        _ signedPczts: [MigrationSignedTransferPczt],
-        state: inout MigrationCoordFlow.State
-    ) -> KeystoneRoundOutcome {
-        guard !state.keystoneRounds.isEmpty else { return .complete(signedPczts) }
-        state.keystoneAccumulatedSigned.append(contentsOf: signedPczts)
-        guard state.keystoneRoundIndex + 1 >= state.keystoneRounds.count else { return .advance }
-        return .complete(state.keystoneAccumulatedSigned)
-    }
-
-    // MARK: - MOB-1496 (W6 §1/§2): Keystone batch re-pairing + sentinel split
+    // MARK: - MOB-1496 (W6 §1): Keystone batch sentinel split
 
     /// The sentinel PREFIX `MigrationCommitPipeline.proposeKeystoneBatch` wraps each preparation
     /// (note-split) entry's engine id under, so a whole batch of preps can ride the same typed
@@ -1810,34 +1769,6 @@ extension MigrationCoordFlow {
     /// strips this prefix back off before handing prep entries to `storeSignedNoteSplits`, which needs
     /// their bare engine ids.
     static let keystoneNoteSplitSentinelPrefix = "note-split#"
-
-    // MARK: - MOB-1513 (E3): Keystone ≤35-per-QR-session cap + multi-round chunker
-
-    /// Maximum PCZTs encoded into a single Keystone QR signing session. Android parity:
-    /// `KeystoneBatchChunking.kt` = 35, chosen after a real device OOM at 50. A batch above this
-    /// signs across multiple rounds (sign → scan → apply, repeated) — see `chunkKeystoneBatch`.
-    static let keystoneMaxPCZTsPerRound = 35
-
-    /// Slices a proposed Keystone PCZT batch into signing rounds of at most `maxPerRound`, with the
-    /// preparation (note-split) PCZTs occupying round 0 first (the "split-first-in-round-0"
-    /// invariant), transfers filling the remainder of round 0, and further rounds holding the rest.
-    ///
-    /// Composes WITH `splitKeystoneBatch` (which partitions signed entries by sentinel prefix at
-    /// store time) rather than duplicating it: the producer (`MigrationCommitPipeline.proposeKeystoneBatch`)
-    /// already orders preps first, so partitioning + re-concatenating preps-first here is
-    /// order-preserving in practice — it makes the round-0 invariant hold independently of input
-    /// order. An empty batch yields no rounds; a batch of `maxPerRound` or fewer yields exactly one
-    /// round (the path that stays byte-identical to the pre-E3 single-session ceremony).
-    static func chunkKeystoneBatch(
-        _ batch: [MigrationUnsignedTransferPczt],
-        maxPerRound: Int = keystoneMaxPCZTsPerRound
-    ) -> [[MigrationUnsignedTransferPczt]] {
-        guard !batch.isEmpty else { return [] }
-
-        let preps = batch.filter { $0.id.hasPrefix(keystoneNoteSplitSentinelPrefix) }
-        let transfers = batch.filter { !$0.id.hasPrefix(keystoneNoteSplitSentinelPrefix) }
-        return (preps + transfers).chunked(into: maxPerRound)
-    }
 
     // MARK: - MOB-1513 (B4 fix wave): first-delivery kick retry knobs + re-arm cancellation
 
@@ -1862,20 +1793,6 @@ extension MigrationCoordFlow {
     /// short enough that a healthy retry still lands "immediately" in product terms.
     static let firstDeliveryKickRetryDelay = Duration.seconds(15)
 
-    /// MOB-1496 (W6 §2): re-pairs a scanned Keystone batch's signed bytes
-    /// (`parseMigrationPCZTBatch`'s order-preserved `[Data]`) against the ORIGINAL unsigned batch's
-    /// ids, by position — `nil` on ANY mismatch (a short batch, a long batch, or an empty parse),
-    /// since a mismatched count means the scan can't be safely re-paired with the ids the firmware
-    /// was asked to sign. The caller then abandons the whole session (`keystoneScanAbandoned`
-    /// semantics — nothing stored) exactly as an empty/rejected scan already did.
-    static func rePairedKeystoneBatch(
-        signed: [Data],
-        unsigned: [MigrationUnsignedTransferPczt]
-    ) -> [MigrationSignedTransferPczt]? {
-        guard !signed.isEmpty, signed.count == unsigned.count else { return nil }
-        return zip(unsigned, signed).map { MigrationSignedTransferPczt(id: $0.id, pczt: $1) }
-    }
-
     /// MOB-1496 (final engine, plural preps): splits a re-paired batch into its preparation
     /// (note-split) entries — present iff the run needed any, now zero-or-MANY rather than
     /// zero-or-one — and the schedule's own engine-id-paired entries; ONLY the schedule entries are
@@ -1899,24 +1816,24 @@ extension MigrationCoordFlow {
         return (prepEntries, scheduleEntries)
     }
 
-    // MARK: - MOB-1510: Keystone minimum-firmware gate over a signed batch
+    // MARK: - MOB-1513: Keystone migration-batch minimum-firmware gate
 
-    /// `true` when ANY entry in a re-paired signed Keystone batch is unstamped or below
-    /// `KeystoneFirmwareVersion.minimumSupported` — every entry in a batch is signed by the SAME
-    /// physical device in the SAME ceremony, so one out-of-date entry means the device was
-    /// out-of-date for the whole batch. `version` is the first offending entry's detected version
-    /// (`nil` = unstamped) for display; meaningless when `found` is `false`.
-    static func firstUnsupportedKeystoneFirmwareVersion(
-        in batch: [MigrationSignedTransferPczt]
-    ) -> (found: Bool, version: KeystoneFirmwareVersion?) {
-        for entry in batch {
-            let version = entry.pczt.keystoneFirmwareVersion()
-            guard let version, version >= KeystoneFirmwareVersion.minimumSupported else {
-                return (true, version)
-            }
-        }
-        return (false, nil)
-    }
+    /// Keystone "cypherpunk" firmware floor for migration batch signing: 3.0.2 is the first firmware
+    /// that supports this protocol at all — older firmware either can't sign the batch correctly or
+    /// won't report a version in the response envelope, which is why the gate below treats "no
+    /// version reported" the same as "below floor". Checked directly against
+    /// `KeystoneBatchDecodeResult.firmwareVersion` (the decode envelope's OWN reported version, an
+    /// `ZcashLightClientKit.KeystoneFirmwareVersion` — `Comparable` by major/minor/build) — there is
+    /// no PCZT-embedded firmware stamp to fall back on in this protocol (see that type's doc).
+    ///
+    /// Deliberately distinct from (and unrelated to) the single-transaction Keystone flow's own
+    /// floor, `KeystoneFirmwareVersion.minimumSupported` (`Features/SendConfirmation/
+    /// KeystoneFirmwareVersion.swift`, 3.0.0) — that flow reads its version from a stamp embedded in
+    /// the signed PCZT bytes, a mechanism the batch protocol has no equivalent of. The two
+    /// `KeystoneFirmwareVersion` types (this file's imported `ZcashLightClientKit` one and the app's
+    /// own single-transaction-flow one) share a bare name; every reference in this file to the SDK's
+    /// type is written out module-qualified for exactly that reason.
+    static let keystoneMigrationBatchMinimumFirmware = ZcashLightClientKit.KeystoneFirmwareVersion(major: 3, minor: 0, build: 2)
 
     // MARK: - Tor bottom sheet (MOB-1478 W2): present + confirm/dismiss
 
@@ -2266,5 +2183,16 @@ extension MigrationCoordFlow {
         }
 
         return (first, last)
+    }
+}
+
+// MARK: - MOB-1513: display form for the SDK's Keystone firmware version
+
+extension ZcashLightClientKit.KeystoneFirmwareVersion {
+    /// Dotted `major.minor.build` display form, for the migration Keystone batch-signing firmware-
+    /// gate sheet's copy (`MigrationCoordFlowView`). Module-qualified everywhere in this file — see
+    /// `MigrationCoordFlow.keystoneMigrationBatchMinimumFirmware`'s doc for why.
+    var versionString: String {
+        "\(major).\(minor).\(build)"
     }
 }

@@ -211,7 +211,7 @@ enum MigrationCommitPipeline {
     /// preparation transactions, not one split transaction, and returns the (possibly empty) prep
     /// subset from that same call — then prepends any of them, each wrapped under the coordinator's
     /// `keystoneNoteSplitSentinelPrefix` + its own engine id (`MigrationCoordFlowCoordinator`'s
-    /// `.scan(.foundPCZTBatch)` handler splits them back out and strips the
+    /// `.scan(.foundKeystoneBatchSignatures)` handler splits them back out and strips the
     /// prefix before storing — see `MigrationCoordFlow.keystoneNoteSplitSentinelPrefix`'s doc), ahead
     /// of the schedule's own PCZTs.
     ///

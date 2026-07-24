@@ -9,7 +9,7 @@
 //  emission. Also covers MOB-1468's Keystone signing round-trip: each of the two remaining signing
 //  sources' `.keystoneSignRequested` delegate sets `pendingKeystoneSigning` and pushes
 //  `keystoneSign`; `keystoneSign(.delegate(.getSignature))` pushes `scan` configured with the
-//  migration batch checker; `scan(.foundPCZTBatch)` stores the signed PCZTs, pops `scan`+
+//  migration batch checker; `scan(.foundKeystoneBatchSignatures)` stores the signed PCZTs, pops `scan`+
 //  `keystoneSign`, and resumes the matching chain (plan post-confirm / immediate sending) — verified
 //  with order-asserting spies; `.rejected` pops back to the signing source with its state intact and
 //  clears the context; the no-partial-storage invariant (reject, or an empty scanned batch, never
@@ -94,13 +94,16 @@ import ComposableArchitecture
         )
     )
 
-    /// MOB-1510: a valid (at-minimum) Keystone firmware stamp, appended to this file's pre-existing
-    /// `signed`/`expectedStored`-style fixture bytes — written before the firmware gate existed, so
-    /// on their own they now read as "unstamped" and abandon the ceremony instead of proceeding.
-    /// Appended (not substituted) so the original identifying bytes stay visible in each fixture.
-    /// Tests that specifically exercise the gate itself live in `KeystoneFirmwareGateTests`
-    /// (`SendTests/KeystoneFirmwareTests.swift`) and `MigrationCoordFlowPureFunctionTests` below.
-    private static let validKeystoneFirmwareStamp = Data(Array("keystone:fw_version".utf8) + [0x03, 3, 0, 0])
+    /// MOB-1513: a firmware version at (not below) the migration batch-signing floor
+    /// (`MigrationCoordFlow.keystoneMigrationBatchMinimumFirmware`, 3.0.2) — the decode-envelope
+    /// `firmwareVersion` every "happy path" ceremony test below passes to
+    /// `.scan(.foundKeystoneBatchSignatures(data:firmwareVersion:))` so the firmware gate clears and
+    /// the ceremony proceeds to apply. Tests that specifically exercise the gate itself live in
+    /// `MigrationCoordFlowPureFunctionTests` below (the pure floor comparison) and this suite's own
+    /// `foundKeystoneBatchSignatures...Firmware...` block. Unrelated to (and not to be confused
+    /// with) the single-transaction Keystone flow's own gate, covered by `KeystoneFirmwareGateTests`
+    /// (`SendTests/KeystoneFirmwareTests.swift`).
+    private static let validKeystoneMigrationFirmware = ZcashLightClientKit.KeystoneFirmwareVersion(major: 3, minor: 0, build: 2)
 
     /// MOB-1496 (W6): `migrationManager.migrationNetworkOptions(_:)` has no macro default (unlike the
     /// SDK synchronizer's `.noOp`) — any test that reaches the note-split-broadcast or dust-execute
@@ -127,6 +130,20 @@ import ComposableArchitecture
                 uivk: nil
             )
         )
+    }
+
+    /// MOB-1513: stubs `sdkSynchronizer.applyKeystoneBatchSignatures` to re-pair `signedBytes`
+    /// against the passed `pczts` positionally, by index — the SAME zip this file's tests relied on
+    /// `MigrationCoordFlow.rePairedKeystoneBatch` (app-side, removed) to do; now it's exactly what
+    /// the real SDK call does internally, so a test-side stub of it is the right place for that
+    /// pairing to happen. `signedBytes` plays the same fixture role the old `signed: [Data]`
+    /// fixtures played pre-MOB-1513 — most call sites below keep that name.
+    private func stubApply(
+        _ signedBytes: [Data]
+    ) -> @Sendable ([MigrationUnsignedTransferPczt], Data) async throws -> [MigrationSignedTransferPczt] {
+        { pczts, _ in
+            zip(pczts, signedBytes).map { MigrationSignedTransferPczt(id: $0.id, pczt: $1) }
+        }
     }
 
     /// MOB-1497 (T2): a PROVIDER `MigrationNetworkSnapshot` fixture for `migrationManager
@@ -1329,163 +1346,6 @@ import ComposableArchitecture
         #expect(signState.pczts == pczts)
     }
 
-    // MARK: - MOB-1513 (E3): Keystone ≤35-per-QR-session cap + multi-round ceremony
-
-    /// A batch ABOVE the 35-per-session cap is sliced into rounds — the `keystoneSign` screen is
-    /// armed with ONLY round 0 (35 PCZTs), the remaining rounds are stashed, and the accumulator
-    /// starts empty. Red-first: a 36-item batch produces 2 rounds (1 today).
-    @MainActor @Test func keystoneSignRequestedAboveCapChunksIntoRoundsAndPushesOnlyRoundZero() async {
-        let account = walletAccount(keystone: true, idByte: 30)
-        var state = MigrationCoordFlow.State()
-        state.$selectedWalletAccount.withLock { $0 = account }
-        state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .scheduled)))
-        let store = TestStore(initialState: state) {
-            MigrationCoordFlow()
-        }
-        store.exhaustivity = .off
-
-        let pczts = (0..<36).map { MigrationUnsignedTransferPczt(id: "t\($0)", pczt: Data([UInt8(truncatingIfNeeded: $0)])) }
-        await store.send(.path(.element(id: 0, action: .transferPlan(.delegate(.keystoneSignRequested(pczts))))))
-
-        #expect(store.state.keystoneRounds.count == 2)
-        #expect(store.state.keystoneRounds.map(\.count) == [35, 1])
-        #expect(store.state.keystoneRoundIndex == 0)
-        #expect(store.state.keystoneAccumulatedSigned.isEmpty)
-        guard case let .keystoneSign(signState) = try? #require(store.state.path.last) else {
-            Issue.record("Expected .keystoneSign pushed on top")
-            return
-        }
-        // The screen (and thus the QR encoder) carries at most 35 PCZTs — round 0 only.
-        #expect(signState.pczts.count == 35)
-        #expect(signState.pczts == store.state.keystoneRounds[0])
-    }
-
-    /// A batch AT or below the cap stays a single QR session: the multi-round state is never
-    /// populated, and the whole batch is pushed unchanged (byte-identical to the pre-E3 ceremony,
-    /// keeping every existing single-round test valid).
-    @MainActor @Test func keystoneSignRequestedAtOrBelowCapStaysSingleRoundWithEmptyMultiRoundState() async {
-        let account = walletAccount(keystone: true, idByte: 31)
-        var state = MigrationCoordFlow.State()
-        state.$selectedWalletAccount.withLock { $0 = account }
-        state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .scheduled)))
-        let store = TestStore(initialState: state) {
-            MigrationCoordFlow()
-        }
-        store.exhaustivity = .off
-
-        let pczts: [MigrationUnsignedTransferPczt] = [
-            MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xAA])),
-            MigrationUnsignedTransferPczt(id: "t1", pczt: Data([0xBB]))
-        ]
-        await store.send(.path(.element(id: 0, action: .transferPlan(.delegate(.keystoneSignRequested(pczts))))))
-
-        #expect(store.state.keystoneRounds.isEmpty)
-        #expect(store.state.keystoneRoundIndex == 0)
-        guard case let .keystoneSign(signState) = try? #require(store.state.path.last) else {
-            Issue.record("Expected .keystoneSign pushed on top")
-            return
-        }
-        #expect(signState.pczts == pczts)
-    }
-
-    /// The REAL QR round-trip's inter-round advance is safe: finishing round 0 via `scan` pops the
-    /// `scan` element and re-arms `keystoneSign` with round 1's slice — WITHOUT the store running yet.
-    /// The pop is deferred to `.keystoneAdvanceToNextRound` so it never races `.forEach`'s delivery of
-    /// the `.scan(.foundPCZTBatch)` action into a "missing element" crash.
-    @MainActor @Test func realScanMultiRoundAdvancesToNextRoundByPoppingScanAndReArmingKeystoneSign() async {
-        let storeCalls = LockIsolated<[[MigrationSignedTransferPczt]]>([])
-        let round0: [MigrationUnsignedTransferPczt] = [
-            MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xA0])),
-            MigrationUnsignedTransferPczt(id: "t1", pczt: Data([0xA1]))
-        ]
-        let round1: [MigrationUnsignedTransferPczt] = [MigrationUnsignedTransferPczt(id: "t2", pczt: Data([0xA2]))]
-        let round0Signed: [Data] = [
-            Data([0xA0]) + Self.validKeystoneFirmwareStamp,
-            Data([0xA1]) + Self.validKeystoneFirmwareStamp
-        ]
-        var state = MigrationCoordFlow.State()
-        state.pendingKeystoneSigning = .planCommit
-        state.pendingKeystoneSigningAccountUUID = Self.defaultAccount.id
-        state.keystoneRounds = [round0, round1]
-        state.keystoneRoundIndex = 0
-        state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .scheduled)))
-        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: round0)))
-        state.path.append(.scan(Scan.State.initial))
-        let store = TestStore(initialState: state) {
-            MigrationCoordFlow()
-        } withDependencies: {
-            $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, stored in
-                storeCalls.withValue { $0.append(stored) }
-            }
-        }
-        store.exhaustivity = .off
-
-        await store.send(.path(.element(id: 2, action: .scan(.foundPCZTBatch(round0Signed)))))
-        await store.receive(\.keystoneAdvanceToNextRound)
-
-        // No store yet, scan popped, keystoneSign re-armed with round 1, accumulator carries round 0.
-        #expect(storeCalls.value.isEmpty)
-        #expect(store.state.keystoneRoundIndex == 1)
-        #expect(store.state.path.count == 2)
-        #expect(store.state.keystoneAccumulatedSigned.map(\.id) == ["t0", "t1"])
-        guard case let .keystoneSign(round1State) = try? #require(store.state.path.last) else {
-            Issue.record("Expected .keystoneSign back on top (scan popped), re-armed with round 1")
-            return
-        }
-        #expect(round1State.pczts == round1)
-    }
-
-    /// The minimum-firmware gate runs on ROUND 0 ONLY — the same device signs every round of a
-    /// ceremony, so firmware can't change between rounds (Android's rationale). A LATER round whose
-    /// scanned batch is unstamped (which would trip the gate on round 0 and abandon) proceeds
-    /// straight to the store instead.
-    @MainActor @Test func firmwareGateRunsOnRoundZeroOnlyLaterRoundsSkipIt() async {
-        let storeCalls = LockIsolated<[[MigrationSignedTransferPczt]]>([])
-        let round0Signed: [MigrationSignedTransferPczt] = [
-            MigrationSignedTransferPczt(id: "t0", pczt: Data([0xA0]) + Self.validKeystoneFirmwareStamp),
-            MigrationSignedTransferPczt(id: "t1", pczt: Data([0xA1]) + Self.validKeystoneFirmwareStamp)
-        ]
-        let round1Unsigned: [MigrationUnsignedTransferPczt] = [MigrationUnsignedTransferPczt(id: "t2", pczt: Data([0xA2]))]
-        // Deliberately UNSTAMPED — this would abandon on round 0.
-        let round1Scanned: [Data] = [Data([0xC2])]
-        var state = MigrationCoordFlow.State()
-        state.pendingKeystoneSigning = .planCommit
-        state.pendingKeystoneSigningAccountUUID = Self.defaultAccount.id
-        state.keystoneRounds = [
-            [MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xA0])), MigrationUnsignedTransferPczt(id: "t1", pczt: Data([0xA1]))],
-            round1Unsigned
-        ]
-        state.keystoneRoundIndex = 1
-        state.keystoneAccumulatedSigned = round0Signed
-        state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .scheduled)))
-        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: round1Unsigned)))
-        state.path.append(.scan(Scan.State.initial))
-        let store = TestStore(initialState: state) {
-            MigrationCoordFlow()
-        } withDependencies: {
-            $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, stored in
-                storeCalls.withValue { $0.append(stored) }
-            }
-            $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in nil }
-            $0.migrationBGScheduler.scheduleFirstWindow = { }
-            $0.migrationManager.reconcile = { }
-            $0.migrationManager.migrationSummary = { _ in MigrationSummary.zero }
-            $0.migrationManager.migrationNetworkOptions = { _ in Self.defaultNetworkPrivacyOptions }
-            $0.migrationManager.refreshMigrationSyncGate = { }
-        }
-        store.exhaustivity = .off
-
-        await store.send(.path(.element(id: 2, action: .scan(.foundPCZTBatch(round1Scanned)))))
-        await store.receive(\.keystoneSigningSubmitted)
-
-        // Proceeded to the store (never abandoned), and the firmware-update prompt stayed down.
-        #expect(store.state.isKeystoneFirmwareUpdatePresented == false)
-        #expect(storeCalls.value.count == 1)
-        #expect(storeCalls.value.first?.map(\.id) == ["t0", "t1", "t2"])
-    }
-
     @MainActor @Test func reviewTransferKeystoneSignRequestedSetsImmediateReviewContextAndPushesKeystoneSign() async {
         let account = walletAccount(keystone: true, idByte: 22)
         var state = MigrationCoordFlow.State()
@@ -1532,23 +1392,22 @@ import ComposableArchitecture
         #expect(scanState.forceLibraryToHide == true)
     }
 
-    // MARK: - MOB-1468: Keystone signing — foundPCZTBatch resumes planCommit (shared post-confirm chain)
+    // MARK: - MOB-1468: Keystone signing — foundKeystoneBatchSignatures resumes planCommit (shared post-confirm chain)
 
-    @MainActor @Test func foundPCZTBatchForPlanCommitContextStoresPopsAndPushesScheduledForScheduledVariant() async {
+    @MainActor @Test func foundKeystoneBatchSignaturesForPlanCommitContextStoresPopsAndPushesScheduledForScheduledVariant() async {
         let callOrder = LockIsolated<[String]>([])
-        // MOB-1496: `signed` (from `.scan(.foundPCZTBatch)`) is raw bytes in scan order — the
-        // coordinator zips them against the ORIGINAL unsigned batch's ids (still on the
-        // `keystoneSign` element beneath `scan`) to rebuild `[MigrationSignedTransferPczt]`.
+        // MOB-1513: `applyKeystoneBatchSignatures` returns the paired `[MigrationSignedTransferPczt]`
+        // directly now (the app-side zip this comment used to describe, `rePairedKeystoneBatch`, is
+        // gone) — `stubApply` reproduces the SAME positional pairing as a test double of that SDK
+        // call.
         let unsigned: [MigrationUnsignedTransferPczt] = [
             MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xAA])),
             MigrationUnsignedTransferPczt(id: "t1", pczt: Data([0xBB]))
         ]
-        // MOB-1510: `+ Self.validKeystoneFirmwareStamp` on `signed`/`expectedStored` keeps this
-        // pre-existing "happy path" fixture clearing the firmware gate — see that constant's doc.
-        let signed: [Data] = [Data([0xAA, 0x01]) + Self.validKeystoneFirmwareStamp, Data([0xBB, 0x01]) + Self.validKeystoneFirmwareStamp]
+        let signed: [Data] = [Data([0xAA, 0x01]), Data([0xBB, 0x01])]
         let expectedStored: [MigrationSignedTransferPczt] = [
-            MigrationSignedTransferPczt(id: "t0", pczt: Data([0xAA, 0x01]) + Self.validKeystoneFirmwareStamp),
-            MigrationSignedTransferPczt(id: "t1", pczt: Data([0xBB, 0x01]) + Self.validKeystoneFirmwareStamp)
+            MigrationSignedTransferPczt(id: "t0", pczt: Data([0xAA, 0x01])),
+            MigrationSignedTransferPczt(id: "t1", pczt: Data([0xBB, 0x01]))
         ]
         var state = MigrationCoordFlow.State()
         state.pendingKeystoneSigning = .planCommit
@@ -1559,6 +1418,7 @@ import ComposableArchitecture
             MigrationCoordFlow()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.applyKeystoneBatchSignatures = stubApply(signed)
             $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, stored in
                 #expect(stored == expectedStored)
                 callOrder.withValue { $0.append("store") }
@@ -1582,7 +1442,15 @@ import ComposableArchitecture
         }
         store.exhaustivity = .off
 
-        await store.send(.path(.element(id: 2, action: .scan(.foundPCZTBatch(signed)))))
+        await store.send(
+            .path(
+                .element(
+                    id: 2,
+                    action: .scan(.foundKeystoneBatchSignatures(data: Data(), firmwareVersion: Self.validKeystoneMigrationFirmware))
+                )
+            )
+        )
+        await store.receive(\.keystoneBatchSignaturesApplied)
         await store.receive(\.keystoneSigningSubmitted)
         // MOB-1458 (W-E): the post-commit `.scheduled` push is now hydrated (an async peek), so it
         // lands via its own `pushHydratedPathState` action rather than synchronously inside the
@@ -1606,12 +1474,11 @@ import ComposableArchitecture
     // MOB-1496 (W2): the Keystone store-success write point — `recordCommittedSchedule` reads the
     // schedule off the `.transferPlan` element still beneath `keystoneSign`+`scan` at store time
     // (before `resumeAfterKeystoneSigning` pops back up to it), and `reconcile()` runs alongside.
-    @MainActor @Test func foundPCZTBatchForPlanCommitContextRecordsCommittedScheduleAndReconciles() async {
+    @MainActor @Test func foundKeystoneBatchSignaturesForPlanCommitContextRecordsCommittedScheduleAndReconciles() async {
         let recordCommittedScheduleCalls = LockIsolated<[(AccountUUID?, MigrationSchedule)]>([])
         let reconcileCalls = LockIsolated<Int>(0)
         let unsigned: [MigrationUnsignedTransferPczt] = [MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xAA]))]
-        // MOB-1510: see `Self.validKeystoneFirmwareStamp`'s doc.
-        let signed: [Data] = [Data([0xAA, 0x01]) + Self.validKeystoneFirmwareStamp]
+        let signed: [Data] = [Data([0xAA, 0x01])]
         let schedule = MigrationSchedule(
             transfers: [MigrationTransferProposal(id: "t0", amount: Zatoshi(500_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)],
             estimatedDurationHours: 24
@@ -1627,6 +1494,7 @@ import ComposableArchitecture
             MigrationCoordFlow()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.applyKeystoneBatchSignatures = stubApply(signed)
             $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, _ in }
             // MOB-1513 (B4): kick stubs — a nil next-due keeps the post-landing kick a silent no-op.
             $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in nil }
@@ -1641,7 +1509,15 @@ import ComposableArchitecture
         }
         store.exhaustivity = .off
 
-        await store.send(.path(.element(id: 2, action: .scan(.foundPCZTBatch(signed)))))
+        await store.send(
+            .path(
+                .element(
+                    id: 2,
+                    action: .scan(.foundKeystoneBatchSignatures(data: Data(), firmwareVersion: Self.validKeystoneMigrationFirmware))
+                )
+            )
+        )
+        await store.receive(\.keystoneBatchSignaturesApplied)
         await store.receive(\.keystoneSigningSubmitted)
         await store.finish()
 
@@ -1660,7 +1536,7 @@ import ComposableArchitecture
     /// failure) — see `MigrationCoordFlowCoordinator.storeKeystoneSignedBatch`'s doc for why
     /// `MigrationNoteSplit`'s store-only retry affordance was investigated and rejected as the reuse
     /// target for this, the no-split case.
-    @MainActor @Test func foundPCZTBatchForPlanCommitContextAbandonsSessionWithoutSubmittingWhenStoreFails() async {
+    @MainActor @Test func foundKeystoneBatchSignaturesForPlanCommitContextAbandonsSessionWithoutSubmittingWhenStoreFails() async {
         struct StoreFailure: Error { }
         let recordCommittedScheduleCalls = LockIsolated<Int>(0)
         let reconcileCalls = LockIsolated<Int>(0)
@@ -1681,6 +1557,7 @@ import ComposableArchitecture
             MigrationCoordFlow()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.applyKeystoneBatchSignatures = stubApply(signed)
             $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, _ in throw StoreFailure() }
             $0.migrationBGScheduler.scheduleFirstWindow = { scheduleFirstWindowCalls.withValue { $0 += 1 } }
             $0.migrationManager.recordCommittedSchedule = { _, _ in recordCommittedScheduleCalls.withValue { $0 += 1 } }
@@ -1688,7 +1565,15 @@ import ComposableArchitecture
         }
         store.exhaustivity = .off
 
-        await store.send(.path(.element(id: 2, action: .scan(.foundPCZTBatch(signed)))))
+        await store.send(
+            .path(
+                .element(
+                    id: 2,
+                    action: .scan(.foundKeystoneBatchSignatures(data: Data(), firmwareVersion: Self.validKeystoneMigrationFirmware))
+                )
+            )
+        )
+        await store.receive(\.keystoneBatchSignaturesApplied)
         await store.receive(\.keystoneScanAbandoned)
 
         #expect(recordCommittedScheduleCalls.value == 0)
@@ -1717,23 +1602,22 @@ import ComposableArchitecture
     // `splitPendingConfirmation` (progress banner/route) and BG windows/foreground reconcile retry
     // the prep naturally.
 
-    @MainActor @Test func foundPCZTBatchWithNoteSplitSentinelStoresOnlyEngineIdPairs() async {
+    @MainActor @Test func foundKeystoneBatchSignaturesWithNoteSplitSentinelStoresOnlyEngineIdPairs() async {
         let storeCalls = LockIsolated<[[MigrationSignedTransferPczt]]>([])
         let unsigned: [MigrationUnsignedTransferPczt] = [
             MigrationUnsignedTransferPczt(id: "note-split#p0", pczt: Data([0x01])),
             MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xAA])),
             MigrationUnsignedTransferPczt(id: "t1", pczt: Data([0xBB]))
         ]
-        // MOB-1510: see `Self.validKeystoneFirmwareStamp`'s doc.
         let signed: [Data] = [
-            Data([0x01, 0x99]) + Self.validKeystoneFirmwareStamp,
-            Data([0xAA, 0x99]) + Self.validKeystoneFirmwareStamp,
-            Data([0xBB, 0x99]) + Self.validKeystoneFirmwareStamp
+            Data([0x01, 0x99]),
+            Data([0xAA, 0x99]),
+            Data([0xBB, 0x99])
         ]
         // The sentinel entry must NOT appear here — only the schedule's own engine-id pairs.
         let expectedStored: [MigrationSignedTransferPczt] = [
-            MigrationSignedTransferPczt(id: "t0", pczt: Data([0xAA, 0x99]) + Self.validKeystoneFirmwareStamp),
-            MigrationSignedTransferPczt(id: "t1", pczt: Data([0xBB, 0x99]) + Self.validKeystoneFirmwareStamp)
+            MigrationSignedTransferPczt(id: "t0", pczt: Data([0xAA, 0x99])),
+            MigrationSignedTransferPczt(id: "t1", pczt: Data([0xBB, 0x99]))
         ]
         var state = MigrationCoordFlow.State()
         state.pendingKeystoneSigning = .planCommit
@@ -1744,6 +1628,7 @@ import ComposableArchitecture
             MigrationCoordFlow()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.applyKeystoneBatchSignatures = stubApply(signed)
             $0.sdkSynchronizer.storeSignedNoteSplits = { _, _ in }
             $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, stored in
                 storeCalls.withValue { $0.append(stored) }
@@ -1758,7 +1643,15 @@ import ComposableArchitecture
         }
         store.exhaustivity = .off
 
-        await store.send(.path(.element(id: 2, action: .scan(.foundPCZTBatch(signed)))))
+        await store.send(
+            .path(
+                .element(
+                    id: 2,
+                    action: .scan(.foundKeystoneBatchSignatures(data: Data(), firmwareVersion: Self.validKeystoneMigrationFirmware))
+                )
+            )
+        )
+        await store.receive(\.keystoneBatchSignaturesApplied)
         await store.receive(\.keystoneSigningSubmitted)
         await store.receive(\.pushHydratedPathState)
         // The kick's deferred schedule store ran only AFTER its prep broadcast landed.
@@ -1773,9 +1666,9 @@ import ComposableArchitecture
     /// transaction). Three sentinel-prefixed preps interleaved with two schedule entries must all
     /// route to `storeSignedNoteSplits` as one 3-element array, ids stripped back to their bare engine
     /// form, while the two schedule entries reach the (kick-deferred) `storeSignedMigrationTransactions`
-    /// store untouched — twin of `foundPCZTBatchWithNoteSplitSentinelStoresOnlyEngineIdPairs` above,
+    /// store untouched — twin of `foundKeystoneBatchSignaturesWithNoteSplitSentinelStoresOnlyEngineIdPairs` above,
     /// generalized from N=1 to N=3 preps.
-    @MainActor @Test func foundPCZTBatchWithMultipleNoteSplitPrepsStoresAllOfThemAsOneArrayAndScheduleSeparately() async {
+    @MainActor @Test func foundKeystoneBatchSignaturesWithMultipleNoteSplitPrepsStoresAllOfThemAsOneArrayAndScheduleSeparately() async {
         let storeScheduleCalls = LockIsolated<[[MigrationSignedTransferPczt]]>([])
         let storePrepsCalls = LockIsolated<[[MigrationSignedTransferPczt]]>([])
         let unsigned: [MigrationUnsignedTransferPczt] = [
@@ -1785,22 +1678,21 @@ import ComposableArchitecture
             MigrationUnsignedTransferPczt(id: "t1", pczt: Data([0xBB])),
             MigrationUnsignedTransferPczt(id: "note-split#p2", pczt: Data([0x03]))
         ]
-        // MOB-1510: see `Self.validKeystoneFirmwareStamp`'s doc.
         let signed: [Data] = [
-            Data([0x01, 0x99]) + Self.validKeystoneFirmwareStamp,
-            Data([0xAA, 0x99]) + Self.validKeystoneFirmwareStamp,
-            Data([0x02, 0x99]) + Self.validKeystoneFirmwareStamp,
-            Data([0xBB, 0x99]) + Self.validKeystoneFirmwareStamp,
-            Data([0x03, 0x99]) + Self.validKeystoneFirmwareStamp
+            Data([0x01, 0x99]),
+            Data([0xAA, 0x99]),
+            Data([0x02, 0x99]),
+            Data([0xBB, 0x99]),
+            Data([0x03, 0x99])
         ]
         let expectedPreps: [MigrationSignedTransferPczt] = [
-            MigrationSignedTransferPczt(id: "p0", pczt: Data([0x01, 0x99]) + Self.validKeystoneFirmwareStamp),
-            MigrationSignedTransferPczt(id: "p1", pczt: Data([0x02, 0x99]) + Self.validKeystoneFirmwareStamp),
-            MigrationSignedTransferPczt(id: "p2", pczt: Data([0x03, 0x99]) + Self.validKeystoneFirmwareStamp)
+            MigrationSignedTransferPczt(id: "p0", pczt: Data([0x01, 0x99])),
+            MigrationSignedTransferPczt(id: "p1", pczt: Data([0x02, 0x99])),
+            MigrationSignedTransferPczt(id: "p2", pczt: Data([0x03, 0x99]))
         ]
         let expectedSchedule: [MigrationSignedTransferPczt] = [
-            MigrationSignedTransferPczt(id: "t0", pczt: Data([0xAA, 0x99]) + Self.validKeystoneFirmwareStamp),
-            MigrationSignedTransferPczt(id: "t1", pczt: Data([0xBB, 0x99]) + Self.validKeystoneFirmwareStamp)
+            MigrationSignedTransferPczt(id: "t0", pczt: Data([0xAA, 0x99])),
+            MigrationSignedTransferPczt(id: "t1", pczt: Data([0xBB, 0x99]))
         ]
         var state = MigrationCoordFlow.State()
         state.pendingKeystoneSigning = .planCommit
@@ -1811,6 +1703,7 @@ import ComposableArchitecture
             MigrationCoordFlow()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.applyKeystoneBatchSignatures = stubApply(signed)
             $0.sdkSynchronizer.storeSignedNoteSplits = { _, signed in
                 storePrepsCalls.withValue { $0.append(signed) }
             }
@@ -1827,7 +1720,15 @@ import ComposableArchitecture
         }
         store.exhaustivity = .off
 
-        await store.send(.path(.element(id: 2, action: .scan(.foundPCZTBatch(signed)))))
+        await store.send(
+            .path(
+                .element(
+                    id: 2,
+                    action: .scan(.foundKeystoneBatchSignatures(data: Data(), firmwareVersion: Self.validKeystoneMigrationFirmware))
+                )
+            )
+        )
+        await store.receive(\.keystoneBatchSignaturesApplied)
         await store.receive(\.keystoneSigningSubmitted)
         await store.receive(\.pushHydratedPathState)
         await store.receive(\.deferredKeystoneScheduleStored)
@@ -1840,14 +1741,13 @@ import ComposableArchitecture
     /// the coordinator's first-delivery kick — the ceremony resumes STRAIGHT to B9 Migration
     /// Scheduled (no `.noteSplit` detour, the screen no longer exists), and the kick broadcasts the
     /// first prep via the EXISTING next-due lane, exactly the closure the BG-window path uses.
-    @MainActor @Test func foundPCZTBatchWithNoteSplitSentinelResumesToScheduledAndKickBroadcastsFirstPrep() async {
+    @MainActor @Test func foundKeystoneBatchSignaturesWithNoteSplitSentinelResumesToScheduledAndKickBroadcastsFirstPrep() async {
         let executeCalls = LockIsolated<Int>(0)
         let unsigned: [MigrationUnsignedTransferPczt] = [
             MigrationUnsignedTransferPczt(id: "note-split#p0", pczt: Data([0x01])),
             MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xAA]))
         ]
-        // MOB-1510: see `Self.validKeystoneFirmwareStamp`'s doc.
-        let signed: [Data] = [Data([0x01, 0x99]) + Self.validKeystoneFirmwareStamp, Data([0xAA, 0x99]) + Self.validKeystoneFirmwareStamp]
+        let signed: [Data] = [Data([0x01, 0x99]), Data([0xAA, 0x99])]
         var state = MigrationCoordFlow.State()
         state.pendingKeystoneSigning = .planCommit
         state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .scheduled)))
@@ -1857,6 +1757,7 @@ import ComposableArchitecture
             MigrationCoordFlow()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.applyKeystoneBatchSignatures = stubApply(signed)
             $0.sdkSynchronizer.storeSignedNoteSplits = { _, _ in }
             $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, _ in }
             $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in
@@ -1872,7 +1773,15 @@ import ComposableArchitecture
         }
         store.exhaustivity = .off
 
-        await store.send(.path(.element(id: 2, action: .scan(.foundPCZTBatch(signed)))))
+        await store.send(
+            .path(
+                .element(
+                    id: 2,
+                    action: .scan(.foundKeystoneBatchSignatures(data: Data(), firmwareVersion: Self.validKeystoneMigrationFirmware))
+                )
+            )
+        )
+        await store.receive(\.keystoneBatchSignaturesApplied)
         await store.receive(\.keystoneSigningSubmitted)
         await store.receive(\.pushHydratedPathState)
         await store.receive(\.deferredKeystoneScheduleStored)
@@ -1896,14 +1805,13 @@ import ComposableArchitecture
     /// then does the deferred schedule store + `recordCommittedSchedule` run — strictly in that
     /// order. Storing the schedule before the prep's broadcast lands would let the broadcast-success
     /// record clobber the run's phase and strand the schedule once the prep mines (C-1b).
-    @MainActor @Test func foundPCZTBatchWithNoteSplitSentinelStoresPrepsThenBroadcastsThenStoresScheduleThenRecords() async {
+    @MainActor @Test func foundKeystoneBatchSignaturesWithNoteSplitSentinelStoresPrepsThenBroadcastsThenStoresScheduleThenRecords() async {
         let callOrder = LockIsolated<[String]>([])
         let unsigned: [MigrationUnsignedTransferPczt] = [
             MigrationUnsignedTransferPczt(id: "note-split#p0", pczt: Data([0x01])),
             MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xAA]))
         ]
-        // MOB-1510: see `Self.validKeystoneFirmwareStamp`'s doc.
-        let signed: [Data] = [Data([0x01, 0x99]) + Self.validKeystoneFirmwareStamp, Data([0xAA, 0x99]) + Self.validKeystoneFirmwareStamp]
+        let signed: [Data] = [Data([0x01, 0x99]), Data([0xAA, 0x99])]
         let schedule = MigrationSchedule(
             transfers: [MigrationTransferProposal(id: "t0", amount: Zatoshi(500_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)],
             estimatedDurationHours: 24
@@ -1919,6 +1827,7 @@ import ComposableArchitecture
             MigrationCoordFlow()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.applyKeystoneBatchSignatures = stubApply(signed)
             $0.sdkSynchronizer.storeSignedNoteSplits = { _, _ in callOrder.withValue { $0.append("storeSignedNoteSplits") } }
             $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, _ in
                 callOrder.withValue { $0.append("storeSignedMigrationTransactions") }
@@ -1938,7 +1847,15 @@ import ComposableArchitecture
         }
         store.exhaustivity = .off
 
-        await store.send(.path(.element(id: 2, action: .scan(.foundPCZTBatch(signed)))))
+        await store.send(
+            .path(
+                .element(
+                    id: 2,
+                    action: .scan(.foundKeystoneBatchSignatures(data: Data(), firmwareVersion: Self.validKeystoneMigrationFirmware))
+                )
+            )
+        )
+        await store.receive(\.keystoneBatchSignaturesApplied)
         await store.receive(\.keystoneSigningSubmitted)
         await store.receive(\.pushHydratedPathState)
         await store.receive(\.deferredKeystoneScheduleStored)
@@ -1965,8 +1882,7 @@ import ComposableArchitecture
             MigrationUnsignedTransferPczt(id: "note-split#p0", pczt: Data([0x01])),
             MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xAA]))
         ]
-        // MOB-1510: see `Self.validKeystoneFirmwareStamp`'s doc.
-        let signed: [Data] = [Data([0x01, 0x99]) + Self.validKeystoneFirmwareStamp, Data([0xAA, 0x99]) + Self.validKeystoneFirmwareStamp]
+        let signed: [Data] = [Data([0x01, 0x99]), Data([0xAA, 0x99])]
         var state = MigrationCoordFlow.State()
         state.pendingKeystoneSigning = .planCommit
         state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .scheduled)))
@@ -1977,6 +1893,7 @@ import ComposableArchitecture
         } withDependencies: {
             $0.continuousClock = ImmediateClock()
             $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.applyKeystoneBatchSignatures = stubApply(signed)
             $0.sdkSynchronizer.storeSignedNoteSplits = { _, _ in }
             $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, _ in scheduleStoreCalls.withValue { $0 += 1 } }
             $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in MigrationTransferResult.networkError(retryable: true) }
@@ -1997,7 +1914,15 @@ import ComposableArchitecture
         }
         store.exhaustivity = .off
 
-        await store.send(.path(.element(id: 2, action: .scan(.foundPCZTBatch(signed)))))
+        await store.send(
+            .path(
+                .element(
+                    id: 2,
+                    action: .scan(.foundKeystoneBatchSignatures(data: Data(), firmwareVersion: Self.validKeystoneMigrationFirmware))
+                )
+            )
+        )
+        await store.receive(\.keystoneBatchSignaturesApplied)
         await store.receive(\.keystoneSigningSubmitted)
         await store.receive(\.pushHydratedPathState)
         // B4 fix wave: exhausting the bounded attempts arms the state-event re-arm.
@@ -2033,8 +1958,7 @@ import ComposableArchitecture
             MigrationUnsignedTransferPczt(id: "note-split#p0", pczt: Data([0x01])),
             MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xAA]))
         ]
-        // MOB-1510: see `Self.validKeystoneFirmwareStamp`'s doc.
-        let signed: [Data] = [Data([0x01, 0x99]) + Self.validKeystoneFirmwareStamp, Data([0xAA, 0x99]) + Self.validKeystoneFirmwareStamp]
+        let signed: [Data] = [Data([0x01, 0x99]), Data([0xAA, 0x99])]
         var state = MigrationCoordFlow.State()
         state.pendingKeystoneSigning = .planCommit
         state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .scheduled)))
@@ -2045,6 +1969,7 @@ import ComposableArchitecture
         } withDependencies: {
             $0.continuousClock = ImmediateClock()
             $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.applyKeystoneBatchSignatures = stubApply(signed)
             $0.sdkSynchronizer.storeSignedNoteSplits = { _, _ in }
             $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, _ in
                 scheduleStoreCalls.withValue { $0 += 1 }
@@ -2070,7 +1995,15 @@ import ComposableArchitecture
         }
         store.exhaustivity = .off
 
-        await store.send(.path(.element(id: 2, action: .scan(.foundPCZTBatch(signed)))))
+        await store.send(
+            .path(
+                .element(
+                    id: 2,
+                    action: .scan(.foundKeystoneBatchSignatures(data: Data(), firmwareVersion: Self.validKeystoneMigrationFirmware))
+                )
+            )
+        )
+        await store.receive(\.keystoneBatchSignaturesApplied)
         await store.receive(\.keystoneSigningSubmitted)
         await store.receive(\.pushHydratedPathState)
         await store.receive(\.firstDeliveryKickFailed)
@@ -2098,8 +2031,7 @@ import ComposableArchitecture
             MigrationUnsignedTransferPczt(id: "note-split#p0", pczt: Data([0x01])),
             MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xAA]))
         ]
-        // MOB-1510: see `Self.validKeystoneFirmwareStamp`'s doc.
-        let signed: [Data] = [Data([0x01, 0x99]) + Self.validKeystoneFirmwareStamp, Data([0xAA, 0x99]) + Self.validKeystoneFirmwareStamp]
+        let signed: [Data] = [Data([0x01, 0x99]), Data([0xAA, 0x99])]
         var state = MigrationCoordFlow.State()
         state.pendingKeystoneSigning = .planCommit
         state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .scheduled)))
@@ -2110,6 +2042,7 @@ import ComposableArchitecture
         } withDependencies: {
             $0.continuousClock = ImmediateClock()
             $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.applyKeystoneBatchSignatures = stubApply(signed)
             $0.sdkSynchronizer.storeSignedNoteSplits = { _, _ in }
             $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, _ in scheduleStoreCalls.withValue { $0 += 1 } }
             $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in
@@ -2130,7 +2063,15 @@ import ComposableArchitecture
         }
         store.exhaustivity = .off
 
-        await store.send(.path(.element(id: 2, action: .scan(.foundPCZTBatch(signed)))))
+        await store.send(
+            .path(
+                .element(
+                    id: 2,
+                    action: .scan(.foundKeystoneBatchSignatures(data: Data(), firmwareVersion: Self.validKeystoneMigrationFirmware))
+                )
+            )
+        )
+        await store.receive(\.keystoneBatchSignaturesApplied)
         await store.receive(\.keystoneSigningSubmitted)
         await store.receive(\.pushHydratedPathState)
         await store.receive(\.deferredKeystoneScheduleStored)
@@ -2156,8 +2097,7 @@ import ComposableArchitecture
             MigrationUnsignedTransferPczt(id: "note-split#p0", pczt: Data([0x01])),
             MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xAA]))
         ]
-        // MOB-1510: see `Self.validKeystoneFirmwareStamp`'s doc.
-        let signed: [Data] = [Data([0x01, 0x99]) + Self.validKeystoneFirmwareStamp, Data([0xAA, 0x99]) + Self.validKeystoneFirmwareStamp]
+        let signed: [Data] = [Data([0x01, 0x99]), Data([0xAA, 0x99])]
         let schedule = MigrationSchedule(
             transfers: [MigrationTransferProposal(id: "t0", amount: Zatoshi(500_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)],
             estimatedDurationHours: 24
@@ -2174,6 +2114,7 @@ import ComposableArchitecture
         } withDependencies: {
             $0.continuousClock = ImmediateClock()
             $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.applyKeystoneBatchSignatures = stubApply(signed)
             $0.sdkSynchronizer.storeSignedNoteSplits = { _, _ in }
             $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, stored in
                 scheduleStoreCalls.withValue { $0.append(stored) }
@@ -2202,7 +2143,15 @@ import ComposableArchitecture
         }
         store.exhaustivity = .off
 
-        await store.send(.path(.element(id: 2, action: .scan(.foundPCZTBatch(signed)))))
+        await store.send(
+            .path(
+                .element(
+                    id: 2,
+                    action: .scan(.foundKeystoneBatchSignatures(data: Data(), firmwareVersion: Self.validKeystoneMigrationFirmware))
+                )
+            )
+        )
+        await store.receive(\.keystoneBatchSignaturesApplied)
         await store.receive(\.keystoneSigningSubmitted)
         await store.receive(\.pushHydratedPathState)
         await store.receive(\.firstDeliveryKickFailed)
@@ -2219,7 +2168,7 @@ import ComposableArchitecture
         await store.receive(\.deferredKeystoneScheduleResolveDue)
         await store.receive(\.deferredKeystoneScheduleStored)
 
-        #expect(scheduleStoreCalls.value == [[MigrationSignedTransferPczt(id: "t0", pczt: Data([0xAA, 0x99]) + Self.validKeystoneFirmwareStamp)]])
+        #expect(scheduleStoreCalls.value == [[MigrationSignedTransferPczt(id: "t0", pczt: Data([0xAA, 0x99]))]])
         #expect(recordCommittedScheduleCalls.value == [schedule])
         #expect(store.state.pendingKeystoneScheduleStore == nil)
     }
@@ -2360,17 +2309,16 @@ import ComposableArchitecture
     /// `dustAmount` from the LIVE stored-run residual, never from the summary's (deliberately
     /// poisoned here) schedule-derived fields, which would read the previous payload or the
     /// degraded progress-only fallback in this window.
-    @MainActor @Test func foundPCZTBatchWithNoteSplitSentinelHydratesScheduledFromDeferredNumbers() async throws {
+    @MainActor @Test func foundKeystoneBatchSignaturesWithNoteSplitSentinelHydratesScheduledFromDeferredNumbers() async throws {
         let unsigned: [MigrationUnsignedTransferPczt] = [
             MigrationUnsignedTransferPczt(id: "note-split#p0", pczt: Data([0x01])),
             MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xAA])),
             MigrationUnsignedTransferPczt(id: "t1", pczt: Data([0xBB]))
         ]
-        // MOB-1510: see `Self.validKeystoneFirmwareStamp`'s doc.
         let signed: [Data] = [
-            Data([0x01, 0x99]) + Self.validKeystoneFirmwareStamp,
-            Data([0xAA, 0x99]) + Self.validKeystoneFirmwareStamp,
-            Data([0xBB, 0x99]) + Self.validKeystoneFirmwareStamp
+            Data([0x01, 0x99]),
+            Data([0xAA, 0x99]),
+            Data([0xBB, 0x99])
         ]
         let schedule = MigrationSchedule(
             transfers: [
@@ -2391,6 +2339,7 @@ import ComposableArchitecture
         } withDependencies: {
             $0.continuousClock = ImmediateClock()
             $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.applyKeystoneBatchSignatures = stubApply(signed)
             $0.sdkSynchronizer.storeSignedNoteSplits = { _, _ in }
             $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, _ in }
             $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in MigrationTransferResult.success(txId: "prep-tx") }
@@ -2415,7 +2364,15 @@ import ComposableArchitecture
         }
         store.exhaustivity = .off
 
-        await store.send(.path(.element(id: 2, action: .scan(.foundPCZTBatch(signed)))))
+        await store.send(
+            .path(
+                .element(
+                    id: 2,
+                    action: .scan(.foundKeystoneBatchSignatures(data: Data(), firmwareVersion: Self.validKeystoneMigrationFirmware))
+                )
+            )
+        )
+        await store.receive(\.keystoneBatchSignaturesApplied)
         await store.receive(\.keystoneSigningSubmitted)
         await store.receive(\.pushHydratedPathState)
         await store.receive(\.deferredKeystoneScheduleStored)
@@ -2437,7 +2394,7 @@ import ComposableArchitecture
     /// be attempted (it would land in a run the split never created), nothing gets recorded, and the
     /// session abandons exactly like a re-pair failure: nothing to resume, same `keystoneScanAbandoned`
     /// semantics (pop back to `.transferPlan`, context cleared).
-    @MainActor @Test func foundPCZTBatchWithSplitStoreFailureAbandonsSessionWithoutStoringScheduleOrRecording() async {
+    @MainActor @Test func foundKeystoneBatchSignaturesWithSplitStoreFailureAbandonsSessionWithoutStoringScheduleOrRecording() async {
         struct SplitStoreFailure: Error { }
         let scheduleStoreCalls = LockIsolated<Int>(0)
         let recordCommittedScheduleCalls = LockIsolated<Int>(0)
@@ -2445,8 +2402,7 @@ import ComposableArchitecture
             MigrationUnsignedTransferPczt(id: "note-split#p0", pczt: Data([0x01])),
             MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xAA]))
         ]
-        // MOB-1510: see `Self.validKeystoneFirmwareStamp`'s doc.
-        let signed: [Data] = [Data([0x01, 0x99]) + Self.validKeystoneFirmwareStamp, Data([0xAA, 0x99]) + Self.validKeystoneFirmwareStamp]
+        let signed: [Data] = [Data([0x01, 0x99]), Data([0xAA, 0x99])]
         var planState = MigrationTransferPlan.State(variant: .scheduled)
         planState.schedule = MigrationSchedule(
             transfers: [MigrationTransferProposal(id: "t0", amount: Zatoshi(500_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)],
@@ -2461,13 +2417,22 @@ import ComposableArchitecture
             MigrationCoordFlow()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.applyKeystoneBatchSignatures = stubApply(signed)
             $0.sdkSynchronizer.storeSignedNoteSplits = { _, _ in throw SplitStoreFailure() }
             $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, _ in scheduleStoreCalls.withValue { $0 += 1 } }
             $0.migrationManager.recordCommittedSchedule = { _, _ in recordCommittedScheduleCalls.withValue { $0 += 1 } }
         }
         store.exhaustivity = .off
 
-        await store.send(.path(.element(id: 2, action: .scan(.foundPCZTBatch(signed)))))
+        await store.send(
+            .path(
+                .element(
+                    id: 2,
+                    action: .scan(.foundKeystoneBatchSignatures(data: Data(), firmwareVersion: Self.validKeystoneMigrationFirmware))
+                )
+            )
+        )
+        await store.receive(\.keystoneBatchSignaturesApplied)
         await store.receive(\.keystoneScanAbandoned)
 
         #expect(scheduleStoreCalls.value == 0)
@@ -2485,22 +2450,21 @@ import ComposableArchitecture
     /// split-routing machinery (`storeKeystoneSignedBatch`/`resumeAfterKeystoneSigning`). That
     /// scenario is now impossible to reach: the immediate lane's Keystone PCZT is a single ordinary-
     /// send PCZT (`createPCZTFromProposal`), which never carries a note-split sentinel, AND
-    /// `.scan(.foundPCZTBatch)` intercepts `.immediateReview` via
+    /// `.scan(.foundKeystoneBatchSignatures)` intercepts `.immediateReview` via
     /// `submitImmediateKeystoneTransaction` BEFORE `storeKeystoneSignedBatch` (and its split-routing)
-    /// ever runs — see `foundPCZTBatchForImmediateReviewContextAddsProofsSubmitsRecordsAndPushesSendingSuccess`
+    /// ever runs — see `foundKeystoneBatchSignaturesForImmediateReviewContextAddsProofsSubmitsRecordsAndPushesSendingSuccess`
     /// below for the lane's real post-signing coverage now.
 
     /// No-split batches are unaffected: `splitKeystoneBatch` finds no sentinel, so every entry lands
     /// in `scheduleEntries` and the resume proceeds straight to `.scheduled`, exactly as before —
-    /// twin of `foundPCZTBatchForPlanCommitContextStoresPopsAndPushesScheduledForScheduledVariant`
+    /// twin of `foundKeystoneBatchSignaturesForPlanCommitContextStoresPopsAndPushesScheduledForScheduledVariant`
     /// above, just asserting the split-free path explicitly stays split-free (no `.noteSplit` push).
-    @MainActor @Test func foundPCZTBatchWithoutNoteSplitSentinelNeverPushesNoteSplitScreen() async {
+    @MainActor @Test func foundKeystoneBatchSignaturesWithoutNoteSplitSentinelNeverPushesNoteSplitScreen() async {
         let unsigned: [MigrationUnsignedTransferPczt] = [
             MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xAA])),
             MigrationUnsignedTransferPczt(id: "t1", pczt: Data([0xBB]))
         ]
-        // MOB-1510: see `Self.validKeystoneFirmwareStamp`'s doc.
-        let signed: [Data] = [Data([0xAA, 0x01]) + Self.validKeystoneFirmwareStamp, Data([0xBB, 0x01]) + Self.validKeystoneFirmwareStamp]
+        let signed: [Data] = [Data([0xAA, 0x01]), Data([0xBB, 0x01])]
         var state = MigrationCoordFlow.State()
         state.pendingKeystoneSigning = .planCommit
         state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .scheduled)))
@@ -2510,6 +2474,7 @@ import ComposableArchitecture
             MigrationCoordFlow()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.applyKeystoneBatchSignatures = stubApply(signed)
             $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, _ in }
             // MOB-1513 (B4): the post-confirm first-delivery kick runs after landing on Scheduled —
             // nothing due is a valid outcome; the nudge/no-op stubs keep this test focused on the
@@ -2525,7 +2490,15 @@ import ComposableArchitecture
         }
         store.exhaustivity = .off
 
-        await store.send(.path(.element(id: 2, action: .scan(.foundPCZTBatch(signed)))))
+        await store.send(
+            .path(
+                .element(
+                    id: 2,
+                    action: .scan(.foundKeystoneBatchSignatures(data: Data(), firmwareVersion: Self.validKeystoneMigrationFirmware))
+                )
+            )
+        )
+        await store.receive(\.keystoneBatchSignaturesApplied)
         await store.receive(\.keystoneSigningSubmitted)
         // MOB-1458 (W-E): see `transferPlanPostConfirmChain`'s doc — the `.scheduled` push is now
         // hydrated (an async peek), landing via its own action rather than synchronously here.
@@ -2539,49 +2512,16 @@ import ComposableArchitecture
         }
     }
 
-    // MARK: - MOB-1496 (W6 §2): re-pair validation — coordinator abandon-on-mismatch (short/long batch)
+    // MARK: - MOB-1513: applyKeystoneBatchSignatures failure abandons (no-partial-storage invariant)
     //
-    // The empty-batch case is already covered by
-    // `foundPCZTBatchWithEmptyArrayForPlanCommitContextAbandonsSessionWithoutStoring` below; the pure
-    // `rePairedKeystoneBatch`/`splitKeystoneBatch` table tests are their own `@Suite` at the bottom of
-    // this file.
+    // The pre-real-SDK app-side re-pair mismatch tests (short/long/empty scanned batch, checked by
+    // the now-deleted `rePairedKeystoneBatch`) are superseded by this one: the real SDK does the
+    // positional pairing itself now, so a malformed/mismatched device response surfaces as a THROW
+    // from `applyKeystoneBatchSignatures` rather than an app-side `nil`. The pure `splitKeystoneBatch`
+    // table tests are their own `@Suite` at the bottom of this file.
 
-    @MainActor @Test func foundPCZTBatchWithShortBatchAbandonsSessionWithoutStoring() async {
-        let storeCalls = LockIsolated<Int>(0)
-        var state = MigrationCoordFlow.State()
-        state.pendingKeystoneSigning = .planCommit
-        state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .scheduled)))
-        state.path.append(
-            .keystoneSign(
-                MigrationKeystoneSign.State(pczts: [
-                    MigrationUnsignedTransferPczt(id: "t0", pczt: Data()),
-                    MigrationUnsignedTransferPczt(id: "t1", pczt: Data())
-                ])
-            )
-        )
-        state.path.append(.scan(Scan.State.initial))
-        let store = TestStore(initialState: state) {
-            MigrationCoordFlow()
-        } withDependencies: {
-            $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, _ in storeCalls.withValue { $0 += 1 } }
-        }
-        store.exhaustivity = .off
-
-        // Only ONE signed entry scanned back for a TWO-entry unsigned batch.
-        await store.send(.path(.element(id: 2, action: .scan(.foundPCZTBatch([Data([0x01])])))))
-        await store.receive(\.keystoneScanAbandoned)
-
-        #expect(storeCalls.value == 0)
-        #expect(store.state.pendingKeystoneSigning == nil)
-        #expect(store.state.path.count == 1)
-        guard case .transferPlan = try? #require(store.state.path.last) else {
-            Issue.record("Expected pop back to .transferPlan (scan + sign removed)")
-            return
-        }
-    }
-
-    @MainActor @Test func foundPCZTBatchWithLongBatchAbandonsSessionWithoutStoring() async {
+    @MainActor @Test func applyKeystoneBatchSignaturesFailureAbandonsSessionWithoutStoring() async {
+        struct ApplyFailure: Error { }
         let storeCalls = LockIsolated<Int>(0)
         var state = MigrationCoordFlow.State()
         state.pendingKeystoneSigning = .planCommit
@@ -2592,12 +2532,19 @@ import ComposableArchitecture
             MigrationCoordFlow()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.applyKeystoneBatchSignatures = { _, _ in throw ApplyFailure() }
             $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, _ in storeCalls.withValue { $0 += 1 } }
         }
         store.exhaustivity = .off
 
-        // TWO signed entries scanned back for a ONE-entry unsigned batch.
-        await store.send(.path(.element(id: 2, action: .scan(.foundPCZTBatch([Data([0x01]), Data([0x02])])))))
+        await store.send(
+            .path(
+                .element(
+                    id: 2,
+                    action: .scan(.foundKeystoneBatchSignatures(data: Data(), firmwareVersion: Self.validKeystoneMigrationFirmware))
+                )
+            )
+        )
         await store.receive(\.keystoneScanAbandoned)
 
         #expect(storeCalls.value == 0)
@@ -2609,10 +2556,9 @@ import ComposableArchitecture
         }
     }
 
-    @MainActor @Test func foundPCZTBatchForPlanCommitContextPushesSendingForManualVariant() async {
+    @MainActor @Test func foundKeystoneBatchSignaturesForPlanCommitContextPushesSendingForManualVariant() async {
         let unsigned: [MigrationUnsignedTransferPczt] = [MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xCC]))]
-        // MOB-1510: see `Self.validKeystoneFirmwareStamp`'s doc.
-        let signed: [Data] = [Data([0xCC, 0x01]) + Self.validKeystoneFirmwareStamp]
+        let signed: [Data] = [Data([0xCC, 0x01])]
         var state = MigrationCoordFlow.State()
         state.pendingKeystoneSigning = .planCommit
         state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .manual)))
@@ -2622,14 +2568,23 @@ import ComposableArchitecture
             MigrationCoordFlow()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.applyKeystoneBatchSignatures = stubApply(signed)
             $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, _ in }
             $0.migrationBGScheduler.scheduleFirstWindow = { }
-            // MOB-1496 (W2): see `foundPCZTBatchForPlanCommitContextStoresPopsAndPushesScheduledForScheduledVariant`'s comment.
+            // MOB-1496 (W2): see `foundKeystoneBatchSignaturesForPlanCommitContextStoresPopsAndPushesScheduledForScheduledVariant`'s comment.
             $0.migrationManager.reconcile = { }
         }
         store.exhaustivity = .off
 
-        await store.send(.path(.element(id: 2, action: .scan(.foundPCZTBatch(signed)))))
+        await store.send(
+            .path(
+                .element(
+                    id: 2,
+                    action: .scan(.foundKeystoneBatchSignatures(data: Data(), firmwareVersion: Self.validKeystoneMigrationFirmware))
+                )
+            )
+        )
+        await store.receive(\.keystoneBatchSignaturesApplied)
         await store.receive(\.keystoneSigningSubmitted)
 
         guard case let .sending(sendingState) = try? #require(store.state.path.last) else {
@@ -2639,7 +2594,7 @@ import ComposableArchitecture
         #expect(sendingState.totalCount == 1)
     }
 
-    // MARK: - MOB-1513: Keystone signing — foundPCZTBatch resumes immediateReview via the immediate submit lane
+    // MARK: - MOB-1513: Keystone signing — foundKeystoneBatchSignatures resumes immediateReview via the immediate submit lane
 
     /// MOB-1513: the immediate lane's Keystone post-signing step diverges entirely from the
     /// schedule-based `.planCommit`/`.dust` contexts — no `storeSignedMigrationTransactions` call at
@@ -2648,13 +2603,12 @@ import ComposableArchitecture
     /// records the success, and the Sending screen is pushed ALREADY in `.success` phase with the
     /// real txid (the broadcast already happened here — see `submitImmediateKeystoneTransaction`'s
     /// doc for why the Keystone lane can't defer to that screen's `onAppear` the way software does).
-    @MainActor @Test func foundPCZTBatchForImmediateReviewContextAddsProofsSubmitsRecordsAndPushesSendingSuccess() async {
+    @MainActor @Test func foundKeystoneBatchSignaturesForImmediateReviewContextAddsProofsSubmitsRecordsAndPushesSendingSuccess() async {
         let addProofsCalls = LockIsolated<[Data]>([])
         let submitCalls = LockIsolated<[(Data, Data)]>([])
         let recordedTxIds = LockIsolated<[(AccountUUID, Data)]>([])
         let unsigned: [MigrationUnsignedTransferPczt] = [MigrationUnsignedTransferPczt(id: MigrationReviewTransfer.immediateKeystonePcztId, pczt: Data([0xDD]))]
-        // MOB-1510: see `Self.validKeystoneFirmwareStamp`'s doc.
-        let signed: [Data] = [Data([0xDD, 0x01]) + Self.validKeystoneFirmwareStamp]
+        let signed: [Data] = [Data([0xDD, 0x01])]
         let provenPczt = Data([0xDD, 0xF0])
         var state = MigrationCoordFlow.State()
         state.pendingKeystoneSigning = .immediateReview
@@ -2665,6 +2619,7 @@ import ComposableArchitecture
             MigrationCoordFlow()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.applyKeystoneBatchSignatures = stubApply(signed)
             $0.sdkSynchronizer.addProofsToPCZT = { pczt in
                 addProofsCalls.withValue { $0.append(pczt) }
                 return provenPczt
@@ -2679,13 +2634,21 @@ import ComposableArchitecture
         }
         store.exhaustivity = .off
 
-        await store.send(.path(.element(id: 2, action: .scan(.foundPCZTBatch(signed)))))
+        await store.send(
+            .path(
+                .element(
+                    id: 2,
+                    action: .scan(.foundKeystoneBatchSignatures(data: Data(), firmwareVersion: Self.validKeystoneMigrationFirmware))
+                )
+            )
+        )
+        await store.receive(\.keystoneBatchSignaturesApplied)
         await store.receive(\.keystoneImmediateSubmitted)
 
         #expect(addProofsCalls.value == [Data([0xDD])])
         #expect(submitCalls.value.count == 1)
         #expect(submitCalls.value.first?.0 == provenPczt)
-        #expect(submitCalls.value.first?.1 == Data([0xDD, 0x01]) + Self.validKeystoneFirmwareStamp)
+        #expect(submitCalls.value.first?.1 == Data([0xDD, 0x01]))
         #expect(recordedTxIds.value.count == 1)
         #expect(recordedTxIds.value.first?.0 == Self.defaultAccount.id)
         // "ab12" hex-decoded forward is [0xAB,0x12]; the raw/internal order is that reversed.
@@ -2709,10 +2672,10 @@ import ComposableArchitecture
     /// Failure path: a non-`.success` submit outcome (or a thrown error from either SDK call)
     /// abandons the ceremony exactly like a re-pair or firmware-gate failure — no partial state, the
     /// user re-initiates from Review's confirm button.
-    @MainActor @Test func foundPCZTBatchForImmediateReviewContextOnSubmitFailureAbandonsSessionWithoutRecording() async {
+    @MainActor @Test func foundKeystoneBatchSignaturesForImmediateReviewContextOnSubmitFailureAbandonsSessionWithoutRecording() async {
         let recordCalls = LockIsolated<Int>(0)
         let unsigned: [MigrationUnsignedTransferPczt] = [MigrationUnsignedTransferPczt(id: MigrationReviewTransfer.immediateKeystonePcztId, pczt: Data([0xDD]))]
-        let signed: [Data] = [Data([0xDD, 0x01]) + Self.validKeystoneFirmwareStamp]
+        let signed: [Data] = [Data([0xDD, 0x01])]
         var state = MigrationCoordFlow.State()
         state.pendingKeystoneSigning = .immediateReview
         state.path.append(.reviewTransfer(MigrationReviewTransfer.State(mode: .immediate)))
@@ -2722,13 +2685,22 @@ import ComposableArchitecture
             MigrationCoordFlow()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.applyKeystoneBatchSignatures = stubApply(signed)
             $0.sdkSynchronizer.addProofsToPCZT = { pczt in pczt }
             $0.sdkSynchronizer.createAndSubmitTransactionFromPCZT = { _, _ in .failure(txIds: [], code: -1, description: "rejected") }
             $0.sdkSynchronizer.recordImmediateMigration = { _, _ in recordCalls.withValue { $0 += 1 } }
         }
         store.exhaustivity = .off
 
-        await store.send(.path(.element(id: 2, action: .scan(.foundPCZTBatch(signed)))))
+        await store.send(
+            .path(
+                .element(
+                    id: 2,
+                    action: .scan(.foundKeystoneBatchSignatures(data: Data(), firmwareVersion: Self.validKeystoneMigrationFirmware))
+                )
+            )
+        )
+        await store.receive(\.keystoneBatchSignaturesApplied)
         await store.receive(\.keystoneScanAbandoned)
 
         #expect(recordCalls.value == 0)
@@ -2740,10 +2712,14 @@ import ComposableArchitecture
         }
     }
 
-    // MARK: - MOB-1468: Keystone signing — empty batch never stores (no-partial-storage)
+    // MARK: - MOB-1513: minimum-firmware gate over the decode envelope's reported version
 
-    @MainActor @Test func foundPCZTBatchWithEmptyArrayForPlanCommitContextAbandonsSessionWithoutStoring() async {
+    /// Firmware strictly below the 3.0.2 floor presents the firmware-gate sheet, abandons the
+    /// ceremony (no-partial-storage invariant: nothing was stored — the store/apply are never even
+    /// reached), and records the detected version for the sheet's copy.
+    @MainActor @Test func foundKeystoneBatchSignaturesBelowFirmwareFloorPresentsGateAndAbandonsWithoutStoring() async {
         let storeCalls = LockIsolated<Int>(0)
+        let applyCalls = LockIsolated<Int>(0)
         var state = MigrationCoordFlow.State()
         state.pendingKeystoneSigning = .planCommit
         state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .scheduled)))
@@ -2753,21 +2729,123 @@ import ComposableArchitecture
             MigrationCoordFlow()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.applyKeystoneBatchSignatures = { _, _ in
+                applyCalls.withValue { $0 += 1 }
+                return []
+            }
             $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, _ in storeCalls.withValue { $0 += 1 } }
         }
         store.exhaustivity = .off
 
-        await store.send(.path(.element(id: 2, action: .scan(.foundPCZTBatch([])))))
+        let belowFloor = ZcashLightClientKit.KeystoneFirmwareVersion(major: 3, minor: 0, build: 1)
+        await store.send(
+            .path(
+                .element(
+                    id: 2,
+                    action: .scan(.foundKeystoneBatchSignatures(data: Data(), firmwareVersion: belowFloor))
+                )
+            )
+        )
         await store.receive(\.keystoneScanAbandoned)
 
+        #expect(applyCalls.value == 0)
         #expect(storeCalls.value == 0)
+        #expect(store.state.isKeystoneFirmwareGatePresented == true)
+        #expect(store.state.detectedKeystoneFirmwareVersion == "3.0.1")
         // Deferred pop of scan + sign back to the plan, context cleared — the user re-initiates
-        // signing from the confirm button (no-partial-storage invariant: nothing was stored).
+        // signing from the confirm button once their firmware is updated.
         #expect(store.state.pendingKeystoneSigning == nil)
         #expect(store.state.path.count == 1)
         guard case .transferPlan = try? #require(store.state.path.last) else {
             Issue.record("Expected pop back to .transferPlan (scan + sign removed)")
             return
+        }
+    }
+
+    /// A decode envelope that reports NO firmware version at all is treated the same as below-floor
+    /// — the batch protocol has no PCZT-embedded fallback (see `KeystoneBatchDecodeResult`'s doc) —
+    /// and the gate's copy falls back to its "no version reported" variant (`nil` detected version).
+    @MainActor @Test func foundKeystoneBatchSignaturesWithNilFirmwarePresentsGateAndAbandons() async {
+        var state = MigrationCoordFlow.State()
+        state.pendingKeystoneSigning = .planCommit
+        state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .scheduled)))
+        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: [MigrationUnsignedTransferPczt(id: "t0", pczt: Data())])))
+        state.path.append(.scan(Scan.State.initial))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+        }
+        store.exhaustivity = .off
+
+        await store.send(
+            .path(
+                .element(
+                    id: 2,
+                    action: .scan(.foundKeystoneBatchSignatures(data: Data(), firmwareVersion: nil))
+                )
+            )
+        )
+        await store.receive(\.keystoneScanAbandoned)
+
+        #expect(store.state.isKeystoneFirmwareGatePresented == true)
+        #expect(store.state.detectedKeystoneFirmwareVersion == nil)
+    }
+
+    /// Firmware exactly AT the floor (3.0.2) and comfortably above it (3.1.0) both clear the gate and
+    /// proceed to apply — the floor is inclusive.
+    @MainActor @Test func foundKeystoneBatchSignaturesAtOrAboveFirmwareFloorProceedsToApply() async {
+        for firmware in [
+            ZcashLightClientKit.KeystoneFirmwareVersion(major: 3, minor: 0, build: 2),
+            ZcashLightClientKit.KeystoneFirmwareVersion(major: 3, minor: 1, build: 0)
+        ] {
+            let applyCalls = LockIsolated<Int>(0)
+            var state = MigrationCoordFlow.State()
+            state.pendingKeystoneSigning = .planCommit
+            state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .scheduled)))
+            state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: [MigrationUnsignedTransferPczt(id: "t0", pczt: Data())])))
+            state.path.append(.scan(Scan.State.initial))
+            let store = TestStore(initialState: state) {
+                MigrationCoordFlow()
+            } withDependencies: {
+                $0.sdkSynchronizer = .noOp
+                $0.sdkSynchronizer.applyKeystoneBatchSignatures = { pczts, _ in
+                    applyCalls.withValue { $0 += 1 }
+                    return pczts.map { MigrationSignedTransferPczt(id: $0.id, pczt: $0.pczt) }
+                }
+                $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, _ in }
+                $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in nil }
+                $0.migrationBGScheduler.scheduleFirstWindow = { }
+                $0.migrationManager.reconcile = { }
+                $0.migrationManager.migrationSummary = { _ in MigrationSummary.zero }
+                $0.migrationManager.migrationNetworkOptions = { _ in Self.defaultNetworkPrivacyOptions }
+                $0.migrationManager.refreshMigrationSyncGate = { }
+            }
+            store.exhaustivity = .off
+
+            // MOB-1513: `StackState`'s element ids are minted from a process-wide generator, not
+            // reset per `State()` — this test's own `for` loop builds a fresh path every iteration,
+            // so the literal `2` every OTHER single-iteration test in this file safely hardcodes
+            // would be stale from iteration 2 onward. Read the real id back instead.
+            guard let scanId = store.state.path.ids.last else {
+                Issue.record("Expected a Scan element id")
+                return
+            }
+            await store.send(
+                .path(
+                    .element(
+                        id: scanId,
+                        action: .scan(.foundKeystoneBatchSignatures(data: Data(), firmwareVersion: firmware))
+                    )
+                )
+            )
+            await store.receive(\.keystoneBatchSignaturesApplied)
+            await store.receive(\.keystoneSigningSubmitted)
+            await store.receive(\.pushHydratedPathState)
+            await store.finish()
+
+            #expect(applyCalls.value == 1, "firmware \(firmware) should have cleared the gate")
+            #expect(store.state.isKeystoneFirmwareGatePresented == false)
         }
     }
 
@@ -4081,7 +4159,7 @@ import ComposableArchitecture
     /// lane. Call ORDER matters (unlock-first is load-bearing) and `.immediateReview` — not a
     /// dust-specific context — is what gets armed, so the rest of the ceremony (scan -> proofs ->
     /// submit) is the SAME already-tested `.immediateReview` machinery
-    /// (`foundPCZTBatchForImmediateReviewContextAddsProofsSubmitsRecordsAndPushesSendingSuccess`).
+    /// (`foundKeystoneBatchSignaturesForImmediateReviewContextAddsProofsSubmitsRecordsAndPushesSendingSuccess`).
     @MainActor @Test func completeMigrateAnywayKeystoneUnlocksProposesAndPushesKeystoneSignContext() async {
         let callLog = LockIsolated<[String]>([])
         let proposal = ImmediateMigrationProposal(proposal: .testOnlyFakeProposal(totalFee: 5_000), amount: Zatoshi(12_000), fee: Zatoshi(5_000))
@@ -4173,10 +4251,9 @@ import ComposableArchitecture
             estimatedDurationHours: 12
         )
         let unsigned: [MigrationUnsignedTransferPczt] = [MigrationUnsignedTransferPczt(id: "r0", pczt: Data([0x11]))]
-        // MOB-1510: see `Self.validKeystoneFirmwareStamp`'s doc.
-        let signed: [Data] = [Data([0x11, 0x99]) + Self.validKeystoneFirmwareStamp]
+        let signed: [Data] = [Data([0x11, 0x99])]
         let expectedStored: [MigrationSignedTransferPczt] = [
-            MigrationSignedTransferPczt(id: "r0", pczt: Data([0x11, 0x99]) + Self.validKeystoneFirmwareStamp)
+            MigrationSignedTransferPczt(id: "r0", pczt: Data([0x11, 0x99]))
         ]
 
         var state = MigrationCoordFlow.State()
@@ -4186,6 +4263,7 @@ import ComposableArchitecture
             MigrationCoordFlow()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.applyKeystoneBatchSignatures = stubApply(signed)
             $0.sdkSynchronizer.restartCurrentMigrationStep = { _ in
                 restartCalls.withValue { $0 += 1 }
                 return restartedSchedule
@@ -4252,7 +4330,15 @@ import ComposableArchitecture
             Issue.record("Expected a Scan element id")
             return
         }
-        await store.send(.path(.element(id: scanId, action: .scan(.foundPCZTBatch(signed)))))
+        await store.send(
+            .path(
+                .element(
+                    id: scanId,
+                    action: .scan(.foundKeystoneBatchSignatures(data: Data(), firmwareVersion: Self.validKeystoneMigrationFirmware))
+                )
+            )
+        )
+        await store.receive(\.keystoneBatchSignaturesApplied)
         await store.receive(\.keystoneSigningSubmitted)
         // MOB-1458 (W-E): see `transferPlanPostConfirmChain`'s doc — the `.scheduled` push is now
         // hydrated (an async peek), landing via its own action rather than synchronously here.
@@ -4288,8 +4374,7 @@ import ComposableArchitecture
             MigrationUnsignedTransferPczt(id: "note-split#p0", pczt: Data([0x22])),
             MigrationUnsignedTransferPczt(id: "r0", pczt: Data([0x11]))
         ]
-        // MOB-1510: see `Self.validKeystoneFirmwareStamp`'s doc.
-        let signed: [Data] = [Data([0x22, 0x99]) + Self.validKeystoneFirmwareStamp, Data([0x11, 0x99]) + Self.validKeystoneFirmwareStamp]
+        let signed: [Data] = [Data([0x22, 0x99]), Data([0x11, 0x99])]
 
         var planState = MigrationTransferPlan.State(variant: .recreated)
         planState.injectedSchedule = restartedSchedule
@@ -4304,6 +4389,7 @@ import ComposableArchitecture
             MigrationCoordFlow()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.applyKeystoneBatchSignatures = stubApply(signed)
             $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, stored in storeCalls.withValue { $0.append(stored) } }
             $0.sdkSynchronizer.storeSignedNoteSplits = { _, signed in
                 storeSignedNoteSplitCalls.withValue { $0.append(signed) }
@@ -4319,13 +4405,21 @@ import ComposableArchitecture
         }
         store.exhaustivity = .off
 
-        await store.send(.path(.element(id: 2, action: .scan(.foundPCZTBatch(signed)))))
+        await store.send(
+            .path(
+                .element(
+                    id: 2,
+                    action: .scan(.foundKeystoneBatchSignatures(data: Data(), firmwareVersion: Self.validKeystoneMigrationFirmware))
+                )
+            )
+        )
+        await store.receive(\.keystoneBatchSignaturesApplied)
         await store.receive(\.keystoneSigningSubmitted)
         await store.receive(\.pushHydratedPathState)
         await store.receive(\.deferredKeystoneScheduleStored)
 
-        #expect(storeCalls.value == [[MigrationSignedTransferPczt(id: "r0", pczt: Data([0x11, 0x99]) + Self.validKeystoneFirmwareStamp)]])
-        #expect(storeSignedNoteSplitCalls.value == [[MigrationSignedTransferPczt(id: "p0", pczt: Data([0x22, 0x99]) + Self.validKeystoneFirmwareStamp)]])
+        #expect(storeCalls.value == [[MigrationSignedTransferPczt(id: "r0", pczt: Data([0x11, 0x99]))]])
+        #expect(storeSignedNoteSplitCalls.value == [[MigrationSignedTransferPczt(id: "p0", pczt: Data([0x22, 0x99]))]])
     }
 
     // MARK: - MOB-1458 (Task 2): expired-recovery refresh-first lane (software + Keystone)
@@ -4465,9 +4559,9 @@ import ComposableArchitecture
         let storeCalls = LockIsolated<[[MigrationSignedTransferPczt]]>([])
         let recordCommittedScheduleCalls = LockIsolated<[MigrationSchedule]>([])
         let unsigned: [MigrationUnsignedTransferPczt] = [MigrationUnsignedTransferPczt(id: "k0", pczt: Data([0x44]))]
-        let signed: [Data] = [Data([0x44, 0x99]) + Self.validKeystoneFirmwareStamp]
+        let signed: [Data] = [Data([0x44, 0x99])]
         let expectedStored: [MigrationSignedTransferPczt] = [
-            MigrationSignedTransferPczt(id: "k0", pczt: Data([0x44, 0x99]) + Self.validKeystoneFirmwareStamp)
+            MigrationSignedTransferPczt(id: "k0", pczt: Data([0x44, 0x99]))
         ]
 
         var state = MigrationCoordFlow.State()
@@ -4477,6 +4571,7 @@ import ComposableArchitecture
             MigrationCoordFlow()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.applyKeystoneBatchSignatures = stubApply(signed)
             $0.sdkSynchronizer.refreshStaleMigrationTransfers = { _, _ in refreshedSchedule }
             $0.sdkSynchronizer.proposeNoteSplitPCZTs = { _ in [] }
             $0.sdkSynchronizer.proposeMigrationPCZTs = { _, _ in unsigned }
@@ -4499,7 +4594,15 @@ import ComposableArchitecture
             Issue.record("Expected a Scan element id")
             return
         }
-        await store.send(.path(.element(id: scanId, action: .scan(.foundPCZTBatch(signed)))))
+        await store.send(
+            .path(
+                .element(
+                    id: scanId,
+                    action: .scan(.foundKeystoneBatchSignatures(data: Data(), firmwareVersion: Self.validKeystoneMigrationFirmware))
+                )
+            )
+        )
+        await store.receive(\.keystoneBatchSignaturesApplied)
         await store.receive(\.keystoneSigningSubmitted)
         await store.receive(\.pushHydratedPathState)
         await store.finish()
@@ -4688,7 +4791,7 @@ import ComposableArchitecture
 
     // MARK: - MOB-1458 (final review): C1 abandon-never-cancels, I2 deferred-store, I3 single-flight
 
-    /// C1: abandoning a `.recoveryRefresh` Keystone ceremony (here via an empty/mismatched scan)
+    /// C1: abandoning a `.recoveryRefresh` Keystone ceremony (here via a below-floor firmware gate)
     /// pops back to Recovery and clears the context like any abandon — but must NOT
     /// `restartCurrentMigrationStep`, because that ceremony operates on the long-committed run the
     /// expired-transfer refresh rebuilt in place (it did not create it). Cancelling would discard the
@@ -4720,8 +4823,15 @@ import ComposableArchitecture
         }
         store.exhaustivity = .off
 
-        // Empty scanned batch → re-pair fails → `.keystoneScanAbandoned`.
-        await store.send(.path(.element(id: 2, action: .scan(.foundPCZTBatch([])))))
+        // Below-floor firmware → gate fails → `.keystoneScanAbandoned`.
+        await store.send(
+            .path(
+                .element(
+                    id: 2,
+                    action: .scan(.foundKeystoneBatchSignatures(data: Data(), firmwareVersion: nil))
+                )
+            )
+        )
         await store.receive(\.keystoneScanAbandoned)
         await store.finish()
 
@@ -4862,61 +4972,42 @@ import ComposableArchitecture
     }
 }
 
-// MARK: - MOB-1496 (W6 §2): re-pair validation + sentinel split — pure function table
+// MARK: - MOB-1496 (W6 §2)/MOB-1513: sentinel split + firmware floor — pure function table
 
-/// `MigrationCoordFlow.rePairedKeystoneBatch`/`splitKeystoneBatch` are small, dependency-free pure
-/// functions (see their docs in `MigrationCoordFlowCoordinator.swift`) — tested directly here rather
-/// than only indirectly through the coordinator reducer, per the brief's "small pure function
-/// (testable table)" ask. No shared/global state, so unserialized.
+/// `MigrationCoordFlow.splitKeystoneBatch` is a small, dependency-free pure function (see its doc in
+/// `MigrationCoordFlowCoordinator.swift`) — tested directly here rather than only indirectly through
+/// the coordinator reducer, per the brief's "small pure function (testable table)" ask. No
+/// shared/global state, so unserialized.
+///
+/// MOB-1513: `rePairedKeystoneBatch` (app-side re-pairing of the device's scanned bytes against the
+/// original unsigned batch) and `firstUnsupportedKeystoneFirmwareVersion` (a per-PCZT firmware-stamp
+/// scan) are both REMOVED — the real SDK bridge does the pairing itself
+/// (`applyKeystoneBatchSignatures`) and reports firmware once, on the decode envelope
+/// (`KeystoneBatchDecodeResult.firmwareVersion`), not per PCZT. The floor comparison itself is now
+/// just `ZcashLightClientKit.KeystoneFirmwareVersion`'s own `Comparable` conformance against
+/// `MigrationCoordFlow.keystoneMigrationBatchMinimumFirmware` — covered below directly, and via the
+/// coordinator-level gate tests in `MigrationCoordFlowTests`.
 @Suite struct MigrationCoordFlowPureFunctionTests {
-    // MARK: - rePairedKeystoneBatch: exact match / short / long / empty
+    // MARK: - MOB-1513: the migration batch-signing firmware floor is 3.0.2
 
-    @Test func rePairedKeystoneBatchExactMatchZipsSignedBytesWithOriginalIdsByPosition() {
-        let unsigned: [MigrationUnsignedTransferPczt] = [
-            MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xAA])),
-            MigrationUnsignedTransferPczt(id: "t1", pczt: Data([0xBB])),
-            MigrationUnsignedTransferPczt(id: "t2", pczt: Data([0xCC]))
-        ]
-        let signed: [Data] = [Data([0x01]), Data([0x02]), Data([0x03])]
-
-        let result = MigrationCoordFlow.rePairedKeystoneBatch(signed: signed, unsigned: unsigned)
-
-        #expect(result == [
-            MigrationSignedTransferPczt(id: "t0", pczt: Data([0x01])),
-            MigrationSignedTransferPczt(id: "t1", pczt: Data([0x02])),
-            MigrationSignedTransferPczt(id: "t2", pczt: Data([0x03]))
-        ])
+    @Test func keystoneMigrationBatchMinimumFirmwareIs302() {
+        #expect(MigrationCoordFlow.keystoneMigrationBatchMinimumFirmware == ZcashLightClientKit.KeystoneFirmwareVersion(major: 3, minor: 0, build: 2))
     }
 
-    @Test func rePairedKeystoneBatchShortBatchReturnsNil() {
-        let unsigned: [MigrationUnsignedTransferPczt] = [
-            MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xAA])),
-            MigrationUnsignedTransferPczt(id: "t1", pczt: Data([0xBB])),
-            MigrationUnsignedTransferPczt(id: "t2", pczt: Data([0xCC]))
-        ]
-        let signed: [Data] = [Data([0x01]), Data([0x02])]
-
-        #expect(MigrationCoordFlow.rePairedKeystoneBatch(signed: signed, unsigned: unsigned) == nil)
+    @Test func firmwareBelowFloorComparesLess() {
+        let belowFloor = ZcashLightClientKit.KeystoneFirmwareVersion(major: 3, minor: 0, build: 1)
+        #expect(!(belowFloor >= MigrationCoordFlow.keystoneMigrationBatchMinimumFirmware))
     }
 
-    @Test func rePairedKeystoneBatchLongBatchReturnsNil() {
-        let unsigned: [MigrationUnsignedTransferPczt] = [MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xAA]))]
-        let signed: [Data] = [Data([0x01]), Data([0x02])]
-
-        #expect(MigrationCoordFlow.rePairedKeystoneBatch(signed: signed, unsigned: unsigned) == nil)
+    @Test func firmwareAtOrAboveFloorComparesGreaterOrEqual() {
+        let atFloor = ZcashLightClientKit.KeystoneFirmwareVersion(major: 3, minor: 0, build: 2)
+        let aboveFloor = ZcashLightClientKit.KeystoneFirmwareVersion(major: 3, minor: 1, build: 0)
+        #expect(atFloor >= MigrationCoordFlow.keystoneMigrationBatchMinimumFirmware)
+        #expect(aboveFloor >= MigrationCoordFlow.keystoneMigrationBatchMinimumFirmware)
     }
 
-    @Test func rePairedKeystoneBatchEmptyParseReturnsNil() {
-        let unsigned: [MigrationUnsignedTransferPczt] = [
-            MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xAA])),
-            MigrationUnsignedTransferPczt(id: "t1", pczt: Data([0xBB]))
-        ]
-
-        #expect(MigrationCoordFlow.rePairedKeystoneBatch(signed: [], unsigned: unsigned) == nil)
-    }
-
-    @Test func rePairedKeystoneBatchEmptyBothReturnsNil() {
-        #expect(MigrationCoordFlow.rePairedKeystoneBatch(signed: [], unsigned: []) == nil)
+    @Test func versionStringFormatsDotted() {
+        #expect(ZcashLightClientKit.KeystoneFirmwareVersion(major: 3, minor: 0, build: 2).versionString == "3.0.2")
     }
 
     // MARK: - splitKeystoneBatch: prep prefix present (one or many) / absent
@@ -4980,60 +5071,5 @@ import ComposableArchitecture
 
         #expect(prepEntries.isEmpty)
         #expect(scheduleEntries.isEmpty)
-    }
-
-    // MARK: - MOB-1510: firstUnsupportedKeystoneFirmwareVersion
-
-    private static func signedPczt(firmware: (major: Int, minor: Int, build: Int)?, id: String) -> MigrationSignedTransferPczt {
-        var data = Data()
-        if let firmware {
-            data.append(contentsOf: Array("keystone:fw_version".utf8))
-            data.append(contentsOf: [0x03, UInt8(firmware.major), UInt8(firmware.minor), UInt8(firmware.build)])
-        }
-        return MigrationSignedTransferPczt(id: id, pczt: data)
-    }
-
-    @Test func firstUnsupportedKeystoneFirmwareVersionAllAtOrAboveMinimumReturnsNotFound() {
-        let batch = [
-            Self.signedPczt(firmware: (3, 0, 0), id: "t0"),
-            Self.signedPczt(firmware: (3, 1, 0), id: "t1")
-        ]
-
-        let result = MigrationCoordFlow.firstUnsupportedKeystoneFirmwareVersion(in: batch)
-
-        #expect(!result.found)
-        #expect(result.version == nil)
-    }
-
-    @Test func firstUnsupportedKeystoneFirmwareVersionBelowMinimumEntryIsFound() {
-        let batch = [
-            Self.signedPczt(firmware: (3, 0, 0), id: "t0"),
-            Self.signedPczt(firmware: (2, 4, 6), id: "t1"),
-            Self.signedPczt(firmware: (3, 1, 0), id: "t2")
-        ]
-
-        let result = MigrationCoordFlow.firstUnsupportedKeystoneFirmwareVersion(in: batch)
-
-        #expect(result.found)
-        #expect(result.version == KeystoneFirmwareVersion(major: 2, minor: 4, build: 6))
-    }
-
-    @Test func firstUnsupportedKeystoneFirmwareVersionUnstampedEntryIsFoundWithNilVersion() {
-        let batch = [
-            Self.signedPczt(firmware: (3, 0, 0), id: "t0"),
-            Self.signedPczt(firmware: nil, id: "t1")
-        ]
-
-        let result = MigrationCoordFlow.firstUnsupportedKeystoneFirmwareVersion(in: batch)
-
-        #expect(result.found)
-        #expect(result.version == nil)
-    }
-
-    @Test func firstUnsupportedKeystoneFirmwareVersionEmptyBatchReturnsNotFound() {
-        let result = MigrationCoordFlow.firstUnsupportedKeystoneFirmwareVersion(in: [])
-
-        #expect(!result.found)
-        #expect(result.version == nil)
     }
 }
