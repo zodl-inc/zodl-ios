@@ -219,4 +219,80 @@ import Foundation
         #expect(a == b)
         #expect(a != c)
     }
+
+    // MARK: - requestIdentifier(accountUUID:) (MOB-1513, gap 1)
+    //
+    // iOS's `UNNotificationRequest` replaces any pending/delivered request sharing its identifier —
+    // the bare, case-only `identifier` above let account B's pending request silently replace
+    // account A's for the same kind. `requestIdentifier(accountUUID:)` is the per-account form
+    // every actual schedule/removal site must use instead: the SAME hex-encoded account suffix
+    // `PerAccountCodableStorage.key(for:)` uses, so two accounts' notifications of the same kind
+    // coexist while a same-account re-schedule of the same kind still replaces (deterministic
+    // derivation from (case, account) alone).
+
+    @Test func requestIdentifierWithNilAccountUUIDFallsBackToBareIdentifier() {
+        let notification = MigrationNotification.manualTransferReady(number: 1)
+
+        #expect(notification.requestIdentifier(accountUUID: nil) == notification.identifier)
+    }
+
+    @Test func requestIdentifierAppendsAccountUUIDSuffix() {
+        let notification = MigrationNotification.transferWaiting(number: 2)
+
+        #expect(notification.requestIdentifier(accountUUID: "aabbcc") == "migration.transferWaiting_aabbcc")
+    }
+
+    /// Same-account replacement semantics: the SAME (case, account) pair always derives the SAME
+    /// identifier, so re-scheduling the same kind for the same account still replaces (no drift
+    /// from any hidden mutable state).
+    @Test func requestIdentifierIsDeterministicForTheSameCaseAndAccount() {
+        let first = MigrationNotification.planNeedsUpdate.requestIdentifier(accountUUID: "acct-a")
+        let second = MigrationNotification.planNeedsUpdate.requestIdentifier(accountUUID: "acct-a")
+
+        #expect(first == second)
+    }
+
+    /// The core gap-1 fix: two DIFFERENT accounts scheduling the SAME kind must derive DIFFERENT
+    /// identifiers, so neither silently replaces the other's pending/delivered request.
+    @Test func requestIdentifierDiffersAcrossAccountsForTheSameCase() {
+        let notification = MigrationNotification.manualTransferReady(number: 3)
+
+        let accountA = notification.requestIdentifier(accountUUID: "acct-a")
+        let accountB = notification.requestIdentifier(accountUUID: "acct-b")
+
+        #expect(accountA != accountB)
+    }
+
+    /// `cancelMigrationNotifications`/`clearDeliveredMigrationNotifications` filter by
+    /// `hasPrefix(identifierPrefix)` — the per-account form must still match so that bulk (all-
+    /// accounts) removal keeps working unchanged.
+    @Test func requestIdentifierStillHasTheStablePrefix() {
+        let notification = MigrationNotification.migrationComplete
+
+        #expect(notification.requestIdentifier(accountUUID: "acct-a").hasPrefix(MigrationNotification.identifierPrefix))
+    }
+
+    /// Comprehensive collision check: every one of the seven real cases, across two accounts, must
+    /// produce fourteen pairwise-distinct identifiers — proves the fix closes gap 1 for every kind,
+    /// not just the two (`manualTransferReady`/`transferWaiting`) called out by name in the audit.
+    @Test func twoAccountsAcrossEveryKindProduceAllDistinctIdentifiers() {
+        let notifications: [MigrationNotification] = [
+            MigrationNotification.transferComplete(number: 1, total: 1, nextInHours: 1, remaining: Zatoshi.zero),
+            MigrationNotification.transferWaiting(number: 1),
+            MigrationNotification.planNeedsUpdate,
+            MigrationNotification.manualTransferReady(number: 1),
+            MigrationNotification.migrationComplete,
+            MigrationNotification.migrationBatchComplete,
+            MigrationNotification.migrationTorFailure
+        ]
+
+        var identifiers: [String] = []
+        for notification in notifications {
+            identifiers.append(notification.requestIdentifier(accountUUID: "acct-a"))
+            identifiers.append(notification.requestIdentifier(accountUUID: "acct-b"))
+        }
+
+        #expect(Set(identifiers).count == identifiers.count)
+        #expect(identifiers.count == 14)
+    }
 }

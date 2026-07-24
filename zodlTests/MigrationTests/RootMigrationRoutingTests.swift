@@ -76,6 +76,94 @@ import ComposableArchitecture
         }
     }
 
+    /// MOB-1513 (gap 3): `.home(.smartBanner(.migrationScreenRequested))` must run the SAME
+    /// defensive teardown (`releaseSendWaitHold()` + `cancelAbandonedKeystoneMigrationRun(state:)`)
+    /// the other two flow-reset sites run (`openMigrationCoordFlow`, `tearDownMigrationCoordFlow`)
+    /// BEFORE wholesale-resetting `migrationCoordFlowState` — a stray Keystone ceremony recorded
+    /// for a DIFFERENT account than the one the banner tap is about to open for must still get
+    /// cancelled (the engine would otherwise silently resume it later, serving stale PCZTs), not
+    /// discarded along with the state that was its only record. Mirrors
+    /// `crossAccountNotificationTapCancelsStrayRunOnCeremonyOwner` but drives the banner-tap route:
+    /// account A's ceremony is stranded (recorded owner `accountA`) on `migrationCoordFlowState`
+    /// while account B is already selected and the banner tap opens the flow for B. RED against the
+    /// pre-fix `RootCoordinator`: that arm wholesale-reset `migrationCoordFlowState` inline with no
+    /// teardown at all, so A's stray run was silently discarded rather than cancelled.
+    @Test func migrationScreenRequestedCancelsStrayRunOnADifferentAccountAndStillResets() async {
+        let restartCalls = LockIsolated<[AccountUUID]>([])
+        let accountA = Self.walletAccount(idByte: 62)
+        let accountB = Self.walletAccount(idByte: 63)
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            var initialState = Root.State.initial
+            initialState.$selectedWalletAccount.withLock { $0 = accountB }
+            initialState.$walletAccounts.withLock { $0 = [accountA, accountB] }
+            // Account A's ceremony is stranded on `migrationCoordFlowState` even though B is now
+            // selected and the flow isn't currently open (`path == nil`) — models a ceremony left
+            // behind by an earlier flow instance for A that never ran its own teardown.
+            initialState.migrationCoordFlowState.pendingKeystoneSigning = MigrationCoordFlow.KeystoneSigningContext.planCommit
+            initialState.migrationCoordFlowState.pendingKeystoneSigningAccountUUID = accountA.id
+            // Poison the rest of the flow state so the reset itself stays observable too.
+            initialState.migrationCoordFlowState.mode = MigrationMode.immediate
+            initialState.migrationCoordFlowState.path.append(.complete(MigrationComplete.State()))
+
+            let store = Store(initialState: initialState) {
+                Root()
+            } withDependencies: {
+                baseNoOpDependencies(&$0)
+                $0.sdkSynchronizer.restartCurrentMigrationStep = { accountUUID in
+                    restartCalls.withValue { $0.append(accountUUID) }
+                    return MigrationSchedule(transfers: [], estimatedDurationHours: 0)
+                }
+            }
+
+            store.send(.home(.smartBanner(.migrationScreenRequested)))
+            await waitForRootStore { store.state.path == Root.State.Path.migrationCoordFlow }
+            await waitForRootStore { restartCalls.withValue { $0.count } == 1 }
+
+            #expect(store.state.path == Root.State.Path.migrationCoordFlow)
+            // The reset still happens: fresh flow state for the about-to-open (B) flow.
+            #expect(store.state.migrationCoordFlowState.mode == nil)
+            #expect(store.state.migrationCoordFlowState.path.isEmpty)
+            #expect(store.state.migrationCoordFlowState.pendingKeystoneSigning == nil)
+            // A's stray run got cancelled exactly once, on A — never B, which never had a ceremony.
+            #expect(restartCalls.withValue { $0.count } == 1)
+            #expect(restartCalls.withValue { $0.first } == accountA.id)
+        }
+    }
+
+    /// Twin of the test above with nothing stranded: the banner tap's new defensive teardown must
+    /// be a genuine no-op when there's nothing to cancel — same "no live ceremony" shape
+    /// `migrationCoordFlowFinishedWithNoPendingKeystoneSigningNeverCancelsMigrationRun` pins for the
+    /// other two reset sites.
+    @Test func migrationScreenRequestedNeverCancelsAnythingWhenNoCeremonyIsStranded() async {
+        let restartCalls = LockIsolated<Int>(0)
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            var initialState = Root.State.initial
+            initialState.migrationCoordFlowState.pendingKeystoneSigning = nil
+
+            let store = Store(initialState: initialState) {
+                Root()
+            } withDependencies: {
+                baseNoOpDependencies(&$0)
+                $0.sdkSynchronizer.restartCurrentMigrationStep = { _ in
+                    restartCalls.withValue { $0 += 1 }
+                    return MigrationSchedule(transfers: [], estimatedDurationHours: 0)
+                }
+            }
+
+            store.send(.home(.smartBanner(.migrationScreenRequested)))
+            await waitForRootStore { store.state.path == Root.State.Path.migrationCoordFlow }
+
+            #expect(store.state.path == Root.State.Path.migrationCoordFlow)
+            // Let any (wrongly-fired) cancel effect settle before asserting its absence.
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            #expect(restartCalls.withValue { $0 } == 0)
+        }
+    }
+
     // MARK: - flowFinished -> path == nil
 
     /// `MigrationCoordFlow`'s `.flowFinished` (every flow-root close / terminal delegate) must

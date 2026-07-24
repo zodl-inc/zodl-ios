@@ -121,36 +121,57 @@ final class MigrationBGSchedulerImpl: @unchecked Sendable {
             }
         }
 
-        // R8-T5 (#8): `rearmInputs` now always has exactly one entry per `accountUUIDs` element
-        // (success or the conservative-active marker above), so it can never end up empty here —
-        // the `!accountUUIDs.isEmpty` guard above is the only emptiness check this function needs.
-        let plan = MigrationCadence.planRearm(rearmInputs)
-        let preferredExecutableAt = plan.earliestNextExecutableAfterHeight.flatMap { height in
-            sdkSynchronizer.estimateTimestamp(height).map { Date(timeIntervalSince1970: $0) }
-        }
-        let window = MigrationCadence.window(
+        // MOB-1513 (gap 2): partition by EACH account's OWN delivery mode before reducing — the
+        // single collapsed `planRearm(rearmInputs)` this replaced picked ONE winner across every
+        // mode, so `WakeupAction.decide` (fed that one winner's mode) silently starved whichever
+        // mode lost the reduction whenever both were present in the same cycle. Calling the SAME,
+        // unmodified `planRearm` once per partition instead keeps its own reduction/tie-break
+        // semantics byte-for-byte (an empty partition — no accounts of that mode at all — reduces
+        // to `.complete` exactly like a genuinely-done one, which is exactly the "nothing to arm
+        // here" reading `WakeupAction.decideAll` needs).
+        let scheduledInputs = rearmInputs.filter { !migrationManager.isManualDelivery($0.accountUUID) }
+        let manualInputs = rearmInputs.filter { migrationManager.isManualDelivery($0.accountUUID) }
+
+        let scheduledPlan = MigrationCadence.planRearm(scheduledInputs)
+        let manualPlan = MigrationCadence.planRearm(manualInputs)
+
+        let now = Date()
+        let scheduledWindow = MigrationCadence.window(
             margin: margin,
-            preferredExecutableAt: preferredExecutableAt,
-            now: Date()
+            preferredExecutableAt: scheduledPlan.earliestNextExecutableAfterHeight.flatMap { height in
+                sdkSynchronizer.estimateTimestamp(height).map { Date(timeIntervalSince1970: $0) }
+            },
+            now: now
+        )
+        let manualWindow = MigrationCadence.window(
+            margin: margin,
+            preferredExecutableAt: manualPlan.earliestNextExecutableAfterHeight.flatMap { height in
+                sdkSynchronizer.estimateTimestamp(height).map { Date(timeIntervalSince1970: $0) }
+            },
+            now: now
         )
 
-        // R8-T5 (S4): the winning account, hex-encoded (`Data.hexEncodedString()` — the same
-        // encoding `MigrationManagerLiveKey`'s own per-account storage key already uses) — carried
-        // into the manual-delivery "ready to send" notification's payload so a tap can open the
-        // RIGHT account instead of always resolving `selectedWalletAccount` at the destination.
-        let winnerAccountUUIDString = plan.winnerAccountUUID.map { Data($0.id).hexEncodedString() }
+        // R8-T5 (S4): the manual partition's own winning account, hex-encoded (`Data
+        // .hexEncodedString()` — the same encoding `MigrationManagerLiveKey`'s own per-account
+        // storage key already uses) — carried into the manual-delivery "ready to send"
+        // notification's payload so a tap can open the RIGHT account instead of always resolving
+        // `selectedWalletAccount` at the destination. The scheduled partition's `.submitTask` has
+        // no notification of its own to attribute (unchanged from before this fix).
+        let manualWinnerAccountUUIDString = manualPlan.winnerAccountUUID.map { Data($0.id).hexEncodedString() }
 
-        let action = WakeupAction.decide(
-            state: plan.representativeState,
-            // MOB-1509: the manual-delivery flag follows the WINNING account (whose transfer this
-            // wakeup serves); nil (no winner, e.g. a sync-only wakeup) resolves the selected one.
-            isManualDelivery: migrationManager.isManualDelivery(plan.winnerAccountUUID),
-            window: window,
-            nextTransferNumber: plan.nextTransferNumber,
-            accountUUID: winnerAccountUUIDString
+        let actions = WakeupAction.decideAll(
+            scheduledState: scheduledPlan.representativeState,
+            scheduledWindow: scheduledWindow,
+            scheduledNextTransferNumber: scheduledPlan.nextTransferNumber,
+            manualState: manualPlan.representativeState,
+            manualWindow: manualWindow,
+            manualNextTransferNumber: manualPlan.nextTransferNumber,
+            manualAccountUUID: manualWinnerAccountUUIDString
         )
 
-        await execute(action)
+        for action in actions {
+            await execute(action)
+        }
     }
 
     func cancelAll() async {
@@ -211,5 +232,47 @@ enum WakeupAction: Equatable {
         }
 
         return WakeupAction.submitTask(earliestBeginDate: window)
+    }
+
+    /// MOB-1513 (gap 2): one `arm()` pass now spans up to two independent partitions — scheduled-
+    /// delivery accounts (their own BG task) and manual-delivery accounts (their own "ready to
+    /// send" notification) — since a single collapsed winner (the pre-fix shape: one `decide` call
+    /// off one reduced-across-every-account state) silently starves whichever mode lost the
+    /// reduction whenever both are present. This calls `decide` once PER partition — its signature
+    /// and every-row semantics are completely unchanged, so every existing single-partition test
+    /// above still exercises it directly — and combines the results: `.cancelAll` from a partition
+    /// means "nothing active there" (a genuinely-done partition and an EMPTY one both read this
+    /// way, since `MigrationCadence.planRearm([])` already resolves `.complete`) and is dropped
+    /// whenever the OTHER partition has a real action to run; the OS-level-plus-notifications
+    /// cancelAll survives only when BOTH partitions have nothing active, never while a still-active
+    /// partition's own wakeup would be wiped out alongside it. The single BGProcessingTaskRequest
+    /// constraint stands: `.submitTask` can appear at most once (from the scheduled partition),
+    /// same as `.scheduleReadyNotification` (from the manual partition).
+    static func decideAll(
+        scheduledState: MigrationState,
+        scheduledWindow: Date,
+        scheduledNextTransferNumber: Int,
+        manualState: MigrationState,
+        manualWindow: Date,
+        manualNextTransferNumber: Int,
+        manualAccountUUID: String?
+    ) -> [WakeupAction] {
+        let scheduledAction = decide(
+            state: scheduledState,
+            isManualDelivery: false,
+            window: scheduledWindow,
+            nextTransferNumber: scheduledNextTransferNumber,
+            accountUUID: nil
+        )
+        let manualAction = decide(
+            state: manualState,
+            isManualDelivery: true,
+            window: manualWindow,
+            nextTransferNumber: manualNextTransferNumber,
+            accountUUID: manualAccountUUID
+        )
+
+        let activeActions = [scheduledAction, manualAction].filter { $0 != WakeupAction.cancelAll }
+        return activeActions.isEmpty ? [WakeupAction.cancelAll] : activeActions
     }
 }

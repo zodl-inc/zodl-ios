@@ -2260,10 +2260,10 @@ extension Root {
     // MARK: - MOB-1467: Migration notification-tap deep link
 
     /// Exactly the SmartBanner-tap routing (`RootCoordinator`'s
-    /// `.home(.smartBanner(.migrationScreenRequested))`): fresh flow state, open the migration
-    /// path. Shared by the immediate (Home already up) and deferred (fired from
-    /// `checkBackupPhraseValidation` once initialization reaches Home) call sites, and by
-    /// `.migrationNotificationRoute` below.
+    /// `.home(.smartBanner(.migrationScreenRequested))`, which calls this directly since MOB-1513
+    /// gap 3): fresh flow state, open the migration path. Shared by the immediate (Home already up)
+    /// and deferred (fired from `checkBackupPhraseValidation` once initialization reaches Home)
+    /// call sites, `.migrationNotificationRoute` below, and the SmartBanner tap itself.
     ///
     /// R8-T6 fix-wave (Critical-1): this is itself an external-teardown site (a live
     /// `.sending(.waiting)` element may be sitting under the flow state this wholesale-replaces —
@@ -2277,7 +2277,15 @@ extension Root {
     /// H3 guard's owner (`presentedMigrationFlowAccountUUID`), so that account's signal must be
     /// disarmed HERE, before the reset, or it strands permanently true (see
     /// `MigrationManagerImpl.presentedFlowAccountUUIDs`'s doc for the full arm/disarm site list).
-    private func openMigrationCoordFlow(state: inout Root.State) -> Effect<Root.Action> {
+    ///
+    /// MOB-1513 (gap 3): not `private` — `RootCoordinator.swift`'s `.home(.smartBanner
+    /// (.migrationScreenRequested))` arm used to duplicate ONLY the last two lines here (the reset
+    /// itself) with NONE of the defensive teardown above it, so a Keystone ceremony stranded on a
+    /// DIFFERENT account than the one the banner tap was about to open for was silently discarded
+    /// instead of cancelled — the engine would have gone on to silently resume it later with
+    /// stale PCZTs. Reusing this single helper from both sites keeps them byte-for-byte identical
+    /// going forward instead of two copies that can drift.
+    func openMigrationCoordFlow(state: inout Root.State) -> Effect<Root.Action> {
         let releaseEffect = releaseSendWaitHold()
         let cancelEffect = cancelAbandonedKeystoneMigrationRun(state: state)
         migrationManager.setMigrationFlowPresented(state.migrationCoordFlowState.presentedMigrationFlowAccountUUID, false)
