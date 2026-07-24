@@ -43,6 +43,14 @@ struct Root {
         var CancelResyncStateId = UUID()
         var CancelStateId = UUID()
         var CancelTransactionsStateId = UUID()
+        /// MOB-1513 (T-B): the `.fetchTransactionsForTheSelectedAccount` fetch effect's own cancel
+        /// id -- belt to the `.fetchedTransactions` provenance guard's suspenders. Every dispatch of
+        /// that action (sync-driven or an account switch's own reaction) shares this one id with
+        /// `cancelInFlight: true`, so a switch's own refetch cancels whatever fetch -- for whichever
+        /// account -- was still in flight, closing the race for the common case where the stale
+        /// fetch hasn't already passed its last cancellation checkpoint. The provenance guard on
+        /// `.fetchedTransactions` remains the load-bearing fix for the residual case where it has.
+        var CancelTransactionsFetchId = UUID()
         var CancelBatteryStateId = UUID()
         var SynchronizerCancelId = UUID()
         var WalletConfigCancelId = UUID()
@@ -322,7 +330,7 @@ struct Root {
         case foundTransactions([ZcashTransaction.Overview])
         case minedTransaction(ZcashTransaction.Overview)
         case fetchTransactionsForTheSelectedAccount
-        case fetchedTransactions(IdentifiedArrayOf<TransactionState>)
+        case fetchedTransactions(AccountUUID, IdentifiedArrayOf<TransactionState>)
         case noChangeInTransactions
         
         // Address Book

@@ -45,18 +45,15 @@ extension Root {
                     state.path = nil
                 }
                 state.$selectedWalletAccount.withLock { $0 = walletAccount }
-                state.homeState.transactionListState.isInvalidated = true
-                state.autoUpdateSwapCandidates.removeAll()
+                let switchedEffect = accountSwitchedEffect(state: &state)
                 return .merge(
                     migrationTeardownEffect,
-                    .send(.home(.smartBanner(.walletAccountChanged))),
-                    .send(.home(.walletBalances(.updateBalances))),
+                    switchedEffect,
                     .send(.loadContacts),
                     .concatenate(
                         .send(.resolveMetadataEncryptionKeys),
                         .send(.loadUserMetadata)
                     ),
-                    .send(.fetchTransactionsForTheSelectedAccount),
                     // SECURITY (MOB-1352): end any open Flexa session bound to the previous account so a
                     // pending Flexa transaction request can't bind to the newly-selected account.
                     .cancel(id: state.CancelFlexaId)
@@ -80,16 +77,29 @@ extension Root {
                 state.path = nil
                 return .none
 
+            case .addKeystoneHWWalletCoordFlow(.path(.element(id: _, action: .keystoneDeviceReady(.accountImportSucceeded)))):
+                // MOB-1513 (T-B): `AddHWWalletStore`'s `.loadedWalletAccounts` handler (fired
+                // immediately before this action, within the SAME `.run` effect as `.accountImported`)
+                // writes `state.selectedWalletAccount` directly with no Root-visible "switch" action
+                // of its own -- this is the earliest point Root can react to that write, so the
+                // transaction/balance reactions fire here rather than waiting for the user to dismiss
+                // the "Keystone Connected" confirmation screen (`.keystoneConnected(.closeTapped)`
+                // below still runs its own refetch afterward too -- redundant but harmless once the
+                // provenance guard on `.fetchedTransactions` is in place). Navigation (pushing
+                // `.keystoneConnected`) is owned by `AddKeystoneHWWalletCoordFlowCoordinator`, so this
+                // arm leaves `state.path` untouched.
+                return accountSwitchedEffect(state: &state)
+
             case .addKeystoneHWWalletCoordFlow(.path(.element(id: _, action: .accountHWWalletSelection(.accountImportSucceeded)))):
                 state.path = nil
-                state.autoUpdateSwapCandidates.removeAll()
+                let switchedEffect = accountSwitchedEffect(state: &state)
                 return .merge(
+                    switchedEffect,
                     .send(.loadContacts),
                     .concatenate(
                         .send(.resolveMetadataEncryptionKeys),
                         .send(.loadUserMetadata)
-                    ),
-                    .send(.fetchTransactionsForTheSelectedAccount)
+                    )
                 )
 
             case .addKeystoneHWWalletCoordFlow(.path(.element(id: _, action: .keystoneConnected(.closeTapped)))):
@@ -112,16 +122,16 @@ extension Root {
 
             case .settings(.path(.element(id: _, action: .accountHWWalletSelection(.accountImportSucceeded)))):
                 state.path = nil
-                state.autoUpdateSwapCandidates.removeAll()
+                let switchedEffect = accountSwitchedEffect(state: &state)
                 return .merge(
+                    switchedEffect,
                     .send(.loadContacts),
                     .concatenate(
                         .send(.resolveMetadataEncryptionKeys),
                         .send(.loadUserMetadata)
-                    ),
-                    .send(.fetchTransactionsForTheSelectedAccount)
+                    )
                 )
-                
+
                 // MARK: - Resync Wallet
 
             case .settings(.resyncFinished):
@@ -589,6 +599,34 @@ extension Root {
             default: return .none
             }
         }
+    }
+
+    /// MOB-1513 (T-B): the account-switch reactions shared by the manual switcher
+    /// (`.home(.walletAccountTapped)`) and every Keystone-connect auto-select completion.
+    /// `AddHWWalletStore`'s `.loadedWalletAccounts` writes `state.selectedWalletAccount` directly,
+    /// with no Root-visible "switch" action of its own — `.accountImportSucceeded`, sent
+    /// immediately after in the same effect, is the earliest point Root can react. Both paths flip
+    /// the selected account out from under whatever transaction/balance fetches are in flight for
+    /// the PREVIOUS account, so both must invalidate the now-stale transaction lists — Home's mini
+    /// list AND the "See All" screen's (previously only Home's was reset here) — and kick off fresh
+    /// transaction/balance reads for the NEW one. Callers compose their own additional reactions on
+    /// top (contacts/metadata reload, Flexa cancellation, migration teardown) — this covers only the
+    /// subset common to every switch path.
+    ///
+    /// MOB-1513 (Fix wave 1): `autoUpdateSwapCandidates.removeAll()` folded in here too — every
+    /// OTHER caller already cleared it inline immediately before invoking this helper (dropping the
+    /// previous account's swap candidates on any switch is the existing, uniform behavior; nothing
+    /// relies on them surviving one), so this is behavior-preserving there and closes the one arm
+    /// (`.keystoneDeviceReady(.accountImportSucceeded)`) that previously omitted it.
+    private func accountSwitchedEffect(state: inout Root.State) -> Effect<Root.Action> {
+        state.autoUpdateSwapCandidates.removeAll()
+        state.homeState.transactionListState.isInvalidated = true
+        state.transactionsCoordFlowState.transactionsManagerState.isInvalidated = true
+        return .merge(
+            .send(.home(.smartBanner(.walletAccountChanged))),
+            .send(.home(.walletBalances(.updateBalances))),
+            .send(.fetchTransactionsForTheSelectedAccount)
+        )
     }
 
     /// MOB-1497 (T4): the migration flow's shared teardown — run by BOTH
