@@ -37,7 +37,7 @@ struct MigrationScheduledView: View {
                     .padding(.top, 16)
 
                 Text(localizable: .migrationScheduledSubtitle)
-                    .zFont(size: 14, style: Design.Text.tertiary)
+                    .zFont(size: 14, style: Design.Text.primary)
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.top, 8)
