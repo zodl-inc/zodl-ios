@@ -4,10 +4,13 @@
 //
 //  Migration-owned Keystone signing screen (MOB-1468, Figma sign frame 2867:11861). Visually
 //  mirrors `SignWithKeystoneView`'s composition exactly (SendConfirmation cannot host this — its
-//  PCZT pipeline is single-PCZT and proposal-centric). Batched single-session signing: this screen
-//  always carries the full `[Pczt]` for the current signing context (note split / plan commit /
-//  immediate review are all sessions of 1..N, uniformly, ONE animated QR per ceremony — no app-side
-//  chunking, the SDK's fountain encoder decides the frame count).
+//  PCZT pipeline is single-PCZT and proposal-centric). Batched signing: this screen carries the
+//  current ROUND's slice of the signing context's batch — MOB-1513 (R9) caps a round at
+//  `KeystoneBatchChunking.maxItemsPerRound` PCZTs (device safety; see that file's doc), so a large
+//  batch signs across several sign→scan round trips driven by `MigrationCoordFlowCoordinator`,
+//  while a batch within the cap remains ONE animated QR per ceremony (within a round the SDK's
+//  fountain encoder still decides the frame count). `roundIndex`/`totalRounds` surface "Round X of
+//  Y" for multi-round ceremonies.
 //
 //  MOB-1513: adopts the SDK's real Keystone batch-signing bridge
 //  (`Synchronizer.buildKeystoneSignBatchQRParts(requestId:pczts:maxFragmentLen:)`) — the joint SDK +
@@ -62,11 +65,25 @@ struct MigrationKeystoneSign {
         /// wire-only). Batch (scheduled/recovery) ceremonies leave this nil and behave exactly as
         /// before.
         var redactedSinglePczt: Data?
+        /// MOB-1513 (R9): this screen's 0-based position in the ceremony's capped signing
+        /// sequence — display-only ("Round X of Y"); the coordinator owns the actual round
+        /// bookkeeping (`MigrationCoordFlow.State.keystoneBatchRounds`).
+        let roundIndex: Int
+        /// MOB-1513 (R9): how many rounds the whole ceremony needs
+        /// (`KeystoneBatchChunking.totalRounds`). 1 — the common case — hides the indicator.
+        let totalRounds: Int
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
 
-        init(pczts: [MigrationUnsignedTransferPczt] = [], redactedSinglePczt: Data? = nil) {
+        init(
+            pczts: [MigrationUnsignedTransferPczt] = [],
+            redactedSinglePczt: Data? = nil,
+            roundIndex: Int = 0,
+            totalRounds: Int = 1
+        ) {
             self.pczts = pczts
             self.redactedSinglePczt = redactedSinglePczt
+            self.roundIndex = roundIndex
+            self.totalRounds = totalRounds
             self.requestId = withUnsafeBytes(of: UUID().uuid) { Data($0) }
         }
     }

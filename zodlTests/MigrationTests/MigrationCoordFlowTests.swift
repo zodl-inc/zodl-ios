@@ -1974,6 +1974,244 @@ import ComposableArchitecture
         #expect(storeScheduleCalls.value == [[MigrationSignedTransferPczt(id: "12", pczt: Data([0xAA, 0x99]))]])
     }
 
+    // MARK: - MOB-1513 (R9): capped multi-round Keystone batch ceremony
+
+    /// MOB-1513 (R9): a batch beyond `KeystoneBatchChunking.maxItemsPerRound` (32) arms round 0
+    /// over the FIRST slice only, with the rounds bookkeeping holding the full batch — the
+    /// device-safety cap the R5 rewire dropped, restored.
+    @MainActor @Test func keystoneSignRequestedBeyondCapArmsRoundZeroSliceOnly() async {
+        let all = Self.roundFixturePczts(count: 65)
+        var state = MigrationCoordFlow.State()
+        state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .scheduled)))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 0, action: .transferPlan(.delegate(.keystoneSignRequested(all))))))
+
+        #expect(store.state.pendingKeystoneSigning == .planCommit)
+        #expect(store.state.keystoneBatchRounds?.allPczts.count == 65)
+        #expect(store.state.keystoneBatchRounds?.roundIndex == 0)
+        #expect(store.state.keystoneBatchRounds?.accumulatedSigned.isEmpty == true)
+        #expect(store.state.path.count == 2)
+        guard case let .keystoneSign(signState)? = store.state.path.last else {
+            Issue.record("Expected keystoneSign armed with round 0's slice")
+            return
+        }
+        #expect(signState.pczts.map(\.id) == (0..<32).map { "t\($0)" })
+        #expect(signState.roundIndex == 0)
+        #expect(signState.totalRounds == 3)
+    }
+
+    /// MOB-1513 (R9): a batch within the cap stays a SINGLE round — the sign screen carries the
+    /// whole batch and the indicator's `totalRounds` is 1, byte-identical ceremony to before R9.
+    @MainActor @Test func keystoneSignRequestedWithinCapStaysSingleRound() async {
+        let all = Self.roundFixturePczts(count: 2)
+        var state = MigrationCoordFlow.State()
+        state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .scheduled)))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 0, action: .transferPlan(.delegate(.keystoneSignRequested(all))))))
+
+        #expect(store.state.keystoneBatchRounds?.allPczts.count == 2)
+        guard case let .keystoneSign(signState)? = store.state.path.last else {
+            Issue.record("Expected keystoneSign armed with the whole batch")
+            return
+        }
+        #expect(signState.pczts.map(\.id) == ["t0", "t1"])
+        #expect(signState.totalRounds == 1)
+    }
+
+    /// MOB-1513 (R9): a mid-sequence round completion applies + ACCUMULATES, then re-arms
+    /// `keystoneSign` with the next slice (fresh request id) — and stores NOTHING: the stores run
+    /// exactly once, after the last round.
+    @MainActor @Test func foundKeystoneBatchSignaturesMidSequenceArmsNextRoundWithoutStoring() async {
+        let storePrepsCalls = LockIsolated<[[MigrationSignedTransferPczt]]>([])
+        let storeScheduleCalls = LockIsolated<[[MigrationSignedTransferPczt]]>([])
+        let all = Self.roundFixturePczts(count: 33)
+        let round0State = MigrationKeystoneSign.State(pczts: Array(all[0..<32]), roundIndex: 0, totalRounds: 2)
+        let round0RequestId = round0State.requestId
+        var state = MigrationCoordFlow.State()
+        state.pendingKeystoneSigning = .planCommit
+        state.keystoneBatchRounds = MigrationCoordFlow.KeystoneBatchRounds(allPczts: all)
+        state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .scheduled)))
+        state.path.append(.keystoneSign(round0State))
+        state.path.append(.scan(Scan.State.initial))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.applyKeystoneBatchSignatures = Self.derivedBytesApply
+            $0.sdkSynchronizer.storeSignedNoteSplits = { _, stored in
+                storePrepsCalls.withValue { $0.append(stored) }
+            }
+            $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, stored in
+                storeScheduleCalls.withValue { $0.append(stored) }
+            }
+        }
+        store.exhaustivity = .off
+
+        await store.send(
+            .path(
+                .element(
+                    id: 2,
+                    action: .scan(.foundKeystoneBatchSignatures(data: Data(), firmwareVersion: Self.validKeystoneMigrationFirmware))
+                )
+            )
+        )
+        await store.receive(\.keystoneBatchSignaturesApplied)
+
+        #expect(storePrepsCalls.value.isEmpty)
+        #expect(storeScheduleCalls.value.isEmpty)
+        #expect(store.state.keystoneBatchApplyInFlight == false)
+        #expect(store.state.pendingKeystoneSigning == .planCommit)
+        #expect(store.state.keystoneBatchRounds?.roundIndex == 1)
+        #expect(store.state.keystoneBatchRounds?.accumulatedSigned.map(\.id) == (0..<32).map { "t\($0)" })
+        #expect(store.state.path.count == 2)
+        guard case let .keystoneSign(nextSignState)? = store.state.path.last else {
+            Issue.record("Expected the NEXT round's keystoneSign armed after the mid-sequence apply")
+            return
+        }
+        #expect(nextSignState.pczts.map(\.id) == ["t32"])
+        #expect(nextSignState.roundIndex == 1)
+        #expect(nextSignState.totalRounds == 2)
+        #expect(nextSignState.requestId != round0RequestId)
+    }
+
+    /// MOB-1513 (R9): the LAST round's completion stores the FULL accumulated batch in original
+    /// order — and, being a later round, skips the firmware gate entirely (round 0 already gated
+    /// the same physical device; a `nil` version here must not block the ceremony's tail).
+    @MainActor @Test func foundKeystoneBatchSignaturesLastRoundSkipsFirmwareGateAndStoresFullAccumulatedBatch() async {
+        let storeScheduleCalls = LockIsolated<[[MigrationSignedTransferPczt]]>([])
+        let all = Self.roundFixturePczts(count: 33)
+        let accumulated = all[0..<32].map { MigrationSignedTransferPczt(id: $0.id, pczt: $0.pczt + Data([0x99])) }
+        var state = MigrationCoordFlow.State()
+        state.pendingKeystoneSigning = .planCommit
+        state.keystoneBatchRounds = MigrationCoordFlow.KeystoneBatchRounds(
+            allPczts: all,
+            roundIndex: 1,
+            accumulatedSigned: accumulated
+        )
+        state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .scheduled)))
+        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: [all[32]], roundIndex: 1, totalRounds: 2)))
+        state.path.append(.scan(Scan.State.initial))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.applyKeystoneBatchSignatures = Self.derivedBytesApply
+            $0.sdkSynchronizer.storeSignedNoteSplits = { _, _ in }
+            $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, stored in
+                storeScheduleCalls.withValue { $0.append(stored) }
+            }
+            $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in MigrationTransferResult.success(txId: "prep-tx") }
+            $0.migrationBGScheduler.scheduleFirstWindow = { }
+            $0.migrationManager.reconcile = { }
+            $0.migrationManager.recordTransferBroadcast = { _, _ in }
+            $0.migrationManager.recordCommittedSchedule = { _, _ in }
+            $0.migrationManager.migrationSummary = { _ in MigrationSummary.zero }
+            $0.migrationManager.migrationNetworkOptions = { _ in Self.defaultNetworkPrivacyOptions }
+        }
+        store.exhaustivity = .off
+
+        await store.send(
+            .path(
+                .element(
+                    id: 2,
+                    action: .scan(.foundKeystoneBatchSignatures(data: Data(), firmwareVersion: nil))
+                )
+            )
+        )
+        await store.receive(\.keystoneBatchSignaturesApplied)
+        await store.receive(\.keystoneSigningSubmitted)
+
+        #expect(store.state.isKeystoneFirmwareGatePresented == false)
+        #expect(store.state.keystoneBatchRounds == nil)
+        #expect(storeScheduleCalls.value.count == 1)
+        #expect(storeScheduleCalls.value.first?.map(\.id) == (0..<33).map { "t\($0)" })
+        #expect(storeScheduleCalls.value.first?.map(\.pczt) == all.map { $0.pczt + Data([0x99]) })
+    }
+
+    /// MOB-1513 (R9): an abandon mid-sequence discards the accumulated rounds — nothing was
+    /// stored, and the next ceremony must start from a clean slate (the engine re-serves the
+    /// still-unsigned batch).
+    @MainActor @Test func keystoneScanAbandonedMidSequenceDiscardsAccumulatedRounds() async {
+        let all = Self.roundFixturePczts(count: 33)
+        let accumulated = all[0..<32].map { MigrationSignedTransferPczt(id: $0.id, pczt: $0.pczt + Data([0x99])) }
+        var state = MigrationCoordFlow.State()
+        state.pendingKeystoneSigning = .planCommit
+        state.keystoneBatchRounds = MigrationCoordFlow.KeystoneBatchRounds(
+            allPczts: all,
+            roundIndex: 1,
+            accumulatedSigned: accumulated
+        )
+        state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .scheduled)))
+        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: [all[32]], roundIndex: 1, totalRounds: 2)))
+        state.path.append(.scan(Scan.State.initial))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+        }
+        store.exhaustivity = .off
+
+        await store.send(.keystoneScanAbandoned)
+
+        #expect(store.state.keystoneBatchRounds == nil)
+        #expect(store.state.pendingKeystoneSigning == nil)
+    }
+
+    /// MOB-1513 (R9): a reject mid-sequence discards the accumulated rounds too — the
+    /// no-partial-storage invariant holds across every ceremony-ending route.
+    @MainActor @Test func keystoneSignRejectedMidSequenceDiscardsAccumulatedRounds() async {
+        let all = Self.roundFixturePczts(count: 33)
+        let accumulated = all[0..<32].map { MigrationSignedTransferPczt(id: $0.id, pczt: $0.pczt + Data([0x99])) }
+        var state = MigrationCoordFlow.State()
+        state.pendingKeystoneSigning = .planCommit
+        state.keystoneBatchRounds = MigrationCoordFlow.KeystoneBatchRounds(
+            allPczts: all,
+            roundIndex: 1,
+            accumulatedSigned: accumulated
+        )
+        state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .scheduled)))
+        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: [all[32]], roundIndex: 1, totalRounds: 2)))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+        }
+        store.exhaustivity = .off
+
+        await store.send(.keystoneSignRejected)
+
+        #expect(store.state.keystoneBatchRounds == nil)
+        #expect(store.state.pendingKeystoneSigning == nil)
+        #expect(store.state.path.count == 1)
+    }
+
+    /// MOB-1513 (R9): shared fixture — `count` unsigned PCZTs with ordinal ids `t0...` and
+    /// distinct single-byte payloads.
+    private static func roundFixturePczts(count: Int) -> [MigrationUnsignedTransferPczt] {
+        (0..<count).map { MigrationUnsignedTransferPczt(id: "t\($0)", pczt: Data([UInt8($0)])) }
+    }
+
+    /// MOB-1513 (R9): an apply stub whose signed bytes derive from each input PCZT (`pczt +
+    /// 0x99`), so multi-round tests stay positionally honest regardless of which round's slice
+    /// crosses the boundary (unlike `stubApply`, whose fixed fixture array zips from index 0
+    /// every call).
+    private static let derivedBytesApply: @Sendable ([MigrationUnsignedTransferPczt], Data) async throws -> [MigrationSignedTransferPczt] = {
+        pczts, _ in
+        pczts.map { MigrationSignedTransferPczt(id: $0.id, pczt: $0.pczt + Data([0x99])) }
+    }
+
     /// MOB-1513 (B4): the first-prep broadcast re-homes from the deleted "Splitting Funds" screen to
     /// the coordinator's first-delivery kick — the ceremony resumes STRAIGHT to B9 Migration
     /// Scheduled (no `.noteSplit` detour, the screen no longer exists), and the kick broadcasts the

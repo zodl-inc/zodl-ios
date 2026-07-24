@@ -11262,6 +11262,23 @@
         }
       }
     },
+    "migrationKeystoneSign.roundIndicator" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Round %1$lld of %2$lld"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ronda %1$lld de %2$lld"
+          }
+        }
+      }
+    },
     "migrationNoteSplit.continue" : {
       "extractionState" : "manual",
       "localizations" : {

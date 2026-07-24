@@ -29,6 +29,18 @@
 //    `MigrationTxId`, and the immediate PCZT has none (the sentinel string id made apply throw on
 //    every ceremony; the then-silent abandon turned that into the QA-reported infinite scan loop).
 //
+//  MOB-1513 (R9): RESTORES the batch ceremony's per-round cap the R5 rewire below dropped — the
+//  ≤35 chunker it removed was DEVICE SAFETY (a real Keystone OOM'd on an oversized batch; Android's
+//  production `KeystoneBatchChunking.kt` kept chunking throughout), not imagined-protocol
+//  bookkeeping. The cap returns at `KeystoneBatchChunking.maxItemsPerRound` (32 = the wallet-team
+//  budget of 96 actions per signing round ÷ ~3 actions per transfer), enforced as a flat item count
+//  exactly like Android. `beginKeystoneCeremony` arms round 0 over the batch's first slice;
+//  `.keystoneBatchSignaturesApplied` accumulates each round's applied signatures in
+//  `State.keystoneBatchRounds` and re-arms `keystoneSign` (fresh request id) until the last round,
+//  which feeds the FULL accumulated set into the unchanged store machinery. The firmware gate runs
+//  on round 0 only; every ceremony-ending route resets the rounds state (nothing stores unless all
+//  rounds complete). The sign screen shows "Round X of Y" for multi-round ceremonies.
+//
 //  MOB-1513: replaces the imagined pre-real-SDK shape (the device echoing back signed PCZTs,
 //  `Scan.Action.foundPCZTBatch([Pczt])`, app-side re-pairing via `rePairedKeystoneBatch`, and a
 //  ≤35-PCZTs-per-QR-session multi-round chunker — `chunkKeystoneBatch`/`keystoneRounds`/
@@ -821,7 +833,14 @@ extension MigrationCoordFlow {
                 // device firmware update). See `keystoneMigrationBatchMinimumFirmware`'s doc for why
                 // this floor and mechanism differ from the single-transaction Keystone flow's own
                 // gate.
-                guard let firmwareVersion, firmwareVersion >= MigrationCoordFlow.keystoneMigrationBatchMinimumFirmware else {
+                // MOB-1513 (R9): the gate runs on ROUND 0 ONLY (Android parity) — the same physical
+                // device signs every round of a multi-round ceremony, and gating a later round
+                // would make the user scan through every remaining round only to be blocked at the
+                // very end. A `nil` rounds state (defensive — every batch ceremony sets it) gates
+                // like round 0.
+                let isFirstKeystoneRound = (state.keystoneBatchRounds?.roundIndex ?? 0) == 0
+                guard !isFirstKeystoneRound
+                    || (firmwareVersion.map { $0 >= MigrationCoordFlow.keystoneMigrationBatchMinimumFirmware } ?? false) else {
                     state.detectedKeystoneFirmwareVersion = firmwareVersion?.versionString
                     // MOB-1513 (R8): the sheet's copy echoes whichever floor actually applied —
                     // this batch trip uses the batch-protocol floor; the immediate single-PCZT
@@ -908,6 +927,43 @@ extension MigrationCoordFlow {
                     )
                 }
 
+                // MOB-1513 (R9): accumulate this round's applied signatures and, if the capped
+                // ceremony has rounds left, arm the next one instead of storing — the stores run
+                // exactly once, over the FULL accumulated batch, after the last round (Android
+                // parity: `MigrationKeystoneScanVM` accumulates per round and finalizes with the
+                // full set). The pop-2 + push keeps the path shape `[..., source, keystoneSign]`
+                // constant regardless of how many rounds a large migration needs, and the fresh
+                // `MigrationKeystoneSign.State` gives the next round its own request id. A `nil`
+                // rounds state (defensive) treats `signed` as the whole batch — today's
+                // single-round behavior.
+                let fullSigned: [MigrationSignedTransferPczt]
+                if var rounds = state.keystoneBatchRounds {
+                    rounds.accumulatedSigned.append(contentsOf: signed)
+                    let totalRounds = KeystoneBatchChunking.totalRounds(itemCount: rounds.allPczts.count)
+                    let nextRoundIndex = rounds.roundIndex + 1
+                    if nextRoundIndex < totalRounds {
+                        rounds.roundIndex = nextRoundIndex
+                        state.keystoneBatchRounds = rounds
+                        let slice = KeystoneBatchChunking.roundSlice(roundIndex: nextRoundIndex, itemCount: rounds.allPczts.count)
+                        let topElementIsScan = state.path.last?.is(\.scan) == true
+                        state.path.removeLast(topElementIsScan ? 2 : 1)
+                        state.path.append(
+                            .keystoneSign(
+                                MigrationKeystoneSign.State(
+                                    pczts: Array(rounds.allPczts[slice]),
+                                    roundIndex: nextRoundIndex,
+                                    totalRounds: totalRounds
+                                )
+                            )
+                        )
+                        return .none
+                    }
+                    state.keystoneBatchRounds = nil
+                    fullSigned = rounds.accumulatedSigned
+                } else {
+                    fullSigned = signed
+                }
+
                 // [MOB-1496] W2: the schedule that was just signed lives on the `.transferPlan`/
                 // `.reviewTransfer` element still beneath `keystoneSign`+`scan` on the path (or, for
                 // the dust lane, directly on `context` — see `pendingKeystoneSchedule`'s doc) — read
@@ -919,7 +975,7 @@ extension MigrationCoordFlow {
                 // engine-id-paired entries — ONLY the latter are safe to hand to
                 // `storeSignedMigrationTransactions` (all-or-nothing, engine ids only; the real
                 // engine rejects a sentinel-prefixed id outright).
-                let (prepEntries, scheduleEntries) = MigrationCoordFlow.splitKeystoneBatch(signed)
+                let (prepEntries, scheduleEntries) = MigrationCoordFlow.splitKeystoneBatch(fullSigned)
 
                 return storeKeystoneSignedBatch(
                     context: context,
@@ -980,6 +1036,9 @@ extension MigrationCoordFlow {
                 // (see `.keystoneImmediateSubmitted`/`.keystoneImmediateSubmitFailed`).
                 state.keystoneBatchApplyInFlight = false
                 state.keystoneImmediateSubmitInFlight = false
+                // MOB-1513 (R9): a reject mid-sequence discards the whole capped ceremony —
+                // accumulated rounds included (no-partial-storage invariant; nothing was stored).
+                state.keystoneBatchRounds = nil
                 let _ = state.path.popLast()
                 return .none
 
@@ -1020,6 +1079,10 @@ extension MigrationCoordFlow {
                 // ceremony's own in-flight guard.
                 state.keystoneBatchApplyInFlight = false
                 state.keystoneImmediateSubmitInFlight = false
+                // MOB-1513 (R9): every abandon route discards the capped ceremony's accumulated
+                // rounds too — nothing was stored (the stores only ever run after the LAST round),
+                // and the engine re-serves the still-unsigned batch on the next attempt.
+                state.keystoneBatchRounds = nil
                 let pendingContext = state.pendingKeystoneSigning
                 let hadPendingCeremony = pendingContext != nil
                 state.pendingKeystoneSigning = nil
@@ -1835,6 +1898,8 @@ extension MigrationCoordFlow {
     ) -> Effect<MigrationCoordFlow.Action> {
         state.pendingKeystoneSigning = nil
         state.pendingKeystoneSigningAccountUUID = nil
+        // MOB-1513 (R9): belt — the last-round store handoff already cleared the rounds state.
+        state.keystoneBatchRounds = nil
         let topElementIsScan = state.path.last?.is(\.scan) == true
         state.path.removeLast(topElementIsScan ? 2 : 1)
 
@@ -2087,16 +2152,36 @@ extension MigrationCoordFlow {
         }
     }
 
-    // MARK: - MOB-1513: Keystone signing ceremony (one animated QR session per ceremony)
+    // MARK: - MOB-1513: Keystone signing ceremony (capped QR rounds — MOB-1513 R9)
 
-    /// Starts the QR signing ceremony for `pczts` — ONE animated QR session over every PCZT of the
-    /// signing context, no app-side chunking: `Synchronizer.buildKeystoneSignBatchQRParts` is a
-    /// fountain encoder, and the SDK itself decides the frame count. Replaces the pre-real-SDK
-    /// ≤35-per-session chunker (`chunkKeystoneBatch`) and its `keystoneRounds`/`keystoneRoundIndex`/
-    /// `keystoneAccumulatedSigned` state / `.keystoneAdvanceToNextRound` action, all removed —
-    /// Android parity for the batch-signing protocol itself needs none of that app-side bookkeeping.
+    /// Starts the QR signing ceremony for `pczts`, capped at
+    /// `KeystoneBatchChunking.maxItemsPerRound` PCZTs per animated-QR round trip — the
+    /// device-safety cap MOB-1513 R9 restored (the R5 rewire onto the real batch protocol removed
+    /// E3's chunker together with the genuinely-obsolete imagined-protocol machinery, but the cap
+    /// was device safety, not protocol bookkeeping: Android observed a real Keystone OOM on an
+    /// oversized batch and its production `KeystoneBatchChunking.kt` kept chunking throughout).
+    ///
+    /// A batch within the cap is ONE animated QR session over every PCZT of the signing context —
+    /// behavior-identical to the uncapped ceremony. A larger batch signs across several rounds:
+    /// each round is a full, self-contained ceremony over its `KeystoneBatchChunking.roundSlice`
+    /// (fresh `MigrationKeystoneSign.State` — fresh request id), driven by the round-advance branch
+    /// of `.keystoneBatchSignaturesApplied`; the applied signatures accumulate in
+    /// `state.keystoneBatchRounds` and nothing stores until the last round lands. Within a round,
+    /// `Synchronizer.buildKeystoneSignBatchQRParts` is a fountain encoder and the SDK decides the
+    /// frame count.
     private func beginKeystoneCeremony(pczts: [MigrationUnsignedTransferPczt], state: inout MigrationCoordFlow.State) {
-        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: pczts)))
+        let totalRounds = KeystoneBatchChunking.totalRounds(itemCount: pczts.count)
+        state.keystoneBatchRounds = MigrationCoordFlow.KeystoneBatchRounds(allPczts: pczts)
+        let slice = KeystoneBatchChunking.roundSlice(roundIndex: 0, itemCount: pczts.count)
+        state.path.append(
+            .keystoneSign(
+                MigrationKeystoneSign.State(
+                    pczts: Array(pczts[slice]),
+                    roundIndex: 0,
+                    totalRounds: totalRounds
+                )
+            )
+        )
     }
 
     /// MOB-1513 (R8): starts the IMMEDIATE lane's SINGLE-PCZT signing ceremony — the PRODUCTION
@@ -2114,6 +2199,10 @@ extension MigrationCoordFlow {
     /// positionally, and it never reaches the SDK.
     private func beginImmediateKeystoneCeremony(unsigned: Data, redacted: Data, state: inout MigrationCoordFlow.State) {
         state.keystoneImmediateSubmitInFlight = false
+        // MOB-1513 (R9): the single-PCZT ceremony never chunks — a leftover rounds state from an
+        // earlier batch ceremony must not leak into this one (defensive; every ceremony-ending
+        // route already clears it).
+        state.keystoneBatchRounds = nil
         state.path.append(
             .keystoneSign(
                 MigrationKeystoneSign.State(
