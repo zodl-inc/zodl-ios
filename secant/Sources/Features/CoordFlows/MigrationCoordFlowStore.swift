@@ -166,6 +166,28 @@ struct MigrationCoordFlow {
         let schedule: MigrationSchedule?
     }
 
+    /// MOB-1513 (R9): the batch ceremony's multi-round bookkeeping — restores the device-safety
+    /// cap the R5 rewire dropped with the imagined-protocol machinery (Android observed a real
+    /// Keystone OOM on an oversized batch; see `KeystoneBatchChunking`). A batch beyond
+    /// `KeystoneBatchChunking.maxItemsPerRound` signs across several QR round trips: each round is
+    /// a full, self-contained ceremony (own request id, own build → scan → decode → apply), and
+    /// the rounds' applied signatures accumulate HERE — nothing stores until the last round lands,
+    /// preserving the ceremony's all-or-nothing invariant (an abandon mid-sequence discards
+    /// everything and the engine re-serves the still-unsigned batch on re-entry). Set by
+    /// `beginKeystoneCeremony` for every batch ceremony (single-round included — `roundIndex` 0 is
+    /// then also the last round); `nil` for the immediate lane's single-PCZT ceremony, which never
+    /// chunks. Cleared at the last round's store handoff and by every ceremony-ending route
+    /// (`keystoneScanAbandoned`, `.keystoneSignRejected`).
+    struct KeystoneBatchRounds: Equatable {
+        /// The ceremony's FULL ordered batch (preps first, then schedule transfers — the order the
+        /// stores expect back). Rounds slice this via `KeystoneBatchChunking.roundSlice`.
+        var allPczts: [MigrationUnsignedTransferPczt]
+        /// The 0-based round currently showing/being scanned.
+        var roundIndex = 0
+        /// Applied signatures of the COMPLETED rounds, in original batch order.
+        var accumulatedSigned: [MigrationSignedTransferPczt] = []
+    }
+
     /// MOB-1478 (W2): which destination the coordinator stashed while the Tor bottom sheet is
     /// presented — resumed once the user confirms ("Got it") or swipes the sheet away (identical
     /// outcome, using whatever toggle state is showing at that moment). MOB-1494 (round 4): the
@@ -224,6 +246,10 @@ struct MigrationCoordFlow {
         /// (the success continuation) and `.keystoneScanAbandoned` (every failure route the ceremony
         /// can end on) so the next ceremony always starts clean.
         var keystoneBatchApplyInFlight = false
+        /// MOB-1513 (R9): the batch ceremony's multi-round bookkeeping — see
+        /// `KeystoneBatchRounds`'s doc. Non-`nil` exactly while a batch ceremony is in flight;
+        /// `nil` for the immediate lane's single-PCZT ceremony.
+        var keystoneBatchRounds: KeystoneBatchRounds?
         /// MOB-1513 (R8): the single-PCZT (immediate-lane) ceremony's own one-shot guard —
         /// `keystoneBatchApplyInFlight`'s twin for the production `.scan(.foundPCZT)` round-trip.
         /// The production checker decodes SYNCHRONOUSLY inside `Scan`'s reducer, but two camera

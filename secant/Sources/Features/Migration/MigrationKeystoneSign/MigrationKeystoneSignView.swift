@@ -47,6 +47,15 @@ struct MigrationKeystoneSignView: View {
                             .zFont(.medium, size: 16, style: Design.Text.primary)
                             .padding(.top, 32)
 
+                        // MOB-1513 (R9): a capped multi-round ceremony (see `KeystoneBatchChunking`)
+                        // tells the user where they are; the common single-round ceremony shows
+                        // nothing new.
+                        if store.totalRounds > 1 {
+                            Text(localizable: .migrationKeystoneSignRoundIndicator(store.roundIndex + 1, store.totalRounds))
+                                .zFont(.medium, size: 14, style: Design.Text.tertiary)
+                                .padding(.top, 4)
+                        }
+
                         Text(localizable: .keystoneSignWithDesc)
                             .zFont(size: 14, style: Design.Text.tertiary)
                             .screenHorizontalPadding()
