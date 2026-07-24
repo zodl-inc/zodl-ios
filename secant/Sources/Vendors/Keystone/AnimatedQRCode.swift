@@ -20,6 +20,17 @@ struct AnimatedQRCode: View {
         self.size = size
     }
 
+    /// MOB-1513: the migration Keystone batch-signing bridge hands over already-built animated QR
+    /// frame strings (`Synchronizer.buildKeystoneSignBatchQRParts`) rather than a `UREncoder` — the
+    /// SDK does the fountain-encoding itself, so there is no encoder object to cycle here, just a
+    /// fixed array of frame payloads. Cycles on the SAME 0.2s cadence as the `UREncoder` path,
+    /// rendering each frame with the same unbranded QR generator (no Zcash-logo overlay, matching
+    /// `ViewModel.getQRCodeDate(from:)` below).
+    init(frames: [String], size: CGFloat) {
+        self._viewModel = StateObject(wrappedValue: ViewModel(frames: frames))
+        self.size = size
+    }
+
     var body: some View {
         Image(uiImage: UIImage(data: viewModel.content) ?? UIImage())
             .resizable()
@@ -47,11 +58,20 @@ extension AnimatedQRCode {
     final class ViewModel: ObservableObject {
         @Published var content: Data = Data()
         @Published var errorMessage: String = ""
-        private var encoder: UREncoder;
+        private var encoder: UREncoder?
+        // MOB-1513: the migration batch-signing bridge's pre-built frame strings, cycled by index
+        // instead of `UREncoder.nextPart()` — see the `AnimatedQRCode.init(frames:size:)` doc.
+        private var frames: [String] = []
+        private var frameIndex = 0
 
         init (urEncoder: UREncoder) {
             self.encoder = urEncoder;
             self.content = getNextQRCode();
+        }
+
+        init(frames: [String]) {
+            self.frames = frames
+            self.content = getNextQRCode()
         }
 
         func getQRCodeDate(from string: String) -> Data? {
@@ -67,17 +87,28 @@ extension AnimatedQRCode {
             }
             return "".data(using: .utf8)
         }
-        
-        func getNextQRCode() -> Data{
-            let qrCode = encoder.nextPart()
+
+        func getNextQRCode() -> Data {
+            let qrCode: String
+            if let encoder {
+                qrCode = encoder.nextPart()
+            } else {
+                qrCode = frames.indices.contains(frameIndex) ? frames[frameIndex] : ""
+            }
             return getQRCodeDate(from: qrCode) ?? Data();
         }
-        
+
         func nextQRCode(){
-            if(encoder.isSinglePart){
-                return;
+            if let encoder {
+                if encoder.isSinglePart {
+                    return
+                }
+                self.content = getNextQRCode()
+                return
             }
-            self.content = getNextQRCode();
+            guard frames.count > 1 else { return }
+            frameIndex = (frameIndex + 1) % frames.count
+            self.content = getNextQRCode()
         }
     }
 }

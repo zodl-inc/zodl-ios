@@ -5,9 +5,13 @@
 //  Migration-owned Keystone signing screen (MOB-1468, Figma sign frame 2867:11861). Visually
 //  mirrors `SignWithKeystoneView`'s composition exactly: account card with Keystone logo +
 //  truncated ZIP-316 address + "Hardware" badge, `AnimatedQRCode` (or the same empty/loading
-//  treatment while the batch encoder is nil), "Scan with your Keystone wallet" copy, Reject
+//  treatment while the frames haven't built yet), "Scan with your Keystone wallet" copy, Reject
 //  (secondary/destructive) / Get Signature (primary). Reuses `SignWithKeystoneView`'s existing
 //  localized keys — zero new *localized* strings.
+//
+//  MOB-1513: the QR frames are now built once by the store's `.onAppear` effect
+//  (`sdkSynchronizer.buildKeystoneSignBatchQRParts`, see `MigrationKeystoneSignStore`'s header) and
+//  read from `store.frames` — the view no longer calls the SDK dependency directly.
 //
 
 import SwiftUI
@@ -18,8 +22,6 @@ struct MigrationKeystoneSignView: View {
     @Environment(\.colorScheme) private var colorScheme
 
     @Perception.Bindable var store: StoreOf<MigrationKeystoneSign>
-
-    @Dependency(\.sdkSynchronizer) var sdkSynchronizer
 
     init(store: StoreOf<MigrationKeystoneSign>) {
         self.store = store
@@ -128,8 +130,8 @@ struct MigrationKeystoneSignView: View {
     // MARK: - QR area
 
     @ViewBuilder private var qrArea: some View {
-        if let encoder = sdkSynchronizer.urEncoderForMigrationPCZTBatch(store.pczts) {
-            AnimatedQRCode(urEncoder: encoder, size: 250)
+        if !store.frames.isEmpty {
+            AnimatedQRCode(frames: store.frames, size: 250)
                 .frame(width: 216, height: 216)
                 .padding(24)
                 .background {
