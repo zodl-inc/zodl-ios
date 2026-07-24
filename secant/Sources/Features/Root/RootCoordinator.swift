@@ -323,7 +323,7 @@ extension Root {
                 // the post-broadcast privacy buffer, so the wallet hasn't scanned the transaction
                 // back in yet. Treat View Transaction as a flow close rather than a broken/empty
                 // detail screen until a by-txid lookup exists.
-                // TODO: [MOB-1458] route to transaction detail once a by-txid transaction lookup exists
+                // TODO: [#1458] route to transaction detail once a by-txid transaction lookup exists
                 //
                 // R8-T6 fix-wave (Critical-1): also a defensive release (BEFORE the pop) — `View
                 // Transaction` only ever renders once the Sending screen has already reached

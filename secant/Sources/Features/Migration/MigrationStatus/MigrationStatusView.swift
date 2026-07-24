@@ -4,9 +4,9 @@
 //
 //  "Migration Progress" / "Resume Migration" / "Re-scheduling…" screen (MOB-1464, Figma S10 ·
 //  progress 2709:3350 / resume 2696:7133 / re-scheduling 2840:3656). `onAppear` loads live rows via
-//  the store; every other delegate emitted here is consumed by nobody yet — chaining is the
-//  coordinator's job (phase 3). When `isFlowRoot` is set, the back control closes the flow instead
-//  of popping (MOB-1466).
+//  the store; every other delegate emitted here is consumed by `MigrationCoordFlowCoordinator`
+//  (phase 3). When `isFlowRoot` is set, the back control closes the flow instead of popping
+//  (MOB-1466).
 //
 //  MOB-1478 (W7): `.rescheduleConfirmed(first:last:)` reuses this same screen for the post-reschedule
 //  confirmation — title borrows `migrationPlanTitleConfirm`, body is `migrationStatusRescheduledDesc`,

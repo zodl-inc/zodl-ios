@@ -114,8 +114,8 @@ extension SDKSynchronizerClient: TestDependencyKey {
             "\(Self.self).restartCurrentMigrationStep",
             placeholder: MigrationSchedule(transfers: [], estimatedDurationHours: 0)
         ),
-        // MOB-1511 (W2): the live value is itself a nil stub (pending librustzcash#2714), so the
-        // test value answers nil quietly rather than flagging unimplemented.
+        // MOB-1511 (W2): the live value is a real SDK-backed estimate now — this test default
+        // answers nil quietly (rather than flagging unimplemented) to mean "no estimate available".
         estimateMigrationRunCount: { _ in nil },
         refreshStaleMigrationTransfers: unimplemented("\(Self.self).refreshStaleMigrationTransfers", placeholder: 0),
         sendRequiresOrchardFunds: unimplemented("\(Self.self).sendRequiresOrchardFunds", placeholder: false),

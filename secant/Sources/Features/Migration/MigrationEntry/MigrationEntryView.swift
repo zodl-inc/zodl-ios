@@ -4,9 +4,8 @@
 //
 //  "Move to Ironwood" entry screen (MOB-1460, Figma S1 · 2867:10445 privacy selected /
 //  2867:5641 + 2867:5731 immediate selected; MOB-1487 round 2 restyle · canvas "Final Designs" ·
-//  3480:6578 privacy / 3480:5841 immediate). Visually complete per Figma; the delegate emitted by
-//  `nextTapped` is consumed by nobody yet — chaining into the rest of the migration flow lands in
-//  MOB-1466.
+//  3480:6578 privacy / 3480:5841 immediate). The `nextTapped` delegate is consumed by
+//  `MigrationCoordFlowCoordinator` (MOB-1466).
 //
 //  MOB-1497 (T7, Q3'26 canvas · 3508:11219 / 4207:10692): the immediate-mode disclaimer note is
 //  replaced with the shared `ZashiInfoCallout(.warning)` "Privacy Disclaimer" card — same visibility

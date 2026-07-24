@@ -87,10 +87,10 @@ struct MigrationTransferPlan {
         var totalDurationHours = 0
         /// MOB-1511 (W2): the multi-round label — non-nil only when the display rule says the
         /// label belongs on screen (a later round in flight, or a known engine total above one);
-        /// `totalRounds` additionally needs the SDK estimate (stubbed nil until librustzcash#2714).
+        /// `totalRounds` additionally carries the SDK's real run-count estimate — `nil` when the
+        /// estimate is unavailable.
         var round: Int?
         var totalRounds: Int?
-        @Shared(.inMemory(.exchangeRate)) var currencyConversion: CurrencyConversion?
         /// Coordinator-injected schedule for recovery/reschedule variants — when set, `onAppear`
         /// populates rows from it directly instead of calling `proposeMigrationTransfers()`. `nil`
         /// for a fresh entry, and also (MOB-1496 R8-T1, S3) when the coordinator's own upstream

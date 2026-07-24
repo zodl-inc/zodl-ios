@@ -2,9 +2,11 @@
 //  MigrationCompleteView.swift
 //  zodl
 //
-//  "Migration Complete" screen (MOB-1464, Figma S12 · 2696:7267). Visually complete per Figma; all
-//  summary fields are placeholders — wiring the real data lands in MOB-1466. The `gotItTapped`
-//  delegate is emitted but consumed by nobody yet.
+//  "Migration Complete" screen (MOB-1464, Figma S12 · 2696:7267). Summary fields are injected by
+//  the coordinator's `completeState` (MOB-1466) from the real `migrationSummary`/
+//  `migrationLockedAmount` values; a `nil` `totalTransferred`/`durationHours` (MOB-1513, a W1
+//  fallback re-entry) renders an em-dash rather than a misleading zero. The `gotItTapped` delegate
+//  is consumed by `MigrationCoordFlowCoordinator` (MOB-1466).
 //
 //  MOB-1487 (round 2, Figma offered 3836:8394 / locking 3836:8488 / locked 3836:8643): dust
 //  resolution branches most of this screen off `store.dustResolution` rather than off the old
