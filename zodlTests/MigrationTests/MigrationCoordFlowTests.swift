@@ -1828,6 +1828,68 @@ import ComposableArchitecture
         #expect(storeScheduleCalls.value == [expectedSchedule])
     }
 
+    /// MOB-1513 (R8 finding 1): the SDK's batch-apply FFI numeric-parses every id it receives, so
+    /// the ceremony must hand it SANITIZED ids — the `note-split#` sentinel stripped down to the
+    /// bare (numeric) engine id — and re-attach the original sentinel ids to the result before any
+    /// downstream consumer sees it. This test captures the ids that actually cross the SDK
+    /// boundary AND re-asserts the downstream split still sees the sentinel round-tripped.
+    @MainActor @Test func foundKeystoneBatchSignaturesSanitizesSentinelIdsForApplyAndRestoresThemDownstream() async {
+        let applyReceivedIds = LockIsolated<[[String]]>([])
+        let storePrepsCalls = LockIsolated<[[MigrationSignedTransferPczt]]>([])
+        let storeScheduleCalls = LockIsolated<[[MigrationSignedTransferPczt]]>([])
+        let unsigned: [MigrationUnsignedTransferPczt] = [
+            MigrationUnsignedTransferPczt(id: "note-split#7", pczt: Data([0x01])),
+            MigrationUnsignedTransferPczt(id: "12", pczt: Data([0xAA]))
+        ]
+        let signed: [Data] = [Data([0x01, 0x99]), Data([0xAA, 0x99])]
+        var state = MigrationCoordFlow.State()
+        state.pendingKeystoneSigning = .planCommit
+        state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .scheduled)))
+        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: unsigned)))
+        state.path.append(.scan(Scan.State.initial))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.applyKeystoneBatchSignatures = { pczts, _ in
+                applyReceivedIds.withValue { $0.append(pczts.map(\.id)) }
+                return zip(pczts, signed).map { MigrationSignedTransferPczt(id: $0.id, pczt: $1) }
+            }
+            $0.sdkSynchronizer.storeSignedNoteSplits = { _, stored in
+                storePrepsCalls.withValue { $0.append(stored) }
+            }
+            $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, stored in
+                storeScheduleCalls.withValue { $0.append(stored) }
+            }
+            $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in MigrationTransferResult.success(txId: "prep-tx") }
+            $0.migrationBGScheduler.scheduleFirstWindow = { }
+            $0.migrationManager.reconcile = { }
+            $0.migrationManager.recordTransferBroadcast = { _, _ in }
+            $0.migrationManager.recordCommittedSchedule = { _, _ in }
+            $0.migrationManager.migrationSummary = { _ in MigrationSummary.zero }
+            $0.migrationManager.migrationNetworkOptions = { _ in Self.defaultNetworkPrivacyOptions }
+        }
+        store.exhaustivity = .off
+
+        await store.send(
+            .path(
+                .element(
+                    id: 2,
+                    action: .scan(.foundKeystoneBatchSignatures(data: Data(), firmwareVersion: Self.validKeystoneMigrationFirmware))
+                )
+            )
+        )
+        await store.receive(\.keystoneBatchSignaturesApplied)
+        await store.receive(\.keystoneSigningSubmitted)
+
+        // The SDK boundary saw ONLY numeric-parseable ids...
+        #expect(applyReceivedIds.value == [["7", "12"]])
+        // ...while the downstream split still received the sentinel-prefixed original, stripped
+        // exactly once by `splitKeystoneBatch` as always.
+        #expect(storePrepsCalls.value == [[MigrationSignedTransferPczt(id: "7", pczt: Data([0x01, 0x99]))]])
+        #expect(storeScheduleCalls.value == [[MigrationSignedTransferPczt(id: "12", pczt: Data([0xAA, 0x99]))]])
+    }
+
     /// MOB-1513 (B4): the first-prep broadcast re-homes from the deleted "Splitting Funds" screen to
     /// the coordinator's first-delivery kick — the ceremony resumes STRAIGHT to B9 Migration
     /// Scheduled (no `.noteSplit` detour, the screen no longer exists), and the kick broadcasts the
@@ -5727,6 +5789,62 @@ import ComposableArchitecture
 
     @Test func versionStringFormatsDotted() {
         #expect(ZcashLightClientKit.KeystoneFirmwareVersion(major: 3, minor: 0, build: 2).versionString == "3.0.2")
+    }
+
+    // MARK: - MOB-1513 (R8 finding 1): sentinel-id sanitization around the batch apply
+
+    /// Only sentinel-prefixed ids are rewritten (down to the bare engine id the SDK FFI can
+    /// digest); schedule entries and their bytes pass through untouched, order preserved.
+    @Test func sanitizedForBatchApplyStripsOnlySentinelPrefixes() {
+        let pczts: [MigrationUnsignedTransferPczt] = [
+            MigrationUnsignedTransferPczt(id: "note-split#7", pczt: Data([0x01])),
+            MigrationUnsignedTransferPczt(id: "12", pczt: Data([0xAA]))
+        ]
+
+        let sanitized = MigrationCoordFlow.sanitizedForBatchApply(pczts)
+
+        #expect(sanitized == [
+            MigrationUnsignedTransferPczt(id: "7", pczt: Data([0x01])),
+            MigrationUnsignedTransferPczt(id: "12", pczt: Data([0xAA]))
+        ])
+    }
+
+    /// The apply result comes back positionally (input order, by the SDK contract) — the
+    /// ceremony's ORIGINAL ids, sentinel prefixes included, are re-attached so every downstream
+    /// consumer (`splitKeystoneBatch`, the stores) sees exactly the ids it always has.
+    @Test func reattachOriginalIdsRestoresSentinelIdsPositionally() {
+        let originals: [MigrationUnsignedTransferPczt] = [
+            MigrationUnsignedTransferPczt(id: "note-split#7", pczt: Data([0x01])),
+            MigrationUnsignedTransferPczt(id: "12", pczt: Data([0xAA]))
+        ]
+        let signed: [MigrationSignedTransferPczt] = [
+            MigrationSignedTransferPczt(id: "7", pczt: Data([0x01, 0xFF])),
+            MigrationSignedTransferPczt(id: "12", pczt: Data([0xAA, 0xFF]))
+        ]
+
+        let reattached = MigrationCoordFlow.reattachOriginalIds(from: originals, onto: signed)
+
+        #expect(reattached == [
+            MigrationSignedTransferPczt(id: "note-split#7", pczt: Data([0x01, 0xFF])),
+            MigrationSignedTransferPczt(id: "12", pczt: Data([0xAA, 0xFF]))
+        ])
+    }
+
+    /// Defensive: a count mismatch would mean the SDK broke its input-order/input-count apply
+    /// contract — the helper then returns the SDK's result untouched rather than zip-truncating
+    /// entries away.
+    @Test func reattachOriginalIdsOnCountMismatchReturnsSignedUnchanged() {
+        let originals: [MigrationUnsignedTransferPczt] = [
+            MigrationUnsignedTransferPczt(id: "note-split#7", pczt: Data([0x01]))
+        ]
+        let signed: [MigrationSignedTransferPczt] = [
+            MigrationSignedTransferPczt(id: "7", pczt: Data([0x01, 0xFF])),
+            MigrationSignedTransferPczt(id: "8", pczt: Data([0x02, 0xFF]))
+        ]
+
+        let reattached = MigrationCoordFlow.reattachOriginalIds(from: originals, onto: signed)
+
+        #expect(reattached == signed)
     }
 
     // MARK: - splitKeystoneBatch: prep prefix present (one or many) / absent
