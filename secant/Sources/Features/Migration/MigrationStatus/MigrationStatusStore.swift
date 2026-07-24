@@ -50,7 +50,11 @@ struct MigrationStatus {
 
         var presentation = Presentation.progress
         var rows: IdentifiedArrayOf<MigrationTransferRow> = []
-        var totalDurationHours = 0
+        /// The schedule's total remaining-duration estimate. `nil` when not derivable — a W1
+        /// fallback re-entry with no persisted schedule yet (MOB-1513) — never a placeholder `0`;
+        /// the `.progress` description omits its duration clause when this is `nil` (see
+        /// `MigrationStatusView.description`).
+        var totalDurationHours: Int?
         /// Resume header: "Transfer {n} of {m} …".
         var stalledNumber = 0
         var stalledHoursAgo = 0
@@ -89,10 +93,39 @@ struct MigrationStatus {
             !rows.contains { $0.status == MigrationTransferRow.Status.overdue }
         }
 
+        /// MOB-1513 (A2): mirrors `MigrationTransferPlan.State.splitRow` for this post-commit
+        /// screen — but COMPLETED (`.sent`) rather than merely ready, since by the time any
+        /// Status/Resume/reschedule-confirmed presentation is reachable the note-split has
+        /// definitely already broadcast (a precondition of scheduling any transfer at all — see
+        /// `MigrationTransferTimeline`'s header doc for the shared-component side of this fix).
+        /// `nil` before any rows have loaded. Computed off `rows` (not stored) so it can never
+        /// drift from whatever `rows` currently holds — including the coordinator's own re-entry
+        /// hydration (`statusResumeState`/`statusProgressState`), which constructs `rows` directly
+        /// without going through `.statusLoaded` — and so it doesn't force every
+        /// `.statusLoaded`/`.rescheduleCompleted` call site (and every existing exhaustive
+        /// `TestStore` assertion) to separately track a parallel stored field.
+        var splitRow: MigrationTransferRow? {
+            guard !rows.isEmpty else { return nil }
+            // MOB-1513: `rows` can now be a W1-fallback derivation (no committed schedule — every
+            // row's `amount` is `nil` on that path) — the sum stays honest: `nil` (unknown total)
+            // if ANY row's amount is, rather than silently treating an unknown row as zero.
+            let totalAmount: Zatoshi? = rows.contains { $0.amount == nil }
+                ? nil
+                : rows.reduce(Zatoshi.zero) { $0 + ($1.amount ?? Zatoshi.zero) }
+            return MigrationTransferRow(
+                id: "split-balance",
+                index: -1,
+                amount: totalAmount,
+                status: .sent,
+                hoursFromNow: 0,
+                kind: .splitBalance
+            )
+        }
+
         init(
             presentation: Presentation = .progress,
             rows: IdentifiedArrayOf<MigrationTransferRow> = [],
-            totalDurationHours: Int = 0,
+            totalDurationHours: Int? = nil,
             stalledNumber: Int = 0,
             stalledHoursAgo: Int = 0,
             isRescheduling: Bool = false,
@@ -122,7 +155,7 @@ struct MigrationStatus {
         /// flipping `isRescheduling` back to `.resume`. The coordinator doesn't send this yet (it
         /// still pushes a fresh `TransferPlan` screen on completion) — wiring it up is a later phase;
         /// this action is the store-side surface for it (MOB-1478 W7).
-        case rescheduleCompleted(rows: [MigrationTransferRow], totalDurationHours: Int)
+        case rescheduleCompleted(rows: [MigrationTransferRow], totalDurationHours: Int?)
         case rescheduleTapped
         case sendNowTapped
         /// `migrationTransfers()` + `migrationSummary()` + `sdkSynchronizer
@@ -131,7 +164,7 @@ struct MigrationStatus {
         /// itself (see `State.isSendNowDisabled`'s doc).
         case statusLoaded(
             rows: [MigrationTransferRow],
-            totalDurationHours: Int,
+            totalDurationHours: Int?,
             syncPrivacyBufferMinutes: Int,
             isTorHoldActive: Bool
         )

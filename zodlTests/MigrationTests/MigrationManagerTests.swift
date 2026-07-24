@@ -5045,4 +5045,201 @@ struct MigrationManagerTests {
         #expect(getMigrationStateCalls.withValue { $0 } == 0)
         #expect(storage.isCompleteAcknowledged(for: accountUUID) == true)
     }
+
+    // MARK: - MOB-1513 (W1 fallback wave 2): migrationTransfers/migrationSummary fallback selection
+
+    /// No committed schedule, but the engine reports live transfer statuses (e.g. a restore
+    /// mid-migration): rows come from `MigrationDerivations.statusOnlyTransferRows`, not the
+    /// progress-only synthesis — real per-transaction status/id, `amount` still `nil` (no schedule
+    /// to read one from).
+    @Test func migrationTransfersWithNoCommittedScheduleAndLiveTransferStatusesDerivesStatusOnlyRows() async throws {
+        let account = AccountUUID(id: [UInt8](repeating: 70, count: 16))
+        let status = MigrationTransactionStatus(
+            id: 5,
+            kind: MigrationTransactionStatus.Kind.transfer(crossing: 0),
+            state: MigrationTransactionStatus.State.mined(height: 900),
+            scheduledHeight: 900,
+            expiryHeight: nil,
+            isReady: false,
+            nextAction: nil,
+            blockedOn: nil
+        )
+
+        let rows = await withDependencies {
+            $0.sdkSynchronizer = SDKSynchronizerClient.mocked(
+                latestState: {
+                    var state = SynchronizerState.zero
+                    state.latestBlockHeight = 1_000
+                    return state
+                }
+            )
+            $0.sdkSynchronizer.migrationTransactionStatuses = { _ in [status] }
+        } operation: {
+            let impl = MigrationManagerImpl()
+            return await impl.migrationTransfers(accountUUID: account)
+        }
+
+        #expect(rows.count == 1)
+        #expect(rows[0].id == "5")
+        #expect(rows[0].status == MigrationTransferRow.Status.sent)
+        #expect(rows[0].amount == nil)
+    }
+
+    /// No committed schedule AND no live transfer statuses either (a throw, or a genuinely empty
+    /// read): falls all the way back to the progress-count synthesis — real counts, but `nil`
+    /// amounts throughout (never the old placeholder `Zatoshi.zero`).
+    @Test func migrationTransfersWithNoCommittedScheduleAndNoLiveStatusesFallsBackToProgressSynthesisWithNilAmounts() async throws {
+        let account = AccountUUID(id: [UInt8](repeating: 71, count: 16))
+        let progress = MigrationProgress(completedTransfers: 1, totalTransfers: 3, remainingOrchard: Zatoshi(500), nextTransferReadyAtHeight: nil)
+
+        let rows = await withDependencies {
+            $0.sdkSynchronizer = SDKSynchronizerClient.mocked(
+                latestState: {
+                    var state = SynchronizerState.zero
+                    state.latestBlockHeight = 1_000
+                    return state
+                }
+            )
+            $0.sdkSynchronizer.migrationTransactionStatuses = { _ in [] }
+            $0.sdkSynchronizer.getMigrationProgress = { _ in progress }
+        } operation: {
+            let impl = MigrationManagerImpl()
+            return await impl.migrationTransfers(accountUUID: account)
+        }
+
+        #expect(rows.count == 3)
+        #expect(rows.allSatisfy { $0.amount == nil })
+        #expect(rows.map(\.status) == [MigrationTransferRow.Status.sent, MigrationTransferRow.Status.pending, MigrationTransferRow.Status.pending])
+    }
+
+    /// A thrown `migrationTransactionStatuses` read degrades exactly like an empty one — falls
+    /// back to the progress synthesis rather than propagating or crashing.
+    @Test func migrationTransfersWithNoCommittedScheduleAndThrowingStatusesReadFallsBackToProgressSynthesis() async throws {
+        struct StatusesReadFailure: Error { }
+        let account = AccountUUID(id: [UInt8](repeating: 72, count: 16))
+        let progress = MigrationProgress(completedTransfers: 0, totalTransfers: 1, remainingOrchard: Zatoshi(500), nextTransferReadyAtHeight: nil)
+
+        let rows = await withDependencies {
+            $0.sdkSynchronizer = SDKSynchronizerClient.mocked(
+                latestState: {
+                    var state = SynchronizerState.zero
+                    state.latestBlockHeight = 1_000
+                    return state
+                }
+            )
+            $0.sdkSynchronizer.migrationTransactionStatuses = { _ in throw StatusesReadFailure() }
+            $0.sdkSynchronizer.getMigrationProgress = { _ in progress }
+        } operation: {
+            let impl = MigrationManagerImpl()
+            return await impl.migrationTransfers(accountUUID: account)
+        }
+
+        #expect(rows.count == 1)
+        #expect(rows[0].amount == nil)
+    }
+
+    /// Regression pin: a committed schedule takes the unchanged primary path — real amounts, live
+    /// statuses still consulted the same way T-A already established — completely unaffected by
+    /// this fallback wave.
+    @Test func migrationTransfersWithCommittedScheduleUsesUnchangedPrimaryPath() async throws {
+        let scheduleSuiteName = "testMigrationTransfersWithCommittedScheduleUsesUnchangedPrimaryPath"
+        let scheduleUserDefaults = try #require(UserDefaults(suiteName: scheduleSuiteName))
+        defer { scheduleUserDefaults.removePersistentDomain(forName: scheduleSuiteName) }
+        let scheduleStorage = MigrationScheduleStorage(userDefaults: scheduleUserDefaults)
+        let account = AccountUUID(id: [UInt8](repeating: 73, count: 16))
+        let schedule = MigrationSchedule(
+            transfers: [
+                MigrationTransferProposal(id: "t0", amount: Zatoshi(100), anchorHeight: 1, nextExecutableAfterHeight: 1, expiryHeight: 9)
+            ],
+            estimatedDurationHours: 6
+        )
+        scheduleStorage.recordCommittedSchedule(schedule, for: account, now: Date())
+
+        let rows = await withDependencies {
+            $0.sdkSynchronizer = SDKSynchronizerClient.mocked(
+                latestState: {
+                    var state = SynchronizerState.zero
+                    state.latestBlockHeight = 1_000
+                    return state
+                }
+            )
+            $0.sdkSynchronizer.getMigrationState = { _ in MigrationState.notStarted }
+            $0.sdkSynchronizer.hasOverdueMigrationTransfers = { _ in false }
+            // Deliberately non-empty — must be ignored while a committed schedule is being
+            // hydrated through a DIFFERENT (already T-A-tested) codepath than this fallback.
+            $0.sdkSynchronizer.migrationTransactionStatuses = { _ in
+                [
+                    MigrationTransactionStatus(
+                        id: 999,
+                        kind: MigrationTransactionStatus.Kind.transfer(crossing: 0),
+                        state: MigrationTransactionStatus.State.mined(height: 900),
+                        scheduledHeight: 900,
+                        expiryHeight: nil,
+                        isReady: false,
+                        nextAction: nil,
+                        blockedOn: nil
+                    )
+                ]
+            }
+        } operation: {
+            let impl = MigrationManagerImpl(scheduleStorage: scheduleStorage)
+            return await impl.migrationTransfers(accountUUID: account)
+        }
+
+        #expect(rows.count == 1)
+        #expect(rows[0].id == "t0")
+        #expect(rows[0].amount == Zatoshi(100))
+    }
+
+    /// Twin coverage for `migrationSummary`: no committed schedule -> `transferred`/
+    /// `estimatedDurationHours` read `nil` (never a placeholder `0`), while the progress-derived
+    /// counts/dust stay real.
+    @Test func migrationSummaryWithNoCommittedScheduleReturnsNilTransferredAndDurationButRealCounts() async throws {
+        let account = AccountUUID(id: [UInt8](repeating: 74, count: 16))
+        let progress = MigrationProgress(completedTransfers: 2, totalTransfers: 5, remainingOrchard: Zatoshi(900), nextTransferReadyAtHeight: nil)
+
+        let summary = await withDependencies {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.getMigrationProgress = { _ in progress }
+        } operation: {
+            let impl = MigrationManagerImpl()
+            return await impl.migrationSummary(accountUUID: account)
+        }
+
+        #expect(summary.transferred == nil)
+        #expect(summary.estimatedDurationHours == nil)
+        #expect(summary.dust == Zatoshi(900))
+        #expect(summary.transfersSent == 2)
+        #expect(summary.transfersTotal == 5)
+    }
+
+    /// Regression pin: a committed schedule still returns real, non-nil `transferred`/
+    /// `estimatedDurationHours` — unaffected by the fallback becoming optional-aware.
+    @Test func migrationSummaryWithCommittedScheduleReturnsRealNonNilValues() async throws {
+        let scheduleSuiteName = "testMigrationSummaryWithCommittedScheduleReturnsRealNonNilValues"
+        let scheduleUserDefaults = try #require(UserDefaults(suiteName: scheduleSuiteName))
+        defer { scheduleUserDefaults.removePersistentDomain(forName: scheduleSuiteName) }
+        let scheduleStorage = MigrationScheduleStorage(userDefaults: scheduleUserDefaults)
+        let account = AccountUUID(id: [UInt8](repeating: 75, count: 16))
+        let schedule = MigrationSchedule(
+            transfers: [
+                MigrationTransferProposal(id: "t0", amount: Zatoshi(100), anchorHeight: 1, nextExecutableAfterHeight: 1, expiryHeight: 9)
+            ],
+            estimatedDurationHours: 6
+        )
+        scheduleStorage.recordCommittedSchedule(schedule, for: account, now: Date())
+
+        let summary = await withDependencies {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.getMigrationState = { _ in MigrationState.notStarted }
+            $0.sdkSynchronizer.residualAfterMigration = { _ in Zatoshi(50) }
+        } operation: {
+            let impl = MigrationManagerImpl(scheduleStorage: scheduleStorage)
+            return await impl.migrationSummary(accountUUID: account)
+        }
+
+        #expect(summary.transferred == Zatoshi.zero)
+        #expect(summary.estimatedDurationHours == 6)
+        #expect(summary.dust == Zatoshi(50))
+    }
 }

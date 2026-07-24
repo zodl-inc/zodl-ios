@@ -1027,4 +1027,204 @@ struct MigrationScheduleStorageTests {
 
         #expect(summary.dust == Zatoshi.zero)
     }
+
+    // MARK: - MOB-1513 (W1 fallback wave 2): statusOnlyTransferRows
+
+    @Test func statusOnlyTransferRowsReturnsNilForEmptyStatuses() {
+        let rows = MigrationDerivations.statusOnlyTransferRows(statuses: [], currentTip: 1_000)
+        #expect(rows == nil)
+    }
+
+    @Test func statusOnlyTransferRowsReturnsNilWhenOnlyPreparationKindStatusesArePresent() {
+        // A note-split (preparation) transaction is never displayed as a transfer row — with
+        // nothing else to show, this reads as "no transfer statuses" (nil), the same signal an
+        // empty array produces, never an empty (but non-nil) row list.
+        let statuses = [
+            Self.status(
+                id: 0,
+                kind: MigrationTransactionStatus.Kind.preparation(layer: 0, index: 0),
+                state: MigrationTransactionStatus.State.mined(height: 900)
+            )
+        ]
+
+        let rows = MigrationDerivations.statusOnlyTransferRows(statuses: statuses, currentTip: 1_000)
+
+        #expect(rows == nil)
+    }
+
+    @Test func statusOnlyTransferRowsFiltersOutPreparationKindStatusesFromAMix() throws {
+        let statuses = [
+            Self.status(
+                id: 0,
+                kind: MigrationTransactionStatus.Kind.preparation(layer: 0, index: 0),
+                state: MigrationTransactionStatus.State.mined(height: 900)
+            ),
+            Self.status(id: 1, kind: MigrationTransactionStatus.Kind.transfer(crossing: 0), state: MigrationTransactionStatus.State.mined(height: 900))
+        ]
+
+        let rows = try #require(MigrationDerivations.statusOnlyTransferRows(statuses: statuses, currentTip: 1_000))
+
+        #expect(rows.count == 1)
+        #expect(rows[0].id == "1")
+    }
+
+    @Test func statusOnlyTransferRowsEveryRowHasNilAmountAndTransferKind() throws {
+        let statuses = [
+            Self.status(id: 0, kind: MigrationTransactionStatus.Kind.transfer(crossing: 0), state: MigrationTransactionStatus.State.mined(height: 900)),
+            Self.status(id: 1, kind: MigrationTransactionStatus.Kind.transfer(crossing: 1), state: MigrationTransactionStatus.State.awaitingSignature)
+        ]
+
+        let rows = try #require(MigrationDerivations.statusOnlyTransferRows(statuses: statuses, currentTip: 1_000))
+
+        // A `MigrationTransactionStatus` carries no amount by design — this fallback has no other
+        // source to read one from (see the function's own doc).
+        #expect(rows.map(\.amount) == [nil, nil])
+        #expect(rows.allSatisfy { $0.kind == MigrationTransferRow.Kind.transfer })
+    }
+
+    @Test func statusOnlyTransferRowsMinedMapsToSentWithNoPreciseRecency() throws {
+        let statuses = [Self.status(id: 7, kind: MigrationTransactionStatus.Kind.transfer(crossing: 0), state: MigrationTransactionStatus.State.mined(height: 900))]
+
+        let rows = try #require(MigrationDerivations.statusOnlyTransferRows(statuses: statuses, currentTip: 1_000))
+
+        // No sentRecord exists on this fallback path at all -> always reads "sent recently", same
+        // convention `transferRows` uses for a live-mined status with no matching sentRecord.
+        #expect(rows[0].id == "7")
+        #expect(rows[0].status == MigrationTransferRow.Status.sent)
+        #expect(rows[0].hoursFromNow == 0)
+        #expect(rows[0].sentMinutesAgo == nil)
+    }
+
+    @Test func statusOnlyTransferRowsBroadcastMapsToActiveWithIsBroadcasting() throws {
+        let statuses = [
+            Self.status(
+                id: 3,
+                kind: MigrationTransactionStatus.Kind.transfer(crossing: 0),
+                state: MigrationTransactionStatus.State.broadcast(txid: Data([0x01])),
+                scheduledHeight: 1_048
+            )
+        ]
+
+        let rows = try #require(MigrationDerivations.statusOnlyTransferRows(statuses: statuses, currentTip: 1_000))
+
+        // Same broadcasting/sent-pending styling `transferRows` uses for a live `.broadcast`
+        // status — `.active`, never `.sent`, regardless of position.
+        #expect(rows[0].status == MigrationTransferRow.Status.active)
+        #expect(rows[0].isBroadcasting == true)
+    }
+
+    @Test func statusOnlyTransferRowsExpiredBlockerMapsToExpiredRegardlessOfPosition() throws {
+        let statuses = [
+            Self.status(id: 0, kind: MigrationTransactionStatus.Kind.transfer(crossing: 0), state: MigrationTransactionStatus.State.awaitingSignature),
+            Self.status(
+                id: 1,
+                kind: MigrationTransactionStatus.Kind.transfer(crossing: 1),
+                state: MigrationTransactionStatus.State.awaitingSignature,
+                blockedOn: MigrationTransactionStatus.Blocker.expired
+            )
+        ]
+
+        let rows = try #require(MigrationDerivations.statusOnlyTransferRows(statuses: statuses, currentTip: 100))
+
+        #expect(rows.map(\.status) == [MigrationTransferRow.Status.active, MigrationTransferRow.Status.expired])
+    }
+
+    @Test func statusOnlyTransferRowsFirstNonTerminalPastDueIsOverdue() throws {
+        let statuses = [
+            Self.status(
+                id: 0,
+                kind: MigrationTransactionStatus.Kind.transfer(crossing: 0),
+                state: MigrationTransactionStatus.State.proved,
+                scheduledHeight: 900,
+                isReady: true,
+                nextAction: MigrationTransactionStatus.NextAction.broadcast
+            )
+        ]
+
+        let rows = try #require(MigrationDerivations.statusOnlyTransferRows(statuses: statuses, currentTip: 1_000))
+
+        #expect(rows[0].status == MigrationTransferRow.Status.overdue)
+        #expect(rows[0].minutesFromNow == 0)
+    }
+
+    @Test func statusOnlyTransferRowsFirstNonTerminalFutureIsActive() throws {
+        let statuses = [
+            Self.status(
+                id: 0,
+                kind: MigrationTransactionStatus.Kind.transfer(crossing: 0),
+                state: MigrationTransactionStatus.State.signed,
+                scheduledHeight: 1_048,
+                blockedOn: MigrationTransactionStatus.Blocker.signature
+            )
+        ]
+
+        let rows = try #require(MigrationDerivations.statusOnlyTransferRows(statuses: statuses, currentTip: 1_000))
+
+        #expect(rows[0].status == MigrationTransferRow.Status.active)
+        #expect(rows[0].minutesFromNow == 60)
+    }
+
+    @Test func statusOnlyTransferRowsSecondNonTerminalIsPendingEvenWhenAlsoPastDue() throws {
+        // Only ONE row is ever the actionable "current" one (ZIP-0318 MUST: at most one broadcast
+        // at a time) — a second row past its own scheduled height still reads `.pending`, not
+        // `.overdue`, mirroring `transferRows`'s own first-non-sent-only convention.
+        let statuses = [
+            Self.status(id: 0, kind: MigrationTransactionStatus.Kind.transfer(crossing: 0), state: MigrationTransactionStatus.State.awaitingSignature, scheduledHeight: 900),
+            Self.status(id: 1, kind: MigrationTransactionStatus.Kind.transfer(crossing: 1), state: MigrationTransactionStatus.State.awaitingSignature, scheduledHeight: 800)
+        ]
+
+        let rows = try #require(MigrationDerivations.statusOnlyTransferRows(statuses: statuses, currentTip: 1_000))
+
+        #expect(rows[0].status == MigrationTransferRow.Status.overdue)
+        #expect(rows[1].status == MigrationTransferRow.Status.pending)
+    }
+
+    @Test func statusOnlyTransferRowsOrdersByCrossingIndexRegardlessOfArrayOrder() throws {
+        let statuses = [
+            Self.status(id: 20, kind: MigrationTransactionStatus.Kind.transfer(crossing: 2), state: MigrationTransactionStatus.State.mined(height: 900)),
+            Self.status(id: 0, kind: MigrationTransactionStatus.Kind.transfer(crossing: 0), state: MigrationTransactionStatus.State.mined(height: 900)),
+            Self.status(id: 10, kind: MigrationTransactionStatus.Kind.transfer(crossing: 1), state: MigrationTransactionStatus.State.mined(height: 900))
+        ]
+
+        let rows = try #require(MigrationDerivations.statusOnlyTransferRows(statuses: statuses, currentTip: 1_000))
+
+        // Row order/index/id follow the crossing index, not `statuses`' own array order.
+        #expect(rows.map(\.id) == ["0", "10", "20"])
+        #expect(rows.map(\.index) == [0, 1, 2])
+    }
+
+    @Test func statusOnlyTransferRowsIdIsTheStatusOrdinalAsAString() throws {
+        let statuses = [Self.status(id: 42, kind: MigrationTransactionStatus.Kind.transfer(crossing: 0), state: MigrationTransactionStatus.State.mined(height: 900))]
+
+        let rows = try #require(MigrationDerivations.statusOnlyTransferRows(statuses: statuses, currentTip: 1_000))
+
+        // The same opaque ordinal a schedule row would carry for the same transaction
+        // (`MigrationTransactionStatus.id`'s own doc) — so a later read that gains a persisted
+        // schedule joins to the identical id.
+        #expect(rows[0].id == "42")
+    }
+
+    @Test func statusOnlyTransferRowsETADerivesFromLiveScheduledHeightAgainstTip() throws {
+        let statuses = [
+            Self.status(id: 0, kind: MigrationTransactionStatus.Kind.transfer(crossing: 0), state: MigrationTransactionStatus.State.awaitingSignature, scheduledHeight: 1_048)
+        ]
+
+        // (1_048 - 1_000) blocks × 75s ÷ 60 = 60 minutes — the same `MigrationETA.minutesFromNow`
+        // block-delta math `transferRows` uses, never a fake/placeholder cadence.
+        let rows = try #require(MigrationDerivations.statusOnlyTransferRows(statuses: statuses, currentTip: 1_000))
+
+        #expect(rows[0].minutesFromNow == 60)
+        #expect(rows[0].hoursFromNow == 1)
+    }
+
+    @Test func statusOnlyTransferRowsPastTipScheduledHeightNeverProducesANegativeETA() throws {
+        let statuses = [
+            Self.status(id: 0, kind: MigrationTransactionStatus.Kind.transfer(crossing: 0), state: MigrationTransactionStatus.State.awaitingSignature, scheduledHeight: 100)
+        ]
+
+        let rows = try #require(MigrationDerivations.statusOnlyTransferRows(statuses: statuses, currentTip: 1_000))
+
+        #expect(rows[0].minutesFromNow == 0)
+        #expect(rows[0].hoursFromNow == 0)
+    }
 }

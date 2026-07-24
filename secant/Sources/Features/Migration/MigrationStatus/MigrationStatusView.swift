@@ -55,11 +55,13 @@ struct MigrationStatusView: View {
                             .zFont(.semiBold, size: 24, style: Design.Text.primary)
                             .padding(.bottom, 8)
 
-                        Text(description)
-                            .zFont(size: 14, style: Design.Text.tertiary)
-                            .multilineTextAlignment(.leading)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .padding(.bottom, 24)
+                        if let description {
+                            Text(description)
+                                .zFont(size: 14, style: Design.Text.tertiary)
+                                .multilineTextAlignment(.leading)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .padding(.bottom, 24)
+                        }
 
                         MigrationTransferTimeline(
                             rows: store.rows,
@@ -118,11 +120,17 @@ struct MigrationStatusView: View {
         }
     }
 
-    private var description: String {
+    /// `nil` hides the description entirely — reached only by `.progress` when
+    /// `store.totalDurationHours` is unknown (a W1 fallback re-entry, MOB-1513): the sentence is a
+    /// single fixed-shape localized string carrying the duration as a numeric argument, so there is
+    /// no in-sentence placeholder ("—") to substitute without inventing new copy: omitting the
+    /// whole line is the honest option that doesn't imply a false duration.
+    private var description: String? {
         switch store.presentation {
         case .progress:
+            guard let totalDurationHours = store.totalDurationHours else { return nil }
             return String(
-                localizable: .migrationStatusDesc(store.rows.count, store.totalDurationHours, store.remainingCount)
+                localizable: .migrationStatusDesc(store.rows.count, totalDurationHours, store.remainingCount)
             )
         case .resume:
             return String(

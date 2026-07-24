@@ -129,6 +129,40 @@ struct MigrationTransferPlan {
         /// needs no view-level wiring of its own.
         @Shared(.inMemory(.toast)) var toast: Toast.Edge? = nil
 
+        /// MOB-1513 (A2): the synthesized "Split Balance" row, computed from `rows` rather than
+        /// stored — the note-split is a real, separate broadcast (immediate at commit) that is
+        /// never itself an element of `schedule.transfers`, so it's no longer conflated with
+        /// `rows`' own index 0 (see `MigrationTransferTimeline`'s header doc for the shared-
+        /// component side of this fix). `nil` before any rows have loaded (nothing to summarize
+        /// yet). Pre-commit the split hasn't broadcast — `.active`, paired with
+        /// `MigrationTransferTimeline`'s check-style badge for it — and `minutesFromNow: 0` so the
+        /// caption renders "Ready now" through the very same `MigrationETA.caption` path every
+        /// other forward caption uses (see `MigrationTransferPlanView.caption(for:)`), never a
+        /// hardcoded string. Amount is the SUM of every listed transfer (Android parity: the split
+        /// row shows the total). Computed (not stored) so it can never drift from `rows` and so
+        /// `apply`/every existing exhaustive `TestStore` assertion needs no parallel bookkeeping —
+        /// `.scheduled`, `.manual`, and `.recreated` all populate `rows` through the same `apply`,
+        /// so all three get the same treatment with no variant branch here.
+        var splitRow: MigrationTransferRow? {
+            guard !rows.isEmpty else { return nil }
+            // MOB-1513: this screen's `rows` are always freshly proposed/injected schedule rows
+            // (`apply(_:to:)` below), so every row's `amount` is genuinely known in practice — but
+            // the sum is honest either way: `nil` (unknown total) if ANY row's amount isn't, rather
+            // than silently treating an unknown row as contributing zero to the total shown.
+            let totalAmount: Zatoshi? = rows.contains { $0.amount == nil }
+                ? nil
+                : rows.reduce(Zatoshi.zero) { $0 + ($1.amount ?? Zatoshi.zero) }
+            return MigrationTransferRow(
+                id: "split-balance",
+                index: -1,
+                amount: totalAmount,
+                status: .active,
+                hoursFromNow: 0,
+                minutesFromNow: 0,
+                kind: .splitBalance
+            )
+        }
+
         init(
             variant: Variant = .scheduled,
             rows: IdentifiedArrayOf<MigrationTransferRow> = [],

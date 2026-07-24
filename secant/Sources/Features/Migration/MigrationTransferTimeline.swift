@@ -76,13 +76,21 @@ struct MigrationTransferTimeline: View {
 
             Spacer(minLength: 8)
 
+            // MOB-1513 (W1 fallback hydration): `row.amount` is `nil` for a status-only or
+            // progress-only fallback row (no persisted schedule to read a real value from) — no
+            // amount/fiat text at all rather than a misleading placeholder "0 ZEC". The VStack
+            // itself (and its vertical padding, which sets this row's height/spacing to the next
+            // one) stays in place either way — only its text content is conditional — so a nil
+            // amount collapses just the trailing column's content, not the row's own rhythm.
             VStack(alignment: .trailing, spacing: 2) {
-                Text("\(row.amount.decimalString()) ZEC")
-                    .zFont(.medium, size: 14, style: Design.Text.primary)
+                if let amount = row.amount {
+                    Text("\(amount.decimalString()) ZEC")
+                        .zFont(.medium, size: 14, style: Design.Text.primary)
 
-                if let currencyConversion {
-                    Text(currencyConversion.convert(row.amount))
-                        .zFont(size: 12, style: Design.Text.tertiary)
+                    if let currencyConversion {
+                        Text(currencyConversion.convert(amount))
+                            .zFont(size: 12, style: Design.Text.tertiary)
+                    }
                 }
             }
             .padding(.top, 2)

@@ -121,13 +121,54 @@ import Foundation
         #expect(decoded.isBroadcasting == true)
     }
 
-    @Test func migrationSummaryZeroIsAllZero() {
+    // MARK: - MOB-1513 (A2): synthesized split-row `kind`
+
+    /// `.transfer` is the default so every existing construction site (all of them genuine
+    /// `schedule.transfers`/sent-record rows) needs no change.
+    @Test func migrationTransferRowDefaultsToTransferKind() {
+        let row = MigrationTransferRow(id: "row-0", index: 0, amount: Zatoshi(100), status: .sent, hoursFromNow: 0)
+
+        #expect(row.kind == .transfer)
+    }
+
+    @Test func migrationTransferRowCodableRoundTripWithSplitBalanceKind() throws {
+        let original = MigrationTransferRow(
+            id: "split-balance",
+            index: -1,
+            amount: Zatoshi(800_000_000),
+            status: .active,
+            hoursFromNow: 0,
+            minutesFromNow: 0,
+            kind: .splitBalance
+        )
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(MigrationTransferRow.self, from: data)
+
+        #expect(decoded == original)
+        #expect(decoded.kind == .splitBalance)
+    }
+
+    /// MOB-1513: `.zero`'s `transferred`/`estimatedDurationHours` read `nil` (unknown), not a
+    /// placeholder zero — the same convention the W1 fallback (no committed schedule) uses for
+    /// both. `dust`/the transfer counts stay genuinely zero.
+    @Test func migrationSummaryZeroHasNilTransferredAndDurationButZeroCounts() {
         let zero = MigrationSummary.zero
-        #expect(zero.transferred == Zatoshi.zero)
+        #expect(zero.transferred == nil)
         #expect(zero.dust == Zatoshi.zero)
         #expect(zero.transfersSent == 0)
         #expect(zero.transfersTotal == 0)
-        #expect(zero.estimatedDurationHours == 0)
+        #expect(zero.estimatedDurationHours == nil)
+    }
+
+    @Test func migrationTransferRowCodableRoundTripWithNilAmount() throws {
+        // MOB-1513: a status-only or progress-only fallback row — `amount` unknown rather than a
+        // placeholder `Zatoshi.zero`; still round-trips cleanly (`Zatoshi?` stays `Codable`).
+        let original = MigrationTransferRow(id: "row-0", index: 0, amount: nil, status: .pending, hoursFromNow: 6)
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(MigrationTransferRow.self, from: data)
+
+        #expect(decoded == original)
+        #expect(decoded.amount == nil)
     }
 
     @Test func transferProposalIdDrivesIdentifiable() {
