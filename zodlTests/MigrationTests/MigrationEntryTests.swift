@@ -5,8 +5,9 @@
 //  Covers the MigrationEntry reducer (Features/Migration/MigrationEntry/MigrationEntryStore.swift)
 //  for MOB-1460/1466: mode selection, the disclaimer-visibility derivation, the `nextTapped`
 //  delegate contract, and (MOB-1466) `onAppear` loading the orchard-balance-to-migrate amount for
-//  the selected account via `MigrationManagerClient`. `.serialized`: state mutates the
-//  process-global `@Shared(.inMemory(.selectedWalletAccount))`.
+//  the selected account via `MigrationManagerClient`. MOB-1513 (W1): also covers `fiatText`,
+//  derived from the shared exchange rate. `.serialized`: state mutates the process-global
+//  `@Shared(.inMemory(.selectedWalletAccount))` and `@Shared(.inMemory(.exchangeRate))`.
 //
 
 import Testing
@@ -37,6 +38,22 @@ import ComposableArchitecture
         #expect(state.isDisclaimerVisible == false)
         #expect(state.orchardBalance == Zatoshi.zero)
         #expect(state.selectedWalletAccount == nil)
+    }
+
+    @MainActor @Test func fiatTextIsConvertedAmountWhenExchangeRateAvailable() async {
+        var state = MigrationEntry.State(orchardBalance: Zatoshi(1_245_800_000))
+        let conversion = CurrencyConversion(.usd, ratio: 30, timestamp: 0)
+        state.$currencyConversion.withLock { $0 = conversion }
+
+        let expected: String = conversion.convert(state.orchardBalance)
+        #expect(state.fiatText == expected)
+    }
+
+    @MainActor @Test func fiatTextIsNilWhenExchangeRateUnavailable() async {
+        var state = MigrationEntry.State(orchardBalance: Zatoshi(1_245_800_000))
+        state.$currencyConversion.withLock { $0 = nil }
+
+        #expect(state.fiatText == nil)
     }
 
     @MainActor @Test func modeTappedImmediateSelectsModeAndRevealsDisclaimer() async {
