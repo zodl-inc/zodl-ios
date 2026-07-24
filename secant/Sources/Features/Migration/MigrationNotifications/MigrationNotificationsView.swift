@@ -138,10 +138,11 @@ struct MigrationNotificationsView: View {
     // MARK: - Skip button
 
     // `ZashiButton`'s `Type` enum has no per-instance color hook, so this reproduces a custom style
-    // locally: fill, border, and label are all `WarningYellow` ramp steps — the dark mock binds the
-    // fill to `._50` too, so this is no longer a `Destructive1` hybrid (MOB-1478 W8; round-2 fill
-    // update MOB-1487; MOB-1487 R3 dark pass; same override duplicated in MigrationBackgroundDeliveryView
-    // rather than touching the shared component).
+    // locally: the border and label stay on the `WarningYellow` ramp (`._300`/`._700`), but the fill
+    // is `Design.Btns.Destructive1.bg` — Figma's `btn-destroy1-bg` token (adaptive white/near-black)
+    // is applied to this fill across the whole canvas, the same token `ZashiButton`'s own
+    // `.destructive1` type already uses for its background (MOB-1513; same override duplicated in
+    // MigrationBackgroundDeliveryView rather than touching the shared component).
     @ViewBuilder private var skipButton: some View {
         Button {
             store.send(.skipTapped)
@@ -155,7 +156,7 @@ struct MigrationNotificationsView: View {
                 .frame(maxWidth: .infinity)
                 .background {
                     RoundedRectangle(cornerRadius: Design.Radius._xl)
-                        .fill(Design.Utility.WarningYellow._50.color(colorScheme))
+                        .fill(Design.Btns.Destructive1.bg.color(colorScheme))
                         .overlay {
                             RoundedRectangle(cornerRadius: Design.Radius._xl)
                                 .stroke(Design.Utility.WarningYellow._300.color(colorScheme), lineWidth: 1)
