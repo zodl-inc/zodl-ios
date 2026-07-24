@@ -224,6 +224,18 @@ struct MigrationCoordFlow {
         /// (the success continuation) and `.keystoneScanAbandoned` (every failure route the ceremony
         /// can end on) so the next ceremony always starts clean.
         var keystoneBatchApplyInFlight = false
+        /// MOB-1513 (R8): the single-PCZT (immediate-lane) ceremony's own one-shot guard —
+        /// `keystoneBatchApplyInFlight`'s twin for the production `.scan(.foundPCZT)` round-trip.
+        /// The production checker decodes SYNCHRONOUSLY inside `Scan`'s reducer, but two camera
+        /// frames can both pass the `isAnythingFound` gate before the first `.foundPCZT` is
+        /// processed, so a duplicate can still reach the coordinator. Armed for the WHOLE post-scan
+        /// leg (set before the proofs+submit effect dispatches — a duplicate mid-proving would
+        /// otherwise double-broadcast), cleared in `.keystoneImmediateSubmitted`,
+        /// `.keystoneImmediateSubmitFailed`, `.keystoneScanAbandoned`, and `.keystoneSignRejected`
+        /// (a reject can land mid-leg after a swipe-back off `scan` — the completions then treat
+        /// the cleared `pendingKeystoneSigning` as a tombstone and never touch the path), plus
+        /// reset at ceremony entry (`beginImmediateKeystoneCeremony`).
+        var keystoneImmediateSubmitInFlight = false
         /// MOB-1513 (H3 guard): the account THIS flow instance opened for — recorded synchronously
         /// at `.onAppear`'s genuine-flow-start branch (`state.path.isEmpty`), alongside arming
         /// `migrationManager.setMigrationFlowPresented`. Every close/replace site reads this back
@@ -245,6 +257,15 @@ struct MigrationCoordFlow {
         /// rather than an `@Presents`/`ifLet` destination.
         var detectedKeystoneFirmwareVersion: String?
         var isKeystoneFirmwareGatePresented = false
+        /// MOB-1513 (R8): the dotted minimum-firmware floor the FAILED gate was checked against —
+        /// the immediate single-PCZT ceremony gates on the production stamp floor
+        /// (`KeystoneFirmwareVersion.minimumSupported`, 3.0.0, read off the signed PCZT's
+        /// proprietary stamp) while the batch ceremony gates on the batch-protocol floor
+        /// (`keystoneMigrationBatchMinimumFirmware`, 3.0.2, from the decode envelope), and the
+        /// sheet's copy must echo whichever actually applied. Set alongside
+        /// `isKeystoneFirmwareGatePresented` at both trip sites; cleared with it. The view falls
+        /// back to the batch floor when nil (defensive only — both trip sites set it).
+        var keystoneFirmwareGateMinimumVersion: String?
         /// MOB-1478 (W2): the Tor bottom sheet's own state — always present (not optional), toggled
         /// on screen via `isTorSheetPresented`, mirroring the `ServerSetup`/`serverSetupViewBinding`
         /// precedent in `Root` rather than an `@Presents`/`ifLet` destination (there's exactly one
@@ -376,13 +397,25 @@ struct MigrationCoordFlow {
         /// on that screen's `onAppear` — see `submitImmediateKeystoneTransaction`'s doc for why the
         /// Keystone lane can't defer to the Sending screen the way the software lane does).
         case keystoneImmediateSubmitted(txId: String)
+        /// Internal: MOB-1513 (R8, F2) — the immediate lane's post-signing proofs+submit FAILED.
+        /// Pops the ceremony exactly like `.keystoneScanAbandoned` (scan + keystoneSign, context +
+        /// in-flight guard cleared), but the failure is VISIBLE and retryable: the retained Review
+        /// Transfer element comes back with its existing commit-failure sheet armed
+        /// (`isFailurePresented`/`.commit` — Retry re-runs the whole ceremony). Replaces the silent
+        /// abandon that produced the QA-reported infinite loop (scan -> silent pop -> confirm ->
+        /// scan -> ...). The dust producer ("Migrate anyway", a `.complete` element beneath) has no
+        /// Review element to arm — it falls back to the generic Sending failure-sheet push its
+        /// propose-failure path already uses. Deliberately skips `.keystoneScanAbandoned`'s
+        /// stray-run cancel: the immediate proposal is engine-external — no engine run exists.
+        case keystoneImmediateSubmitFailed
         /// Internal: MOB-1496 (W-B) — "Migrate anyway"'s Keystone fork
-        /// (`.complete(.delegate(.migrateAnyway))`) unlocked, proposed the immediate migration, and
-        /// built its single PCZT via `createPCZTFromProposal` — arms `.immediateReview` (the SAME
-        /// context the entry-screen immediate lane's Keystone ceremony uses) and pushes
-        /// `keystoneSign`, exactly like `MigrationReviewTransferStore.requestKeystoneSignature`'s
-        /// `.keystoneSignRequested` delegate does for that lane.
-        case migrateAnywayImmediateKeystonePCZTProposed(pczts: [MigrationUnsignedTransferPczt])
+        /// (`.complete(.delegate(.migrateAnyway))`) unlocked, proposed the immediate migration,
+        /// built its single PCZT via `createPCZTFromProposal`, and redacted it for the signer
+        /// (MOB-1513 R8) — arms `.immediateReview` (the SAME context the entry-screen immediate
+        /// lane's Keystone ceremony uses) and pushes `keystoneSign` in single-PCZT mode, exactly
+        /// like `MigrationReviewTransferStore.requestKeystoneSignature`'s
+        /// `.keystoneImmediateSignRequested` delegate does for that lane.
+        case migrateAnywayImmediateKeystonePCZTProposed(unsigned: Data, redacted: Data)
         /// Internal: MOB-1468 `keystoneSign(.delegate(.rejected))`'s pop, deferred to a follow-up
         /// self-action for the same reason `sendNowCompleted` defers its pop — popping the
         /// `keystoneSign` element inline in the `.path(.element(...))` case would race
@@ -453,6 +486,10 @@ struct MigrationCoordFlow {
     // MOB-1458 (Task 2): the software expired-recovery lane derives the account's USK in-process
     // (via `MigrationSpendingKeyDerivation.deriveUSK`) to pass to `refreshStaleMigrationTransfers`.
     @Dependency(\.derivationTool) var derivationTool
+    // MOB-1513 (R8): the immediate single-PCZT ceremony resets the shared BC-UR fountain decoder
+    // before pushing its scan session (`SendConfirmation.getSignatureTapped` precedent), so a retry
+    // ceremony never inherits a previous session's accumulated frames.
+    @Dependency(\.keystoneHandler) var keystoneHandler
     @Dependency(\.migrationBGScheduler) var migrationBGScheduler
     @Dependency(\.migrationManager) var migrationManager
     @Dependency(\.mnemonic) var mnemonic

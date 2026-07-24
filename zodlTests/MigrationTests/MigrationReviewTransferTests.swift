@@ -223,10 +223,12 @@ import ComposableArchitecture
 
     // MARK: - MOB-1468 / MOB-1513: Keystone confirmTapped fork proposes an ordinary PCZT
 
-    @MainActor @Test func confirmTappedInImmediateModeWithKeystoneAccountProposesPCZTAndDelegatesKeystoneSignRequested() async {
+    @MainActor @Test func confirmTappedInImmediateModeWithKeystoneAccountProposesPCZTRedactsAndDelegatesImmediateSignRequested() async {
         let createPCZTCalls = LockIsolated<[(AccountUUID, Proposal)]>([])
+        let redactCalls = LockIsolated<[Data]>([])
         let proposal = immediateProposal(amount: Zatoshi(1_245_800_000), fee: Zatoshi(15_000))
         let pcztBytes = Data([0xAA, 0xBB])
+        let redactedBytes = Data([0xAA, 0xBB, 0x0F])
         var state = MigrationReviewTransfer.State(mode: .immediate)
         state.immediateProposal = proposal
         state.$selectedWalletAccount.withLock { $0 = walletAccount(keystone: true, idByte: 1) }
@@ -238,6 +240,10 @@ import ComposableArchitecture
                 createPCZTCalls.withValue { $0.append((accountUUID, proposedProposal)) }
                 return pcztBytes
             }
+            $0.sdkSynchronizer.redactPCZTForSigner = { pczt in
+                redactCalls.withValue { $0.append(pczt) }
+                return redactedBytes
+            }
         }
 
         await store.send(.confirmTapped) {
@@ -245,7 +251,7 @@ import ComposableArchitecture
         }
         await store.receive(
             .delegate(
-                .keystoneSignRequested([MigrationUnsignedTransferPczt(id: MigrationReviewTransfer.immediateKeystonePcztId, pczt: pcztBytes)])
+                .keystoneImmediateSignRequested(unsigned: pcztBytes, redacted: redactedBytes)
             )
         ) {
             $0.isConfirming = false
@@ -254,6 +260,9 @@ import ComposableArchitecture
         #expect(createPCZTCalls.value.count == 1)
         #expect(createPCZTCalls.value.first?.0 == state.selectedWalletAccount?.id)
         #expect(createPCZTCalls.value.first?.1 == proposal.proposal)
+        // MOB-1513 (R8): the redaction runs over the just-built ORIGINAL — the wire copy the device
+        // scans; the unsigned original still rides the delegate for the post-scan proofs+combine.
+        #expect(redactCalls.value == [pcztBytes])
     }
 
     @MainActor @Test func confirmTappedInImmediateModeWithZcashAccountUsesSoftwarePathUnchanged() async {
@@ -309,6 +318,32 @@ import ComposableArchitecture
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
             $0.sdkSynchronizer.createPCZTFromProposal = { _, _ in throw CreatePCZTFailure() }
+        }
+
+        await store.send(.confirmTapped) {
+            $0.isConfirming = true
+        }
+        await store.receive(\.noteSplitFailed) {
+            $0.isConfirming = false
+            $0.isFailurePresented = true
+            $0.failureReason = MigrationReviewTransfer.State.FailureReason.commit
+        }
+    }
+
+    /// MOB-1513 (R8): the redaction the single-PCZT reroute adds is a second throw site on the same
+    /// leg — it must surface exactly like a `createPCZTFromProposal` throw (commit-failure sheet,
+    /// nothing delegated), never silently swallowed.
+    @MainActor @Test func confirmTappedInImmediateModeWithKeystoneAccountWhenRedactPCZTForSignerThrowsPresentsFailureSheetWithoutDelegating() async {
+        struct RedactFailure: Error { }
+        var state = MigrationReviewTransfer.State(mode: .immediate)
+        state.immediateProposal = immediateProposal(amount: Zatoshi(1_245_800_000), fee: Zatoshi(15_000))
+        state.$selectedWalletAccount.withLock { $0 = walletAccount(keystone: true, idByte: 15) }
+        let store = TestStore(initialState: state) {
+            MigrationReviewTransfer()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.createPCZTFromProposal = { _, _ in Data([0xAA]) }
+            $0.sdkSynchronizer.redactPCZTForSigner = { _ in throw RedactFailure() }
         }
 
         await store.send(.confirmTapped) {
@@ -412,6 +447,7 @@ import ComposableArchitecture
         let createPCZTCalls = LockIsolated<Int>(0)
         let proposal = immediateProposal(amount: Zatoshi(1_245_800_000), fee: Zatoshi(15_000))
         let pcztBytes = Data([0xCC])
+        let redactedBytes = Data([0xCC, 0x0F])
         var state = MigrationReviewTransfer.State(mode: .immediate)
         state.immediateProposal = proposal
         state.isFailurePresented = true
@@ -429,6 +465,7 @@ import ComposableArchitecture
                 createPCZTCalls.withValue { $0 += 1 }
                 return pcztBytes
             }
+            $0.sdkSynchronizer.redactPCZTForSigner = { _ in redactedBytes }
         }
 
         await store.send(.retryTapped) {
@@ -438,7 +475,7 @@ import ComposableArchitecture
         }
         await store.receive(
             .delegate(
-                .keystoneSignRequested([MigrationUnsignedTransferPczt(id: MigrationReviewTransfer.immediateKeystonePcztId, pczt: pcztBytes)])
+                .keystoneImmediateSignRequested(unsigned: pcztBytes, redacted: redactedBytes)
             )
         ) {
             $0.isConfirming = false
@@ -460,6 +497,7 @@ import ComposableArchitecture
         let (releaseStream, releaseContinuation) = AsyncStream<Void>.makeStream()
         let proposal = immediateProposal(amount: Zatoshi(1_245_800_000), fee: Zatoshi(15_000))
         let pcztBytes = Data([0xAB])
+        let redactedBytes = Data([0xAB, 0x0F])
         var state = MigrationReviewTransfer.State(mode: .immediate)
         state.immediateProposal = proposal
         state.$selectedWalletAccount.withLock { $0 = walletAccount(keystone: true, idByte: 21) }
@@ -472,6 +510,7 @@ import ComposableArchitecture
                 for await _ in releaseStream { break }
                 return pcztBytes
             }
+            $0.sdkSynchronizer.redactPCZTForSigner = { _ in redactedBytes }
         }
 
         await store.send(.confirmTapped) {
@@ -485,7 +524,7 @@ import ComposableArchitecture
 
         await store.receive(
             .delegate(
-                .keystoneSignRequested([MigrationUnsignedTransferPczt(id: MigrationReviewTransfer.immediateKeystonePcztId, pczt: pcztBytes)])
+                .keystoneImmediateSignRequested(unsigned: pcztBytes, redacted: redactedBytes)
             )
         ) {
             $0.isConfirming = false

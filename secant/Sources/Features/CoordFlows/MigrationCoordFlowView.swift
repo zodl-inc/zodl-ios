@@ -66,16 +66,17 @@ struct MigrationCoordFlowView: View {
             ) {
                 MigrationTorSheetView(store: store.scope(state: \.torSheetState, action: \.torSheet))
             }
-            // MOB-1513: the migration Keystone batch-signing minimum-firmware gate. Mirrors
+            // MOB-1513: the migration Keystone minimum-firmware gate. Mirrors
             // `KeystoneFirmwareUpdateContent`'s illustration/title/body/button structure (the
             // single-transaction Keystone flow's own firmware-gate content, `Features/
-            // SendConfirmation/KeystoneFirmwareUpdateView.swift`) but with its OWN copy and floor:
-            // this gate reads `KeystoneBatchDecodeResult.firmwareVersion` from the batch decode
-            // envelope (not a stamp scanned out of signed PCZT bytes) against a DIFFERENT minimum
-            // (3.0.2 vs that flow's 3.0.0) — reusing that view's copy here would report the wrong
-            // required version. There is no `SendConfirmation` in this flow to scope that view's
-            // store from either, so the content is presented directly here, mirroring the Tor
-            // sheet's own coordinator-owned-sheet idiom above.
+            // SendConfirmation/KeystoneFirmwareUpdateView.swift`) but with its OWN copy and
+            // per-ceremony floor (MOB-1513 R8): the batch ceremony trips on
+            // `KeystoneBatchDecodeResult.firmwareVersion` from the decode envelope against 3.0.2,
+            // the immediate single-PCZT ceremony on the production PCZT stamp against 3.0.0 —
+            // `keystoneFirmwareGateMinimumVersion` records whichever applied, so the copy always
+            // reports the right required version. There is no `SendConfirmation` in this flow to
+            // scope that view's store from either, so the content is presented directly here,
+            // mirroring the Tor sheet's own coordinator-owned-sheet idiom above.
             .zashiSheet(
                 isPresented: Binding(
                     get: { store.isKeystoneFirmwareGatePresented },
@@ -115,20 +116,25 @@ struct MigrationCoordFlowView: View {
     }
 
     /// MOB-1513: mirrors `KeystoneFirmwareUpdateContent.bodyText`'s specific/legacy split — a
-    /// detected-but-too-low version interpolates both figures, an undetected one (the envelope
-    /// reported none at all) falls back to the floor-only variant.
+    /// detected-but-too-low version interpolates both figures, an undetected one (the envelope or
+    /// stamp reported none at all) falls back to the floor-only variant. MOB-1513 (R8): the
+    /// interpolated minimum is the floor the FAILED gate actually checked
+    /// (`keystoneFirmwareGateMinimumVersion` — batch envelope 3.0.2 vs the immediate single-PCZT
+    /// ceremony's production stamp floor 3.0.0); the batch constant is only a defensive fallback.
     private var keystoneFirmwareGateBody: String {
+        let minimumVersion = store.keystoneFirmwareGateMinimumVersion
+            ?? MigrationCoordFlow.keystoneMigrationBatchMinimumFirmware.versionString
         if let detected = store.detectedKeystoneFirmwareVersion {
             return String(
                 localizable: .migrationKeystoneFirmwareBody(
                     detected,
-                    MigrationCoordFlow.keystoneMigrationBatchMinimumFirmware.versionString
+                    minimumVersion
                 )
             )
         }
         return String(
             localizable: .migrationKeystoneFirmwareLegacyBody(
-                MigrationCoordFlow.keystoneMigrationBatchMinimumFirmware.versionString
+                minimumVersion
             )
         )
     }

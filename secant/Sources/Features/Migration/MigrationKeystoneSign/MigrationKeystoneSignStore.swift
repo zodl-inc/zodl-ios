@@ -44,17 +44,29 @@ struct MigrationKeystoneSign {
         /// checked at scan completion (`decodeKeystoneSignBatchPart(_:expectedRequestId:)`) to reject
         /// a scan of an unrelated/stale response. A fresh UUID's 16 raw bytes, generated once per
         /// ceremony entry (Android parity) — never regenerated across this screen's lifetime, so a
-        /// stray extra `.onAppear` can't silently invalidate an in-flight scan.
+        /// stray extra `.onAppear` can't silently invalidate an in-flight scan. Batch-mode only —
+        /// the single-PCZT mode's production `zcash-pczt` protocol has no request-id concept.
         let requestId: Data
         /// MOB-1513: the built animated-QR frame strings (`buildKeystoneSignBatchQRParts`), cycled by
         /// the view via `AnimatedQRCode(frames:size:)`. Empty until the `.onAppear` build effect
         /// resolves — the view shows the same empty/loading treatment `SignWithKeystoneView` shows
-        /// while `pcztForUI == nil`.
+        /// while `pcztForUI == nil`. Batch-mode only — stays empty in single-PCZT mode.
         var frames: [String] = []
+        /// MOB-1513 (R8): non-nil puts this screen in SINGLE-PCZT mode — the immediate lane's
+        /// PRODUCTION ceremony: the view computes `urEncoderForPCZT` live over these
+        /// redacted-for-signer bytes (`SignWithKeystoneView` parity; a `UREncoder` is a
+        /// non-`Equatable`, non-`Sendable` class that can't live in `@ObservableState`), the batch
+        /// frames build never runs, and the coordinator configures the scan session with the
+        /// production checker. `pczts` then carries the single UNREDACTED original the coordinator's
+        /// post-scan submit reads (`addProofsToPCZT` needs the full PCZT — the redaction is
+        /// wire-only). Batch (scheduled/recovery) ceremonies leave this nil and behave exactly as
+        /// before.
+        var redactedSinglePczt: Data?
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
 
-        init(pczts: [MigrationUnsignedTransferPczt] = []) {
+        init(pczts: [MigrationUnsignedTransferPczt] = [], redactedSinglePczt: Data? = nil) {
             self.pczts = pczts
+            self.redactedSinglePczt = redactedSinglePczt
             self.requestId = withUnsafeBytes(of: UUID().uuid) { Data($0) }
         }
     }
@@ -97,6 +109,9 @@ struct MigrationKeystoneSign {
                 return .send(.delegate(.getSignature))
 
             case .onAppear:
+                // MOB-1513 (R8): single-PCZT mode never builds batch frames — the view computes the
+                // production `urEncoderForPCZT` QR live over `redactedSinglePczt`.
+                guard state.redactedSinglePczt == nil else { return .none }
                 // Idempotent: a redundant re-appear (defensive — this ceremony never re-enters this
                 // screen mid-flight) never rebuilds frames it already has.
                 guard state.frames.isEmpty else { return .none }
@@ -105,6 +120,7 @@ struct MigrationKeystoneSign {
                         let frames = try await sdkSynchronizer.buildKeystoneSignBatchQRParts(requestId, pczts, MigrationKeystoneSign.maxFragmentLen)
                         await send(.framesBuilt(frames))
                     } catch {
+                        LoggerProxy.error("[MOB-1513] Keystone batch QR frames build failed: \(error)")
                         await send(.framesBuildFailed)
                     }
                 }
