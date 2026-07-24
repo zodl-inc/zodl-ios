@@ -115,8 +115,14 @@ extension WalletStorageClient {
     /// Ensures the stored Address Book encryption keys match `expected` — the keys derived from
     /// the CURRENT wallet seed. A key derived from a previous seed must never survive into a new
     /// wallet, otherwise that wallet can read and write another wallet's encrypted contacts file
-    /// in the shared iCloud container (MOB-1450). Overwrites a stale or absent key.
+    /// in the shared iCloud container (MOB-1450). Overwrites a stale or absent key. An empty
+    /// `expected` set is ignored — clearing a slot goes through deletion, never through reconcile.
     func reconcileAddressBookEncryptionKeys(_ expected: AddressBookEncryptionKeys) throws {
+        // An empty expected set means derivation produced nothing — never treat it as
+        // ground truth, or a transient derivation failure would erase a real key.
+        guard !expected.keys.isEmpty else {
+            return
+        }
         let current = try? exportAddressBookEncryptionKeys()
         guard current != expected else {
             return
@@ -128,7 +134,14 @@ extension WalletStorageClient {
     /// derived from the CURRENT wallet seed. A key derived from a previous seed must never survive
     /// into a new wallet, otherwise that wallet can read and write another wallet's encrypted
     /// metadata file in the shared iCloud container (MOB-1450). Overwrites a stale or absent key.
+    /// An empty `expected` set is ignored — clearing a slot goes through deletion, never through
+    /// reconcile.
     func reconcileUserMetadataEncryptionKeys(_ expected: UserMetadataEncryptionKeys, account: Account) throws {
+        // An empty expected set means derivation produced nothing — never treat it as
+        // ground truth, or a transient derivation failure would erase a real key.
+        guard !expected.keys.isEmpty else {
+            return
+        }
         let current = try? exportUserMetadataEncryptionKeys(account)
         guard current != expected else {
             return

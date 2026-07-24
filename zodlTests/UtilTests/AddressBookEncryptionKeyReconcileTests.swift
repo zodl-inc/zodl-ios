@@ -64,6 +64,19 @@ struct AddressBookEncryptionKeyReconcileTests {
         #expect(try client.exportAddressBookEncryptionKeys() == current)
     }
 
+    @Test func reconcileNeverReplacesRealKeysWithAnEmptySet() throws {
+        let client = Self.makeWalletStorageClient()
+        let current = try Self.addressBookKeys(byte: 0xEE)
+
+        try client.importAddressBookEncryptionKeys(current)
+        // A failed derivation surfaces as an empty expected set. Reconcile must treat
+        // it as "nothing to enforce", not as ground truth — otherwise a transient
+        // derivation failure would erase the only copy of a real key.
+        try client.reconcileAddressBookEncryptionKeys(AddressBookEncryptionKeys.empty)
+
+        #expect(try client.exportAddressBookEncryptionKeys() == current)
+    }
+
     // MARK: Helpers
 
     static func makeWalletStorageClient() -> WalletStorageClient {

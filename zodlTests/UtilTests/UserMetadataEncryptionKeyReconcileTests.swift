@@ -71,6 +71,20 @@ struct UserMetadataEncryptionKeyReconcileTests {
         #expect(try client.exportUserMetadataEncryptionKeys(account) == current)
     }
 
+    @Test func reconcileNeverReplacesRealKeysWithAnEmptySet() throws {
+        let client = Self.makeWalletStorageClient()
+        let account = try Self.account()
+        let current = Self.metadataKeys(byte: 0xEE)
+
+        try client.importUserMetadataEncryptionKeys(current, account)
+        // A failed derivation surfaces as an empty expected set. Reconcile must treat
+        // it as "nothing to enforce", not as ground truth — otherwise a transient
+        // derivation failure would erase the only copy of a real key.
+        try client.reconcileUserMetadataEncryptionKeys(UserMetadataEncryptionKeys.empty, account: account)
+
+        #expect(try client.exportUserMetadataEncryptionKeys(account) == current)
+    }
+
     // MARK: Helpers
 
     static func makeWalletStorageClient() -> WalletStorageClient {
