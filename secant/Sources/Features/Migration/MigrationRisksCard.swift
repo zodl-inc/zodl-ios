@@ -40,6 +40,10 @@ struct MigrationRisksCard: View {
                         .strokeBorder(Design.Surfaces.strokeTertiary.color(colorScheme))
                 }
         }
+        // Figma Shadow/XXS (node 4588:28496) — same two-layer treatment already used by other
+        // `bgPrimary`-fill/stroked cards (AvailableBalanceView, FloatingArrow, HomeView).
+        .shadow(color: .black.opacity(0.02), radius: 0.66667, x: 0, y: 1.33333)
+        .shadow(color: .black.opacity(0.08), radius: 1.33333, x: 0, y: 1.33333)
     }
 }
 

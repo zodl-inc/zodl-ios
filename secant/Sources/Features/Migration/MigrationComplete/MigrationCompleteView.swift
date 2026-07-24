@@ -250,7 +250,7 @@ struct MigrationCompleteView: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .top, spacing: 0) {
                 Text(calloutTitle)
-                    .zFont(.semiBold, size: 14, style: calloutTitleStyle)
+                    .zFont(.medium, size: 14, style: calloutTitleStyle)
 
                 Spacer()
 
@@ -335,10 +335,12 @@ struct MigrationCompleteView: View {
     }
 
     // `ZashiButton`'s `Type` enum has no per-instance color hook, so this hand-builds the warning
-    // button. MOB-1511 (W5 audit): the fill moves off `Destructive1.bg` (the ErrorRed ramp — a
-    // stale copy of a hybrid the permission screens' Skip button has since dropped) onto the same
-    // `WarningYellow._50` every sibling warning surface uses (MigrationNotificationsView's Skip,
-    // SendFormView's Orchard warning).
+    // button. MOB-1513 (Figma 3836:8394): the fill moves back onto `Design.Btns.Destructive1.bg` —
+    // Figma's `btn-destroy1-bg` token (adaptive white/near-black), the same one `ZashiButton`'s own
+    // `.destructive1` type uses for its background, and the one this button shares with the
+    // Skip buttons on MigrationBackgroundDeliveryView/MigrationNotificationsView. The prior
+    // `WarningYellow._50` fill (MOB-1511) blended into the callout's own `WarningYellow._50`
+    // background; the border and label stay on `WarningYellow._300`/`._700`.
     @ViewBuilder private var migrateAnywayButton: some View {
         Button {
             store.send(.migrateAnywayTapped)
@@ -352,7 +354,7 @@ struct MigrationCompleteView: View {
                 .frame(maxWidth: .infinity)
                 .background {
                     RoundedRectangle(cornerRadius: Design.Radius._xl)
-                        .fill(Design.Utility.WarningYellow._50.color(colorScheme))
+                        .fill(Design.Btns.Destructive1.bg.color(colorScheme))
                         .overlay {
                             RoundedRectangle(cornerRadius: Design.Radius._xl)
                                 .stroke(Design.Utility.WarningYellow._300.color(colorScheme), lineWidth: 1)
