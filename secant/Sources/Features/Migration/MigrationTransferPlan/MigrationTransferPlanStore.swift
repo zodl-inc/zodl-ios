@@ -145,10 +145,17 @@ struct MigrationTransferPlan {
         /// so all three get the same treatment with no variant branch here.
         var splitRow: MigrationTransferRow? {
             guard !rows.isEmpty else { return nil }
+            // MOB-1513: this screen's `rows` are always freshly proposed/injected schedule rows
+            // (`apply(_:to:)` below), so every row's `amount` is genuinely known in practice — but
+            // the sum is honest either way: `nil` (unknown total) if ANY row's amount isn't, rather
+            // than silently treating an unknown row as contributing zero to the total shown.
+            let totalAmount: Zatoshi? = rows.contains { $0.amount == nil }
+                ? nil
+                : rows.reduce(Zatoshi.zero) { $0 + ($1.amount ?? Zatoshi.zero) }
             return MigrationTransferRow(
                 id: "split-balance",
                 index: -1,
-                amount: rows.reduce(Zatoshi.zero) { $0 + $1.amount },
+                amount: totalAmount,
                 status: .active,
                 hoursFromNow: 0,
                 minutesFromNow: 0,

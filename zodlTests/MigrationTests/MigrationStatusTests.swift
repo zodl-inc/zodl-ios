@@ -34,7 +34,8 @@ import ComposableArchitecture
 
         #expect(state.presentation == MigrationStatus.State.Presentation.progress)
         #expect(state.rows.isEmpty)
-        #expect(state.totalDurationHours == 0)
+        // MOB-1513: `nil` (unknown), never a placeholder `0`, until a real load hydrates it.
+        #expect(state.totalDurationHours == nil)
         #expect(state.stalledNumber == 0)
         #expect(state.stalledHoursAgo == 0)
         #expect(state.isRescheduling == false)

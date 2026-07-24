@@ -212,7 +212,9 @@ struct MigrationCompleteView: View {
         VStack(spacing: 0) {
             MigrationDetailRow(
                 title: String(localizable: .migrationCompleteRowTotal),
-                value: "\(store.totalTransferred.decimalString()) ZEC",
+                // MOB-1513: `nil` on a W1 fallback re-entry (no persisted schedule) — an em-dash
+                // rather than a misleading "0 ZEC", matching `store.durationHours`'s treatment below.
+                value: store.totalTransferred.map { "\($0.decimalString()) ZEC" } ?? "—",
                 rowAppereance: .top
             )
 
@@ -232,7 +234,9 @@ struct MigrationCompleteView: View {
 
             MigrationDetailRow(
                 title: String(localizable: .migrationCompleteRowDuration),
-                value: String(localizable: .migrationPlanEtaHours(store.durationHours)),
+                // MOB-1513: `nil` on a W1 fallback re-entry — an em-dash rather than a misleading
+                // "0 hours".
+                value: store.durationHours.map { String(localizable: .migrationPlanEtaHours($0)) } ?? "—",
                 rowAppereance: .bottom
             )
         }

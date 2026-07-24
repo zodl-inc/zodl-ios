@@ -14,27 +14,35 @@ import Foundation
 
 /// Aggregate summary of the migration for progress UI. Not part of the SDK surface. [ext]
 struct MigrationSummary: Equatable, Sendable, Codable {
-    /// All-zero convenience value, e.g. before any migration data has loaded.
+    /// Convenience value for e.g. before any migration data has loaded: `dust`/the transfer
+    /// counts read genuinely zero, while `transferred`/`estimatedDurationHours` read `nil` — the
+    /// same "not yet known" pairing the W1 fallback (no committed schedule persisted) returns for
+    /// both (MOB-1513; see `MigrationManagerImpl.migrationSummary`'s doc).
     static let zero = MigrationSummary(
-        transferred: Zatoshi.zero,
+        transferred: nil,
         dust: Zatoshi.zero,
         transfersSent: 0,
         transfersTotal: 0,
-        estimatedDurationHours: 0
+        estimatedDurationHours: nil
     )
 
-    var transferred: Zatoshi
+    /// The value transferred so far. `nil` when not derivable from a persisted schedule (the W1
+    /// fallback, before any committed schedule exists) — never a placeholder `Zatoshi.zero`
+    /// (MOB-1513).
+    var transferred: Zatoshi?
     var dust: Zatoshi
     var transfersSent: Int
     var transfersTotal: Int
-    var estimatedDurationHours: Int
+    /// A rough estimate of the schedule's total remaining duration, in hours. `nil` on the same
+    /// W1 fallback `transferred` is — never a placeholder `0` (MOB-1513).
+    var estimatedDurationHours: Int?
 
     init(
-        transferred: Zatoshi,
+        transferred: Zatoshi?,
         dust: Zatoshi,
         transfersSent: Int,
         transfersTotal: Int,
-        estimatedDurationHours: Int
+        estimatedDurationHours: Int?
     ) {
         self.transferred = transferred
         self.dust = dust
@@ -71,7 +79,12 @@ struct MigrationTransferRow: Equatable, Sendable, Codable, Identifiable {
     var id: String
     /// 0-based position in the schedule.
     var index: Int
-    var amount: Zatoshi
+    /// The value crossing the turnstile on this row. `nil` when not derivable — a status-only
+    /// (live per-transaction statuses, no persisted schedule) or progress-only synthesized
+    /// fallback row (MOB-1513; see `MigrationDerivations.statusOnlyTransferRows`'s and
+    /// `MigrationManagerImpl.synthesizedTransferRows`'s docs). A genuine schedule/sentRecord-
+    /// derived row always carries its real, non-nil value — never a placeholder `Zatoshi.zero`.
+    var amount: Zatoshi?
     var status: Status
     /// 0 = ready now; meaningful for pending rows. Coarse (whole-hour) — the forward-ETA caption
     /// prefers `minutesFromNow` when set; the BACKWARD "Sent Nh ago" / "Overdue Nh ago" captions
@@ -105,7 +118,7 @@ struct MigrationTransferRow: Equatable, Sendable, Codable, Identifiable {
     init(
         id: String,
         index: Int,
-        amount: Zatoshi,
+        amount: Zatoshi?,
         status: Status,
         hoursFromNow: Int,
         minutesFromNow: Int? = nil,

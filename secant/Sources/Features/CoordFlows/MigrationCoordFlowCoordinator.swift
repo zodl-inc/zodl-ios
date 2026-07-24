@@ -1224,10 +1224,17 @@ extension MigrationCoordFlow {
         let summary = await migrationManager.migrationSummary(accountUUID)
         let newScheduleAmount = schedule?.transfers.reduce(Zatoshi.zero) { $0 + $1.amount } ?? Zatoshi.zero
         return MigrationScheduled.State(
-            totalAmount: summary.transferred + newScheduleAmount,
+            // `summary.transferred` is only `nil` on the W1 fallback (no committed schedule) —
+            // impossible here, since this screen hydrates right after `recordCommittedSchedule` has
+            // already run; `Zatoshi.zero` is the correct additive identity regardless (nothing
+            // ALREADY sent to add on top of the fresh schedule's own total).
+            totalAmount: (summary.transferred ?? Zatoshi.zero) + newScheduleAmount,
             sentCount: summary.transfersSent,
             totalCount: summary.transfersTotal,
-            durationHours: summary.estimatedDurationHours,
+            // Same reasoning as `totalAmount` above — `summary.estimatedDurationHours` is only
+            // `nil` on the W1 fallback, which a just-committed schedule has already left; `0` never
+            // surfaces in practice, but is the correct fallback if it somehow did.
+            durationHours: summary.estimatedDurationHours ?? 0,
             dustAmount: summary.dust
         )
     }
@@ -1250,10 +1257,17 @@ extension MigrationCoordFlow {
             residual = (try? await sdkSynchronizer.residualAfterMigration(accountUUID)) ?? nil
         }
         return MigrationScheduled.State(
-            totalAmount: summary.transferred + newScheduleAmount,
+            // Unlike `scheduledState`, this window genuinely CAN hit the W1 fallback (called
+            // BEFORE `recordCommittedSchedule` runs — see this method's own doc): `nil` there means
+            // "no prior schedule's sent total exists yet", so `Zatoshi.zero` is the mathematically
+            // correct amount to add, not a placeholder.
+            totalAmount: (summary.transferred ?? Zatoshi.zero) + newScheduleAmount,
             sentCount: summary.transfersSent,
             totalCount: summary.transfersSent + (schedule?.transfers.count ?? 0),
-            durationHours: schedule?.estimatedDurationHours ?? summary.estimatedDurationHours,
+            // `schedule` (the in-hand fresh proposal) is the real primary source and always wins
+            // when present; `summary.estimatedDurationHours` only backs it up when `schedule` is
+            // nil too (defensive), and `0` only if BOTH are unavailable.
+            durationHours: schedule?.estimatedDurationHours ?? summary.estimatedDurationHours ?? 0,
             dustAmount: residual ?? Zatoshi.zero
         )
     }

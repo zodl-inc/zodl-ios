@@ -359,7 +359,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
         let balance = await balanceTask
 
         let state = rawState
-        let rows = bannerTransferRows(resolvedAccountUUID: resolvedAccountUUID, state: state, hasOverdue: hasOverdue, progress: progress)
+        let rows = await bannerTransferRows(resolvedAccountUUID: resolvedAccountUUID, state: state, hasOverdue: hasOverdue, progress: progress)
         // MOB-1511 (W2): the multi-round context for the round-aware banner arms.
         let roundContext = await migrationRoundContext(accountUUID: resolvedAccountUUID)
 
@@ -469,19 +469,20 @@ final class MigrationManagerImpl: @unchecked Sendable {
         guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return MigrationSummary.zero }
 
         guard let committedSchedule = scheduleStorage.committedSchedule(for: resolvedAccountUUID) else {
-            // [MOB-1496] W1 fallback: no persisted payload yet — everything derivable comes from
+            // [MOB-1513] W1 fallback: no persisted payload yet — everything derivable comes from
             // `getMigrationProgress` alone (counts and the remaining Orchard value, mapped onto
             // `dust`). `transferred`/`estimatedDurationHours` need per-transfer amounts and the
             // schedule's own duration estimate, neither recoverable from progress alone, so they
-            // stay `0`. On a missing account or any SDK-read error, `.zero`.
+            // read `nil` — never a placeholder `0`. On a missing account or any SDK-read error,
+            // `.zero` (whose own `transferred`/`estimatedDurationHours` are `nil` too).
             guard let progress = await migrationProgress(accountUUID: resolvedAccountUUID) else { return MigrationSummary.zero }
 
             return MigrationSummary(
-                transferred: Zatoshi.zero,
+                transferred: nil,
                 dust: progress.remainingOrchard,
                 transfersSent: progress.completedTransfers,
                 transfersTotal: progress.totalTransfers,
-                estimatedDurationHours: 0
+                estimatedDurationHours: nil
             )
         }
 
@@ -508,8 +509,19 @@ final class MigrationManagerImpl: @unchecked Sendable {
         guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return [] }
 
         guard let committedSchedule = scheduleStorage.committedSchedule(for: resolvedAccountUUID) else {
-            // [MOB-1496] W1 fallback — see `synthesizedTransferRows`'s doc for the exact rules. On a
-            // missing account or any SDK-read error, `[]`.
+            // [MOB-1513] W1 fallback, statuses-first: no persisted schedule yet (a restore, or a
+            // fresh install mid-migration), so the engine's LIVE per-transaction statuses are the
+            // best available signal — see `MigrationDerivations.statusOnlyTransferRows`'s doc for
+            // the exact per-row rules. Only when the engine reports no transfer-kind status either
+            // (an empty/throwing read) does this fall further back to `synthesizedTransferRows`,
+            // the pure progress-count approximation. On a missing account, `[]`.
+            let statuses = (try? await sdkSynchronizer.migrationTransactionStatuses(resolvedAccountUUID)) ?? []
+            if let statusRows = MigrationDerivations.statusOnlyTransferRows(
+                statuses: statuses,
+                currentTip: sdkSynchronizer.latestState().latestBlockHeight
+            ) {
+                return statusRows
+            }
             guard let progress = await migrationProgress(accountUUID: resolvedAccountUUID) else { return [] }
             return Self.synthesizedTransferRows(progress: progress)
         }
@@ -533,11 +545,13 @@ final class MigrationManagerImpl: @unchecked Sendable {
         )
     }
 
-    /// [MOB-1496] W1 fallback: no persisted payload yet — rows are synthesized purely from
-    /// `getMigrationProgress`'s counts: index < completedTransfers reads `.sent`, everything else
-    /// `.pending` (no `.active`/`.overdue`/`.invalid`/`.expired` — those need per-transfer identity a
-    /// persisted schedule would carry); `hoursFromNow` is a rough `(index - completed) × 6h` cadence
-    /// estimate, clamped ≥ 0. `amount`/`id` are placeholders. Shared by the public
+    /// [MOB-1496] W1 fallback of last resort: no persisted schedule AND no live transfer statuses
+    /// either (MOB-1513 — `statusOnlyTransferRows` returned `nil`) — rows are synthesized purely
+    /// from `getMigrationProgress`'s counts: index < completedTransfers reads `.sent`, everything
+    /// else `.pending` (no `.active`/`.overdue`/`.invalid`/`.expired` — those need per-transfer
+    /// identity neither progress nor an absent status list can carry); `hoursFromNow` is a rough
+    /// `(index - completed) × 6h` cadence estimate, clamped ≥ 0. `amount` is `nil` (unknown — never
+    /// a placeholder `Zatoshi.zero`); `id` is a placeholder ordinal. Shared by the public
     /// `migrationTransfers(accountUUID:)` and `bannerVariant`'s own row derivation (R8-T3 #23),
     /// which otherwise would have re-derived this independently after already fetching `progress`.
     private static func synthesizedTransferRows(progress: MigrationProgress) -> [MigrationTransferRow] {
@@ -545,7 +559,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
             MigrationTransferRow(
                 id: "\(index)",
                 index: index,
-                amount: Zatoshi.zero,
+                amount: nil,
                 status: index < progress.completedTransfers ? MigrationTransferRow.Status.sent : MigrationTransferRow.Status.pending,
                 hoursFromNow: max(0, (index - progress.completedTransfers) * 6)
             )
@@ -555,15 +569,30 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// R8-T3 (#23): `bannerVariant`'s own row derivation — mirrors `migrationTransfers(accountUUID:)`'s
     /// branching logic exactly, but takes `state`/`hasOverdue`/`progress` already fetched by the
     /// caller instead of re-reading them (this file's public `migrationTransfers` keeps its own
-    /// independent reads unchanged; only the tiny W1-fallback synthesis is shared, via
+    /// independent reads unchanged; only the W1-fallback synthesis is shared, via
     /// `synthesizedTransferRows`, to avoid coupling the two methods' read patterns together).
+    ///
+    /// MOB-1513 (W1 fallback wave 2): `async` now — the no-committed-schedule branch reads live
+    /// transfer statuses itself, LAZILY (only when actually taking that branch), rather than being
+    /// handed a caller-prefetched value: `bannerVariant`'s committed-schedule path never needed
+    /// this read before (it still doesn't derive its OWN rows from live statuses — see
+    /// `transferRows`'s call below, `statuses:` omitted), so prefetching it unconditionally at the
+    /// call site would add a wasted SDK round-trip to the common (schedule-present) case.
     private func bannerTransferRows(
         resolvedAccountUUID: AccountUUID,
         state: MigrationState,
         hasOverdue: Bool,
         progress: MigrationProgress?
-    ) -> [MigrationTransferRow] {
+    ) async -> [MigrationTransferRow] {
         guard let committedSchedule = scheduleStorage.committedSchedule(for: resolvedAccountUUID) else {
+            // [MOB-1513] W1 fallback, statuses-first — see `migrationTransfers`'s twin doc.
+            let statuses = (try? await sdkSynchronizer.migrationTransactionStatuses(resolvedAccountUUID)) ?? []
+            if let statusRows = MigrationDerivations.statusOnlyTransferRows(
+                statuses: statuses,
+                currentTip: sdkSynchronizer.latestState().latestBlockHeight
+            ) {
+                return statusRows
+            }
             guard let progress else { return [] }
             return Self.synthesizedTransferRows(progress: progress)
         }
@@ -2070,6 +2099,125 @@ enum MigrationDerivations {
             transfersTotal: committedSchedule.sentRecords.count + unsentScheduleCount,
             estimatedDurationHours: committedSchedule.schedule.estimatedDurationHours
         )
+    }
+
+    /// MOB-1513 (W1 fallback wave 2): rows derived PURELY from the engine's LIVE per-transaction
+    /// migration statuses (`sdkSynchronizer.migrationTransactionStatuses`) — the preferred fallback
+    /// a caller takes when no committed schedule is persisted yet (a restore, or a fresh install
+    /// mid-migration; see `MigrationManagerImpl.migrationTransfers`'s doc). Unlike `transferRows`
+    /// above, there is no persisted schedule or `sentRecords` to join against, so every row's
+    /// `amount` is `nil` — a `MigrationTransactionStatus` carries no amount by design (see its own
+    /// `id` doc), and this is the only data source available on this path.
+    ///
+    /// Filters to `.transfer`-kind statuses only (a `.preparation`-kind status is a note-split
+    /// transaction, never displayed as a transfer row) — returns `nil` when none remain, the
+    /// "nothing to show yet" signal a caller falls further back from (to
+    /// `MigrationManagerImpl.synthesizedTransferRows`, the pure progress-count approximation).
+    /// Never an empty array, which would read as "the run has zero transfers" — a different and
+    /// wrong claim. Sorted by `crossing` index; a row's `index`/display position follows that sort,
+    /// and `id` is `String(status.id)` — the SAME opaque ordinal a schedule row would carry for the
+    /// same transaction (`MigrationTransactionStatus.id`'s own doc), so a later read that DOES gain
+    /// a persisted schedule joins to the identical id.
+    ///
+    /// Per-row status mirrors `transferRows`'s live-status precedence above (items 1-2 verbatim;
+    /// this fallback has no aggregate `state`/`hasOverdueMigrationTransfers` to consult for the
+    /// remaining cases, so items 3-4 below substitute an equivalent PER-ROW signal):
+    /// 1. `.mined` -> `.sent`, `hoursFromNow: 0`, `sentMinutesAgo: nil` (no `sentRecord` on this
+    ///    path at all — always reads "sent recently", same convention `transferRows` uses for a
+    ///    live-mined status with no matching `sentRecord`).
+    /// 2. `.broadcast` -> `.active` + `isBroadcasting: true` (the existing broadcasting/sent-
+    ///    pending styling, regardless of position — same convention as `transferRows`'s own item
+    ///    2).
+    /// 3. `blockedOn == .expired` -> `.expired`, regardless of position.
+    /// 4. The FIRST row in crossing order among everything else (mirrors `transferRows`'s own
+    ///    "only the earliest non-terminal row is ever the acted-on one" convention — ZIP-0318
+    ///    MUST: at most one broadcast at a time): `.overdue` when its own `scheduledHeight` is
+    ///    at/behind `currentTip` (the same "already due" reading `MigrationETA.minutesFromNow`
+    ///    floors to zero for), else `.active`. Every OTHER row -> `.pending`.
+    ///
+    /// ETAs (`hoursFromNow`/`minutesFromNow`) for rows in cases 2-4 come from `MigrationETA
+    /// .minutesFromNow(scheduledHeight:currentTip:)` fed the row's own live `scheduledHeight` —
+    /// never negative, never a fake future value for a past-due row (floors to `0`, "Ready now").
+    ///
+    /// Deliberately NOT extracted from/sharing private helpers with `transferRows` above — that
+    /// function's committed-schedule behavior is out of scope for this fallback (reuse of its
+    /// PUBLIC conventions yes, restructuring its internals no); this stays a small, self-contained
+    /// function that mirrors those conventions by construction instead.
+    static func statusOnlyTransferRows(
+        statuses: [MigrationTransactionStatus],
+        currentTip: BlockHeight
+    ) -> [MigrationTransferRow]? {
+        let transferStatuses = statuses
+            .compactMap { status -> (crossing: Int, status: MigrationTransactionStatus)? in
+                guard case let MigrationTransactionStatus.Kind.transfer(crossing) = status.kind else { return nil }
+                return (crossing, status)
+            }
+            .sorted { $0.crossing < $1.crossing }
+            .map { $0.status }
+
+        guard !transferStatuses.isEmpty else { return nil }
+
+        let firstNonTerminalIndex = transferStatuses.firstIndex { status in
+            switch status.state {
+            case MigrationTransactionStatus.State.mined, MigrationTransactionStatus.State.broadcast:
+                return false
+            default:
+                return true
+            }
+        }
+
+        return transferStatuses.enumerated().map { index, status in
+            if case MigrationTransactionStatus.State.mined = status.state {
+                return MigrationTransferRow(
+                    id: String(status.id),
+                    index: index,
+                    amount: nil,
+                    status: MigrationTransferRow.Status.sent,
+                    hoursFromNow: 0
+                )
+            }
+
+            let minutesFromNow = MigrationETA.minutesFromNow(scheduledHeight: status.scheduledHeight, currentTip: currentTip)
+
+            if case MigrationTransactionStatus.State.broadcast = status.state {
+                return MigrationTransferRow(
+                    id: String(status.id),
+                    index: index,
+                    amount: nil,
+                    status: MigrationTransferRow.Status.active,
+                    hoursFromNow: minutesFromNow / 60,
+                    minutesFromNow: minutesFromNow,
+                    isBroadcasting: true
+                )
+            }
+
+            if status.blockedOn == MigrationTransactionStatus.Blocker.expired {
+                return MigrationTransferRow(
+                    id: String(status.id),
+                    index: index,
+                    amount: nil,
+                    status: MigrationTransferRow.Status.expired,
+                    hoursFromNow: minutesFromNow / 60,
+                    minutesFromNow: minutesFromNow
+                )
+            }
+
+            let rowStatus: MigrationTransferRow.Status
+            if index == firstNonTerminalIndex {
+                rowStatus = minutesFromNow > 0 ? MigrationTransferRow.Status.active : MigrationTransferRow.Status.overdue
+            } else {
+                rowStatus = MigrationTransferRow.Status.pending
+            }
+
+            return MigrationTransferRow(
+                id: String(status.id),
+                index: index,
+                amount: nil,
+                status: rowStatus,
+                hoursFromNow: minutesFromNow / 60,
+                minutesFromNow: minutesFromNow
+            )
+        }
     }
 }
 
