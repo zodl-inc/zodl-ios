@@ -130,13 +130,17 @@ import ComposableArchitecture
         var state = AddKeystoneHWWallet.State()
         state.zcashAccounts = ZcashAccounts.testFixture()
         let importCount = LockIsolated(0)
+        // Hold the import in flight until the test releases it. A wall-clock sleep here raced
+        // parallel-suite load: the first import could finish (downing the guard) before the second
+        // tap was sent, so the re-tap legitimately imported again and the count read 2.
+        let (releaseStream, releaseContinuation) = AsyncStream<Void>.makeStream()
         let store = TestStore(initialState: state) {
             AddKeystoneHWWallet()
         } withDependencies: {
             $0.sdkSynchronizer = .mocked(
                 importAccount: { _, _, _, _, _, _, _ in
                     importCount.withValue { $0 += 1 }
-                    try await Task.sleep(for: .milliseconds(100))
+                    for await _ in releaseStream { break }
                     return AccountUUID(id: [UInt8](repeating: 0x01, count: 16))
                 },
                 walletAccounts: { [] }
@@ -146,6 +150,8 @@ import ComposableArchitecture
 
         await store.send(.unlockTapped(nil)) { $0.isImportingAccount = true }
         await store.send(.unlockTapped(nil))
+        releaseContinuation.yield()
+        releaseContinuation.finish()
         await store.receive(\.accountImportSucceeded, timeout: .seconds(2))
         await store.finish()
 
