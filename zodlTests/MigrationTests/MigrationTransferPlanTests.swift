@@ -118,8 +118,11 @@ import ComposableArchitecture
         await store.send(.onAppear)
         await store.receive(\.roundContextLoaded)
         await store.receive(\.transfersProposed) {
+            // MOB-1513 (C2): `t0` is `.pending`, not `.active` — the synthesized split row
+            // (`state.splitRow`, shown once `rows` is non-empty) carries the current-step styling
+            // alone now; see `MigrationTransferPlan.transferRowStatus`'s doc for the full rule.
             $0.rows = [
-                MigrationTransferRow(id: "t0", index: 0, amount: Zatoshi(500_000_000), status: .active, hoursFromNow: 0, minutesFromNow: 0),
+                MigrationTransferRow(id: "t0", index: 0, amount: Zatoshi(500_000_000), status: .pending, hoursFromNow: 0, minutesFromNow: 0),
                 MigrationTransferRow(id: "t1", index: 1, amount: Zatoshi(300_000_000), status: .pending, hoursFromNow: 0, minutesFromNow: 0)
             ]
             $0.totalDurationHours = 24
@@ -150,8 +153,11 @@ import ComposableArchitecture
         }
 
         await store.send(.onAppear) {
+            // MOB-1513 (C2): `.pending`, not `.active` — the split row shows for this single-
+            // transfer schedule too (non-empty `rows`), so it alone carries the current-step
+            // styling.
             $0.rows = [
-                MigrationTransferRow(id: "t0", index: 0, amount: Zatoshi(200_000_000), status: .active, hoursFromNow: 0, minutesFromNow: 0)
+                MigrationTransferRow(id: "t0", index: 0, amount: Zatoshi(200_000_000), status: .pending, hoursFromNow: 0, minutesFromNow: 0)
             ]
             $0.totalDurationHours = 12
             $0.schedule = schedule
@@ -198,8 +204,12 @@ import ComposableArchitecture
         await store.receive(\.transfersProposed) {
             // Unchanged from `onAppearWithNoInjectedScheduleProposesTransfersAndPopulatesRows`: the
             // two transfers, 1:1 with `schedule.transfers`, no third "split" entry.
+            //
+            // MOB-1513 (C2): `t0` is `.pending`, not `.active`, now — before this fix BOTH `t0` and
+            // `splitRow` (below) rendered `.active` simultaneously; the split row alone carries the
+            // current-step styling once it's shown.
             $0.rows = [
-                MigrationTransferRow(id: "t0", index: 0, amount: Zatoshi(500_000_000), status: .active, hoursFromNow: 0, minutesFromNow: 0),
+                MigrationTransferRow(id: "t0", index: 0, amount: Zatoshi(500_000_000), status: .pending, hoursFromNow: 0, minutesFromNow: 0),
                 MigrationTransferRow(id: "t1", index: 1, amount: Zatoshi(300_000_000), status: .pending, hoursFromNow: 0, minutesFromNow: 0)
             ]
             $0.totalDurationHours = 24
@@ -243,8 +253,10 @@ import ComposableArchitecture
         }
 
         await store.send(.onAppear) {
+            // MOB-1513 (C2): `t0` is `.pending`, not `.active` — same rule as the fresh-propose
+            // path above, applied via the injected-schedule branch.
             $0.rows = [
-                MigrationTransferRow(id: "t0", index: 0, amount: Zatoshi(600_000_000), status: .active, hoursFromNow: 0, minutesFromNow: 0),
+                MigrationTransferRow(id: "t0", index: 0, amount: Zatoshi(600_000_000), status: .pending, hoursFromNow: 0, minutesFromNow: 0),
                 MigrationTransferRow(id: "t1", index: 1, amount: Zatoshi(150_000_000), status: .pending, hoursFromNow: 0, minutesFromNow: 0)
             ]
             $0.totalDurationHours = 12
@@ -286,6 +298,32 @@ import ComposableArchitecture
         #expect(called.value == false)
     }
 
+    // MARK: - MOB-1513 (C2): transfer row status — the split row, once shown, alone carries the
+    // current-step styling (Figma 4207:7394 + 4198:14325)
+
+    /// Every `apply`-populated non-empty schedule reaches this branch in practice: `state.splitRow`
+    /// (see its doc) shows unconditionally once `rows` is non-empty, so `hasSplitRow` is always
+    /// `true` for a genuine schedule — this is the actual bug fix, pinned directly against
+    /// `MigrationTransferPlan.transferRowStatus` (the rule `apply` now delegates to) rather than
+    /// only through the full `onAppear`/`transfersProposed` pipeline, since every existing
+    /// end-to-end test above already exercises this same branch (updated alongside this task).
+    @Test func transferRowStatusIsPendingForEveryIndexWhenSplitRowIsPresent() {
+        #expect(MigrationTransferPlan.transferRowStatus(index: 0, hasSplitRow: true) == .pending)
+        #expect(MigrationTransferPlan.transferRowStatus(index: 1, hasSplitRow: true) == .pending)
+        #expect(MigrationTransferPlan.transferRowStatus(index: 4, hasSplitRow: true) == .pending)
+    }
+
+    /// The ORIGINAL rule (Figma 3508:11442), kept as `transferRowStatus`'s other explicit branch for
+    /// whenever there's no split row to carry the current-step styling instead. Unreachable through
+    /// `apply` today (`state.splitRow`'s only gate is `rows.isEmpty`, so a schedule with any rows at
+    /// all always has one) — pinned here directly so the rule's own doc-stated behavior stays
+    /// verified even though this store can't currently produce the scenario end-to-end.
+    @Test func transferRowStatusKeepsFirstActiveWhenNoSplitRowIsPresent() {
+        #expect(MigrationTransferPlan.transferRowStatus(index: 0, hasSplitRow: false) == .active)
+        #expect(MigrationTransferPlan.transferRowStatus(index: 1, hasSplitRow: false) == .pending)
+        #expect(MigrationTransferPlan.transferRowStatus(index: 2, hasSplitRow: false) == .pending)
+    }
+
     // MARK: - MOB-1513 (B3): minute-precise forward ETA from the live chain tip
 
     /// B3 root cause: `apply` converted a transfer's execution height via `estimateTimestamp`, which
@@ -320,8 +358,10 @@ import ComposableArchitecture
         await store.send(.onAppear)
         await store.receive(\.roundContextLoaded)
         await store.receive(\.transfersProposed) {
+            // MOB-1513 (C2): `t0` is `.pending`, not `.active` — incidental to this test's own
+            // concern (the ETA math below), but still asserted since `TestStore` is exhaustive.
             $0.rows = [
-                MigrationTransferRow(id: "t0", index: 0, amount: Zatoshi(500_000_000), status: .active, hoursFromNow: 0, minutesFromNow: 0),
+                MigrationTransferRow(id: "t0", index: 0, amount: Zatoshi(500_000_000), status: .pending, hoursFromNow: 0, minutesFromNow: 0),
                 MigrationTransferRow(id: "t1", index: 1, amount: Zatoshi(300_000_000), status: .pending, hoursFromNow: 2, minutesFromNow: 120)
             ]
             $0.totalDurationHours = 24
@@ -888,8 +928,10 @@ import ComposableArchitecture
         }
         await store.receive(\.transfersProposed) {
             $0.isConfirming = false
+            // MOB-1513 (C2): `.pending`, not `.active` — the split row carries the current-step
+            // styling once it's shown.
             $0.rows = [
-                MigrationTransferRow(id: "t0", index: 0, amount: Zatoshi(500_000_000), status: .active, hoursFromNow: 0, minutesFromNow: 0)
+                MigrationTransferRow(id: "t0", index: 0, amount: Zatoshi(500_000_000), status: .pending, hoursFromNow: 0, minutesFromNow: 0)
             ]
             $0.totalDurationHours = 24
             $0.schedule = schedule
@@ -1210,8 +1252,10 @@ import ComposableArchitecture
         }
         await store.receive(\.transfersProposed) {
             $0.isConfirming = false
+            // MOB-1513 (C2): `.pending`, not `.active` — the split row carries the current-step
+            // styling once it's shown.
             $0.rows = [
-                MigrationTransferRow(id: "t0", index: 0, amount: Zatoshi(200_000_000), status: .active, hoursFromNow: 0, minutesFromNow: 0)
+                MigrationTransferRow(id: "t0", index: 0, amount: Zatoshi(200_000_000), status: .pending, hoursFromNow: 0, minutesFromNow: 0)
             ]
             $0.totalDurationHours = 12
             $0.schedule = schedule
@@ -1298,8 +1342,10 @@ import ComposableArchitecture
         await clock.advance(by: .seconds(3))
         await clock.advance(by: .seconds(3))
         await store.receive(\.transfersProposed) {
+            // MOB-1513 (C2): `t0` is `.pending`, not `.active` — the split row carries the
+            // current-step styling once it's shown.
             $0.rows = [
-                MigrationTransferRow(id: "t0", index: 0, amount: Zatoshi(500_000_000), status: .active, hoursFromNow: 0, minutesFromNow: 0),
+                MigrationTransferRow(id: "t0", index: 0, amount: Zatoshi(500_000_000), status: .pending, hoursFromNow: 0, minutesFromNow: 0),
                 MigrationTransferRow(id: "t1", index: 1, amount: Zatoshi(300_000_000), status: .pending, hoursFromNow: 0, minutesFromNow: 0)
             ]
             $0.totalDurationHours = 24
@@ -1394,9 +1440,11 @@ import ComposableArchitecture
         await store.receive(\.planStaleRefreshed)
 
         #expect(store.state.schedule == freshSchedule)
+        // MOB-1513 (C2): `.pending`, not `.active` — the split row carries the current-step
+        // styling once it's shown.
         #expect(
             store.state.rows == [
-                MigrationTransferRow(id: "fresh", index: 0, amount: Zatoshi(400_000_000), status: .active, hoursFromNow: 0, minutesFromNow: 0)
+                MigrationTransferRow(id: "fresh", index: 0, amount: Zatoshi(400_000_000), status: .pending, hoursFromNow: 0, minutesFromNow: 0)
             ]
         )
         #expect(store.state.totalDurationHours == 20)
@@ -1461,9 +1509,11 @@ import ComposableArchitecture
         await store.receive(\.planStaleRefreshed)
 
         #expect(store.state.schedule == freshSchedule)
+        // MOB-1513 (C2): `.pending`, not `.active` — the split row carries the current-step
+        // styling once it's shown.
         #expect(
             store.state.rows == [
-                MigrationTransferRow(id: "fresh", index: 0, amount: Zatoshi(300_000_000), status: .active, hoursFromNow: 0, minutesFromNow: 0)
+                MigrationTransferRow(id: "fresh", index: 0, amount: Zatoshi(300_000_000), status: .pending, hoursFromNow: 0, minutesFromNow: 0)
             ]
         )
         #expect(store.state.isConfirming == false)

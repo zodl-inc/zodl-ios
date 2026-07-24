@@ -568,8 +568,8 @@ struct MigrationTransferPlan {
     }
 
     /// Populates `rows`/`totalDurationHours`/`schedule` from a `MigrationSchedule`, whether it was
-    /// freshly proposed or injected by the coordinator. The first transfer is `.active` (ready now);
-    /// the rest are `.pending`.
+    /// freshly proposed or injected by the coordinator. MOB-1513 (C2, Figma 4207:7394 + 4198:14325):
+    /// every transfer row's status is decided by `transferRowStatus` now — see its doc for the rule.
     ///
     /// MOB-1513 (B3): each row's forward ETA is a block delta against the LIVE chain tip
     /// (`latestState().latestBlockHeight`, the established synchronous tip accessor) at 75 s/block —
@@ -579,6 +579,10 @@ struct MigrationTransferPlan {
     /// sub-hour transfer reads "in ~N mins"); `hoursFromNow` keeps the coarse whole-hour copy.
     private func apply(_ schedule: MigrationSchedule, to state: inout State) {
         let tip = sdkSynchronizer.latestState().latestBlockHeight
+        // MOB-1513 (C2): mirrors `State.splitRow`'s own gate (shown whenever `rows` is non-empty —
+        // see its doc) rather than re-deriving a second "is there a split" notion that could drift
+        // from what the view actually renders alongside these rows.
+        let hasSplitRow = !schedule.transfers.isEmpty
         state.rows = IdentifiedArrayOf(
             uniqueElements: schedule.transfers.enumerated().map { index, transfer in
                 let minutes = MigrationETA.minutesFromNow(scheduledHeight: transfer.nextExecutableAfterHeight, currentTip: tip)
@@ -586,7 +590,7 @@ struct MigrationTransferPlan {
                     id: transfer.id,
                     index: index,
                     amount: transfer.amount,
-                    status: index == 0 ? .active : .pending,
+                    status: Self.transferRowStatus(index: index, hasSplitRow: hasSplitRow),
                     hoursFromNow: minutes / 60,
                     minutesFromNow: minutes
                 )
@@ -594,5 +598,20 @@ struct MigrationTransferPlan {
         )
         state.totalDurationHours = schedule.estimatedDurationHours
         state.schedule = schedule
+    }
+
+    /// MOB-1513 (C2, Figma 4207:7394 + 4198:14325): a transfer row's `.active`/`.pending` status.
+    /// The synthesized split row (`State.splitRow`) alone carries the current-step styling once
+    /// it's shown, so a transfer row is `.active` only in the split row's ABSENCE — `apply`'s
+    /// original rule (Figma 3508:11442). Before this fix, both rendered `.active` simultaneously
+    /// for any non-empty schedule, since `State.splitRow` shows unconditionally once `rows` is
+    /// non-empty — the exact condition `hasSplitRow` mirrors here, so `apply` can in practice only
+    /// ever reach the `true` branch for a genuine schedule. Extracted as its own internal,
+    /// directly-tested rule (the established pattern for pure per-row logic in this feature — see
+    /// `MigrationETA`) rather than inlined, so both branches of the rule stay pinned by a test even
+    /// though only one is reachable through `apply` today.
+    static func transferRowStatus(index: Int, hasSplitRow: Bool) -> MigrationTransferRow.Status {
+        guard !hasSplitRow else { return .pending }
+        return index == 0 ? .active : .pending
     }
 }
