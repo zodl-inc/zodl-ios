@@ -101,7 +101,7 @@ import ComposableArchitecture
         }
 
         let transaction = TransactionState(fee: nil, id: "restored-tx-1", status: .received, zecAmount: Zatoshi(100_000))
-        store.send(.fetchedTransactions(IdentifiedArrayOf(uniqueElements: [transaction])))
+        store.send(.fetchedTransactions(account.id, IdentifiedArrayOf(uniqueElements: [transaction])))
 
         await waitForRootStore { store.state.homeState.smartBannerState.priorityContent != nil }
 
