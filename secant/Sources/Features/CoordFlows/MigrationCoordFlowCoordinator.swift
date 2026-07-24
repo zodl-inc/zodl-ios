@@ -308,6 +308,26 @@
 //  the run stays `splitPendingConfirmation`, surfaced by the migration progress banner/route, and
 //  BG windows + foreground reconcile retry preps naturally.
 //
+//  MOB-1513 (C7, Figma Error & Recovery row 3): the EXPIRED-transfer recovery lane's `.recreate`
+//  used to land directly on Scheduled (software) or start the Keystone ceremony immediately
+//  (Keystone) — the approved Figma spec's Error & Recovery row 3 instead promises a Confirm
+//  Transfer Plan review screen between the recovery screen and Scheduled, matching the
+//  `.notesSpent` lane's own recreated-plan screen. Both `.expired` branches now push that SAME
+//  `.recreated` presentation (`recreatedPlanState`) with `requiresSigning: false` (nothing left to
+//  sign — the software refresh already re-signed in place, the Keystone batch is already proposed)
+//  and the new `isExpiredRecoveryReview` flag; `.transferPlan(.delegate(.confirmed))` reads that
+//  flag to route to the new `expiredRecoveryReviewConfirmed` instead of the pre-existing
+//  `requiresSigning == false` rescheduled-variant branch (a plain `.flowFinished` acknowledgment,
+//  unchanged and still reachable — `isExpiredRecoveryReview` is what tells the two apart, since
+//  both are `.recreated`/`requiresSigning == false`). The Keystone lane's already-proposed batch
+//  rides the pushed screen's own new `pendingKeystoneRecoveryBatch` field (`MigrationTransferPlanStore.swift`)
+//  rather than coordinator state, so backing out of the review screen without confirming discards
+//  it for free (TCA tears the popped element's state down) — no new pop-handling needed. The
+//  ceremony's own completion/store/abandon semantics (`resumeCommittedMigrationChain`'s
+//  `.recoveryRefresh` case, `keystoneScanAbandoned`'s recovery-refresh skip-cancel branch) are
+//  byte-identical; only WHEN `.recoveryRefresh(schedule:)` gets armed moves, from the propose
+//  landing to the review screen's own Confirm.
+//
 
 import Foundation
 import ComposableArchitecture
@@ -563,11 +583,27 @@ extension MigrationCoordFlow {
             case .path(.element(id: _, action: .transferPlan(.delegate(.confirmed)))):
                 guard case let .transferPlan(planState) = state.path.last else { return .none }
 
-                // Rescheduled variant (`requiresSigning == false`): its confirm is a plain
-                // acknowledgment of an already-committed reschedule (`scheduleFirstWindow()` ran
-                // once already, at reschedule-initiation) — no re-sign, no terminal `.scheduled`
-                // screen, straight to `.flowFinished` ("Got-it" per the spec).
                 guard planState.requiresSigning else {
+                    // MOB-1513 (C7, Figma Error & Recovery row 3): the expired-recovery review
+                    // screen is ALSO `requiresSigning == false` (nothing left to sign by the time
+                    // it's shown — see its two construction sites, `recreatedPlanState`) but must
+                    // NOT just acknowledge like the rescheduled variant below: software lands on
+                    // Scheduled, Keystone resumes the already-proposed ceremony.
+                    // `isExpiredRecoveryReview` is the discriminator — `variant`/`requiresSigning`
+                    // alone can't tell the two `requiresSigning == false` screens apart (this one is
+                    // also `.recreated`, the same variant the pre-existing `.notesSpent`/restart lane
+                    // uses).
+                    if planState.isExpiredRecoveryReview {
+                        return expiredRecoveryReviewConfirmed(
+                            schedule: planState.schedule,
+                            pendingKeystoneRecoveryBatch: planState.pendingKeystoneRecoveryBatch,
+                            state: &state
+                        )
+                    }
+                    // Rescheduled variant: its confirm is a plain acknowledgment of an
+                    // already-committed reschedule (`scheduleFirstWindow()` ran once already, at
+                    // reschedule-initiation) — no re-sign, no terminal `.scheduled` screen, straight
+                    // to `.flowFinished` ("Got-it" per the spec).
                     return .send(.flowFinished)
                 }
 
@@ -988,10 +1024,18 @@ extension MigrationCoordFlow {
                 // state.
                 //
                 // - `.transferExpired`: rebuild the expired transfers IN PLACE first via
-                //   `refreshStaleMigrationTransfers` — software re-signs (real usk) and lands straight
-                //   on the Scheduled screen (already committed + re-signed, amounts unchanged, no new
-                //   consent); Keystone re-serves ONLY the rebuilt rows through the existing QR ceremony
-                //   (nil usk). A full restart is offered only as the failure alert's fallback.
+                //   `refreshStaleMigrationTransfers` — software re-signs (real usk), then records +
+                //   reconciles the committed schedule immediately (record-before-navigation: the SDK
+                //   has already re-signed in place by the time the refresh returns, so the app-side
+                //   record must not wait on anything the user could still back out of — see that
+                //   branch's own doc). MOB-1513 (C7, Figma Error & Recovery row 3 — whose own bullet
+                //   copy promises this step): rather than landing straight on Scheduled, this now
+                //   shows a Confirm Transfer Plan review screen first; ITS Confirm is what actually
+                //   pushes Scheduled (`expiredRecoveryReviewConfirmed`). Keystone re-serves ONLY the
+                //   rebuilt rows through the existing QR ceremony (nil usk), but the ceremony no
+                //   longer starts as soon as the batch is proposed either — it proposes, then shows
+                //   the SAME review screen, and THAT screen's Confirm is what starts the ceremony. A
+                //   full restart is offered only as the failure alert's fallback.
                 // - `.invalidTransfer`: keep the pre-Task-2 restart behavior (`.recoveryRestartRequested`).
                 //
                 // MOB-1458 (final review I3): single-flight — set `isRecovering` on the recovery
@@ -1013,7 +1057,10 @@ extension MigrationCoordFlow {
 
                 case .expired:
                     // Keystone: refresh with a nil usk (rebuilt rows return UNSIGNED), then propose the
-                    // rebuilt batch off the RETURNED schedule and drive the existing QR ceremony. The
+                    // rebuilt batch off the RETURNED schedule. MOB-1513 (C7): the ceremony no longer
+                    // starts as soon as the propose succeeds — `recoveryRefreshKeystonePCZTProposed`
+                    // stashes the batch on a freshly pushed Confirm Transfer Plan review screen instead
+                    // (see that case's doc), and ITS OWN Confirm drives the existing QR ceremony. The
                     // returned schedule is the ONLY value echoed downstream (into `proposeKeystoneBatch`
                     // and, at store time, `recordCommittedSchedule`).
                     guard account.vendor != WalletAccount.Vendor.keystone else {
@@ -1062,13 +1109,25 @@ extension MigrationCoordFlow {
                             // locally persisted `committedSchedule`. Without this the app would keep
                             // showing the STALE pre-refresh schedule. Matches `commitSoftware`'s
                             // sign -> record -> reconcile order and the Keystone lane's store-time record.
+                            // MOB-1513 (C7): this ordering is UNCHANGED even though a review screen sits
+                            // between this point and Scheduled now (below) — the SDK has already
+                            // re-signed the rebuilt rows IN PLACE by the time `refreshStaleMigrationTransfers`
+                            // returns, so the app-side record must not be deferred until that screen's
+                            // Confirm: if the user backs out mid-flow from there, the app must still
+                            // reflect the re-signed run, never the stale pre-refresh one.
                             await migrationManager.recordCommittedSchedule(account.id, schedule)
                             // Reconcile on success, mirroring the restart path — the refresh's state
-                            // transition (e.g. off `.requiresAttention`) is observed promptly, and
-                            // `scheduledState`'s summary read below now sees the fresh schedule.
+                            // transition (e.g. off `.requiresAttention`) is observed promptly.
                             await migrationManager.reconcile()
-                            let scheduled = await scheduledState(accountUUID: account.id, schedule: schedule)
-                            await send(.pushHydratedPathState(.scheduled(scheduled)))
+                            // MOB-1513 (C7, Figma Error & Recovery row 3): lands on the SAME Confirm
+                            // Transfer Plan review screen the design now specifies between recovery and
+                            // Scheduled, instead of jumping straight there — see `recreatedPlanState`'s
+                            // doc. `requiresSigning: false` (the refresh above already re-signed
+                            // everything); its own Confirm (`isExpiredRecoveryReview`,
+                            // `expiredRecoveryReviewConfirmed`) is what pushes `.scheduled` next,
+                            // hydrated from THIS schedule.
+                            let planState = recreatedPlanState(schedule: schedule, requiresSigning: false, isExpiredRecoveryReview: true)
+                            await send(.pushHydratedPathState(.transferPlan(planState)))
                         } catch {
                             await send(.recoveryRefreshFailed)
                         }
@@ -1107,13 +1166,24 @@ extension MigrationCoordFlow {
                 }
 
                 // MOB-1458 (Task 2): the Keystone expired-recovery refresh succeeded and proposed the
-                // rebuilt batch — arm `.recoveryRefresh(schedule:)` (the returned schedule is the sole
-                // downstream echo source) and enter the existing QR ceremony. Mirrors
-                // `.migrateAnywayImmediateKeystonePCZTProposed`'s shape.
+                // rebuilt batch. MOB-1513 (C7, Figma Error & Recovery row 3): no longer arms
+                // `.recoveryRefresh(schedule:)`/starts the ceremony directly — pushes the SAME Confirm
+                // Transfer Plan review screen the software lane gets first, hydrated from the returned
+                // schedule, with the already-proposed batch riding the pushed screen's OWN
+                // `pendingKeystoneRecoveryBatch` rather than coordinator state (see that field's doc:
+                // a pop-back without confirming then discards it for free, TCA tearing the element
+                // down). The ceremony itself starts only once THAT screen's Confirm fires
+                // (`expiredRecoveryReviewConfirmed`), which is where `.recoveryRefresh(schedule:)`
+                // actually gets armed now.
             case .recoveryRefreshKeystonePCZTProposed(let pczts, let schedule):
-                state.pendingKeystoneSigning = .recoveryRefresh(schedule: schedule)
-                state.pendingKeystoneSigningAccountUUID = state.selectedWalletAccount?.id
-                beginKeystoneCeremony(pczts: pczts, state: &state)
+                let batch = MigrationTransferPlan.State.PendingKeystoneRecoveryBatch(pczts: pczts, schedule: schedule)
+                let planState = recreatedPlanState(
+                    schedule: schedule,
+                    requiresSigning: false,
+                    isExpiredRecoveryReview: true,
+                    pendingKeystoneRecoveryBatch: batch
+                )
+                state.path.append(.transferPlan(planState))
                 return .none
 
                 // MOB-1458 (Task 2): a refresh (or the Keystone batch propose after it) threw — offer
@@ -1264,6 +1334,46 @@ extension MigrationCoordFlow {
                 }
             }
         }
+    }
+
+    // MARK: - MOB-1513 (C7): expired-recovery review screen's own post-confirm chain
+
+    /// The expired-transfer recovery review screen's Confirm (Figma Error & Recovery row 3) —
+    /// reached only via `MigrationTransferPlan.State.isExpiredRecoveryReview` (see the
+    /// `.transferPlan(.delegate(.confirmed))` case above). Deliberately NOT routed through
+    /// `transferPlanPostConfirmChain`: that helper also fires `scheduleFirstWindow()`/the first-
+    /// delivery kick, side effects a fresh plan commit needs but this lane's refresh already doesn't
+    /// — nothing was newly scheduled here, so re-running them would be new behavior this task never
+    /// asked for, not a preserved one.
+    ///
+    /// Software: `recordCommittedSchedule`/`reconcile` already ran, BEFORE this screen was even
+    /// pushed (see the `.expired` software branch's own doc) — this is nothing more than a hydrate-
+    /// and-push, the exact same `scheduledState` hydration `transferPlanPostConfirmChain`'s
+    /// `.scheduled`/`.recreated` branch uses. Confirm never re-signs or re-records here.
+    ///
+    /// Keystone: the batch was already proposed (`recoveryRefreshKeystonePCZTProposed`) and rides on
+    /// THIS screen's own `pendingKeystoneRecoveryBatch` (never coordinator state — see that field's
+    /// doc for why). Confirm arms `.recoveryRefresh(schedule:)` and starts the ceremony exactly like
+    /// the original `.recoveryRefreshKeystonePCZTProposed` handler did before this review step
+    /// existed — the ceremony's own completion/store/abandon semantics (`resumeCommittedMigrationChain`'s
+    /// `.recoveryRefresh` case, `keystoneScanAbandoned`'s recovery-refresh skip-cancel branch) are
+    /// untouched, so it still lands on Scheduled the same way once signing completes.
+    private func expiredRecoveryReviewConfirmed(
+        schedule: MigrationSchedule?,
+        pendingKeystoneRecoveryBatch: MigrationTransferPlan.State.PendingKeystoneRecoveryBatch?,
+        state: inout MigrationCoordFlow.State
+    ) -> Effect<MigrationCoordFlow.Action> {
+        guard let pendingKeystoneRecoveryBatch else {
+            let accountUUID = state.selectedWalletAccount?.id
+            return .run { [accountUUID, schedule] send in
+                let scheduled = await scheduledState(accountUUID: accountUUID, schedule: schedule)
+                await send(.pushHydratedPathState(.scheduled(scheduled)))
+            }
+        }
+        state.pendingKeystoneSigning = .recoveryRefresh(schedule: pendingKeystoneRecoveryBatch.schedule)
+        state.pendingKeystoneSigningAccountUUID = state.selectedWalletAccount?.id
+        beginKeystoneCeremony(pczts: pendingKeystoneRecoveryBatch.pczts, state: &state)
+        return .none
     }
 
     /// MOB-1458 (W-E): hydrates `MigrationScheduled.State` from the manager's summary PLUS the
@@ -2050,11 +2160,30 @@ extension MigrationCoordFlow {
 
     /// Recovery `.recreate`'s follow-up plan screen: `restartCurrentMigrationStep()` returns a
     /// fresh `MigrationSchedule`, injected via `injectedSchedule` so the screen's own `onAppear`
-    /// populates rows (no coordinator-side duplication of that row-building logic). This variant
-    /// DOES sign — `requiresSigning` stays at its default `true`.
-    private func recreatedPlanState(schedule: MigrationSchedule?) -> MigrationTransferPlan.State {
-        var state = MigrationTransferPlan.State(variant: .recreated)
+    /// populates rows (no coordinator-side duplication of that row-building logic). The
+    /// `.notesSpent`/restart lane's plan DOES sign — `requiresSigning` stays at its default `true`.
+    ///
+    /// MOB-1513 (C7, Figma Error & Recovery row 3): also backs the EXPIRED-transfer recovery's
+    /// review screen — both the software lane (after `refreshStaleMigrationTransfers` +
+    /// `recordCommittedSchedule` + `reconcile` have already run) and the Keystone lane (after the
+    /// batch is proposed, before it's signed) push this SAME `.recreated` presentation with
+    /// `requiresSigning: false` (nothing left to sign) and `isExpiredRecoveryReview: true` — the
+    /// discriminator `.transferPlan(.delegate(.confirmed))` reads to route to
+    /// `expiredRecoveryReviewConfirmed` instead of the rescheduled variant's plain `.flowFinished`
+    /// acknowledgment. `pendingKeystoneRecoveryBatch` carries the Keystone lane's already-proposed
+    /// PCZTs so its Confirm can start the ceremony without re-proposing; `nil` for the software lane
+    /// and the pre-existing `.notesSpent` call site (both unaffected — every new parameter here
+    /// defaults to matching their prior behavior exactly).
+    private func recreatedPlanState(
+        schedule: MigrationSchedule?,
+        requiresSigning: Bool = true,
+        isExpiredRecoveryReview: Bool = false,
+        pendingKeystoneRecoveryBatch: MigrationTransferPlan.State.PendingKeystoneRecoveryBatch? = nil
+    ) -> MigrationTransferPlan.State {
+        var state = MigrationTransferPlan.State(variant: .recreated, requiresSigning: requiresSigning)
         state.injectedSchedule = schedule
+        state.isExpiredRecoveryReview = isExpiredRecoveryReview
+        state.pendingKeystoneRecoveryBatch = pendingKeystoneRecoveryBatch
         return state
     }
 
