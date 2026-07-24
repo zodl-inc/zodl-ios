@@ -186,6 +186,15 @@ struct SDKSynchronizerClient: Sendable {
     var executeNextPendingMigrationTransfer: @Sendable (
         AccountUUID, MigrationNetworkPrivacyOptions
     ) async throws -> MigrationTransferResult?
+    /// MOB-1513: DEBUG/QA ONLY — rewrites `accountUUID`'s committed migration schedule's transfer
+    /// heights (first due in ~2 blocks/~2.5 min, then 4-block/~5 min strides) and the earliest
+    /// transfer's anchor boundary, so real broadcast delivery can be exercised without waiting out
+    /// ZIP 318's privacy delay. Not for production flows. Returns the number of transfers
+    /// rescheduled (`0` when the account has no stored migration, or every stored transfer is
+    /// already broadcast/mined). Already-broadcast/mined transfers and preparation (note-split)
+    /// transactions are left untouched. Not broadcast-bearing (rewrites local schedule heights
+    /// only) — no transaction-guard wrap, same reasoning as `restartCurrentMigrationStep` above.
+    var debugRescheduleMigrationTransfers: @Sendable (AccountUUID) async throws -> Int
     /// Wallet-scope: whether ordinary sync should currently be paused for a migration privacy gate.
     /// Non-throwing (degrades open on internal failure).
     var isMigrationSyncBlocked: @Sendable () async -> Bool = { false }

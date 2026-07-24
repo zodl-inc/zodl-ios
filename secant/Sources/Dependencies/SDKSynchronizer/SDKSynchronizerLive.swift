@@ -366,6 +366,11 @@ extension SDKSynchronizerClient: DependencyKey {
                     try await synchronizer.executeNextPendingMigrationTransfer(accountUUID: accountUUID, options: options)
                 }
             },
+            // MOB-1513: DEBUG/QA only — rewrites local schedule heights, no transaction submitted,
+            // so (unlike the broadcast-bearing member just above) this stays unguarded.
+            debugRescheduleMigrationTransfers: { accountUUID in
+                try await synchronizer.debugRescheduleMigrationTransfers(accountUUID: accountUUID)
+            },
             isMigrationSyncBlocked: {
                 await synchronizer.isMigrationSyncBlocked()
             },
