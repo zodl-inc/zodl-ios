@@ -11273,7 +11273,7 @@
         },
         "es" : {
           "stringUnit" : {
-            "state" : "needs_review",
+            "state" : "translated",
             "value" : "Ronda %1$lld de %2$lld"
           }
         }
