@@ -18,22 +18,26 @@ struct MigrationEntry {
     struct State: Equatable {
         var selectedMode = MigrationMode.privateScheduled
         var orchardBalance = Zatoshi.zero
-        /// e.g. `"$4,832.86"`; `nil` omits the parenthesized fiat amount.
-        var fiatText: String?
+        @Shared(.inMemory(.exchangeRate)) var currencyConversion: CurrencyConversion?
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
 
         var isDisclaimerVisible: Bool {
             selectedMode == .immediate
         }
 
+        /// `orchardBalance` converted to the user's fiat currency, e.g. `"$4,832.86"`; `nil` when
+        /// no exchange rate is available (the exchange-rate feature is optional app-wide) — the
+        /// parenthesized fiat amount is omitted in that case.
+        var fiatText: String? {
+            currencyConversion?.convert(orchardBalance)
+        }
+
         init(
             selectedMode: MigrationMode = .privateScheduled,
-            orchardBalance: Zatoshi = Zatoshi.zero,
-            fiatText: String? = nil
+            orchardBalance: Zatoshi = Zatoshi.zero
         ) {
             self.selectedMode = selectedMode
             self.orchardBalance = orchardBalance
-            self.fiatText = fiatText
         }
     }
 

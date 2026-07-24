@@ -242,8 +242,7 @@ struct MigrationEntryView: View {
             store: StoreOf<MigrationEntry>(
                 initialState: MigrationEntry.State(
                     selectedMode: .privateScheduled,
-                    orchardBalance: Zatoshi(1_245_800_000),
-                    fiatText: "$4,832.86"
+                    orchardBalance: Zatoshi(1_245_800_000)
                 )
             ) {
                 MigrationEntry()
@@ -258,8 +257,7 @@ struct MigrationEntryView: View {
             store: StoreOf<MigrationEntry>(
                 initialState: MigrationEntry.State(
                     selectedMode: .immediate,
-                    orchardBalance: Zatoshi(1_245_800_000),
-                    fiatText: "$4,832.86"
+                    orchardBalance: Zatoshi(1_245_800_000)
                 )
             ) {
                 MigrationEntry()
