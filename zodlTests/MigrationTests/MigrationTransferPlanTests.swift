@@ -22,14 +22,6 @@ import ComposableArchitecture
 @testable import zodl_internal
 
 @Suite(.serialized) struct MigrationTransferPlanTests {
-    /// MOB-1496: `migrationManager.migrationNetworkOptions(_:)` has no macro default (unlike the SDK
-    /// synchronizer's `.noOp`), so any test reaching the note-split branch (`isNoteSplitNeeded ==
-    /// true`) must mock it explicitly or trip `unimplemented`.
-    private static let defaultNetworkPrivacyOptions = MigrationNetworkPrivacyOptions(
-        useTor: false,
-        submissionEndpoint: LightWalletEndpoint(address: "", port: 0)
-    )
-
     /// MOB-1496: the real per-account SDK surface needs a concrete `AccountUUID` (and, for the
     /// software-signing path, a resolvable USK) for nearly every migration call this store makes.
     /// Swift Testing instantiates a fresh `struct` per `@Test`, so this `init()` acts as a per-test
@@ -548,15 +540,29 @@ import ComposableArchitecture
     // MARK: - MOB-1513 (B4): the confirm chain signs only — no broadcast, no proving, no Tor
 
     /// B4 reorder ("everything signed at once, splits execute immediately, transfers per
-    /// offsets"): the confirm chain is `isNoteSplitNeeded` -> USK -> `prepareNoteSplit` (propose-
-    /// side caching only, its returned proposal is discarded — `sign_and_store` echo-validates the
-    /// split against the plan cache) -> `signAndStoreMigrationSchedule` (the sign-only atomic
-    /// commit) -> `recordCommittedSchedule` -> `reconcile`. The monolithic `submitNoteSplit`
-    /// (proving + inline Tor bootstrap + broadcast — the multi-second, DB-actor-blocking freeze QA
-    /// hit) and its `stopSyncBeforeMigrationBroadcast` companion are gone from this chain entirely:
-    /// the first prep broadcasts AFTER navigation, via the coordinator's background kick.
-    @MainActor @Test func confirmTappedWithNoteSplitNeededPreparesBeforeSigningAndNeverBroadcasts() async {
-        let callOrder = LockIsolated<[String]>([])
+    /// offsets"): the confirm chain is USK -> `signAndStoreMigrationSchedule` (the sign-only
+    /// atomic commit, which signs every transfer AND any note-split preparation layers straight
+    /// from the plan cache the schedule's own propose call wrote) -> `recordCommittedSchedule` ->
+    /// `reconcile`. The monolithic `submitNoteSplit` (proving + inline Tor bootstrap + broadcast —
+    /// the multi-second, DB-actor-blocking freeze QA hit) and its
+    /// `stopSyncBeforeMigrationBroadcast` companion are gone from this chain entirely: the first
+    /// prep broadcasts AFTER navigation, via the coordinator's background kick.
+    ///
+    /// MOB-1513 (F1-A1): the confirm-time note-split propose must never collide with the schedule
+    /// it is about to sign. The real SDK holds ONE proposal-handle slot per account —
+    /// `NoteSplitProposal.proposalHandle`/`MigrationSchedule.proposalHandle`'s shared doc: "the
+    /// native side refuses to sign any plan other than the one it identifies — throwing
+    /// `migrationPlanStale` when a later propose/prepare call superseded it" — modeled here as a
+    /// shared `LockIsolated` slot seeded with the displayed `schedule`'s own handle.
+    /// `signAndStoreMigrationSchedule`'s mock throws `ZcashError.migrationPlanStale` whenever the
+    /// schedule it is handed no longer matches the slot, exactly like the real echo-validated
+    /// commit — the blind spot the old version of this test had (a stateless mock that always
+    /// succeeded regardless of which handle it saw, so it couldn't tell a real SDK would reject
+    /// the sequence it was pinning). `commitSoftware` must sign+store the ORIGINAL displayed
+    /// schedule without ever superseding its own handle first — proven here by reaching
+    /// `.scheduleSigned`/`.delegate(.confirmed)` rather than the plan-stale recovery path
+    /// (`.planStaleRefreshed`, a toast instead of a commit).
+    @MainActor @Test func confirmTappedWithNoteSplitNeededCommitsWithoutSelfInflictedPlanStale() async {
         let schedule = MigrationSchedule(
             transfers: [
                 MigrationTransferProposal(id: "t0", amount: Zatoshi(500_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
@@ -564,6 +570,14 @@ import ComposableArchitecture
             estimatedDurationHours: 24,
             proposalHandle: 1
         )
+        // The engine's single per-account plan-cache slot, seeded with the handle the user was
+        // actually shown. ANY propose/prepare call for the account overwrites this slot — the real
+        // contract shared by every `proposalHandle` doc in the SDK.
+        let planCacheHandle = LockIsolated<UInt64>(schedule.proposalHandle)
+        let prepareNoteSplitCalls = LockIsolated<Int>(0)
+        let signedSchedule = LockIsolated<MigrationSchedule?>(nil)
+        let recordCommittedScheduleCalls = LockIsolated<Int>(0)
+        let reconcileCalls = LockIsolated<Int>(0)
         var state = MigrationTransferPlan.State()
         state.schedule = schedule
         let store = TestStore(initialState: state) {
@@ -572,25 +586,21 @@ import ComposableArchitecture
             $0.sdkSynchronizer = .noOp
             $0.sdkSynchronizer.isNoteSplitNeeded = { _ in true }
             $0.sdkSynchronizer.prepareNoteSplit = { _ in
-                callOrder.withValue { $0.append("prepare") }
-                return NoteSplitProposal(outputNotes: [Zatoshi(500_000_000)], fee: Zatoshi(100_000), proposalHandle: 1)
+                prepareNoteSplitCalls.withValue { $0 += 1 }
+                // The real engine mints a FRESH handle for the note-split-only plan it just
+                // cached — superseding whatever the slot held before, same as the real
+                // single-slot plan cache.
+                planCacheHandle.setValue(2)
+                return NoteSplitProposal(outputNotes: [Zatoshi(500_000_000)], fee: Zatoshi(100_000), proposalHandle: 2)
             }
-            $0.sdkSynchronizer.signAndStoreMigrationSchedule = { _, _, _ in
-                callOrder.withValue { $0.append("signAndStore") }
+            $0.sdkSynchronizer.signAndStoreMigrationSchedule = { _, schedule, _ in
+                guard schedule.proposalHandle == planCacheHandle.value else {
+                    throw ZcashError.migrationPlanStale
+                }
+                signedSchedule.setValue(schedule)
             }
-            $0.migrationManager.migrationNetworkOptions = { _ in
-                callOrder.withValue { $0.append("networkOptions") }
-                return Self.defaultNetworkPrivacyOptions
-            }
-            $0.migrationManager.recordTransferBroadcast = { _, _ in
-                callOrder.withValue { $0.append("recordTransferBroadcast") }
-            }
-            $0.migrationManager.recordCommittedSchedule = { _, _ in
-                callOrder.withValue { $0.append("recordCommittedSchedule") }
-            }
-            $0.migrationManager.reconcile = {
-                callOrder.withValue { $0.append("reconcile") }
-            }
+            $0.migrationManager.recordCommittedSchedule = { _, _ in recordCommittedScheduleCalls.withValue { $0 += 1 } }
+            $0.migrationManager.reconcile = { reconcileCalls.withValue { $0 += 1 } }
             withDependenciesUSKDerivable(&$0)
         }
 
@@ -602,7 +612,10 @@ import ComposableArchitecture
         }
         await store.receive(.delegate(.confirmed))
 
-        #expect(callOrder.value == ["prepare", "signAndStore", "recordCommittedSchedule", "reconcile"])
+        #expect(signedSchedule.value == schedule)
+        #expect(prepareNoteSplitCalls.value == 0)
+        #expect(recordCommittedScheduleCalls.value == 1)
+        #expect(reconcileCalls.value == 1)
     }
 
     /// B4 (controller resolution 4): a thrown `signAndStoreMigrationSchedule` persists NOTHING —

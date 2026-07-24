@@ -45,14 +45,21 @@
 //  hit), plus `stopSyncBeforeMigrationBroadcast` and the whole broadcast failure-routing block
 //  (`MigrationCommitError.splitFailedRouted`, R14-R17 surfaces on the plan screen — all deleted
 //  with it). The chain is now sign-only, matching the design's "everything signed at once, splits
-//  execute immediately, transfers per offsets": `prepareNoteSplit` (propose-side caching, kept —
-//  `sign_and_store`'s echo-validation reads the plan cache it writes) ->
-//  `signAndStoreMigrationSchedule` (the atomic commit: signs EVERYTHING including the preps, no
-//  proving, no broadcast) -> `recordCommittedSchedule` -> `reconcile`. The first prep's actual
+//  execute immediately, transfers per offsets": `signAndStoreMigrationSchedule` (the atomic
+//  commit: signs EVERYTHING of the run — every transfer AND any note-split preparation layers it
+//  needs — straight from the plan cache `schedule`'s own propose call already wrote, with NO
+//  proving and NO broadcast) -> `recordCommittedSchedule` -> `reconcile`. The first prep's actual
 //  broadcast (prove-at-broadcast, Tor, privacy buffer) happens AFTER navigation, via
 //  `MigrationCoordFlowCoordinator`'s post-confirm first-delivery kick over the existing next-due
-//  lane — see `runFirstDeliveryKick`'s doc there. NEVER add a `submitNoteSplit` call after
-//  `signAndStoreMigrationSchedule`: the successful commit clears the plan cache, so
+//  lane — see `runFirstDeliveryKick`'s doc there. NEVER add a `submitNoteSplit` OR a
+//  `prepareNoteSplit` call ahead of `signAndStoreMigrationSchedule` here (MOB-1513 F1-A1): the SDK
+//  holds ONE proposal-handle slot per account (`MigrationSchedule.proposalHandle`'s doc), and ANY
+//  propose/prepare call for that account — `prepareNoteSplit` included — supersedes whatever
+//  handle is cached there, including `schedule`'s own. A `prepareNoteSplit` call sandwiched
+//  between the propose that minted `schedule` and this commit would invalidate `schedule` before
+//  it is ever signed, so every commit needing a split would throw `migrationPlanStale`
+//  unconditionally — a bug this file used to have. NEVER add a `submitNoteSplit` call after
+//  `signAndStoreMigrationSchedule` either: the successful commit clears the plan cache, so
 //  `sign_note_split`'s echo-validation would throw plan-stale.
 //
 
@@ -76,17 +83,19 @@ enum MigrationCommitError: Error, Equatable {
 enum MigrationCommitPipeline {
     /// Signs and persists `schedule` in the migration engine, software-signing path — the SIGN-ONLY
     /// commit (MOB-1513 B4; see this file's header for what used to run here and why it left):
-    /// derive the account's USK, then — iff the engine still needs a note split —
-    /// `prepareNoteSplit` (propose-side caching only; its returned proposal is deliberately
-    /// discarded, since `sign_and_store_migration_schedule` echo-validates the split against the
-    /// plan cache that call just wrote), then `signAndStoreMigrationSchedule` (the atomic commit:
-    /// signs every transaction of the run, preps included, with NO proving and NO broadcast) ->
-    /// `recordCommittedSchedule` -> `reconcile`.
+    /// derive the account's USK, then `signAndStoreMigrationSchedule` directly (the atomic commit:
+    /// signs every transaction of the run — `schedule`'s transfers AND any note-split preparation
+    /// layers the engine still needs — straight from the plan cache `schedule`'s own propose call
+    /// wrote, with NO proving and NO broadcast) -> `recordCommittedSchedule` -> `reconcile`.
+    /// Deliberately no separate `isNoteSplitNeeded`/`prepareNoteSplit` step here (MOB-1513 F1-A1
+    /// fix): the SDK's one proposal-handle slot per account means a `prepareNoteSplit` call at
+    /// this point would supersede `schedule`'s own handle before it is signed, turning every
+    /// commit that needs a split into a guaranteed `migrationPlanStale` throw — see this file's
+    /// header.
     ///
     /// A thrown commit persists NOTHING (the engine's commit is persist-once-atomic, and neither
     /// `recordCommittedSchedule` nor `reconcile` has run) — callers map the throw to their existing
-    /// commit-failure surface and a Retry re-runs this whole chain (whose `prepareNoteSplit` is
-    /// itself a fresh propose-side cache write).
+    /// commit-failure surface and a Retry re-runs this whole chain.
     ///
     /// This is the STAGGERED-SCHEDULE lane only (`MigrationTransferPlanStore`'s
     /// `scheduled`/`manual`/`recreated` variants — all three sign a multi-transfer schedule the same
@@ -103,7 +112,6 @@ enum MigrationCommitPipeline {
         derivationTool: DerivationToolClient,
         networkType: NetworkType
     ) async throws {
-        let needsNoteSplit = try await sdkSynchronizer.isNoteSplitNeeded(account.id)
         let usk = try MigrationSpendingKeyDerivation.deriveUSK(
             zip32AccountIndex: zip32AccountIndex,
             walletStorage: walletStorage,
@@ -111,9 +119,6 @@ enum MigrationCommitPipeline {
             derivationTool: derivationTool,
             networkType: networkType
         )
-        if needsNoteSplit {
-            _ = try await sdkSynchronizer.prepareNoteSplit(account.id)
-        }
         try await sdkSynchronizer.signAndStoreMigrationSchedule(account.id, schedule, usk)
 
         // [MOB-1496] W2: persist the just-committed schedule (the SDK keeps no proposal list
