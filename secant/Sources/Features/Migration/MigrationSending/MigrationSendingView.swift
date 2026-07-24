@@ -4,8 +4,8 @@
 //
 //  "Sending" / "Sent" screen (MOB-1463, Figma S8 · sending 2618:6858 / sent 2618:6895). `onAppear`
 //  drives the store's sequential transfer execution (MOB-1466). The `closeTapped` /
-//  `viewTransactionTapped` delegates are emitted but consumed by nobody yet — chaining is the
-//  coordinator's job (phase 3).
+//  `viewTransactionTapped` delegates (`.closed` / `.viewTransaction`) are consumed by
+//  `MigrationCoordFlowCoordinator` and `RootCoordinator` respectively (phase 3).
 //
 //  Also reused for the "Migrate anyway" dust lane (MOB-1487). MOB-1494 (round 4): every lane
 //  shows the same "migrated" subtitles (the canvas dropped the "sent" wording), so the view has

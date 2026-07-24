@@ -587,7 +587,7 @@ struct SendForm {
     /// `_XCTIsTesting` and would make this undetectable in tests. Runs the
     /// `sendRequiresOrchardFunds` dry-run only once Ironwood is active and a positive amount is
     /// entered; otherwise drops the flag and cancels any in-flight dry-run without ever calling
-    /// the stub.
+    /// it.
     private func orchardSpendCheckEffect(state: inout State) -> Effect<Action> {
         guard
             migrationManager.isIronwoodActivated(),

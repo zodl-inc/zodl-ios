@@ -15,7 +15,8 @@ enum MigrationBannerVariant: Equatable {
     case required
     /// MOB-1511 (W2): `round`/`totalRounds` carry the multi-round context — non-nil only when the
     /// display rule says a round label belongs on the banner (round ≥ 2, or a known total > 1);
-    /// `totalRounds` additionally needs the SDK estimate (stubbed nil until librustzcash#2714).
+    /// `totalRounds` additionally carries the SDK's real run-count estimate — `nil` when the
+    /// estimate is unavailable.
     case inProgress(done: Int, total: Int, round: Int?, totalRounds: Int?)
     /// MOB-1511 (W2): the post-completion "more funds to migrate" re-offer, round-aware — replaces
     /// the plain `.required` reuse for an acknowledged completion with a pending remainder.
