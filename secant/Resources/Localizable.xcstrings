@@ -799,9 +799,6 @@
         }
       }
     },
-    "autoShieldingHelpContent" : {
-
-    },
     "balance.availableTitle" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -17975,6 +17972,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Actualizando Balance..."
+          }
+        }
+      }
+    },
+    "smartBanner.help.autoShielding.info" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "With Auto-Shielding on, ZODL automatically shields your transparent ZEC, keeping your total balance private without manual shielding. Each automatic shield creates a shielding in-wallet transaction, consolidating your transparent and shielded funds."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Con la Auto-Protección activada, ZODL protege automáticamente tu ZEC transparente y mantiene tu saldo total privado sin que tengas que hacerlo manualmente. Cada protección automática crea una transacción de protección en la billetera, que consolida tus fondos transparentes y protegidos."
+          }
+        }
+      }
+    },
+    "smartBanner.help.autoShielding.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Auto-Shielding"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Auto-Protección"
           }
         }
       }
