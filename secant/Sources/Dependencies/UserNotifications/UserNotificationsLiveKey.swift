@@ -51,8 +51,11 @@ extension UserNotificationsClient: DependencyKey {
                     trigger = nil
                 }
 
+                // MOB-1513 (gap 1): the per-account identifier — see `MigrationNotification
+                // .requestIdentifier(accountUUID:)`'s doc for why the bare `identifier` alone
+                // let two accounts' pending requests of the same kind silently replace each other.
                 let request = UNNotificationRequest(
-                    identifier: notification.identifier,
+                    identifier: notification.requestIdentifier(accountUUID: accountUUID),
                     content: content,
                     trigger: trigger
                 )

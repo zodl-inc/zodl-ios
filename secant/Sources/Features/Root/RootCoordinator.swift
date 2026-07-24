@@ -278,9 +278,14 @@ extension Root {
                 // MARK: - Migration Coord Flow
 
             case .home(.smartBanner(.migrationScreenRequested)):
-                state.migrationCoordFlowState = MigrationCoordFlow.State.initial
-                state.path = .migrationCoordFlow
-                return .none
+                // MOB-1513 (gap 3): routes through the SAME helper the notification-tap deep link
+                // uses (`openMigrationCoordFlow`, `RootInitialization.swift`) instead of duplicating
+                // its reset inline — this arm used to wholesale-reset `migrationCoordFlowState`
+                // with none of that helper's defensive teardown (send-wait-hold release, stray
+                // Keystone run cancel, H3-guard disarm), so a ceremony stranded on a DIFFERENT
+                // account than the one this tap is about to open for was silently discarded instead
+                // of cancelled. See that helper's own doc for the full defensive sequence.
+                return openMigrationCoordFlow(state: &state)
 
             case .migrationCoordFlow(.flowFinished):
                 // `.flowFinished` is the Root-side terminal signal for every flow-root close
