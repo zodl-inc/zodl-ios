@@ -58,9 +58,9 @@ enum MigrationBannerVariant: Equatable {
         case .inProgress(let done, let total, let round, let totalRounds):
             if let round {
                 if let totalRounds {
-                    return String(localizable: .migrationBannerProgressInfoRoundTotal(round, totalRounds, done, total, percent ?? 0))
+                    return String(localizable: .migrationBannerProgressInfoRoundTotal(round, totalRounds, done, total))
                 }
-                return String(localizable: .migrationBannerProgressInfoRound(round, done, total, percent ?? 0))
+                return String(localizable: .migrationBannerProgressInfoRound(round, done, total))
             }
             return String(localizable: .migrationBannerProgressInfo(done, total, percent ?? 0))
         case .nextRoundRequired(let round, let totalRounds):

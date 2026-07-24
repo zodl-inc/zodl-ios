@@ -111,13 +111,13 @@ import Foundation
         let variant = MigrationBannerVariant.inProgress(done: 2, total: 6, round: 1, totalRounds: 4)
 
         #expect(variant.title == String(localizable: .migrationBannerProgressTitle))
-        #expect(variant.info == String(localizable: .migrationBannerProgressInfoRoundTotal(1, 4, 2, 6, 33)))
+        #expect(variant.info == String(localizable: .migrationBannerProgressInfoRoundTotal(1, 4, 2, 6)))
     }
 
     @Test func inProgressWithRoundButNoTotalUsesTheTotalFreeKey() {
         let variant = MigrationBannerVariant.inProgress(done: 2, total: 6, round: 2, totalRounds: nil)
 
-        #expect(variant.info == String(localizable: .migrationBannerProgressInfoRound(2, 2, 6, 33)))
+        #expect(variant.info == String(localizable: .migrationBannerProgressInfoRound(2, 2, 6)))
     }
 
     @Test func nextRoundRequiredUsesRequiredTitleWithRoundInfo() {
