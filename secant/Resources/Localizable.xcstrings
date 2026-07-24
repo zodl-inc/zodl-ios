@@ -11245,6 +11245,23 @@
         }
       }
     },
+    "migrationKeystoneScan.signing" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Signing…"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Firmando…"
+          }
+        }
+      }
+    },
     "migrationNoteSplit.continue" : {
       "extractionState" : "manual",
       "localizations" : {
