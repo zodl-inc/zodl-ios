@@ -56,13 +56,29 @@ extension Root {
                 guard let accountUUID = state.selectedWalletAccount?.id else {
                     return .none
                 }
+                // MOB-1513 (T-B): `cancelInFlight: true` on a stable, shared id means every fresh
+                // dispatch of this action -- whichever account it's for -- cancels whatever fetch
+                // was still running under this same id. This is the "belt": it closes the race for
+                // the common case, but a slow enrichment loop that has already passed its last
+                // cancellation checkpoint can still complete and call `send` -- the `.fetchedTransactions`
+                // provenance guard below is what actually keeps that from corrupting `state.transactions`.
                 return .run { send in
                     if let transactions = try? await sdkSynchronizer.getAllTransactions(accountUUID) {
-                        await send(.fetchedTransactions(transactions))
+                        await send(.fetchedTransactions(accountUUID, transactions))
                     }
                 }
-                
-            case .fetchedTransactions(var transactions):
+                .cancellable(id: state.CancelTransactionsFetchId, cancelInFlight: true)
+
+            case .fetchedTransactions(let accountUUID, var transactions):
+                // MOB-1513 (T-B): load-bearing provenance guard -- drop a payload that belongs to
+                // an account other than the one currently selected. Closes the race even when the
+                // cancel id above misses (the fetch's own effect completed anyway): during sync,
+                // BOTH accounts' wallet-wide `eventStream`/`stateStream` events can dispatch a fetch,
+                // and a slow one for the account that was JUST switched away from can still land
+                // after the switch. Never merge/reconcile a stale payload -- always drop it whole.
+                guard accountUUID == state.selectedWalletAccount?.id else {
+                    return .none
+                }
                 let mempoolHeight = sdkSynchronizer.latestState().latestBlockHeight + 1
 
                 // Resolve Swaps
