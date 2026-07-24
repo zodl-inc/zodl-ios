@@ -2,29 +2,16 @@
 //  ArrayChunkedTests.swift
 //  zodlTests
 //
-//  Batch 1 — pure logic. Covers Array.chunked / removingDuplicates (Utils/Array+Chunked.swift).
+//  Batch 1 — pure logic. Covers Array.removingDuplicates (Utils/Array+Chunked.swift). `chunked(into:)`
+//  and its tests here were removed with MOB-1513's Keystone batch-signing chunker
+//  (`MigrationCoordFlow.chunkKeystoneBatch`, its only caller) — the real SDK protocol needs no
+//  app-side chunking (see `MigrationCoordFlowCoordinator.swift`'s header).
 //
 
 import Testing
 @testable import zodl_internal
 
 @Suite struct ArrayChunkedTests {
-    @Test func chunkedSplitsWithRemainder() {
-        #expect([1, 2, 3, 4, 5].chunked(into: 2) == [[1, 2], [3, 4], [5]])
-    }
-
-    @Test func chunkedSplitsEvenly() {
-        #expect([1, 2, 3, 4].chunked(into: 2) == [[1, 2], [3, 4]])
-    }
-
-    @Test func chunkedWithSizeLargerThanCountReturnsSingleChunk() {
-        #expect([1, 2].chunked(into: 5) == [[1, 2]])
-    }
-
-    @Test func chunkedEmptyArrayReturnsEmpty() {
-        #expect([Int]().chunked(into: 3) == [])
-    }
-
     @Test func removingDuplicatesKeepsFirstOccurrencePreservingOrder() {
         let items = [
             Item(id: 1, tag: "a"),

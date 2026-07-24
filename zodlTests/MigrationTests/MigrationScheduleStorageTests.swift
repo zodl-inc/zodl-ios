@@ -270,7 +270,7 @@ struct MigrationScheduleStorageTests {
 
         let rows = MigrationDerivations.transferRows(
             committedSchedule: committed,
-            state: MigrationState.readyToPropose,
+            state: MigrationState.notStarted,
             hasOverdueMigrationTransfers: false,
             now: Date(),
             currentTip: 1_000
@@ -295,7 +295,7 @@ struct MigrationScheduleStorageTests {
 
         let rows = MigrationDerivations.transferRows(
             committedSchedule: committed,
-            state: MigrationState.readyToPropose,
+            state: MigrationState.notStarted,
             hasOverdueMigrationTransfers: true,
             now: Date(),
             currentTip: 100
@@ -480,7 +480,7 @@ struct MigrationScheduleStorageTests {
 
         let rows = MigrationDerivations.transferRows(
             committedSchedule: committed,
-            state: MigrationState.readyToPropose,
+            state: MigrationState.notStarted,
             hasOverdueMigrationTransfers: false,
             now: Date(),
             currentTip: 100
@@ -975,7 +975,7 @@ struct MigrationScheduleStorageTests {
 
         let summary = MigrationDerivations.summary(
             committedSchedule: committed,
-            state: MigrationState.readyToPropose,
+            state: MigrationState.notStarted,
             residual: nil,
             progress: nil
         )

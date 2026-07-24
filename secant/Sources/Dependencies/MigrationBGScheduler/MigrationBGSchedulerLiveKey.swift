@@ -112,7 +112,7 @@ final class MigrationBGSchedulerImpl: @unchecked Sendable {
                 rearmInputs.append(
                     MigrationCadence.AccountRearmInput(
                         accountUUID: accountUUID,
-                        state: MigrationState.readyToPropose,
+                        state: MigrationState.splitPendingConfirmation,
                         progress: nil,
                         nextExecutableAfterHeight: nil,
                         isUnreadable: true

@@ -159,6 +159,101 @@ import ComposableArchitecture
         #expect(proposeCalls.value == 0)
     }
 
+    // MARK: - MOB-1513 (A2): synthesized split row + transfer renumbering
+
+    /// Default state (no rows loaded yet): no schedule to summarize, so no split row either.
+    @MainActor @Test func splitRowIsNilBeforeAnyRowsHaveLoaded() async {
+        let state = MigrationTransferPlan.State()
+
+        #expect(state.splitRow == nil)
+    }
+
+    /// The defect this fixes: the timeline component used to relabel `rows[0]` (an ORDINARY
+    /// crossing transfer) as "Split Balance", showing its own multi-hour ETA/amount instead of the
+    /// real note-split's. The split is now a synthesized row the STORE exposes separately from
+    /// `rows` — never a third `schedule.transfers` entry — so `rows` stays 1:1 with the schedule
+    /// (Transfer 1..N, real per-row ETA `apply` already computed, unchanged) while the split gets
+    /// its own truthful amount/status/caption-input.
+    @MainActor @Test func onAppearForScheduledVariantSynthesizesSplitRowAheadOfNumberedTransfers() async {
+        let schedule = MigrationSchedule(
+            transfers: [
+                MigrationTransferProposal(id: "t0", amount: Zatoshi(500_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200),
+                MigrationTransferProposal(id: "t1", amount: Zatoshi(300_000_000), anchorHeight: 100, nextExecutableAfterHeight: 150, expiryHeight: 250)
+            ],
+            estimatedDurationHours: 24
+        )
+        let store = TestStore(initialState: MigrationTransferPlan.State(variant: .scheduled)) {
+            MigrationTransferPlan()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.proposeMigrationTransfers = { _ in schedule }
+            $0.migrationManager.migrationRoundContext = { _ in (1, nil) }
+        }
+
+        await store.send(.onAppear)
+        await store.receive(\.roundContextLoaded)
+        await store.receive(\.transfersProposed) {
+            // Unchanged from `onAppearWithNoInjectedScheduleProposesTransfersAndPopulatesRows`: the
+            // two transfers, 1:1 with `schedule.transfers`, no third "split" entry.
+            $0.rows = [
+                MigrationTransferRow(id: "t0", index: 0, amount: Zatoshi(500_000_000), status: .active, hoursFromNow: 0, minutesFromNow: 0),
+                MigrationTransferRow(id: "t1", index: 1, amount: Zatoshi(300_000_000), status: .pending, hoursFromNow: 0, minutesFromNow: 0)
+            ]
+            $0.totalDurationHours = 24
+            $0.schedule = schedule
+        }
+
+        // Row count stays N (the two transfers above) — the split is the separate synthesized
+        // `splitRow`, not an element of `rows`.
+        #expect(store.state.rows.count == 2)
+        #expect(store.state.splitRow?.kind == MigrationTransferRow.Kind.splitBalance)
+        // Android parity: the split row's amount is the SUM of every listed transfer.
+        #expect(store.state.splitRow?.amount == Zatoshi(800_000_000))
+        // Pre-commit, the split hasn't broadcast yet — `.active`, paired with the timeline's
+        // check-style (not numbered) badge for this row specifically.
+        #expect(store.state.splitRow?.status == .active)
+        // `minutesFromNow == 0` is the Ready-now caption INPUT — the view renders it through the
+        // shared `MigrationETA.caption` path (see `MigrationTransferPlanView.caption(for:)`), never
+        // a hardcoded string.
+        #expect(store.state.splitRow?.minutesFromNow == 0)
+    }
+
+    /// `.recreated` is a fresh pre-commit run too (the restart lane) — `apply` carries no
+    /// variant branch, so the same split-row treatment applies via the injected-schedule path,
+    /// exactly like the fresh-propose path above.
+    @MainActor @Test func onAppearForRecreatedVariantWithInjectedScheduleAlsoSynthesizesSplitRow() async {
+        let schedule = MigrationSchedule(
+            transfers: [
+                MigrationTransferProposal(id: "t0", amount: Zatoshi(600_000_000), anchorHeight: 50, nextExecutableAfterHeight: 50, expiryHeight: 150),
+                MigrationTransferProposal(id: "t1", amount: Zatoshi(150_000_000), anchorHeight: 50, nextExecutableAfterHeight: 50, expiryHeight: 150)
+            ],
+            estimatedDurationHours: 12
+        )
+        var state = MigrationTransferPlan.State(variant: .recreated)
+        state.injectedSchedule = schedule
+        let store = TestStore(initialState: state) {
+            MigrationTransferPlan()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.migrationManager.migrationRoundContext = { _ in (1, nil) }
+        }
+
+        await store.send(.onAppear) {
+            $0.rows = [
+                MigrationTransferRow(id: "t0", index: 0, amount: Zatoshi(600_000_000), status: .active, hoursFromNow: 0, minutesFromNow: 0),
+                MigrationTransferRow(id: "t1", index: 1, amount: Zatoshi(150_000_000), status: .pending, hoursFromNow: 0, minutesFromNow: 0)
+            ]
+            $0.totalDurationHours = 12
+            $0.schedule = schedule
+        }
+        await store.receive(\.roundContextLoaded)
+
+        #expect(store.state.splitRow?.kind == MigrationTransferRow.Kind.splitBalance)
+        #expect(store.state.splitRow?.amount == Zatoshi(750_000_000))
+        #expect(store.state.splitRow?.status == .active)
+        #expect(store.state.splitRow?.minutesFromNow == 0)
+    }
+
     @MainActor @Test func onAppearWithCoordinatorHydratedRowsDoesNotRePropose() async {
         let rows: [MigrationTransferRow] = [
             MigrationTransferRow(id: "0", index: 0, amount: Zatoshi(1_000), status: .active, hoursFromNow: 0)

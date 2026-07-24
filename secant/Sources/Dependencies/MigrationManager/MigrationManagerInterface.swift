@@ -341,7 +341,7 @@ enum MigrationReentryRoute: Equatable, Sendable {
     case statusProgress                  // row 3 — also the split phase (MOB-1513 B4: the old row-5 `noteSplitProgress` route is retired with the "Splitting Funds" screen)
     case complete                        // row 4 (unacknowledged)
     case reviewManual(step: Int, total: Int)  // row 6 — manual delivery, next transfer due
-    case entry                           // row 7 (notStarted / readyToPropose)
+    case entry                           // row 7 (notStarted)
 }
 
 /// MOB-1497 (R7-T3 — failure routing): the outcome `MigrationManagerClient.routeBroadcastFailure`

@@ -125,36 +125,21 @@ struct KeystoneVotingDelegationPcztScanChecker: ScanChecker, Equatable {
     }
 }
 
-/// Migration Keystone batch signing (MOB-1468) — mirrors `KeystonePcztScanChecker`'s accumulate-
-/// with-progress flow, but the completed UR parses via `sdkSynchronizer.parseMigrationPCZTBatch`
-/// rather than `KeystoneZcashSDK().parseZcashPczt(ur:)`: that call is the single-PCZT decoder (it
-/// invokes the Rust `parse_zcash_pczt` FFI entrypoint), which is the wrong shape for a batch UR
-/// whose CBOR format doesn't exist yet — the accumulated UR's raw cbor bytes (`resultUR.cbor
-/// .cborData`, the same accessor `KeystoneZcashSDK` uses internally) go straight to the [ext]
-/// batch-parse stub instead. Stub returns `nil` today, so a completed scan reports the same
-/// failure an unparseable QR gets, exactly like every other checker here when parsing fails.
+/// Migration Keystone batch signing (MOB-1513) — unlike every other checker in this file, this one
+/// does NOT run the accumulate-with-progress dance itself: the real batch-signing bridge
+/// (`Synchronizer.decodeKeystoneSignBatchPart(_:expectedRequestId:)`) owns its OWN multi-part decode
+/// session over the raw scanned frame strings directly, so `keystoneHandler`'s BC-UR fountain
+/// decoder (used by every other Keystone checker above) plays no part here. `checkQRCode` can't
+/// await that call itself (`ScanChecker.checkQRCode` is a synchronous, dependency-only, `state`-free
+/// function), so it hands the raw frame straight back as `.keystoneBatchPartScanned` — `Scan.body`
+/// runs the actual decode as an effect and reports progress/completion/failure from there. Always
+/// matches (never `nil`): every scanned string during this ceremony is a candidate frame, and the
+/// decode call itself is what validates it.
 struct KeystoneMigrationBatchScanChecker: ScanChecker, Equatable {
     let id = 6
 
     func checkQRCode(_ qrCode: String) -> Scan.Action? {
-        @Dependency(\.keystoneHandler) var keystoneHandler
-        @Dependency(\.sdkSynchronizer) var sdkSynchronizer
-
-        if let result = keystoneHandler.decodeQR(qrCode) {
-            if result.progress < 100 {
-                return ScanCheckerWrapper.reportCheck(qrCode, progress: result.progress)
-            }
-
-            if let resultUR = result.ur, result.progress == 100 {
-                if let pczts = sdkSynchronizer.parseMigrationPCZTBatch(resultUR.cbor.cborData) {
-                    return .foundPCZTBatch(pczts)
-                } else {
-                    return nil
-                }
-            }
-        }
-
-        return nil
+        .keystoneBatchPartScanned(qrCode)
     }
 }
 

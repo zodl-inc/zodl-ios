@@ -22,8 +22,9 @@
 //  delegates `.buildFailed`, which the coordinator maps onto the ceremony's existing abandon path
 //  (`keystoneScanAbandoned` semantics) — the same honest-failure surface a scan-side failure uses.
 //
-//  The coordinator consumes both delegates (`.getSignature` -> scan -> decode/apply, `.rejected` ->
-//  deferred pop) — MOB-1468.
+//  The coordinator consumes all three delegates (`.getSignature` -> scan -> decode/apply,
+//  `.rejected` -> deferred pop, `.buildFailed` -> `keystoneScanAbandoned`) — MOB-1468
+//  (`.buildFailed` added by MOB-1513, per this file's header above).
 //
 
 import Foundation

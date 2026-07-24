@@ -337,8 +337,8 @@ extension SDKSynchronizerClient: DependencyKey {
             prepareNoteSplit: { accountUUID in
                 try await synchronizer.prepareNoteSplit(accountUUID: accountUUID)
             },
-            proposeMigrationTransfers: { accountUUID, includeResidual in
-                try await synchronizer.proposeMigrationTransfers(accountUUID: accountUUID, includeResidual: includeResidual)
+            proposeMigrationTransfers: { accountUUID in
+                try await synchronizer.proposeMigrationTransfers(accountUUID: accountUUID)
             },
             proposeImmediateMigration: { accountUUID in
                 try await synchronizer.proposeImmediateMigration(accountUUID: accountUUID)
@@ -359,9 +359,6 @@ extension SDKSynchronizerClient: DependencyKey {
             },
             signAndStoreMigrationSchedule: { accountUUID, schedule, usk in
                 try await synchronizer.signAndStoreMigrationSchedule(accountUUID: accountUUID, schedule, usk: usk)
-            },
-            isSyncRequiredBeforeNextMigrationTransfer: { accountUUID in
-                try await synchronizer.isSyncRequiredBeforeNextMigrationTransfer(accountUUID: accountUUID)
             },
             executeNextPendingMigrationTransfer: { accountUUID, options in
                 @Dependency(\.transactionGuard) var transactionGuard
@@ -387,8 +384,8 @@ extension SDKSynchronizerClient: DependencyKey {
             rescheduleOverdueMigrationTransfer: { accountUUID in
                 try await synchronizer.rescheduleOverdueMigrationTransfer(accountUUID: accountUUID)
             },
-            restartCurrentMigrationStep: { accountUUID, includeResidual in
-                try await synchronizer.restartCurrentMigrationStep(accountUUID: accountUUID, includeResidual: includeResidual)
+            restartCurrentMigrationStep: { accountUUID in
+                try await synchronizer.restartCurrentMigrationStep(accountUUID: accountUUID)
             },
             // MOB-1511 (W2): librustzcash#2714's `estimate_migration_runs` is now plumbed through
             // the SDK (`Synchronizer.estimateMigrationRuns(accountUUID:)`) — the mapping itself
@@ -400,11 +397,10 @@ extension SDKSynchronizerClient: DependencyKey {
                     fromEstimate: try await synchronizer.estimateMigrationRuns(accountUUID: accountUUID)
                 )
             },
-            refreshStaleMigrationTransfers: { accountUUID, usk, includeResidual in
+            refreshStaleMigrationTransfers: { accountUUID, usk in
                 try await synchronizer.refreshStaleMigrationTransfers(
                     accountUUID: accountUUID,
-                    usk: usk,
-                    includeResidual: includeResidual
+                    usk: usk
                 )
             },
             // [ext] MOB-1487 R3: a send of `amount` "requires Orchard funds" — see

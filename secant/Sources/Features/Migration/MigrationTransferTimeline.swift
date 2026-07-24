@@ -16,16 +16,18 @@
 //  pending-gray once Transfers 1-2 are sent). The reschedule skeleton placeholder resizes
 //  72x12 -> 60x16 (corner radius unchanged, confirmed against the Figma skeleton Rectangle).
 //
-//  MOB-1497 (T8, Q3'26 canvas, Figma 4207:7394): two changes, both to row 0 specifically.
-//  - Title: row 0 always reads "Split Balance" instead of "Transfer 1" — applied here (not in each
-//    caller) so Plan and Status stay consistent per the task's own instruction, covering row 0 for
-//    its whole lifecycle (pre-confirmation through fully sent, on either screen). `migrationPlan
-//    .transferN` stays in use for every other row (index >= 1), so it's not orphaned.
-//  - Badge: `usesNeutralCheckForReadyFirstStep` (opted into by `MigrationTransferPlanView` only —
-//    see that view's header doc) swaps row 0's badge for the new `.neutral` check while it's still
-//    `.active` (ready, not yet sent) instead of the numbered dark circle every other `.active` row
-//    gets; a `.sent` row 0 keeps the ordinary green check either way. Defaults `false`, so
-//    `MigrationStatusView` (which never opts in) is byte-for-byte unchanged.
+//  MOB-1513 (A2): retires the MOB-1497 (T8) row-0 relabel below — `rows` is 1:1 with
+//  `schedule.transfers` again (no row silently becomes "Split Balance"). That relabel let an
+//  ORDINARY crossing transfer masquerade as the split: wrong amount (a single transfer's, not the
+//  split's), wrong time (its own multi-hour ETA instead of "Ready now"), while the real note-split
+//  (a separate broadcast, immediate at commit) had no row of its own and real Transfer 1 was
+//  hidden. A caller now opts a SEPARATE, explicit `splitRow` in ahead of `rows` instead — rendered
+//  through the exact same row layout, but always check-style (never a numbered badge): `.sent`
+//  gets the ordinary green check, anything else the `.neutral` "ready, not yet done" check MOB-1497
+//  introduced (still reserved for this one precondition-style row — see `MigrationStepBadge`'s
+//  header doc). Every row in `rows` is a genuine transfer now, titled/badged "Transfer `index + 1`"
+//  with no exception, so both screens number every real transfer 1..N. Replaces the old opt-in
+//  `usesNeutralCheckForReadyFirstStep` flag, which existed only to cover the relabel this retires.
 //
 
 import ComposableArchitecture
@@ -38,16 +40,21 @@ struct MigrationTransferTimeline: View {
 
     let rows: IdentifiedArrayOf<MigrationTransferRow>
     let caption: (MigrationTransferRow) -> String
+    /// MOB-1513 (A2): the synthesized "Split Balance" row a caller opts into ahead of `rows` — see
+    /// this file's header doc. `nil` renders no split row at all (e.g. before any rows have
+    /// loaded).
+    var splitRow: MigrationTransferRow?
     var skeletonPendingCaptions = false
-    /// MOB-1497 (T8): opts row 0 into the neutral "ready, not yet done" check while `.active`. See
-    /// this file's header doc.
-    var usesNeutralCheckForReadyFirstStep = false
     /// MOB-1511 (W4): per-row caption tone — `nil` keeps the historical tertiary everywhere;
     /// `MigrationStatusView` uses it to render the completed Split Balance row's "Done" in green.
     var captionStyle: ((MigrationTransferRow) -> Colorable)?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
+            if let splitRow {
+                timelineRow(splitRow, isLast: rows.isEmpty)
+            }
+
             ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
                 timelineRow(row, isLast: index == rows.count - 1)
             }
@@ -98,10 +105,11 @@ struct MigrationTransferTimeline: View {
         }
     }
 
-    /// MOB-1497 (T8): row 0 always reads "Split Balance" — every other row keeps its "Transfer N"
-    /// title. See this file's header doc.
+    /// MOB-1513 (A2): the split row always reads "Split Balance"; every other row is a genuine
+    /// transfer, always "Transfer `index + 1`" — no more index-0 exception. See this file's header
+    /// doc.
     private func rowTitle(for row: MigrationTransferRow) -> String {
-        row.index == 0
+        row.kind == .splitBalance
             ? String(localizable: .migrationPlanSplitBalance)
             : String(localizable: .migrationPlanTransferN(row.index + 1))
     }
@@ -117,11 +125,14 @@ struct MigrationTransferTimeline: View {
         }
     }
 
-    /// MOB-1497 (T8): row-aware entry point — layers the opt-in neutral-first-step rule (see this
-    /// file's header doc) on top of the plain status mapping below, which every other row (and
-    /// every row when the opt-in is off) still uses unchanged.
+    /// MOB-1513 (A2): the split row is always check-style — the ordinary green check once it's
+    /// `.sent`, otherwise the `.neutral` "ready, not yet done" check (MOB-1497 T8) — never the
+    /// numbered circle every transfer row gets. Replaces the old opt-in
+    /// `usesNeutralCheckForReadyFirstStep`, which only ever existed to cover the row-0 relabel this
+    /// task retires. Every other row (every element of `rows`) still uses the plain status mapping
+    /// below unchanged.
     private func badgeStyle(for row: MigrationTransferRow) -> MigrationStepBadge.Style {
-        if usesNeutralCheckForReadyFirstStep, row.index == 0, row.status == .active {
+        if row.kind == .splitBalance, row.status == .active {
             return .neutral
         }
         return badgeStyle(for: row.status)
@@ -140,8 +151,12 @@ struct MigrationTransferTimeline: View {
         }
     }
 
-    /// MOB-1487: whether any row in the list has already sent — gates the active row's trailing
-    /// connector segment (see `connectorColor(for:)`).
+    /// MOB-1487: whether any TRANSFER row has already sent — gates the active transfer row's
+    /// trailing connector segment (see `connectorColor(for:)`). MOB-1513 (A2): deliberately scoped
+    /// to `rows` only, excluding `splitRow` — a transfer's own connector cares whether ANOTHER
+    /// TRANSFER has sent, not whether the split has (unchanged visual behavior from before this
+    /// task; the split's own trailing segment, rendered via the same `timelineRow`, still reads its
+    /// OWN `status` regardless).
     private var hasSentRow: Bool {
         rows.contains { $0.status == .sent }
     }
@@ -201,6 +216,26 @@ private extension IdentifiedArray where ID == MigrationTransferRow.ID, Element =
             rows: .previewRows,
             caption: { row in "hoursFromNow: \(row.hoursFromNow)" },
             skeletonPendingCaptions: true
+        )
+        .padding()
+    }
+}
+
+/// MOB-1513 (A2): the split row, opted in ahead of `rows` — see this file's header doc.
+#Preview("With split row") {
+    ScrollView {
+        MigrationTransferTimeline(
+            rows: .previewRows,
+            caption: { row in "hoursFromNow: \(row.hoursFromNow)" },
+            splitRow: MigrationTransferRow(
+                id: "split-balance",
+                index: -1,
+                amount: Zatoshi(1_245_800_000),
+                status: .active,
+                hoursFromNow: 0,
+                minutesFromNow: 0,
+                kind: .splitBalance
+            )
         )
         .padding()
     }

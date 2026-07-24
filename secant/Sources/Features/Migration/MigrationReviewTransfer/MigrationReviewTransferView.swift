@@ -73,11 +73,30 @@ struct MigrationReviewTransferView: View {
                     .padding(.vertical, 1)
                 }
 
-                ZashiButton(String(localizable: .generalConfirm)) {
-                    store.send(.confirmTapped)
+                // MOB-1513 (B4): disabled+spinner while the Keystone PCZT build is in flight (the
+                // established button-loading idiom — mirrors `SendConfirmationView`'s `isSending`
+                // button).
+                if store.isConfirming {
+                    ZashiButton(
+                        String(localizable: .generalConfirm),
+                        accessoryView:
+                            ProgressView()
+                            .progressViewStyle(
+                                CircularProgressViewStyle(
+                                    tint: Asset.Colors.secondary.color
+                                )
+                            )
+                    ) { }
+                    .padding(.top, 16)
+                    .padding(.bottom, 24)
+                    .disabled(store.isConfirming)
+                } else {
+                    ZashiButton(String(localizable: .generalConfirm)) {
+                        store.send(.confirmTapped)
+                    }
+                    .padding(.top, 16)
+                    .padding(.bottom, 24)
                 }
-                .padding(.top, 16)
-                .padding(.bottom, 24)
             }
             .screenHorizontalPadding()
             .applyPresentationModifier(store: store)

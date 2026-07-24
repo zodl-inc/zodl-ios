@@ -1471,6 +1471,90 @@ import ComposableArchitecture
         }
     }
 
+    /// MOB-1513 (final review, I-1 fix): the late-frame duplicate-completion race — the camera
+    /// forwards every metadata callback (`ScanUIView`) regardless of ceremony state, and `Scan`'s own
+    /// intake gate only flips once this action's OWN async apply effect result lands, so a second
+    /// `.foundKeystoneBatchSignatures` for the SAME ceremony can reach the coordinator before the
+    /// first one's apply/store chain resolves. `keystoneBatchApplyInFlight` makes the completion
+    /// one-shot: the second delivery must be DROPPED (no state change, no effect) rather than
+    /// double-applying and double-storing, while the first delivery's own chain proceeds exactly like
+    /// the happy path above (`...StoresPopsAndPushesScheduledForScheduledVariant`) — one apply call,
+    /// one store call.
+    @MainActor @Test func foundKeystoneBatchSignaturesSentTwiceInARowAppliesAndStoresExactlyOnceDroppingTheDuplicate() async {
+        let applyCalls = LockIsolated<Int>(0)
+        let storeCalls = LockIsolated<Int>(0)
+        // MOB-1513 (final review, I-1 fix): holds the FIRST apply call suspended so the second
+        // (duplicate) send below is guaranteed to land while `keystoneBatchApplyInFlight` is still
+        // `true` — same release-gate idiom as `MigrationReviewTransferTests
+        // .confirmTappedKeystoneSetsIsConfirmingAndIgnoresSecondTapWhilePcztBuildInFlight`.
+        let (releaseStream, releaseContinuation) = AsyncStream<Void>.makeStream()
+        let unsigned: [MigrationUnsignedTransferPczt] = [
+            MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xAA])),
+            MigrationUnsignedTransferPczt(id: "t1", pczt: Data([0xBB]))
+        ]
+        let signed: [Data] = [Data([0xAA, 0x01]), Data([0xBB, 0x01])]
+        var state = MigrationCoordFlow.State()
+        state.pendingKeystoneSigning = .planCommit
+        state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .scheduled)))
+        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: unsigned)))
+        state.path.append(.scan(Scan.State.initial))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.applyKeystoneBatchSignatures = { pczts, data in
+                applyCalls.withValue { $0 += 1 }
+                for await _ in releaseStream { break }
+                return zip(pczts, signed).map { MigrationSignedTransferPczt(id: $0.id, pczt: $1) }
+            }
+            $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, _ in
+                storeCalls.withValue { $0 += 1 }
+            }
+            // MOB-1513 (B4): the post-confirm first-delivery kick runs after landing on Scheduled —
+            // a nil next-due keeps it a silent no-op here, same as the happy-path test above.
+            $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in nil }
+            $0.migrationBGScheduler.scheduleFirstWindow = { }
+            $0.migrationManager.reconcile = { }
+            $0.migrationManager.migrationNetworkOptions = { _ in Self.defaultNetworkPrivacyOptions }
+            $0.migrationManager.refreshMigrationSyncGate = { }
+            $0.migrationManager.migrationSummary = { _ in MigrationSummary.zero }
+        }
+        store.exhaustivity = .off
+
+        let foundSignatures = MigrationCoordFlow.Action.path(
+            .element(
+                id: 2,
+                action: .scan(.foundKeystoneBatchSignatures(data: Data(), firmwareVersion: Self.validKeystoneMigrationFirmware))
+            )
+        )
+
+        // First delivery: passes the guard, arms it, dispatches the apply effect — which suspends on
+        // `releaseStream` before returning, so it's still in flight for everything below.
+        await store.send(foundSignatures)
+        #expect(store.state.keystoneBatchApplyInFlight == true)
+        let stateAfterFirstDelivery = store.state
+
+        // Second delivery (the late-frame duplicate): the guard is already armed, so this is
+        // DROPPED — no state change, no effect, and (per the finding) never routed through
+        // `keystoneScanAbandoned` either.
+        await store.send(foundSignatures)
+        #expect(store.state == stateAfterFirstDelivery)
+
+        // Release the first (and only) apply call to let the ceremony's chain proceed.
+        releaseContinuation.yield()
+        releaseContinuation.finish()
+
+        await store.receive(\.keystoneBatchSignaturesApplied)
+        await store.receive(\.keystoneSigningSubmitted)
+        await store.receive(\.pushHydratedPathState)
+        await store.finish()
+
+        #expect(applyCalls.value == 1)
+        #expect(storeCalls.value == 1)
+        #expect(store.state.keystoneBatchApplyInFlight == false)
+        #expect(store.state.pendingKeystoneSigning == nil)
+    }
+
     // MOB-1496 (W2): the Keystone store-success write point — `recordCommittedSchedule` reads the
     // schedule off the `.transferPlan` element still beneath `keystoneSign`+`scan` at store time
     // (before `resumeAfterKeystoneSigning` pops back up to it), and `reconcile()` runs alongside.
