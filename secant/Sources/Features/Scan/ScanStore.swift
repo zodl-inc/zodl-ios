@@ -196,6 +196,11 @@ struct Scan {
                             await send(.keystoneBatchDecodeProgress(result.progress))
                         }
                     } catch {
+                        // MOB-1513 (R8, F3): log before reporting — the coordinator abandons the
+                        // ceremony on this action, and a silently-discarded decode error (request-id
+                        // mismatch vs malformed envelope vs missing firmware field) is undiagnosable
+                        // from QA logs otherwise.
+                        LoggerProxy.error("[MOB-1513] Keystone batch scan decode failed: \(error)")
                         await send(.keystoneBatchDecodeFailed)
                     }
                 }

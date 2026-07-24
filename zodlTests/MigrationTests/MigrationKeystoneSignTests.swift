@@ -113,6 +113,29 @@ import ComposableArchitecture
         #expect(store.state.frames.isEmpty)
     }
 
+    /// MOB-1513 (R8): SINGLE-PCZT mode (`redactedSinglePczt` set — the immediate lane's production
+    /// ceremony) never builds batch frames: the view computes the production `urEncoderForPCZT` QR
+    /// live over the redacted bytes, so `.onAppear` must not touch the batch bridge at all.
+    @MainActor @Test func onAppearInSinglePcztModeNeverBuildsBatchFrames() async {
+        let state = MigrationKeystoneSign.State(
+            pczts: [MigrationUnsignedTransferPczt(id: "immediate", pczt: Data([0xAA]))],
+            redactedSinglePczt: Data([0xAA, 0x0F])
+        )
+        let store = TestStore(initialState: state) {
+            MigrationKeystoneSign()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.buildKeystoneSignBatchQRParts = { _, _, _ in
+                Issue.record("Single-PCZT mode must never call the batch QR builder")
+                return []
+            }
+        }
+
+        await store.send(.onAppear)
+
+        #expect(store.state.frames.isEmpty)
+    }
+
     @MainActor @Test func getSignatureTappedEmitsDelegateGetSignature() async {
         let store = TestStore(initialState: MigrationKeystoneSign.State(pczts: [MigrationUnsignedTransferPczt(id: "t0", pczt: Data())])) {
             MigrationKeystoneSign()

@@ -1346,7 +1346,10 @@ import ComposableArchitecture
         #expect(signState.pczts == pczts)
     }
 
-    @MainActor @Test func reviewTransferKeystoneSignRequestedSetsImmediateReviewContextAndPushesKeystoneSign() async {
+    /// MOB-1513 (R8): the immediate lane's delegate carries the (unsigned, redacted) pair and the
+    /// pushed `keystoneSign` enters SINGLE-PCZT mode — `redactedSinglePczt` set for the production
+    /// `urEncoderForPCZT` QR, `pczts` carrying the unredacted original the post-scan submit reads.
+    @MainActor @Test func reviewTransferKeystoneImmediateSignRequestedSetsImmediateReviewContextAndPushesSinglePcztKeystoneSign() async {
         let account = walletAccount(keystone: true, idByte: 22)
         var state = MigrationCoordFlow.State()
         state.$selectedWalletAccount.withLock { $0 = account }
@@ -1356,8 +1359,9 @@ import ComposableArchitecture
         }
         store.exhaustivity = .off
 
-        let pczts: [MigrationUnsignedTransferPczt] = [MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xCC]))]
-        await store.send(.path(.element(id: 0, action: .reviewTransfer(.delegate(.keystoneSignRequested(pczts))))))
+        let unsigned = Data([0xCC])
+        let redacted = Data([0xCC, 0x0F])
+        await store.send(.path(.element(id: 0, action: .reviewTransfer(.delegate(.keystoneImmediateSignRequested(unsigned: unsigned, redacted: redacted))))))
 
         #expect(store.state.pendingKeystoneSigning == MigrationCoordFlow.KeystoneSigningContext.immediateReview)
         // MOB-1509: owner recorded beside the context (see the planCommit twin above).
@@ -1366,7 +1370,8 @@ import ComposableArchitecture
             Issue.record("Expected .keystoneSign pushed on top")
             return
         }
-        #expect(signState.pczts == pczts)
+        #expect(signState.pczts == [MigrationUnsignedTransferPczt(id: MigrationReviewTransfer.immediateKeystonePcztId, pczt: unsigned)])
+        #expect(signState.redactedSinglePczt == redacted)
     }
 
     // MARK: - MOB-1468/1478 (W10): Keystone signing — getSignature pushes scan configured for migration
@@ -2800,10 +2805,12 @@ import ComposableArchitecture
         }
     }
 
-    /// Failure path: a non-`.success` submit outcome (or a thrown error from either SDK call)
-    /// abandons the ceremony exactly like a re-pair or firmware-gate failure — no partial state, the
-    /// user re-initiates from Review's confirm button.
-    @MainActor @Test func foundKeystoneBatchSignaturesForImmediateReviewContextOnSubmitFailureAbandonsSessionWithoutRecording() async {
+    /// Failure path: a non-`.success` submit outcome (or a thrown error from either SDK call) pops
+    /// the ceremony and — MOB-1513 (R8, F2) — arms the retained Review element's commit-failure
+    /// sheet instead of abandoning silently. (This batch entry into the `.immediateReview` submit is
+    /// retained defensively; the live immediate lane rides the single-PCZT `.foundPCZT` round-trip,
+    /// covered by `foundPCZTOnSubmitFailurePopsCeremonyAndArmsReviewCommitFailureSheet`.)
+    @MainActor @Test func foundKeystoneBatchSignaturesForImmediateReviewContextOnSubmitFailureArmsReviewFailureSheetWithoutRecording() async {
         let recordCalls = LockIsolated<Int>(0)
         let unsigned: [MigrationUnsignedTransferPczt] = [MigrationUnsignedTransferPczt(id: MigrationReviewTransfer.immediateKeystonePcztId, pczt: Data([0xDD]))]
         let signed: [Data] = [Data([0xDD, 0x01])]
@@ -2832,15 +2839,307 @@ import ComposableArchitecture
             )
         )
         await store.receive(\.keystoneBatchSignaturesApplied)
-        await store.receive(\.keystoneScanAbandoned)
+        await store.receive(\.keystoneImmediateSubmitFailed)
 
         #expect(recordCalls.value == 0)
         #expect(store.state.pendingKeystoneSigning == nil)
         #expect(store.state.path.count == 1)
-        guard case .reviewTransfer = try? #require(store.state.path.last) else {
+        guard case let .reviewTransfer(reviewState) = try? #require(store.state.path.last) else {
             Issue.record("Expected pop back to .reviewTransfer (scan + sign removed)")
             return
         }
+        #expect(reviewState.isFailurePresented == true)
+        #expect(reviewState.failureReason == MigrationReviewTransfer.State.FailureReason.commit)
+    }
+
+    // MARK: - MOB-1513 (R8): immediate lane — SINGLE-PCZT production ceremony
+
+    /// MOB-1513 (R8): a signed-PCZT fixture carrying the Keystone firmware proprietary-field stamp
+    /// (`keystone:fw_version` + postcard length prefix `0x03` + 3 version bytes) the production
+    /// stamp scan (`Data.keystoneFirmwareVersion()`) reads — the immediate single-PCZT ceremony
+    /// gates on THIS stamp (the `SendConfirmation` floor, 3.0.0), never the batch envelope version.
+    private func stampedSignedPczt(major: UInt8, minor: UInt8, build: UInt8, payload: [UInt8] = [0xD0, 0xD1]) -> Data {
+        var bytes: [UInt8] = payload
+        bytes.append(contentsOf: Array("keystone:fw_version".utf8))
+        bytes.append(0x03)
+        bytes.append(contentsOf: [major, minor, build])
+        return Data(bytes)
+    }
+
+    /// MOB-1513 (R8): a single-PCZT-mode `keystoneSign` element's Get Signature pushes a scan
+    /// session configured with the PRODUCTION checker (`keystonePCZTScanChecker` — the device echoes
+    /// a full signed `zcash-pczt` UR, no batch decode session, no request-id) and resets the shared
+    /// BC-UR fountain decoder so a retry ceremony never inherits a previous session's frames
+    /// (`SendConfirmation.getSignatureTapped` precedent).
+    @MainActor @Test func keystoneSignGetSignatureInSinglePcztModeConfiguresProductionCheckerAndResetsQRDecoder() async {
+        let resetCalls = LockIsolated<Int>(0)
+        var state = MigrationCoordFlow.State()
+        state.pendingKeystoneSigning = .immediateReview
+        state.path.append(.reviewTransfer(MigrationReviewTransfer.State(mode: .immediate)))
+        state.path.append(
+            .keystoneSign(
+                MigrationKeystoneSign.State(
+                    pczts: [MigrationUnsignedTransferPczt(id: MigrationReviewTransfer.immediateKeystonePcztId, pczt: Data([0xDD]))],
+                    redactedSinglePczt: Data([0xDD, 0x0F])
+                )
+            )
+        )
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.keystoneHandler.resetQRDecoder = { resetCalls.withValue { $0 += 1 } }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 1, action: .keystoneSign(.delegate(.getSignature)))))
+
+        #expect(resetCalls.value == 1)
+        guard case let .scan(scanState) = try? #require(store.state.path.last) else {
+            Issue.record("Expected .scan pushed on top")
+            return
+        }
+        #expect(scanState.checkers == [.keystonePCZTScanChecker])
+        #expect(scanState.keystoneBatchRequestId == Data())
+        #expect(scanState.forceLibraryToHide)
+        #expect(scanState.instructions == String(localizable: .migrationKeystoneScanInstructions))
+    }
+
+    /// MOB-1513 (R8): the immediate lane's post-scan step off the PRODUCTION ceremony — the scanned
+    /// `.foundPCZT` payload IS the device-signed PCZT; the coordinator adds proofs to the ORIGINAL
+    /// unsigned PCZT (still on the `keystoneSign` element beneath `scan`), combines+submits via the
+    /// unchanged `commitImmediateKeystone`, records, and pushes Sending already in `.success` — the
+    /// batch bridge (`applyKeystoneBatchSignatures`) is never touched.
+    @MainActor @Test func foundPCZTForImmediateReviewContextAddsProofsSubmitsRecordsAndPushesSendingSuccess() async {
+        let addProofsCalls = LockIsolated<[Data]>([])
+        let submitCalls = LockIsolated<[(Data, Data)]>([])
+        let recordedTxIds = LockIsolated<[(AccountUUID, Data)]>([])
+        let applyCalls = LockIsolated<Int>(0)
+        let unsignedBytes = Data([0xDD])
+        let signedPczt = stampedSignedPczt(major: 3, minor: 0, build: 0)
+        let provenPczt = Data([0xDD, 0xF0])
+        var state = MigrationCoordFlow.State()
+        state.pendingKeystoneSigning = .immediateReview
+        state.path.append(.reviewTransfer(MigrationReviewTransfer.State(mode: .immediate)))
+        state.path.append(
+            .keystoneSign(
+                MigrationKeystoneSign.State(
+                    pczts: [MigrationUnsignedTransferPczt(id: MigrationReviewTransfer.immediateKeystonePcztId, pczt: unsignedBytes)],
+                    redactedSinglePczt: Data([0xDD, 0x0F])
+                )
+            )
+        )
+        state.path.append(.scan(Scan.State.initial))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.applyKeystoneBatchSignatures = { _, _ in
+                applyCalls.withValue { $0 += 1 }
+                return []
+            }
+            $0.sdkSynchronizer.addProofsToPCZT = { pczt in
+                addProofsCalls.withValue { $0.append(pczt) }
+                return provenPczt
+            }
+            $0.sdkSynchronizer.createAndSubmitTransactionFromPCZT = { proofed, sig in
+                submitCalls.withValue { $0.append((proofed, sig)) }
+                return .success(txIds: ["ab12"])
+            }
+            $0.sdkSynchronizer.recordImmediateMigration = { accountUUID, txid in
+                recordedTxIds.withValue { $0.append((accountUUID, txid)) }
+            }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 2, action: .scan(.foundPCZT(signedPczt)))))
+        await store.receive(\.keystoneImmediateSubmitted)
+
+        #expect(applyCalls.value == 0)
+        #expect(addProofsCalls.value == [unsignedBytes])
+        #expect(submitCalls.value.count == 1)
+        #expect(submitCalls.value.first?.0 == provenPczt)
+        #expect(submitCalls.value.first?.1 == signedPczt)
+        #expect(recordedTxIds.value.count == 1)
+        #expect(recordedTxIds.value.first?.0 == Self.defaultAccount.id)
+        // "ab12" hex-decoded forward is [0xAB,0x12]; the raw/internal order is that reversed.
+        #expect(recordedTxIds.value.first?.1 == Data([0x12, 0xAB]))
+
+        #expect(store.state.pendingKeystoneSigning == nil)
+        #expect(store.state.keystoneImmediateSubmitInFlight == false)
+        #expect(store.state.path.count == 2)
+        guard case let .sending(sendingState) = try? #require(store.state.path.last) else {
+            Issue.record("Expected .sending pushed on top of the retained .reviewTransfer element")
+            return
+        }
+        #expect(sendingState.phase == MigrationSending.State.Phase.success)
+        #expect(sendingState.txId == "ab12")
+        #expect(sendingState.totalCount == 1)
+    }
+
+    /// MOB-1513 (R8, F2): a post-scan submit failure must be VISIBLE and retryable — the ceremony
+    /// pops exactly like an abandon, but the retained Review Transfer element comes back with its
+    /// existing commit-failure sheet armed (Retry re-runs the whole ceremony). This replaces the
+    /// silent `keystoneScanAbandoned` funnel that produced the QA-reported infinite loop.
+    @MainActor @Test func foundPCZTOnSubmitFailurePopsCeremonyAndArmsReviewCommitFailureSheet() async {
+        let recordCalls = LockIsolated<Int>(0)
+        let unsignedBytes = Data([0xDD])
+        var state = MigrationCoordFlow.State()
+        state.pendingKeystoneSigning = .immediateReview
+        state.path.append(.reviewTransfer(MigrationReviewTransfer.State(mode: .immediate)))
+        state.path.append(
+            .keystoneSign(
+                MigrationKeystoneSign.State(
+                    pczts: [MigrationUnsignedTransferPczt(id: MigrationReviewTransfer.immediateKeystonePcztId, pczt: unsignedBytes)],
+                    redactedSinglePczt: Data([0xDD, 0x0F])
+                )
+            )
+        )
+        state.path.append(.scan(Scan.State.initial))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.addProofsToPCZT = { pczt in pczt }
+            $0.sdkSynchronizer.createAndSubmitTransactionFromPCZT = { _, _ in .failure(txIds: [], code: -1, description: "rejected") }
+            $0.sdkSynchronizer.recordImmediateMigration = { _, _ in recordCalls.withValue { $0 += 1 } }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 2, action: .scan(.foundPCZT(stampedSignedPczt(major: 3, minor: 0, build: 0))))))
+        await store.receive(\.keystoneImmediateSubmitFailed)
+
+        #expect(recordCalls.value == 0)
+        #expect(store.state.pendingKeystoneSigning == nil)
+        #expect(store.state.keystoneImmediateSubmitInFlight == false)
+        #expect(store.state.path.count == 1)
+        guard case let .reviewTransfer(reviewState) = try? #require(store.state.path.last) else {
+            Issue.record("Expected pop back to .reviewTransfer (scan + sign removed)")
+            return
+        }
+        #expect(reviewState.isFailurePresented == true)
+        #expect(reviewState.failureReason == MigrationReviewTransfer.State.FailureReason.commit)
+        #expect(reviewState.isConfirming == false)
+    }
+
+    /// MOB-1513 (R8): the immediate ceremony's firmware gate reads the PRODUCTION proprietary-field
+    /// stamp off the scanned signed PCZT against the `SendConfirmation` floor (3.0.0) — a stamp
+    /// below it presents the migration firmware sheet with THAT floor's copy
+    /// (`keystoneFirmwareGateMinimumVersion`) and abandons without ever touching proofs/submit.
+    @MainActor @Test func foundPCZTBelowProductionFirmwareFloorPresentsGateWithProductionMinimumAndAbandons() async {
+        let addProofsCalls = LockIsolated<Int>(0)
+        var state = MigrationCoordFlow.State()
+        state.pendingKeystoneSigning = .immediateReview
+        state.path.append(.reviewTransfer(MigrationReviewTransfer.State(mode: .immediate)))
+        state.path.append(
+            .keystoneSign(
+                MigrationKeystoneSign.State(
+                    pczts: [MigrationUnsignedTransferPczt(id: MigrationReviewTransfer.immediateKeystonePcztId, pczt: Data([0xDD]))],
+                    redactedSinglePczt: Data([0xDD, 0x0F])
+                )
+            )
+        )
+        state.path.append(.scan(Scan.State.initial))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.addProofsToPCZT = { pczt in
+                addProofsCalls.withValue { $0 += 1 }
+                return pczt
+            }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 2, action: .scan(.foundPCZT(stampedSignedPczt(major: 2, minor: 9, build: 9))))))
+        await store.receive(\.keystoneScanAbandoned)
+
+        #expect(addProofsCalls.value == 0)
+        #expect(store.state.isKeystoneFirmwareGatePresented == true)
+        #expect(store.state.detectedKeystoneFirmwareVersion == "2.9.9")
+        #expect(store.state.keystoneFirmwareGateMinimumVersion == zodl_internal.KeystoneFirmwareVersion.minimumSupported.versionString)
+        #expect(store.state.pendingKeystoneSigning == nil)
+        #expect(store.state.path.count == 1)
+        guard case .reviewTransfer = try? #require(store.state.path.last) else {
+            Issue.record("Expected pop back to .reviewTransfer")
+            return
+        }
+    }
+
+    /// An UNSTAMPED signed PCZT (firmware predating the stamping feature — necessarily below the
+    /// 3.0.0 floor, per the stamp's own 2.4.6 introduction) takes the same gate with the
+    /// floor-only sheet copy (`detectedKeystoneFirmwareVersion` nil).
+    @MainActor @Test func foundPCZTUnstampedPresentsGateAndAbandons() async {
+        var state = MigrationCoordFlow.State()
+        state.pendingKeystoneSigning = .immediateReview
+        state.path.append(.reviewTransfer(MigrationReviewTransfer.State(mode: .immediate)))
+        state.path.append(
+            .keystoneSign(
+                MigrationKeystoneSign.State(
+                    pczts: [MigrationUnsignedTransferPczt(id: MigrationReviewTransfer.immediateKeystonePcztId, pczt: Data([0xDD]))],
+                    redactedSinglePczt: Data([0xDD, 0x0F])
+                )
+            )
+        )
+        state.path.append(.scan(Scan.State.initial))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 2, action: .scan(.foundPCZT(Data([0xD0, 0xD1, 0xD2]))))))
+        await store.receive(\.keystoneScanAbandoned)
+
+        #expect(store.state.isKeystoneFirmwareGatePresented == true)
+        #expect(store.state.detectedKeystoneFirmwareVersion == nil)
+        #expect(store.state.keystoneFirmwareGateMinimumVersion == zodl_internal.KeystoneFirmwareVersion.minimumSupported.versionString)
+        #expect(store.state.pendingKeystoneSigning == nil)
+    }
+
+    /// MOB-1513 (R8): duplicate `.foundPCZT` deliveries (a second camera frame decoded before the
+    /// first delivery's `isAnythingFound` gate could flip) must be DROPPED while the submit is in
+    /// flight — never a second addProofs/submit for the same ceremony.
+    @MainActor @Test func foundPCZTDuplicateWhileSubmitInFlightIsDropped() async {
+        let addProofsCalls = LockIsolated<Int>(0)
+        let (releaseStream, releaseContinuation) = AsyncStream<Void>.makeStream()
+        let signedPczt = stampedSignedPczt(major: 3, minor: 0, build: 0)
+        var state = MigrationCoordFlow.State()
+        state.pendingKeystoneSigning = .immediateReview
+        state.path.append(.reviewTransfer(MigrationReviewTransfer.State(mode: .immediate)))
+        state.path.append(
+            .keystoneSign(
+                MigrationKeystoneSign.State(
+                    pczts: [MigrationUnsignedTransferPczt(id: MigrationReviewTransfer.immediateKeystonePcztId, pczt: Data([0xDD]))],
+                    redactedSinglePczt: Data([0xDD, 0x0F])
+                )
+            )
+        )
+        state.path.append(.scan(Scan.State.initial))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.addProofsToPCZT = { pczt in
+                addProofsCalls.withValue { $0 += 1 }
+                for await _ in releaseStream { break }
+                return pczt
+            }
+            $0.sdkSynchronizer.createAndSubmitTransactionFromPCZT = { _, _ in .success(txIds: ["ab12"]) }
+            $0.sdkSynchronizer.recordImmediateMigration = { _, _ in }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 2, action: .scan(.foundPCZT(signedPczt)))))
+        // Duplicate delivery while the first submit is still in flight: a complete no-op.
+        await store.send(.path(.element(id: 2, action: .scan(.foundPCZT(signedPczt)))))
+
+        releaseContinuation.yield()
+        releaseContinuation.finish()
+
+        await store.receive(\.keystoneImmediateSubmitted)
+
+        #expect(addProofsCalls.value == 1)
     }
 
     // MARK: - MOB-1513: minimum-firmware gate over the decode envelope's reported version
@@ -4328,12 +4627,14 @@ import ComposableArchitecture
     /// `MigrationReviewTransferStore.requestKeystoneSignature` uses for the entry-screen immediate
     /// lane. Call ORDER matters (unlock-first is load-bearing) and `.immediateReview` — not a
     /// dust-specific context — is what gets armed, so the rest of the ceremony (scan -> proofs ->
-    /// submit) is the SAME already-tested `.immediateReview` machinery
-    /// (`foundKeystoneBatchSignaturesForImmediateReviewContextAddsProofsSubmitsRecordsAndPushesSendingSuccess`).
-    @MainActor @Test func completeMigrateAnywayKeystoneUnlocksProposesAndPushesKeystoneSignContext() async {
+    /// submit) is the SAME `.immediateReview` machinery the entry lane uses. MOB-1513 (R8): the
+    /// dust producer redacts too and the pushed `keystoneSign` enters SINGLE-PCZT mode, exactly
+    /// like the entry lane's delegate handler.
+    @MainActor @Test func completeMigrateAnywayKeystoneUnlocksProposesRedactsAndPushesSinglePcztKeystoneSignContext() async {
         let callLog = LockIsolated<[String]>([])
         let proposal = ImmediateMigrationProposal(proposal: .testOnlyFakeProposal(totalFee: 5_000), amount: Zatoshi(12_000), fee: Zatoshi(5_000))
         let pczt = Data([0xDD])
+        let redacted = Data([0xDD, 0x0F])
         var state = MigrationCoordFlow.State()
         state.$selectedWalletAccount.withLock { $0 = walletAccount(keystone: true, idByte: 20) }
         state.path.append(.complete(MigrationComplete.State(isFlowRoot: true)))
@@ -4353,19 +4654,24 @@ import ComposableArchitecture
                 callLog.withValue { $0.append("createPCZT") }
                 return pczt
             }
+            $0.sdkSynchronizer.redactPCZTForSigner = { _ in
+                callLog.withValue { $0.append("redact") }
+                return redacted
+            }
         }
         store.exhaustivity = .off
 
         await store.send(.path(.element(id: 0, action: .complete(.delegate(.migrateAnyway)))))
         await store.receive(\.migrateAnywayImmediateKeystonePCZTProposed)
 
-        #expect(callLog.value == ["unlock", "propose", "createPCZT"])
+        #expect(callLog.value == ["unlock", "propose", "createPCZT", "redact"])
         #expect(store.state.pendingKeystoneSigning == MigrationCoordFlow.KeystoneSigningContext.immediateReview)
         guard case let .keystoneSign(signState) = try? #require(store.state.path.last) else {
             Issue.record("Expected .keystoneSign pushed on top of .complete")
             return
         }
         #expect(signState.pczts == [MigrationUnsignedTransferPczt(id: MigrationReviewTransfer.immediateKeystonePcztId, pczt: pczt)])
+        #expect(signState.redactedSinglePczt == redacted)
     }
 
     /// Propose/unlock (or PCZT-build) failure falls back to the SAME generic Sending-screen failure

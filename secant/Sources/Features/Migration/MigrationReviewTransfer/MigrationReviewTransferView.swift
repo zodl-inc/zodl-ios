@@ -5,7 +5,7 @@
 //  "Review Transfer" screen (MOB-1463, Figma S7 · immediate 2867:5924 / manual "3 of 5"
 //  2729:8544). `onAppear` loads Amount/Fee live (immediate mode) via the store; when the manual-step
 //  variant is a flow re-entry root (`isFlowRoot`), its back control closes the flow instead of
-//  popping (MOB-1466). `confirmTapped`'s delegate (`.confirmed` or `.keystoneSignRequested`) is
+//  popping (MOB-1466). `confirmTapped`'s delegate (`.confirmed` or `.keystoneImmediateSignRequested`) is
 //  consumed by `MigrationCoordFlowCoordinator` (phase 3).
 //
 //  MOB-1478 (W4): immediate mode's `confirmTapped` now silently splits first when needed — a failure
