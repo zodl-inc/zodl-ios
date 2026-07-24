@@ -34,6 +34,12 @@
 //  `migrationPlanRandomizedNote` row (whose key was already removed with it, so there's nothing to
 //  orphan here).
 //
+//  MOB-1513 (C1, Figma 4207:7394): the footer T8 reinstated above is retired again — the same
+//  frame, re-synced, now hides its Disclaimer layer in every Transfer Plan frame (scheduled/manual/
+//  recreated alike), so nothing sits between the list and Confirm any more. `randomizedFooter` and
+//  its call site are removed; the `migrationPlanRandomizedTitle`/`migrationPlanRandomizedBody`
+//  string keys stay in the catalogue (removed separately, centrally).
+//
 //  MOB-1513 (A2): the shared timeline no longer relabels `store.rows`' own index 0 as "Split
 //  Balance" — that let an ordinary crossing transfer masquerade as the split (wrong amount, its own
 //  multi-hour ETA instead of "Ready now"), while the real note-split (broadcast at commit) had no
@@ -75,7 +81,7 @@ struct MigrationTransferPlanView: View {
                         // once the engine estimate exists, "Round N" until then.
                         if let round = store.round {
                             Text(roundLabel(round: round, totalRounds: store.totalRounds))
-                                .zFont(.semiBold, size: 14, style: Design.Text.primary)
+                                .zFont(.semiBold, size: 16, style: Design.Text.primary)
                                 .padding(.bottom, 24)
                         }
 
@@ -87,9 +93,6 @@ struct MigrationTransferPlanView: View {
                     }
                     .padding(.vertical, 1)
                 }
-
-                randomizedFooter
-                    .padding(.top, 16)
 
                 // MOB-1513 (B4): disabled+spinner while the commit is in flight (the established
                 // button-loading idiom — mirrors `SendConfirmationView`'s `isSending` button).
@@ -194,17 +197,6 @@ struct MigrationTransferPlanView: View {
         )
     }
 
-    // MARK: - Randomized-amounts footer (MOB-1497 T8)
-
-    /// Reinstates the footer MOB-1487 removed — see this file's header doc.
-    @ViewBuilder private var randomizedFooter: some View {
-        ZashiInfoCallout(
-            style: .plain,
-            title: String(localizable: .migrationPlanRandomizedTitle),
-            body: String(localizable: .migrationPlanRandomizedBody)
-        )
-    }
-
     // MARK: - Failure sheet
 
     /// A `.propose` failure keeps this screen's own honest "couldn't load" copy; a `.commit` (or
@@ -274,12 +266,14 @@ struct MigrationTransferPlanView: View {
 
 private extension IdentifiedArray where ID == MigrationTransferRow.ID, Element == MigrationTransferRow {
     /// The 6-transfer set from the "Final Designs" canvas, frame 3508:11442 (10.00 / 1.00 / 1.00 /
-    /// 0.2 / 0.2 / 0.05 ZEC). Transfer 1 stays `.active` (dark badge, dark trailing connector
-    /// segment per the frame's Avatar fill) even though its ETA is a real "in ~6 hours" rather than
-    /// "ready now" — nothing has actually started sending on this pre-commit screen.
+    /// 0.2 / 0.2 / 0.05 ZEC). MOB-1513 (C2): Transfer 1 is `.pending`, not `.active` — this screen
+    /// also shows the synthesized "Split Balance" row ahead of this list (see
+    /// `MigrationTransferPlan.State.splitRow`), which now carries the current-step styling alone,
+    /// even though Transfer 1's own ETA is a real "in ~6 hours" rather than "ready now" (nothing
+    /// has actually started sending on this pre-commit screen).
     static var previewRows: Self {
         [
-            MigrationTransferRow(id: "0", index: 0, amount: Zatoshi(1_000_000_000), status: .active, hoursFromNow: 6),
+            MigrationTransferRow(id: "0", index: 0, amount: Zatoshi(1_000_000_000), status: .pending, hoursFromNow: 6),
             MigrationTransferRow(id: "1", index: 1, amount: Zatoshi(100_000_000), status: .pending, hoursFromNow: 12),
             MigrationTransferRow(id: "2", index: 2, amount: Zatoshi(100_000_000), status: .pending, hoursFromNow: 18),
             MigrationTransferRow(id: "3", index: 3, amount: Zatoshi(20_000_000), status: .pending, hoursFromNow: 24),
