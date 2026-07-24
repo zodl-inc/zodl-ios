@@ -838,13 +838,18 @@ extension MigrationCoordFlow {
                 state.keystoneBatchApplyInFlight = true
                 return .run { [sdkSynchronizer, unsignedPczts, data] send in
                     do {
-                        let signed = try await sdkSynchronizer.applyKeystoneBatchSignatures(unsignedPczts, data)
+                        // MOB-1513 (R8 finding 1): sentinel-prefixed prep ids never cross the FFI —
+                        // see `sanitizedForBatchApply`/`reattachOriginalIds`.
+                        let signed = try await sdkSynchronizer.applyKeystoneBatchSignatures(
+                            MigrationCoordFlow.sanitizedForBatchApply(unsignedPczts),
+                            data
+                        )
                         await send(
                             .keystoneBatchSignaturesApplied(
                                 context: context,
                                 accountUUID: accountUUID,
                                 unsignedPczts: unsignedPczts,
-                                signed: signed
+                                signed: MigrationCoordFlow.reattachOriginalIds(from: unsignedPczts, onto: signed)
                             )
                         )
                     } catch {
@@ -2164,6 +2169,42 @@ extension MigrationCoordFlow {
             }
         }
         return (prepEntries, scheduleEntries)
+    }
+
+    /// MOB-1513 (R8 finding 1): strips the `note-split#` sentinel prefix off every prep entry's id
+    /// — down to the bare (numeric) engine id — before the batch is handed to
+    /// `applyKeystoneBatchSignatures`. The SDK's apply FFI historically numeric-parsed EVERY id it
+    /// received (`decode_signed_pairs` -> `transfer_id_from_c`), so a sentinel-prefixed id made
+    /// apply throw after every successful scan, abandoning any scheduled ceremony that carried a
+    /// preparation transaction. The SDK-side contract fix (apply ids opaque, SDK PR #1834) makes
+    /// ids pass-through, but this app-side sanitization is kept as defense-in-depth: it is correct
+    /// against BOTH SDK generations, and the ceremony's own sentinel bookkeeping never needs to
+    /// cross the FFI at all. Pair with `reattachOriginalIds` on the result — apply echoes ids back
+    /// positionally, and every downstream consumer (`splitKeystoneBatch`, the stores) expects the
+    /// ORIGINAL sentinel-prefixed ids.
+    static func sanitizedForBatchApply(_ pczts: [MigrationUnsignedTransferPczt]) -> [MigrationUnsignedTransferPczt] {
+        pczts.map { entry in
+            guard entry.id.hasPrefix(keystoneNoteSplitSentinelPrefix) else { return entry }
+            return MigrationUnsignedTransferPczt(
+                id: String(entry.id.dropFirst(keystoneNoteSplitSentinelPrefix.count)),
+                pczt: entry.pczt
+            )
+        }
+    }
+
+    /// MOB-1513 (R8 finding 1): re-attaches the ceremony's ORIGINAL (possibly sentinel-prefixed)
+    /// ids onto the signed pairs `applyKeystoneBatchSignatures` returned — positional, per the
+    /// apply contract (output order and count equal the input's). See `sanitizedForBatchApply`'s
+    /// doc for the pairing. Defensive: a count mismatch would mean the SDK broke that contract —
+    /// the signed result is then returned untouched rather than zip-truncating entries away.
+    static func reattachOriginalIds(
+        from originals: [MigrationUnsignedTransferPczt],
+        onto signed: [MigrationSignedTransferPczt]
+    ) -> [MigrationSignedTransferPczt] {
+        guard originals.count == signed.count else { return signed }
+        return zip(originals, signed).map { original, signedEntry in
+            MigrationSignedTransferPczt(id: original.id, pczt: signedEntry.pczt)
+        }
     }
 
     // MARK: - MOB-1513: Keystone migration-batch minimum-firmware gate
