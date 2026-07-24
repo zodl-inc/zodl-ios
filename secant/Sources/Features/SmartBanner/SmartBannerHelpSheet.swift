@@ -331,9 +331,33 @@ extension SmartBannerView {
     }
 
     @ViewBuilder func autoShieldingHelpContent() -> some View {
-        Text("autoShieldingHelpContent")
-            .zFont(size: 14, style: Design.Text.primary)
-            .padding(.vertical, 50)
+        VStack(alignment: .leading, spacing: 0) {
+            Asset.Assets.Icons.shieldZap.image
+                .zImage(size: 20, color: Design.Text.primary.color(colorScheme))
+                .padding(10)
+                .background {
+                    Circle()
+                        .fill(Design.Surfaces.bgTertiary.color(colorScheme))
+                        .frame(width: 40, height: 40)
+                }
+                .padding(.top, 32)
+                .padding(.bottom, 12)
+
+            Text(localizable: .smartBannerHelpAutoShieldingTitle)
+                .zFont(.semiBold, size: 20, style: Design.Text.primary)
+                .padding(.bottom, 4)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Text(localizable: .smartBannerHelpAutoShieldingInfo)
+                .zFont(size: 16, style: Design.Text.tertiary)
+                .padding(.bottom, 32)
+                .fixedSize(horizontal: false, vertical: true)
+
+            ZashiButton(String(localizable: .generalOk).uppercased()) {
+                store.send(.closeSheetTapped)
+            }
+            .padding(.bottom, Design.Spacing.sheetBottomSpace)
+        }
     }
     
     @ViewBuilder private func bulletpoint(_ text: String) -> some View {
