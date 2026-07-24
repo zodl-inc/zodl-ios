@@ -9046,7 +9046,7 @@
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Keystone Conectado"
+            "value" : "¡Conectado!"
           }
         }
       }
@@ -9063,7 +9063,7 @@
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Tu billetera de hardware Keystone se ha conectado correctamente. Ahora puedes firmar transacciones de forma inalámbrica."
+            "value" : "Tu billetera de hardware Keystone se ha conectado correctamente."
           }
         }
       }
@@ -10104,7 +10104,7 @@
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "%1$lld de %2$lld transferencias hechas ~ %3$lld%% completo"
+            "value" : "%1$lld de %2$lld transferencias hechas · %3$lld%% completo"
           }
         }
       }
@@ -10308,7 +10308,7 @@
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "%1$@ permaneció en Orchard — el monto está por debajo del umbral de transferencia."
+            "value" : "%1$@ permaneció en Orchard. Un monto tan específico puede identificarte en la red. Para proteger tu privacidad, te recomendamos bloquear este saldo en lugar de migrarlo."
           }
         }
       }
@@ -10325,7 +10325,7 @@
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Saldo de polvo restante"
+            "value" : "Saldo de Orchard restante"
           }
         }
       }
@@ -10338,6 +10338,12 @@
             "state" : "translated",
             "value" : "Lock balance"
           }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bloquear saldo"
+          }
         }
       }
     },
@@ -10348,6 +10354,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%1$@ is now locked in Orchard. Locking keeps this amount unspendable to protect your privacy."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ ahora está bloqueado en Orchard. El bloqueo mantiene este monto no gastable para proteger tu privacidad."
           }
         }
       }
@@ -10360,6 +10372,12 @@
             "state" : "translated",
             "value" : "Orchard balance locked"
           }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Saldo de Orchard bloqueado"
+          }
         }
       }
     },
@@ -10370,6 +10388,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Locking marks this balance as ^[unspendable](style: 'boldPrimary'), so it can't compromise your privacy in future transactions."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bloquear marca este saldo como ^[no gastable](style: 'boldPrimary'), para que no pueda comprometer tu privacidad en futuras transacciones."
           }
         }
       }
@@ -10382,6 +10406,12 @@
             "state" : "translated",
             "value" : "The lock lives on ^[this ZODL/Keystone instance only.](style: 'boldPrimary') Restoring your wallet won't carry it over."
           }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "El bloqueo existe ^[solo en esta instancia de ZODL/Keystone.](style: 'boldPrimary') Restaurar tu billetera no lo conservará."
+          }
         }
       }
     },
@@ -10392,6 +10422,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "A future release will let you ^[unlock this balance.](style: 'boldPrimary')"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Una versión futura te permitirá ^[desbloquear este saldo.](style: 'boldPrimary')"
           }
         }
       }
@@ -10404,6 +10440,12 @@
             "state" : "translated",
             "value" : "What does locking do?"
           }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "¿Qué hace el bloqueo?"
+          }
         }
       }
     },
@@ -10415,6 +10457,12 @@
             "state" : "translated",
             "value" : "Locking balance"
           }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bloqueando saldo"
+          }
         }
       }
     },
@@ -10425,6 +10473,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Migrate anyway"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Migrar de todos modos"
           }
         }
       }
@@ -10611,7 +10665,7 @@
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Los montos de las transferencias entre pools son visibles en cadena (on-chain)."
+            "value" : "El monto de cada transferencia individual entre pools se revela en la cadena."
           }
         }
       }
@@ -10747,7 +10801,7 @@
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "No se pudo contactar con ninguno de los servidores de difusión de tu migración. Puedes difundir a través de tu servidor de sincronización en su lugar: recibirá las transacciones a través de Tor, y como ya conoce tu dirección IP por la sincronización, podría correlacionar ambas cosas por el tiempo."
+            "value" : "No se pudo contactar con ninguno de los servidores de difusión de tu migración. Puedes difundir a través de tu servidor de sincronización en su lugar: recibirá las transacciones a través de Tor, y como ya conoce tu dirección IP por la sincronización, podría correlacionar ambas cosas por el momento en que ocurren."
           }
         }
       }
@@ -10913,6 +10967,12 @@
             "state" : "translated",
             "value" : "ZODL handles the rest, sending each transfer automatically in its scheduled window while the app runs in the background."
           }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ZODL se encarga del resto, enviando cada transferencia automáticamente en su ventana programada mientras la app se ejecuta en segundo plano."
+          }
         }
       }
     },
@@ -10923,6 +10983,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Approve once"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aprueba una vez"
           }
         }
       }
@@ -10935,6 +11001,12 @@
             "state" : "translated",
             "value" : "Continue"
           }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Continuar"
+          }
         }
       }
     },
@@ -10945,6 +11017,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Choosing this option may require a small amount (less than 0.01 ZEC) to be left in the Orchard pool, and which won't be transferred."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Elegir esta opción puede requerir dejar un monto pequeño (menos de 0.01 ZEC) en el pool de Orchard, que no será transferido."
           }
         }
       }
@@ -10957,6 +11035,12 @@
             "state" : "translated",
             "value" : "We'll notify you so you can complete it manually."
           }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Te notificaremos para que puedas completarla manualmente."
+          }
         }
       }
     },
@@ -10967,6 +11051,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "If something fails"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Si algo falla"
           }
         }
       }
@@ -10979,6 +11069,12 @@
             "state" : "translated",
             "value" : "Moving funds between Zcash pools reveals the amount of each transfer. Here's how we protect your privacy during migration."
           }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mover fondos entre pools de Zcash revela el monto de cada transferencia. Así protegemos tu privacidad durante la migración."
+          }
         }
       }
     },
@@ -10989,6 +11085,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "If your wallet holds large balance or many small notes, migration may run across multiple scheduled rounds."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Si tu billetera tiene un saldo grande o muchas notas pequeñas, la migración puede ejecutarse en varias rondas programadas."
           }
         }
       }
@@ -11001,6 +11103,12 @@
             "state" : "translated",
             "value" : "Large balance"
           }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Saldo grande"
+          }
         }
       }
     },
@@ -11011,6 +11119,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Your balance is divided into smaller amounts and spaced out over time, so they're harder to link together."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tu saldo se divide en montos más pequeños y espaciados en el tiempo, para que sean más difíciles de vincular entre sí."
           }
         }
       }
@@ -11023,6 +11137,12 @@
             "state" : "translated",
             "value" : "Split and schedule"
           }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dividir y programar"
+          }
         }
       }
     },
@@ -11033,6 +11153,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "How This Works"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cómo funciona"
           }
         }
       }
@@ -11045,6 +11171,12 @@
             "state" : "translated",
             "value" : "Your Keystone's firmware (%1$@) doesn't support migration signing yet. Update to firmware %2$@ or later, then start the migration again."
           }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "El firmware de tu Keystone (%1$@) aún no admite la firma de migración. Actualiza al firmware %2$@ o posterior y luego inicia la migración de nuevo."
+          }
         }
       }
     },
@@ -11055,6 +11187,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Close"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cerrar"
           }
         }
       }
@@ -11067,6 +11205,12 @@
             "state" : "translated",
             "value" : "Your Keystone's firmware doesn't support migration signing yet. Update to firmware %1$@ or later, then start the migration again."
           }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "El firmware de tu Keystone aún no admite la firma de migración. Actualiza al firmware %1$@ o posterior y luego inicia la migración de nuevo."
+          }
         }
       }
     },
@@ -11078,6 +11222,12 @@
             "state" : "translated",
             "value" : "Firmware Update Required"
           }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Actualización de Firmware Requerida"
+          }
         }
       }
     },
@@ -11088,6 +11238,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Scan Keystone QR code\nto sign the transaction"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Escanea el código QR de Keystone\npara firmar la transacción"
           }
         }
       }
@@ -11219,6 +11375,12 @@
             "state" : "translated",
             "value" : "Transfer %1$lld — ready to send"
           }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Transferencia %1$lld — lista para enviar"
+          }
         }
       }
     },
@@ -11280,6 +11442,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Migration plan needs update"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "El plan de migración necesita actualizarse"
           }
         }
       }
@@ -11359,6 +11527,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Transfer %1$lld waiting"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Transferencia %1$lld en espera"
           }
         }
       }
@@ -11562,7 +11736,7 @@
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Te recomendamos seguir el siguiente plan. Tu saldo se dividirá en %1$lld transferencias a lo largo de ~%2$lld horas. Los montos son aleatorios por privacidad. Confirma para enviar la primera transferencia ahora."
+            "value" : "Te recomendamos seguir el siguiente plan. Divide tu saldo en %1$lld transferencias a lo largo de ~%2$lld horas. Los montos se aleatorizan por privacidad. ZODL te avisará al abrir la app."
           }
         }
       }
@@ -11596,7 +11770,7 @@
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Tu saldo se divide en %1$lld transferencias a lo largo de ~%2$lld horas. Aprueba una vez y nosotros nos encargamos del resto — solo mantén la app ejecutándose en segundo plano. Los montos son aleatorios por privacidad. Si nos perdemos una ventana, ZODL te lo indicará la próxima vez que abras la app."
+            "value" : "Revisa el siguiente plan — una vez confirmado, cada transferencia se envía en su ventana programada durante las próximas ~%1$lld horas."
           }
         }
       }
@@ -11694,6 +11868,12 @@
             "state" : "translated",
             "value" : "We couldn't calculate your migration transfer. Your ZEC is safe — tap below to try again."
           }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "No pudimos calcular tu transferencia de migración. Tu ZEC está a salvo — toca abajo para intentarlo de nuevo."
+          }
         }
       }
     },
@@ -11704,6 +11884,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Couldn't Load Transfer"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "No se pudo cargar la transferencia"
           }
         }
       }
@@ -11800,6 +11986,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Your migration plan was refreshed — review it before confirming."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tu plan de migración se actualizó — revísalo antes de confirmar."
           }
         }
       }
@@ -11948,6 +12140,12 @@
             "state" : "translated",
             "value" : "The expired transfers couldn’t be rebuilt. You can restart this migration step and try again, or cancel for now."
           }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Las transferencias caducadas no se pudieron reconstruir. Puedes reiniciar este paso de la migración e intentarlo de nuevo, o cancelar por ahora."
+          }
         }
       }
     },
@@ -11959,6 +12157,12 @@
             "state" : "translated",
             "value" : "Restart Step"
           }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Reiniciar paso"
+          }
         }
       }
     },
@@ -11969,6 +12173,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Couldn’t Reschedule Transfers"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "No se pudieron reprogramar las transferencias"
           }
         }
       }
@@ -12032,6 +12242,12 @@
             "state" : "translated",
             "value" : "Once confirmed, this cannot be undone."
           }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Una vez confirmado, esto no se puede deshacer."
+          }
         }
       }
     },
@@ -12064,7 +12280,7 @@
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Esta transferencia envía parte de tu saldo de Orchard a Ironwood como parte de tu migración programada.\n\nRevisa y confirma para enviar la transacción. Una vez confirmada, esto no se puede deshacer."
+            "value" : "Esta transferencia envía parte de tu saldo de Orchard a Ironwood como parte de tu migración programada."
           }
         }
       }
@@ -12077,6 +12293,12 @@
             "state" : "translated",
             "value" : "Sends now"
           }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Se envía ahora"
+          }
         }
       }
     },
@@ -12087,6 +12309,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "This Transfer"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Esta transferencia"
           }
         }
       }
@@ -12132,6 +12360,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Transfer %1$lld of %2$lld"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Transferencia %1$lld de %2$lld"
           }
         }
       }
@@ -12314,6 +12548,12 @@
             "state" : "translated",
             "value" : "Your ZEC was successfully migrated to Ironwood."
           }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tu ZEC se migró correctamente a Ironwood."
+          }
         }
       }
     },
@@ -12358,6 +12598,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Your ZEC is being migrated to Ironwood…"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tu ZEC se está migrando a Ironwood…"
           }
         }
       }
@@ -12489,6 +12735,12 @@
             "state" : "translated",
             "value" : "Transfers %1$lld-%2$lld have been successfully rescheduled. Keep the app running in the background. If we miss a window, ZODL will prompt you on next open."
           }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Las transferencias %1$lld-%2$lld se reprogramaron correctamente. Mantén la app ejecutándose en segundo plano. Si se pasa una ventana, ZODL te avisará la próxima vez que abras la app."
+          }
         }
       }
     },
@@ -12551,6 +12803,12 @@
             "state" : "translated",
             "value" : "Sending now"
           }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Enviando ahora"
+          }
         }
       }
     },
@@ -12578,6 +12836,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Sent %1$lld min ago"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Enviada hace %1$lld min"
           }
         }
       }
@@ -12743,6 +13007,12 @@
             "state" : "translated",
             "value" : "Routes your connection through the Tor network for enhanced anonymity and privacy protection."
           }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Enruta tu conexión a través de la red Tor para mayor anonimato y protección de tu privacidad."
+          }
         }
       }
     },
@@ -12753,6 +13023,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Enable Tor Protection"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Activar protección Tor"
           }
         }
       }
@@ -12935,6 +13211,12 @@
             "state" : "translated",
             "value" : "Enable Tor Protection"
           }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Activar protección Tor"
+          }
         }
       }
     },
@@ -12950,7 +13232,7 @@
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "La transacción de migración no se puede transmitir a través de Tor cuando usas un servidor personalizado. Si continúas, esta transacción se enviará sin la protección de IP de Tor."
+            "value" : "La transacción de migración no se puede difundir a través de Tor cuando usas un servidor personalizado. Si continúas, esta transacción se enviará sin la protección de IP de Tor."
           }
         }
       }
@@ -12967,7 +13249,7 @@
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Las transacciones de migración no se pueden transmitir a través de Tor cuando usas un servidor personalizado. Si continúas, estas transacciones se enviarán sin la protección de IP de Tor."
+            "value" : "Las transacciones de migración no se pueden difundir a través de Tor cuando usas un servidor personalizado. Si continúas, estas transacciones se enviarán sin la protección de IP de Tor."
           }
         }
       }
@@ -15732,7 +16014,7 @@
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Te recomendamos migrar tus fondos primero para evitar revelar el monto de la transacción en cadena."
+            "value" : "Te recomendamos migrar tus fondos primero para evitar revelar el monto de la transacción en la cadena."
           }
         }
       }
@@ -18012,6 +18294,12 @@
             "state" : "translated",
             "value" : "Wallet Resync in Progress"
           }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Resincronización de Billetera en Progreso"
+          }
         }
       }
     },
@@ -18209,6 +18497,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Resyncing"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Resincronizando"
           }
         }
       }
