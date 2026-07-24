@@ -746,6 +746,12 @@ extension MigrationCoordFlow {
                 // `.keystoneImmediateSubmitted` / `.keystoneImmediateSubmitFailed` /
                 // `.keystoneScanAbandoned`.
                 state.keystoneImmediateSubmitInFlight = true
+                // MOB-1513 (R10): the scan screen stays on top for this whole leg (proofs +
+                // broadcast) — arm its "Signing…" hold so it isn't silent while this runs.
+                if let scanId = state.path.ids.last, case .scan(var scanState) = state.path[id: scanId] {
+                    scanState.isKeystoneSigningInProgress = true
+                    state.path[id: scanId] = .scan(scanState)
+                }
                 return submitImmediateKeystoneTransaction(
                     accountUUID: accountUUID,
                     unsignedPczt: signState.pczts.first?.pczt ?? Data(),
@@ -836,6 +842,12 @@ extension MigrationCoordFlow {
                 // MOB-1513 (final review, I-1 fix): armed right before the apply effect dispatches —
                 // cleared in `.keystoneBatchSignaturesApplied` (below) and `.keystoneScanAbandoned`.
                 state.keystoneBatchApplyInFlight = true
+                // MOB-1513 (R10): the scan screen stays on top for this whole leg (apply + store) —
+                // arm its "Signing…" hold so it isn't silent while this runs.
+                if let scanId = state.path.ids.last, case .scan(var scanState) = state.path[id: scanId] {
+                    scanState.isKeystoneSigningInProgress = true
+                    state.path[id: scanId] = .scan(scanState)
+                }
                 return .run { [sdkSynchronizer, unsignedPczts, data] send in
                     do {
                         // MOB-1513 (R8 finding 1): sentinel-prefixed prep ids never cross the FFI —

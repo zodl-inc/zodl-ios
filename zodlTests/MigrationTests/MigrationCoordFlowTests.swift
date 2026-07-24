@@ -1454,7 +1454,12 @@ import ComposableArchitecture
                     action: .scan(.foundKeystoneBatchSignatures(data: Data(), firmwareVersion: Self.validKeystoneMigrationFirmware))
                 )
             )
-        )
+        ) {
+            if case .scan(var scanState) = $0.path[id: 2] {
+                scanState.isKeystoneSigningInProgress = true
+                $0.path[id: 2] = .scan(scanState)
+            }
+        }
         await store.receive(\.keystoneBatchSignaturesApplied)
         await store.receive(\.keystoneSigningSubmitted)
         // MOB-1458 (W-E): the post-commit `.scheduled` push is now hydrated (an async peek), so it
@@ -1474,6 +1479,55 @@ import ComposableArchitecture
             Issue.record("Expected .transferPlan retained at the bottom (never re-signs again)")
             return
         }
+    }
+
+    /// MOB-1513 (R10): the scan screen's "Signing…" hold — the coordinator arms
+    /// `Scan.State.isKeystoneSigningInProgress` on the `scan` element the INSTANT the scheduled/
+    /// recovery lanes' post-scan leg (apply + store) starts, since that element stays on top for the
+    /// whole leg. Cloned setup from `foundKeystoneBatchSignaturesForPlanCommitContextStoresPopsAndPushesScheduledForScheduledVariant`
+    /// above — this test only adds the new flag assertion to the send closure.
+    @MainActor @Test func foundKeystoneBatchSignaturesArmsScanSigningHoldOnTheScanElement() async {
+        let unsigned: [MigrationUnsignedTransferPczt] = [
+            MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xAA])),
+            MigrationUnsignedTransferPczt(id: "t1", pczt: Data([0xBB]))
+        ]
+        let signed: [Data] = [Data([0xAA, 0x01]), Data([0xBB, 0x01])]
+        var state = MigrationCoordFlow.State()
+        state.pendingKeystoneSigning = .planCommit
+        state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .scheduled)))
+        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: unsigned)))
+        state.path.append(.scan(Scan.State.initial))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.applyKeystoneBatchSignatures = stubApply(signed)
+            $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, _ in }
+            $0.sdkSynchronizer.executeNextPendingMigrationTransfer = { _, _ in nil }
+            $0.migrationBGScheduler.scheduleFirstWindow = { }
+            $0.migrationManager.reconcile = { }
+            $0.migrationManager.migrationNetworkOptions = { _ in Self.defaultNetworkPrivacyOptions }
+            $0.migrationManager.refreshMigrationSyncGate = { }
+            $0.migrationManager.migrationSummary = { _ in MigrationSummary.zero }
+        }
+        store.exhaustivity = .off
+
+        await store.send(
+            .path(
+                .element(
+                    id: 2,
+                    action: .scan(.foundKeystoneBatchSignatures(data: Data(), firmwareVersion: Self.validKeystoneMigrationFirmware))
+                )
+            )
+        ) {
+            if case .scan(var scanState) = $0.path[id: 2] {
+                scanState.isKeystoneSigningInProgress = true
+                $0.path[id: 2] = .scan(scanState)
+            }
+        }
+        await store.receive(\.keystoneBatchSignaturesApplied)
+        await store.receive(\.keystoneSigningSubmitted)
+        await store.receive(\.pushHydratedPathState)
     }
 
     /// MOB-1513 (final review, I-1 fix): the late-frame duplicate-completion race — the camera
@@ -1535,7 +1589,12 @@ import ComposableArchitecture
 
         // First delivery: passes the guard, arms it, dispatches the apply effect — which suspends on
         // `releaseStream` before returning, so it's still in flight for everything below.
-        await store.send(foundSignatures)
+        await store.send(foundSignatures) {
+            if case .scan(var scanState) = $0.path[id: 2] {
+                scanState.isKeystoneSigningInProgress = true
+                $0.path[id: 2] = .scan(scanState)
+            }
+        }
         #expect(store.state.keystoneBatchApplyInFlight == true)
         let stateAfterFirstDelivery = store.state
 
@@ -1606,7 +1665,12 @@ import ComposableArchitecture
                     action: .scan(.foundKeystoneBatchSignatures(data: Data(), firmwareVersion: Self.validKeystoneMigrationFirmware))
                 )
             )
-        )
+        ) {
+            if case .scan(var scanState) = $0.path[id: 2] {
+                scanState.isKeystoneSigningInProgress = true
+                $0.path[id: 2] = .scan(scanState)
+            }
+        }
         await store.receive(\.keystoneBatchSignaturesApplied)
         await store.receive(\.keystoneSigningSubmitted)
         await store.finish()
@@ -1663,7 +1727,12 @@ import ComposableArchitecture
                     action: .scan(.foundKeystoneBatchSignatures(data: Data(), firmwareVersion: Self.validKeystoneMigrationFirmware))
                 )
             )
-        )
+        ) {
+            if case .scan(var scanState) = $0.path[id: 2] {
+                scanState.isKeystoneSigningInProgress = true
+                $0.path[id: 2] = .scan(scanState)
+            }
+        }
         await store.receive(\.keystoneBatchSignaturesApplied)
         await store.receive(\.keystoneScanAbandoned)
 
@@ -1741,7 +1810,12 @@ import ComposableArchitecture
                     action: .scan(.foundKeystoneBatchSignatures(data: Data(), firmwareVersion: Self.validKeystoneMigrationFirmware))
                 )
             )
-        )
+        ) {
+            if case .scan(var scanState) = $0.path[id: 2] {
+                scanState.isKeystoneSigningInProgress = true
+                $0.path[id: 2] = .scan(scanState)
+            }
+        }
         await store.receive(\.keystoneBatchSignaturesApplied)
         await store.receive(\.keystoneSigningSubmitted)
         await store.receive(\.pushHydratedPathState)
@@ -1818,7 +1892,12 @@ import ComposableArchitecture
                     action: .scan(.foundKeystoneBatchSignatures(data: Data(), firmwareVersion: Self.validKeystoneMigrationFirmware))
                 )
             )
-        )
+        ) {
+            if case .scan(var scanState) = $0.path[id: 2] {
+                scanState.isKeystoneSigningInProgress = true
+                $0.path[id: 2] = .scan(scanState)
+            }
+        }
         await store.receive(\.keystoneBatchSignaturesApplied)
         await store.receive(\.keystoneSigningSubmitted)
         await store.receive(\.pushHydratedPathState)
@@ -1878,7 +1957,12 @@ import ComposableArchitecture
                     action: .scan(.foundKeystoneBatchSignatures(data: Data(), firmwareVersion: Self.validKeystoneMigrationFirmware))
                 )
             )
-        )
+        ) {
+            if case .scan(var scanState) = $0.path[id: 2] {
+                scanState.isKeystoneSigningInProgress = true
+                $0.path[id: 2] = .scan(scanState)
+            }
+        }
         await store.receive(\.keystoneBatchSignaturesApplied)
         await store.receive(\.keystoneSigningSubmitted)
 
@@ -1933,7 +2017,12 @@ import ComposableArchitecture
                     action: .scan(.foundKeystoneBatchSignatures(data: Data(), firmwareVersion: Self.validKeystoneMigrationFirmware))
                 )
             )
-        )
+        ) {
+            if case .scan(var scanState) = $0.path[id: 2] {
+                scanState.isKeystoneSigningInProgress = true
+                $0.path[id: 2] = .scan(scanState)
+            }
+        }
         await store.receive(\.keystoneBatchSignaturesApplied)
         await store.receive(\.keystoneSigningSubmitted)
         await store.receive(\.pushHydratedPathState)
@@ -2008,7 +2097,12 @@ import ComposableArchitecture
                     action: .scan(.foundKeystoneBatchSignatures(data: Data(), firmwareVersion: Self.validKeystoneMigrationFirmware))
                 )
             )
-        )
+        ) {
+            if case .scan(var scanState) = $0.path[id: 2] {
+                scanState.isKeystoneSigningInProgress = true
+                $0.path[id: 2] = .scan(scanState)
+            }
+        }
         await store.receive(\.keystoneBatchSignaturesApplied)
         await store.receive(\.keystoneSigningSubmitted)
         await store.receive(\.pushHydratedPathState)
@@ -2075,7 +2169,12 @@ import ComposableArchitecture
                     action: .scan(.foundKeystoneBatchSignatures(data: Data(), firmwareVersion: Self.validKeystoneMigrationFirmware))
                 )
             )
-        )
+        ) {
+            if case .scan(var scanState) = $0.path[id: 2] {
+                scanState.isKeystoneSigningInProgress = true
+                $0.path[id: 2] = .scan(scanState)
+            }
+        }
         await store.receive(\.keystoneBatchSignaturesApplied)
         await store.receive(\.keystoneSigningSubmitted)
         await store.receive(\.pushHydratedPathState)
@@ -2156,7 +2255,12 @@ import ComposableArchitecture
                     action: .scan(.foundKeystoneBatchSignatures(data: Data(), firmwareVersion: Self.validKeystoneMigrationFirmware))
                 )
             )
-        )
+        ) {
+            if case .scan(var scanState) = $0.path[id: 2] {
+                scanState.isKeystoneSigningInProgress = true
+                $0.path[id: 2] = .scan(scanState)
+            }
+        }
         await store.receive(\.keystoneBatchSignaturesApplied)
         await store.receive(\.keystoneSigningSubmitted)
         await store.receive(\.pushHydratedPathState)
@@ -2224,7 +2328,12 @@ import ComposableArchitecture
                     action: .scan(.foundKeystoneBatchSignatures(data: Data(), firmwareVersion: Self.validKeystoneMigrationFirmware))
                 )
             )
-        )
+        ) {
+            if case .scan(var scanState) = $0.path[id: 2] {
+                scanState.isKeystoneSigningInProgress = true
+                $0.path[id: 2] = .scan(scanState)
+            }
+        }
         await store.receive(\.keystoneBatchSignaturesApplied)
         await store.receive(\.keystoneSigningSubmitted)
         await store.receive(\.pushHydratedPathState)
@@ -2305,7 +2414,12 @@ import ComposableArchitecture
                     action: .scan(.foundKeystoneBatchSignatures(data: Data(), firmwareVersion: Self.validKeystoneMigrationFirmware))
                 )
             )
-        )
+        ) {
+            if case .scan(var scanState) = $0.path[id: 2] {
+                scanState.isKeystoneSigningInProgress = true
+                $0.path[id: 2] = .scan(scanState)
+            }
+        }
         await store.receive(\.keystoneBatchSignaturesApplied)
         await store.receive(\.keystoneSigningSubmitted)
         await store.receive(\.pushHydratedPathState)
@@ -2528,7 +2642,12 @@ import ComposableArchitecture
                     action: .scan(.foundKeystoneBatchSignatures(data: Data(), firmwareVersion: Self.validKeystoneMigrationFirmware))
                 )
             )
-        )
+        ) {
+            if case .scan(var scanState) = $0.path[id: 2] {
+                scanState.isKeystoneSigningInProgress = true
+                $0.path[id: 2] = .scan(scanState)
+            }
+        }
         await store.receive(\.keystoneBatchSignaturesApplied)
         await store.receive(\.keystoneSigningSubmitted)
         await store.receive(\.pushHydratedPathState)
@@ -2589,7 +2708,12 @@ import ComposableArchitecture
                     action: .scan(.foundKeystoneBatchSignatures(data: Data(), firmwareVersion: Self.validKeystoneMigrationFirmware))
                 )
             )
-        )
+        ) {
+            if case .scan(var scanState) = $0.path[id: 2] {
+                scanState.isKeystoneSigningInProgress = true
+                $0.path[id: 2] = .scan(scanState)
+            }
+        }
         await store.receive(\.keystoneBatchSignaturesApplied)
         await store.receive(\.keystoneScanAbandoned)
 
@@ -2655,7 +2779,12 @@ import ComposableArchitecture
                     action: .scan(.foundKeystoneBatchSignatures(data: Data(), firmwareVersion: Self.validKeystoneMigrationFirmware))
                 )
             )
-        )
+        ) {
+            if case .scan(var scanState) = $0.path[id: 2] {
+                scanState.isKeystoneSigningInProgress = true
+                $0.path[id: 2] = .scan(scanState)
+            }
+        }
         await store.receive(\.keystoneBatchSignaturesApplied)
         await store.receive(\.keystoneSigningSubmitted)
         // MOB-1458 (W-E): see `transferPlanPostConfirmChain`'s doc — the `.scheduled` push is now
@@ -2702,7 +2831,12 @@ import ComposableArchitecture
                     action: .scan(.foundKeystoneBatchSignatures(data: Data(), firmwareVersion: Self.validKeystoneMigrationFirmware))
                 )
             )
-        )
+        ) {
+            if case .scan(var scanState) = $0.path[id: 2] {
+                scanState.isKeystoneSigningInProgress = true
+                $0.path[id: 2] = .scan(scanState)
+            }
+        }
         await store.receive(\.keystoneScanAbandoned)
 
         #expect(storeCalls.value == 0)
@@ -2781,7 +2915,12 @@ import ComposableArchitecture
                     action: .scan(.foundKeystoneBatchSignatures(data: Data(), firmwareVersion: Self.validKeystoneMigrationFirmware))
                 )
             )
-        )
+        ) {
+            if case .scan(var scanState) = $0.path[id: 2] {
+                scanState.isKeystoneSigningInProgress = true
+                $0.path[id: 2] = .scan(scanState)
+            }
+        }
         await store.receive(\.keystoneBatchSignaturesApplied)
         await store.receive(\.keystoneSigningSubmitted)
 
@@ -2839,7 +2978,12 @@ import ComposableArchitecture
                     action: .scan(.foundKeystoneBatchSignatures(data: Data(), firmwareVersion: Self.validKeystoneMigrationFirmware))
                 )
             )
-        )
+        ) {
+            if case .scan(var scanState) = $0.path[id: 2] {
+                scanState.isKeystoneSigningInProgress = true
+                $0.path[id: 2] = .scan(scanState)
+            }
+        }
         await store.receive(\.keystoneBatchSignaturesApplied)
         await store.receive(\.keystoneImmediateSubmitted)
 
@@ -2899,7 +3043,12 @@ import ComposableArchitecture
                     action: .scan(.foundKeystoneBatchSignatures(data: Data(), firmwareVersion: Self.validKeystoneMigrationFirmware))
                 )
             )
-        )
+        ) {
+            if case .scan(var scanState) = $0.path[id: 2] {
+                scanState.isKeystoneSigningInProgress = true
+                $0.path[id: 2] = .scan(scanState)
+            }
+        }
         await store.receive(\.keystoneBatchSignaturesApplied)
         await store.receive(\.keystoneImmediateSubmitFailed)
 
@@ -3013,7 +3162,12 @@ import ComposableArchitecture
         }
         store.exhaustivity = .off
 
-        await store.send(.path(.element(id: 2, action: .scan(.foundPCZT(signedPczt)))))
+        await store.send(.path(.element(id: 2, action: .scan(.foundPCZT(signedPczt))))) {
+            if case .scan(var scanState) = $0.path[id: 2] {
+                scanState.isKeystoneSigningInProgress = true
+                $0.path[id: 2] = .scan(scanState)
+            }
+        }
         await store.receive(\.keystoneImmediateSubmitted)
 
         #expect(applyCalls.value == 0)
@@ -3036,6 +3190,44 @@ import ComposableArchitecture
         #expect(sendingState.phase == MigrationSending.State.Phase.success)
         #expect(sendingState.txId == "ab12")
         #expect(sendingState.totalCount == 1)
+    }
+
+    /// MOB-1513 (R10): the scan screen's "Signing…" hold — the coordinator arms
+    /// `Scan.State.isKeystoneSigningInProgress` on the `scan` element the INSTANT the immediate
+    /// lane's post-scan leg (proofs + broadcast) starts, since that element stays on top for the
+    /// whole leg. Cloned setup from `foundPCZTForImmediateReviewContextAddsProofsSubmitsRecordsAndPushesSendingSuccess`
+    /// above — this test only adds the new flag assertion to the send closure.
+    @MainActor @Test func foundPCZTArmsScanSigningHoldOnTheScanElement() async {
+        let signedPczt = stampedSignedPczt(major: 3, minor: 0, build: 0)
+        var state = MigrationCoordFlow.State()
+        state.pendingKeystoneSigning = .immediateReview
+        state.path.append(.reviewTransfer(MigrationReviewTransfer.State(mode: .immediate)))
+        state.path.append(
+            .keystoneSign(
+                MigrationKeystoneSign.State(
+                    pczts: [MigrationUnsignedTransferPczt(id: MigrationReviewTransfer.immediateKeystonePcztId, pczt: Data([0xDD]))],
+                    redactedSinglePczt: Data([0xDD, 0x0F])
+                )
+            )
+        )
+        state.path.append(.scan(Scan.State.initial))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.addProofsToPCZT = { pczt in pczt }
+            $0.sdkSynchronizer.createAndSubmitTransactionFromPCZT = { _, _ in .success(txIds: ["ab12"]) }
+            $0.sdkSynchronizer.recordImmediateMigration = { _, _ in }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 2, action: .scan(.foundPCZT(signedPczt))))) {
+            if case .scan(var scanState) = $0.path[id: 2] {
+                scanState.isKeystoneSigningInProgress = true
+                $0.path[id: 2] = .scan(scanState)
+            }
+        }
+        await store.receive(\.keystoneImmediateSubmitted)
     }
 
     /// MOB-1513 (R8, F2): a post-scan submit failure must be VISIBLE and retryable — the ceremony
@@ -3067,7 +3259,12 @@ import ComposableArchitecture
         }
         store.exhaustivity = .off
 
-        await store.send(.path(.element(id: 2, action: .scan(.foundPCZT(stampedSignedPczt(major: 3, minor: 0, build: 0))))))
+        await store.send(.path(.element(id: 2, action: .scan(.foundPCZT(stampedSignedPczt(major: 3, minor: 0, build: 0)))))) {
+            if case .scan(var scanState) = $0.path[id: 2] {
+                scanState.isKeystoneSigningInProgress = true
+                $0.path[id: 2] = .scan(scanState)
+            }
+        }
         await store.receive(\.keystoneImmediateSubmitFailed)
 
         #expect(recordCalls.value == 0)
@@ -3264,7 +3461,12 @@ import ComposableArchitecture
         }
         store.exhaustivity = .off
 
-        await store.send(.path(.element(id: 2, action: .scan(.foundPCZT(signedPczt)))))
+        await store.send(.path(.element(id: 2, action: .scan(.foundPCZT(signedPczt))))) {
+            if case .scan(var scanState) = $0.path[id: 2] {
+                scanState.isKeystoneSigningInProgress = true
+                $0.path[id: 2] = .scan(scanState)
+            }
+        }
         // Duplicate delivery while the first submit is still in flight: a complete no-op.
         await store.send(.path(.element(id: 2, action: .scan(.foundPCZT(signedPczt)))))
 
@@ -3402,7 +3604,12 @@ import ComposableArchitecture
                         action: .scan(.foundKeystoneBatchSignatures(data: Data(), firmwareVersion: firmware))
                     )
                 )
-            )
+            ) {
+                if case .scan(var scanState) = $0.path[id: scanId] {
+                    scanState.isKeystoneSigningInProgress = true
+                    $0.path[id: scanId] = .scan(scanState)
+                }
+            }
             await store.receive(\.keystoneBatchSignaturesApplied)
             await store.receive(\.keystoneSigningSubmitted)
             await store.receive(\.pushHydratedPathState)
@@ -4948,7 +5155,12 @@ import ComposableArchitecture
                     action: .scan(.foundKeystoneBatchSignatures(data: Data(), firmwareVersion: Self.validKeystoneMigrationFirmware))
                 )
             )
-        )
+        ) {
+            if case .scan(var scanState) = $0.path[id: scanId] {
+                scanState.isKeystoneSigningInProgress = true
+                $0.path[id: scanId] = .scan(scanState)
+            }
+        }
         await store.receive(\.keystoneBatchSignaturesApplied)
         await store.receive(\.keystoneSigningSubmitted)
         // MOB-1458 (W-E): see `transferPlanPostConfirmChain`'s doc — the `.scheduled` push is now
@@ -5024,7 +5236,12 @@ import ComposableArchitecture
                     action: .scan(.foundKeystoneBatchSignatures(data: Data(), firmwareVersion: Self.validKeystoneMigrationFirmware))
                 )
             )
-        )
+        ) {
+            if case .scan(var scanState) = $0.path[id: 2] {
+                scanState.isKeystoneSigningInProgress = true
+                $0.path[id: 2] = .scan(scanState)
+            }
+        }
         await store.receive(\.keystoneBatchSignaturesApplied)
         await store.receive(\.keystoneSigningSubmitted)
         await store.receive(\.pushHydratedPathState)
@@ -5373,7 +5590,12 @@ import ComposableArchitecture
                     action: .scan(.foundKeystoneBatchSignatures(data: Data(), firmwareVersion: Self.validKeystoneMigrationFirmware))
                 )
             )
-        )
+        ) {
+            if case .scan(var scanState) = $0.path[id: scanId] {
+                scanState.isKeystoneSigningInProgress = true
+                $0.path[id: scanId] = .scan(scanState)
+            }
+        }
         await store.receive(\.keystoneBatchSignaturesApplied)
         await store.receive(\.keystoneSigningSubmitted)
         await store.receive(\.pushHydratedPathState)

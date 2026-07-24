@@ -50,6 +50,13 @@ struct Scan {
         /// `MigrationCoordFlowCoordinator` when it pushes this scan session for the Keystone
         /// migration-batch checker (copied from the `keystoneSign` element's own `requestId`).
         var keystoneBatchRequestId = Data()
+        /// MOB-1513 (R10): armed by `MigrationCoordFlowCoordinator` while a Keystone migration
+        /// ceremony's post-scan leg runs (immediate lane: proofs + broadcast; scheduled/recovery
+        /// lanes: apply + store) — the scan screen stays on top the whole time, so this drives the
+        /// visible "Signing…" hold: the progress bar pins at 100% and the Cancel pill is replaced by
+        /// a disabled spinner pill. Pure UI state: no reducer case touches it, and it dies with the
+        /// popped `scan` element on every unwind.
+        var isKeystoneSigningInProgress = false
 
         var countedProgress: Int {
             if let keystoneBatchDirectProgress {
