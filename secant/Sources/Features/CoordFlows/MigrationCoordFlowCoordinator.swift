@@ -646,6 +646,13 @@ extension MigrationCoordFlow {
                 return .send(.keystoneScanAbandoned)
 
             case .path(.element(id: _, action: .scan(.foundKeystoneBatchSignatures(let data, let firmwareVersion)))):
+                // MOB-1513 (final review, I-1 fix): one-shot guard against a late-frame duplicate
+                // completion — see `keystoneBatchApplyInFlight`'s doc for the full race this guards
+                // against. A duplicate for an already in-flight ceremony is DROPPED here (`.none`),
+                // never routed through `keystoneScanAbandoned` — nothing went wrong; the first
+                // delivery is simply still being applied/stored.
+                guard !state.keystoneBatchApplyInFlight else { return .none }
+
                 guard let context = state.pendingKeystoneSigning,
                       case let .keystoneSign(signState)? = state.path.dropLast().last,
                       let accountUUID = state.selectedWalletAccount?.id else {
@@ -653,14 +660,17 @@ extension MigrationCoordFlow {
                 }
 
                 // MOB-1513: the minimum-firmware gate reads the decode envelope's OWN reported
-                // version (`KeystoneBatchDecodeResult.firmwareVersion`) directly — there is only ever
-                // ONE QR session per ceremony now, so this runs exactly once, before applying any
-                // signatures. Below the floor (`ZcashLightClientKit.KeystoneFirmwareVersion` is
-                // `Comparable`), or no version reported at all, presents the firmware-gate sheet and
-                // abandons exactly like an apply failure would (`keystoneScanAbandoned` semantics —
-                // no retry without a physical device firmware update). See
-                // `keystoneMigrationBatchMinimumFirmware`'s doc for why this floor and mechanism
-                // differ from the single-transaction Keystone flow's own gate.
+                // version (`KeystoneBatchDecodeResult.firmwareVersion`) directly. MOB-1513 (final
+                // review, I-1 fix): "this runs exactly once" used to be a bare assumption here (there
+                // is only ever one QR session per ceremony) — the `keystoneBatchApplyInFlight` guard
+                // above now actually ENFORCES it, so a duplicate late-frame delivery is dropped before
+                // it ever reaches this gate a second time for the same ceremony. Below the floor
+                // (`ZcashLightClientKit.KeystoneFirmwareVersion` is `Comparable`), or no version
+                // reported at all, presents the firmware-gate sheet and abandons exactly like an apply
+                // failure would (`keystoneScanAbandoned` semantics — no retry without a physical
+                // device firmware update). See `keystoneMigrationBatchMinimumFirmware`'s doc for why
+                // this floor and mechanism differ from the single-transaction Keystone flow's own
+                // gate.
                 guard let firmwareVersion, firmwareVersion >= MigrationCoordFlow.keystoneMigrationBatchMinimumFirmware else {
                     state.detectedKeystoneFirmwareVersion = firmwareVersion?.versionString
                     state.isKeystoneFirmwareGatePresented = true
@@ -675,6 +685,9 @@ extension MigrationCoordFlow {
                 // is still exactly `[..., keystoneSign, scan]` when `.keystoneBatchSignaturesApplied`
                 // is handled below.
                 let unsignedPczts = signState.pczts
+                // MOB-1513 (final review, I-1 fix): armed right before the apply effect dispatches —
+                // cleared in `.keystoneBatchSignaturesApplied` (below) and `.keystoneScanAbandoned`.
+                state.keystoneBatchApplyInFlight = true
                 return .run { [sdkSynchronizer, unsignedPczts, data] send in
                     do {
                         let signed = try await sdkSynchronizer.applyKeystoneBatchSignatures(unsignedPczts, data)
@@ -702,6 +715,15 @@ extension MigrationCoordFlow {
                 return .send(.keystoneScanAbandoned)
 
             case .keystoneBatchSignaturesApplied(let context, let accountUUID, let unsignedPczts, let signed):
+                // MOB-1513 (final review, I-1 fix): the apply step landed — clear the one-shot guard
+                // here, the success-continuation clearing point `keystoneBatchApplyInFlight`'s doc
+                // names. Scan's own intake gate (`isAnythingFound`) already flipped synchronously
+                // when THIS action was forwarded to the `scan` path element (`.forEach(\.path,
+                // action:)` runs after this file's own `Reduce` — see `MigrationCoordFlowStore.body`),
+                // so no NEW camera frame can start a fresh decode past this point; only a frame
+                // already mid-decode from the same original race could still land, and the guard
+                // covers that window by staying armed for exactly as long as this apply step takes.
+                state.keystoneBatchApplyInFlight = false
                 // MOB-1513: the immediate lane diverges entirely from here on — no engine schedule to
                 // read, no store step at all (nothing was ever proposed through the engine). See
                 // `submitImmediateKeystoneTransaction`'s doc.
@@ -777,12 +799,27 @@ extension MigrationCoordFlow {
                 // `SDKSynchronizerInterface.proposeNoteSplitPCZTs`'s doc). The engine always resumes a
                 // stored non-terminal run on the next attempt, ignoring any newer preview, so
                 // abandoning here without cancelling would leave that run stranded — a later re-entry
-                // would silently resume signing these same, by-then-stale PCZTs. This fires from the
-                // build failure, the firmware-gate guard, the apply-signature failure, AND the
-                // split-store-failure branch of the Keystone store effect — v1 semantics hold for
-                // all of them: abandon discards everything, the user re-runs the ceremony from a
-                // fresh preview, so cancelling the stray run is correct here regardless of which
-                // guard sent this action.
+                // would silently resume signing these same, by-then-stale PCZTs.
+                //
+                // MOB-1513 (final review, N-1 fix): this is the shared sink for every terminal
+                // failure of the signing session — deliberately described as open-ended rather than
+                // re-enumerated exhaustively (a prior version of this comment listed four call sites
+                // and had already drifted stale by the time of this fix, missing four more). Currently
+                // that's: the `keystoneSign` build failure; the `.foundKeystoneBatchSignatures`
+                // guard-failure fallback (missing `pendingKeystoneSigning`/`signState`/account); the
+                // firmware-gate guard; the scan-side decode failure
+                // (`.scan(.keystoneBatchDecodeFailed)`); the apply-signature failure; both the
+                // no-preps and with-preps store failures inside `storeKeystoneSignedBatch`; and the
+                // immediate lane's post-signing submit failure (`submitImmediateKeystoneTransaction`).
+                // v1 semantics hold for all of them, current and future additions alike: abandon
+                // discards everything, the user re-runs the ceremony from a fresh preview, so
+                // cancelling the stray run is correct here regardless of which guard sent this action.
+                //
+                // MOB-1513 (final review, I-1 fix): also clears `keystoneBatchApplyInFlight` — every
+                // failure route above ends the signing session exactly like the success continuation
+                // (`.keystoneBatchSignaturesApplied`) does, so the next ceremony never inherits a
+                // stale `true` left over from this one.
+                state.keystoneBatchApplyInFlight = false
                 let pendingContext = state.pendingKeystoneSigning
                 let hadPendingCeremony = pendingContext != nil
                 state.pendingKeystoneSigning = nil

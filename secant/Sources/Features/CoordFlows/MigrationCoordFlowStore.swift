@@ -211,6 +211,19 @@ struct MigrationCoordFlow {
         /// teardown that runs AFTER an account switch (the cross-account notification tap) still
         /// cancels the stranded run on the account that built it, not the newly selected one.
         var pendingKeystoneSigningAccountUUID: AccountUUID?
+        /// MOB-1513 (final review, I-1 fix): makes the real `.scan(.foundKeystoneBatchSignatures)`
+        /// round-trip's completion one-shot. `ScanUIView` forwards every camera metadata callback
+        /// regardless of ceremony state, and `Scan`'s own intake gate (`isAnythingFound`) only flips
+        /// once THIS action's async apply effect result lands — so a late frame delivered in that
+        /// window can re-decode a single-part response standalone (after the SDK's decode session
+        /// already cleared on the first completion) and reach the coordinator as a SECOND
+        /// `.foundKeystoneBatchSignatures` for the same ceremony, with a request id that
+        /// legitimately matches. Set `true` right before the apply effect is dispatched, checked at
+        /// the top of that same case (`guard !keystoneBatchApplyInFlight else { return .none }` — a
+        /// duplicate is DROPPED, not abandoned), and cleared in `.keystoneBatchSignaturesApplied`
+        /// (the success continuation) and `.keystoneScanAbandoned` (every failure route the ceremony
+        /// can end on) so the next ceremony always starts clean.
+        var keystoneBatchApplyInFlight = false
         /// MOB-1513 (H3 guard): the account THIS flow instance opened for — recorded synchronously
         /// at `.onAppear`'s genuine-flow-start branch (`state.path.isEmpty`), alongside arming
         /// `migrationManager.setMigrationFlowPresented`. Every close/replace site reads this back
@@ -375,10 +388,13 @@ struct MigrationCoordFlow {
         /// `keystoneSign` element inline in the `.path(.element(...))` case would race
         /// `.forEach(\.path, action:)`'s delivery of that same action to the (then-missing) element.
         case keystoneSignRejected
-        /// Internal: an apply/decode failure, a build failure, OR a split-store failure (MOB-1496
-        /// C-1 fix, final review R6 — nothing was stored, so there is nothing to resume), abandons
-        /// the signing session — pops back to the initiating screen (deferred like
-        /// `keystoneSignRejected`) and clears the context. Pop count adapts to the caller: 2 (`scan`
+        /// Internal: an apply/decode failure, a build failure, a firmware-gate rejection, or a store
+        /// failure (MOB-1496 C-1 fix, final review R6 — nothing was stored, so there is nothing to
+        /// resume) abandons the signing session — pops back to the initiating screen (deferred like
+        /// `keystoneSignRejected`) and clears the context. MOB-1513 (final review, N-1 fix): this is
+        /// a summary, not the exhaustive list — see `MigrationCoordFlowCoordinator.swift`'s
+        /// `.keystoneScanAbandoned` case for every current firing site, kept there (not duplicated
+        /// here) so the two can't drift out of sync again. Pop count adapts to the caller: 2 (`scan`
         /// + `keystoneSign`) for the real round-trip, where `scan` is always the acting/top element;
         /// 1 (`keystoneSign` only) is a defensive fallback that predates the MOB-1458 removal of a
         /// former simulator-only bypass caller that never pushed `scan` (and now also covers a
