@@ -1111,8 +1111,10 @@ extension Root {
 
                             let walletAccounts = try await sdkSynchronizer.walletAccounts()
                             await send(.initialization(.loadedWalletAccounts(walletAccounts)))
-                            await send(.resolveMetadataEncryptionKeys)
-                            await send(.loadUserMetadata)
+                            // MOB-1450: the user-metadata key reconcile and the metadata load are driven
+                            // by .loadedWalletAccounts (which reconciles inline, then sends .loadUserMetadata)
+                            // so the load can't race the reconcile and decrypt/write metadata with a stale
+                            // key from a previous seed.
 
                             // MOB-1496 (R8-T4, #2): mirrors `.retryStart`'s proactive check AND
                             // reactive catch exactly — but, unlike `.retryStart`, defers ONLY this
@@ -1138,36 +1140,9 @@ extension Root {
                                 }
                             }
 
-                            var selectedAccount: WalletAccount?
-                            
-                            for account in walletAccounts {
-                                if account.vendor == .zcash {
-                                    selectedAccount = account
-                                }
-                            }
-
                             exchangeRate.refreshExchangeRateUSD()
 
-                            if let account = selectedAccount {
-                                let addressBookEncryptionKeys = try? walletStorage.exportAddressBookEncryptionKeys()
-                                if addressBookEncryptionKeys == nil {
-                                    do {
-                                        var keys = AddressBookEncryptionKeys.empty
-                                        try keys.cacheFor(
-                                            seed: seedBytes,
-                                            account: account.account,
-                                            network: zcashSDKEnvironment.network().networkType
-                                        )
-                                        try walletStorage.importAddressBookEncryptionKeys(keys)
-                                    } catch {
-                                        // TODO: [#1408] error handling https://github.com/Electric-Coin-Company/zashi-ios/issues/1408
-                                    }
-                                }
-
-                                await send(.initialization(.initializationSuccessfullyDone))
-                            } else {
-                                await send(.initialization(.initializationSuccessfullyDone))
-                            }
+                            await send(.initialization(.initializationSuccessfullyDone))
                         } catch Root.WalletDatabaseHealError.reprepareFailed {
                             // The stale database was already wiped before re-prepare failed, so
                             // there is no database left to leave the user staring at a dead-end
@@ -1237,9 +1212,86 @@ extension Root {
                         }
                     }
                 }
+
+                // MOB-1450: ensure the Address Book encryption key matches the CURRENT seed
+                // before contacts load. The address book is tied to the Zashi (seed-based, .zcash)
+                // account — every AddressBook operation resolves against it — so we select that
+                // account by vendor and reconcile its key. Keystone (hardware) accounts have no
+                // in-app seed and no separate address book, so they are intentionally skipped. A
+                // key left over from a previous wallet (e.g. a stale keychain entry that survived a
+                // wipe) would otherwise let this wallet read and write another wallet's encrypted
+                // contacts file in the shared iCloud container.
                 return .merge(
-                    .send(.loadContacts),
-                    .send(.loadUserMetadata),
+                    // Reconcile inside the effect — seed derivation (PBKDF2) and keychain access
+                    // block — then load contacts, preserving the "reconcile before decrypt"
+                    // ordering without blocking the store's actor.
+                    .run { send in
+                        if let zashiAccount = walletAccounts.first(where: { $0.vendor == .zcash }),
+                           let storedWallet = try? walletStorage.exportWallet(),
+                           let seedBytes = try? mnemonic.toSeed(storedWallet.seedPhrase.value()) {
+                            var expectedKeys = AddressBookEncryptionKeys.empty
+                            try? expectedKeys.cacheFor(
+                                seed: seedBytes,
+                                account: zashiAccount.account,
+                                network: zcashSDKEnvironment.network().networkType
+                            )
+                            // Never overwrite a real key with an empty set if derivation produced nothing.
+                            if !expectedKeys.keys.isEmpty {
+                                do {
+                                    try walletStorage.reconcileAddressBookEncryptionKeys(expectedKeys)
+                                } catch {
+                                    // A failed reconcile leaves a possibly-stale key in place, so the
+                                    // security fix would silently not apply — log it (UI-level error
+                                    // handling still tracked by #1408) rather than dropping it.
+                                    LoggerProxy.error("MOB-1450: Address Book key reconcile failed: \(error)")
+                                }
+                            }
+                        }
+                        await send(.loadContacts)
+                    },
+                    // MOB-1450: reconcile each account's user-metadata key BEFORE metadata loads — the
+                    // same "reconcile before decrypt" guarantee the Address Book .run above gives
+                    // contacts. The reconcile runs inline inside this .run (seed derivation + keychain
+                    // access block), and .loadUserMetadata is sent only after it completes, so metadata
+                    // is never decrypted or written back with a stale key from a previous seed.
+                    //
+                    // This must NOT be expressed as
+                    // .concatenate(.send(.resolveMetadataEncryptionKeys), .send(.loadUserMetadata)):
+                    // .resolveMetadataEncryptionKeys returns its OWN async .run that does the reconcile,
+                    // and .concatenate sequences only the delivery of the actions, not the completion of
+                    // that effect — so .loadUserMetadata would race the reconcile and could decrypt with
+                    // a stale key. (.resolveMetadataEncryptionKeys is still used by the account-switch,
+                    // hardware-wallet-import, and disconnect paths in RootCoordinator, which do NOT
+                    // strictly order their load after the reconcile — they use the same
+                    // .concatenate(.send, .send) / sequential-`await send` shape called out as unsafe
+                    // above. That race is benign on those paths: they run within a single wallet/seed,
+                    // so the stored key already matches the current seed and the reconcile is a no-op —
+                    // only create/restore (startup, handled here) can leave a stale key from a DIFFERENT
+                    // seed. Ordering those paths too is defense-in-depth, tracked as a MOB-1450 follow-up.)
+                    .run { send in
+                        if let storedWallet = try? walletStorage.exportWallet(),
+                           let seedBytes = try? mnemonic.toSeed(storedWallet.seedPhrase.value()) {
+                            for account in walletAccounts {
+                                var expectedKeys = UserMetadataEncryptionKeys.empty
+                                try? expectedKeys.cacheFor(
+                                    seed: seedBytes,
+                                    account: account.account,
+                                    network: zcashSDKEnvironment.network().networkType
+                                )
+                                // Never overwrite a real key with an empty set if derivation produced nothing.
+                                guard !expectedKeys.keys.isEmpty else { continue }
+                                do {
+                                    try walletStorage.reconcileUserMetadataEncryptionKeys(expectedKeys, account: account.account)
+                                } catch {
+                                    // A failed reconcile leaves a possibly-stale key in place, so the
+                                    // security fix would silently not apply — log it (UI-level error
+                                    // handling still tracked by #1408) rather than dropping it.
+                                    LoggerProxy.error("MOB-1450: user-metadata key reconcile failed: \(error)")
+                                }
+                            }
+                        }
+                        await send(.loadUserMetadata)
+                    },
                     .send(.loadSwapAPIAccess),
                     // R9-T5 fix (final-review IMPORTANT-1): the trigger that actually clears an
                     // abandoned snapshot on a genuine COLD launch — `.initialSetups`'s own send
@@ -1270,29 +1322,49 @@ extension Root {
                     
                     return .run { [walletAccounts = state.walletAccounts] send in
                         do {
-                            
+                            var metadataKeyChanged = false
                             for account in walletAccounts {
-                                let userMetadataEncryptionKeys = try? walletStorage.exportUserMetadataEncryptionKeys(account.account)
-                                if userMetadataEncryptionKeys == nil {
-                                    do {
-                                        var keys = UserMetadataEncryptionKeys.empty
-                                        try keys.cacheFor(
-                                            seed: seedBytes,
-                                            account: account.account,
-                                            network: zcashSDKEnvironment.network().networkType
-                                        )
-                                        try walletStorage.importUserMetadataEncryptionKeys(keys, account.account)
-                                        await send(.loadUserMetadata)
-                                    } catch {
-                                        // TODO: [#1408] error handling https://github.com/Electric-Coin-Company/zashi-ios/issues/1408
-                                    }
+                                // MOB-1450: reconcile each account's user-metadata encryption key
+                                // against the CURRENT seed before metadata loads. The cached key
+                                // decrypts the metadata file synced through the shared iCloud
+                                // container, so a key left over from a previous wallet seed must
+                                // never survive into a new wallet — otherwise this wallet could read
+                                // and write another wallet's encrypted metadata. Overwrite a stale or
+                                // absent key (replaces the old "derive only when the slot is nil").
+                                var keys = UserMetadataEncryptionKeys.empty
+                                try? keys.cacheFor(
+                                    seed: seedBytes,
+                                    account: account.account,
+                                    network: zcashSDKEnvironment.network().networkType
+                                )
+                                // Never overwrite a real key with an empty set if derivation produced nothing.
+                                guard !keys.keys.isEmpty else { continue }
+                                let changed = (try? walletStorage.exportUserMetadataEncryptionKeys(account.account)) != keys
+                                do {
+                                    try walletStorage.reconcileUserMetadataEncryptionKeys(keys, account: account.account)
+                                } catch {
+                                    // A failed reconcile leaves a possibly-stale key in place, so the
+                                    // security fix would silently not apply — log it (UI-level error
+                                    // handling still tracked by #1408) rather than dropping it.
+                                    LoggerProxy.error("MOB-1450: user-metadata key reconcile failed: \(error)")
                                 }
+                                if changed {
+                                    metadataKeyChanged = true
+                                }
+                            }
+                            // Reload metadata once if any account's key changed — not once per
+                            // account. `.loadUserMetadata` always targets the single selected
+                            // account, so repeated sends would only duplicate the load + reset.
+                            if metadataKeyChanged {
+                                await send(.loadUserMetadata)
                             }
                         }
                     }
-                } catch { }
+                } catch {
+                    LoggerProxy.error("MOB-1450: resolving user-metadata encryption keys failed: \(error)")
+                }
                 return .none
-                
+
             case .initialization(.checkBackupPhraseValidation):
                 do {
                     let _ = try walletStorage.exportWallet()

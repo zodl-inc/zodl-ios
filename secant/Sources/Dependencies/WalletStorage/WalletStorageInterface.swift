@@ -110,3 +110,29 @@ struct WalletStorageClient {
     var importVotingHotkey: @Sendable (_ phrase: String, _ accountId: AccountUUID) throws -> Void
     var exportVotingHotkey: @Sendable (_ accountId: AccountUUID) throws -> StoredVotingHotkey
 }
+
+extension WalletStorageClient {
+    /// Ensures the stored Address Book encryption keys match `expected` — the keys derived from
+    /// the CURRENT wallet seed. A key derived from a previous seed must never survive into a new
+    /// wallet, otherwise that wallet can read and write another wallet's encrypted contacts file
+    /// in the shared iCloud container (MOB-1450). Overwrites a stale or absent key.
+    func reconcileAddressBookEncryptionKeys(_ expected: AddressBookEncryptionKeys) throws {
+        let current = try? exportAddressBookEncryptionKeys()
+        guard current != expected else {
+            return
+        }
+        try importAddressBookEncryptionKeys(expected)
+    }
+
+    /// Ensures the stored User Metadata encryption keys for `account` match `expected` — the keys
+    /// derived from the CURRENT wallet seed. A key derived from a previous seed must never survive
+    /// into a new wallet, otherwise that wallet can read and write another wallet's encrypted
+    /// metadata file in the shared iCloud container (MOB-1450). Overwrites a stale or absent key.
+    func reconcileUserMetadataEncryptionKeys(_ expected: UserMetadataEncryptionKeys, account: Account) throws {
+        let current = try? exportUserMetadataEncryptionKeys(account)
+        guard current != expected else {
+            return
+        }
+        try importUserMetadataEncryptionKeys(expected, account)
+    }
+}
