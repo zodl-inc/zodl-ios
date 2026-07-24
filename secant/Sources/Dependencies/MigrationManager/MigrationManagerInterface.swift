@@ -318,9 +318,11 @@ struct MigrationManagerClient: Sendable {
     // fire-and-forget from the coordinator's `.flowFinished` handler. `= { _ in }` mirrors
     // `reconcile`'s no-op but is not a test fallback (see the `recordCommittedSchedule` note).
     var clearAbandonedNetworkSnapshot: @Sendable (_ accountUUID: AccountUUID?) async -> Void = { _ in }
-    // Debug/testnet-only: clears every persisted migration flag this client owns (mode, manual
-    // delivery, network privacy, complete-acknowledged). MOB-1496 (W-A): no longer
-    // includes dust-locked — "Lock balance" is now a genuine SDK-side lock, not app-persisted state.
+    // Test-only utility: clears every persisted migration flag this client owns (mode, manual
+    // delivery, network privacy, complete-acknowledged). Its former UI caller (the migration
+    // simulator debug panel) was removed by MOB-1458; today it's exercised solely by
+    // `MigrationManagerTests`/`MigrationFailureRoutingTests`. MOB-1496 (W-A): no longer includes
+    // dust-locked — "Lock balance" is now a genuine SDK-side lock, not app-persisted state.
     var resetPersistedFlags: @Sendable () -> Void
 }
 

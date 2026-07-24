@@ -3,9 +3,9 @@
 //  zodl
 //
 //  "Allow Notifications" screen (MOB-1462, round-2 canvas "Final Designs" — Figma S4 scheduled ·
-//  3480:9620 / manual · 3484:13186). Visually complete per Figma; `allowTapped` (notification
-//  authorization request) is declared but inert — wiring it up lands in MOB-1466. The `skipTapped`
-//  delegate is emitted but consumed by nobody yet.
+//  3480:9620 / manual · 3484:13186). `allowTapped` requests `UNUserNotificationCenter`
+//  authorization via the store; either outcome, or `skipTapped`, sends the `.continued` delegate,
+//  consumed by `MigrationCoordFlowCoordinator` (MOB-1466).
 //
 
 import ComposableArchitecture

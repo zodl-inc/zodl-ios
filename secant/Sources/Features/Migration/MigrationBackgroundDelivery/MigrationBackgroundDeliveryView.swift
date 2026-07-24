@@ -5,8 +5,7 @@
 //  "Allow Background Delivery" screen (MOB-1462, round-2 canvas "Final Designs" — Figma S3 ·
 //  3484:12873). `allowTapped` opens the Settings deep-link; `scenePhaseActive` re-checks Background
 //  App Refresh on return and the store auto-advances once it's available (MOB-1466). The
-//  `skipTapped` delegate is emitted but consumed by nobody yet — chaining is the coordinator's job
-//  (phase 3).
+//  `skipTapped` delegate is consumed by `MigrationCoordFlowCoordinator` (phase 3).
 //
 
 import ComposableArchitecture

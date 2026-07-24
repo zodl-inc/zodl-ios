@@ -4,8 +4,8 @@
 //
 //  "Transfer Plan" screen (MOB-1463, Figma S6 · scheduled 2867:10211 / manual 2867:2198 /
 //  re-created 2709:3519). `onAppear` loads a fresh proposal (or leaves an injected schedule alone)
-//  via the store; the `confirmTapped` delegate is emitted but consumed by nobody yet — chaining
-//  into the rest of the migration flow is the coordinator's job (MOB-1466 phase 3).
+//  via the store; `confirmTapped`'s delegate — `.confirmed` (software) or `.keystoneSignRequested`
+//  (Keystone) — is consumed by `MigrationCoordFlowCoordinator` (MOB-1466 phase 3).
 //
 //  MOB-1478 (W4): `confirmTapped` now silently splits first when needed — a failure presents the
 //  same Cancel/Retry bottom sheet `MigrationNoteSplit` uses (this screen had no failure path before).

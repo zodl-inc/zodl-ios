@@ -1504,8 +1504,10 @@ final class MigrationManagerImpl: @unchecked Sendable {
         presentedFlowAccountUUIDs.withLock { $0.contains(accountUUID) }
     }
 
-    /// Debug/testnet-only "Reset app migration flags" reset.
-    /// MOB-1496 (W2): also clears every candidate account's persisted schedule — a debug reset must
+    /// Test-only "Reset app migration flags" reset — the migration simulator debug panel that used
+    /// to call this was removed (MOB-1458); today it's exercised solely by `MigrationManagerTests`/
+    /// `MigrationFailureRoutingTests`.
+    /// MOB-1496 (W2): also clears every candidate account's persisted schedule — a reset must
     /// leave no stale committed-schedule payload behind either. MOB-1496 (W4): and its network
     /// snapshot; MOB-1497 (R7-T3): and its failure-routing state (had-broadcast flag + R16
     /// episode). R8-T3: sourced from `MigrationDerivations.candidateAccountUUIDs` (was two separate
@@ -1514,8 +1516,8 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// account-set logic); also now clears each candidate account's own per-account acknowledged
     /// flag (R8-T3 S2 — the flag itself used to be wallet-wide, cleared directly by
     /// `gateStorage.resetPersistedFlags()` alone). MOB-1496: also clears each candidate account's
-    /// own per-account remainder verdict — same rationale as the acknowledged flag, since a debug
-    /// reset must leave no stale "more to migrate" verdict behind either.
+    /// own per-account remainder verdict — same rationale as the acknowledged flag, since a reset
+    /// must leave no stale "more to migrate" verdict behind either.
     func resetPersistedFlags() {
         gateStorage.resetPersistedFlags()
         let accountUUIDs = MigrationDerivations.candidateAccountUUIDs(
@@ -2443,7 +2445,8 @@ final class MigrationGateStorage: @unchecked Sendable {
     /// weight now that the flag is per-account (`acknowledgedStorage`), kept here only so no stray
     /// value lingers. The actual per-account acknowledged flags are cleared by
     /// `MigrationManagerImpl.resetPersistedFlags()`, which knows the account set this storage does
-    /// not. Backs the debug-only "Reset app migration flags" reset.
+    /// not. Backs the test-only "Reset app migration flags" reset (`MigrationManagerTests`/
+    /// `MigrationFailureRoutingTests`).
     /// Deliberately leaves `migrationLastSyncCompletedAt` alone: the send gate's timing
     /// window is a short-lived value, not a durable app flag, and expires (the buffer elapses) on
     /// its own — same reasoning the retired `migrationSyncGateUntil` followed pre-MOB-1496 (W3).
