@@ -13987,6 +13987,23 @@
         }
       }
     },
+    "recoverFunds.error" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Error: %@"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Error: %@"
+          }
+        }
+      }
+    },
     "recoverFunds.fieldTitle" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -14004,6 +14021,23 @@
         }
       }
     },
+    "recoverFunds.found" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Funds were successfully discovered"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Fondos descubiertos correctamente"
+          }
+        }
+      }
+    },
     "recoverFunds.msg" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -14017,6 +14051,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Si confirmas, Zodl escaneará la dirección transparente que proporciones y descubrirá sus fondos. Esto puede tardar unos minutos."
+          }
+        }
+      }
+    },
+    "recoverFunds.notFound" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No funds were discovered"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "No se descubrieron fondos"
           }
         }
       }
