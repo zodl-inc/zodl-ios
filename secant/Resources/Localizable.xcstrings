@@ -6592,6 +6592,193 @@
         }
       }
     },
+    "debugMigrationDeliver.alertTitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Migration delivery"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Entrega de migración"
+          }
+        }
+      }
+    },
+    "debugMigrationDeliver.errorMessage" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Deliver failed: %@"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Error al entregar: %@"
+          }
+        }
+      }
+    },
+    "debugMigrationDeliver.nothingDueMessage" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nothing due yet — reschedule first, then wait ~2.5 minutes."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nada pendiente todavía: reprograma primero y espera ~2.5 minutos."
+          }
+        }
+      }
+    },
+    "debugMigrationDeliver.rowTitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Deliver next due migration transfer"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Entregar la próxima transferencia de migración pendiente"
+          }
+        }
+      }
+    },
+    "debugMigrationDeliver.successMessage" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transfer broadcast — txid %@"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Transferencia transmitida — txid %@"
+          }
+        }
+      }
+    },
+    "debugMigrationReschedule.alertTitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Migration reschedule"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Reprogramación de migración"
+          }
+        }
+      }
+    },
+    "debugMigrationReschedule.errorMessage" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reschedule failed: %@"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Error al reprogramar: %@"
+          }
+        }
+      }
+    },
+    "debugMigrationReschedule.rowTitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reschedule migration transfers (fast test)"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Reprogramar transferencias de migración (prueba rápida)"
+          }
+        }
+      }
+    },
+    "debugMigrationReschedule.successMessage" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld transfer(s) rescheduled: first due in ~2.5 min, then ~5 min apart. Background window re-armed."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%lld transferencia(s) reprogramada(s): la primera vence en ~2.5 min, luego cada ~5 min. Ventana en segundo plano reactivada."
+          }
+        }
+      }
+    },
+    "debugMigrationReschedule.zeroMessage" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "0 transfers rescheduled — no in-progress migration found, or every transfer is already broadcast or mined. Nothing was changed."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "0 transferencias reprogramadas: no se encontró ninguna migración en curso, o todas las transferencias ya fueron transmitidas o confirmadas. No se realizó ningún cambio."
+          }
+        }
+      }
+    },
+    "debugSection.header" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Debug"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Depuración"
+          }
+        }
+      }
+    },
     "deeplinkWarning.cta" : {
       "extractionState" : "manual",
       "localizations" : {

@@ -136,11 +136,17 @@ struct SDKSynchronizerClient: Sendable {
     /// Whether the account's Orchard notes must be split before migration. THROWS before the
     /// wallet's first completed sync (no chain tip known yet).
     var isNoteSplitNeeded: @Sendable (AccountUUID) async throws -> Bool
-    /// The optimal note split for the account's spendable Orchard balance — propose-side caching
-    /// for the sign-only commit chain (MOB-1513 B4: `signAndStoreMigrationSchedule` echo-validates
-    /// the split against the plan cache this call writes; the old broadcast-bearing
-    /// `submitNoteSplit` monolith is retired — preps broadcast via
-    /// `executeNextPendingMigrationTransfer`).
+    /// The optimal note split for the account's spendable Orchard balance. Like every
+    /// propose/prepare call, this writes the account's ONE native-side proposal-handle slot —
+    /// superseding whatever handle was cached there before, including a `MigrationSchedule`
+    /// already displayed to the user (`MigrationSchedule.proposalHandle`'s doc: a later
+    /// propose/prepare call throws its holder into `migrationPlanStale` on its next commit-shaped
+    /// use). MOB-1513 (F1-A1): NEVER call this between proposing a schedule and committing it
+    /// (`signAndStoreMigrationSchedule`) — that call alone signs every transaction of the run,
+    /// split preparation layers included, straight from the plan cache the schedule's own propose
+    /// already wrote, so no separate prepare step belongs in that chain. The old broadcast-bearing
+    /// `submitNoteSplit` monolith this used to feed is retired — preps broadcast via
+    /// `executeNextPendingMigrationTransfer` instead.
     var prepareNoteSplit: @Sendable (AccountUUID) async throws -> NoteSplitProposal
     /// The full scheduled-migration schedule for the account's spendable Orchard balance.
     var proposeMigrationTransfers: @Sendable (AccountUUID) async throws -> MigrationSchedule
@@ -180,6 +186,15 @@ struct SDKSynchronizerClient: Sendable {
     var executeNextPendingMigrationTransfer: @Sendable (
         AccountUUID, MigrationNetworkPrivacyOptions
     ) async throws -> MigrationTransferResult?
+    /// MOB-1513: DEBUG/QA ONLY — rewrites `accountUUID`'s committed migration schedule's transfer
+    /// heights (first due in ~2 blocks/~2.5 min, then 4-block/~5 min strides) and the earliest
+    /// transfer's anchor boundary, so real broadcast delivery can be exercised without waiting out
+    /// ZIP 318's privacy delay. Not for production flows. Returns the number of transfers
+    /// rescheduled (`0` when the account has no stored migration, or every stored transfer is
+    /// already broadcast/mined). Already-broadcast/mined transfers and preparation (note-split)
+    /// transactions are left untouched. Not broadcast-bearing (rewrites local schedule heights
+    /// only) — no transaction-guard wrap, same reasoning as `restartCurrentMigrationStep` above.
+    var debugRescheduleMigrationTransfers: @Sendable (AccountUUID) async throws -> Int
     /// Wallet-scope: whether ordinary sync should currently be paused for a migration privacy gate.
     /// Non-throwing (degrades open on internal failure).
     var isMigrationSyncBlocked: @Sendable () async -> Bool = { false }

@@ -82,6 +82,33 @@ struct AdvancedSettingsView: View {
                     .listRowInsets(EdgeInsets())
                     .listRowBackground(Asset.Colors.background.color)
                     .listRowSeparator(.hidden)
+
+                    #if DEBUG
+                    Group {
+                        Text(String(localizable: .debugSectionHeader))
+                            .zFont(.semiBold, size: 12, style: Design.Text.tertiary)
+                            .padding(.horizontal, 20)
+                            .padding(.top, 12)
+
+                        ActionRow(
+                            icon: Asset.Assets.Icons.settings2.image,
+                            title: String(localizable: .debugMigrationRescheduleRowTitle)
+                        ) {
+                            store.send(.debugMigrationRescheduleTapped)
+                        }
+
+                        ActionRow(
+                            icon: Asset.Assets.Icons.settings2.image,
+                            title: String(localizable: .debugMigrationDeliverRowTitle),
+                            divider: false
+                        ) {
+                            store.send(.debugMigrationDeliverTapped)
+                        }
+                    }
+                    .listRowInsets(EdgeInsets())
+                    .listRowBackground(Asset.Colors.background.color)
+                    .listRowSeparator(.hidden)
+                    #endif
                 }
                 .padding(.top, 24)
                 .padding(.horizontal, 4)
@@ -124,6 +151,9 @@ struct AdvancedSettingsView: View {
         .navigationBarTitleDisplayMode(.inline)
         .zashiBack()
         .screenTitle(String(localizable: .settingsAdvanced))
+        #if DEBUG
+        .alert($store.scope(state: \.alert, action: \.alert))
+        #endif
     }
 }
 
