@@ -517,13 +517,20 @@ final class MigrationManagerImpl: @unchecked Sendable {
 
         let state = await migrationState(accountUUID: resolvedAccountUUID) ?? MigrationState.notStarted
         let hasOverdue = await hasOverdueMigrationTransfers(accountUUID: resolvedAccountUUID)
+        // MOB-1513 (T-A): the engine's LIVE per-transaction statuses — preferred over the persisted
+        // schedule's own app-derived state/heights for each transfer row (see
+        // `MigrationDerivations.transferRows`'s doc). A throw or an empty read (no run stored, or a
+        // transient SDK error) degrades to `[]`, which keeps `transferRows`'s existing R3-A3
+        // persisted-schedule derivation fully in play — never a crash, never a blank screen.
+        let statuses = (try? await sdkSynchronizer.migrationTransactionStatuses(resolvedAccountUUID)) ?? []
 
         return MigrationDerivations.transferRows(
             committedSchedule: committedSchedule,
             state: state,
             hasOverdueMigrationTransfers: hasOverdue,
             now: Date(),
-            currentTip: sdkSynchronizer.latestState().latestBlockHeight
+            currentTip: sdkSynchronizer.latestState().latestBlockHeight,
+            statuses: statuses
         )
     }
 
@@ -1838,7 +1845,8 @@ enum MigrationDerivations {
     /// copy (`minutes / 60`) for callers that only read that field. A height at/behind `currentTip`
     /// (or an unknown `currentTip <= 0`) floors to `0` — "Ready now" — per `minutesFromNow`'s own
     /// fail-safe. This replaces the old W1 index-cadence placeholder (`nonSentPosition × 6h`), which
-    /// never read the schedule's real heights at all.
+    /// never read the schedule's real heights at all. MOB-1513 (T-A): a matched live status's own
+    /// `scheduledHeight` takes precedence over this persisted height — see `statuses`' doc below.
     ///
     /// R7's refresh lane (`refreshStaleMigrationTransfers`) persists its RETURNED schedule via
     /// `recordCommittedSchedule` before this derivation ever runs again (see
@@ -1847,13 +1855,49 @@ enum MigrationDerivations {
     /// re-derives every row's ETA from the freshly-persisted heights, never a stale pre-refresh one.
     ///
     /// Amounts come from the persisted proposal (schedule rows) or the sent record itself (leading
-    /// rows) — never from live progress.
+    /// rows) — never from live progress or the live status (MOB-1513 T-A: a `MigrationTransactionStatus`
+    /// carries no amount by design — see its own `id` doc — so the persisted schedule stays the sole
+    /// amount source even on the live-preferred path below).
+    ///
+    /// MOB-1513 (T-A): `statuses` — the engine's LIVE per-transaction migration statuses, `[]` by
+    /// default (every pre-T-A call site/test omits it and is byte-identical to before: the fallback
+    /// path above stays fully in play whenever the caller's own SDK read threw or returned `[]`, per
+    /// `MigrationManagerImpl.migrationTransfers`'s doc). When non-empty, its per-transaction state
+    /// PREFERS over the app-derived precedence table above for every SCHEDULE row it can join to
+    /// (never the leading prior-run rows, which have no live join target of their own): only
+    /// `.transfer`-kind statuses join (a `.preparation`-kind status — a note-split transaction — is
+    /// never displayed as a transfer row); the join key is `String(status.id) == transfer.id`
+    /// (`MigrationTransactionStatus.id`'s own doc: "the same ordinal the schedule surfaces carry as
+    /// their opaque string id"), independent of `statuses`' own order. A schedule row with no
+    /// matching status (a partial/shuffled `statuses` read, or one still `.preparation`-only) simply
+    /// falls through to the table above unaffected — never a crash, never a misattributed row. Per
+    /// matched row:
+    /// 1. `.mined` -> `.sent`, even when the app's own `sentRecord` bookkeeping hasn't caught up
+    ///    (live truth wins over app-derived truth) — elapsed time still prefers a real
+    ///    `sentRecord.sentAt` when one exists (never discards real data the app already has);
+    ///    absent one, reads as "sent recently" (`hoursFromNow == 0`, `sentMinutesAgo == nil` — see
+    ///    `MigrationTransferRow.sentMinutesAgo`'s doc).
+    /// 2. `.broadcast(txid:)` -> the existing broadcasting/sent-pending styling: `.active` +
+    ///    `isBroadcasting: true` (regardless of position — a row actually in flight right now is
+    ///    unambiguously "the" active one; no new UI state).
+    /// 3. `blockedOn == .expired` -> `.expired`, the same case row 3 of the table above already
+    ///    renders, but decided per-row from live ground truth rather than gated on the aggregate
+    ///    `state == .requiresAttention(.transferExpired)` + first-non-sent position.
+    /// 4. every other state (`.awaitingSignature`/`.signed`/`.proved`, not expired) -> the table
+    ///    above, position/`state`-driven, MINUS its own `.expired` case (`.active`/`.overdue`/
+    ///    `.pending`/`.invalid` only — see `nonSentRowStatus`'s `hasLiveStatus` doc): a row that
+    ///    reaches here already had its one shot at `.expired` in item 3 above and didn't take it,
+    ///    which is live ground truth this row specifically is NOT expired, so the table's own
+    ///    aggregate-`state`-driven `.expired` reading (true for the WHOLE run, not this row) must
+    ///    not override that. The row's ETA feeds from the matched status's own `scheduledHeight`
+    ///    rather than the persisted schedule's `nextExecutableAfterHeight`.
     static func transferRows(
         committedSchedule: MigrationCommittedSchedule,
         state: MigrationState,
         hasOverdueMigrationTransfers: Bool,
         now: Date,
-        currentTip: BlockHeight
+        currentTip: BlockHeight,
+        statuses: [MigrationTransactionStatus] = []
     ) -> [MigrationTransferRow] {
         struct RowSeed {
             let transferId: String
@@ -1863,6 +1907,10 @@ enum MigrationDerivations {
             /// placeholder) for leading rows, which always carry a `sentRecord` and so never reach
             /// the forward-ETA branch below.
             let nextExecutableAfterHeight: BlockHeight
+            /// MOB-1513 (T-A): this row's LIVE per-transaction status, joined by id — `nil` for
+            /// leading rows (no join target) and for a schedule row `statuses` carries no current
+            /// `.transfer`-kind entry for. See `transferRows`'s own doc for the full join contract.
+            let liveStatus: MigrationTransactionStatus?
         }
 
         let scheduleTransferIds = Set(committedSchedule.schedule.transfers.map { $0.id })
@@ -1870,24 +1918,55 @@ enum MigrationDerivations {
             committedSchedule.sentRecords.map { ($0.transferId, $0) },
             uniquingKeysWith: { first, _ in first }
         )
+        // MOB-1513 (T-A): only `.transfer`-kind statuses ever join to a displayed row (preparation
+        // transactions are never displayed as transfer rows); keyed by id so a shuffled `statuses`
+        // array joins identically, and a defensive duplicate id keeps its first occurrence — same
+        // `uniquingKeysWith` convention as `sentRecordsByTransferId` above.
+        let liveStatusesByTransferId: [String: MigrationTransactionStatus] = Dictionary(
+            statuses.compactMap { status -> (String, MigrationTransactionStatus)? in
+                guard case MigrationTransactionStatus.Kind.transfer = status.kind else { return nil }
+                return (String(status.id), status)
+            },
+            uniquingKeysWith: { first, _ in first }
+        )
 
         let leadingRows: [RowSeed] = committedSchedule.sentRecords
             .filter { !scheduleTransferIds.contains($0.transferId) }
-            .map { RowSeed(transferId: $0.transferId, amount: $0.amount, sentRecord: $0, nextExecutableAfterHeight: 0) }
+            .map { RowSeed(transferId: $0.transferId, amount: $0.amount, sentRecord: $0, nextExecutableAfterHeight: 0, liveStatus: nil) }
         let scheduleRows: [RowSeed] = committedSchedule.schedule.transfers.map { transfer in
             RowSeed(
                 transferId: transfer.id,
                 amount: transfer.amount,
                 sentRecord: sentRecordsByTransferId[transfer.id],
-                nextExecutableAfterHeight: transfer.nextExecutableAfterHeight
+                nextExecutableAfterHeight: transfer.nextExecutableAfterHeight,
+                liveStatus: liveStatusesByTransferId[transfer.id]
             )
         }
 
         let seeds = leadingRows + scheduleRows
-        let firstNonSentIndex = seeds.firstIndex { $0.sentRecord == nil }
+        // MOB-1513 (T-A): "sent" prefers a joined live status's `.mined` state over sentRecord
+        // presence — see this function's own doc, precedence item 1.
+        func isSent(_ seed: RowSeed) -> Bool {
+            if let liveStatus = seed.liveStatus, case MigrationTransactionStatus.State.mined = liveStatus.state {
+                return true
+            }
+            return seed.sentRecord != nil
+        }
+        let firstNonSentIndex = seeds.firstIndex { !isSent($0) }
 
         return seeds.enumerated().map { index, seed in
-            if let sentRecord = seed.sentRecord {
+            if isSent(seed) {
+                guard let sentRecord = seed.sentRecord else {
+                    // MOB-1513 (T-A): live-mined with no app-recorded `sentRecord` — sent, but with
+                    // no known recency (see this function's own doc, precedence item 1).
+                    return MigrationTransferRow(
+                        id: seed.transferId,
+                        index: index,
+                        amount: seed.amount,
+                        status: MigrationTransferRow.Status.sent,
+                        hoursFromNow: 0
+                    )
+                }
                 let elapsedMinutes = max(0, Int(now.timeIntervalSince(sentRecord.sentAt) / 60))
                 return MigrationTransferRow(
                     id: seed.transferId,
@@ -1899,13 +1978,48 @@ enum MigrationDerivations {
                 )
             }
 
+            // MOB-1513 (T-A): a `.broadcast` live status is in flight right now — the existing
+            // broadcasting/sent-pending styling, regardless of position (see this function's own
+            // doc, precedence item 2).
+            if let liveStatus = seed.liveStatus, case MigrationTransactionStatus.State.broadcast = liveStatus.state {
+                let minutesFromNow = MigrationETA.minutesFromNow(scheduledHeight: liveStatus.scheduledHeight, currentTip: currentTip)
+                return MigrationTransferRow(
+                    id: seed.transferId,
+                    index: index,
+                    amount: seed.amount,
+                    status: MigrationTransferRow.Status.active,
+                    hoursFromNow: minutesFromNow / 60,
+                    minutesFromNow: minutesFromNow,
+                    isBroadcasting: true
+                )
+            }
+
+            // MOB-1513 (T-A): a live-expired row is unambiguous per-row ground truth (see this
+            // function's own doc, precedence item 3).
+            if let liveStatus = seed.liveStatus, liveStatus.blockedOn == MigrationTransactionStatus.Blocker.expired {
+                let minutesFromNow = MigrationETA.minutesFromNow(scheduledHeight: liveStatus.scheduledHeight, currentTip: currentTip)
+                return MigrationTransferRow(
+                    id: seed.transferId,
+                    index: index,
+                    amount: seed.amount,
+                    status: MigrationTransferRow.Status.expired,
+                    hoursFromNow: minutesFromNow / 60,
+                    minutesFromNow: minutesFromNow
+                )
+            }
+
             let status = nonSentRowStatus(
                 transferId: seed.transferId,
                 isFirstNonSent: index == firstNonSentIndex,
                 state: state,
-                hasOverdueMigrationTransfers: hasOverdueMigrationTransfers
+                hasOverdueMigrationTransfers: hasOverdueMigrationTransfers,
+                hasLiveStatus: seed.liveStatus != nil
             )
-            let minutesFromNow = MigrationETA.minutesFromNow(scheduledHeight: seed.nextExecutableAfterHeight, currentTip: currentTip)
+            // MOB-1513 (T-A): a matched live status's own `scheduledHeight` feeds the ETA in
+            // preference to the persisted schedule's `nextExecutableAfterHeight` (see this
+            // function's own doc, precedence item 4).
+            let scheduledHeight = seed.liveStatus?.scheduledHeight ?? seed.nextExecutableAfterHeight
+            let minutesFromNow = MigrationETA.minutesFromNow(scheduledHeight: scheduledHeight, currentTip: currentTip)
 
             return MigrationTransferRow(
                 id: seed.transferId,
@@ -1918,11 +2032,23 @@ enum MigrationDerivations {
         }
     }
 
+    /// MOB-1513 (T-A fix wave 1): `hasLiveStatus` gates the aggregate-state `.expired` heuristic
+    /// below — a row that HAS a joined live status already had its chance to be marked `.expired`
+    /// from that status's own `blockedOn` (checked by the caller BEFORE this fallthrough is ever
+    /// reached — see `transferRows`'s own doc, precedence item 3); reaching here with
+    /// `hasLiveStatus == true` is live GROUND TRUTH that this specific row is not expired, so the
+    /// aggregate `state == .requiresAttention(.transferExpired)` reading (true for the WHOLE run,
+    /// not this row) must not override it. The heuristic stays live only for a row the join
+    /// couldn't match at all (no live status to consult) — e.g. an expired transfer the persisted
+    /// schedule/`statuses` read doesn't currently cover. `.invalid`/`.overdue`/`.active` are
+    /// unaffected — only the `.expired` branch was ever backed by this position-plus-aggregate-flag
+    /// proxy instead of a per-row signal.
     private static func nonSentRowStatus(
         transferId: String,
         isFirstNonSent: Bool,
         state: MigrationState,
-        hasOverdueMigrationTransfers: Bool
+        hasOverdueMigrationTransfers: Bool,
+        hasLiveStatus: Bool
     ) -> MigrationTransferRow.Status {
         if case let MigrationState.requiresAttention(reason) = state,
            case let MigrationAttentionReason.invalidTransfer(invalidTransferId) = reason,
@@ -1932,7 +2058,7 @@ enum MigrationDerivations {
 
         guard isFirstNonSent else { return MigrationTransferRow.Status.pending }
 
-        if case MigrationState.requiresAttention(MigrationAttentionReason.transferExpired) = state {
+        if !hasLiveStatus, case MigrationState.requiresAttention(MigrationAttentionReason.transferExpired) = state {
             return MigrationTransferRow.Status.expired
         }
 

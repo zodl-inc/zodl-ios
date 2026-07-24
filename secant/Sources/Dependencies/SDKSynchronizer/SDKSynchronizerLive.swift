@@ -328,6 +328,9 @@ extension SDKSynchronizerClient: DependencyKey {
             getMigrationProgress: { accountUUID in
                 try await synchronizer.migrationProgress(accountUUID: accountUUID)
             },
+            migrationTransactionStatuses: { accountUUID in
+                try await synchronizer.migrationTransactionStatuses(accountUUID: accountUUID)
+            },
             isNoteSplitNeeded: { accountUUID in
                 try await synchronizer.isNoteSplitNeeded(accountUUID: accountUUID)
             },

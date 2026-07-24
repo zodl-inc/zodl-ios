@@ -127,6 +127,12 @@ struct SDKSynchronizerClient: Sendable {
     var getMigrationState: @Sendable (AccountUUID) async throws -> MigrationState
     /// Live migration progress, or `nil` when nothing is in progress.
     var getMigrationProgress: @Sendable (AccountUUID) async throws -> MigrationProgress?
+    /// MOB-1513 (T-A): the account's LIVE per-transaction migration statuses — one row per
+    /// committed migration transaction (preparation AND transfer kinds), mined-reconciled at every
+    /// read; `[]` when no run is stored. Preferred over the persisted schedule's own app-derived
+    /// state/heights by `MigrationDerivations.transferRows` for every row it can join by id — see
+    /// that function's own doc for the full join contract.
+    var migrationTransactionStatuses: @Sendable (AccountUUID) async throws -> [MigrationTransactionStatus]
     /// Whether the account's Orchard notes must be split before migration. THROWS before the
     /// wallet's first completed sync (no chain tip known yet).
     var isNoteSplitNeeded: @Sendable (AccountUUID) async throws -> Bool

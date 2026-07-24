@@ -80,6 +80,7 @@ extension SDKSynchronizerClient: TestDependencyKey {
         getTreeState: unimplemented("\(Self.self).getTreeState", placeholder: Data()),
         getMigrationState: unimplemented("\(Self.self).getMigrationState", placeholder: .notStarted),
         getMigrationProgress: unimplemented("\(Self.self).getMigrationProgress", placeholder: nil),
+        migrationTransactionStatuses: unimplemented("\(Self.self).migrationTransactionStatuses", placeholder: []),
         isNoteSplitNeeded: unimplemented("\(Self.self).isNoteSplitNeeded", placeholder: false),
         prepareNoteSplit: unimplemented(
             "\(Self.self).prepareNoteSplit",
@@ -183,6 +184,7 @@ extension SDKSynchronizerClient {
         getTreeState: { _ in Data() },
         getMigrationState: { _ in .notStarted },
         getMigrationProgress: { _ in nil },
+        migrationTransactionStatuses: { _ in [] },
         isNoteSplitNeeded: { _ in false },
         prepareNoteSplit: { _ in NoteSplitProposal(outputNotes: [], fee: Zatoshi.zero) },
         proposeMigrationTransfers: { _, _ in MigrationSchedule(transfers: [], estimatedDurationHours: 0) },
@@ -396,6 +398,7 @@ extension SDKSynchronizerClient {
             // preview/test needs real migration behavior.
             getMigrationState: { _ in .notStarted },
             getMigrationProgress: { _ in nil },
+            migrationTransactionStatuses: { _ in [] },
             isNoteSplitNeeded: { _ in false },
             prepareNoteSplit: { _ in NoteSplitProposal(outputNotes: [], fee: Zatoshi.zero) },
             proposeMigrationTransfers: { _, _ in MigrationSchedule(transfers: [], estimatedDurationHours: 0) },
