@@ -38,6 +38,32 @@ struct MigrationScheduleStorageTests {
         )
     }
 
+    /// MOB-1513 (T-A): a `MigrationTransactionStatus` fixture — the engine's LIVE per-transaction
+    /// migration status. `id` is the join key against a schedule transfer's own `String` id
+    /// (`String(status.id) == transfer.id`); defaults produce an ordinary `.transfer`-kind row with
+    /// no blocker, matching the shape of a plain in-flight (not yet due) transaction.
+    private static func status(
+        id: UInt32,
+        kind: MigrationTransactionStatus.Kind = MigrationTransactionStatus.Kind.transfer(crossing: 0),
+        state: MigrationTransactionStatus.State,
+        scheduledHeight: BlockHeight = 1_000,
+        expiryHeight: BlockHeight? = nil,
+        isReady: Bool = false,
+        nextAction: MigrationTransactionStatus.NextAction? = nil,
+        blockedOn: MigrationTransactionStatus.Blocker? = nil
+    ) -> MigrationTransactionStatus {
+        MigrationTransactionStatus(
+            id: id,
+            kind: kind,
+            state: state,
+            scheduledHeight: scheduledHeight,
+            expiryHeight: expiryHeight,
+            isReady: isReady,
+            nextAction: nextAction,
+            blockedOn: blockedOn
+        )
+    }
+
     private func withStorage(
         _ name: String,
         _ body: (MigrationScheduleStorage) throws -> Void
@@ -551,6 +577,337 @@ struct MigrationScheduleStorageTests {
 
         #expect(refreshedRows[0].minutesFromNow == 120)
         #expect(refreshedRows[0].hoursFromNow == 2)
+    }
+
+    // MARK: - Derivation: transferRows live per-transaction statuses (MOB-1513 T-A)
+    //
+    // `statuses` defaults to `[]`, so every test above (which never passes it) already covers the
+    // fallback path structurally — these cover the LIVE-preferred join itself.
+
+    @Test func transferRowsLiveMinedStatusMarksRowSentEvenWithoutSentRecord() {
+        // The app's own bookkeeping has no sent record for this transfer yet (the OLD, statuses-less
+        // derivation would read it `.active` — see `transferRowsFirstNonSentIsActiveWhenNothingIsWrong`
+        // above), but the engine's LIVE status already reports it mined: live truth wins.
+        let schedule = MigrationSchedule(transfers: [Self.transfer(id: "0", amount: 100)], estimatedDurationHours: 6)
+        let committed = MigrationCommittedSchedule(schedule: schedule, sentRecords: [], committedAt: Date())
+        let statuses = [Self.status(id: 0, state: MigrationTransactionStatus.State.mined(height: 900))]
+
+        let rows = MigrationDerivations.transferRows(
+            committedSchedule: committed,
+            state: MigrationState.inProgress(
+                MigrationProgress(completedTransfers: 0, totalTransfers: 1, remainingOrchard: .zero, nextTransferReadyAtHeight: nil)
+            ),
+            hasOverdueMigrationTransfers: false,
+            now: Date(),
+            currentTip: 1_000,
+            statuses: statuses
+        )
+
+        #expect(rows.count == 1)
+        #expect(rows[0].status == MigrationTransferRow.Status.sent)
+        // No sentRecord to read a precise timestamp from -> reads "sent recently" (hoursFromNow 0,
+        // sentMinutesAgo nil — see `MigrationTransferRow.sentMinutesAgo`'s doc).
+        #expect(rows[0].hoursFromNow == 0)
+        #expect(rows[0].sentMinutesAgo == nil)
+    }
+
+    @Test func transferRowsLiveMinedStatusWithSentRecordKeepsPreciseElapsedTime() {
+        // When a sentRecord DOES exist alongside a live `.mined` status, the row stays `.sent` (as
+        // it already was) AND keeps its precise elapsed-time math — the live join must not discard
+        // real data the app already has.
+        let schedule = MigrationSchedule(transfers: [Self.transfer(id: "0", amount: 100)], estimatedDurationHours: 6)
+        let sentAt = Date(timeIntervalSince1970: 1_000)
+        let sentRecords = [MigrationCommittedSchedule.SentRecord(transferId: "0", amount: Zatoshi(100), txId: "tx0", sentAt: sentAt)]
+        let committed = MigrationCommittedSchedule(schedule: schedule, sentRecords: sentRecords, committedAt: Date())
+        let statuses = [Self.status(id: 0, state: MigrationTransactionStatus.State.mined(height: 900))]
+
+        let rows = MigrationDerivations.transferRows(
+            committedSchedule: committed,
+            state: MigrationState.complete,
+            hasOverdueMigrationTransfers: false,
+            now: sentAt.addingTimeInterval(600),
+            currentTip: 1_000,
+            statuses: statuses
+        )
+
+        #expect(rows[0].status == MigrationTransferRow.Status.sent)
+        #expect(rows[0].sentMinutesAgo == 10)
+    }
+
+    @Test func transferRowsLiveScheduledHeightFeedsETAOverPersistedHeight() {
+        // The persisted schedule's own height is far in the future (would read hours-out); the
+        // LIVE status's `scheduledHeight` for the SAME transfer sits behind the tip — the live
+        // height wins, reading ready-now.
+        let schedule = MigrationSchedule(
+            transfers: [Self.transfer(id: "0", amount: 100, nextExecutableAfterHeight: 10_000)],
+            estimatedDurationHours: 6
+        )
+        let committed = MigrationCommittedSchedule(schedule: schedule, sentRecords: [], committedAt: Date())
+        let statuses = [Self.status(id: 0, state: MigrationTransactionStatus.State.awaitingSignature, scheduledHeight: 900)]
+
+        let rows = MigrationDerivations.transferRows(
+            committedSchedule: committed,
+            state: MigrationState.notStarted,
+            hasOverdueMigrationTransfers: false,
+            now: Date(),
+            currentTip: 1_000,
+            statuses: statuses
+        )
+
+        #expect(rows[0].status == MigrationTransferRow.Status.active)
+        #expect(rows[0].minutesFromNow == 0)
+        #expect(rows[0].hoursFromNow == 0)
+    }
+
+    @Test func transferRowsJoinByIdMapsAmountsCorrectlyWithShuffledStatusOrder() {
+        let schedule = MigrationSchedule(
+            transfers: [
+                Self.transfer(id: "0", amount: 100, nextExecutableAfterHeight: 1_000),
+                Self.transfer(id: "1", amount: 200, nextExecutableAfterHeight: 1_000),
+                Self.transfer(id: "2", amount: 300, nextExecutableAfterHeight: 1_000)
+            ],
+            estimatedDurationHours: 12
+        )
+        let committed = MigrationCommittedSchedule(schedule: schedule, sentRecords: [], committedAt: Date())
+        // Deliberately out of schedule order (2, then 0, then 1), plus a stray preparation-kind
+        // status sharing id 0 with the transfer row — it must never join (only `.transfer`-kind
+        // statuses are eligible).
+        let statuses = [
+            Self.status(id: 2, state: MigrationTransactionStatus.State.mined(height: 900)),
+            Self.status(
+                id: 0,
+                kind: MigrationTransactionStatus.Kind.preparation(layer: 0, index: 0),
+                state: MigrationTransactionStatus.State.mined(height: 900)
+            ),
+            Self.status(id: 0, state: MigrationTransactionStatus.State.broadcast(txid: Data())),
+            Self.status(id: 1, state: MigrationTransactionStatus.State.awaitingSignature)
+        ]
+
+        let rows = MigrationDerivations.transferRows(
+            committedSchedule: committed,
+            state: MigrationState.notStarted,
+            hasOverdueMigrationTransfers: false,
+            now: Date(),
+            currentTip: 1_000,
+            statuses: statuses
+        )
+
+        // Row order/identity/amount follow the persisted schedule regardless of `statuses` order —
+        // the join is by id, not position.
+        #expect(rows.map(\.id) == ["0", "1", "2"])
+        #expect(rows.map(\.amount) == [Zatoshi(100), Zatoshi(200), Zatoshi(300)])
+        #expect(rows[0].status == MigrationTransferRow.Status.active)
+        #expect(rows[0].isBroadcasting == true)
+        #expect(rows[1].status == MigrationTransferRow.Status.pending)
+        #expect(rows[2].status == MigrationTransferRow.Status.sent)
+    }
+
+    @Test func transferRowsEmptyStatusesArrayMatchesOmittedDefaultFallback() {
+        let schedule = MigrationSchedule(
+            transfers: [
+                Self.transfer(id: "t0", amount: 100, nextExecutableAfterHeight: 1_000),
+                Self.transfer(id: "t1", amount: 200, nextExecutableAfterHeight: 1_048)
+            ],
+            estimatedDurationHours: 12
+        )
+        let committed = MigrationCommittedSchedule(schedule: schedule, sentRecords: [], committedAt: Date())
+
+        let rowsWithoutStatusesArgument = MigrationDerivations.transferRows(
+            committedSchedule: committed,
+            state: MigrationState.notStarted,
+            hasOverdueMigrationTransfers: false,
+            now: Date(),
+            currentTip: 1_000
+        )
+        let rowsWithExplicitEmptyStatuses = MigrationDerivations.transferRows(
+            committedSchedule: committed,
+            state: MigrationState.notStarted,
+            hasOverdueMigrationTransfers: false,
+            now: Date(),
+            currentTip: 1_000,
+            statuses: []
+        )
+
+        #expect(rowsWithoutStatusesArgument == rowsWithExplicitEmptyStatuses)
+        #expect(rowsWithExplicitEmptyStatuses.map(\.status) == [MigrationTransferRow.Status.active, MigrationTransferRow.Status.pending])
+    }
+
+    @Test func transferRowsBroadcastLiveStateRendersBroadcastingStyling() {
+        let schedule = MigrationSchedule(
+            transfers: [Self.transfer(id: "0", amount: 100, nextExecutableAfterHeight: 1_048)],
+            estimatedDurationHours: 6
+        )
+        let committed = MigrationCommittedSchedule(schedule: schedule, sentRecords: [], committedAt: Date())
+        let statuses = [
+            Self.status(id: 0, state: MigrationTransactionStatus.State.broadcast(txid: Data([0x01, 0x02])), scheduledHeight: 1_048)
+        ]
+
+        let rows = MigrationDerivations.transferRows(
+            committedSchedule: committed,
+            state: MigrationState.inProgress(
+                MigrationProgress(completedTransfers: 0, totalTransfers: 1, remainingOrchard: .zero, nextTransferReadyAtHeight: nil)
+            ),
+            hasOverdueMigrationTransfers: false,
+            now: Date(),
+            currentTip: 1_000,
+            statuses: statuses
+        )
+
+        // Same `.active` badge as a merely-queued row, but `isBroadcasting` — the existing
+        // broadcasting/sent-pending styling (`MigrationStatusView`'s `.active where isBroadcasting`
+        // caption), never a new UI state.
+        #expect(rows[0].status == MigrationTransferRow.Status.active)
+        #expect(rows[0].isBroadcasting == true)
+    }
+
+    @Test func transferRowsLiveBlockedExpiredMarksRowExpiredRegardlessOfPosition() {
+        let schedule = MigrationSchedule(
+            transfers: [Self.transfer(id: "0", amount: 100), Self.transfer(id: "1", amount: 200)],
+            estimatedDurationHours: 12
+        )
+        let committed = MigrationCommittedSchedule(schedule: schedule, sentRecords: [], committedAt: Date())
+        // "1" — NOT the first non-sent row — is the one the engine reports expired; per-row live
+        // ground truth marks it directly, unlike the old aggregate-`MigrationState`-driven check
+        // (which could only ever mark the FIRST non-sent row expired).
+        let statuses = [
+            Self.status(id: 1, state: MigrationTransactionStatus.State.awaitingSignature, blockedOn: MigrationTransactionStatus.Blocker.expired)
+        ]
+
+        let rows = MigrationDerivations.transferRows(
+            committedSchedule: committed,
+            state: MigrationState.notStarted,
+            hasOverdueMigrationTransfers: false,
+            now: Date(),
+            currentTip: 100,
+            statuses: statuses
+        )
+
+        #expect(rows.map(\.status) == [MigrationTransferRow.Status.active, MigrationTransferRow.Status.expired])
+    }
+
+    @Test func transferRowsIgnoresPreparationKindStatusesEntirely() {
+        let schedule = MigrationSchedule(transfers: [Self.transfer(id: "0", amount: 100)], estimatedDurationHours: 6)
+        let committed = MigrationCommittedSchedule(schedule: schedule, sentRecords: [], committedAt: Date())
+        // A preparation-kind status sharing the transfer's OWN numeric id must not join to it —
+        // only `.transfer`-kind statuses are eligible (preparation transactions are never displayed
+        // as transfer rows).
+        let statuses = [
+            Self.status(
+                id: 0,
+                kind: MigrationTransactionStatus.Kind.preparation(layer: 0, index: 0),
+                state: MigrationTransactionStatus.State.mined(height: 900)
+            )
+        ]
+
+        let rows = MigrationDerivations.transferRows(
+            committedSchedule: committed,
+            state: MigrationState.notStarted,
+            hasOverdueMigrationTransfers: false,
+            now: Date(),
+            currentTip: 1_000,
+            statuses: statuses
+        )
+
+        // No live join happened -> ordinary not-sent derivation (first non-sent row, nothing wrong)
+        // -> `.active`, NOT `.sent` (which a wrongly-joined `.mined` preparation status would produce).
+        #expect(rows[0].status == MigrationTransferRow.Status.active)
+    }
+
+    @Test func transferRowsPartialJoinLeavesUnmatchedRowsAndStatusesUnaffected() {
+        let schedule = MigrationSchedule(
+            transfers: [Self.transfer(id: "0", amount: 100), Self.transfer(id: "1", amount: 200)],
+            estimatedDurationHours: 12
+        )
+        let committed = MigrationCommittedSchedule(schedule: schedule, sentRecords: [], committedAt: Date())
+        // "1" has no matching status at all (partial join); id 999 matches no schedule OR leading
+        // row (a stale/foreign status) — neither must crash or misattribute.
+        let statuses = [
+            Self.status(id: 0, state: MigrationTransactionStatus.State.mined(height: 900)),
+            Self.status(id: 999, state: MigrationTransactionStatus.State.mined(height: 900))
+        ]
+
+        let rows = MigrationDerivations.transferRows(
+            committedSchedule: committed,
+            state: MigrationState.notStarted,
+            hasOverdueMigrationTransfers: true,
+            now: Date(),
+            currentTip: 100,
+            statuses: statuses
+        )
+
+        #expect(rows.count == 2)
+        #expect(rows[0].status == MigrationTransferRow.Status.sent)
+        // "1" has no live join -> falls back to the ordinary not-sent derivation (first non-sent +
+        // hasOverdueMigrationTransfers == true -> `.overdue`), unaffected by the unrelated id-999
+        // status.
+        #expect(rows[1].status == MigrationTransferRow.Status.overdue)
+    }
+
+    // MOB-1513 (T-A fix wave 1): row "0" (first non-sent) has ITS OWN joined live status that is
+    // NOT expired (blocked on signature) even though the AGGREGATE `state` is
+    // `.requiresAttention(.transferExpired)` (some OTHER transaction in the run expired) — live
+    // ground truth for a row that HAS a join must own that row's classification; the old
+    // first-non-sent positional/aggregate-state heuristic must not override it with a stale
+    // `.expired`. Row "2" is the one the engine actually reports expired (via `blockedOn`, not
+    // position). Composes `transferRows` with `bannerVariant` end to end, matching how production
+    // actually chains them, so `expiredBounds`'s narrowed range is pinned too.
+    @Test func transferRowsExpiredStatusOwnsClassificationOverPositionalAggregateStateFallback() {
+        let schedule = MigrationSchedule(
+            transfers: [
+                Self.transfer(id: "0", amount: 100),
+                Self.transfer(id: "1", amount: 200),
+                Self.transfer(id: "2", amount: 300)
+            ],
+            estimatedDurationHours: 18
+        )
+        let committed = MigrationCommittedSchedule(schedule: schedule, sentRecords: [], committedAt: Date())
+        let statuses = [
+            Self.status(
+                id: 0,
+                state: MigrationTransactionStatus.State.awaitingSignature,
+                blockedOn: MigrationTransactionStatus.Blocker.signature
+            ),
+            Self.status(
+                id: 2,
+                state: MigrationTransactionStatus.State.awaitingSignature,
+                blockedOn: MigrationTransactionStatus.Blocker.expired
+            )
+        ]
+
+        let rows = MigrationDerivations.transferRows(
+            committedSchedule: committed,
+            state: MigrationState.requiresAttention(MigrationAttentionReason.transferExpired),
+            hasOverdueMigrationTransfers: false,
+            now: Date(),
+            currentTip: 100,
+            statuses: statuses
+        )
+
+        // Row "0": its OWN live status says "blocked on signature", not expired -> live truth wins,
+        // falls through to the ordinary first-non-sent table (nothing wrong here) -> `.active`, NOT
+        // `.expired`. Row "1": no live status, not first-non-sent -> `.pending`, unaffected either
+        // way. Row "2": its OWN live status says expired -> `.expired`.
+        #expect(rows.map(\.status) == [
+            MigrationTransferRow.Status.active,
+            MigrationTransferRow.Status.pending,
+            MigrationTransferRow.Status.expired
+        ])
+
+        let variant = MigrationDerivations.bannerVariant(
+            isIronwoodActivated: true,
+            state: MigrationState.requiresAttention(MigrationAttentionReason.transferExpired),
+            hasOverdue: false,
+            isManualDelivery: false,
+            isNextTransferDue: false,
+            orchardBalance: Zatoshi.zero,
+            isCompleteAcknowledged: false,
+            isMigrationRemainderPending: false,
+            transferRows: rows
+        )
+
+        // `expiredBounds` must narrow to ONLY row "2" (1-based position 3) — not widen to include
+        // row "0" just because it's first-non-sent under the stale aggregate-state reading.
+        #expect(variant == MigrationBannerVariant.transfersExpired(first: 3, last: 3))
     }
 
     // MARK: - Derivation: summary math
