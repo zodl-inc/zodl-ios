@@ -193,6 +193,27 @@ import ComposableArchitecture
         #expect(executedCount.value == 0)
     }
 
+    // MARK: - MOB-1513 (R10): onAppear already in `.success` phase -> nothing left to execute
+
+    /// The Keystone immediate lane's broadcast already happened in `MigrationCoordFlowCoordinator`
+    /// BEFORE this screen is ever pushed — `.keystoneImmediateSubmitted` pushes straight into
+    /// `.success` (see that handler's doc). Pre-fix, `onAppear` re-ran the executor anyway: with no
+    /// account-scoped transfer left in the engine for `executeNextPendingMigrationTransfer` to
+    /// serve, that resolved to a non-success result, which flipped `isFailurePresented = true` and
+    /// popped the failure sheet OVER the success screen — the QA-reported bogus error. `onAppear`
+    /// must be a no-op once the phase is already `.success`: no dependency touched, no action
+    /// received, no state mutated. RED against the pre-fix reducer, which only guarded on
+    /// `isFailurePresented`/`entersViaSendNow`, never `phase`.
+    @MainActor @Test func onAppearInSuccessPhaseExecutesNothing() async {
+        var state = MigrationSending.State(phase: .success, txId: "deadbeef")
+        state.$selectedWalletAccount.withLock { $0 = walletAccount(keystone: false, idByte: 0) }
+        let store = TestStore(initialState: state) {
+            MigrationSending()
+        }
+
+        await store.send(.onAppear)
+    }
+
     // MARK: - onAppear: single transfer (immediate/manual/plan-first)
 
     @MainActor @Test func onAppearWithSingleTransferSucceedsAndReachesSentPhase() async {

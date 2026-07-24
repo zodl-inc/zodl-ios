@@ -274,6 +274,11 @@ struct MigrationSending {
                 // the only way out. Every production push in every other lane defaults
                 // `isFailurePresented` to `false`, so this is a no-op for them.
                 guard !state.isFailurePresented else { return .none }
+                // MOB-1513 (R10): a screen pushed ALREADY in `.success` (the Keystone immediate lane —
+                // its broadcast happens in the coordinator BEFORE this screen is pushed) has nothing to
+                // execute either — re-running the executor here hit the engine's "nothing pending" path
+                // and popped the failure sheet over the success screen (the QA-reported bogus error).
+                if case .success = state.phase { return .none }
                 // R8-T6: the send-now lane routes through the gate-check/wait flow FIRST; every
                 // other lane (immediate/manual/plan-first review, Keystone) keeps today's immediate
                 // stop+broadcast — they never consulted `sendGate()` and still don't.
