@@ -927,6 +927,18 @@ extension MigrationCoordFlow {
                     )
                 }
 
+                // MOB-1513 (R9, review fix): tombstone — a reject/abandon can land while THIS
+                // apply effect is still in flight (swipe-back off `scan`, then Reject — the same
+                // documented race the R8 completions guard against with this exact check). The
+                // ceremony is over: `pendingKeystoneSigning` and `keystoneBatchRounds` are cleared
+                // and the path popped. A late applied completion must store NOTHING — without this
+                // guard the nil rounds state below would masquerade as a single-round ceremony and
+                // store THIS ROUND'S SLICE as if it were the whole batch (a partial store, the
+                // exact invariant breach this round exists to prevent). Dropping is safe: the
+                // engine still holds the run's transactions awaiting signatures and re-serves the
+                // still-unsigned batch on the next ceremony entry.
+                guard state.pendingKeystoneSigning != nil else { return .none }
+
                 // MOB-1513 (R9): accumulate this round's applied signatures and, if the capped
                 // ceremony has rounds left, arm the next one instead of storing — the stores run
                 // exactly once, over the FULL accumulated batch, after the last round (Android
