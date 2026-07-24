@@ -10867,6 +10867,50 @@
         }
       }
     },
+    "migrationKeystoneFirmware.body" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your Keystone's firmware (%1$@) doesn't support migration signing yet. Update to firmware %2$@ or later, then start the migration again."
+          }
+        }
+      }
+    },
+    "migrationKeystoneFirmware.close" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Close"
+          }
+        }
+      }
+    },
+    "migrationKeystoneFirmware.legacyBody" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your Keystone's firmware doesn't support migration signing yet. Update to firmware %1$@ or later, then start the migration again."
+          }
+        }
+      }
+    },
+    "migrationKeystoneFirmware.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Firmware Update Required"
+          }
+        }
+      }
+    },
     "migrationKeystoneScan.instructions" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -11438,6 +11482,40 @@
         }
       }
     },
+    "migrationPlan.etaMins" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "~%1$lld mins"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "~%1$lld min"
+          }
+        }
+      }
+    },
+    "migrationPlan.etaMinsIn" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "in ~%1$lld mins"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "en ~%1$lld min"
+          }
+        }
+      }
+    },
     "migrationPlan.proposeFailedBody" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -11575,6 +11653,17 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Dividir saldo"
+          }
+        }
+      }
+    },
+    "migrationPlan.staleRefreshed" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your migration plan was refreshed — review it before confirming."
           }
         }
       }

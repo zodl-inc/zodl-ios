@@ -51,12 +51,13 @@ extension MigrationBGSessionHandle: Equatable {
 /// and consumed by `MigrationSessionPlanner.plan(_:)` to pick the session's single action. Mirrors
 /// the ordered classification the spec's "Per-account background decision tree" describes.
 private enum MigrationAccountClassification: Equatable {
-    /// `complete`/`notStarted`/`readyToPropose` — no broadcast, no sync need for this account.
+    /// `complete`/`notStarted` — no broadcast, no sync need for this account.
     case nothingToDo(MigrationState)
     /// `hasInvalidMigrationTransfers` OR state is `.requiresAttention(.transferExpired)` /
     /// `.requiresAttention(.invalidTransfer)`.
     case planBroken
-    /// `isSyncRequiredBeforeNextMigrationTransfer` is true.
+    /// A sync-only session for this account, once the SDK offers a signal for it again — see
+    /// `classifyMigrationAccount`'s doc: nothing currently produces this case (MOB-1513 R6).
     case syncNeeded
     /// `rescheduleOverdueMigrationTransfer` returned a proposal — a candidate for this session's
     /// single broadcast, ordered by `isOverdue` then `nextExecutableAfterHeight`. Due-ness itself is
@@ -96,9 +97,7 @@ private func classifyMigrationAccount(
     }
 
     switch migrationState {
-    // `.readyToPropose` is never actually emitted by the final migration engine — kept here only
-    // for exhaustiveness / the migration SDK simulator, which still models it.
-    case MigrationState.complete, MigrationState.notStarted, MigrationState.readyToPropose:
+    case MigrationState.complete, MigrationState.notStarted:
         return MigrationAccountClassification.nothingToDo(migrationState)
     default:
         break
@@ -131,14 +130,17 @@ private func classifyMigrationAccount(
         return MigrationAccountClassification.planBroken
     }
 
-    guard let isSyncRequired = try? await sdkSynchronizer.isSyncRequiredBeforeNextMigrationTransfer(accountUUID) else {
-        LoggerProxy.error("BGTask migration session: sync-required check failed for an account")
-        return MigrationAccountClassification.unreadable
-    }
-
-    if isSyncRequired {
-        return MigrationAccountClassification.syncNeeded
-    }
+    // MOB-1513 (R6): `isSyncRequiredBeforeNextMigrationTransfer` no longer exists anywhere on the
+    // SDK's Synchronizer surface as of this round's handle-era consolidation (confirmed absent from
+    // both the current pin and the raw `Synchronizer` protocol it forwarded to) — the capability
+    // this precondition depended on was dropped during the SDK's own iteration toward the final
+    // engine, with no direct replacement offered. `.syncNeeded` and its `.syncOnly` session plan
+    // (`MigrationSessionPlanner.plan(_:)`, and this decision tree's own doc above) are left in place
+    // deliberately — removing them would be re-architecting a documented, load-bearing branch of the
+    // "Session resolution" tree, not a mechanical SDK adaptation — but with nothing left to ever
+    // produce a `.syncNeeded` classification, that branch is now permanently unreachable. Flagging
+    // for a product/SDK follow-up: either the SDK reintroduces an equivalent pre-broadcast sync
+    // signal, or this branch should be formally retired.
 
     // Double-optional flatten: `rescheduleOverdueMigrationTransfer` already returns an Optional on
     // success, and `try?` adds a second layer — a thrown read and a genuinely-empty probe both read
@@ -228,9 +230,10 @@ private enum MigrationSessionPlanner {
     }
 
     /// A single account's classification counts as "done" (no active run) for the cancel-all gate
-    /// below — `.complete`/`.notStarted` only. `.readyToPropose` (a real balance, no committed plan
-    /// yet) and `.unreadable` (an unknown true state) both deliberately do NOT count as done, so
-    /// either one blocks a premature cancelAll and keeps the wakeup chain alive instead.
+    /// below — `.complete`/`.notStarted` only. Every other live-state classification (an active run
+    /// in any of `.splitPendingConfirmation`/`.inProgress`/`.requiresAttention`) and `.unreadable`
+    /// (an unknown true state) both deliberately do NOT count as done, so either one blocks a
+    /// premature cancelAll and keeps the wakeup chain alive instead.
     ///
     /// MOB-1496 (fix-wave, review IMPORTANT-1): also reused by `handleLandedBroadcast`'s own
     /// post-broadcast complete-check, via `allAccountsAreDone` below, so the two "is everyone
@@ -2253,7 +2256,7 @@ extension Root {
         }
 
         return .run { [sdkSynchronizer] _ in
-            _ = try? await sdkSynchronizer.restartCurrentMigrationStep(accountUUID, false)
+            _ = try? await sdkSynchronizer.restartCurrentMigrationStep(accountUUID)
         }
     }
 
