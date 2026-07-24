@@ -123,8 +123,13 @@ extension SDKSynchronizerClient: TestDependencyKey {
         storeSignedNoteSplits: unimplemented("\(Self.self).storeSignedNoteSplits"),
         proposeMigrationPCZTs: unimplemented("\(Self.self).proposeMigrationPCZTs", placeholder: []),
         storeSignedMigrationTransactions: unimplemented("\(Self.self).storeSignedMigrationTransactions"),
-        urEncoderForMigrationPCZTBatch: unimplemented("\(Self.self).urEncoderForMigrationPCZTBatch", placeholder: nil),
-        parseMigrationPCZTBatch: unimplemented("\(Self.self).parseMigrationPCZTBatch", placeholder: nil)
+        buildKeystoneSignBatchQRParts: unimplemented("\(Self.self).buildKeystoneSignBatchQRParts", placeholder: []),
+        resetKeystoneSignBatchDecoder: unimplemented("\(Self.self).resetKeystoneSignBatchDecoder", placeholder: ()),
+        decodeKeystoneSignBatchPart: unimplemented(
+            "\(Self.self).decodeKeystoneSignBatchPart",
+            placeholder: KeystoneBatchDecodeResult(complete: false, progress: 0, data: nil, firmwareVersion: nil)
+        ),
+        applyKeystoneBatchSignatures: unimplemented("\(Self.self).applyKeystoneBatchSignatures", placeholder: [])
     )
 }
 
@@ -210,8 +215,10 @@ extension SDKSynchronizerClient {
         storeSignedNoteSplits: { _, _ in },
         proposeMigrationPCZTs: { _, _ in [] },
         storeSignedMigrationTransactions: { _, _ in },
-        urEncoderForMigrationPCZTBatch: { _ in nil },
-        parseMigrationPCZTBatch: { _ in nil }
+        buildKeystoneSignBatchQRParts: { _, _, _ in [] },
+        resetKeystoneSignBatchDecoder: { },
+        decodeKeystoneSignBatchPart: { _, _ in KeystoneBatchDecodeResult(complete: false, progress: 0, data: nil, firmwareVersion: nil) },
+        applyKeystoneBatchSignatures: { _, _ in [] }
     )
 
     static let mock = Self.mocked()
@@ -340,8 +347,12 @@ extension SDKSynchronizerClient {
         fetchUTXOsByAddress: @escaping @Sendable (String, AccountUUID) async throws -> TransparentAddressCheckResult = { _, _ in .notFound },
         enhanceTransactionBy: @escaping @Sendable (String) async throws -> Void = { _ in },
         getTreeState: @escaping @Sendable (UInt64) async throws -> Data = { _ in Data() },
-        urEncoderForMigrationPCZTBatch: @escaping @Sendable ([MigrationUnsignedTransferPczt]) -> UREncoder? = { _ in nil },
-        parseMigrationPCZTBatch: @escaping @Sendable (Data) -> [Data]? = { _ in nil }
+        buildKeystoneSignBatchQRParts: @escaping @Sendable (Data, [MigrationUnsignedTransferPczt], Int) async throws -> [String] = { _, _, _ in [] },
+        resetKeystoneSignBatchDecoder: @escaping @Sendable () async -> Void = { },
+        decodeKeystoneSignBatchPart: @escaping @Sendable (String, Data) async throws -> KeystoneBatchDecodeResult = { _, _ in
+            KeystoneBatchDecodeResult(complete: false, progress: 0, data: nil, firmwareVersion: nil)
+        },
+        applyKeystoneBatchSignatures: @escaping @Sendable ([MigrationUnsignedTransferPczt], Data) async throws -> [MigrationSignedTransferPczt] = { _, _ in [] }
     ) -> SDKSynchronizerClient {
         SDKSynchronizerClient(
             stateStream: stateStream,
@@ -424,8 +435,10 @@ extension SDKSynchronizerClient {
             storeSignedNoteSplits: { _, _ in },
             proposeMigrationPCZTs: { _, _ in [] },
             storeSignedMigrationTransactions: { _, _ in },
-            urEncoderForMigrationPCZTBatch: urEncoderForMigrationPCZTBatch,
-            parseMigrationPCZTBatch: parseMigrationPCZTBatch
+            buildKeystoneSignBatchQRParts: buildKeystoneSignBatchQRParts,
+            resetKeystoneSignBatchDecoder: resetKeystoneSignBatchDecoder,
+            decodeKeystoneSignBatchPart: decodeKeystoneSignBatchPart,
+            applyKeystoneBatchSignatures: applyKeystoneBatchSignatures
         )
     }
 }

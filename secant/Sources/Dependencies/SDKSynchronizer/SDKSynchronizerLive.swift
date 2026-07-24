@@ -433,14 +433,22 @@ extension SDKSynchronizerClient: DependencyKey {
             storeSignedMigrationTransactions: { accountUUID, signed in
                 try await synchronizer.storeSignedMigrationSchedulePCZTs(accountUUID: accountUUID, signed)
             },
-            // [ext] JOINT SDK + Keystone-team ask; device support unvalidated (feature-spec §14
-            // risk). No batch UR format exists yet — inert stub, unchanged from the pre-real-SDK
-            // shape (MOB-1496 only reshapes the payload types: `[MigrationUnsignedTransferPczt]`
-            // in, encoding `$0.pczt` blobs in order once a real batch format lands).
-            urEncoderForMigrationPCZTBatch: { _ in nil },
-            // [ext] Same ask as above — inert stub; parses to `[Data]` in scan order once a real
-            // batch format lands.
-            parseMigrationPCZTBatch: { _ in nil }
+            // MOB-1513: the real Keystone batch-signing bridge — thin forwards to the SDK
+            // synchronizer instance, exactly like the neighboring migration closures above. Read/
+            // session calls only (never a broadcast), so none of these four take
+            // `transactionGuard` — see `SDKSynchronizerInterface`'s doc.
+            buildKeystoneSignBatchQRParts: { requestId, pczts, maxFragmentLen in
+                try await synchronizer.buildKeystoneSignBatchQRParts(requestId: requestId, pczts: pczts, maxFragmentLen: maxFragmentLen)
+            },
+            resetKeystoneSignBatchDecoder: {
+                await synchronizer.resetKeystoneSignBatchDecoder()
+            },
+            decodeKeystoneSignBatchPart: { part, expectedRequestId in
+                try await synchronizer.decodeKeystoneSignBatchPart(part, expectedRequestId: expectedRequestId)
+            },
+            applyKeystoneBatchSignatures: { pczts, batchSignResponse in
+                try await synchronizer.applyKeystoneBatchSignatures(pczts: pczts, batchSignResponse: batchSignResponse)
+            }
         )
 
         return client
