@@ -761,6 +761,12 @@ extension MigrationCoordFlow {
                 // anyway") has a `.complete` element beneath instead — it falls back to the generic
                 // Sending failure-sheet push its own propose-failure path already uses.
                 state.keystoneImmediateSubmitInFlight = false
+                // MOB-1513 (R8, review fix): ceremony already torn down (a reject after a
+                // swipe-back off `scan` mid-proving cleared `pendingKeystoneSigning` — the
+                // tombstone)? The scan/sign elements are gone, the pop below would delete the
+                // user's current screen, and they already walked away from this ceremony — drop
+                // the late failure silently (it's logged at the throw site).
+                guard case .immediateReview? = state.pendingKeystoneSigning else { return .none }
                 state.pendingKeystoneSigning = nil
                 state.pendingKeystoneSigningAccountUUID = nil
                 let topElementIsScan = state.path.last?.is(\.scan) == true
@@ -918,6 +924,17 @@ extension MigrationCoordFlow {
                 // lines (duplicated rather than shared — this lane's completion diverges immediately
                 // after: `.success` phase with a known txid, not a resume into `resumeCommittedMigrationChain`).
                 state.keystoneImmediateSubmitInFlight = false
+                // MOB-1513 (R8, review fix): the ceremony may have been torn down while this
+                // coordinator-level effect was in flight (a reject after a swipe-back off `scan`
+                // mid-proving — `.keystoneSignRejected` cleared `pendingKeystoneSigning`, the
+                // tombstone). The scan/sign elements are gone and the pop-count read below would
+                // delete whatever screen the user backed onto instead. The broadcast DID land,
+                // so still surface the success — but push it over the CURRENT top without popping
+                // anything.
+                guard case .immediateReview? = state.pendingKeystoneSigning else {
+                    state.path.append(.sending(MigrationSending.State(phase: .success, txId: txId, totalCount: 1)))
+                    return .none
+                }
                 state.pendingKeystoneSigning = nil
                 state.pendingKeystoneSigningAccountUUID = nil
                 let topElementIsScan = state.path.last?.is(\.scan) == true
@@ -938,6 +955,14 @@ extension MigrationCoordFlow {
             case .keystoneSignRejected:
                 state.pendingKeystoneSigning = nil
                 state.pendingKeystoneSigningAccountUUID = nil
+                // MOB-1513 (R8, review fix): a reject can land while a post-scan leg is still in
+                // flight (the user swipe-backs off `scan` mid-proving and taps Reject — the
+                // coordinator-level submit/apply effects survive the pop). Clear BOTH in-flight
+                // guards so the next ceremony starts clean; clearing `pendingKeystoneSigning` above
+                // doubles as the tombstone the late completions check before touching the path
+                // (see `.keystoneImmediateSubmitted`/`.keystoneImmediateSubmitFailed`).
+                state.keystoneBatchApplyInFlight = false
+                state.keystoneImmediateSubmitInFlight = false
                 let _ = state.path.popLast()
                 return .none
 

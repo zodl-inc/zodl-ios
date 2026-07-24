@@ -3097,6 +3097,78 @@ import ComposableArchitecture
         #expect(store.state.pendingKeystoneSigning == nil)
     }
 
+    /// MOB-1513 (R8, review fix): a reject landing while the post-scan submit is still in flight
+    /// (the user swipe-backs off `scan` mid-proving and taps Reject — the coordinator-level submit
+    /// effect survives the pops) must clear the in-flight guard, and the LATE completion must not
+    /// mutate the path shape: the tombstoned (`pendingKeystoneSigning == nil`) success pushes the
+    /// Sending success over the current top WITHOUT popping (the broadcast genuinely landed), never
+    /// deleting the screen the user backed onto.
+    @MainActor @Test func keystoneSignRejectedWhileImmediateSubmitInFlightClearsGuardAndLateSuccessNeverPopsCurrentScreen() async {
+        var state = MigrationCoordFlow.State()
+        state.pendingKeystoneSigning = .immediateReview
+        state.keystoneImmediateSubmitInFlight = true
+        state.path.append(.reviewTransfer(MigrationReviewTransfer.State(mode: .immediate)))
+        // The user already swipe-backed off `scan` — only `keystoneSign` sits above Review.
+        state.path.append(
+            .keystoneSign(
+                MigrationKeystoneSign.State(
+                    pczts: [MigrationUnsignedTransferPczt(id: MigrationReviewTransfer.immediateKeystonePcztId, pczt: Data([0xDD]))],
+                    redactedSinglePczt: Data([0xDD, 0x0F])
+                )
+            )
+        )
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 1, action: .keystoneSign(.delegate(.rejected)))))
+        await store.receive(\.keystoneSignRejected)
+
+        #expect(store.state.keystoneImmediateSubmitInFlight == false)
+        #expect(store.state.pendingKeystoneSigning == nil)
+        #expect(store.state.path.count == 1)
+
+        // The in-flight submit resolves AFTER the teardown — the tombstone branch must not pop.
+        await store.send(.keystoneImmediateSubmitted(txId: "ab12"))
+
+        #expect(store.state.path.count == 2)
+        guard case .reviewTransfer = try? #require(store.state.path[id: 0]) else {
+            Issue.record("Expected the Review element to survive the late success")
+            return
+        }
+        guard case let .sending(sendingState) = try? #require(store.state.path.last) else {
+            Issue.record("Expected the late success pushed on top without popping")
+            return
+        }
+        #expect(sendingState.phase == MigrationSending.State.Phase.success)
+    }
+
+    /// Twin of the late-success test: a LATE submit FAILURE for a torn-down ceremony is dropped
+    /// entirely (the user already rejected; the error is logged at the throw site) — no pops, no
+    /// failure sheet, no path mutation at all.
+    @MainActor @Test func lateImmediateSubmitFailureAfterRejectIsDroppedWithoutTouchingPath() async {
+        var state = MigrationCoordFlow.State()
+        state.pendingKeystoneSigning = nil
+        state.keystoneImmediateSubmitInFlight = true
+        state.path.append(.reviewTransfer(MigrationReviewTransfer.State(mode: .immediate)))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        }
+        store.exhaustivity = .off
+
+        await store.send(.keystoneImmediateSubmitFailed) {
+            $0.keystoneImmediateSubmitInFlight = false
+        }
+
+        #expect(store.state.path.count == 1)
+        guard case let .reviewTransfer(reviewState) = try? #require(store.state.path.last) else {
+            Issue.record("Expected the Review element untouched")
+            return
+        }
+        #expect(reviewState.isFailurePresented == false)
+    }
+
     /// MOB-1513 (R8): duplicate `.foundPCZT` deliveries (a second camera frame decoded before the
     /// first delivery's `isAnythingFound` gate could flip) must be DROPPED while the submit is in
     /// flight — never a second addProofs/submit for the same ceremony.

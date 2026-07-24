@@ -231,7 +231,10 @@ struct MigrationCoordFlow {
         /// processed, so a duplicate can still reach the coordinator. Armed for the WHOLE post-scan
         /// leg (set before the proofs+submit effect dispatches — a duplicate mid-proving would
         /// otherwise double-broadcast), cleared in `.keystoneImmediateSubmitted`,
-        /// `.keystoneImmediateSubmitFailed`, and `.keystoneScanAbandoned`.
+        /// `.keystoneImmediateSubmitFailed`, `.keystoneScanAbandoned`, and `.keystoneSignRejected`
+        /// (a reject can land mid-leg after a swipe-back off `scan` — the completions then treat
+        /// the cleared `pendingKeystoneSigning` as a tombstone and never touch the path), plus
+        /// reset at ceremony entry (`beginImmediateKeystoneCeremony`).
         var keystoneImmediateSubmitInFlight = false
         /// MOB-1513 (H3 guard): the account THIS flow instance opened for — recorded synchronously
         /// at `.onAppear`'s genuine-flow-start branch (`state.path.isEmpty`), alongside arming
