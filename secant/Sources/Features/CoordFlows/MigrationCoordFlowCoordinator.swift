@@ -691,6 +691,16 @@ extension MigrationCoordFlow {
                     }
                 }
 
+            case .path(.element(id: _, action: .scan(.keystoneBatchDecodeFailed))):
+                // MOB-1513 (final review, C1 fix): `decodeKeystoneSignBatchPart` threw on a scanned
+                // frame — a stale, mismatched, or corrupt response, including the SDK's own
+                // request-id-mismatch throw at completion. `.scan` is still the top path element here
+                // (this fires before `.foundKeystoneBatchSignatures` ever would), so this reuses
+                // `keystoneScanAbandoned`'s pop-2 semantics to unwind scan + keystoneSign back to the
+                // initiating screen — the same "abandon like a rejected scan" treatment the
+                // apply-signature and firmware-gate failures above already get. No new UI.
+                return .send(.keystoneScanAbandoned)
+
             case .keystoneBatchSignaturesApplied(let context, let accountUUID, let unsignedPczts, let signed):
                 // MOB-1513: the immediate lane diverges entirely from here on — no engine schedule to
                 // read, no store step at all (nothing was ever proposed through the engine). See

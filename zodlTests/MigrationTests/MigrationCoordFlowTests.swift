@@ -2556,6 +2556,46 @@ import ComposableArchitecture
         }
     }
 
+    // MARK: - MOB-1513 (final review, C1 fix): keystoneBatchDecodeFailed abandons the ceremony
+    //
+    // Before this fix the coordinator had NO handler at all for `.scan(.keystoneBatchDecodeFailed)` —
+    // `decodeKeystoneSignBatchPart` throwing on a scanned frame (a stale, mismatched, or corrupt
+    // response, including a request-id mismatch at completion) left the scan screen hung
+    // unrecoverably instead of abandoning like every other failure point in this ceremony.
+
+    @MainActor @Test func keystoneBatchDecodeFailedAbandonsSessionWithoutStoring() async {
+        let applyCalls = LockIsolated<Int>(0)
+        let storeCalls = LockIsolated<Int>(0)
+        var state = MigrationCoordFlow.State()
+        state.pendingKeystoneSigning = .planCommit
+        state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .scheduled)))
+        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: [MigrationUnsignedTransferPczt(id: "t0", pczt: Data())])))
+        state.path.append(.scan(Scan.State.initial))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.applyKeystoneBatchSignatures = { _, _ in
+                applyCalls.withValue { $0 += 1 }
+                return []
+            }
+            $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, _ in storeCalls.withValue { $0 += 1 } }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 2, action: .scan(.keystoneBatchDecodeFailed))))
+        await store.receive(\.keystoneScanAbandoned)
+
+        #expect(applyCalls.value == 0)
+        #expect(storeCalls.value == 0)
+        #expect(store.state.pendingKeystoneSigning == nil)
+        #expect(store.state.path.count == 1)
+        guard case .transferPlan = try? #require(store.state.path.last) else {
+            Issue.record("Expected pop back to .transferPlan (scan + sign removed)")
+            return
+        }
+    }
+
     @MainActor @Test func foundKeystoneBatchSignaturesForPlanCommitContextPushesSendingForManualVariant() async {
         let unsigned: [MigrationUnsignedTransferPczt] = [MigrationUnsignedTransferPczt(id: "t0", pczt: Data([0xCC]))]
         let signed: [Data] = [Data([0xCC, 0x01])]
@@ -2890,6 +2930,40 @@ import ComposableArchitecture
         await store.receive(\.keystoneSignRejected)
 
         #expect(storeCalls.value == 0)
+    }
+
+    // MARK: - MOB-1513 (final review, I1 fix): keystoneSign(.delegate(.buildFailed)) abandons too
+    //
+    // `buildKeystoneSignBatchQRParts` throwing happens before the user ever taps "Get Signature", so
+    // `.scan` was never pushed — unlike the rejected-path tests above (which land on
+    // `keystoneSignRejected`), a build failure reuses `keystoneScanAbandoned` itself (handler at
+    // `MigrationCoordFlowCoordinator.swift` ~line 640), taking its pop-1 path since only `keystoneSign`
+    // is on top.
+
+    @MainActor @Test func keystoneSignBuildFailedAbandonsSessionPoppingOnlyKeystoneSign() async {
+        let storeCalls = LockIsolated<Int>(0)
+        var state = MigrationCoordFlow.State()
+        state.pendingKeystoneSigning = .planCommit
+        state.path.append(.transferPlan(MigrationTransferPlan.State(variant: .scheduled)))
+        state.path.append(.keystoneSign(MigrationKeystoneSign.State(pczts: [MigrationUnsignedTransferPczt(id: "t0", pczt: Data())])))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.storeSignedMigrationTransactions = { _, _ in storeCalls.withValue { $0 += 1 } }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 1, action: .keystoneSign(.delegate(.buildFailed)))))
+        await store.receive(\.keystoneScanAbandoned)
+
+        #expect(storeCalls.value == 0)
+        #expect(store.state.pendingKeystoneSigning == nil)
+        #expect(store.state.path.count == 1)
+        guard case .transferPlan = try? #require(store.state.path.last) else {
+            Issue.record("Expected pop back to .transferPlan (keystoneSign removed, scan never pushed)")
+            return
+        }
     }
 
     /// R8-T3 (V18-b): the immediate-mode Sending close no longer acknowledges AT ALL — the engine
