@@ -267,11 +267,25 @@ struct SDKSynchronizerClient: Sendable {
     var storeSignedNoteSplits: @Sendable (AccountUUID, [MigrationSignedTransferPczt]) async throws -> Void
     var proposeMigrationPCZTs: @Sendable (AccountUUID, MigrationSchedule) async throws -> [MigrationUnsignedTransferPczt]
     var storeSignedMigrationTransactions: @Sendable (AccountUUID, [MigrationSignedTransferPczt]) async throws -> Void
-    // Batch UR encoding of N migration PCZTs into ONE animated-QR session — [ext]: JOINT SDK +
-    // Keystone-team ask; device support unvalidated (feature-spec §14 risk).
-    var urEncoderForMigrationPCZTBatch: @Sendable ([MigrationUnsignedTransferPczt]) -> UREncoder? = { _ in nil }
-    // Batch parse of the scanned signed session back into N signed PCZTs' raw bytes, in scan order.
-    var parseMigrationPCZTBatch: @Sendable (Data) -> [Data]? = { _ in nil }
+    // MOB-1513: the real Keystone batch-signing bridge (Synchronizer.swift's "Migration Keystone
+    // batch-signing" section) — a DB-free, account-free, four-call ceremony over a caller-held PCZT
+    // array and a scanned device response. Every unsigned PCZT of the signing context rides ONE
+    // animated QR (fountain-encoded; the SDK decides the frame count, never the app), and the
+    // device's response is signatures-only — no PCZT is echoed back. These are read/session calls,
+    // never broadcasts, so (unlike `createProposedTransactions`/`createTransactionFromPCZT`) none of
+    // the four take the transaction guard.
+    /// Builds the animated QR frame strings for a Keystone batch-signing request over `pczts` (which
+    /// MUST be preparation-then-transfer, schedule order — see the SDK doc) — the SAME array, same
+    /// order, must be passed to `applyKeystoneBatchSignatures` once the device responds.
+    var buildKeystoneSignBatchQRParts: @Sendable (Data, [MigrationUnsignedTransferPczt], Int) async throws -> [String]
+    /// Discards any in-flight batch-response decode session — call on scan-screen entry, retry, and
+    /// exit (one decode session exists process-wide). Infallible.
+    var resetKeystoneSignBatchDecoder: @Sendable () async -> Void
+    /// Feeds one scanned QR frame into the active Keystone sign-batch-response decode session.
+    var decodeKeystoneSignBatchPart: @Sendable (String, Data) async throws -> KeystoneBatchDecodeResult
+    /// Applies the ceremony's batch signatures to `pczts` positionally — MUST be the SAME array/order
+    /// passed to `buildKeystoneSignBatchQRParts`, including its unredacted bytes.
+    var applyKeystoneBatchSignatures: @Sendable ([MigrationUnsignedTransferPczt], Data) async throws -> [MigrationSignedTransferPczt]
 }
 
 extension SDKSynchronizerClient {
