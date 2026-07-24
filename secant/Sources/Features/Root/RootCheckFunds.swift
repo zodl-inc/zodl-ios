@@ -35,19 +35,19 @@ extension Root {
                 }
             
             case .checkFundsFailed(let error):
-                state.$toast.withLock { $0 = .topDelayed5("Error: \(error)") }
+                state.$toast.withLock { $0 = .topDelayed5(String(localizable: .recoverFundsError(error))) }
                 return .none
 
             case .checkFundsFoundSomething:
-                state.$toast.withLock { $0 = .topDelayed5("Funds were successfully discovered") }
+                state.$toast.withLock { $0 = .topDelayed5(String(localizable: .recoverFundsFound)) }
                 return .none
 
             case .checkFundsTorRequired:
-                state.$toast.withLock { $0 = .topDelayed5("Tor required") }
+                state.$toast.withLock { $0 = .topDelayed5(String(localizable: .recoverFundsTor)) }
                 return .none
 
             case .checkFundsNothingFound:
-                state.$toast.withLock { $0 = .topDelayed5("No funds were discovered") }
+                state.$toast.withLock { $0 = .topDelayed5(String(localizable: .recoverFundsNotFound)) }
                 return .none
 
             default: return .none
