@@ -10497,23 +10497,6 @@
         }
       }
     },
-    "migrationEntry.privacyDisclaimerTitle" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Privacy Disclaimer"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Aviso de privacidad"
-          }
-        }
-      }
-    },
     "migrationEntry.privacyTitle" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -11538,40 +11521,6 @@
         }
       }
     },
-    "migrationPlan.randomizedBody" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "To reduce linkability, amounts will be randomized. Confirm once — no per-transfer prompts."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Para reducir la vinculación, los montos se aleatorizarán. Confirma una vez — sin avisos por cada transferencia."
-          }
-        }
-      }
-    },
-    "migrationPlan.randomizedTitle" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Amounts randomized to reduce linkability"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Montos aleatorizados para reducir la vinculación"
-          }
-        }
-      }
-    },
     "migrationPlan.readyNow" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -11929,40 +11878,6 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Esta transferencia envía parte de tu saldo de Orchard a Ironwood como parte de tu migración programada.\n\nRevisa y confirma para enviar la transacción. Una vez confirmada, esto no se puede deshacer."
-          }
-        }
-      }
-    },
-    "migrationReview.privacyDisclaimerBody" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Your full balance will be revealed on-chain — crossing the pool boundary exposes the transaction amount. We recommend going back and selecting Migrate with Privacy instead."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Tu saldo completo quedará expuesto en cadena (on-chain): cruzar el límite entre pools revela el monto de la transacción. Te recomendamos volver atrás y seleccionar Migrar con privacidad."
-          }
-        }
-      }
-    },
-    "migrationReview.reviewAndConfirm" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Review and confirm to send the transaction."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Revisa y confirma para enviar la transacción."
           }
         }
       }
@@ -12514,23 +12429,6 @@
         }
       }
     },
-    "migrationStatus.windowMissedBody" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Send now or reschedule to the next window."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Envía ahora o reprograma para la siguiente ventana."
-          }
-        }
-      }
-    },
     "migrationStatus.windowMissedNote" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -12544,23 +12442,6 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Enviar ahora retrasará la sincronización de tu billetera unos %1$lld minutos. Para proteger tu privacidad, necesitamos desacoplar la sincronización de la transmisión de transacciones."
-          }
-        }
-      }
-    },
-    "migrationStatus.windowMissedTitle" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Transfer window missed"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Ventana de transferencia perdida"
           }
         }
       }
