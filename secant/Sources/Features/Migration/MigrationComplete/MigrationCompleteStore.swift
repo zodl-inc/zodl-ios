@@ -48,12 +48,17 @@ struct MigrationComplete {
         }
 
         @Presents var alert: AlertState<Action>?
-        var totalTransferred = Zatoshi.zero
+        /// The total value transferred across the whole run. `nil` when not derivable — a W1
+        /// fallback re-entry with no persisted schedule (MOB-1513) — never a placeholder
+        /// `Zatoshi.zero`; the view renders an em-dash in its place (see `MigrationCompleteView
+        /// .summaryCard`).
+        var totalTransferred: Zatoshi?
         var dust = Zatoshi.zero
         var dustResolution: DustResolution
         var transfersSent = 0
         var transfersTotal = 0
-        var durationHours = 0
+        /// Same "nil, never a placeholder `0`" W1-fallback convention as `totalTransferred` above.
+        var durationHours: Int?
         /// Carried for consistency with the other re-entry-root screens; this screen has no back
         /// control to gate (`.navigationBarBackButtonHidden()`, no custom leading toolbar item).
         var isFlowRoot = false
@@ -69,11 +74,11 @@ struct MigrationComplete {
         }
 
         init(
-            totalTransferred: Zatoshi = .zero,
+            totalTransferred: Zatoshi? = nil,
             dust: Zatoshi = .zero,
             transfersSent: Int = 0,
             transfersTotal: Int = 0,
-            durationHours: Int = 0,
+            durationHours: Int? = nil,
             isFlowRoot: Bool = false,
             dustResolution: DustResolution? = nil
         ) {

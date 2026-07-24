@@ -148,13 +148,27 @@ import Foundation
         #expect(decoded.kind == .splitBalance)
     }
 
-    @Test func migrationSummaryZeroIsAllZero() {
+    /// MOB-1513: `.zero`'s `transferred`/`estimatedDurationHours` read `nil` (unknown), not a
+    /// placeholder zero — the same convention the W1 fallback (no committed schedule) uses for
+    /// both. `dust`/the transfer counts stay genuinely zero.
+    @Test func migrationSummaryZeroHasNilTransferredAndDurationButZeroCounts() {
         let zero = MigrationSummary.zero
-        #expect(zero.transferred == Zatoshi.zero)
+        #expect(zero.transferred == nil)
         #expect(zero.dust == Zatoshi.zero)
         #expect(zero.transfersSent == 0)
         #expect(zero.transfersTotal == 0)
-        #expect(zero.estimatedDurationHours == 0)
+        #expect(zero.estimatedDurationHours == nil)
+    }
+
+    @Test func migrationTransferRowCodableRoundTripWithNilAmount() throws {
+        // MOB-1513: a status-only or progress-only fallback row — `amount` unknown rather than a
+        // placeholder `Zatoshi.zero`; still round-trips cleanly (`Zatoshi?` stays `Codable`).
+        let original = MigrationTransferRow(id: "row-0", index: 0, amount: nil, status: .pending, hoursFromNow: 6)
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(MigrationTransferRow.self, from: data)
+
+        #expect(decoded == original)
+        #expect(decoded.amount == nil)
     }
 
     @Test func transferProposalIdDrivesIdentifiable() {

@@ -38,11 +38,13 @@ import ComposableArchitecture
     @MainActor @Test func defaultStateIsAllZeroWithNoDust() async {
         let state = MigrationComplete.State()
 
-        #expect(state.totalTransferred == Zatoshi.zero)
+        // MOB-1513: `totalTransferred`/`durationHours` default `nil` (unknown), never a
+        // placeholder zero — the same convention `MigrationSummary`'s W1 fallback uses.
+        #expect(state.totalTransferred == nil)
         #expect(state.dust == Zatoshi.zero)
         #expect(state.transfersSent == 0)
         #expect(state.transfersTotal == 0)
-        #expect(state.durationHours == 0)
+        #expect(state.durationHours == nil)
         #expect(state.hasDust == false)
         #expect(state.isFlowRoot == false)
         #expect(state.dustResolution == MigrationComplete.State.DustResolution.none)
