@@ -227,6 +227,91 @@ import ComposableArchitecture
             #expect(action == row.expected, "Row \(row.name) expected \(row.expected) but got \(action)")
         }
     }
+
+    // MARK: - decideAll(...) — MOB-1513 (gap 2): mixed-mode partition
+    //
+    // `planRearm` reduces every account down to ONE winner and (pre-fix) `WakeupAction.decide` was
+    // called ONCE off that single winner's own delivery mode — with mixed modes present, the
+    // losing mode's wakeup mechanism never got armed for the cycle. `decideAll` calls `decide`
+    // once PER partition (unchanged signature/semantics — every test above still exercises it
+    // directly) and combines: a partition reducing to `.cancelAll` means "nothing active in that
+    // partition" (a genuinely-done partition and an EMPTY partition both read this way, since
+    // `planRearm([])` already resolves `.complete`) and is dropped whenever the OTHER partition has
+    // a real action; the global cancelAll only survives when BOTH partitions have nothing active.
+
+    private static let mixedProgress = MigrationProgress(
+        completedTransfers: 1,
+        totalTransfers: 4,
+        remainingOrchard: Zatoshi(1_000),
+        nextTransferReadyAtHeight: 50
+    )
+
+    @Test func decideAllEmitsBothActionsExactlyOnceWhenBothPartitionsAreActive() {
+        let scheduledWindow = Self.window
+        let manualWindow = Self.window.addingTimeInterval(3_600)
+
+        let actions = WakeupAction.decideAll(
+            scheduledState: MigrationState.inProgress(Self.mixedProgress),
+            scheduledWindow: scheduledWindow,
+            scheduledNextTransferNumber: 2,
+            manualState: MigrationState.notStarted,
+            manualWindow: manualWindow,
+            manualNextTransferNumber: 5,
+            manualAccountUUID: "acct-manual"
+        )
+
+        #expect(actions == [
+            WakeupAction.submitTask(earliestBeginDate: scheduledWindow),
+            WakeupAction.scheduleReadyNotification(number: 5, at: manualWindow, accountUUID: "acct-manual")
+        ])
+    }
+
+    @Test func decideAllEmitsOnlySubmitTaskWhenTheManualPartitionIsComplete() {
+        let actions = WakeupAction.decideAll(
+            scheduledState: MigrationState.notStarted,
+            scheduledWindow: Self.window,
+            scheduledNextTransferNumber: 1,
+            manualState: MigrationState.complete,
+            manualWindow: Self.window,
+            manualNextTransferNumber: 1,
+            manualAccountUUID: nil
+        )
+
+        #expect(actions == [WakeupAction.submitTask(earliestBeginDate: Self.window)])
+    }
+
+    /// Also covers the EMPTY-manual-partition shape: an account list with no manual-delivery
+    /// accounts at all reduces via `planRearm([])` to the exact same `.complete` state a genuinely-
+    /// done partition does — `decideAll` cannot tell (and doesn't need to) the two apart.
+    @Test func decideAllEmitsOnlyScheduleReadyNotificationWhenTheScheduledPartitionIsComplete() {
+        let actions = WakeupAction.decideAll(
+            scheduledState: MigrationState.complete,
+            scheduledWindow: Self.window,
+            scheduledNextTransferNumber: 1,
+            manualState: MigrationState.notStarted,
+            manualWindow: Self.window,
+            manualNextTransferNumber: 2,
+            manualAccountUUID: "acct-1"
+        )
+
+        #expect(actions == [WakeupAction.scheduleReadyNotification(number: 2, at: Self.window, accountUUID: "acct-1")])
+    }
+
+    /// Both partitions done (or empty): exactly ONE `.cancelAll`, never two — a naive
+    /// per-partition `execute` without de-duplication would otherwise cancel twice.
+    @Test func decideAllCancelsAllExactlyOnceWhenBothPartitionsAreComplete() {
+        let actions = WakeupAction.decideAll(
+            scheduledState: MigrationState.complete,
+            scheduledWindow: Self.window,
+            scheduledNextTransferNumber: 1,
+            manualState: MigrationState.complete,
+            manualWindow: Self.window,
+            manualNextTransferNumber: 1,
+            manualAccountUUID: nil
+        )
+
+        #expect(actions == [WakeupAction.cancelAll])
+    }
 }
 
 // MARK: - MigrationBGSchedulerImpl.arm(margin:) — per-account fan-out (MOB-1496 W5)
@@ -462,6 +547,96 @@ import ComposableArchitecture
             // would instead hit the real, unmockable `BGTaskScheduler.shared.submit(_:)` — see this
             // suite's own header doc for why only the manual path is asserted here).
             #expect(scheduleCalls.withValue { $0 } == 1)
+        }
+    }
+
+    // MARK: - MOB-1513 (gap 2): mixed delivery modes across accounts
+    //
+    // The core "both partitions active -> both actions emitted exactly once" proof lives in the
+    // pure `WakeupAction.decideAll` tests above, deliberately — this suite's own header doc already
+    // establishes that `.submitTask` (a genuinely-active SCHEDULED partition) hits the real,
+    // unmockable `BGTaskScheduler.shared.submit(_:)`; empirically (confirmed while authoring this
+    // fix) that call doesn't merely go unobserved here, it TRAPS in this unregistered test host
+    // ("No launch handler registered for task with identifier ...") — so every `arm()`-level test
+    // in this suite, before and after this fix, keeps the scheduled partition on the empty/complete
+    // side. The test below stays inside that same boundary while still proving the partition
+    // reduction end to end: a scheduled-mode account that is DONE must not be mistaken for "every
+    // account done" once a manual-mode account is still active alongside it.
+
+    /// Mixed modes represented, but only the manual side is active: the manual reminder still
+    /// fires, and `cancelAll` must NOT fire just because the scheduled-mode account happens to be
+    /// complete — the per-partition reduction (`MigrationCadence.planRearm` called once per
+    /// partition) must not let one done partition masquerade as "everyone done".
+    @Test func armSchedulesManualNotificationWhenScheduledPartitionIsCompleteAndManualPartitionIsActive() async {
+        let selected = Self.walletAccount(idByte: 1)
+        let second = Self.walletAccount(idByte: 2)
+        let scheduleCalls = LockIsolated<Int>(0)
+        let cancelCalls = LockIsolated<Int>(0)
+        let progress = MigrationProgress(completedTransfers: 1, totalTransfers: 9, remainingOrchard: Zatoshi(1), nextTransferReadyAtHeight: nil)
+
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
+            @Shared(.inMemory(.walletAccounts)) var walletAccounts: [WalletAccount] = []
+            $selectedWalletAccount.withLock { $0 = selected }
+            $walletAccounts.withLock { $0 = [selected, second] }
+
+            await withDependencies {
+                // `selected` (idByte 1) is scheduled-mode and DONE; `second` (idByte 2) is
+                // manual-mode and still active.
+                $0.migrationManager.isManualDelivery = { accountUUID in accountUUID == second.id }
+                $0.sdkSynchronizer = .noOp
+                $0.sdkSynchronizer.getMigrationState = { accountUUID in
+                    accountUUID == selected.id ? MigrationState.complete : MigrationState.inProgress(progress)
+                }
+                $0.sdkSynchronizer.getMigrationProgress = { _ in progress }
+                $0.sdkSynchronizer.rescheduleOverdueMigrationTransfer = { accountUUID in
+                    accountUUID == second.id ? Self.proposal(nextExecutableAfterHeight: 900) : nil
+                }
+                $0.sdkSynchronizer.estimateTimestamp = { height in TimeInterval(height) }
+                $0.userNotifications.scheduleMigrationNotification = { _, _, _ in scheduleCalls.withValue { $0 += 1 } }
+                $0.userNotifications.cancelMigrationNotifications = { cancelCalls.withValue { $0 += 1 } }
+            } operation: {
+                let impl = MigrationBGSchedulerImpl()
+                await impl.arm(margin: MigrationCadence.nextWindowMargin)
+            }
+
+            #expect(scheduleCalls.withValue { $0 } == 1)
+            #expect(cancelCalls.withValue { $0 } == 0)
+        }
+    }
+
+    /// Both modes represented, but every account done: exactly ONE `cancelMigrationNotifications`
+    /// call — guards against a naive per-partition `execute` that cancels twice when both
+    /// partitions independently resolve `.complete`.
+    @Test func armCancelsAllExactlyOnceWhenBothModesAreRepresentedAndEveryAccountIsDone() async {
+        let selected = Self.walletAccount(idByte: 1)
+        let second = Self.walletAccount(idByte: 2)
+        let cancelCalls = LockIsolated<Int>(0)
+        let scheduleCalls = LockIsolated<Int>(0)
+
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
+            @Shared(.inMemory(.walletAccounts)) var walletAccounts: [WalletAccount] = []
+            $selectedWalletAccount.withLock { $0 = selected }
+            $walletAccounts.withLock { $0 = [selected, second] }
+
+            await withDependencies {
+                $0.migrationManager.isManualDelivery = { accountUUID in accountUUID == second.id }
+                $0.sdkSynchronizer = .noOp
+                $0.sdkSynchronizer.getMigrationState = { _ in MigrationState.complete }
+                $0.userNotifications.cancelMigrationNotifications = { cancelCalls.withValue { $0 += 1 } }
+                $0.userNotifications.scheduleMigrationNotification = { _, _, _ in scheduleCalls.withValue { $0 += 1 } }
+            } operation: {
+                let impl = MigrationBGSchedulerImpl()
+                await impl.arm(margin: MigrationCadence.nextWindowMargin)
+            }
+
+            #expect(cancelCalls.withValue { $0 } == 1)
+            #expect(scheduleCalls.withValue { $0 } == 0)
         }
     }
 }

@@ -59,6 +59,20 @@ enum MigrationNotification: Equatable, Sendable {
         }
     }
 
+    /// MOB-1513 (gap 1): the actual `UNNotificationRequest` identifier every schedule/removal site
+    /// must use — `identifier` above suffixed with the SAME hex encoding
+    /// `PerAccountCodableStorage.key(for:)` uses (`Data(accountUUID.id).hexEncodedString()`), via
+    /// the already hex-encoded string every schedule site threads through as `accountUUID`. The
+    /// bare `identifier` let iOS's replace-by-identifier semantics collapse two accounts' pending
+    /// notifications of the same kind into one; the SAME (case, account) pair always derives the
+    /// SAME string here, so a same-account re-schedule of the same kind still replaces its own
+    /// prior pending/delivered request. `nil` (legacy/no-account payload) falls back to the bare
+    /// `identifier` unchanged.
+    func requestIdentifier(accountUUID: String?) -> String {
+        guard let accountUUID else { return identifier }
+        return "\(identifier)_\(accountUUID)"
+    }
+
     var title: String {
         switch self {
         case .transferComplete:

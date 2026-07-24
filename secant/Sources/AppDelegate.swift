@@ -248,7 +248,14 @@ final class MigrationNotificationCenterDelegate: NSObject, UNUserNotificationCen
             // behavior (resolves whatever's currently selected).
             let accountUUID = response.notification.request.content.userInfo["accountUUID"] as? String
             // MOB-1511 (W3): the Tor-failure notification routes to the failure sheet, not the flow.
-            let isTorFailure = response.notification.request.identifier == MigrationNotification.migrationTorFailure.identifier
+            // MOB-1513 (gap 1): `hasPrefix`, not `==` — the delivered identifier now carries the
+            // per-account suffix (`MigrationNotification.requestIdentifier(accountUUID:)`), so an
+            // exact match against the bare case identifier would never hit. Still an exact CASE
+            // match: no other case's bare identifier is itself a prefix of another's
+            // (`MigrationNotificationTests.identifierTable` pins every case's bare form), so
+            // `hasPrefix` against `"migration.torFailure"` can only match a `.migrationTorFailure`
+            // request, suffixed or not.
+            let isTorFailure = response.notification.request.identifier.hasPrefix(MigrationNotification.migrationTorFailure.identifier)
             DispatchQueue.main.async {
                 rootStore?.send(.initialization(.appDelegate(.migrationNotificationTapped(accountUUID: accountUUID, isTorFailure: isTorFailure))))
             }
