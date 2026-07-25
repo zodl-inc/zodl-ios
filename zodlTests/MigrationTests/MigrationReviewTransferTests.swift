@@ -39,6 +39,24 @@
 //  Retry authenticates again like a fresh `confirmTapped`; and the propose-failure Retry
 //  short-circuit is the one path that stays unauthenticated, since it never signs or broadcasts.
 //
+//  MOB-1458 (round 2 — regression fix): a code review caught that the first version above still
+//  decided what a tap commits to (`State.ConfirmIntent`, new) AFTER the authentication prompt
+//  returned — re-reading `immediateProposal`/`selectedWalletAccount` from state inside
+//  `confirmAuthenticated`, which now carries that decision as its payload instead. Most tests below
+//  needed no behavioral changes for this: within one action's synchronous processing,
+//  `isConfirming`/`failureReason` net out the same either way. The ones that don't:
+//  `confirmTappedInImmediateModeBeforeProposalResolvesDoesNothing` and the Confirm half of
+//  `onAppearInImmediateModeWhenProposeThrowsPresentsFailureSheetLeavesProposalNilAndConfirmDoesNothing`
+//  now prove a full no-op with NO authentication prompt at all (previously they authenticated
+//  first, then no-op'd on the far side); the two Retry-after-a-commit-failure tests now assert
+//  `failureReason` clears in `confirmAuthenticated` rather than at the tap itself (F5: a declined
+//  prompt must no longer erase the failure message — new coverage below proves it).
+//  `retryTappedAfterProposeFailureNeverAuthenticates` is deleted as a strictly weaker duplicate of
+//  `retryTappedInImmediateModeAfterProposeFailureReProposesAndClearsFailureStateOnSuccess`. New:
+//  `mockAuthenticationBlocking`-driven regression pins for the exact reported bug (a tap with no
+//  proposal is a complete no-op; a proposal that lands mid-prompt never swaps into the commit),
+//  direct `confirmIntent` coverage for every mode/account combination, and the F5 decline test.
+//
 
 import Testing
 import Foundation
@@ -236,20 +254,19 @@ import ComposableArchitecture
     /// MOB-1513: `confirmTapped` before `onAppear`'s propose has ever resolved (or after it failed)
     /// must stay put rather than delegating with nothing to broadcast — the guard is keyed off
     /// `immediateProposal == nil`, replacing the deleted "zero-transfer schedule" guard (there is no
-    /// "empty" `ImmediateMigrationProposal` — it either exists or it doesn't).
+    /// "empty" `ImmediateMigrationProposal` — it either exists or it doesn't). MOB-1458 (round 2):
+    /// that guard is `confirmIntent`, evaluated BEFORE authentication now — so this is a genuine
+    /// no-op that never touches `localAuthentication` at all (previously it authenticated first and
+    /// only discovered afterward that there was nothing to confirm).
     @MainActor @Test func confirmTappedInImmediateModeBeforeProposalResolvesDoesNothing() async {
         let store = TestStore(initialState: MigrationReviewTransfer.State(mode: .immediate)) {
             MigrationReviewTransfer()
-        } withDependencies: {
-            $0.localAuthentication = .mockAuthenticationSucceeded
         }
+        // `localAuthentication` is intentionally left unimplemented: with no proposal,
+        // `confirmIntent` is `nil` and the tap must return before ever reaching the authentication
+        // prompt — a call to `authenticate()` here would fail this test.
 
-        await store.send(.confirmTapped) {
-            $0.isConfirming = true
-        }
-        await store.receive(\.confirmAuthenticated) {
-            $0.isConfirming = false
-        }
+        await store.send(.confirmTapped)
     }
 
     // MARK: - MOB-1468 / MOB-1513: Keystone confirmTapped fork proposes an ordinary PCZT
@@ -415,7 +432,10 @@ import ComposableArchitecture
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
             $0.sdkSynchronizer.proposeImmediateMigration = { _ in throw ProposeFailure() }
-            $0.localAuthentication = .mockAuthenticationSucceeded
+            // MOB-1458 (round 2): `localAuthentication` is intentionally left unimplemented — with
+            // no proposal, `confirmIntent` is `nil` and the tap below must return before ever
+            // reaching the authentication prompt. A call to `authenticate()` here would fail this
+            // test.
         }
 
         await store.send(.onAppear)
@@ -426,17 +446,13 @@ import ComposableArchitecture
 
         #expect(store.state.immediateProposal == nil)
 
-        // Confirm must not proceed: no proposal to broadcast. Tapping it also dismisses the
-        // (already showing) failure affordance, same as any other confirm/retry tap, and — since
-        // this is a plain `.confirmTapped`, not the propose-failure Retry short-circuit — still
-        // authenticates before finding out there's nothing to confirm.
+        // MOB-1458 (round 2): Confirm must not proceed — no proposal means `confirmIntent` is
+        // `nil`, so the tap returns before setting `isConfirming` or opening the authentication
+        // prompt. It still dismisses the (already showing) failure affordance first, same as any
+        // other confirm/retry tap — that step is unconditional, ahead of the intent check — but
+        // `failureReason` itself survives (F5: cleared only on a successful commit).
         await store.send(.confirmTapped) {
             $0.isFailurePresented = false
-            $0.failureReason = nil
-            $0.isConfirming = true
-        }
-        await store.receive(\.confirmAuthenticated) {
-            $0.isConfirming = false
         }
     }
 
@@ -459,6 +475,9 @@ import ComposableArchitecture
                 }
                 return proposal
             }
+            // MOB-1458: `localAuthentication` is intentionally left unimplemented — this also pins
+            // that a propose-failure Retry never authenticates (a call to `authenticate()` here
+            // would fail this test).
         }
 
         await store.send(.onAppear)
@@ -528,9 +547,13 @@ import ComposableArchitecture
         await store.send(.retryTapped) {
             $0.isConfirming = true
             $0.isFailurePresented = false
+            // MOB-1458 (round 2 / F5): `failureReason` is no longer cleared here — only on a
+            // successful commit, in `.confirmAuthenticated` below — so a decline would still have
+            // the message to restore.
+        }
+        await store.receive(\.confirmAuthenticated) {
             $0.failureReason = nil
         }
-        await store.receive(\.confirmAuthenticated)
         await store.receive(
             .delegate(
                 .keystoneImmediateSignRequested(unsigned: pcztBytes, redacted: redactedBytes)
@@ -548,8 +571,10 @@ import ComposableArchitecture
     /// Same treatment as `MigrationTransferPlan`'s confirm (B4): the Keystone fork's PCZT build is
     /// async, so Confirm shows a loader (`isConfirming`) and a second tap while it's in flight is a
     /// complete no-op; the flag clears once the batch is handed to the coordinator so a later
-    /// pop-back (rejected signature) re-enables Confirm. The software/manual-step confirms delegate
-    /// synchronously and never need the flag.
+    /// pop-back (rejected signature) re-enables Confirm. MOB-1458: the software/manual-step confirms
+    /// now set the flag too, for the device-authentication window that precedes them — they are no
+    /// longer synchronous from the user's perspective, even though neither has a local commit step
+    /// of its own once authentication succeeds.
     @MainActor @Test func confirmTappedKeystoneSetsIsConfirmingAndIgnoresSecondTapWhilePcztBuildInFlight() async {
         let createPCZTCalls = LockIsolated<Int>(0)
         let (releaseStream, releaseContinuation) = AsyncStream<Void>.makeStream()
@@ -664,12 +689,7 @@ import ComposableArchitecture
             MigrationReviewTransfer()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.localAuthentication = .mockAuthenticationSucceeded
-            $0.localAuthentication.authenticate = {
-                authenticateCalls.withValue { $0 += 1 }
-                for await _ in releaseStream { break }
-                return true
-            }
+            $0.localAuthentication = .mockAuthenticationBlocking(authenticateCalls, releaseStream: releaseStream)
         }
 
         await store.send(.confirmTapped) {
@@ -704,56 +724,195 @@ import ComposableArchitecture
             MigrationReviewTransfer()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.localAuthentication = .mockAuthenticationSucceeded
-            $0.localAuthentication.authenticate = {
-                authenticateCalls.withValue { $0 += 1 }
-                return true
-            }
+            $0.localAuthentication = .mockAuthenticationCounting(authenticateCalls)
         }
 
         await store.send(.retryTapped) {
             $0.isConfirming = true
             $0.isFailurePresented = false
-            $0.failureReason = nil
+            // MOB-1458 (round 2 / F5): `failureReason` survives the tap itself — cleared only on
+            // success, below.
         }
         await store.receive(\.confirmAuthenticated) {
             $0.isConfirming = false
+            $0.failureReason = nil
         }
         await store.receive(.delegate(.confirmed))
 
         #expect(authenticateCalls.value == 1)
     }
 
-    /// MOB-1458: the propose-failure Retry short-circuit re-fetches a proposal for display only —
-    /// nothing is signed or broadcast, so it must NEVER authenticate. `localAuthentication` is
-    /// intentionally left unimplemented below: a call to `authenticate()` here would fail this
-    /// test (same idiom as `AdvancedSettingsTests.chooseServerSkipsAuthentication`).
-    @MainActor @Test func retryTappedAfterProposeFailureNeverAuthenticates() async {
-        let proposal = immediateProposal(amount: Zatoshi(1_245_800_000), fee: Zatoshi(15_000))
+    /// MOB-1458 (F5): declining the re-authentication prompt on a commit-failure Retry must not
+    /// erase the failure message — the sheet is its only surface, and `.retryTapped`/
+    /// `.authenticationCancelled` no longer touch `failureReason` except to restore
+    /// `isFailurePresented` from it.
+    @MainActor @Test func retryTappedAfterCommitFailureThenDecliningAuthenticationRestoresFailureSheet() async {
         var state = MigrationReviewTransfer.State(mode: .immediate)
+        state.immediateProposal = immediateProposal(amount: Zatoshi(1_245_800_000), fee: Zatoshi(15_000))
         state.isFailurePresented = true
-        state.failureReason = MigrationReviewTransfer.State.FailureReason.propose
+        state.failureReason = MigrationReviewTransfer.State.FailureReason.commit
         let store = TestStore(initialState: state) {
             MigrationReviewTransfer()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.proposeImmediateMigration = { _ in proposal }
-            // `localAuthentication` is intentionally left unimplemented: a call to
-            // `authenticate()` on this re-propose-only path (nothing signed or broadcast) would
-            // fail this test.
+            $0.localAuthentication = .mockAuthenticationFailed
         }
 
         await store.send(.retryTapped) {
             $0.isConfirming = true
             $0.isFailurePresented = false
-            $0.failureReason = nil
         }
-        await store.receive(\.transferProposed) {
+        await store.receive(\.authenticationCancelled) {
             $0.isConfirming = false
-            $0.amount = Zatoshi(1_245_800_000)
-            $0.fee = Zatoshi(15_000)
-            $0.immediateProposal = proposal
+            $0.isFailurePresented = true
         }
+
+        #expect(store.state.failureReason == MigrationReviewTransfer.State.FailureReason.commit)
+    }
+
+    // MARK: - MOB-1458 (round 2): confirmIntent — decided synchronously, never re-read post-prompt
+
+    @MainActor @Test func confirmIntentInManualStepModeIsManualStepRegardlessOfProposalOrAccount() async {
+        var state = MigrationReviewTransfer.State(mode: .manualStep(number: 3, total: 5))
+        state.$selectedWalletAccount.withLock { $0 = nil }
+
+        #expect(state.confirmIntent == MigrationReviewTransfer.State.ConfirmIntent.manualStep)
+    }
+
+    @MainActor @Test func confirmIntentInImmediateModeWithSoftwareAccountIsImmediateSoftware() async {
+        var state = MigrationReviewTransfer.State(mode: .immediate)
+        state.immediateProposal = immediateProposal(amount: Zatoshi(1_245_800_000), fee: Zatoshi(15_000))
+        state.$selectedWalletAccount.withLock { $0 = walletAccount(keystone: false, idByte: 50) }
+
+        #expect(state.confirmIntent == MigrationReviewTransfer.State.ConfirmIntent.immediateSoftware)
+    }
+
+    @MainActor @Test func confirmIntentInImmediateModeWithKeystoneAccountIsImmediateKeystoneCarryingProposalAndAccount() async {
+        var state = MigrationReviewTransfer.State(mode: .immediate)
+        let proposal = immediateProposal(amount: Zatoshi(1_245_800_000), fee: Zatoshi(15_000))
+        let account = walletAccount(keystone: true, idByte: 51)
+        state.immediateProposal = proposal
+        state.$selectedWalletAccount.withLock { $0 = account }
+
+        #expect(
+            state.confirmIntent == MigrationReviewTransfer.State.ConfirmIntent.immediateKeystone(proposal: proposal, account: account)
+        )
+    }
+
+    /// The `onAppear` cache guard's `nil` state (propose still in flight, or never attempted) must
+    /// also read as "nothing to commit" here — `confirmIntent` is the ONE place both `onAppear` and
+    /// `confirmTapped` agree a proposal is or isn't ready.
+    @MainActor @Test func confirmIntentInImmediateModeWithNoProposalIsNil() async {
+        var state = MigrationReviewTransfer.State(mode: .immediate)
+        state.$selectedWalletAccount.withLock { $0 = walletAccount(keystone: false, idByte: 52) }
+
+        #expect(state.confirmIntent == nil)
+    }
+
+    @MainActor @Test func confirmIntentInImmediateModeWithNoSelectedAccountIsNil() async {
+        var state = MigrationReviewTransfer.State(mode: .immediate)
+        state.immediateProposal = immediateProposal(amount: Zatoshi(1_245_800_000), fee: Zatoshi(15_000))
+        state.$selectedWalletAccount.withLock { $0 = nil }
+
+        #expect(state.confirmIntent == nil)
+    }
+
+    // MARK: - MOB-1458 (round 2): regression pins — the exact bug the code review caught
+
+    /// THE regression pin. Before this fix, a tap with no proposal yet still authenticated
+    /// (`confirmAuthenticated`'s guards ran AFTER the prompt) — only to discover, on the far side of
+    /// the prompt, that there was nothing to confirm. Now `confirmIntent` is computed BEFORE the
+    /// prompt opens, so a tap with nothing to commit never reaches `authenticate()` at all. Uses
+    /// `mockAuthenticationBlocking` (rather than leaving the dependency unimplemented) so the
+    /// zero-calls claim is an explicit, counted assertion rather than an incidental test failure.
+    @MainActor @Test func confirmTappedWithNoProposalIsACompleteNoOpAndNeverAuthenticates() async {
+        let authenticateCalls = LockIsolated<Int>(0)
+        let (releaseStream, _) = AsyncStream<Void>.makeStream()
+        let store = TestStore(initialState: MigrationReviewTransfer.State(mode: .immediate)) {
+            MigrationReviewTransfer()
+        } withDependencies: {
+            $0.localAuthentication = .mockAuthenticationBlocking(authenticateCalls, releaseStream: releaseStream)
+        }
+
+        // A COMPLETE no-op: no trailing mutation closure means TestStore asserts state is
+        // byte-for-byte unchanged, and no `.receive` below means no action may be emitted either.
+        await store.send(.confirmTapped)
+
+        #expect(store.state.isConfirming == false)
+        #expect(authenticateCalls.value == 0)
+    }
+
+    /// The companion regression pin: the "phantom proposal" shape of the same bug. `onAppear`'s
+    /// bounded propose-retry loop keeps running underneath an open authentication prompt — nothing
+    /// cancels it on `confirmTapped` — so a DIFFERENT proposal than the one on screen at tap time
+    /// can land while the prompt is still up. Before this fix, `confirmAuthenticated` re-read
+    /// `immediateProposal` from state and would silently commit the late arrival instead — a spend
+    /// the user never reviewed. Now the proposal is captured in `ConfirmIntent` at tap time and
+    /// carried through unchanged, regardless of what lands in state afterward.
+    ///
+    /// Asserted via an EXACT `.confirmAuthenticated` action match (not by inspecting what reaches
+    /// `createPCZTFromProposal`): `Proposal.testOnlyFakeProposal(totalFee:)`'s `totalFee` doesn't
+    /// actually reach the underlying `FfiProposal` it wraps (a no-op assignment to a local that's
+    /// then discarded), so two fixtures' `.proposal` values compare equal regardless of `totalFee`
+    /// — only comparing the whole `ImmediateMigrationProposal` (`amount`/`fee` included) actually
+    /// distinguishes `tapTimeProposal` from `lateArrivalProposal` below.
+    @MainActor @Test func confirmTappedCommitsTheProposalCapturedAtTapTimeNotOneThatArrivesMidPrompt() async {
+        let authenticateCalls = LockIsolated<Int>(0)
+        let (releaseStream, releaseContinuation) = AsyncStream<Void>.makeStream()
+        let createPCZTCalls = LockIsolated<Int>(0)
+        let tapTimeProposal = immediateProposal(amount: Zatoshi(1_245_800_000), fee: Zatoshi(15_000))
+        let lateArrivalProposal = immediateProposal(amount: Zatoshi(999_999_999), fee: Zatoshi(20_000))
+        let account = walletAccount(keystone: true, idByte: 53)
+        var state = MigrationReviewTransfer.State(mode: .immediate)
+        state.immediateProposal = tapTimeProposal
+        state.$selectedWalletAccount.withLock { $0 = account }
+        let store = TestStore(initialState: state) {
+            MigrationReviewTransfer()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.createPCZTFromProposal = { _, _ in
+                createPCZTCalls.withValue { $0 += 1 }
+                return Data([0xEE])
+            }
+            $0.sdkSynchronizer.redactPCZTForSigner = { _ in Data([0xEE, 0x0F]) }
+            $0.localAuthentication = .mockAuthenticationBlocking(authenticateCalls, releaseStream: releaseStream)
+        }
+
+        await store.send(.confirmTapped) {
+            $0.isConfirming = true
+        }
+
+        // The late arrival lands WHILE the authentication prompt is still up — simulating what
+        // `onAppear`'s retry loop can do underneath an open prompt.
+        await store.send(.transferProposed(lateArrivalProposal)) {
+            $0.isConfirming = false
+            $0.amount = lateArrivalProposal.amount
+            $0.fee = lateArrivalProposal.fee
+            $0.immediateProposal = lateArrivalProposal
+        }
+
+        releaseContinuation.yield()
+        releaseContinuation.finish()
+
+        // THE assertion: the delivered action carries the intent captured AT TAP TIME
+        // (`tapTimeProposal`) — not whatever `state.immediateProposal` was swapped to above.
+        await store.receive(
+            .confirmAuthenticated(
+                MigrationReviewTransfer.State.ConfirmIntent.immediateKeystone(proposal: tapTimeProposal, account: account)
+            )
+        ) {
+            $0.isConfirming = true
+        }
+        await store.receive(
+            .delegate(
+                .keystoneImmediateSignRequested(unsigned: Data([0xEE]), redacted: Data([0xEE, 0x0F]))
+            )
+        ) {
+            $0.isConfirming = false
+        }
+
+        #expect(createPCZTCalls.value == 1)
+        #expect(authenticateCalls.value == 1)
     }
 
     // MARK: - MOB-1513 (E2-FIX): bounded quiet retry at entry when the wallet isn't ready yet
