@@ -25,6 +25,13 @@
 //  `alert`, it's presentation-only), so the dismiss test mutates it directly before constructing the
 //  `TestStore`, matching `alertDismissClearsAlertState`'s existing idiom below.
 //
+//  MOB-1458 (code review — F4): `migrateAnywayTapped` now sets `State.isMigratingAnyway` (single-
+//  flight for the coordinator's device-authentication gate that follows this delegate) with a guard
+//  that makes a second tap a no-op while it's still `true` — covered below alongside the existing
+//  delegate-emission pin. The coordinator's own clearing of the flag (on a refusal or a post-gate
+//  failure) is covered in `MigrationCoordFlowTests.swift`, not here, since that's coordinator-owned
+//  behavior this screen's own reducer has no part in.
+//
 
 import Testing
 import Foundation
@@ -50,6 +57,7 @@ import ComposableArchitecture
         #expect(state.dustResolution == MigrationComplete.State.DustResolution.none)
         #expect(state.alert == nil)
         #expect(state.isLockExplainerPresented == false)
+        #expect(state.isMigratingAnyway == false)
     }
 
     @MainActor @Test func hasDustIsFalseWhenDustIsZero() async {
@@ -177,13 +185,32 @@ import ComposableArchitecture
 
     // MARK: - MOB-1487: migrateAnywayTapped
 
+    /// MOB-1458 (code review — F4): the tap now also sets the single-flight guard
+    /// (`State.isMigratingAnyway`) synchronously, alongside the pre-existing delegate emission.
     @MainActor @Test func migrateAnywayTappedEmitsDelegateMigrateAnyway() async {
         let store = TestStore(initialState: MigrationComplete.State(dust: Zatoshi(31_000))) {
             MigrationComplete()
         }
 
-        await store.send(.migrateAnywayTapped)
+        await store.send(.migrateAnywayTapped) {
+            $0.isMigratingAnyway = true
+        }
         await store.receive(.delegate(.migrateAnyway))
+    }
+
+    /// MOB-1458 (code review — F4): single-flight — a second tap while `isMigratingAnyway` is
+    /// already `true` (the coordinator's device-authentication gate, or the unlock/propose leg
+    /// that follows a pass, still in flight) is a complete no-op: no second
+    /// `.delegate(.migrateAnyway)`, no state change. The view's `.disabled` mirrors this so the
+    /// common double-tap never reaches here at all; this pins the reducer-level backstop directly.
+    @MainActor @Test func migrateAnywayTappedIsNoOpWhileAlreadyInFlight() async {
+        var state = MigrationComplete.State(dust: Zatoshi(31_000))
+        state.isMigratingAnyway = true
+        let store = TestStore(initialState: state) {
+            MigrationComplete()
+        }
+
+        await store.send(.migrateAnywayTapped)
     }
 
     // MARK: - MOB-1487 (round 3): lock explainer sheet present/dismiss pair
