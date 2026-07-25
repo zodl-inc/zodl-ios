@@ -63,9 +63,12 @@ extension Root.State: @retroactive Equatable {
     /// `setUserDefaultsBools`) or a benign no-op, so the whole effect — including the
     /// `.initializationSuccessfullyDone` fan-out (SmartBanner priority evaluation, contacts,
     /// user metadata, the battery-state subscription, …) — runs to completion without ever
-    /// touching an unimplemented dependency closure. When `reprepareError` is non-nil, the
-    /// second (re-prepare, `.restoreWallet`-mode) `prepareWith` call throws it instead of
-    /// succeeding, for exercising the `WalletDatabaseHealError.reprepareFailed` recovery route.
+    /// touching an unimplemented dependency closure. When `firstPrepareError` is non-nil, the
+    /// first `prepareWith` call throws it instead of returning `firstPrepareResult`, for
+    /// exercising the `ZcashError.initializerSeedMismatch` heal-mapping path. When `reprepareError`
+    /// is non-nil, the second (re-prepare, `.restoreWallet`-mode) `prepareWith` call throws it
+    /// instead of succeeding, for exercising the `WalletDatabaseHealError.reprepareFailed`
+    /// recovery route.
     private func makeStore(
         calls: LockIsolated<[String]>,
         removedUserDefaultsKeys: LockIsolated<[String]>,
@@ -73,6 +76,7 @@ extension Root.State: @retroactive Equatable {
         firstPrepareResult: Initializer.InitializationResult,
         isSeedRelevant: Bool,
         walletAccountsResult: [WalletAccount] = [RootInitializeSDKHealTests.seedDerivedAccount],
+        firstPrepareError: Error? = nil,
         reprepareError: Error? = nil,
         isStaleWalletHealedAlertPending: Bool = false,
         destination: Root.DestinationState.Destination = .welcome
@@ -147,6 +151,9 @@ extension Root.State: @retroactive Equatable {
                             throw reprepareError
                         }
                         return .success
+                    }
+                    if let firstPrepareError {
+                        throw firstPrepareError
                     }
                     return firstPrepareResult
                 },
@@ -312,6 +319,63 @@ extension Root.State: @retroactive Equatable {
             !recordedCalls[..<wipeIndex].contains("walletAccounts"),
             "a database already known stale (.seedNotRelevant) must not be probed for a derived account"
         )
+
+        await drain(store)
+    }
+
+    // MARK: - Scenario 2b: prepare() throwing initializerSeedMismatch heals like .seedNotRelevant
+
+    /// SDK 2.6.0 moved the seed/account integrity check inside `Initializer.initialize`, so a
+    /// stale database can now surface as a **thrown** `ZcashError.initializerSeedMismatch` from
+    /// the first `prepareWith` call instead of (only) a returned `.seedNotRelevant`.
+    /// `RootInitialization` must map that throw onto the same `knownStale: true` heal — this is
+    /// the throw-based mirror of `seedNotRelevantHealsWithoutProbingRelevanceOrDerivation` above.
+    @Test func prepareThrowingSeedMismatchHealsWithoutProbingRelevanceOrDerivation() async throws {
+        let calls = LockIsolated<[String]>([])
+        let removedKeys = LockIsolated<[String]>([])
+        let setBools = LockIsolated<[String: Bool]>([:])
+        let store = makeStore(
+            calls: calls,
+            removedUserDefaultsKeys: removedKeys,
+            setUserDefaultsBools: setBools,
+            firstPrepareResult: .success,
+            // If the F1 guard regresses and this gets consulted despite the database already
+            // being known stale, answering "yes, relevant" makes reconcile bail out with no
+            // heal — so a regression fails this test instead of coincidentally passing it.
+            isSeedRelevant: true,
+            firstPrepareError: ZcashError.initializerSeedMismatch
+        )
+
+        await store.send(.initialization(.initializeSDK(.existingWallet)))
+
+        await store.receive(
+            { action in
+                guard case .initialization(.staleWalletDatabaseHealed) = action else { return false }
+                return true
+            },
+            timeout: .seconds(5)
+        ) { state in
+            state.isRestoringWallet = true
+            state.$walletStatus.withLock { $0 = .restoring }
+            state.isStaleWalletHealedAlertPending = true
+        }
+
+        let recordedCalls = calls.value
+        let wipeIndex = try #require(recordedCalls.firstIndex(of: "wipe"))
+        #expect(
+            !recordedCalls[..<wipeIndex].contains("isSeedRelevant"),
+            "a mismatch thrown by prepare() is already known stale and must not be probed for relevance"
+        )
+        #expect(
+            !recordedCalls[..<wipeIndex].contains("walletAccounts"),
+            "a mismatch thrown by prepare() is already known stale and must not be probed for a derived account"
+        )
+
+        // `.initialization(.initializationFailed)` is the only other place the reducer sets
+        // these — their absence confirms the thrown mismatch healed instead of dead-ending the
+        // user on that alert.
+        #expect(store.state.alert == nil, "the mismatch must heal in place, not surface initializationFailed")
+        #expect(store.state.appInitializationState != .failed, "the mismatch must heal in place, not surface initializationFailed")
 
         await drain(store)
     }
