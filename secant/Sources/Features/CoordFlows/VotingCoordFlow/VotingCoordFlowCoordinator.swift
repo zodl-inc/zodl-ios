@@ -1,3 +1,4 @@
+#if VOTING_ENABLED
 //
 //  VotingCoordFlowCoordinator.swift
 //  Zashi
@@ -3762,3 +3763,4 @@ private enum DelegationTxConfirmationStatus: Sendable {
     case failed(code: UInt32, log: String)
     case notFound
 }
+#endif

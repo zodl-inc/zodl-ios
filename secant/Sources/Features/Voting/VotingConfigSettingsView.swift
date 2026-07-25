@@ -1,3 +1,4 @@
+#if VOTING_ENABLED
 import SwiftUI
 import ComposableArchitecture
 
@@ -640,3 +641,4 @@ private var bottomBar: some View {
         }
     )
 }
+#endif

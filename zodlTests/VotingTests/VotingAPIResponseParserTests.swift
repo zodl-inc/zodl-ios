@@ -1,3 +1,4 @@
+#if VOTING_ENABLED
 import Foundation
 import Testing
 @testable import zodl_internal
@@ -95,3 +96,4 @@ import Testing
         return response
     }
 }
+#endif

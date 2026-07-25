@@ -1,3 +1,4 @@
+#if VOTING_ENABLED
 //
 //  ResultsView.swift
 //  Zashi
@@ -523,3 +524,4 @@ private struct ResultsExpandableTextCollapsedHeightKey: PreferenceKey {
         value = max(value, nextValue())
     }
 }
+#endif

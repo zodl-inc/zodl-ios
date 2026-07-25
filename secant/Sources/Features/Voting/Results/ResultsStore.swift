@@ -1,3 +1,4 @@
+#if VOTING_ENABLED
 //
 //  ResultsStore.swift
 //  Zashi
@@ -22,3 +23,4 @@ struct Results {
         EmptyReducer()
     }
 }
+#endif

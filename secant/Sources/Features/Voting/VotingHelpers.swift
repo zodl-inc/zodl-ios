@@ -1,3 +1,4 @@
+#if VOTING_ENABLED
 //
 //  VotingHelpers.swift
 //  Zashi
@@ -576,3 +577,4 @@ func votingDataFromHex(_ hex: String) -> Data {
     }
     return data
 }
+#endif

@@ -1,3 +1,4 @@
+#if VOTING_ENABLED
 //
 //  VotingMetadataStorage.swift
 //  Zashi
@@ -329,3 +330,4 @@ extension VotingMetadata {
         }
     }
 }
+#endif

@@ -614,7 +614,9 @@ extension Root {
                     state.walletAccounts.forEach { account in
                         try? userMetadataProvider.resetAccount(account.account)
                         try? addressBook.resetAccount(account.account)
+                        #if VOTING_ENABLED
                         try? votingMetadata.resetAccount(account.account)
+                        #endif
                     }
                 }
                 state.walletAccounts.forEach { account in
@@ -622,7 +624,9 @@ extension Root {
                 }
                 state.autoUpdateSwapCandidates.removeAll()
                 try? userMetadataProvider.reset()
+                #if VOTING_ENABLED
                 votingMetadata.reset()
+                #endif
                 state.$walletStatus.withLock { $0 = .none }
                 state.$selectedWalletAccount.withLock { $0 = nil }
                 state.$walletAccounts.withLock { $0 = [] }

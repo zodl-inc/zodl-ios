@@ -1,3 +1,4 @@
+#if VOTING_ENABLED
 //
 //  VotingErrorView.swift
 //  Zashi
@@ -83,3 +84,4 @@ struct VotingErrorView: View {
         }
     }
 }
+#endif

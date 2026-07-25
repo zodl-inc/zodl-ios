@@ -312,7 +312,9 @@ struct Root {
     @Dependency(\.userDefaults) var userDefaults
     @Dependency(\.userMetadataProvider) var userMetadataProvider
     @Dependency(\.userStoredPreferences) var userStoredPreferences
+    #if VOTING_ENABLED
     @Dependency(\.votingMetadata) var votingMetadata
+    #endif
     @Dependency(\.walletConfigProvider) var walletConfigProvider
     @Dependency(\.walletStorage) var walletStorage
     @Dependency(\.readTransactionsStorage) var readTransactionsStorage
@@ -604,6 +606,7 @@ extension Root {
         userDefaults.remove(Constants.udIsRestoringWallet)
         userDefaults.remove(Constants.udIsResyncingWallet)
         userDefaults.remove(Constants.udLeavesScreenOpen)
+        #if VOTING_ENABLED
         userDefaults.remove(.hasSeenHowToVote)
         userDefaults.remove(.hasSeenHowToVoteKeystone)
         // Drop the user-supplied voting chain override and the saved
@@ -632,6 +635,7 @@ extension Root {
             where key.hasPrefix("voting.voteRecord.") || key.hasPrefix("voting.draftVotes.") {
             standardDefaults.removeObject(forKey: key)
         }
+        #endif
         flexaHandler.signOut()
         userStoredPreferences.removeAll()
         try? readTransactionsStorage.resetZashi()

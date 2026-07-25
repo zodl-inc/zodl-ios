@@ -1,3 +1,4 @@
+#if VOTING_ENABLED
 //
 //  DelegationSigningStore.swift
 //  Zashi
@@ -508,3 +509,4 @@ struct DelegationSigningView: View {
         }
     }
 }
+#endif

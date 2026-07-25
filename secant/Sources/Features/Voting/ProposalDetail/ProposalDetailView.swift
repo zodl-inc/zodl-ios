@@ -1,3 +1,4 @@
+#if VOTING_ENABLED
 //
 //  ProposalDetailView.swift
 //  Zashi
@@ -351,3 +352,4 @@ struct ProposalDetailView: View {
         submittedChoice ?? draftChoice
     }
 }
+#endif

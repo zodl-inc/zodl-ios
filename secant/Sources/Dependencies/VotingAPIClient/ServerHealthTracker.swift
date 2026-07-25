@@ -1,3 +1,4 @@
+#if VOTING_ENABLED
 import Foundation
 
 // MARK: - Server Health Tracker
@@ -189,3 +190,4 @@ actor ServerHealthTracker {
         probeTask = nil
     }
 }
+#endif

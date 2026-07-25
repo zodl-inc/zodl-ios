@@ -1,3 +1,4 @@
+#if VOTING_ENABLED
 //
 //  ProposalListView.swift
 //  Zashi
@@ -563,3 +564,4 @@ private struct ExpandableTextCollapsedHeightKey: PreferenceKey {
         value = max(value, nextValue())
     }
 }
+#endif

@@ -1,3 +1,4 @@
+#if VOTING_ENABLED
 import ComposableArchitecture
 import Foundation
 
@@ -1110,3 +1111,4 @@ extension VotingAPIClient: DependencyKey {
         )
     }
 }
+#endif

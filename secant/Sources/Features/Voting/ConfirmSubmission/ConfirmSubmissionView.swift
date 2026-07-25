@@ -1,3 +1,4 @@
+#if VOTING_ENABLED
 //
 //  ConfirmSubmissionView.swift
 //  Zashi
@@ -526,3 +527,4 @@ private extension BatchSubmissionStatus {
         }
     }
 }
+#endif

@@ -3,6 +3,7 @@
 //  Zashi
 //
 
+#if VOTING_ENABLED
 import Foundation
 
 /// A single entry in the polls list: a voting round paired with the index
@@ -25,3 +26,4 @@ struct RoundListItem: Equatable, Identifiable {
             : session.title
     }
 }
+#endif

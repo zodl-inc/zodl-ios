@@ -1,3 +1,4 @@
+#if VOTING_ENABLED
 import CryptoKit
 import Foundation
 
@@ -77,3 +78,4 @@ enum RoundAuthenticator {
         return false
     }
 }
+#endif

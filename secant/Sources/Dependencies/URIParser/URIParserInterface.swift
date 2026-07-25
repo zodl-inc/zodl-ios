@@ -28,7 +28,9 @@ extension ParserContext {
         switch networkType {
         case .mainnet:
             ParserContext.mainnet
-        case .testnet:
+        case .testnet, .regtest:
+            // Regtest (SDK networkId 2, custom activation heights) has no URI context of its own;
+            // its addresses are testnet-encoded, so the testnet context is the correct parser.
             ParserContext.testnet
         }
     }

@@ -1,3 +1,4 @@
+#if VOTING_ENABLED
 //
 //  NoRoundsView.swift
 //  Zashi
@@ -138,3 +139,4 @@ struct PollsListSkeletonCard: View {
             .clipShape(RoundedRectangle(cornerRadius: 4))
     }
 }
+#endif

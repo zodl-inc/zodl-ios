@@ -382,10 +382,12 @@ extension Root.State: @retroactive Equatable {
         #expect(signOutIndex < wipeIndex, "the Flexa session must be cleared before the database is wiped")
         #expect(userPrefsIndex < wipeIndex, "cached preferences must be cleared before the database is wiped")
 
+        #if VOTING_ENABLED
         #expect(
             removedKeys.value.contains(.votingConfigOverrideURL),
             "the voting chain override must be cleared before healing a stale database"
         )
+        #endif
 
         await drain(store)
     }

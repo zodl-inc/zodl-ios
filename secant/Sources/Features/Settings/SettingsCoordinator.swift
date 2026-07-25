@@ -234,6 +234,7 @@ extension Settings {
                 state.path.append(.advancedSettings(AdvancedSettings.State.initial))
                 return .none
 
+            #if VOTING_ENABLED
             case .coinholderPollingTapped:
                 guard let account = state.selectedWalletAccount else { return .none }
                 var votingState = VotingCoordFlow.State()
@@ -245,6 +246,7 @@ extension Settings {
             case .votingCoordFlow(.presented(.dismissFlow)):
                 state.votingCoordFlow = nil
                 return .none
+            #endif
 
             case .whatsNewTapped:
                 state.path.append(.whatsNew(WhatsNew.State.initial))

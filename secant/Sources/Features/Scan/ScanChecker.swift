@@ -102,6 +102,7 @@ struct SwapStringScanChecker: ScanChecker, Equatable {
     }
 }
 
+#if VOTING_ENABLED
 struct KeystoneVotingDelegationPcztScanChecker: ScanChecker, Equatable {
     let id = 5
 
@@ -123,6 +124,7 @@ struct KeystoneVotingDelegationPcztScanChecker: ScanChecker, Equatable {
         return nil
     }
 }
+#endif
 
 struct ScanCheckerWrapper: Equatable, Sendable {
     let checker: any ScanChecker
@@ -132,7 +134,9 @@ struct ScanCheckerWrapper: Equatable, Sendable {
     static let keystoneScanChecker = ScanCheckerWrapper(KeystoneScanChecker())
     static let keystonePCZTScanChecker = ScanCheckerWrapper(KeystonePcztScanChecker())
     static let swapStringScanChecker = ScanCheckerWrapper(SwapStringScanChecker())
+    #if VOTING_ENABLED
     static let keystoneVotingDelegationPCZTScanChecker = ScanCheckerWrapper(KeystoneVotingDelegationPcztScanChecker())
+    #endif
 
     static func == (lhs: ScanCheckerWrapper, rhs: ScanCheckerWrapper) -> Bool {
         return lhs.checker.id == rhs.checker.id

@@ -1,3 +1,4 @@
+#if VOTING_ENABLED
 //
 //  VotingCoordFlowView.swift
 //  Zashi
@@ -172,3 +173,4 @@ struct VotingCoordFlowView: View {
         }
     }
 }
+#endif

@@ -1,3 +1,4 @@
+#if VOTING_ENABLED
 import CryptoKit
 import Foundation
 import Testing
@@ -945,3 +946,4 @@ private func makeRecoverySharePayload(index: UInt32 = 0) -> SharePayload {
         submitAt: 99
     )
 }
+#endif

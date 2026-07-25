@@ -1,3 +1,4 @@
+#if VOTING_ENABLED
 //
 //  VotingMetadataProviderInterface.swift
 //  Zashi
@@ -45,3 +46,4 @@ struct VotingMetadataProviderClient {
     var setRecord: @Sendable (_ record: PersistedVotingRecord, _ roundId: String) -> Void
     var clearRecord: @Sendable (_ roundId: String) -> Void
 }
+#endif

@@ -1,3 +1,4 @@
+#if VOTING_ENABLED
 //
 //  WalletSyncingView.swift
 //  Zashi
@@ -52,3 +53,4 @@ struct WalletSyncingView: View {
         }
     }
 }
+#endif
