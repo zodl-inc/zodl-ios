@@ -123,6 +123,7 @@ struct ReceiveView: View {
                                         iconFg: Design.Text.primary,
                                         iconBg: Design.Surfaces.bgTertiary,
                                         bcgColor: .clear,
+                                        shieldBcgColor: Asset.Colors.background.color,
                                         expanded: store.currentFocus == .saplingAddress,
                                         shield: true
                                     ) {
@@ -290,6 +291,7 @@ struct ReceiveView: View {
         iconFg: Colorable,
         iconBg: Colorable,
         bcgColor: Color,
+        shieldBcgColor: Color? = nil,
         expanded: Bool,
         shield: Bool = false,
         copyButton: Bool = true,
@@ -306,7 +308,7 @@ struct ReceiveView: View {
                         .padding(.trailing, 16)
                         .overlay {
                             Asset.Assets.Icons.shieldBcg.image
-                                .zImage(size: 18, color: bcgColor)
+                                .zImage(size: 18, color: shieldBcgColor ?? bcgColor)
                                 .offset(x: 6, y: 14)
                                 .overlay {
                                     Asset.Assets.Icons.shieldTickFilled.image

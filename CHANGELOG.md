@@ -15,6 +15,7 @@ directly impact users rather than highlighting other crucial architectural updat
 
 ### Fixed
 - [Ironwood] The automatic recovery from another wallet's leftover data (see MOB-1512 below) keeps working with the updated Zcash SDK. The SDK now reports that mismatch as an error rather than a status, so ZODL maps it back onto the same recovery and the wallet still heals itself instead of stopping on an initialization error.
+- [MOB-140] On the Receive screen, the Zcash Sapling address (testnet debug builds only) now shows the same shield badge on its icon as the Zcash Shielded Address, instead of an incomplete badge that made the address look unshielded.
 - [#1943] Fixed a wallet initialization bug: initialization is now single-flight, so repeated startup triggers while the wallet is still initializing are ignored until it finishes.
 - [#1920] Connecting a Keystone hardware wallet that fails now shows a clear "Connection Failed" message (with Contact Support and Cancel options) instead of silently doing nothing. Cancel leaves the flow so the user is never stuck on the connection screen. The support message includes a safe error identifier and never exposes any wallet keys.
 - [#1920] The "Connection Failed" sheet no longer appears on top of the success screen when connecting a Keystone device actually succeeds. Tapping the connect/OK button again while the import was still running started a duplicate import whose failure surfaced as a bogus error; the button now shows a progress indicator and extra taps are ignored.
