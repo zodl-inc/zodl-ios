@@ -4889,8 +4889,12 @@ import ComposableArchitecture
             $0.sdkSynchronizer = .noOp
             $0.sdkSynchronizer.signAndStoreMigrationSchedule = { _, _, _ in signCalls.withValue { $0 += 1 } }
         }
+        // `localAuthentication` is intentionally left unimplemented: `requiresSigning == false` and
+        // this isn't an expired-recovery review, so `State.confirmRequiresAuthentication` is false
+        // and `confirmTapped` never calls `authenticate()` — a call here would fail this test.
 
         await store.send(.confirmTapped)
+        await store.receive(\.confirmAuthenticated)
         await store.receive(.delegate(.confirmed))
 
         #expect(signCalls.value == 0)
@@ -5040,11 +5044,13 @@ import ComposableArchitecture
             // customized at least once before any of its members can run in a test context.
             $0.migrationManager.recordCommittedSchedule = { _, _ in }
             $0.migrationManager.reconcile = { }
+            $0.localAuthentication = .mockAuthenticationSucceeded
         }
 
         await store.send(.confirmTapped) {
             $0.isConfirming = true
         }
+        await store.receive(\.confirmAuthenticated)
         await store.receive(\.scheduleSigned) {
             $0.isConfirming = false
         }
@@ -5142,6 +5148,7 @@ import ComposableArchitecture
         let store = TestStore(initialState: state) {
             MigrationCoordFlow()
         } withDependencies: {
+            $0.localAuthentication = .mockAuthenticationSucceeded
             $0.sdkSynchronizer = .noOp
             $0.sdkSynchronizer.unlockMigrationResidual = { _ in
                 callLog.withValue { $0.append("unlock") }
@@ -5155,6 +5162,7 @@ import ComposableArchitecture
         store.exhaustivity = .off
 
         await store.send(.path(.element(id: 0, action: .complete(.delegate(.migrateAnyway)))))
+        await store.receive(\.migrateAnywayAuthenticated)
         await store.receive(\.pushHydratedPathState)
 
         #expect(callLog.value == ["unlock", "propose"])
@@ -5178,6 +5186,7 @@ import ComposableArchitecture
         let store = TestStore(initialState: state) {
             MigrationCoordFlow()
         } withDependencies: {
+            $0.localAuthentication = .mockAuthenticationSucceeded
             $0.sdkSynchronizer = .noOp
             $0.sdkSynchronizer.unlockMigrationResidual = { _ in 0 }
             $0.sdkSynchronizer.proposeImmediateMigration = { _ in proposal }
@@ -5185,6 +5194,7 @@ import ComposableArchitecture
         store.exhaustivity = .off
 
         await store.send(.path(.element(id: 0, action: .complete(.delegate(.migrateAnyway)))))
+        await store.receive(\.migrateAnywayAuthenticated)
         await store.receive(\.pushHydratedPathState)
 
         guard case let .sending(sendingState) = try? #require(store.state.path.last) else {
@@ -5206,6 +5216,7 @@ import ComposableArchitecture
         let store = TestStore(initialState: state) {
             MigrationCoordFlow()
         } withDependencies: {
+            $0.localAuthentication = .mockAuthenticationSucceeded
             $0.sdkSynchronizer = .noOp
             $0.sdkSynchronizer.unlockMigrationResidual = { _ in 0 }
             // The SDK's clean throw when the ZIP-317 fee would consume the whole residual.
@@ -5214,6 +5225,7 @@ import ComposableArchitecture
         store.exhaustivity = .off
 
         await store.send(.path(.element(id: 0, action: .complete(.delegate(.migrateAnyway)))))
+        await store.receive(\.migrateAnywayAuthenticated)
         await store.receive(\.pushHydratedPathState)
 
         guard case let .sending(sendingState) = try? #require(store.state.path.last) else {
@@ -5234,6 +5246,7 @@ import ComposableArchitecture
         let store = TestStore(initialState: state) {
             MigrationCoordFlow()
         } withDependencies: {
+            $0.localAuthentication = .mockAuthenticationSucceeded
             $0.sdkSynchronizer = .noOp
             $0.sdkSynchronizer.unlockMigrationResidual = { _ in throw ZcashError.rustMigrationUnlockResidual("boom") }
             $0.sdkSynchronizer.proposeImmediateMigration = { _ in
@@ -5244,6 +5257,7 @@ import ComposableArchitecture
         store.exhaustivity = .off
 
         await store.send(.path(.element(id: 0, action: .complete(.delegate(.migrateAnyway)))))
+        await store.receive(\.migrateAnywayAuthenticated)
         await store.receive(\.pushHydratedPathState)
 
         #expect(proposeCalls.value == 0)
@@ -5367,6 +5381,7 @@ import ComposableArchitecture
         let store = TestStore(initialState: state) {
             MigrationCoordFlow()
         } withDependencies: {
+            $0.localAuthentication = .mockAuthenticationSucceeded
             $0.sdkSynchronizer = .noOp
             $0.sdkSynchronizer.unlockMigrationResidual = { _ in
                 callLog.withValue { $0.append("unlock") }
@@ -5388,6 +5403,7 @@ import ComposableArchitecture
         store.exhaustivity = .off
 
         await store.send(.path(.element(id: 0, action: .complete(.delegate(.migrateAnyway)))))
+        await store.receive(\.migrateAnywayAuthenticated)
         await store.receive(\.migrateAnywayImmediateKeystonePCZTProposed)
 
         #expect(callLog.value == ["unlock", "propose", "createPCZT", "redact"])
@@ -5411,6 +5427,7 @@ import ComposableArchitecture
         let store = TestStore(initialState: state) {
             MigrationCoordFlow()
         } withDependencies: {
+            $0.localAuthentication = .mockAuthenticationSucceeded
             $0.sdkSynchronizer = .noOp
             $0.sdkSynchronizer.unlockMigrationResidual = { _ in 0 }
             $0.sdkSynchronizer.proposeImmediateMigration = { _ in throw ZcashError.rustProposeSendMaxTransfer("insufficient funds") }
@@ -5422,6 +5439,7 @@ import ComposableArchitecture
         store.exhaustivity = .off
 
         await store.send(.path(.element(id: 0, action: .complete(.delegate(.migrateAnyway)))))
+        await store.receive(\.migrateAnywayAuthenticated)
         await store.receive(\.pushHydratedPathState)
 
         #expect(createPCZTCalls.value == 0)
@@ -5431,6 +5449,135 @@ import ComposableArchitecture
             return
         }
         #expect(sendingState.isFailurePresented == true)
+    }
+
+    // MARK: - MOB-1458: "Migrate anyway" device-authentication gate
+    //
+    // The tests above (fixed up for the gate) already prove call ORDER and failure-sheet routing
+    // survive the new authentication hop; these three isolate the GATE itself: a success must let
+    // the untouched unlock/propose/push body run to completion on both vendor lanes, and a refusal
+    // must short-circuit before ANY of that body runs, on EITHER lane (the gate sits ahead of the
+    // vendor fork, so which vendor is selected can't matter to it — see
+    // `MigrationCoordFlowCoordinator.swift`'s `.complete(.delegate(.migrateAnyway))` case).
+
+    /// A successful authentication must let the pre-MOB-1458 unlock + propose + push sequence run
+    /// exactly as before the gate was added, for the SOFTWARE lane.
+    @MainActor @Test func completeMigrateAnywayAuthenticationSucceedsSoftwareRunsUnlockProposeAndPushSequence() async {
+        let unlockCalls = LockIsolated<Int>(0)
+        let proposeCalls = LockIsolated<Int>(0)
+        let proposal = ImmediateMigrationProposal(proposal: .testOnlyFakeProposal(totalFee: 5_000), amount: Zatoshi(95_000), fee: Zatoshi(5_000))
+        var state = MigrationCoordFlow.State()
+        state.path.append(.complete(MigrationComplete.State(isFlowRoot: true)))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.localAuthentication = .mockAuthenticationSucceeded
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.unlockMigrationResidual = { _ in
+                unlockCalls.withValue { $0 += 1 }
+                return 0
+            }
+            $0.sdkSynchronizer.proposeImmediateMigration = { _ in
+                proposeCalls.withValue { $0 += 1 }
+                return proposal
+            }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 0, action: .complete(.delegate(.migrateAnyway)))))
+        await store.receive(\.migrateAnywayAuthenticated)
+        await store.receive(\.pushHydratedPathState)
+
+        #expect(unlockCalls.value == 1)
+        #expect(proposeCalls.value == 1)
+        guard case let .sending(sendingState) = try? #require(store.state.path.last) else {
+            Issue.record("Expected .sending pushed on top of .complete")
+            return
+        }
+        #expect(sendingState.immediateProposal == proposal)
+    }
+
+    /// Twin of the test above for the KEYSTONE lane — a successful authentication must let the
+    /// unlock + propose + createPCZT + redact + push-`keystoneSign` sequence run unchanged.
+    @MainActor @Test func completeMigrateAnywayAuthenticationSucceedsKeystoneRunsUnlockProposeAndPushSequence() async {
+        let unlockCalls = LockIsolated<Int>(0)
+        let proposeCalls = LockIsolated<Int>(0)
+        let proposal = ImmediateMigrationProposal(proposal: .testOnlyFakeProposal(totalFee: 5_000), amount: Zatoshi(12_000), fee: Zatoshi(5_000))
+        let pczt = Data([0xEE])
+        let redacted = Data([0xEE, 0x0F])
+        var state = MigrationCoordFlow.State()
+        state.$selectedWalletAccount.withLock { $0 = walletAccount(keystone: true, idByte: 50) }
+        state.path.append(.complete(MigrationComplete.State(isFlowRoot: true)))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.localAuthentication = .mockAuthenticationSucceeded
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.unlockMigrationResidual = { _ in
+                unlockCalls.withValue { $0 += 1 }
+                return 0
+            }
+            $0.sdkSynchronizer.proposeImmediateMigration = { _ in
+                proposeCalls.withValue { $0 += 1 }
+                return proposal
+            }
+            $0.sdkSynchronizer.createPCZTFromProposal = { _, _ in pczt }
+            $0.sdkSynchronizer.redactPCZTForSigner = { _ in redacted }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 0, action: .complete(.delegate(.migrateAnyway)))))
+        await store.receive(\.migrateAnywayAuthenticated)
+        await store.receive(\.migrateAnywayImmediateKeystonePCZTProposed)
+
+        #expect(unlockCalls.value == 1)
+        #expect(proposeCalls.value == 1)
+        #expect(store.state.pendingKeystoneSigning == MigrationCoordFlow.KeystoneSigningContext.immediateReview)
+        guard case let .keystoneSign(signState) = try? #require(store.state.path.last) else {
+            Issue.record("Expected .keystoneSign pushed on top of .complete")
+            return
+        }
+        #expect(signState.redactedSinglePczt == redacted)
+    }
+
+    /// The refusal path — `authenticate()` returning `false` must short-circuit BEFORE the vendor
+    /// fork entirely: neither `unlockMigrationResidual` nor `proposeImmediateMigration` ever runs,
+    /// nothing is pushed onto the path, and the Complete screen the user was already on stays
+    /// exactly as it was — no alert, no toast, no navigation (the established idiom; see
+    /// `MigrationCoordFlowCoordinator.swift`'s doc on `.complete(.delegate(.migrateAnyway))`, and
+    /// `SendConfirmationStore.sendTapped`/`SwapAndPayCoordFlowCoordinator` for the same shape
+    /// elsewhere). The default (software) account is used deliberately — the gate runs before the
+    /// vendor fork, so which vendor is selected cannot affect this outcome.
+    @MainActor @Test func completeMigrateAnywayAuthenticationFailureNeverUnlocksOrProposesAndLeavesCompleteScreenInPlace() async {
+        let unlockCalls = LockIsolated<Int>(0)
+        let proposeCalls = LockIsolated<Int>(0)
+        var state = MigrationCoordFlow.State()
+        state.path.append(.complete(MigrationComplete.State(isFlowRoot: true)))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.localAuthentication = .mockAuthenticationFailed
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.unlockMigrationResidual = { _ in
+                unlockCalls.withValue { $0 += 1 }
+                return 0
+            }
+            $0.sdkSynchronizer.proposeImmediateMigration = { _ in
+                proposeCalls.withValue { $0 += 1 }
+                return ImmediateMigrationProposal(proposal: .testOnlyFakeProposal(totalFee: 0), amount: .zero, fee: .zero)
+            }
+        }
+
+        await store.send(.path(.element(id: 0, action: .complete(.delegate(.migrateAnyway)))))
+        await store.finish()
+
+        #expect(unlockCalls.value == 0)
+        #expect(proposeCalls.value == 0)
+        #expect(store.state.path.count == 1)
+        guard case .complete = try? #require(store.state.path.last) else {
+            Issue.record("Expected .complete to remain the only/top path element")
+            return
+        }
     }
 
     // MARK: - MOB-1496 (W6 §6): Keystone recovery — recreate routes through the PCZT batch session

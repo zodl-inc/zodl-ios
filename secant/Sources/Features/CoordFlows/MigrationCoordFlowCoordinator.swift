@@ -1449,6 +1449,23 @@ extension MigrationCoordFlow {
 
                 // MARK: - Flow-root closes / terminal delegates -> .flowFinished
 
+                // MOB-1458: gates the dust sweep behind device authentication before ANY of the
+                // unlock/propose/broadcast machinery below runs — a real spend must never fire off
+                // an unauthenticated tap. `localAuthentication.authenticate()` covers Face ID /
+                // Touch ID / passcode, and itself already returns `true` on a device with no
+                // passcode set (nothing left to gate on then) — so there is nothing to pass in and
+                // no new strings to add here. A refusal returns silently: no alert, no toast, no
+                // navigation — the user simply stays on Complete with the button live again, exactly
+                // like `SendConfirmationStore.sendTapped`/`SwapAndPayCoordFlowCoordinator`'s own
+                // confirm taps already do (and matches the Android wallet). The authenticated
+                // continuation is deferred to `.migrateAnywayAuthenticated` below, which carries the
+                // ENTIRE pre-MOB-1458 handler body verbatim.
+            case .path(.element(id: _, action: .complete(.delegate(.migrateAnyway)))):
+                return .run { send in
+                    guard await localAuthentication.authenticate() else { return }
+                    await send(.migrateAnywayAuthenticated)
+                }
+
                 // MOB-1496 (W-B): "Migrate anyway" now rides the SAME immediate (send-max) lane the
                 // entry-screen migration uses, for both vendors — see this file's header doc.
                 // Unlock-first is LOAD-BEARING: a locked residual is excluded from send-max note
@@ -1459,7 +1476,11 @@ extension MigrationCoordFlow {
                 // UI. Entry-screen immediate migrations must NEVER call `unlockMigrationResidual`
                 // (a locked residual staying excluded from later sweeps is correct-by-construction);
                 // this is the ONE call site that does.
-            case .path(.element(id: _, action: .complete(.delegate(.migrateAnyway)))):
+                //
+                // MOB-1458: reached only once `.complete(.delegate(.migrateAnyway))` above has
+                // already authenticated — this case is otherwise byte-for-byte the pre-MOB-1458
+                // handler, moved down verbatim.
+            case .migrateAnywayAuthenticated:
                 guard let account = state.selectedWalletAccount else { return .none }
 
                 guard account.vendor != WalletAccount.Vendor.keystone else {

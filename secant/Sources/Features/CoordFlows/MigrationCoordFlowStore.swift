@@ -434,6 +434,14 @@ struct MigrationCoordFlow {
         /// propose-failure path already uses. Deliberately skips `.keystoneScanAbandoned`'s
         /// stray-run cancel: the immediate proposal is engine-external — no engine run exists.
         case keystoneImmediateSubmitFailed
+        /// Internal: MOB-1458 — "Migrate anyway"'s device-authentication gate
+        /// (`.complete(.delegate(.migrateAnyway))`) passed: `LocalAuthenticationClient.authenticate()`
+        /// returned `true` (Face ID / Touch ID / passcode, or the client's own no-passcode-set
+        /// bypass), so the ORIGINAL unlock + propose + vendor-fork body — unchanged since MOB-1496
+        /// (W-B) — now runs. A refusal never reaches this action at all; see
+        /// `MigrationCoordFlowCoordinator.swift`'s `.complete(.delegate(.migrateAnyway))` case for
+        /// the gate itself and why a refusal returns silently (no alert, no toast, no navigation).
+        case migrateAnywayAuthenticated
         /// Internal: MOB-1496 (W-B) — "Migrate anyway"'s Keystone fork
         /// (`.complete(.delegate(.migrateAnyway))`) unlocked, proposed the immediate migration,
         /// built its single PCZT via `createPCZTFromProposal`, and redacted it for the signer
@@ -516,6 +524,10 @@ struct MigrationCoordFlow {
     // before pushing its scan session (`SendConfirmation.getSignatureTapped` precedent), so a retry
     // ceremony never inherits a previous session's accumulated frames.
     @Dependency(\.keystoneHandler) var keystoneHandler
+    // MOB-1458: gates "Migrate anyway"'s immediate dust sweep behind Face ID / Touch ID / passcode
+    // before any unlock/propose/broadcast runs — see `.complete(.delegate(.migrateAnyway))` in
+    // `MigrationCoordFlowCoordinator.swift`.
+    @Dependency(\.localAuthentication) var localAuthentication
     @Dependency(\.migrationBGScheduler) var migrationBGScheduler
     @Dependency(\.migrationManager) var migrationManager
     @Dependency(\.mnemonic) var mnemonic
