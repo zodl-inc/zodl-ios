@@ -48,6 +48,16 @@
 //  defer to the Sending screen the way the software lane's does. The manual-step path (transfers
 //  already signed at plan commit) is unchanged — no PCZT is ever proposed there.
 //
+//  MOB-1458: `confirmTapped`/`retryTapped`'s entire commit body — the manual-step delegate, the
+//  immediate software delegate, and the immediate Keystone PCZT propose+redact — now runs only
+//  after a device-authentication (Face ID / Touch ID / passcode) prompt succeeds
+//  (`localAuthentication.authenticate()`). `isConfirming` flips `true` BEFORE the prompt runs
+//  (not after), so the existing Confirm-button spinner covers the authentication sheet too, and a
+//  double-tap while it's up hits the single-flight guard instead of opening a second prompt; a
+//  refused/cancelled prompt (`.authenticationCancelled`) just clears the flag again, with nothing
+//  signed or broadcast. The propose-failure Retry short-circuit is the one exception — it never
+//  authenticates, since re-fetching a proposal for display neither signs nor broadcasts anything.
+//
 
 import Foundation
 import ComposableArchitecture
@@ -115,15 +125,27 @@ struct MigrationReviewTransfer {
     }
 
     enum Action: BindableAction, Equatable {
+        /// MOB-1458: the device-authentication (Face ID / Touch ID / passcode) prompt that
+        /// `confirmTapped`/`retryTapped` launched failed or was cancelled — undoes the
+        /// `isConfirming = true` those actions set before the prompt ran, so Confirm is tappable
+        /// again. Nothing was signed or broadcast, so there is nothing else to unwind.
+        case authenticationCancelled
         case binding(BindingAction<State>)
         /// Failure sheet: dismiss (stay on screen).
         case cancelTapped
         /// Flow-root back control (manual step only): closes the flow instead of popping.
         case closeTapped
+        /// MOB-1458: the device-authentication prompt succeeded — runs the body `confirmTapped`/
+        /// `retryTapped` used to run directly before the authentication gate was added: the
+        /// manual-step direct delegate, the immediate-mode Keystone PCZT propose+redact, or the
+        /// immediate-mode software delegate. Never sent directly by the view.
+        case confirmAuthenticated
         /// MOB-1513: immediate mode delegates `.confirmed` directly — the actual create+sign+submit
         /// happens on the Sending screen (software) or was already handled by the coordinator's
         /// post-Keystone-signing step before this action even fires (Keystone). Manual step also
-        /// delegates directly (transfer already signed at plan commit).
+        /// delegates directly (transfer already signed at plan commit). MOB-1458: all of that now
+        /// runs only once a device-authentication (Face ID / Touch ID / passcode) prompt succeeds —
+        /// see `confirmAuthenticated`/`authenticationCancelled` for the two outcomes.
         case confirmTapped
         case delegate(Delegate)
         /// The commit failed — presents the failure sheet instead of proceeding. Covers any
@@ -132,7 +154,9 @@ struct MigrationReviewTransfer {
         /// Immediate mode only: proposes the send-max proposal for Amount/Fee display.
         case onAppear
         /// Failure sheet: dismiss, then re-attempt the failed step from scratch — the whole commit
-        /// sequence when `failureReason == .commit` (or unset), or a fresh proposal when
+        /// sequence (MOB-1458: behind a fresh device-authentication prompt, same as
+        /// `confirmTapped`) when `failureReason == .commit` (or unset), or a fresh proposal — NOT
+        /// re-authenticated, since nothing is signed or broadcast yet — when
         /// `failureReason == .propose`.
         case retryTapped
         /// MOB-1513: `proposeImmediateMigration()` threw — presents the failure sheet;
@@ -183,6 +207,7 @@ struct MigrationReviewTransfer {
     }
 
     @Dependency(\.continuousClock) var clock
+    @Dependency(\.localAuthentication) var localAuthentication
     @Dependency(\.sdkSynchronizer) var sdkSynchronizer
 
     init() { }
@@ -192,6 +217,13 @@ struct MigrationReviewTransfer {
 
         Reduce { state, action in
             switch action {
+            case .authenticationCancelled:
+                // MOB-1458: the prompt failed or was cancelled — undo the `isConfirming = true`
+                // set before it launched so Confirm is tappable again. Nothing was signed or
+                // broadcast, so there is nothing else to unwind.
+                state.isConfirming = false
+                return .none
+
             case .binding:
                 return .none
 
@@ -203,6 +235,46 @@ struct MigrationReviewTransfer {
             case .closeTapped:
                 return .send(.delegate(.closed))
 
+            case .confirmAuthenticated:
+                // MOB-1458: authentication already succeeded and `isConfirming` is already `true`
+                // (set below, by `confirmTapped`/`retryTapped`, before the prompt ran) — no
+                // single-flight re-check here, since re-running `guard !state.isConfirming` would
+                // always fail.
+                guard case .immediate = state.mode else {
+                    // Manual step: the transfer was already signed at plan commit — delegate
+                    // directly.
+                    state.isConfirming = false
+                    return .send(.delegate(.confirmed))
+                }
+
+                // MOB-1513: never delegate for a proposal that doesn't exist yet (propose still in
+                // flight, or failed) — deliberately a SEPARATE guard from the mode check above, so a
+                // nil proposal in immediate mode returns `.none` (stay put) rather than falling into
+                // the manual step's "already signed, just acknowledge" delegate.
+                guard let proposal = state.immediateProposal else {
+                    state.isConfirming = false
+                    return .none
+                }
+                guard let account = state.selectedWalletAccount else {
+                    state.isConfirming = false
+                    return .none
+                }
+
+                guard account.vendor != WalletAccount.Vendor.keystone else {
+                    // Already `true` (set by `confirmTapped`/`retryTapped` before the
+                    // authentication prompt ran) — kept explicit so this branch reads correctly on
+                    // its own, and so `isConfirming` stays `true` while `requestKeystoneSignature`
+                    // is in flight.
+                    state.isConfirming = true
+                    return requestKeystoneSignature(for: proposal, account: account)
+                }
+
+                // MOB-1513: nothing left to pre-commit locally for the software lane — the actual
+                // create+sign+submit happens on the Sending screen, which the coordinator threads
+                // `immediateProposal` into.
+                state.isConfirming = false
+                return .send(.delegate(.confirmed))
+
             case .confirmTapped, .retryTapped:
                 // MOB-1513 (B4): single-flight — a second tap while an async confirm leg is in
                 // flight must be a complete no-op (same guard as `MigrationTransferPlan`'s confirm).
@@ -210,7 +282,9 @@ struct MigrationReviewTransfer {
                 state.isFailurePresented = false
 
                 // MOB-1513: a propose failure's Retry re-proposes instead of re-attempting the
-                // commit — checked FIRST, before any of the commit guards below.
+                // commit — checked FIRST, before any of the commit guards below. MOB-1458:
+                // deliberately NOT gated behind authentication — it only re-fetches a proposal for
+                // display, nothing is signed or broadcast.
                 if case .retryTapped = action, state.failureReason == State.FailureReason.propose {
                     state.failureReason = nil
                     // Set only when a real re-propose launches (a nil account is a no-op inside
@@ -221,30 +295,20 @@ struct MigrationReviewTransfer {
                 }
                 state.failureReason = nil
 
-                guard case .immediate = state.mode else {
-                    // Manual step: the transfer was already signed at plan commit — delegate
-                    // directly.
-                    return .send(.delegate(.confirmed))
+                // MOB-1458: everything past this point signs or broadcasts something, so it's
+                // gated behind device authentication (Face ID / Touch ID / passcode).
+                // `isConfirming` flips `true` HERE, before the prompt runs, so the existing
+                // Confirm-button spinner covers the authentication sheet too, and a double-tap
+                // while it's up hits the single-flight guard above instead of opening a second
+                // prompt.
+                state.isConfirming = true
+                return .run { send in
+                    guard await localAuthentication.authenticate() else {
+                        await send(.authenticationCancelled)
+                        return
+                    }
+                    await send(.confirmAuthenticated)
                 }
-
-                // MOB-1513: never delegate for a proposal that doesn't exist yet (propose still in
-                // flight, or failed) — deliberately a SEPARATE guard from the mode check above, so a
-                // nil proposal in immediate mode returns `.none` (stay put) rather than falling into
-                // the manual step's "already signed, just acknowledge" delegate.
-                guard let proposal = state.immediateProposal else {
-                    return .none
-                }
-                guard let account = state.selectedWalletAccount else { return .none }
-
-                guard account.vendor != WalletAccount.Vendor.keystone else {
-                    state.isConfirming = true
-                    return requestKeystoneSignature(for: proposal, account: account)
-                }
-
-                // MOB-1513: nothing left to pre-commit locally for the software lane — the actual
-                // create+sign+submit happens on the Sending screen, which the coordinator threads
-                // `immediateProposal` into.
-                return .send(.delegate(.confirmed))
 
             case .delegate(.keystoneImmediateSignRequested):
                 // MOB-1513 (B4): the PCZT is handed to the coordinator (which pushes the QR
