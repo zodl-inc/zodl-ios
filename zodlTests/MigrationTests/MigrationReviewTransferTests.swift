@@ -28,6 +28,17 @@
 //  proposal-not-yet-fetched guard test. The old "note-split PCZT folds into an immediate Keystone
 //  batch" tests are gone too — a single ordinary-send PCZT has no note-split concept at all.
 //
+//  MOB-1458: `confirmTapped`/`retryTapped` now gate their entire commit body behind a device-
+//  authentication (Face ID / Touch ID / passcode) prompt (`localAuthentication.authenticate()`).
+//  Every pre-existing `confirmTapped`/`retryTapped` test below was updated to authenticate
+//  successfully (`.mockAuthenticationSucceeded`) and receive the new `.confirmAuthenticated`
+//  action before the assertions it already had — preserving each test's original intent. New
+//  coverage below proves the outcomes the old tests couldn't: a refused/cancelled prompt
+//  (`.authenticationCancelled`) builds nothing and re-enables Confirm; the single-flight guard
+//  covers the authentication prompt itself, not just the PCZT build after it; a commit-failure
+//  Retry authenticates again like a fresh `confirmTapped`; and the propose-failure Retry
+//  short-circuit is the one path that stays unauthenticated, since it never signs or broadcasts.
+//
 
 import Testing
 import Foundation
@@ -192,9 +203,15 @@ import ComposableArchitecture
             MigrationReviewTransfer()
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
+            $0.localAuthentication = .mockAuthenticationSucceeded
         }
 
-        await store.send(.confirmTapped)
+        await store.send(.confirmTapped) {
+            $0.isConfirming = true
+        }
+        await store.receive(\.confirmAuthenticated) {
+            $0.isConfirming = false
+        }
         await store.receive(.delegate(.confirmed))
     }
 
@@ -203,9 +220,16 @@ import ComposableArchitecture
             initialState: MigrationReviewTransfer.State(mode: .manualStep(number: 3, total: 5))
         ) {
             MigrationReviewTransfer()
+        } withDependencies: {
+            $0.localAuthentication = .mockAuthenticationSucceeded
         }
 
-        await store.send(.confirmTapped)
+        await store.send(.confirmTapped) {
+            $0.isConfirming = true
+        }
+        await store.receive(\.confirmAuthenticated) {
+            $0.isConfirming = false
+        }
         await store.receive(.delegate(.confirmed))
     }
 
@@ -216,9 +240,16 @@ import ComposableArchitecture
     @MainActor @Test func confirmTappedInImmediateModeBeforeProposalResolvesDoesNothing() async {
         let store = TestStore(initialState: MigrationReviewTransfer.State(mode: .immediate)) {
             MigrationReviewTransfer()
+        } withDependencies: {
+            $0.localAuthentication = .mockAuthenticationSucceeded
         }
 
-        await store.send(.confirmTapped)
+        await store.send(.confirmTapped) {
+            $0.isConfirming = true
+        }
+        await store.receive(\.confirmAuthenticated) {
+            $0.isConfirming = false
+        }
     }
 
     // MARK: - MOB-1468 / MOB-1513: Keystone confirmTapped fork proposes an ordinary PCZT
@@ -244,11 +275,13 @@ import ComposableArchitecture
                 redactCalls.withValue { $0.append(pczt) }
                 return redactedBytes
             }
+            $0.localAuthentication = .mockAuthenticationSucceeded
         }
 
         await store.send(.confirmTapped) {
             $0.isConfirming = true
         }
+        await store.receive(\.confirmAuthenticated)
         await store.receive(
             .delegate(
                 .keystoneImmediateSignRequested(unsigned: pcztBytes, redacted: redactedBytes)
@@ -278,9 +311,15 @@ import ComposableArchitecture
                 createPCZTCalls.withValue { $0 += 1 }
                 return Data()
             }
+            $0.localAuthentication = .mockAuthenticationSucceeded
         }
 
-        await store.send(.confirmTapped)
+        await store.send(.confirmTapped) {
+            $0.isConfirming = true
+        }
+        await store.receive(\.confirmAuthenticated) {
+            $0.isConfirming = false
+        }
         await store.receive(.delegate(.confirmed))
 
         #expect(createPCZTCalls.value == 0)
@@ -298,9 +337,15 @@ import ComposableArchitecture
                 createPCZTCalls.withValue { $0 += 1 }
                 return Data()
             }
+            $0.localAuthentication = .mockAuthenticationSucceeded
         }
 
-        await store.send(.confirmTapped)
+        await store.send(.confirmTapped) {
+            $0.isConfirming = true
+        }
+        await store.receive(\.confirmAuthenticated) {
+            $0.isConfirming = false
+        }
         await store.receive(.delegate(.confirmed))
 
         #expect(createPCZTCalls.value == 0)
@@ -318,11 +363,13 @@ import ComposableArchitecture
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
             $0.sdkSynchronizer.createPCZTFromProposal = { _, _ in throw CreatePCZTFailure() }
+            $0.localAuthentication = .mockAuthenticationSucceeded
         }
 
         await store.send(.confirmTapped) {
             $0.isConfirming = true
         }
+        await store.receive(\.confirmAuthenticated)
         await store.receive(\.noteSplitFailed) {
             $0.isConfirming = false
             $0.isFailurePresented = true
@@ -344,11 +391,13 @@ import ComposableArchitecture
             $0.sdkSynchronizer = .noOp
             $0.sdkSynchronizer.createPCZTFromProposal = { _, _ in Data([0xAA]) }
             $0.sdkSynchronizer.redactPCZTForSigner = { _ in throw RedactFailure() }
+            $0.localAuthentication = .mockAuthenticationSucceeded
         }
 
         await store.send(.confirmTapped) {
             $0.isConfirming = true
         }
+        await store.receive(\.confirmAuthenticated)
         await store.receive(\.noteSplitFailed) {
             $0.isConfirming = false
             $0.isFailurePresented = true
@@ -366,6 +415,7 @@ import ComposableArchitecture
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
             $0.sdkSynchronizer.proposeImmediateMigration = { _ in throw ProposeFailure() }
+            $0.localAuthentication = .mockAuthenticationSucceeded
         }
 
         await store.send(.onAppear)
@@ -377,10 +427,16 @@ import ComposableArchitecture
         #expect(store.state.immediateProposal == nil)
 
         // Confirm must not proceed: no proposal to broadcast. Tapping it also dismisses the
-        // (already showing) failure affordance, same as any other confirm/retry tap.
+        // (already showing) failure affordance, same as any other confirm/retry tap, and — since
+        // this is a plain `.confirmTapped`, not the propose-failure Retry short-circuit — still
+        // authenticates before finding out there's nothing to confirm.
         await store.send(.confirmTapped) {
             $0.isFailurePresented = false
             $0.failureReason = nil
+            $0.isConfirming = true
+        }
+        await store.receive(\.confirmAuthenticated) {
+            $0.isConfirming = false
         }
     }
 
@@ -466,6 +522,7 @@ import ComposableArchitecture
                 return pcztBytes
             }
             $0.sdkSynchronizer.redactPCZTForSigner = { _ in redactedBytes }
+            $0.localAuthentication = .mockAuthenticationSucceeded
         }
 
         await store.send(.retryTapped) {
@@ -473,6 +530,7 @@ import ComposableArchitecture
             $0.isFailurePresented = false
             $0.failureReason = nil
         }
+        await store.receive(\.confirmAuthenticated)
         await store.receive(
             .delegate(
                 .keystoneImmediateSignRequested(unsigned: pcztBytes, redacted: redactedBytes)
@@ -511,11 +569,13 @@ import ComposableArchitecture
                 return pcztBytes
             }
             $0.sdkSynchronizer.redactPCZTForSigner = { _ in redactedBytes }
+            $0.localAuthentication = .mockAuthenticationSucceeded
         }
 
         await store.send(.confirmTapped) {
             $0.isConfirming = true
         }
+        await store.receive(\.confirmAuthenticated)
         // Second tap while the PCZT build is in flight: a complete no-op.
         await store.send(.confirmTapped)
 
@@ -546,15 +606,153 @@ import ComposableArchitecture
         } withDependencies: {
             $0.sdkSynchronizer = .noOp
             $0.sdkSynchronizer.createPCZTFromProposal = { _, _ in throw PcztFailure() }
+            $0.localAuthentication = .mockAuthenticationSucceeded
         }
 
         await store.send(.confirmTapped) {
             $0.isConfirming = true
         }
+        await store.receive(\.confirmAuthenticated)
         await store.receive(\.noteSplitFailed) {
             $0.isConfirming = false
             $0.isFailurePresented = true
             $0.failureReason = MigrationReviewTransfer.State.FailureReason.commit
+        }
+    }
+
+    // MARK: - MOB-1458: device-authentication gate (Face ID / Touch ID / passcode)
+
+    /// MOB-1458: a refused/cancelled device-authentication prompt gates the ENTIRE commit body —
+    /// no delegate fires, no PCZT is built, and `isConfirming` returns to `false` so Confirm is
+    /// tappable again. Uses a Keystone account so "no PCZT is built" is a meaningful assertion
+    /// (the software lane never builds one either way).
+    @MainActor @Test func confirmTappedWhenAuthenticationFailsBuildsNoPcztAndEmitsNoDelegate() async {
+        let createPCZTCalls = LockIsolated<Int>(0)
+        var state = MigrationReviewTransfer.State(mode: .immediate)
+        state.immediateProposal = immediateProposal(amount: Zatoshi(1_245_800_000), fee: Zatoshi(15_000))
+        state.$selectedWalletAccount.withLock { $0 = walletAccount(keystone: true, idByte: 30) }
+        let store = TestStore(initialState: state) {
+            MigrationReviewTransfer()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.createPCZTFromProposal = { _, _ in
+                createPCZTCalls.withValue { $0 += 1 }
+                return Data()
+            }
+            $0.localAuthentication = .mockAuthenticationFailed
+        }
+
+        await store.send(.confirmTapped) {
+            $0.isConfirming = true
+        }
+        await store.receive(\.authenticationCancelled) {
+            $0.isConfirming = false
+        }
+
+        #expect(createPCZTCalls.value == 0)
+    }
+
+    /// MOB-1458: single-flight covers the AUTHENTICATION leg itself, not just the PCZT build that
+    /// can follow it — a second tap while the Face ID / Touch ID / passcode prompt is still up
+    /// must be a complete no-op, same as any other in-flight confirm leg.
+    @MainActor @Test func confirmTappedIgnoresSecondTapWhileAuthenticationInFlight() async {
+        let authenticateCalls = LockIsolated<Int>(0)
+        let (releaseStream, releaseContinuation) = AsyncStream<Void>.makeStream()
+        var state = MigrationReviewTransfer.State(mode: .immediate)
+        state.immediateProposal = immediateProposal(amount: Zatoshi(1_245_800_000), fee: Zatoshi(15_000))
+        let store = TestStore(initialState: state) {
+            MigrationReviewTransfer()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.localAuthentication = .mockAuthenticationSucceeded
+            $0.localAuthentication.authenticate = {
+                authenticateCalls.withValue { $0 += 1 }
+                for await _ in releaseStream { break }
+                return true
+            }
+        }
+
+        await store.send(.confirmTapped) {
+            $0.isConfirming = true
+        }
+        // Second tap while the authentication prompt is still up: a complete no-op.
+        await store.send(.confirmTapped)
+
+        releaseContinuation.yield()
+        releaseContinuation.finish()
+
+        await store.receive(\.confirmAuthenticated) {
+            $0.isConfirming = false
+        }
+        await store.receive(.delegate(.confirmed))
+
+        #expect(authenticateCalls.value == 1)
+    }
+
+    /// MOB-1458: a commit-failure Retry (`failureReason == .commit`) re-attempts the FULL gated
+    /// commit, including a fresh device-authentication prompt — unlike the propose-failure Retry
+    /// short-circuit below, which never authenticates. Counts `authenticate()` calls directly
+    /// (rather than only relying on `.confirmAuthenticated` arriving) to make the "authenticates
+    /// again" claim explicit.
+    @MainActor @Test func retryTappedAfterCommitFailureAuthenticatesAgain() async {
+        let authenticateCalls = LockIsolated<Int>(0)
+        var state = MigrationReviewTransfer.State(mode: .immediate)
+        state.immediateProposal = immediateProposal(amount: Zatoshi(1_245_800_000), fee: Zatoshi(15_000))
+        state.isFailurePresented = true
+        state.failureReason = MigrationReviewTransfer.State.FailureReason.commit
+        let store = TestStore(initialState: state) {
+            MigrationReviewTransfer()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.localAuthentication = .mockAuthenticationSucceeded
+            $0.localAuthentication.authenticate = {
+                authenticateCalls.withValue { $0 += 1 }
+                return true
+            }
+        }
+
+        await store.send(.retryTapped) {
+            $0.isConfirming = true
+            $0.isFailurePresented = false
+            $0.failureReason = nil
+        }
+        await store.receive(\.confirmAuthenticated) {
+            $0.isConfirming = false
+        }
+        await store.receive(.delegate(.confirmed))
+
+        #expect(authenticateCalls.value == 1)
+    }
+
+    /// MOB-1458: the propose-failure Retry short-circuit re-fetches a proposal for display only —
+    /// nothing is signed or broadcast, so it must NEVER authenticate. `localAuthentication` is
+    /// intentionally left unimplemented below: a call to `authenticate()` here would fail this
+    /// test (same idiom as `AdvancedSettingsTests.chooseServerSkipsAuthentication`).
+    @MainActor @Test func retryTappedAfterProposeFailureNeverAuthenticates() async {
+        let proposal = immediateProposal(amount: Zatoshi(1_245_800_000), fee: Zatoshi(15_000))
+        var state = MigrationReviewTransfer.State(mode: .immediate)
+        state.isFailurePresented = true
+        state.failureReason = MigrationReviewTransfer.State.FailureReason.propose
+        let store = TestStore(initialState: state) {
+            MigrationReviewTransfer()
+        } withDependencies: {
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.proposeImmediateMigration = { _ in proposal }
+            // `localAuthentication` is intentionally left unimplemented: a call to
+            // `authenticate()` on this re-propose-only path (nothing signed or broadcast) would
+            // fail this test.
+        }
+
+        await store.send(.retryTapped) {
+            $0.isConfirming = true
+            $0.isFailurePresented = false
+            $0.failureReason = nil
+        }
+        await store.receive(\.transferProposed) {
+            $0.isConfirming = false
+            $0.amount = Zatoshi(1_245_800_000)
+            $0.fee = Zatoshi(15_000)
+            $0.immediateProposal = proposal
         }
     }
 
