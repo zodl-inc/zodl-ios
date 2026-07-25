@@ -123,6 +123,26 @@
 //  `keystoneSplitResumeContinued` action, the `storeScheduleRequested`/`splitConfirmed` handshake
 //  cases, and `storeDeferredKeystoneSchedule` are deleted with the detour.
 //
+//  MOB-1458 (code review — device-authentication coverage/robustness):
+//  - F2: the expired-recovery gate moves OFF the review screen's own Confirm (which by the time it
+//    ran only guarded navigation — the software lane had already re-signed and committed, the
+//    Keystone lane had already refreshed and proposed, both unauthenticated) onto
+//    `.recovery(.delegate(.recreate))` itself, the tap that actually starts that work, for both
+//    vendors. `recoveryRecreateAuthenticated` carries the ORIGINAL `.recreate` body verbatim;
+//    `recoveryRecreateAuthenticationCancelled` clears `isRecovering` on a refusal.
+//  - F3: `.status(.delegate(.sendNow))` stays deliberately UNGATED — see that case's own doc in
+//    `MigrationCoordFlowCoordinator.swift` for the rationale (a documented exemption, not a gap).
+//  - F4: "Migrate anyway" gains single-flight (`MigrationComplete.State.isMigratingAnyway`, set by
+//    `migrateAnywayTapped`) and effect cancellation. `migrateAnywayAuthenticated` now carries
+//    `id`/`account`, captured at TAP time rather than re-read from `state`/`@Shared` after the
+//    prompt (this file's own long-lived-effect convention — see `runFirstDeliveryKick`'s doc: this
+//    effect is root-scoped, not under `.forEach(\.path,…)`, so nothing auto-cancels it either) —
+//    `CancelID.migrateAnywayAuthentication` now covers the whole gate+continuation chain.
+//    `migrateAnywayAuthenticationCancelled`/`migrateAnywayFailed` clear the flag on a refusal and on
+//    the post-gate unlock/propose failure path respectively.
+//  - F6: both gates above move onto the shared `LocalAuthenticationClient.gated(success:cancelled:)`
+//    helper instead of a hand-rolled `.run`.
+//
 
 import SwiftUI
 import ComposableArchitecture
@@ -438,10 +458,25 @@ struct MigrationCoordFlow {
         /// (`.complete(.delegate(.migrateAnyway))`) passed: `LocalAuthenticationClient.authenticate()`
         /// returned `true` (Face ID / Touch ID / passcode, or the client's own no-passcode-set
         /// bypass), so the ORIGINAL unlock + propose + vendor-fork body — unchanged since MOB-1496
-        /// (W-B) — now runs. A refusal never reaches this action at all; see
-        /// `MigrationCoordFlowCoordinator.swift`'s `.complete(.delegate(.migrateAnyway))` case for
-        /// the gate itself and why a refusal returns silently (no alert, no toast, no navigation).
-        case migrateAnywayAuthenticated
+        /// (W-B) — now runs. `id`/`account` are captured at TAP time (in the gate's own case, before
+        /// `authenticate()` is ever called) and ride this action rather than being re-read from
+        /// `state.path[id:]`/`@Shared` once the prompt resolves — see this file's header doc (F4) for
+        /// why. See `MigrationCoordFlowCoordinator.swift`'s `.complete(.delegate(.migrateAnyway))`
+        /// case for the gate itself and why a refusal (`migrateAnywayAuthenticationCancelled` below)
+        /// returns silently (no alert, no toast, no navigation).
+        case migrateAnywayAuthenticated(id: StackElementID, account: WalletAccount)
+        /// Internal: MOB-1458 (F4) — the gate above was refused, or `state.selectedWalletAccount`
+        /// was unexpectedly nil at tap time (a "can't happen" that still must not strand the button —
+        /// mirrors the software recovery lane's `zip32AccountIndex` guard). Clears
+        /// `MigrationComplete.State.isMigratingAnyway` on the `.complete` element with the given id
+        /// so the button is tappable again; no alert, no toast, no navigation.
+        case migrateAnywayAuthenticationCancelled(id: StackElementID)
+        /// Internal: MOB-1458 (F4) — the unlock/propose (or, Keystone, the PCZT build+redact) leg
+        /// that follows a PASSED gate threw. Sent just before the existing generic Sending-failure-
+        /// sheet push (`.pushHydratedPathState(.sending(isFailurePresented: true))`) so
+        /// `isMigratingAnyway` clears too — otherwise a user who pops back from that failure sheet to
+        /// Complete would find "Migrate anyway" permanently disabled.
+        case migrateAnywayFailed(id: StackElementID)
         /// Internal: MOB-1496 (W-B) — "Migrate anyway"'s Keystone fork
         /// (`.complete(.delegate(.migrateAnyway))`) unlocked, proposed the immediate migration,
         /// built its single PCZT via `createPCZTFromProposal`, and redacted it for the signer
@@ -504,6 +539,22 @@ struct MigrationCoordFlow {
         /// `restartCurrentMigrationStep`, reconciles on success, and pushes the re-created plan (the
         /// pre-Task-2 recovery-recreate behavior, factored out so both entry points share it).
         case recoveryRestartRequested
+        /// Internal: MOB-1458 (code review — F2): the device-authentication gate this task ADDS to
+        /// `.recovery(.delegate(.recreate))` passed — `id`/`account`/`reason` are captured at TAP
+        /// time (in that case, before `authenticate()` is ever called) and ride this action; the
+        /// handler runs the ORIGINAL `.recreate` body verbatim (the reason/vendor split described in
+        /// that case's own doc in `MigrationCoordFlowCoordinator.swift`). Moving the gate here —
+        /// rather than leaving it on the expired-transfer review screen's own Confirm, which by the
+        /// time it ran only guarded navigation — is the fix itself: the software lane had already
+        /// re-signed and committed the schedule, and the Keystone lane had already refreshed and
+        /// proposed a fresh PCZT batch, both fully unauthenticated, before that review screen ever
+        /// appeared.
+        case recoveryRecreateAuthenticated(id: StackElementID, account: WalletAccount, reason: MigrationRecovery.State.Reason)
+        /// Internal: MOB-1458 (F2): the gate above was refused — clears `isRecovering` on the
+        /// `.recovery` element with the given id (mirroring the existing failure-alert clear at
+        /// `.recoveryRefreshFailed`) so the Continue button is tappable again; no alert, no toast, no
+        /// navigation.
+        case recoveryRecreateAuthenticationCancelled(id: StackElementID)
 
         /// MOB-1458 (Task 2): the expired-recovery refresh-failure alert's own action type — a
         /// dedicated `Equatable` enum (not the store's own non-`Equatable` `Action`) so

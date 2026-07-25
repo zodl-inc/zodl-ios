@@ -15,9 +15,9 @@
 //  that derivation is the only thing driving it in the shipped app; tests can pin an explicit
 //  value. `lockBalanceTapped` (valid only from `.offered`) runs `migrationManager.lockMigrationDust()`:
 //  `.locking` while in flight, `.locked` on success, back to `.offered` plus a failure alert
-//  otherwise. `migrateAnywayTapped` just emits `.delegate(.migrateAnyway)` for the coordinator to
-//  wire up later (delegate wiring is a separate serialized stream) — no local state change.
-//  `gotItTapped` is unchanged and reachable from `.none`/`.locked`.
+//  otherwise. `migrateAnywayTapped` emits `.delegate(.migrateAnyway)` for the coordinator to wire up
+//  later (delegate wiring is a separate serialized stream) — see MOB-1458 below for the one local
+//  state change it does make now. `gotItTapped` is unchanged and reachable from `.none`/`.locked`.
 //
 //  MOB-1487 (round 3, Figma 3925:24209): adds the "Lock balance" explainer sheet's presentation
 //  state — `isLockExplainerPresented`, toggled by an explicit present/dismiss action pair
@@ -31,6 +31,15 @@
 //  (unlike `lockBalanceTapped`'s `.offered`-only guard, which protects a real SDK side effect).
 //  `lockExplainerDismissed` is intentionally distinct from `gotItTapped` — it closes only the
 //  sheet, never the screen.
+//
+//  MOB-1458 (code review — F4): `migrateAnywayTapped` gains a single-flight guard
+//  (`State.isMigratingAnyway`). The coordinator's device-authentication gate that follows this tap
+//  is an async prompt with no local state of its own to disable the button on its behalf — and on a
+//  device with no passcode set (or the simulator) it resolves instantly with NO visible sheet — so
+//  two fast taps could otherwise both emit `.delegate(.migrateAnyway)` and each run its own
+//  unlock/propose/broadcast. See `MigrationCoordFlowCoordinator.swift`'s
+//  `.complete(.delegate(.migrateAnyway))`/`.migrateAnywayAuthenticated` cases for the coordinator
+//  side, which clears the flag again on a refusal or a post-gate failure.
 //
 
 import ComposableArchitecture
@@ -68,6 +77,19 @@ struct MigrationComplete {
         /// the memberwise `init` below — like `alert`, it's presentation-only state that tests
         /// mutate directly on a case that needs to start with the sheet already up.
         var isLockExplainerPresented = false
+        /// MOB-1458 (code review — F4): single-flight for "Migrate anyway" — true from the tap that
+        /// starts the coordinator's device-authentication gate until that gate's continuation lands
+        /// (a refusal, a post-gate unlock/propose failure, or — implicitly, since the flow then
+        /// closes — a success). SET here, locally, by `migrateAnywayTapped` itself, unlike
+        /// `MigrationRecovery.State.isRecovering`/`MigrationStatus.State.isRescheduling`, which the
+        /// COORDINATOR sets on their path elements — those flags guard coordinator-owned async work
+        /// that starts asynchronously from the coordinator's own handler, while this tap's own
+        /// reducer runs synchronously and can set its own guard before ever delegating out. CLEARED
+        /// by the coordinator (which owns the gate + the unlock/propose that follows it) via
+        /// `.migrateAnywayAuthenticationCancelled`/`.migrateAnywayFailed` — see
+        /// `MigrationCoordFlowCoordinator.swift`. Deliberately not part of the memberwise `init`
+        /// below, matching `isLockExplainerPresented`'s own precedent just above.
+        var isMigratingAnyway = false
 
         var hasDust: Bool {
             dust.amount > 0
@@ -161,6 +183,13 @@ struct MigrationComplete {
                 return .none
 
             case .migrateAnywayTapped:
+                // MOB-1458 (F4): single-flight — see `State.isMigratingAnyway`'s doc. A second tap
+                // that arrives before the coordinator's gate/unlock/propose leg resolves is a no-op;
+                // the view's `.disabled` mirrors this so the common double-tap never reaches here at
+                // all, but this guard is the backstop for a tap that lands anyway (e.g. queued just
+                // ahead of the disable taking visual effect).
+                guard !state.isMigratingAnyway else { return .none }
+                state.isMigratingAnyway = true
                 return .send(.delegate(.migrateAnyway))
             }
         }

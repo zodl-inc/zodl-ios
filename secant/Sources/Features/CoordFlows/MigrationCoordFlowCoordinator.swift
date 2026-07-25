@@ -1212,6 +1212,20 @@ extension MigrationCoordFlow {
                 // MARK: - Status
 
             case .path(.element(id: _, action: .status(.delegate(.sendNow)))):
+                // MOB-1458 (code review — F3): deliberately NOT gated behind device authentication
+                // (Michal, code review) — record this as a considered exemption, not a gap, if it
+                // comes up again. The transfer this pushes `MigrationSending` to broadcast is already
+                // SIGNED — signing happened back at the gated plan commit — and the background
+                // executor broadcasts that very same signed transfer, unattended, with no
+                // authentication, the moment its delivery window opens; this tap just runs that same
+                // unauthenticated broadcast in the foreground, sooner. A prompt here would not guard
+                // anything the background path doesn't already do without one — it would only be
+                // friction a user bypasses by waiting for the next automatic window, never a real
+                // security boundary. Contrast the manual-delivery Confirm this file DOES gate
+                // (`.reviewTransfer(.delegate(.confirmed))`'s manual-step body): `reentryRoute()`
+                // routes manual mode to `.reviewManual`, never `.statusResume`, and manual mode has no
+                // automatic/background delivery at all — that tap is the ONLY authorisation moment a
+                // manual transfer ever gets, so it must gate. This one doesn't need to.
                 // MOB-1496 (fix-wave, review MINOR-5): `totalCount` used to be driven by the
                 // overdue row count — vestigial once `MigrationSendingStore` stopped looping on it
                 // (W5, ZIP-0318 MUST: at most one broadcast per screen regardless of how many
@@ -1284,14 +1298,46 @@ extension MigrationCoordFlow {
                 // async work, so it owns the flag, exactly like `.status(.delegate(.reschedule))` sets
                 // `isRescheduling`. The flag is cleared on the failure alert below and reset by the
                 // recovery screen's own `.onAppear` when it re-appears after navigating away.
+                //
+                // MOB-1458 (code review — F2): device-authentication gate. This handler used to run
+                // the whole rebuild/re-sign/record body directly. Review found the gate on the
+                // EXPIRED-recovery review screen's own Confirm guards only navigation: by the time
+                // that screen appears, the software lane has already derived the real spending key,
+                // re-signed every rebuilt transfer, and recorded+reconciled the committed schedule
+                // (the Keystone lane has already refreshed and proposed a fresh PCZT batch) — ALL with
+                // no authentication. Declining on the review screen left a fully committed run for the
+                // background executor to deliver anyway. The gate belongs HERE instead, on the tap
+                // that actually starts that work, for BOTH vendors: `isRecovering` is set BEFORE
+                // prompting (so a second tap arriving mid-prompt still no-ops on the guard above) and
+                // cleared on a refusal (`recoveryRecreateAuthenticationCancelled`), exactly as it
+                // already was on the failure alert below. `id`/`account`/`reason` are captured HERE,
+                // at tap time, and ride `recoveryRecreateAuthenticated` rather than being re-read from
+                // `state` after the `authenticate()` await — which then runs the ORIGINAL body
+                // verbatim (see that case).
             case .path(.element(id: let id, action: .recovery(.delegate(.recreate)))):
                 guard case .recovery(var recoveryState) = state.path[id: id] else { return .none }
                 guard !recoveryState.isRecovering else { return .none }
                 guard let account = state.selectedWalletAccount else { return .none }
+                // Read the reason out BEFORE mutating `recoveryState`: `gated`'s arguments are
+                // `@autoclosure`, so they are evaluated inside the effect and would otherwise
+                // capture the mutable local rather than its value at tap time.
+                let reason = recoveryState.reason
                 recoveryState.isRecovering = true
                 state.path[id: id] = .recovery(recoveryState)
 
-                switch recoveryState.reason {
+                return localAuthentication.gated(
+                    success: .recoveryRecreateAuthenticated(id: id, account: account, reason: reason),
+                    cancelled: .recoveryRecreateAuthenticationCancelled(id: id)
+                )
+
+                // MOB-1458 (F2): the gate above passed — the ORIGINAL `.recovery(.delegate(.recreate))`
+                // body, moved here verbatim (see that case's doc for the full rebuild/re-sign/record
+                // rationale per reason/vendor). `account`/`reason` ride the action rather than being
+                // re-read off `state` post-await; `id` isn't needed by this body (nothing here writes
+                // back to the `.recovery` element on success — same as before this fix) but rides
+                // along for symmetry with the cancellation below.
+            case .recoveryRecreateAuthenticated(_, let account, let reason):
+                switch reason {
                 case .notesSpent:
                     return .send(.recoveryRestartRequested)
 
@@ -1373,6 +1419,16 @@ extension MigrationCoordFlow {
                         }
                     }
                 }
+
+                // MOB-1458 (F2): the gate above was refused — clear `isRecovering` so the recovery
+                // screen's Continue button is tappable again; no alert, no toast, no navigation,
+                // matching every other device-authentication refusal in this file.
+            case .recoveryRecreateAuthenticationCancelled(let id):
+                if case .recovery(var recoveryState) = state.path[id: id] {
+                    recoveryState.isRecovering = false
+                    state.path[id: id] = .recovery(recoveryState)
+                }
+                return .none
 
                 // MOB-1458 (Task 2): the `.invalidTransfer` recovery lane AND the expired-recovery
                 // failure alert's "restart the step" action both land here — the pre-Task-2
@@ -1460,11 +1516,40 @@ extension MigrationCoordFlow {
                 // confirm taps already do (and matches the Android wallet). The authenticated
                 // continuation is deferred to `.migrateAnywayAuthenticated` below, which carries the
                 // ENTIRE pre-MOB-1458 handler body verbatim.
-            case .path(.element(id: _, action: .complete(.delegate(.migrateAnyway)))):
-                return .run { send in
-                    guard await localAuthentication.authenticate() else { return }
-                    await send(.migrateAnywayAuthenticated)
+                //
+                // MOB-1458 (code review — F4/F6): `account` is captured HERE, at tap time, and rides
+                // both continuations (`migrateAnywayAuthenticated`'s success,
+                // `migrateAnywayAuthenticationCancelled`'s refusal) rather than being re-read from
+                // `@Shared` once the prompt resolves — this file's own long-lived-effect convention
+                // (see `runFirstDeliveryKick`'s doc: this case lives in `coordinatorReduce()`, not
+                // under `.forEach(\.path,…)`, so nothing auto-cancels it on a pop either way).
+                // `CancelID.migrateAnywayAuthentication`, keyed by account like
+                // `CancelID.deferredScheduleStoreRearm` (MOB-1509: this coordinator is a single
+                // permanent `Scope` shared by every account), covers the whole gate+continuation
+                // chain — both `.cancellable` sites below share it. The `nil`-account branch is a
+                // "can't happen" (Complete only ever shows for the selected account's own run) but,
+                // like the software recovery lane's `zip32AccountIndex` guard, still routes to the
+                // SAME clearing action the refusal uses rather than silently stranding the caller's
+                // `isMigratingAnyway` flag with no prompt ever shown.
+            case .path(.element(id: let id, action: .complete(.delegate(.migrateAnyway)))):
+                guard let account = state.selectedWalletAccount else {
+                    return .send(.migrateAnywayAuthenticationCancelled(id: id))
                 }
+                return localAuthentication.gated(
+                    success: .migrateAnywayAuthenticated(id: id, account: account),
+                    cancelled: .migrateAnywayAuthenticationCancelled(id: id)
+                )
+                .cancellable(id: MigrationCoordFlow.CancelID.migrateAnywayAuthentication(account.id), cancelInFlight: true)
+
+                // MOB-1458 (F2/F4): the refusal arm of both gates in this file clears the tapped
+                // screen's own in-flight flag so its button goes live again — no alert, no toast, no
+                // navigation either way.
+            case .migrateAnywayAuthenticationCancelled(let id):
+                if case .complete(var completeState) = state.path[id: id] {
+                    completeState.isMigratingAnyway = false
+                    state.path[id: id] = .complete(completeState)
+                }
+                return .none
 
                 // MOB-1496 (W-B): "Migrate anyway" now rides the SAME immediate (send-max) lane the
                 // entry-screen migration uses, for both vendors — see this file's header doc.
@@ -1479,10 +1564,10 @@ extension MigrationCoordFlow {
                 //
                 // MOB-1458: reached only once `.complete(.delegate(.migrateAnyway))` above has
                 // already authenticated — this case is otherwise byte-for-byte the pre-MOB-1458
-                // handler, moved down verbatim.
-            case .migrateAnywayAuthenticated:
-                guard let account = state.selectedWalletAccount else { return .none }
-
+                // handler, moved down verbatim (MOB-1458 code review, F4: each catch now also sends
+                // `.migrateAnywayFailed(id:)` ahead of the existing failure-sheet push, and both
+                // effects share the gate's `CancelID.migrateAnywayAuthentication`).
+            case .migrateAnywayAuthenticated(let id, let account):
                 guard account.vendor != WalletAccount.Vendor.keystone else {
                     return .run { [sdkSynchronizer, accountUUID = account.id] send in
                         do {
@@ -1498,9 +1583,11 @@ extension MigrationCoordFlow {
                             )
                         } catch {
                             LoggerProxy.error("[MOB-1513] Migrate-anyway Keystone propose/PCZT/redact failed: \(error)")
+                            await send(.migrateAnywayFailed(id: id))
                             await send(.pushHydratedPathState(.sending(MigrationSending.State(isFailurePresented: true, totalCount: 1))))
                         }
                     }
+                    .cancellable(id: MigrationCoordFlow.CancelID.migrateAnywayAuthentication(account.id))
                 }
 
                 return .run { [sdkSynchronizer, accountUUID = account.id] send in
@@ -1509,9 +1596,22 @@ extension MigrationCoordFlow {
                         let proposal = try await sdkSynchronizer.proposeImmediateMigration(accountUUID)
                         await send(.pushHydratedPathState(.sending(MigrationSending.State(totalCount: 1, immediateProposal: proposal))))
                     } catch {
+                        await send(.migrateAnywayFailed(id: id))
                         await send(.pushHydratedPathState(.sending(MigrationSending.State(isFailurePresented: true, totalCount: 1))))
                     }
                 }
+                .cancellable(id: MigrationCoordFlow.CancelID.migrateAnywayAuthentication(account.id))
+
+                // MOB-1458 (F4): the unlock/propose (or Keystone PCZT build+redact) leg above threw —
+                // clear `isMigratingAnyway` on the `.complete` element with the given id so a user who
+                // pops back from the failure sheet this is paired with finds "Migrate anyway" tappable
+                // again, exactly like the refusal above.
+            case .migrateAnywayFailed(let id):
+                if case .complete(var completeState) = state.path[id: id] {
+                    completeState.isMigratingAnyway = false
+                    state.path[id: id] = .complete(completeState)
+                }
+                return .none
 
             case .migrateAnywayImmediateKeystonePCZTProposed(let unsigned, let redacted):
                 // Mirrors `.reviewTransfer(.delegate(.keystoneImmediateSignRequested))`'s handler
@@ -2270,6 +2370,15 @@ extension MigrationCoordFlow {
         /// let account B's `cancelInFlight` arm — or its store's `.cancel` — tear down account A's
         /// still-armed re-arm, stranding A's run; keying by account isolates each re-arm subscription.
         case deferredScheduleStoreRearm(AccountUUID)
+        /// MOB-1458 (code review — F4/F6): "Migrate anyway"'s device-authentication gate PLUS the
+        /// unlock/propose/PCZT continuation that follows a pass — both `.cancellable` sites in
+        /// `.complete(.delegate(.migrateAnyway))`/`.migrateAnywayAuthenticated` share this id, keyed
+        /// by account for the SAME reason as `deferredScheduleStoreRearm` above (one shared
+        /// coordinator across parallel per-account migrations). `cancelInFlight: true` on the gate
+        /// is a defensive backstop against a genuinely concurrent second chain for the same account —
+        /// the primary double-tap guard is `MigrationComplete.State.isMigratingAnyway`, owned by the
+        /// tapped screen itself.
+        case migrateAnywayAuthentication(AccountUUID)
     }
 
     /// Total broadcast attempts one kick makes when a Keystone deferred schedule store is pending

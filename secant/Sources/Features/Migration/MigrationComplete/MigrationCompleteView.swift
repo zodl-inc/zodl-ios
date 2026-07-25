@@ -264,7 +264,11 @@ struct MigrationCompleteView: View {
 
             if store.dustResolution == .offered || store.dustResolution == .locking {
                 migrateAnywayButton
-                    .disabled(store.dustResolution == .locking)
+                    // MOB-1458 (code review — F4): `.locking` (dust-lock in flight) disabled this
+                    // already; `isMigratingAnyway` (the device-authentication gate + unlock/propose
+                    // leg in flight, MOB-1458) now does too — previously the ONLY state where this
+                    // tap is actually meaningful (`.offered`) left the button live for a double-tap.
+                    .disabled(store.dustResolution == .locking || store.isMigratingAnyway)
             }
         }
         .padding(16)
