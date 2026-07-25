@@ -48,6 +48,26 @@ import Foundation
         )
     }
 
+    /// The SDK-backed init must carry the transaction's note counts onto the state rather than
+    /// leaving them at their struct defaults. `sentNoteCount` and `receivedNoteCount` are given
+    /// distinct, non-default values here, so deleting either wiring line in
+    /// `TransactionState.init(transaction:)` (`sentNoteCount = transaction.sentNoteCount` /
+    /// `receivedNoteCount = transaction.receivedNoteCount`) makes the corresponding property fall
+    /// back to 0 and fails this test - unlike asserting against 0, which those defaults would
+    /// satisfy whether or not the wiring exists.
+    @Test func noteCountsAreWiredFromSDKTransaction() {
+        let state = TransactionState(
+            transaction: overview(
+                sentNoteCount: 3,
+                receivedNoteCount: 2,
+                value: Zatoshi(25_000_000)
+            )
+        )
+
+        #expect(state.sentNoteCount == 3)
+        #expect(state.receivedNoteCount == 2)
+    }
+
     /// The migration shape: a self-send whose net value collapses to the fee, with no counted
     /// sent or received notes but a real `totalReceived`. netValue must show the crossing amount
     /// (`totalReceived`), not the misleading fee-collapsed net (`zecAmount`).
@@ -61,10 +81,7 @@ import Foundation
             )
         )
 
-        #expect(state.sentNoteCount == 0)
-        #expect(state.receivedNoteCount == 0)
         #expect(state.netValue == Zatoshi(25_000_000).atLeastThreeDecimalsZashiFormatted())
-        #expect(state.netValue != state.zecAmount.atLeastThreeDecimalsZashiFormatted())
     }
 
     /// A shielding transaction keeps the `totalSpent` path even with 0/0 note counts: that
@@ -89,9 +106,9 @@ import Foundation
 
     /// Guard hardening: a note-less (0/0) shape whose `totalReceived` is `.zero` — the same shape
     /// the swap-deposit initialiser produces — must stay on the `zecAmount` path rather than
-    /// misreport a zero crossing amount. `zecAmount` is deliberately non-zero here so the two
-    /// paths are distinguishable: a guard that checks presence alone (not `> 0`) would return the
-    /// zero `totalReceived` and fail the second assertion.
+    /// misreport a zero crossing amount. `zecAmount` is deliberately non-zero here, so a guard
+    /// that checks presence alone (not `> 0`) would return the zero `totalReceived` instead and
+    /// be caught by the assertion below.
     @Test func noteslessStateWithZeroTotalReceivedKeepsZecAmountPath() {
         let state = TransactionState(
             transaction: overview(
@@ -103,7 +120,6 @@ import Foundation
         )
 
         #expect(state.netValue == state.zecAmount.atLeastThreeDecimalsZashiFormatted())
-        #expect(state.netValue != Zatoshi.zero.atLeastThreeDecimalsZashiFormatted())
     }
 
     /// The non-SDK initialisers (a pending send, a swap deposit) never touch the note-count
