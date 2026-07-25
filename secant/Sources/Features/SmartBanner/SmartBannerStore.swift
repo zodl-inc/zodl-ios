@@ -346,7 +346,9 @@ struct SmartBanner {
                 let snapshot = SyncStatusSnapshot.snapshotFor(state: latestState.data.syncStatus)
                 
                 if let account = state.selectedWalletAccount, let accountBalance = latestState.data.accountsBalances[account.id] {
-                    state.spendableBalance = accountBalance.saplingBalance.spendableValue + accountBalance.orchardBalance.spendableValue
+                    // Pool-agnostic accessor: sum sapling + orchard + ironwood (and any future
+                    // shielded pool) instead of hand-summing individual pools.
+                    state.spendableBalance = accountBalance.shieldedSpendableValue
                 }
 
                 if snapshot.syncStatus != state.synchronizerStatusSnapshot.syncStatus {
@@ -519,11 +521,12 @@ struct SmartBanner {
             case .evaluatePriority8:
                 if let account = state.selectedWalletAccount {
                     if let accountBalance = sdkSynchronizer.latestState().accountsBalances[account.id] {
-                        let orchard = accountBalance.orchardBalance.total().amount
-                        let sapling = accountBalance.saplingBalance.total().amount
+                        // Pool-agnostic accessor: sums sapling + orchard + ironwood (and any
+                        // future shielded pool) instead of hand-summing individual pools.
+                        let shielded = accountBalance.shieldedTotal().amount
                         let unshielded = accountBalance.unshielded.amount
-                        
-                        if orchard + sapling + unshielded == 0 {
+
+                        if shielded + unshielded == 0 {
                             return .send(.evaluatePriority9)
                         }
                     }

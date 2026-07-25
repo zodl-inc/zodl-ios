@@ -171,14 +171,14 @@ struct Balances {
                 return .send(.updateBalance(accountsBalances[account.id]))
 
             case .updateBalance(let accountBalance):
-                state.changePending = (accountBalance?.saplingBalance.changePendingConfirmation ?? .zero) +
-                    (accountBalance?.orchardBalance.changePendingConfirmation ?? .zero)
-                state.pendingTransactions = (accountBalance?.saplingBalance.valuePendingSpendability ?? .zero) +
-                    (accountBalance?.orchardBalance.valuePendingSpendability ?? .zero)
-                state.shieldedBalance = (accountBalance?.saplingBalance.spendableValue ?? .zero) + (accountBalance?.orchardBalance.spendableValue ?? .zero)
+                // Pool-agnostic accessors: sum sapling + orchard + ironwood (and any future
+                // shielded pool) instead of hand-summing individual pools.
+                state.changePending = accountBalance?.shieldedChangePendingConfirmation ?? .zero
+                state.pendingTransactions = accountBalance?.shieldedValuePendingSpendability ?? .zero
+                state.shieldedBalance = accountBalance?.shieldedSpendableValue ?? .zero
                 state.transparentBalance = accountBalance?.unshielded ?? .zero
 
-                state.shieldedWithPendingBalance = (accountBalance?.saplingBalance.total() ?? .zero) + (accountBalance?.orchardBalance.total() ?? .zero)
+                state.shieldedWithPendingBalance = accountBalance?.shieldedTotal() ?? .zero
                 state.totalBalance = state.shieldedWithPendingBalance + state.transparentBalance + (accountBalance?.awaitingResolution ?? .zero)
 
                 let everythingCondition = state.shieldedBalance.amount > 0 && ((state.shieldedBalance == state.totalBalance)

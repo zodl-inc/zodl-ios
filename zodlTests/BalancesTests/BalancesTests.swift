@@ -96,6 +96,36 @@ import ComposableArchitecture
         #expect(store.state.spendability == .something)
     }
 
+    // Ironwood is a third shielded pool (NU6.3 / Orchard note-version V3). The reducer must
+    // pick it up through the SDK's pool-agnostic `shielded*` accessors on `AccountBalance`
+    // rather than a hand-summed sapling+orchard pair, or Ironwood funds would be invisible.
+    @MainActor @Test func updateBalanceAggregatesSaplingOrchardIronwoodAndTransparent() async {
+        let store = TestStore(initialState: state(autoShieldingThreshold: Zatoshi(1_000_000))) {
+            Balances()
+        } withDependencies: {
+            $0.zcashSDKEnvironment.shieldingThreshold = { Zatoshi(1_000_000) }
+        }
+        store.exhaustivity = .off
+
+        let balance = AccountBalance(
+            saplingBalance: PoolBalance(spendableValue: Zatoshi(100), changePendingConfirmation: Zatoshi(10), valuePendingSpendability: Zatoshi(20)),
+            orchardBalance: PoolBalance(spendableValue: Zatoshi(200), changePendingConfirmation: Zatoshi(30), valuePendingSpendability: Zatoshi(40)),
+            ironwoodBalance: PoolBalance(spendableValue: Zatoshi(300), changePendingConfirmation: Zatoshi(50), valuePendingSpendability: Zatoshi(60)),
+            unshielded: Zatoshi(5),
+            awaitingResolution: Zatoshi(1)
+        )
+
+        await store.send(.updateBalance(balance))
+
+        #expect(store.state.changePending == Zatoshi(90))              // 10 + 30 + 50
+        #expect(store.state.pendingTransactions == Zatoshi(120))       // 20 + 40 + 60
+        #expect(store.state.shieldedBalance == Zatoshi(600))           // 100 + 200 + 300
+        #expect(store.state.transparentBalance == Zatoshi(5))          // unshielded
+        #expect(store.state.shieldedWithPendingBalance == Zatoshi(810)) // 130 + 270 + 410 totals
+        #expect(store.state.totalBalance == Zatoshi(816))              // 810 + 5 + 1 awaiting
+        #expect(store.state.spendability == .something)
+    }
+
     @MainActor @Test func shieldingProcessorRequestedMarksShielding() async {
         let store = TestStore(initialState: state()) { Balances() }
 

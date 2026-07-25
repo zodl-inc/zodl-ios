@@ -10,7 +10,7 @@
 import Testing
 import Foundation
 import ComposableArchitecture
-@preconcurrency import ZcashLightClientKit
+@testable @preconcurrency import ZcashLightClientKit
 @testable import zodl_internal
 
 @Suite(.serialized) struct SmartBannerTests {
@@ -100,5 +100,55 @@ import ComposableArchitecture
         await store.send(.torSettingsRequested) {
             $0.isSyncTimedOutSheetPresented = false
         }
+    }
+
+    // MARK: - evaluatePriority8 zero-balance check
+
+    /// A wallet holding funds only in the Ironwood pool (sapling and orchard both empty) must not
+    /// be treated as an empty balance. Ironwood is a third shielded pool (NU6.3 / Orchard
+    /// note-version V3); the reducer must fold it into the zero-balance check via the SDK's
+    /// pool-agnostic `shieldedTotal()` rather than a hand-summed sapling+orchard pair, or the
+    /// currency-conversion prompt would be skipped for Ironwood-only holders.
+    @MainActor @Test func evaluatePriority8TreatsIronwoodOnlyBalanceAsNonZero() async {
+        let account = WalletAccount(
+            Account(
+                id: AccountUUID(id: [UInt8](repeating: 0x01, count: 16)),
+                name: "Zodl",
+                keySource: nil,
+                seedFingerprint: nil,
+                hdAccountIndex: Zip32AccountIndex(0),
+                ufvk: nil,
+                uivk: nil
+            )
+        )
+
+        let accountBalance = AccountBalance(
+            saplingBalance: .zero,
+            orchardBalance: .zero,
+            ironwoodBalance: PoolBalance(spendableValue: Zatoshi(100), changePendingConfirmation: .zero, valuePendingSpendability: .zero),
+            unshielded: .zero
+        )
+
+        let synchronizerState: SynchronizerState = {
+            var value = SynchronizerState.zero
+            value.accountsBalances = [account.id: accountBalance]
+            return value
+        }()
+
+        var state = SmartBanner.State()
+        state.$selectedWalletAccount.withLock { $0 = account }
+
+        let store = TestStore(initialState: state) {
+            SmartBanner()
+        } withDependencies: {
+            $0.sdkSynchronizer = .mocked(latestState: { synchronizerState })
+        }
+        store.exhaustivity = .off
+        store.dependencies.mainQueue = .immediate
+
+        await store.send(.evaluatePriority8)
+        // Falls through to the exchange-rate check (and triggers priority8) instead of
+        // short-circuiting straight to priority9 as if the balance were empty.
+        await store.receive(\.triggerPriority)
     }
 }
