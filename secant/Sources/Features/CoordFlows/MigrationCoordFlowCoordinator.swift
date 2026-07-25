@@ -789,6 +789,13 @@ extension MigrationCoordFlow {
                 state.pendingKeystoneSigningAccountUUID = nil
                 let topElementIsScan = state.path.last?.is(\.scan) == true
                 state.path.removeLast(topElementIsScan ? 2 : 1)
+                // MOB-1458: same dust-lane "Migrate anyway" flag fix (see `clearMigrateAnywayInFlight`'s
+                // doc) — placed ahead of the branch below so it runs whichever screen the pop landed
+                // on. This lane's leak is not currently user-visible (the `.sending` pushed below over
+                // a retained `.complete` ends the flow before `.complete` could reappear), but the
+                // clear is free and keeps it that way if this fallback's behavior ever changes — do
+                // NOT delete this as dead code.
+                clearMigrateAnywayInFlight(state: &state)
                 if let reviewId = state.path.ids.last, case .reviewTransfer(var reviewState) = state.path.last {
                     reviewState.isConfirming = false
                     reviewState.isFailurePresented = true
@@ -1052,6 +1059,11 @@ extension MigrationCoordFlow {
                 // accumulated rounds included (no-partial-storage invariant; nothing was stored).
                 state.keystoneBatchRounds = nil
                 let _ = state.path.popLast()
+                // MOB-1458: the pop above can land back on a still-live `.complete` (the dust lane —
+                // `beginImmediateKeystoneCeremony` only ever appends over it) whose `isMigratingAnyway`
+                // this reject would otherwise leave stranded `true` forever. See
+                // `clearMigrateAnywayInFlight`'s doc for why this scans rather than threading an id.
+                clearMigrateAnywayInFlight(state: &state)
                 return .none
 
             case .keystoneScanAbandoned:
@@ -1108,6 +1120,12 @@ extension MigrationCoordFlow {
                 // pop-1 path.
                 let topElementIsScan = state.path.last?.is(\.scan) == true
                 state.path.removeLast(topElementIsScan ? 2 : 1)
+                // MOB-1458: same dust-lane "Migrate anyway" flag fix as `.keystoneSignRejected` above
+                // — see `clearMigrateAnywayInFlight`'s doc. Deliberately ahead of the
+                // `hadPendingCeremony` guard below: the stray-run cancellation and this UI-flag clear
+                // are independent concerns, and the latter must still fire when there is no run to
+                // cancel.
+                clearMigrateAnywayInFlight(state: &state)
 
                 guard hadPendingCeremony, let accountUUID = state.selectedWalletAccount?.id else { return .none }
                 // MOB-1458 (final review C1): the abandon-cancels-the-stray-run premise above
@@ -2344,6 +2362,60 @@ extension MigrationCoordFlow {
                 )
             )
         )
+    }
+
+    // MARK: - MOB-1458: dust-lane "Migrate anyway" in-flight flag — Keystone ceremony exit cleanup
+
+    /// Clears `MigrationComplete.State.isMigratingAnyway` on the first `.complete` element found by
+    /// scanning `state.path.ids`, if one exists and the flag is actually set — a no-op otherwise.
+    ///
+    /// Why this exists: `beginImmediateKeystoneCeremony` above only ever APPENDS `.keystoneSign` (and,
+    /// once "Get Signature" is tapped, `.scan`) on top of whatever screen requested the ceremony — it
+    /// never pops or replaces that screen. For the dust lane ("Migrate anyway" over Migration
+    /// Complete), that screen is a still-live `.complete` element whose `isMigratingAnyway` was set
+    /// `true` by `MigrationComplete.migrateAnywayTapped` before the ceremony ever started. The two
+    /// clear sites that already existed for this flag — `.migrateAnywayAuthenticationCancelled` /
+    /// `.migrateAnywayFailed`, above — key off the tap-time `id` they each captured, but that id is
+    /// useless to the ceremony's own terminal exits (`.keystoneSignRejected`, `.keystoneScanAbandoned`,
+    /// `.keystoneImmediateSubmitFailed`): those three are POSITIONAL pops shared with the non-dust
+    /// lanes (`.transferPlan`'s `.planCommit` context, `.reviewTransfer`'s own `.immediateReview`
+    /// context) and carry no `.complete` id of their own. Without this helper, a
+    /// reject/abandon/submit-fail on the dust lane landed the user back on Complete with the button
+    /// permanently disabled and `migrateAnywayTapped`'s own single-flight guard
+    /// (`!state.isMigratingAnyway`) swallowing every further tap — the dead-button bug this fixes.
+    ///
+    /// Scanning `state.path.ids` (rather than threading the tap-time id through all three exits) is
+    /// deliberate: those three actions are shared with the non-dust lanes, which have no other reason
+    /// to carry a `.complete` id around — widening their signatures for this one flag's bookkeeping
+    /// would be worse than a small lookup here. It is safe because at most one dust ceremony can be
+    /// mid-flight per account (`CancelID.migrateAnywayAuthentication`, keyed by account, plus
+    /// `MigrationComplete.State.isMigratingAnyway`'s own single-flight guard on the tap itself), so
+    /// there is never more than one `.complete` element with the flag genuinely set to find.
+    ///
+    /// A no-op when no `.complete` element is on the path at all — the normal case for every non-dust
+    /// lane reaching these same three exits (`.transferPlan`/`.reviewTransfer` sits beneath them
+    /// instead, never `.complete`) — and equally a no-op once the flag is already `false`. Either way
+    /// it must not disturb anything else on the path.
+    ///
+    /// `.keystoneImmediateSubmitFailed`'s call site is not user-visible TODAY — that handler's
+    /// fallback pushes `.sending` over the retained `.complete`, and closing `.sending` ends the whole
+    /// flow before `.complete` (and its by-then-stale flag) could ever be seen again. It gets the
+    /// clear anyway: the call is free, and it stops the leak from becoming reachable the moment that
+    /// fallback's behavior changes. Do not delete it as dead code.
+    ///
+    /// An `onAppear`-driven self-heal on `MigrationComplete` (mirroring
+    /// `MigrationRecovery.State.isRecovering`'s reset in `MigrationRecoveryStore.swift`) was
+    /// considered and rejected: it would work in the app, but the clear would then live in view
+    /// lifecycle that `TestStore` cannot drive, so a regression that deleted this helper would not
+    /// fail any test. Explicit clears at the exact exit points stay assertable.
+    private func clearMigrateAnywayInFlight(state: inout MigrationCoordFlow.State) {
+        for id in state.path.ids {
+            guard case .complete(var completeState) = state.path[id: id] else { continue }
+            guard completeState.isMigratingAnyway else { return }
+            completeState.isMigratingAnyway = false
+            state.path[id: id] = .complete(completeState)
+            return
+        }
     }
 
     // MARK: - MOB-1496 (W6 §1): Keystone batch sentinel split

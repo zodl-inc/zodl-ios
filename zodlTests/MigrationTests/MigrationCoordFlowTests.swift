@@ -5678,6 +5678,279 @@ import ComposableArchitecture
         #expect(afterState.isMigratingAnyway == false)
     }
 
+    // MARK: - MOB-1458 (dead-button fix): dust-lane Keystone ceremony exits clear isMigratingAnyway
+    //
+    // Code-review finding: `beginImmediateKeystoneCeremony` only ever APPENDS `keystoneSign` (and,
+    // once "Get Signature" is tapped, `scan`) on top of whatever screen requested the ceremony — for
+    // the dust lane that is a still-live `.complete` element, not popped or replaced. The two
+    // pre-existing clear sites above (`.migrateAnywayAuthenticationCancelled`/`.migrateAnywayFailed`)
+    // key off the tap-time id and never fire once the ceremony is under way; the ceremony's own three
+    // terminal exits (`.keystoneSignRejected`, `.keystoneScanAbandoned`, `.keystoneImmediateSubmitFailed`)
+    // pop POSITIONALLY and, before this fix, cleared nothing — stranding
+    // `MigrationComplete.State.isMigratingAnyway` at `true` forever, which `migrateAnywayTapped`'s own
+    // single-flight guard then reads as "still in flight", permanently disabling the button. The three
+    // tests below drive the REAL tap-to-ceremony wiring for a Keystone account through each exit in
+    // turn; the fourth proves the fix (`clearMigrateAnywayInFlight`, in the coordinator) is a genuine
+    // no-op on the non-dust lanes that share these same three exits.
+
+    /// `.keystoneSignRejected` fires directly off `MigrationKeystoneSignView`'s plain destructive
+    /// Reject button, with no scan ever involved — the most trivially reachable of the three exits,
+    /// and the one the code review used to demonstrate the bug.
+    @MainActor @Test func completeMigrateAnywayKeystoneSignRejectedClearsIsMigratingAnywayOnCompleteBeneath() async {
+        let authenticateCalls = LockIsolated<Int>(0)
+        let proposal = ImmediateMigrationProposal(proposal: .testOnlyFakeProposal(totalFee: 5_000), amount: Zatoshi(12_000), fee: Zatoshi(5_000))
+        let pczt = Data([0xDD])
+        let redacted = Data([0xDD, 0x0F])
+        var state = MigrationCoordFlow.State()
+        state.$selectedWalletAccount.withLock { $0 = walletAccount(keystone: true, idByte: 50) }
+        state.path.append(.complete(MigrationComplete.State(isFlowRoot: true)))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.localAuthentication = .mockAuthenticationCounting(authenticateCalls)
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.unlockMigrationResidual = { _ in 0 }
+            $0.sdkSynchronizer.proposeImmediateMigration = { _ in proposal }
+            $0.sdkSynchronizer.createPCZTFromProposal = { _, _ in pczt }
+            $0.sdkSynchronizer.redactPCZTForSigner = { _ in redacted }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 0, action: .complete(.migrateAnywayTapped))))
+        guard case let .complete(midState) = store.state.path.last else {
+            Issue.record("Expected .complete on top after the tap")
+            return
+        }
+        #expect(midState.isMigratingAnyway == true)
+
+        await store.receive(\.migrateAnywayAuthenticated)
+        await store.receive(\.migrateAnywayImmediateKeystonePCZTProposed)
+
+        guard let signId = store.state.path.ids.last else {
+            Issue.record("Expected a KeystoneSign element id")
+            return
+        }
+        await store.send(.path(.element(id: signId, action: .keystoneSign(.delegate(.rejected)))))
+        await store.receive(\.keystoneSignRejected)
+
+        #expect(authenticateCalls.value == 1)
+        #expect(store.state.path.count == 1)
+        guard case let .complete(afterState) = try? #require(store.state.path.last) else {
+            Issue.record("Expected .keystoneSign popped, .complete remaining as the only path element")
+            return
+        }
+        #expect(afterState.isMigratingAnyway == false)
+    }
+
+    /// `.keystoneScanAbandoned`'s pop-1 shape — a `keystoneSign` build failure
+    /// (`MigrationKeystoneSign.Delegate.buildFailed`) abandons before `scan` is ever pushed, so only
+    /// `keystoneSign` itself gets popped. Twin of
+    /// `keystoneSignBuildFailedAbandonsSessionPoppingOnlyKeystoneSign` (which seeds `.transferPlan`)
+    /// for the dust lane's `.complete`.
+    @MainActor @Test func completeMigrateAnywayKeystoneScanAbandonedBeforeScanPushedClearsIsMigratingAnywayOnCompleteBeneath() async {
+        let authenticateCalls = LockIsolated<Int>(0)
+        let proposal = ImmediateMigrationProposal(proposal: .testOnlyFakeProposal(totalFee: 5_000), amount: Zatoshi(12_000), fee: Zatoshi(5_000))
+        let pczt = Data([0xDD])
+        let redacted = Data([0xDD, 0x0F])
+        var state = MigrationCoordFlow.State()
+        state.$selectedWalletAccount.withLock { $0 = walletAccount(keystone: true, idByte: 51) }
+        state.path.append(.complete(MigrationComplete.State(isFlowRoot: true)))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.localAuthentication = .mockAuthenticationCounting(authenticateCalls)
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.unlockMigrationResidual = { _ in 0 }
+            $0.sdkSynchronizer.proposeImmediateMigration = { _ in proposal }
+            $0.sdkSynchronizer.createPCZTFromProposal = { _, _ in pczt }
+            $0.sdkSynchronizer.redactPCZTForSigner = { _ in redacted }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 0, action: .complete(.migrateAnywayTapped))))
+        await store.receive(\.migrateAnywayAuthenticated)
+        await store.receive(\.migrateAnywayImmediateKeystonePCZTProposed)
+
+        guard let signId = store.state.path.ids.last else {
+            Issue.record("Expected a KeystoneSign element id")
+            return
+        }
+        await store.send(.path(.element(id: signId, action: .keystoneSign(.delegate(.buildFailed)))))
+        await store.receive(\.keystoneScanAbandoned)
+
+        #expect(authenticateCalls.value == 1)
+        #expect(store.state.path.count == 1)
+        guard case let .complete(afterState) = try? #require(store.state.path.last) else {
+            Issue.record("Expected .keystoneSign popped, .complete remaining as the only path element")
+            return
+        }
+        #expect(afterState.isMigratingAnyway == false)
+    }
+
+    /// `.keystoneScanAbandoned`'s pop-2 shape — `scan` IS pushed by the time the ceremony abandons
+    /// (here, an unstamped signed PCZT fails the production firmware gate, mirroring
+    /// `foundPCZTUnstampedPresentsGateAndAbandons`'s `.reviewTransfer` fixture), so both `scan` and
+    /// `keystoneSign` get popped together.
+    @MainActor @Test func completeMigrateAnywayKeystoneScanAbandonedAfterScanPushedClearsIsMigratingAnywayOnCompleteBeneath() async {
+        let authenticateCalls = LockIsolated<Int>(0)
+        let proposal = ImmediateMigrationProposal(proposal: .testOnlyFakeProposal(totalFee: 5_000), amount: Zatoshi(12_000), fee: Zatoshi(5_000))
+        let pczt = Data([0xDD])
+        let redacted = Data([0xDD, 0x0F])
+        var state = MigrationCoordFlow.State()
+        state.$selectedWalletAccount.withLock { $0 = walletAccount(keystone: true, idByte: 52) }
+        state.path.append(.complete(MigrationComplete.State(isFlowRoot: true)))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.localAuthentication = .mockAuthenticationCounting(authenticateCalls)
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.unlockMigrationResidual = { _ in 0 }
+            $0.sdkSynchronizer.proposeImmediateMigration = { _ in proposal }
+            $0.sdkSynchronizer.createPCZTFromProposal = { _, _ in pczt }
+            $0.sdkSynchronizer.redactPCZTForSigner = { _ in redacted }
+            // Pushing `scan` resets the shared BC-UR fountain decoder, so the pop-2 shapes touch
+            // `keystoneHandler` where the pop-1 shapes above never do.
+            $0.keystoneHandler.resetQRDecoder = { }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 0, action: .complete(.migrateAnywayTapped))))
+        await store.receive(\.migrateAnywayAuthenticated)
+        await store.receive(\.migrateAnywayImmediateKeystonePCZTProposed)
+
+        guard let signId = store.state.path.ids.last else {
+            Issue.record("Expected a KeystoneSign element id")
+            return
+        }
+        await store.send(.path(.element(id: signId, action: .keystoneSign(.delegate(.getSignature)))))
+
+        guard let scanId = store.state.path.ids.last else {
+            Issue.record("Expected a Scan element id")
+            return
+        }
+        await store.send(.path(.element(id: scanId, action: .scan(.foundPCZT(Data([0xD0, 0xD1, 0xD2]))))))
+        await store.receive(\.keystoneScanAbandoned)
+
+        #expect(authenticateCalls.value == 1)
+        #expect(store.state.isKeystoneFirmwareGatePresented == true)
+        #expect(store.state.path.count == 1)
+        guard case let .complete(afterState) = try? #require(store.state.path.last) else {
+            Issue.record("Expected .scan + .keystoneSign popped, .complete remaining as the only path element")
+            return
+        }
+        #expect(afterState.isMigratingAnyway == false)
+    }
+
+    /// `.keystoneImmediateSubmitFailed` — the post-scan proofs+submit leg fails (device rejects the
+    /// broadcast). Its own fallback pushes `.sending` with a failure sheet OVER the retained
+    /// `.complete` (the same generic failure UX the software vendor fork's propose failure already
+    /// uses, since a dust "Migrate anyway" ceremony has no `.reviewTransfer`/`.transferPlan` of its
+    /// own to arm instead) — asserts the clear on the `.complete` element still one level beneath the
+    /// pushed `.sending`. This call site is not user-visible today (closing `.sending` ends the flow
+    /// before `.complete` could reappear) but is covered anyway per `clearMigrateAnywayInFlight`'s doc.
+    @MainActor @Test func completeMigrateAnywayKeystoneImmediateSubmitFailedClearsIsMigratingAnywayOnCompleteBeneathSending() async {
+        let authenticateCalls = LockIsolated<Int>(0)
+        let proposal = ImmediateMigrationProposal(proposal: .testOnlyFakeProposal(totalFee: 5_000), amount: Zatoshi(12_000), fee: Zatoshi(5_000))
+        let pczt = Data([0xDD])
+        let redacted = Data([0xDD, 0x0F])
+        var state = MigrationCoordFlow.State()
+        state.$selectedWalletAccount.withLock { $0 = walletAccount(keystone: true, idByte: 53) }
+        state.path.append(.complete(MigrationComplete.State(isFlowRoot: true)))
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.localAuthentication = .mockAuthenticationCounting(authenticateCalls)
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.unlockMigrationResidual = { _ in 0 }
+            $0.sdkSynchronizer.proposeImmediateMigration = { _ in proposal }
+            $0.sdkSynchronizer.createPCZTFromProposal = { _, _ in pczt }
+            $0.sdkSynchronizer.redactPCZTForSigner = { _ in redacted }
+            $0.sdkSynchronizer.addProofsToPCZT = { proofed in proofed }
+            $0.sdkSynchronizer.createAndSubmitTransactionFromPCZT = { _, _ in .failure(txIds: [], code: -1, description: "rejected") }
+            // This lane reaches the submit leg through `scan`, whose push resets the shared BC-UR
+            // fountain decoder — so it touches `keystoneHandler` where the pop-1 shapes never do.
+            $0.keystoneHandler.resetQRDecoder = { }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.path(.element(id: 0, action: .complete(.migrateAnywayTapped))))
+        await store.receive(\.migrateAnywayAuthenticated)
+        await store.receive(\.migrateAnywayImmediateKeystonePCZTProposed)
+
+        guard let signId = store.state.path.ids.last else {
+            Issue.record("Expected a KeystoneSign element id")
+            return
+        }
+        await store.send(.path(.element(id: signId, action: .keystoneSign(.delegate(.getSignature)))))
+
+        guard let scanId = store.state.path.ids.last else {
+            Issue.record("Expected a Scan element id")
+            return
+        }
+        await store.send(.path(.element(id: scanId, action: .scan(.foundPCZT(stampedSignedPczt(major: 3, minor: 0, build: 0)))))) {
+            if case .scan(var scanState) = $0.path[id: scanId] {
+                scanState.isKeystoneSigningInProgress = true
+                $0.path[id: scanId] = .scan(scanState)
+            }
+        }
+        await store.receive(\.keystoneImmediateSubmitFailed)
+
+        #expect(authenticateCalls.value == 1)
+        #expect(store.state.path.count == 2)
+        guard case let .sending(sendingState) = try? #require(store.state.path.last) else {
+            Issue.record("Expected the generic failure-sheet Sending fallback pushed over .complete")
+            return
+        }
+        #expect(sendingState.isFailurePresented == true)
+        guard case let .complete(afterState) = try? #require(store.state.path[id: 0]) else {
+            Issue.record("Expected .complete retained beneath the failure-sheet Sending push")
+            return
+        }
+        #expect(afterState.isMigratingAnyway == false)
+    }
+
+    /// Regression guard: `clearMigrateAnywayInFlight` scans `state.path.ids` for a `.complete` element
+    /// on EVERY `.keystoneSignRejected`, including the non-dust `.reviewTransfer`/`.transferPlan` lanes
+    /// that reach this exact same handler (`.transferPlan` is already covered by
+    /// `keystoneSignRejectedPopsBackToUnsignedTransferPlanConfirmingScreenUntouched`/
+    /// `keystoneSignRejectedNeverCallsStore`) — this is the fix's own regression risk. Proves the scan
+    /// is a genuine no-op when no `.complete` exists on the path (the normal case for this lane) by
+    /// asserting the retained `.reviewTransfer` element is byte-for-byte EQUAL to what was seeded, not
+    /// merely "still `.reviewTransfer`".
+    @MainActor @Test func keystoneSignRejectedWithReviewTransferBeneathLeavesReviewTransferStateByteForByteUntouched() async {
+        let seededReviewState = MigrationReviewTransfer.State(mode: .immediate)
+        var state = MigrationCoordFlow.State()
+        state.pendingKeystoneSigning = .immediateReview
+        state.path.append(.reviewTransfer(seededReviewState))
+        state.path.append(
+            .keystoneSign(
+                MigrationKeystoneSign.State(
+                    pczts: [MigrationUnsignedTransferPczt(id: MigrationReviewTransfer.immediateKeystonePcztId, pczt: Data([0xDD]))],
+                    redactedSinglePczt: Data([0xDD, 0x0F])
+                )
+            )
+        )
+        let store = TestStore(initialState: state) {
+            MigrationCoordFlow()
+        }
+        store.exhaustivity = .off
+
+        guard let signId = store.state.path.ids.last else {
+            Issue.record("Expected a KeystoneSign element id")
+            return
+        }
+        await store.send(.path(.element(id: signId, action: .keystoneSign(.delegate(.rejected)))))
+        await store.receive(\.keystoneSignRejected)
+
+        #expect(store.state.pendingKeystoneSigning == nil)
+        #expect(store.state.path.count == 1)
+        guard case let .reviewTransfer(afterState) = try? #require(store.state.path.last) else {
+            Issue.record("Expected .keystoneSign popped, .reviewTransfer remaining on top")
+            return
+        }
+        #expect(afterState == seededReviewState)
+    }
+
     // MARK: - MOB-1496 (W6 §6): Keystone recovery — recreate routes through the PCZT batch session
 
     /// MOB-1458 (Task 2): the `.invalidTransfer` (`.notesSpent`) recovery lane keeps the pre-Task-2
