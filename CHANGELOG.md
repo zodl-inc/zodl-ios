@@ -6,7 +6,15 @@ directly impact users rather than highlighting other crucial architectural updat
 
 ## [Unreleased]
 
+### Added
+- [Ironwood] ZODL now recognizes funds held in the Ironwood shielded pool. Balances on the home screen, in the balances breakdown and in the shielding banner include Ironwood alongside Sapling and Orchard, so those funds are visible and counted as soon as the network upgrade activates.
+- [Ironwood] A transfer that moves funds into the Ironwood pool now shows the amount that actually moved, in both the transaction list and the transaction detail screen. Previously such a transfer displayed only its fee.
+
+### Changed
+- [Ironwood] Coinholder Polling is temporarily unavailable and no longer appears in Settings, while voting is brought up to date with the Ironwood network upgrade. No voting data is deleted — the feature returns in a later release.
+
 ### Fixed
+- [Ironwood] The automatic recovery from another wallet's leftover data (see MOB-1512 below) keeps working with the updated Zcash SDK. The SDK now reports that mismatch as an error rather than a status, so ZODL maps it back onto the same recovery and the wallet still heals itself instead of stopping on an initialization error.
 - [#1943] Fixed a wallet initialization bug: initialization is now single-flight, so repeated startup triggers while the wallet is still initializing are ignored until it finishes.
 - [#1920] Connecting a Keystone hardware wallet that fails now shows a clear "Connection Failed" message (with Contact Support and Cancel options) instead of silently doing nothing. Cancel leaves the flow so the user is never stuck on the connection screen. The support message includes a safe error identifier and never exposes any wallet keys.
 - [#1920] The "Connection Failed" sheet no longer appears on top of the success screen when connecting a Keystone device actually succeeds. Tapping the connect/OK button again while the import was still running started a duplicate import whose failure surfaced as a bogus error; the button now shows a progress indicator and extra taps are ignored.
