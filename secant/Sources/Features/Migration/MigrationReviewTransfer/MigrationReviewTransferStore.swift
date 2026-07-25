@@ -79,6 +79,20 @@
 //  (`State.confirmIntent == nil`), removes that window entirely: what gets confirmed is always
 //  exactly what was on screen at the moment of the tap, never whatever arrived after it.
 //
+//  MOB-1458 (code review): two more early exits dismissed the failure sheet and never restored
+//  it — both missed by the round-2 fix above, which only closed the authentication-cancel/success
+//  gap. The nil-`ConfirmIntent` no-op (`confirmTapped`/`retryTapped`'s
+//  `guard let intent = state.confirmIntent else { ... }`) cleared `isFailurePresented` at the top
+//  of the case and never set it back — reachable whenever `confirmIntent` goes nil AFTER a commit
+//  failure already put the sheet up (in practice, the shared `selectedWalletAccount` clearing
+//  under an open flow). Fixed to mirror `.authenticationCancelled`: restore `isFailurePresented`
+//  from `failureReason != nil`. The propose-failure Retry short-circuit had the same shape one
+//  guard earlier — it cleared `failureReason` (and with it, the sheet's only way back) BEFORE
+//  checking whether `selectedWalletAccount` even resolves to an account to re-propose with. Fixed
+//  by running the account guard first, so a nil account restores `isFailurePresented = true`
+//  (unconditionally — this branch only runs when `failureReason == .propose`, already known
+//  non-nil) instead of clearing state ahead of a re-propose that never launches.
+//
 
 import Foundation
 import ComposableArchitecture
@@ -353,10 +367,24 @@ struct MigrationReviewTransfer {
                 // deliberately NOT gated behind authentication — it only re-fetches a proposal for
                 // display, nothing is signed or broadcast.
                 if case .retryTapped = action, state.failureReason == State.FailureReason.propose {
+                    // MOB-1458 (code review): the account guard now runs BEFORE `failureReason`
+                    // clears — clearing it unconditionally first (the old order) meant a nil
+                    // account dismissed the "couldn't load your plan" sheet, wiped its reason, and
+                    // launched nothing, leaving the user on a screen with no surface for the
+                    // error. Same principle as the nil-`confirmIntent` no-op below: clear state
+                    // only once the thing that follows actually proceeds.
+                    guard let accountUUID = state.selectedWalletAccount?.id else {
+                        // Restored unconditionally `true` here, NOT the `failureReason != nil`
+                        // form used at the other restore sites — this branch only runs when
+                        // `failureReason == State.FailureReason.propose`, already known non-nil,
+                        // so there is no `nil` case to guard against. Don't "fix" this to match
+                        // the other sites.
+                        state.isFailurePresented = true
+                        return .none
+                    }
                     state.failureReason = nil
                     // Set only when a real re-propose launches (a nil account is a no-op inside
                     // `proposeEffect`, which must not strand the flag).
-                    guard let accountUUID = state.selectedWalletAccount?.id else { return .none }
                     state.isConfirming = true
                     return proposeEffect(accountUUID: accountUUID)
                 }
@@ -369,8 +397,15 @@ struct MigrationReviewTransfer {
                 // prompt returns. Re-reading it there is exactly the regression this ordering fixes:
                 // `onAppear`'s retry loop can land a proposal WHILE THE PROMPT IS UP, and a post-await
                 // guard would silently swap it into the commit. `nil` means there is nothing to
-                // commit — the tap is a complete no-op, and no prompt opens at all.
-                guard let intent = state.confirmIntent else { return .none }
+                // commit — the tap is a complete no-op. MOB-1458 (code review): a no-op must restore
+                // the failure sheet dismissed at the top of this case, exactly like
+                // `.authenticationCancelled` does — nothing ran here either, so there is nothing new
+                // to show in its place, and silently dropping the sheet would strand `failureReason`
+                // set with no surface rendering it. No prompt opens either way.
+                guard let intent = state.confirmIntent else {
+                    state.isFailurePresented = state.failureReason != nil
+                    return .none
+                }
 
                 // MOB-1458: everything past this point signs or broadcasts something, so it's
                 // gated behind device authentication (Face ID / Touch ID / passcode).

@@ -926,12 +926,17 @@ import ComposableArchitecture
         // MOB-1458 (regression fix, F1): `State.confirmIntent` is nil for a nil schedule, decided
         // SYNCHRONOUSLY, so this is a complete no-op otherwise: no authentication, no
         // `.confirmAuthenticated`, nothing signed. `localAuthentication` is intentionally left
-        // unimplemented: a call to `authenticate()` here would fail this test.
-        await store.send(.confirmTapped) {
-            $0.isFailurePresented = false
-        }
+        // unimplemented: a call to `authenticate()` here would fail this test. MOB-1458 (code
+        // review): the nil-intent branch now restores `isFailurePresented` right after this same
+        // tap dismisses it, so the net state is unchanged — no trailing mutation closure below.
+        // Before the code-review fix this assertion read `$0.isFailurePresented = false` —
+        // encoding the bug (the sheet staying dismissed with `failureReason` still set and
+        // nothing left on screen to show it).
+        await store.send(.confirmTapped)
 
         #expect(store.state.isConfirming == false)
+        #expect(store.state.isFailurePresented == true)
+        #expect(store.state.failureReason == MigrationTransferPlan.State.FailureReason.propose)
         #expect(signAndStoreCalls.value == 0)
     }
 
@@ -2213,5 +2218,76 @@ import ComposableArchitecture
         }
 
         #expect(store.state.failureReason == MigrationTransferPlan.State.FailureReason.commit)
+    }
+
+    // MARK: - MOB-1458 (code review): two more early exits that dismissed the failure sheet and
+    // never restored it — missed by the F1/F5 fixes above, which only closed the
+    // authentication-cancel/success gap.
+
+    /// THE Fix 1 regression pin. A commit-failure sheet is up (`failureReason == .commit`) and the
+    /// account backing `confirmIntent` goes `nil` — in practice `selectedWalletAccount` clearing
+    /// under an open flow — before Retry is tapped. Before this fix, the nil-`confirmIntent` no-op
+    /// left `isFailurePresented` at the `false` the top of the case had just set, dismissing the
+    /// sheet with `failureReason` still set and nothing left on screen to show it.
+    /// `localAuthentication` is intentionally left unimplemented: with `confirmIntent` nil, the
+    /// tap must return before ever reaching the authentication gate — a call to `authenticate()`
+    /// here would fail this test. The happy-path counterpart (a non-nil intent still dismisses the
+    /// sheet and proceeds) is already covered by `retryTappedAfterCommitFailureAuthenticatesAgain`
+    /// above — not duplicated here.
+    @MainActor @Test func retryTappedWithNilConfirmIntentRestoresTheCommitFailureSheetItDismissed() async {
+        let schedule = MigrationSchedule(
+            transfers: [
+                MigrationTransferProposal(id: "t0", amount: Zatoshi(500_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
+            ],
+            estimatedDurationHours: 24,
+            proposalHandle: 1
+        )
+        var state = MigrationTransferPlan.State()
+        state.schedule = schedule
+        state.isFailurePresented = true
+        state.failureReason = MigrationTransferPlan.State.FailureReason.commit
+        // The reachable trigger this pins: the account backing `confirmIntent` disappears out from
+        // under an open commit-failure sheet.
+        state.$selectedWalletAccount.withLock { $0 = nil }
+        let store = TestStore(initialState: state) {
+            MigrationTransferPlan()
+        }
+
+        // A COMPLETE no-op: `isFailurePresented` dips to `false` at the top of the case and is
+        // restored before the reducer returns, so the net state is unchanged — no trailing
+        // mutation closure needed.
+        await store.send(.retryTapped)
+
+        #expect(store.state.isFailurePresented == true)
+        #expect(store.state.failureReason == MigrationTransferPlan.State.FailureReason.commit)
+        #expect(store.state.isConfirming == false)
+    }
+
+    /// THE Fix 2 regression pin. A propose-failure sheet is up (`failureReason == .propose`) and no
+    /// account is selected when Retry is tapped. Before this fix, `failureReason` cleared BEFORE
+    /// the account guard ran, so a nil account dismissed the "couldn't load your plan" sheet,
+    /// wiped its reason, and launched no re-propose — leaving the user on a screen with no surface
+    /// for the error. `localAuthentication` is intentionally left unimplemented: the propose-retry
+    /// short-circuit never authenticates on any path, so a call to `authenticate()` here would fail
+    /// this test regardless of which bug it caught. The happy-path counterpart (a propose-Retry
+    /// with a valid account still clears `failureReason` and launches the propose) is already
+    /// covered by `retryTappedAfterProposeFailureSetsIsConfirmingUntilFreshProposalLands` and
+    /// `retryTappedAfterProposeFailureReProposesAndClearsFailureStateOnSuccess` above — not
+    /// duplicated here.
+    @MainActor @Test func retryTappedAfterProposeFailureWithNoSelectedAccountRestoresFailureSheetWithoutReProposing() async {
+        var state = MigrationTransferPlan.State(variant: .scheduled)
+        state.isFailurePresented = true
+        state.failureReason = MigrationTransferPlan.State.FailureReason.propose
+        state.$selectedWalletAccount.withLock { $0 = nil }
+        let store = TestStore(initialState: state) {
+            MigrationTransferPlan()
+        }
+
+        // A COMPLETE no-op, same shape as the Fix 1 pin above.
+        await store.send(.retryTapped)
+
+        #expect(store.state.isFailurePresented == true)
+        #expect(store.state.failureReason == MigrationTransferPlan.State.FailureReason.propose)
+        #expect(store.state.isConfirming == false)
     }
 }
