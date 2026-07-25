@@ -726,12 +726,17 @@ import ComposableArchitecture
 
         // MOB-1458: a commit-failure Retry (`failureReason == .commit`) is NOT the propose-failure
         // short-circuit — it goes through the authentication gate again, same as the first attempt.
+        // MOB-1458 (F5): `failureReason` is no longer cleared by the tap itself — only by a
+        // subsequent `.confirmAuthenticated` success — so it survives here until then; see
+        // `retryTappedThenDecliningAuthenticationRestoresTheFailureSheetItDismissed` for the
+        // regression this protects (a declined Retry must be able to restore the same sheet).
         await store.send(.retryTapped) {
             $0.isConfirming = true
             $0.isFailurePresented = false
+        }
+        await store.receive(\.confirmAuthenticated) {
             $0.failureReason = nil
         }
-        await store.receive(\.confirmAuthenticated)
         await store.receive(\.scheduleSigned) {
             $0.isConfirming = false
         }
@@ -900,7 +905,6 @@ import ComposableArchitecture
         let store = TestStore(initialState: state) {
             MigrationTransferPlan()
         } withDependencies: {
-            $0.localAuthentication = .mockAuthenticationSucceeded
             $0.sdkSynchronizer = .noOp
             $0.sdkSynchronizer.proposeMigrationTransfers = { _ in throw ProposeFailure() }
             $0.sdkSynchronizer.signAndStoreMigrationSchedule = { _, _, _ in signAndStoreCalls.withValue { $0 += 1 } }
@@ -917,20 +921,17 @@ import ComposableArchitecture
         #expect(store.state.schedule == nil)
         #expect(store.state.rows.isEmpty)
 
-        // Confirm must not proceed: no signAndStore reachable with a nil schedule. Tapping it also
-        // dismisses the (already showing) failure affordance, same as any other confirm/retry tap.
-        // MOB-1458: this state's `requiresSigning` default is `true`, so Confirm still gates behind
-        // authentication before discovering there's no schedule to sign — `.confirmAuthenticated`
-        // is where the (still-nil) schedule guard now lives, clearing `isConfirming` back off.
+        // Confirm must not proceed: no signAndStore reachable with a nil schedule. Tapping it still
+        // dismisses the (already showing) failure affordance — that step is unconditional — but
+        // MOB-1458 (regression fix, F1): `State.confirmIntent` is nil for a nil schedule, decided
+        // SYNCHRONOUSLY, so this is a complete no-op otherwise: no authentication, no
+        // `.confirmAuthenticated`, nothing signed. `localAuthentication` is intentionally left
+        // unimplemented: a call to `authenticate()` here would fail this test.
         await store.send(.confirmTapped) {
             $0.isFailurePresented = false
-            $0.failureReason = nil
-            $0.isConfirming = true
-        }
-        await store.receive(\.confirmAuthenticated) {
-            $0.isConfirming = false
         }
 
+        #expect(store.state.isConfirming == false)
         #expect(signAndStoreCalls.value == 0)
     }
 
@@ -995,21 +996,17 @@ import ComposableArchitecture
         let store = TestStore(initialState: state) {
             MigrationTransferPlan()
         } withDependencies: {
-            $0.localAuthentication = .mockAuthenticationSucceeded
             $0.sdkSynchronizer = .noOp
             $0.sdkSynchronizer.signAndStoreMigrationSchedule = { _, _, _ in signAndStoreCalls.withValue { $0 += 1 } }
         }
 
-        // MOB-1458: `requiresSigning` defaults `true`, so Confirm authenticates BEFORE discovering
-        // the schedule has zero transfers — the zero-transfer guard now lives in
-        // `.confirmAuthenticated`, reached only after a successful prompt.
-        await store.send(.confirmTapped) {
-            $0.isConfirming = true
-        }
-        await store.receive(\.confirmAuthenticated) {
-            $0.isConfirming = false
-        }
+        // MOB-1458 (regression fix, F1): a zero-transfer schedule makes `State.confirmIntent` nil,
+        // decided SYNCHRONOUSLY at tap time — exactly like a nil schedule — so Confirm never
+        // reaches the authentication gate at all. `localAuthentication` is intentionally left
+        // unimplemented: a call to `authenticate()` here would fail this test.
+        await store.send(.confirmTapped)
 
+        #expect(store.state.isConfirming == false)
         #expect(signAndStoreCalls.value == 0)
     }
 
@@ -1021,7 +1018,6 @@ import ComposableArchitecture
         let store = TestStore(initialState: state) {
             MigrationTransferPlan()
         } withDependencies: {
-            $0.localAuthentication = .mockAuthenticationSucceeded
             $0.sdkSynchronizer = .noOp
             $0.sdkSynchronizer.proposeMigrationPCZTs = { _, _ in
                 proposeCalls.withValue { $0 += 1 }
@@ -1029,14 +1025,11 @@ import ComposableArchitecture
             }
         }
 
-        // MOB-1458: `requiresSigning` defaults `true`, so Confirm authenticates BEFORE discovering
-        // the schedule has zero transfers — see the sibling software-lane test's comment.
-        await store.send(.confirmTapped) {
-            $0.isConfirming = true
-        }
-        await store.receive(\.confirmAuthenticated) {
-            $0.isConfirming = false
-        }
+        // MOB-1458 (regression fix, F1): a zero-transfer schedule makes `State.confirmIntent` nil
+        // before vendor is even consulted — see the sibling software-lane test's comment.
+        // `localAuthentication` is intentionally left unimplemented: a call to `authenticate()`
+        // here would fail this test.
+        await store.send(.confirmTapped)
 
         #expect(proposeCalls.value == 0)
     }
@@ -1307,7 +1300,9 @@ import ComposableArchitecture
     }
 
     /// A propose-failure Retry (`failureReason == .propose`) re-proposes — that leg shows the same
-    /// loader and clears it when the fresh proposal lands (or fails again).
+    /// loader and clears it when the fresh proposal lands (or fails again). MOB-1458: also pins
+    /// the no-authentication property of this short-circuit — `localAuthentication` is left
+    /// unimplemented below, so a call to `authenticate()` would fail this test by itself.
     @MainActor @Test func retryTappedAfterProposeFailureSetsIsConfirmingUntilFreshProposalLands() async {
         let schedule = MigrationSchedule(
             transfers: [
@@ -1696,9 +1691,11 @@ import ComposableArchitecture
 
     // MARK: - MOB-1458: device-authentication gate
 
-    /// Confirm's `State.confirmRequiresAuthentication` truth table — covers the two flags
-    /// independently rather than only through the reachable screen variants (mirrors
-    /// `transferRowStatus`'s own directly-tested pattern above).
+    /// Confirm's `State.confirmRequiresAuthentication` truth table under MOB-1458 (F2) — covers
+    /// `requiresSigning` independently of `isExpiredRecoveryReview` rather than only through the
+    /// reachable screen variants (mirrors `transferRowStatus`'s own directly-tested pattern
+    /// above). `isExpiredRecoveryReview` no longer changes the answer either way — see the sibling
+    /// test below.
     @MainActor @Test func confirmRequiresAuthenticationIsTrueWheneverRequiresSigningIsTrue() async {
         var state = MigrationTransferPlan.State(requiresSigning: true)
         state.isExpiredRecoveryReview = false
@@ -1708,16 +1705,19 @@ import ComposableArchitecture
         #expect(state.confirmRequiresAuthentication == true)
     }
 
-    /// The two `requiresSigning == false` variants this screen can show: the rescheduled
-    /// acknowledgment (plain "got it," does NOT gate) and the expired-recovery review (funds in
-    /// motion either way, DOES gate) — `isExpiredRecoveryReview` is what tells them apart.
-    @MainActor @Test func confirmRequiresAuthenticationWhenRequiresSigningIsFalseFollowsIsExpiredRecoveryReview() async {
+    /// MOB-1458 (F2): BOTH `requiresSigning == false` variants this screen can show — the
+    /// rescheduled acknowledgment AND the expired-recovery review — now skip the gate.
+    /// `isExpiredRecoveryReview` no longer tells them apart for THIS purpose: the expired-recovery
+    /// review's own re-signing already happened, ungated, one screen earlier
+    /// (`.recovery(.delegate(.recreate))` in the coordinator), so by the time this review appears
+    /// its Confirm is pure navigation, same as the plain rescheduled "got it."
+    @MainActor @Test func confirmRequiresAuthenticationIsFalseWheneverRequiresSigningIsFalse() async {
         var state = MigrationTransferPlan.State(requiresSigning: false)
         state.isExpiredRecoveryReview = false
         #expect(state.confirmRequiresAuthentication == false)
 
         state.isExpiredRecoveryReview = true
-        #expect(state.confirmRequiresAuthentication == true)
+        #expect(state.confirmRequiresAuthentication == false)
     }
 
     /// Authentication succeeding changes nothing about the existing software commit sequence — it
@@ -1737,10 +1737,7 @@ import ComposableArchitecture
         let store = TestStore(initialState: state) {
             MigrationTransferPlan()
         } withDependencies: {
-            $0.localAuthentication.authenticate = {
-                authenticateCalls.withValue { $0 += 1 }
-                return true
-            }
+            $0.localAuthentication = .mockAuthenticationCounting(authenticateCalls)
             $0.sdkSynchronizer = .noOp
             $0.sdkSynchronizer.signAndStoreMigrationSchedule = { _, _, _ in signCalls.withValue { $0 += 1 } }
             $0.migrationManager.recordCommittedSchedule = { _, _ in }
@@ -1780,10 +1777,7 @@ import ComposableArchitecture
         let store = TestStore(initialState: state) {
             MigrationTransferPlan()
         } withDependencies: {
-            $0.localAuthentication.authenticate = {
-                authenticateCalls.withValue { $0 += 1 }
-                return true
-            }
+            $0.localAuthentication = .mockAuthenticationCounting(authenticateCalls)
             $0.sdkSynchronizer = .noOp
             $0.sdkSynchronizer.isNoteSplitNeeded = { _ in false }
             $0.sdkSynchronizer.proposeMigrationPCZTs = { _, _ in
@@ -1842,21 +1836,38 @@ import ComposableArchitecture
     /// A second tap while the Face ID/Touch ID/passcode prompt itself is still up (BEFORE
     /// `.confirmAuthenticated`/`.authenticationCancelled` resolves) is the same single-flight
     /// no-op as a second tap during the commit/propose — `isConfirming` is already `true` from the
-    /// first tap. Uses the expired-recovery review's plain acknowledgment body so the test needs
-    /// no SDK commit/propose mocks at all.
+    /// first tap.
+    ///
+    /// MOB-1458 (F2 adaptation): the original version of this test exploited the expired-recovery
+    /// review's plain acknowledgment body (`requiresSigning: false` + `isExpiredRecoveryReview:
+    /// true`) to authenticate without any SDK commit/propose mocks. Under F2,
+    /// `confirmRequiresAuthentication` follows `requiresSigning` alone — that combination no
+    /// longer authenticates AT ALL any more (see
+    /// `confirmRequiresAuthenticationIsFalseWheneverRequiresSigningIsFalse`) — so this uses the
+    /// ordinary software commit lane instead, same setup as
+    /// `confirmTappedSetsIsConfirmingAndIgnoresSecondTapWhileCommitInFlight` but blocking
+    /// `authenticate()` itself rather than the commit.
     @MainActor @Test func confirmTappedIgnoresSecondTapWhileAuthenticationInFlight() async {
         let authenticateCalls = LockIsolated<Int>(0)
         let (releaseStream, releaseContinuation) = AsyncStream<Void>.makeStream()
-        var state = MigrationTransferPlan.State(requiresSigning: false)
-        state.isExpiredRecoveryReview = true
+        let schedule = MigrationSchedule(
+            transfers: [
+                MigrationTransferProposal(id: "t0", amount: Zatoshi(500_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
+            ],
+            estimatedDurationHours: 24,
+            proposalHandle: 1
+        )
+        var state = MigrationTransferPlan.State()
+        state.schedule = schedule
         let store = TestStore(initialState: state) {
             MigrationTransferPlan()
         } withDependencies: {
-            $0.localAuthentication.authenticate = {
-                authenticateCalls.withValue { $0 += 1 }
-                for await _ in releaseStream { break }
-                return true
-            }
+            $0.localAuthentication = .mockAuthenticationBlocking(authenticateCalls, releaseStream: releaseStream)
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.signAndStoreMigrationSchedule = { _, _, _ in }
+            $0.migrationManager.recordCommittedSchedule = { _, _ in }
+            $0.migrationManager.reconcile = { }
+            withDependenciesUSKDerivable(&$0)
         }
 
         await store.send(.confirmTapped) {
@@ -1870,7 +1881,8 @@ import ComposableArchitecture
         releaseContinuation.yield()
         releaseContinuation.finish()
 
-        await store.receive(\.confirmAuthenticated) {
+        await store.receive(\.confirmAuthenticated)
+        await store.receive(\.scheduleSigned) {
             $0.isConfirming = false
         }
         await store.receive(.delegate(.confirmed))
@@ -1897,10 +1909,7 @@ import ComposableArchitecture
         let store = TestStore(initialState: state) {
             MigrationTransferPlan()
         } withDependencies: {
-            $0.localAuthentication.authenticate = {
-                authenticateCalls.withValue { $0 += 1 }
-                return true
-            }
+            $0.localAuthentication = .mockAuthenticationCounting(authenticateCalls)
             $0.sdkSynchronizer = .noOp
             $0.sdkSynchronizer.signAndStoreMigrationSchedule = { _, _, _ in }
             $0.migrationManager.recordCommittedSchedule = { _, _ in }
@@ -1908,12 +1917,15 @@ import ComposableArchitecture
             withDependenciesUSKDerivable(&$0)
         }
 
+        // MOB-1458 (F5): `failureReason` is no longer cleared by the tap itself — only by the
+        // subsequent `.confirmAuthenticated` success below.
         await store.send(.retryTapped) {
             $0.isFailurePresented = false
-            $0.failureReason = nil
             $0.isConfirming = true
         }
-        await store.receive(\.confirmAuthenticated)
+        await store.receive(\.confirmAuthenticated) {
+            $0.failureReason = nil
+        }
         await store.receive(\.scheduleSigned) {
             $0.isConfirming = false
         }
@@ -1922,50 +1934,15 @@ import ComposableArchitecture
         #expect(authenticateCalls.value == 1)
     }
 
-    /// A propose-failure Retry (`failureReason == .propose`) is the pre-existing short-circuit that
-    /// only re-proposes for display — it must never reach the authentication gate.
-    /// `localAuthentication` is intentionally left unimplemented (the established idiom — see
-    /// `AdvancedSettingsTests.chooseServerSkipsAuthentication`): a call to `authenticate()` here
-    /// would fail this test.
-    @MainActor @Test func retryTappedAfterProposeFailureDoesNotAuthenticate() async {
-        let schedule = MigrationSchedule(
-            transfers: [
-                MigrationTransferProposal(id: "t0", amount: Zatoshi(200_000_000), anchorHeight: 50, nextExecutableAfterHeight: 50, expiryHeight: 150)
-            ],
-            estimatedDurationHours: 12,
-            proposalHandle: 1
-        )
-        var state = MigrationTransferPlan.State()
-        state.isFailurePresented = true
-        state.failureReason = MigrationTransferPlan.State.FailureReason.propose
-        let store = TestStore(initialState: state) {
-            MigrationTransferPlan()
-        } withDependencies: {
-            $0.sdkSynchronizer = .noOp
-            $0.sdkSynchronizer.proposeMigrationTransfers = { _ in schedule }
-        }
-
-        await store.send(.retryTapped) {
-            $0.isConfirming = true
-            $0.isFailurePresented = false
-            $0.failureReason = nil
-        }
-        await store.receive(\.transfersProposed) {
-            $0.isConfirming = false
-            $0.rows = [
-                MigrationTransferRow(id: "t0", index: 0, amount: Zatoshi(200_000_000), status: .pending, hoursFromNow: 0, minutesFromNow: 0)
-            ]
-            $0.totalDurationHours = 12
-            $0.schedule = schedule
-        }
-    }
-
-    /// The rescheduled acknowledgment (`requiresSigning == false`, NOT the expired-recovery
-    /// review) is a plain "got it" — `confirmRequiresAuthentication` is `false`, so Confirm must
-    /// never reach the gate. `localAuthentication` is intentionally left unimplemented: a call to
-    /// `authenticate()` here would fail this test.
-    @MainActor @Test func confirmTappedForRescheduledAcknowledgmentDoesNotAuthenticate() async {
-        let state = MigrationTransferPlan.State(requiresSigning: false)
+    /// MOB-1458 (F2): the rescheduled acknowledgment AND the expired-recovery review — both
+    /// `requiresSigning == false` — no longer authenticate at all; see
+    /// `confirmRequiresAuthenticationIsFalseWheneverRequiresSigningIsFalse` for the truth table
+    /// and `MigrationCoordFlowTests.rescheduledPlanConfirmDoesNotSignAndFinishesFlow` for the
+    /// rescheduled acknowledgment's own coordinator-level pin. `localAuthentication` is
+    /// intentionally left unimplemented: a call to `authenticate()` here would fail this test.
+    @MainActor @Test func confirmTappedForExpiredRecoveryReviewDoesNotAuthenticateAndDelegatesConfirmed() async {
+        var state = MigrationTransferPlan.State(requiresSigning: false)
+        state.isExpiredRecoveryReview = true
         let store = TestStore(initialState: state) {
             MigrationTransferPlan()
         }
@@ -1975,49 +1952,266 @@ import ComposableArchitecture
         await store.receive(.delegate(.confirmed))
     }
 
-    /// The expired-recovery review is ALSO `requiresSigning == false`, but — unlike the plain
-    /// rescheduled acknowledgment above — it puts funds in motion, so it DOES authenticate.
-    @MainActor @Test func confirmTappedForExpiredRecoveryReviewAuthenticatesThenDelegatesConfirmed() async {
+    // MARK: - MOB-1458 (regression fix, F1): State.confirmIntent — decided synchronously, every case
+
+    /// `requiresSigning == false` wins over everything else, unconditionally — no schedule or
+    /// selected account is needed to acknowledge.
+    @MainActor @Test func confirmIntentIsAcknowledgeWheneverRequiresSigningIsFalse() async {
+        let state = MigrationTransferPlan.State(requiresSigning: false)
+
+        #expect(state.confirmIntent == MigrationTransferPlan.State.ConfirmIntent.acknowledge)
+    }
+
+    /// A nil schedule (propose still in flight, or never attempted) has nothing to confirm.
+    @MainActor @Test func confirmIntentIsNilWhenScheduleIsNil() async {
+        let state = MigrationTransferPlan.State()
+
+        #expect(state.schedule == nil)
+        #expect(state.confirmIntent == nil)
+    }
+
+    /// A legitimately empty schedule (zero transfers) also has nothing to confirm — same as a nil
+    /// one, per the engine's own refusal to sign an empty schedule (see `confirmIntent`'s doc).
+    @MainActor @Test func confirmIntentIsNilWhenScheduleHasZeroTransfers() async {
+        var state = MigrationTransferPlan.State()
+        state.schedule = MigrationSchedule(transfers: [], estimatedDurationHours: 0, proposalHandle: 0)
+
+        #expect(state.confirmIntent == nil)
+    }
+
+    /// No selected account: nothing to sign or propose with, regardless of vendor.
+    @MainActor @Test func confirmIntentIsNilWhenNoAccountIsSelected() async {
+        let schedule = MigrationSchedule(
+            transfers: [
+                MigrationTransferProposal(id: "t0", amount: Zatoshi(500_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
+            ],
+            estimatedDurationHours: 24,
+            proposalHandle: 1
+        )
+        var state = MigrationTransferPlan.State()
+        state.schedule = schedule
+        state.$selectedWalletAccount.withLock { $0 = nil }
+
+        #expect(state.confirmIntent == nil)
+    }
+
+    /// A Keystone-vendor account never carries a `zip32AccountIndex` — the vendor check must win
+    /// before that guard, so this resolves to `.keystone`, never `nil`.
+    @MainActor @Test func confirmIntentIsKeystoneForAKeystoneVendorAccount() async {
+        let schedule = MigrationSchedule(
+            transfers: [
+                MigrationTransferProposal(id: "t0", amount: Zatoshi(500_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
+            ],
+            estimatedDurationHours: 24,
+            proposalHandle: 1
+        )
+        var state = MigrationTransferPlan.State()
+        state.schedule = schedule
+        let account = walletAccount(keystone: true, idByte: 60)
+        state.$selectedWalletAccount.withLock { $0 = account }
+
+        #expect(state.confirmIntent == MigrationTransferPlan.State.ConfirmIntent.keystone(schedule: schedule, account: account))
+    }
+
+    /// A software (non-Keystone) account missing a `zip32AccountIndex` has nothing derivable to
+    /// sign with — this is the one guard `confirmIntent` adds beyond "vendor is software."
+    @MainActor @Test func confirmIntentIsNilWhenSoftwareAccountHasNoZip32AccountIndex() async {
+        let schedule = MigrationSchedule(
+            transfers: [
+                MigrationTransferProposal(id: "t0", amount: Zatoshi(500_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
+            ],
+            estimatedDurationHours: 24,
+            proposalHandle: 1
+        )
+        var state = MigrationTransferPlan.State()
+        state.schedule = schedule
+        var account = walletAccount(keystone: false, idByte: 61)
+        account.zip32AccountIndex = nil
+        state.$selectedWalletAccount.withLock { $0 = account }
+
+        #expect(state.confirmIntent == nil)
+    }
+
+    /// The full software-lane happy path, for completeness alongside the `nil` cases above — the
+    /// suite's default selected account (seeded by `init()`) is a software account with a
+    /// `zip32AccountIndex`.
+    @MainActor @Test func confirmIntentIsSoftwareForAZcashVendorAccountWithAZip32AccountIndex() async {
+        let schedule = MigrationSchedule(
+            transfers: [
+                MigrationTransferProposal(id: "t0", amount: Zatoshi(500_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
+            ],
+            estimatedDurationHours: 24,
+            proposalHandle: 1
+        )
+        var state = MigrationTransferPlan.State()
+        state.schedule = schedule
+
+        guard let account = state.selectedWalletAccount, let zip32AccountIndex = account.zip32AccountIndex else {
+            Issue.record("Expected the suite's default selected account to carry a zip32AccountIndex")
+            return
+        }
+        #expect(
+            state.confirmIntent
+                == MigrationTransferPlan.State.ConfirmIntent.software(schedule: schedule, account: account, zip32AccountIndex: zip32AccountIndex)
+        )
+    }
+
+    // MARK: - MOB-1458 (regression fix, F1): the regression pin
+
+    /// THE most important pin in this file. Before this fix, the guard against a nil/empty
+    /// schedule lived on the far side of the authentication `await` — `.confirmAuthenticated`
+    /// re-read `state.schedule` fresh — while `onAppear`'s bounded retry loop
+    /// (`proposeWithRetryEffect`, up to ~60 s) kept running uncancelled underneath a still-blank
+    /// timeline. A schedule that arrived DURING the prompt satisfied that guard by construction
+    /// once authentication passed, so a plan the user never saw could be signed, persisted, and
+    /// started. With no schedule at all, `.confirmTapped` must now be a COMPLETE no-op, decided
+    /// synchronously, before authentication is ever reached. `.mockAuthenticationBlocking` proves
+    /// it two ways at once: the call count stays 0, and — because this mock blocks on a stream
+    /// this test never releases — a regression that reintroduced a call here would leave the
+    /// effect stuck in flight rather than quietly passing.
+    @MainActor @Test func confirmTappedWithNilScheduleAndEmptyRowsIsACompleteNoOp() async {
         let authenticateCalls = LockIsolated<Int>(0)
-        var state = MigrationTransferPlan.State(requiresSigning: false)
-        state.isExpiredRecoveryReview = true
+        let (releaseStream, releaseContinuation) = AsyncStream<Void>.makeStream()
+        let signAndStoreCalls = LockIsolated<Int>(0)
+        let state = MigrationTransferPlan.State(variant: .scheduled)
         let store = TestStore(initialState: state) {
             MigrationTransferPlan()
         } withDependencies: {
-            $0.localAuthentication.authenticate = {
-                authenticateCalls.withValue { $0 += 1 }
-                return true
-            }
+            $0.localAuthentication = .mockAuthenticationBlocking(authenticateCalls, releaseStream: releaseStream)
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.signAndStoreMigrationSchedule = { _, _, _ in signAndStoreCalls.withValue { $0 += 1 } }
+        }
+
+        #expect(store.state.schedule == nil)
+        #expect(store.state.rows.isEmpty)
+
+        await store.send(.confirmTapped)
+
+        releaseContinuation.finish()
+
+        #expect(store.state.isConfirming == false)
+        #expect(authenticateCalls.value == 0)
+        #expect(signAndStoreCalls.value == 0)
+    }
+
+    /// Companion to the no-op pin above: proves the POSITIVE half of the fix — the schedule that
+    /// gets signed is the one captured at TAP time, even when a DIFFERENT schedule lands while the
+    /// authentication prompt is still up. Before this fix, `.confirmAuthenticated` re-read
+    /// `state.schedule` after the `await`, so the late arrival below would have been what actually
+    /// got signed instead of the one the user was shown and tapped Confirm on.
+    @MainActor @Test func confirmTappedSignsScheduleCapturedAtTapTimeNotOneArrivingMidPrompt() async {
+        let authenticateCalls = LockIsolated<Int>(0)
+        let (releaseStream, releaseContinuation) = AsyncStream<Void>.makeStream()
+        let tappedSchedule = MigrationSchedule(
+            transfers: [
+                MigrationTransferProposal(id: "shown", amount: Zatoshi(500_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
+            ],
+            estimatedDurationHours: 24,
+            proposalHandle: 1
+        )
+        let lateArrivingSchedule = MigrationSchedule(
+            transfers: [
+                MigrationTransferProposal(id: "never-shown", amount: Zatoshi(999_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
+            ],
+            estimatedDurationHours: 24,
+            proposalHandle: 2
+        )
+        let signedSchedule = LockIsolated<MigrationSchedule?>(nil)
+        var state = MigrationTransferPlan.State()
+        state.schedule = tappedSchedule
+        let store = TestStore(initialState: state) {
+            MigrationTransferPlan()
+        } withDependencies: {
+            $0.localAuthentication = .mockAuthenticationBlocking(authenticateCalls, releaseStream: releaseStream)
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.signAndStoreMigrationSchedule = { _, schedule, _ in signedSchedule.setValue(schedule) }
+            $0.migrationManager.recordCommittedSchedule = { _, _ in }
+            $0.migrationManager.reconcile = { }
+            withDependenciesUSKDerivable(&$0)
         }
 
         await store.send(.confirmTapped) {
             $0.isConfirming = true
         }
+
+        // The authentication prompt is up (blocked on `releaseStream`) — a late `.transfersProposed`
+        // lands here exactly like the real MOB-1458 regression scenario (`onAppear`'s retry loop
+        // was never cancelled by the tap), with a schedule the user never saw.
+        await store.send(.transfersProposed(lateArrivingSchedule)) {
+            $0.isConfirming = false
+            $0.rows = [
+                MigrationTransferRow(id: "never-shown", index: 0, amount: Zatoshi(999_000_000), status: .pending, hoursFromNow: 0, minutesFromNow: 0)
+            ]
+            $0.totalDurationHours = 24
+            $0.schedule = lateArrivingSchedule
+        }
+
+        releaseContinuation.yield()
+        releaseContinuation.finish()
+
         await store.receive(\.confirmAuthenticated) {
+            $0.isConfirming = true
+        }
+        await store.receive(\.scheduleSigned) {
             $0.isConfirming = false
         }
         await store.receive(.delegate(.confirmed))
 
+        #expect(signedSchedule.value == tappedSchedule)
         #expect(authenticateCalls.value == 1)
     }
 
-    /// A refusal on the expired-recovery review must emit NO `.confirmed` delegate — unlike the
-    /// plain rescheduled acknowledgment, this screen puts funds in motion, so a cancelled prompt
-    /// leaves the user back on the review, not waved through.
-    @MainActor @Test func confirmTappedForExpiredRecoveryReviewWhenAuthenticationFailsEmitsNoConfirmedDelegate() async {
-        var state = MigrationTransferPlan.State(requiresSigning: false)
-        state.isExpiredRecoveryReview = true
+    // MARK: - MOB-1458 (F5): declining must not erase the failure message
+
+    /// Before this fix, `.retryTapped` cleared both `isFailurePresented` and `failureReason` up
+    /// front, and `.authenticationCancelled` restored neither — so a declined Retry left a screen
+    /// that looked like a fresh, never-attempted review, with no way back to the failure sheet
+    /// (the only surface for the error).
+    @MainActor @Test func retryTappedThenDecliningAuthenticationRestoresTheFailureSheetItDismissed() async {
+        struct CommitFailure: Error { }
+        let schedule = MigrationSchedule(
+            transfers: [
+                MigrationTransferProposal(id: "t0", amount: Zatoshi(500_000_000), anchorHeight: 100, nextExecutableAfterHeight: 100, expiryHeight: 200)
+            ],
+            estimatedDurationHours: 24,
+            proposalHandle: 1
+        )
+        var state = MigrationTransferPlan.State()
+        state.schedule = schedule
         let store = TestStore(initialState: state) {
             MigrationTransferPlan()
         } withDependencies: {
-            $0.localAuthentication = .mockAuthenticationFailed
+            $0.localAuthentication = .mockAuthenticationSucceeded
+            $0.sdkSynchronizer = .noOp
+            $0.sdkSynchronizer.isNoteSplitNeeded = { _ in false }
+            $0.sdkSynchronizer.signAndStoreMigrationSchedule = { _, _, _ in throw CommitFailure() }
+            $0.migrationManager.recordCommittedSchedule = { _, _ in }
+            withDependenciesUSKDerivable(&$0)
         }
 
         await store.send(.confirmTapped) {
             $0.isConfirming = true
         }
+        await store.receive(\.confirmAuthenticated)
+        await store.receive(\.noteSplitFailed) {
+            $0.isConfirming = false
+            $0.isFailurePresented = true
+            $0.failureReason = MigrationTransferPlan.State.FailureReason.commit
+        }
+
+        // Retry dismisses the sheet up front (unchanged) but — MOB-1458 (F5) — no longer clears
+        // `failureReason`, so a decline below can restore the same sheet.
+        store.dependencies.localAuthentication = .mockAuthenticationFailed
+
+        await store.send(.retryTapped) {
+            $0.isConfirming = true
+            $0.isFailurePresented = false
+        }
         await store.receive(\.authenticationCancelled) {
             $0.isConfirming = false
+            $0.isFailurePresented = true
         }
+
+        #expect(store.state.failureReason == MigrationTransferPlan.State.FailureReason.commit)
     }
 }

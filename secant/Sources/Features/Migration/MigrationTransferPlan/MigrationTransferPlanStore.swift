@@ -54,17 +54,31 @@
 //  on every proposal, so the SDK never silently signs a plan the user was not shown). Any OTHER
 //  thrown error on either path keeps the existing `.noteSplitFailed` handling unchanged.
 //
-//  MOB-1458: `confirmTapped`/`retryTapped` now gate behind device authentication (Face ID /
-//  Touch ID / passcode, via `LocalAuthenticationClient`) before running the real confirm body —
-//  `State.confirmRequiresAuthentication` decides whether the prompt is needed (see its own doc:
-//  it isn't simply `requiresSigning`, since the expired-recovery review below also puts funds in
-//  motion despite `requiresSigning == false`). The gate runs BEFORE `isConfirming` is set, so the
-//  Confirm button's existing spinner covers the authentication sheet too and a double-tap can't
-//  open two prompts. A pass sends `.confirmAuthenticated`, which carries the entire body this
-//  case used to run directly; a refusal sends `.authenticationCancelled`, clearing `isConfirming`
-//  and going no further — nothing is signed, proposed, or delegated. The propose-failure Retry
-//  short-circuit above stays UNauthenticated, since it only re-proposes for display; nothing is
-//  signed or broadcast either way.
+//  MOB-1458: `confirmTapped`/`retryTapped` gate behind device authentication (Face ID / Touch ID /
+//  passcode, via `LocalAuthenticationClient`) before running the real confirm body —
+//  `State.confirmRequiresAuthentication` decides whether the prompt is needed (F2: reduced to
+//  plain `requiresSigning` now — see its own doc for where the expired-recovery review's gate
+//  moved). `state.isConfirming` is set `true` BEFORE the gate's effect launches, not after, so the
+//  Confirm button's existing spinner covers the authentication sheet too and a double-tap hits the
+//  single-flight guard at the top of this case instead of opening a second prompt. A pass sends
+//  `.confirmAuthenticated`, carrying a `ConfirmIntent` (F1, see `State.confirmIntent`) — the whole
+//  body this case used to run directly, plus WHAT to run it on, both decided synchronously at tap
+//  time. A refusal sends `.authenticationCancelled`, clearing `isConfirming` and going no further
+//  — nothing is signed, proposed, or delegated. The propose-failure Retry short-circuit above
+//  stays UNauthenticated, since it only re-proposes for display; nothing is signed or broadcast
+//  either way.
+//
+//  MOB-1458 (regression fix, F1): before this fix, the guard against a nil/empty schedule lived
+//  on the far side of the authentication `await`, re-reading `state.schedule` fresh inside
+//  `.confirmAuthenticated` — while `onAppear`'s bounded entry retry (`proposeWithRetryEffect`, up
+//  to ~60 s of quiet re-proposing) kept running uncancelled underneath a still-blank timeline. A
+//  schedule that arrived DURING the prompt satisfied that guard by construction once
+//  authentication passed, so a plan the user was never shown could be signed, persisted, and
+//  started — directly against this file's own MOB-1458 (Task 3) invariant that the SDK never
+//  signs a plan the user was not shown. `ConfirmIntent` closes this: `State.confirmIntent` decides
+//  synchronously at tap time, before the prompt opens, and that CAPTURED decision — not a fresh
+//  read of `state` — is what `.confirmAuthenticated` acts on. A schedule landing mid-prompt can no
+//  longer retroactively make an already-decided tap valid.
 //
 
 import Foundation
@@ -107,6 +121,24 @@ struct MigrationTransferPlan {
             let schedule: MigrationSchedule
         }
 
+        /// MOB-1458 (regression fix, F1): what a Confirm tap will actually do, decided
+        /// SYNCHRONOUSLY at tap time (`State.confirmIntent` below) and carried end-to-end in
+        /// `.confirmAuthenticated` — nothing about WHAT to sign/propose is re-read from state after
+        /// the authentication `await`. See this file's header for the bug this closes: re-reading
+        /// `state.schedule` on the far side of the prompt let a schedule that arrived DURING the
+        /// prompt (never shown on the still-blank timeline) satisfy the emptiness guard by
+        /// construction.
+        enum ConfirmIntent: Equatable {
+            /// `requiresSigning == false` — a plain "got it": nothing left to sign or propose.
+            case acknowledge
+            /// The software lane: sign + store `schedule` with a USK derived for `account` at
+            /// `zip32AccountIndex`.
+            case software(schedule: MigrationSchedule, account: WalletAccount, zip32AccountIndex: Zip32AccountIndex)
+            /// The Keystone lane: propose `schedule`'s PCZTs (plus any preparation PCZTs) for a
+            /// batched QR-signing session against `account`.
+            case keystone(schedule: MigrationSchedule, account: WalletAccount)
+        }
+
         var variant = Variant.scheduled
         var rows: IdentifiedArrayOf<MigrationTransferRow> = []
         var totalDurationHours = 0
@@ -147,12 +179,20 @@ struct MigrationTransferPlan {
         /// above — see `PendingKeystoneRecoveryBatch`'s doc for why it lives here. `nil` for the
         /// software lane (nothing left to sign) and every other variant/screen.
         var pendingKeystoneRecoveryBatch: PendingKeystoneRecoveryBatch?
-        /// MOB-1513 (B4): true while an async confirm leg is in flight — the software commit, the
-        /// Keystone PCZT-batch propose, or a propose-failure Retry's re-propose. Drives the Confirm
-        /// button's disabled+spinner state AND the `.confirmTapped`/`.retryTapped` single-flight
-        /// guard: a second tap while set is a complete no-op, so concurrent commits (the
-        /// plan-cache-overwrite race behind QA's `MIGRATION_PLAN_STALE` error sheet) can't happen.
-        /// Cleared on every outcome: `.scheduleSigned`, `.noteSplitFailed`,
+        /// MOB-1513 (B4): true while an async confirm leg is in flight — the device-authentication
+        /// prompt itself (MOB-1458), the software commit, the Keystone PCZT-batch propose, or a
+        /// propose-failure Retry's re-propose. Drives the Confirm button's disabled+spinner state
+        /// AND the `.confirmTapped`/`.retryTapped` single-flight guard: a second tap while set is a
+        /// complete no-op, so concurrent commits (the plan-cache-overwrite race behind QA's
+        /// `MIGRATION_PLAN_STALE` error sheet) can't happen — and, MOB-1458, a second tap can't
+        /// open a second authentication prompt either, since this is set true BEFORE that prompt's
+        /// effect launches, not after.
+        ///
+        /// MOB-1458: cleared unconditionally at the top of `.confirmAuthenticated` — every intent
+        /// branch that goes on to launch a further async leg (`.software`, `.keystone`) re-sets it
+        /// `true` immediately after, so this is a real transition only for `.acknowledge`, which
+        /// delegates `.confirmed` straight away — and by `.authenticationCancelled`. Also cleared
+        /// on every terminal outcome of those further legs: `.scheduleSigned`, `.noteSplitFailed`,
         /// `.delegate(.keystoneSignRequested)` (so a pop-back after a rejected QR ceremony
         /// re-enables Confirm), `.transfersProposed`, and `.transferProposalFailed`.
         var isConfirming = false
@@ -205,17 +245,51 @@ struct MigrationTransferPlan {
             )
         }
 
+        /// MOB-1458 (regression fix, F1): what `.confirmTapped`/`.retryTapped` will actually do,
+        /// computed fresh from CURRENT state at the call site — `nil` means there is nothing to
+        /// confirm and the tap is a no-op. This is the SAME decision the old inline body used to
+        /// make on the far side of the authentication prompt (by re-reading state from
+        /// `.confirmAuthenticated`); only WHEN it runs moves earlier, to before the prompt opens —
+        /// see the file header for the regression that closes. Guard order reproduces the
+        /// original exactly and is significant: the `requiresSigning == false` short-circuit must
+        /// win first (a rescheduled acknowledgment has neither a schedule nor necessarily a
+        /// selected account by the time it reaches this screen), and the Keystone-vendor check
+        /// must win before the software-only `zip32AccountIndex` guard (a Keystone account never
+        /// has one).
+        var confirmIntent: ConfirmIntent? {
+            guard requiresSigning else { return .acknowledge }
+            // MOB-1496 (R8-T1, S3): an absent or legitimately-empty schedule has nothing to sign —
+            // the engine's `sign_and_store_migration_schedule` deterministically refuses an empty
+            // one either way.
+            guard let schedule, !schedule.transfers.isEmpty else { return nil }
+            guard let account = selectedWalletAccount else { return nil }
+            guard account.vendor != WalletAccount.Vendor.keystone else {
+                return .keystone(schedule: schedule, account: account)
+            }
+            guard let zip32AccountIndex = account.zip32AccountIndex else { return nil }
+            return .software(schedule: schedule, account: account, zip32AccountIndex: zip32AccountIndex)
+        }
+
         /// MOB-1458: whether `confirmTapped`/`retryTapped` must pass the device-authentication
-        /// gate (Face ID / Touch ID / passcode) before running its real body. `requiresSigning`
-        /// alone would under-gate: this screen has TWO distinct `requiresSigning == false`
-        /// variants. The expired-transfer recovery review (`isExpiredRecoveryReview == true`)
-        /// puts funds in motion — software lands on the running plan, Keystone resumes the
-        /// already-proposed QR ceremony — so it gates too. The rescheduled-plan acknowledgment
-        /// (`requiresSigning == false` and `!isExpiredRecoveryReview`) is a plain "got it" whose
-        /// coordinator handler is a bare `.send(.flowFinished)` — nothing is signed, nothing
-        /// broadcasts — so it does NOT gate.
+        /// gate (Face ID / Touch ID / passcode) before running its real body.
+        ///
+        /// MOB-1458 (F2): reduced to plain `requiresSigning` — `isExpiredRecoveryReview` is
+        /// deliberately NOT part of this any more, even though that review also puts funds in
+        /// motion despite `requiresSigning == false`. On the SOFTWARE lane the expired-recovery
+        /// re-signing already happens, ungated, one screen earlier: `.recovery(.delegate(.recreate))`
+        /// in the coordinator derives the real spending key, calls `refreshStaleMigrationTransfers`
+        /// (which re-signs every rebuilt transfer in-process), then `recordCommittedSchedule` +
+        /// `reconcile` — by the time THIS review screen appears the run is already fully committed,
+        /// and its Confirm is pure navigation. The authentication gate now lives on
+        /// `.recovery(.delegate(.recreate))` instead, so each recovery prompts exactly once, at the
+        /// point funds are actually committed, rather than a second time on a screen that no longer
+        /// does anything but acknowledge. Kept as its own named computed property (rather than
+        /// inlined to `requiresSigning` at call sites) since it remains the documented seam a
+        /// future `requiresSigning == false` variant author will look at first, and its
+        /// truth-table tests (`confirmRequiresAuthenticationIsTrueWheneverRequiresSigningIsTrue` /
+        /// `confirmRequiresAuthenticationIsFalseWheneverRequiresSigningIsFalse`) already exist.
         var confirmRequiresAuthentication: Bool {
-            requiresSigning || isExpiredRecoveryReview
+            requiresSigning
         }
 
         init(
@@ -241,12 +315,18 @@ struct MigrationTransferPlan {
         /// MOB-1458: `confirmTapped`/`retryTapped`'s device-authentication gate
         /// (`State.confirmRequiresAuthentication`) refused — authentication failed, or the user
         /// cancelled the Face ID / Touch ID / passcode prompt. Clears `isConfirming`; nothing was
-        /// signed, proposed, or delegated.
+        /// signed, proposed, or delegated. MOB-1458 (F5): re-presents the failure sheet if one was
+        /// already showing before this tap (a declined Retry must not erase the error the user was
+        /// looking at) — see `State.failureReason`'s lifecycle note at `.confirmAuthenticated`.
         case authenticationCancelled
         /// MOB-1458: the device-authentication gate passed (or `confirmRequiresAuthentication`
         /// was `false`, skipping it entirely) — runs the confirm body that used to live directly
-        /// under `.confirmTapped`/`.retryTapped`, unchanged.
-        case confirmAuthenticated
+        /// under `.confirmTapped`/`.retryTapped`, unchanged. MOB-1458 (regression fix, F1): now
+        /// carries the `ConfirmIntent` that `.confirmTapped`/`.retryTapped` decided BEFORE the
+        /// prompt opened (`State.confirmIntent`) — this handler acts on that captured decision
+        /// instead of re-reading `state`, which is the fix for the regression this task closes
+        /// (see the file header).
+        case confirmAuthenticated(State.ConfirmIntent)
         case delegate(Delegate)
         /// The commit failed — presents the failure sheet instead of proceeding. Covers any
         /// software commit failure and (MOB-1496 R8-T1, #4) the Keystone PCZT-proposal fork's
@@ -346,77 +426,71 @@ struct MigrationTransferPlan {
                     state.isConfirming = true
                     return proposeEffect(accountUUID: accountUUID)
                 }
-                state.failureReason = nil
+
+                // MOB-1458 (regression fix, F1): decided synchronously, from CURRENT state, before
+                // anything below ever awaits — see `State.confirmIntent`'s doc. `nil` means there
+                // is nothing to confirm, so this tap is a no-op. Deliberately does NOT clear
+                // `failureReason` (F5, below): a failure sheet dismissed by this tap must be able
+                // to come back unchanged if what follows is refused, or turns out to be this no-op.
+                guard let intent = state.confirmIntent else { return .none }
 
                 // MOB-1458: the device-authentication gate — see `State.confirmRequiresAuthentication`'s
                 // doc for which of this screen's states need it. The rescheduled acknowledgment
                 // (`false`) skips straight through with no prompt.
-                guard state.confirmRequiresAuthentication else { return .send(.confirmAuthenticated) }
+                guard state.confirmRequiresAuthentication else { return .send(.confirmAuthenticated(intent)) }
 
-                // Set BEFORE authentication (unlike the rest of this case's body, moved below to
-                // `.confirmAuthenticated`, which used to set it) so the Confirm button's existing
-                // spinner covers the Face ID/Touch ID sheet too — a double-tap while the prompt is
-                // up hits the single-flight guard above instead of opening a second prompt.
+                // Set BEFORE authentication so the Confirm button's existing spinner covers the
+                // Face ID/Touch ID sheet too — a double-tap while the prompt is up hits the
+                // single-flight guard above instead of opening a second prompt.
                 state.isConfirming = true
-                return .run { send in
-                    guard await localAuthentication.authenticate() else {
-                        await send(.authenticationCancelled)
-                        return
-                    }
-                    await send(.confirmAuthenticated)
-                }
+                return localAuthentication.gated(success: .confirmAuthenticated(intent), cancelled: .authenticationCancelled)
 
             case .authenticationCancelled:
                 // MOB-1458: refused — nothing was signed, proposed, or delegated. Re-enables
-                // Confirm.
+                // Confirm. MOB-1458 (F5): `failureReason` is never cleared by the tap that led
+                // here (only by a subsequent `.confirmAuthenticated` success, below) — so if a
+                // failure sheet was showing before this tap, bring it back rather than leaving a
+                // screen that reads as a fresh, never-attempted review with no way back to the
+                // error it was showing.
                 state.isConfirming = false
+                state.isFailurePresented = state.failureReason != nil
                 return .none
 
-            case .confirmAuthenticated:
+            case .confirmAuthenticated(let intent):
                 // MOB-1458: the gate passed (or didn't apply) — the confirm body that used to run
                 // directly under `.confirmTapped`/`.retryTapped`. `isConfirming` is already `true`
                 // here for every path that goes on to launch an async leg below (set by the gate
-                // above), so this never re-checks the single-flight guard the way that case does;
-                // every early return below instead clears the flag explicitly, since — unlike
-                // before MOB-1458 — it may already be `true` on entry here.
-                guard state.requiresSigning else {
-                    // Rescheduled variant: transfers are already signed — this is acknowledgment.
-                    // MOB-1458: `isConfirming` was never set on the way here for THIS branch
-                    // (ungated above), so this is a harmless no-op — but the expired-recovery
-                    // review is ALSO `requiresSigning == false` and IS gated, reaching here with
-                    // the flag `true`, so it must be cleared unconditionally to handle both
-                    // correctly.
-                    state.isConfirming = false
+                // above), so this never re-checks the single-flight guard the way that case does.
+                // MOB-1458 (regression fix, F1): acts ONLY on `intent`, captured synchronously by
+                // `State.confirmIntent` at tap time — never re-reads `state.schedule` or
+                // `state.selectedWalletAccount` here, which is exactly the fix (see the file
+                // header for the regression this closes).
+                //
+                // MOB-1458 (F5): `failureReason` clears here — the one place left that clears it
+                // outside of a specific success action — since reaching this point means the tap
+                // that dismissed the sheet is actually going somewhere, not bouncing off a no-op
+                // (a nil `confirmIntent` returns before ever sending this action) or getting
+                // refused (`.authenticationCancelled` restores the sheet instead of clearing it).
+                state.isConfirming = false
+                state.failureReason = nil
+                switch intent {
+                case .acknowledge:
+                    // The rescheduled variant, or the expired-recovery review
+                    // (`isExpiredRecoveryReview`) — both `requiresSigning == false`: transfers are
+                    // already signed, so this is a plain acknowledgment either way. The coordinator
+                    // (reading `state.path.last`'s `isExpiredRecoveryReview`) decides any further
+                    // routing once `.delegate(.confirmed)` lands; this reducer needs no awareness
+                    // of it (see `State.isExpiredRecoveryReview`'s own doc).
                     return .send(.delegate(.confirmed))
-                }
 
-                // MOB-1496 (R8-T1, S3): never sign/delegate for a schedule that doesn't exist yet
-                // (propose still in flight, or failed) or that legitimately came back empty — the
-                // engine's `sign_and_store_migration_schedule` deterministically refuses an empty
-                // schedule, and an absent one has nothing to sign.
-                guard let schedule = state.schedule, !schedule.transfers.isEmpty else {
-                    // MOB-1458: reachable with `isConfirming` already `true` now — clear it so a
-                    // stranded schedule doesn't leave Confirm stuck spinning.
-                    state.isConfirming = false
-                    return .none
-                }
-                guard let account = state.selectedWalletAccount else {
-                    state.isConfirming = false
-                    return .none
-                }
-
-                guard account.vendor != WalletAccount.Vendor.keystone else {
+                case .keystone(let schedule, let account):
                     state.isConfirming = true
                     return requestKeystoneSignature(for: schedule, account: account)
-                }
 
-                guard let zip32AccountIndex = account.zip32AccountIndex else {
-                    state.isConfirming = false
-                    return .none
+                case .software(let schedule, let account, let zip32AccountIndex):
+                    state.isConfirming = true
+                    return commitEffect(schedule: schedule, account: account, zip32AccountIndex: zip32AccountIndex)
                 }
-
-                state.isConfirming = true
-                return commitEffect(schedule: schedule, account: account, zip32AccountIndex: zip32AccountIndex)
 
             case .delegate(.keystoneSignRequested):
                 // MOB-1513 (B4): the batch is handed to the coordinator (which pushes the QR
