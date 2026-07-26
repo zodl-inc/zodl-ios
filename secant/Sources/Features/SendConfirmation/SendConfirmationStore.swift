@@ -481,10 +481,17 @@ struct SendConfirmation {
                     // releases before the minimum this gate enforces — an unstamped PCZT is
                     // therefore necessarily below minimum, never merely "unknown".
                     let detectedFirmware = pcztWithSigs.keystoneFirmwareVersion()
+                    let minimumFirmware = KeystoneFirmwareVersion.minimumSupported.versionString
                     guard let detectedFirmware, detectedFirmware >= KeystoneFirmwareVersion.minimumSupported else {
+                        LoggerProxy.warn(
+                            "Keystone firmware gate: stamp \(detectedFirmware?.versionString ?? "absent"), minimum \(minimumFirmware), blocked"
+                        )
                         state.detectedKeystoneFirmware = detectedFirmware
                         return .send(.keystoneFirmwareUpdateRequired)
                     }
+                    LoggerProxy.info(
+                        "Keystone firmware gate: stamp \(detectedFirmware.versionString), minimum \(minimumFirmware), allowed"
+                    )
 
                     state.pcztWithSigs = pcztWithSigs
                     return .merge(
