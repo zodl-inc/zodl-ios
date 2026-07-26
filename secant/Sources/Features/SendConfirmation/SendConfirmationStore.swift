@@ -480,18 +480,21 @@ struct SendConfirmation {
                     // MOB-1510: firmware >= 2.4.6 stamps its version into every signed PCZT, two
                     // releases before the minimum this gate enforces — an unstamped PCZT is
                     // therefore necessarily below minimum, never merely "unknown".
-                    let detectedFirmware = pcztWithSigs.keystoneFirmwareVersion()
-                    let minimumFirmware = KeystoneFirmwareVersion.minimumSupported.versionString
+                    let firmwareStamp = pcztWithSigs.keystoneFirmwareStamp()
+                    let detectedFirmware = firmwareStamp.map { KeystoneFirmwareVersion.fromStamp($0) }
+                    // Both numberings, because they differ: the device stamps its internal major,
+                    // which is 10 higher than the version shown on its own screen.
+                    let firmwareGateLog = """
+                        Keystone firmware gate: raw stamp \(firmwareStamp?.rawString ?? "absent"), \
+                        reads as \(detectedFirmware?.versionString ?? "unknown"), \
+                        minimum \(KeystoneFirmwareVersion.minimumSupported.versionString)
+                        """
                     guard let detectedFirmware, detectedFirmware >= KeystoneFirmwareVersion.minimumSupported else {
-                        LoggerProxy.warn(
-                            "Keystone firmware gate: stamp \(detectedFirmware?.versionString ?? "absent"), minimum \(minimumFirmware), blocked"
-                        )
+                        LoggerProxy.warn("\(firmwareGateLog), blocked")
                         state.detectedKeystoneFirmware = detectedFirmware
                         return .send(.keystoneFirmwareUpdateRequired)
                     }
-                    LoggerProxy.info(
-                        "Keystone firmware gate: stamp \(detectedFirmware.versionString), minimum \(minimumFirmware), allowed"
-                    )
+                    LoggerProxy.info("\(firmwareGateLog), allowed")
 
                     state.pcztWithSigs = pcztWithSigs
                     return .merge(

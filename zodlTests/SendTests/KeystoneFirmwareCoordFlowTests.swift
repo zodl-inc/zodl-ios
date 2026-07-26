@@ -43,10 +43,11 @@ import XCTestDynamicOverlay
         )
     }
 
-    private func signedPczt(firmware: (major: Int, minor: Int, build: Int)) -> Pczt {
+    /// `stamp` is in the wire's numbering — a device displaying 3.0.1 stamps `[13, 0, 1]`.
+    private func signedPczt(stamp: (major: Int, minor: Int, build: Int)) -> Pczt {
         var data = Data()
         data.append(contentsOf: Array("keystone:fw_version".utf8))
-        data.append(contentsOf: [0x03, UInt8(firmware.major), UInt8(firmware.minor), UInt8(firmware.build)])
+        data.append(contentsOf: [0x03, UInt8(stamp.major), UInt8(stamp.minor), UInt8(stamp.build)])
         return Pczt(data)
     }
 
@@ -146,7 +147,7 @@ import XCTestDynamicOverlay
         } operation: {
             var confirmState = SendConfirmation.State.initial
             confirmState.isKeystoneCodeFound = true
-            confirmState.detectedKeystoneFirmware = KeystoneFirmwareVersion(major: 2, minor: 4, build: 6)
+            confirmState.detectedKeystoneFirmware = KeystoneFirmwareVersion(displayMajor: 2, minor: 4, build: 6)
 
             var initialState = SendCoordFlow.State()
             initialState.path.append(.confirmWithKeystone(confirmState))
@@ -185,7 +186,7 @@ import XCTestDynamicOverlay
         } operation: {
             var initialState = SignWithKeystoneCoordFlow.State()
             initialState.sendConfirmationState.isKeystoneCodeFound = true
-            initialState.sendConfirmationState.detectedKeystoneFirmware = KeystoneFirmwareVersion(major: 2, minor: 4, build: 6)
+            initialState.sendConfirmationState.detectedKeystoneFirmware = KeystoneFirmwareVersion(displayMajor: 2, minor: 4, build: 6)
             initialState.path.append(.keystoneFirmwareUpdate(initialState.sendConfirmationState))
             let updateId = try #require(initialState.path.ids.last)
 
@@ -218,7 +219,7 @@ import XCTestDynamicOverlay
         } operation: {
             var confirmState = SendConfirmation.State.initial
             confirmState.isKeystoneCodeFound = true
-            confirmState.detectedKeystoneFirmware = KeystoneFirmwareVersion(major: 2, minor: 4, build: 6)
+            confirmState.detectedKeystoneFirmware = KeystoneFirmwareVersion(displayMajor: 2, minor: 4, build: 6)
 
             var initialState = SendCoordFlow.State()
             initialState.path.append(.confirmWithKeystone(confirmState))
@@ -260,7 +261,7 @@ import XCTestDynamicOverlay
             let markCalls = LockIsolated(0)
             let store = try makeSwapAndPayStore(markCalls: markCalls)
 
-            store.send(.path(.element(id: try #require(store.state.path.ids.last), action: .scan(.foundPCZT(signedPczt(firmware: (2, 4, 6)))))))
+            store.send(.path(.element(id: try #require(store.state.path.ids.last), action: .scan(.foundPCZT(signedPczt(stamp: (12, 4, 6)))))))
 
             await waitForCoordFlowStore {
                 !store.state.path.filter { $0.is(\.keystoneFirmwareUpdate) }.isEmpty
@@ -279,7 +280,7 @@ import XCTestDynamicOverlay
             let markCalls = LockIsolated(0)
             let store = try makeSwapAndPayStore(markCalls: markCalls)
 
-            store.send(.path(.element(id: try #require(store.state.path.ids.last), action: .scan(.foundPCZT(signedPczt(firmware: (3, 0, 1)))))))
+            store.send(.path(.element(id: try #require(store.state.path.ids.last), action: .scan(.foundPCZT(signedPczt(stamp: (13, 0, 1)))))))
 
             await waitForCoordFlowStore {
                 markCalls.value == 1
