@@ -32,14 +32,14 @@ extension HomeView {
                 .padding(.bottom, 8)
 
                 HStack(spacing: 8) {
+                    poolCard(title: String(localizable: .poolBalancesIronwood), balance: store.walletBalancesState.ironwoodPoolBalance)
                     poolCard(title: String(localizable: .poolBalancesOrchard), balance: store.walletBalancesState.orchardPoolBalance)
-                    poolCard(title: String(localizable: .poolBalancesSapling), balance: store.walletBalancesState.saplingPoolBalance)
                 }
                 .padding(.bottom, 8)
 
                 HStack(spacing: 8) {
+                    poolCard(title: String(localizable: .poolBalancesSapling), balance: store.walletBalancesState.saplingPoolBalance)
                     poolCard(title: String(localizable: .poolBalancesTransparent), balance: store.walletBalancesState.transparentPoolBalance)
-                    poolCard(title: String(localizable: .poolBalancesIronwood), balance: store.walletBalancesState.ironwoodPoolBalance)
                 }
                 .padding(.bottom, 32)
 
@@ -57,21 +57,23 @@ extension HomeView {
                 .zFont(.medium, size: 14, style: Design.Text.tertiary)
                 .padding(.bottom, 4)
 
-            if dimmedToken {
-                HStack(spacing: 4) {
-                    // .abbreviated matches the home screen's balance label: floored to 0.001 ZEC,
-                    // always three fraction digits.
-                    ZatoshiText(balance, .abbreviated)
-                        .zFont(.semiBold, size: 16, style: Design.Text.primary)
+            HStack(spacing: 4) {
+                // .expanded keeps every zatoshi visible: first three fraction digits at full size,
+                // remaining five smaller.
+                ZatoshiRepresentationView(
+                    balance: balance,
+                    fontName: FontFamily.Inter.semiBold.name,
+                    mostSignificantFontSize: 16,
+                    leastSignificantFontSize: 12,
+                    format: .expanded,
+                    couldBeHidden: true
+                )
+                .zForegroundColor(Design.Text.primary)
 
-                    if !isSensitiveContentHidden {
-                        Text(tokenName)
-                            .zFont(.semiBold, size: 16, style: Design.Text.tertiary)
-                    }
+                if !isSensitiveContentHidden {
+                    Text(tokenName)
+                        .zFont(.semiBold, size: 16, style: dimmedToken ? Design.Text.tertiary : Design.Text.primary)
                 }
-            } else {
-                ZatoshiText(balance, .abbreviated, tokenName)
-                    .zFont(.semiBold, size: 16, style: Design.Text.primary)
             }
 
             if store.walletBalancesState.isFiatAvailable {
