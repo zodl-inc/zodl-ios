@@ -42,7 +42,7 @@ struct KeystoneFirmwareVersion: Equatable, Comparable, Sendable {
     /// Minimum Keystone firmware this app will accept a signature from — set by product
     /// (MOB-1510), in the numbering the device displays. Single point of change if the minimum is
     /// ever raised. Always enforced — there is no "0.0.0 disables the check" escape hatch.
-    static let minimumSupported = KeystoneFirmwareVersion(displayMajor: 3, minor: 0, build: 1)
+    static let minimumSupported = KeystoneFirmwareVersion(displayMajor: 3, minor: 0, build: 3)
 
     let major: Int
     let minor: Int

@@ -280,7 +280,7 @@ import XCTestDynamicOverlay
             let markCalls = LockIsolated(0)
             let store = try makeSwapAndPayStore(markCalls: markCalls)
 
-            store.send(.path(.element(id: try #require(store.state.path.ids.last), action: .scan(.foundPCZT(signedPczt(stamp: (13, 0, 1)))))))
+            store.send(.path(.element(id: try #require(store.state.path.ids.last), action: .scan(.foundPCZT(signedPczt(stamp: (13, 0, 3)))))))
 
             await waitForCoordFlowStore {
                 markCalls.value == 1
