@@ -58,12 +58,21 @@ struct TransactionState: Equatable, Identifiable {
     /// indistinguishable from a genuine self-transfer.
     var sentNoteCount = 0
     var receivedNoteCount = 0
-    /// Sum of this transaction's outputs that pay an explicit address and are not change
-    /// (`recipient == .address` and `isChange == false`). For a self-transfer this is the
-    /// deliberately sent portion. Both conditions are needed: shielded change carries no address
-    /// (the SDK stores no address row for internal-scope notes), but a transparent internal or
-    /// ephemeral output does carry one, so the address check alone would fold transparent change
-    /// back into the total.
+    /// Sum of this transaction's outputs that pay an explicit address (`recipient == .address`).
+    /// For a self-transfer this is the deliberately sent portion; wallet-internal outputs are
+    /// excluded because the SDK stores no address row for an internal-scope note, so they arrive
+    /// as `.internalAccount`.
+    ///
+    /// Do NOT additionally filter on `isChange`. Upstream sets that flag during scanning as
+    /// `spent_from_accounts.contains(key.account_id())` — "received by an account that also spent
+    /// in this transaction" — and its own comment lists "notes sent from one account to itself"
+    /// among the cases it means to catch. A self-send's payment output is therefore flagged as
+    /// change on every device that scanned the transaction, and filtering on it empties this sum
+    /// for exactly the transactions the feature exists to display.
+    ///
+    /// The cost of leaving it out: a transparent internal or ephemeral output does carry an
+    /// address and so is counted. ZODL spends from the shielded pool, so change is a shielded,
+    /// address-less note and this stays theoretical — and it is much the lesser error.
     ///
     /// `nil` means the SDK returned no per-output detail at all, which is a different statement
     /// from "no output paid an address" and must not be read as zero — `isSelfTransfer` relies on
@@ -484,7 +493,7 @@ extension TransactionState {
         ? nil
         : Zatoshi(
             outputs.reduce(Int64(0)) { total, output in
-                if case .address = output.recipient, !output.isChange {
+                if case .address = output.recipient {
                     return total + output.value.amount
                 }
                 return total

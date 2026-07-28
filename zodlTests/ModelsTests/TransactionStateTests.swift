@@ -6,16 +6,21 @@
 //  transaction sent to the user's own wallet -- a manual send to one's own address, or the
 //  Orchard -> Ironwood migration crossing -- nets to exactly -fee (the SDK's per-account balance
 //  delta), so naively rendering `zecAmount` would show the fee instead of the amount that
-//  actually moved. `TransactionState.isSelfTransfer` detects this shape (the fee-collapsed net,
-//  with the SDK's note-count shape as a fallback for rows whose fee isn't recorded yet), and
-//  `resolvedAmount` -- surfaced through `netValue` and `amountWithoutFee` -- substitutes the
-//  amount deliberately addressed to the user's own address, falling back to `totalReceived` when
-//  per-output detail isn't available (the dedicated migration path has none; its full crossing
-//  amount mirrors Android's TransactionRepository fallback). Both substitutes are output face
-//  values, so the fee is added back on to match `zecAmount`, which every other send row displays
-//  and which already includes it -- see
-//  `selfSendAndExternalSendDisplayTheSameTotalForTheSamePayment`. Pure model logic, no
-//  shared/global state -> no `.serialized`.
+//  actually moved. `TransactionState.isSelfTransfer` detects that shape from the recorded fee,
+//  falling back to the outputs when no fee is recorded, and `resolvedAmount` -- surfaced through
+//  `netValue` and `amountWithoutFee` -- substitutes the amount deliberately addressed to the
+//  user's own address, or `totalReceived` when per-output detail isn't available. Both
+//  substitutes are output face values, so the fee is added back on to match `zecAmount`, which
+//  every other send row displays and which already includes it -- see
+//  `selfSendAndExternalSendDisplayTheSameTotalForTheSamePayment`.
+//
+//  Two SDK fields look usable here and are not, each with a test naming it: the note counts are
+//  device-local (`ordinarySendSeenFromAnotherDeviceIsNotASelfTransfer`) and `isChange` is set on a
+//  self-send's own payment output whenever the transaction was scanned rather than created locally
+//  (`selfSendPaymentOutputFlaggedAsChangeByScanningIsStillCounted`). Both produce a display that is
+//  correct on the sending device and wrong everywhere else, so both are excluded from detection.
+//
+//  Pure model logic, no shared/global state -> no `.serialized`.
 //
 
 import Testing
@@ -57,9 +62,10 @@ import Foundation
     }
 
     /// An output paying an explicit address -- the deliberately-sent portion of a self-send.
-    /// `isChange` is a parameter because the two are independent in the SDK's data: a transparent
-    /// change or ephemeral output carries an address *and* is change (see
-    /// `transparentChangeOutputIsExcludedFromExternalTotal`).
+    /// `isChange` is a parameter because upstream sets that flag on a self-send's payment output
+    /// whenever the transaction was scanned rather than created locally (see
+    /// `selfSendPaymentOutputFlaggedAsChangeByScanningIsStillCounted`), so both values occur for
+    /// the very same output depending on which device is looking.
     private func addressedOutput(
         value: Zatoshi,
         pool: ZcashTransaction.Output.Pool = .orchard,
@@ -248,30 +254,36 @@ import Foundation
         #expect(state.netValue == Zatoshi(12_030_000).atLeastThreeDecimalsZashiFormatted())
     }
 
-    /// Change is excluded from `externalOutputsTotal` by its `isChange` flag, not merely by the
-    /// absence of an address. Shielded change carries no address, but the SDK resolves an address
-    /// row for every transparent output it receives -- including internal-scope change and
-    /// ephemeral outputs -- so an address-only filter would fold transparent change back into the
-    /// total and display the sent amount plus the change that returned.
-    @Test func transparentChangeOutputIsExcludedFromExternalTotal() {
+    /// The self-send as it looks on a device that SCANNED the transaction rather than creating it
+    /// -- which includes the sending device once it scans the block containing its own send.
+    ///
+    /// Upstream marks a received output as change when the receiving account also spent in the
+    /// same transaction (`scanning.rs`: `spent_from_accounts.contains(key.account_id())`, whose
+    /// comment names "notes sent from one account to itself" as an intended case). So the payment
+    /// output arrives here flagged `isChange`, and `externalOutputsTotal` must count it anyway:
+    /// filtering on that flag empties the sum and drops the row onto the `totalReceived` fallback,
+    /// which reports payment plus change -- the 0.03 self-send that displayed 0.064.
+    @Test func selfSendPaymentOutputFlaggedAsChangeByScanningIsStillCounted() {
         let state = TransactionState(
             transaction: overview(
-                sentNoteCount: 1,
-                receivedNoteCount: 1,
+                sentNoteCount: 0,
+                receivedNoteCount: 0,
                 value: Zatoshi(-30_000),
                 fee: Zatoshi(30_000),
                 totalSpent: Zatoshi(16_494_726),
                 totalReceived: Zatoshi(16_464_726)
             ),
             outputs: [
-                addressedOutput(value: Zatoshi(12_000_000)),
-                addressedOutput(value: Zatoshi(4_464_726), pool: .transaparent, isChange: true, index: 1)
+                addressedOutput(value: Zatoshi(12_000_000), isChange: true),
+                internalOutput(value: Zatoshi(4_464_726))
             ]
         )
 
         #expect(state.isSelfTransfer)
         #expect(state.externalOutputsTotal == Zatoshi(12_000_000))
         #expect(state.netValue == Zatoshi(12_030_000).atLeastThreeDecimalsZashiFormatted())
+        // Not payment + change + fee, which is what dropping to the fallback produces.
+        #expect(state.netValue != Zatoshi(16_494_726).atLeastThreeDecimalsZashiFormatted())
     }
 
     /// Degradation: a self-transfer whose outputs aren't available at all (empty array) falls
