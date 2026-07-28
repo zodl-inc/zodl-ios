@@ -420,7 +420,14 @@ struct SmartBanner {
 
                         if state.priorityContent == .priority5 {
                             if !isShieldedBalancePending {
-                                return .send(.closeAndCleanupBanner)
+                                // Mirrors priority7's own close pattern below: recovering while
+                                // the banner's help sheet is open must dismiss that sheet too, or
+                                // the user is left staring at an almost-empty sheet (priority5's
+                                // helpSheetContent() default is EmptyView).
+                                return .merge(
+                                    .send(.closeAndCleanupBanner),
+                                    .send(.closeSheetTapped)
+                                )
                             }
                         } else if isShieldedBalancePending && !isSyncing
                             && (state.priorityContent?.rawValue ?? Int.max) > State.PriorityContent.priority5.rawValue {

@@ -189,6 +189,33 @@ import Testing
         }
     }
 
+    /// Mirrors priority7's own close pattern (`.merge(.send(.closeAndCleanupBanner),
+    /// .send(.closeSheetTapped))`): recovering while the banner's help sheet is open must dismiss
+    /// that sheet too, or the user is left staring at an almost-empty sheet (priority5's
+    /// `helpSheetContent()` default is `EmptyView`) they have to swipe away by hand.
+    @Test func balanceRecoveryDismissesAnOpenHelpSheetToo() async {
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let store = makeStore(modify: { state in
+                state.priorityContent = .priority5
+                state.priorityContentRequested = .priority5
+                state.isOpen = true
+                state.isSmartBannerSheetPresented = true
+            })
+
+            await store.send(.synchronizerStateChanged(Self.tick(.upToDate, balance: Self.healthyBalance)))
+            await store.receive(\.closeAndCleanupBanner)
+            await store.receive(\.closeSheetTapped)
+            await store.receive(\.closeBanner)
+            await store.receive(\.openBannerRequest)
+
+            #expect(store.state.priorityContent == nil)
+            #expect(store.state.isOpen == false)
+            #expect(store.state.isSmartBannerSheetPresented == false)
+        }
+    }
+
     // MARK: - 6. Still-pending balance keeps the banner open, no duplicate trigger
 
     @Test func stillPendingBalanceKeepsPriority5BannerOpen() async {
