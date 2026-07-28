@@ -329,11 +329,18 @@ struct TransactionState: Equatable, Identifiable {
             // the outputs deliberately addressed to the user's own address (a manual self-send),
             // or — when every output is wallet-internal (the dedicated Orchard -> Ironwood
             // migration) — the full amount that crossed, totalReceived.
+            //
+            // The fee is added back on because both of those are output face values, whereas
+            // every other send row displays `zecAmount` — the account balance delta — which
+            // already includes it. Without this the same 12 ZEC payment would read 12.030 when
+            // sent to someone else and 12.000 when sent to oneself, with no way to tell from the
+            // row which convention it used. `amountWithoutFee` strips the fee off again for the
+            // send-again prefill, exactly as it does for an ordinary send.
             if externalOutputsTotal.amount > 0 {
-                return externalOutputsTotal
+                return Zatoshi(externalOutputsTotal.amount + (fee?.amount ?? 0))
             }
             if let totalReceived, totalReceived.amount > 0 {
-                return totalReceived
+                return Zatoshi(totalReceived.amount + (fee?.amount ?? 0))
             }
         }
         return zecAmount
@@ -343,9 +350,14 @@ struct TransactionState: Equatable, Identifiable {
         resolvedAmount.atLeastThreeDecimalsZashiFormatted()
     }
 
+    /// The payment on its own, fee excluded — what the send-again prefill needs. Both arms strip
+    /// the fee off a fee-inclusive basis; they differ only in which basis applies. A self-transfer
+    /// has to start from `resolvedAmount`, since its `zecAmount` is the fee alone. Shielding never
+    /// reaches that arm (`isSelfTransfer` excludes it) and so keeps the `zecAmount` basis rather
+    /// than `resolvedAmount`'s `totalSpent`, leaving it at zero as it has always been.
     var amountWithoutFee: Zatoshi {
         isSelfTransfer
-        ? resolvedAmount
+        ? Zatoshi(resolvedAmount.amount - (fee?.amount ?? 0))
         : Zatoshi(zecAmount.amount - (fee?.amount ?? 0))
     }
 

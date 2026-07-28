@@ -11,8 +11,11 @@
 //  `resolvedAmount` -- surfaced through `netValue` and `amountWithoutFee` -- substitutes the
 //  amount deliberately addressed to the user's own address, falling back to `totalReceived` when
 //  per-output detail isn't available (the dedicated migration path has none; its full crossing
-//  amount mirrors Android's TransactionRepository fallback). Pure model logic, no shared/global
-//  state -> no `.serialized`.
+//  amount mirrors Android's TransactionRepository fallback). Both substitutes are output face
+//  values, so the fee is added back on to match `zecAmount`, which every other send row displays
+//  and which already includes it -- see
+//  `selfSendAndExternalSendDisplayTheSameTotalForTheSamePayment`. Pure model logic, no
+//  shared/global state -> no `.serialized`.
 //
 
 import Testing
@@ -130,7 +133,7 @@ import Foundation
 
         #expect(state.sentNoteCount == 0)
         #expect(state.receivedNoteCount == 0)
-        #expect(state.netValue == Zatoshi(25_000_000).atLeastThreeDecimalsZashiFormatted())
+        #expect(state.netValue == Zatoshi(25_010_000).atLeastThreeDecimalsZashiFormatted())
         #expect(state.netValue != state.zecAmount.atLeastThreeDecimalsZashiFormatted())
     }
 
@@ -218,7 +221,7 @@ import Foundation
             ]
         )
 
-        #expect(state.netValue == Zatoshi(12_000_000).atLeastThreeDecimalsZashiFormatted())
+        #expect(state.netValue == Zatoshi(12_030_000).atLeastThreeDecimalsZashiFormatted())
         #expect(state.netValue != Zatoshi(30_000).atLeastThreeDecimalsZashiFormatted())
         #expect(state.netValue != Zatoshi(16_464_726).atLeastThreeDecimalsZashiFormatted())
     }
@@ -242,7 +245,7 @@ import Foundation
             ]
         )
 
-        #expect(state.netValue == Zatoshi(12_000_000).atLeastThreeDecimalsZashiFormatted())
+        #expect(state.netValue == Zatoshi(12_030_000).atLeastThreeDecimalsZashiFormatted())
     }
 
     /// Change is excluded from `externalOutputsTotal` by its `isChange` flag, not merely by the
@@ -268,7 +271,7 @@ import Foundation
 
         #expect(state.isSelfTransfer)
         #expect(state.externalOutputsTotal == Zatoshi(12_000_000))
-        #expect(state.netValue == Zatoshi(12_000_000).atLeastThreeDecimalsZashiFormatted())
+        #expect(state.netValue == Zatoshi(12_030_000).atLeastThreeDecimalsZashiFormatted())
     }
 
     /// Degradation: a self-transfer whose outputs aren't available at all (empty array) falls
@@ -286,7 +289,7 @@ import Foundation
             outputs: []
         )
 
-        #expect(state.netValue == Zatoshi(16_464_726).atLeastThreeDecimalsZashiFormatted())
+        #expect(state.netValue == Zatoshi(16_494_726).atLeastThreeDecimalsZashiFormatted())
     }
 
     // MARK: - Guards: ordinary sends/receives must not be treated as self-transfers
@@ -424,10 +427,11 @@ import Foundation
 
     // MARK: - amountWithoutFee (send-again prefill)
 
-    /// For a self-transfer, `amountWithoutFee` must match the resolved display amount (not
-    /// `zecAmount - fee`, which would be 0 for a self-send), so send-again prefills the amount
-    /// the user actually meant to move.
-    @Test func amountWithoutFeeForSelfTransferMatchesResolvedAmount() {
+    /// For a self-transfer, `amountWithoutFee` strips the fee off the resolved display amount
+    /// rather than off `zecAmount` (which is the fee alone, and would give 0), so send-again
+    /// prefills the payment the user actually meant to move -- 12.000, not the 12.030 shown on
+    /// the row. This is the same relationship an ordinary send has between the two properties.
+    @Test func amountWithoutFeeForSelfTransferStripsFeeFromResolvedAmount() {
         let state = TransactionState(
             transaction: overview(
                 sentNoteCount: 1,
@@ -470,6 +474,74 @@ import Foundation
         #expect(state.amountWithoutFee != state.externalOutputsTotal)
     }
 
+    // MARK: - Fee convention shared with ordinary sends
+
+    /// The whole point of adding the fee back on in `resolvedAmount`: the same 12 ZEC payment
+    /// with the same 30_000 fee must display identically whether it went to someone else or back
+    /// to the user's own address. `zecAmount` (the balance delta) is fee-inclusive for an ordinary
+    /// send, while `externalOutputsTotal` is an output face value and is not, so without the
+    /// adjustment these two rows would read 12.030 and 12.000 with nothing on screen to explain
+    /// the difference.
+    @Test func selfSendAndExternalSendDisplayTheSameTotalForTheSamePayment() {
+        let selfSend = TransactionState(
+            transaction: overview(
+                sentNoteCount: 1,
+                receivedNoteCount: 1,
+                value: Zatoshi(-30_000),
+                fee: Zatoshi(30_000),
+                totalSpent: Zatoshi(16_494_726),
+                totalReceived: Zatoshi(16_464_726)
+            ),
+            outputs: [
+                addressedOutput(value: Zatoshi(12_000_000)),
+                internalOutput(value: Zatoshi(4_464_726))
+            ]
+        )
+
+        let externalSend = TransactionState(
+            transaction: overview(
+                sentNoteCount: 1,
+                receivedNoteCount: 0,
+                value: Zatoshi(-12_030_000),
+                fee: Zatoshi(30_000),
+                totalReceived: Zatoshi(4_464_726)
+            ),
+            outputs: [
+                addressedOutput(value: Zatoshi(12_000_000)),
+                internalOutput(value: Zatoshi(4_464_726))
+            ]
+        )
+
+        #expect(selfSend.isSelfTransfer)
+        #expect(!externalSend.isSelfTransfer)
+        #expect(selfSend.netValue == externalSend.netValue)
+        #expect(selfSend.netValue == Zatoshi(12_030_000).atLeastThreeDecimalsZashiFormatted())
+        // ...and both strip the same fee back off for the send-again prefill.
+        #expect(selfSend.amountWithoutFee == externalSend.amountWithoutFee)
+        #expect(selfSend.amountWithoutFee == Zatoshi(12_000_000))
+    }
+
+    /// Degenerate self-transfer: detected by the fee arm, but with no outputs and no
+    /// `totalReceived` to resolve against, so `resolvedAmount` falls through to `zecAmount` -- the
+    /// fee. `amountWithoutFee` must still subtract it and land on zero rather than prefilling the
+    /// send form with the fee.
+    @Test func amountWithoutFeeForUnresolvableSelfTransferIsZero() {
+        let state = TransactionState(
+            transaction: overview(
+                sentNoteCount: 1,
+                receivedNoteCount: 1,
+                value: Zatoshi(-30_000),
+                fee: Zatoshi(30_000)
+            ),
+            outputs: []
+        )
+
+        #expect(state.isSelfTransfer)
+        #expect(state.externalOutputsTotal == .zero)
+        #expect(state.totalReceived == nil)
+        #expect(state.amountWithoutFee == .zero)
+    }
+
     // MARK: - SDK assembly (SDKSynchronizerClient.transactionState)
 
     /// The SDK call site must feed each transaction's outputs into `TransactionState`. Every
@@ -496,7 +568,7 @@ import Foundation
         )
 
         #expect(state.externalOutputsTotal == Zatoshi(12_000_000))
-        #expect(state.netValue == Zatoshi(12_000_000).atLeastThreeDecimalsZashiFormatted())
+        #expect(state.netValue == Zatoshi(12_030_000).atLeastThreeDecimalsZashiFormatted())
         #expect(state.hasTransparentOutputs)
         #expect(state.zAddress == "tFixtureSelfSend")
         #expect(state.isTransparentRecipient)
@@ -524,6 +596,6 @@ import Foundation
         #expect(!state.hasTransparentOutputs)
         #expect(state.zAddress == nil)
         #expect(!state.isTransparentRecipient)
-        #expect(state.netValue == Zatoshi(16_464_726).atLeastThreeDecimalsZashiFormatted())
+        #expect(state.netValue == Zatoshi(16_494_726).atLeastThreeDecimalsZashiFormatted())
     }
 }
