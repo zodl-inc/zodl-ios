@@ -243,6 +243,10 @@ struct SmartBanner {
                 
             case .walletAccountChanged:
                 state.remindMeShieldedPhaseCounter = 0
+                // Stale per-account reading: the previous account's spendable balance must not
+                // leak into `areFundsSpendable` between the switch and the new account's first
+                // `synchronizerStateChanged` tick.
+                state.spendableBalance = Zatoshi(0)
                 return .run { send in
                     await send(.closeBanner(true), animation: .easeInOut(duration: Constants.easeInOutDuration))
                     try? await mainQueue.sleep(for: .seconds(1))
@@ -409,6 +413,27 @@ struct SmartBanner {
                     }
                     
                     if let account = state.selectedWalletAccount, let accountBalance = latestState.data.accountsBalances[account.id] {
+                        // Shielded spendable reads 0 while shielded total > 0: inputs are
+                        // pending-spent (e.g. right after a send) and/or change is awaiting
+                        // confirmations. Pool-agnostic accessors only — never hand-sum pools.
+                        let isShieldedBalancePending = accountBalance.shieldedSpendableValue.amount == 0 && accountBalance.shieldedTotal().amount > 0
+
+                        if state.priorityContent == .priority5 {
+                            if !isShieldedBalancePending {
+                                // Mirrors priority7's own close pattern below: recovering while
+                                // the banner's help sheet is open must dismiss that sheet too, or
+                                // the user is left staring at an almost-empty sheet (priority5's
+                                // helpSheetContent() default is EmptyView).
+                                return .merge(
+                                    .send(.closeAndCleanupBanner),
+                                    .send(.closeSheetTapped)
+                                )
+                            }
+                        } else if isShieldedBalancePending && !isSyncing
+                            && (state.priorityContent?.rawValue ?? Int.max) > State.PriorityContent.priority5.rawValue {
+                            return .send(.triggerPriority(.priority5))
+                        }
+
                         if state.priorityContent == .priority7 {
                             if accountBalance.unshielded > zcashSDKEnvironment.shieldingThreshold() {
                                 return .send(.transparentBalanceUpdated(accountBalance.unshielded))
@@ -472,7 +497,17 @@ struct SmartBanner {
 
                 // updating balance
             case .evaluatePriority5:
-                return .send(.evaluatePriority6)
+                guard let account = state.selectedWalletAccount else {
+                    return .send(.evaluatePriority6)
+                }
+                return .run { send in
+                    if let accountBalance = try? await sdkSynchronizer.getAccountsBalances()[account.id],
+                       accountBalance.shieldedSpendableValue.amount == 0 && accountBalance.shieldedTotal().amount > 0 {
+                        await send(.triggerPriority(.priority5))
+                    } else {
+                        await send(.evaluatePriority6)
+                    }
+                }
 
                 // wallet backup
             case .evaluatePriority6:

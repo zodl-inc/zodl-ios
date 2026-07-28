@@ -30,6 +30,7 @@ directly impact users rather than highlighting other crucial architectural updat
 - [MOB-1512] The "Wallet data replaced" notice now stays on screen after the healed wallet opens, instead of disappearing during the transition to the home screen.
 - [Keystone] Switching between the ZODL and Keystone accounts now always shows the selected account's transaction history — a slow in-flight refresh for the previous account can no longer overwrite it — and connecting a Keystone hardware wallet refreshes the transaction list and balance immediately.
 - [Keystone] The transaction list no longer gets stuck showing its loading placeholder when switching to an account whose transaction list turns out identical to the previous one — in practice, switching between two accounts that both have no transactions, such as right after connecting a Keystone.
+- [MOB-1585] Explain why the balance is temporarily not spendable after sending (new "Updating Balance" banner) instead of showing a bare zero.
 
 ## 3.7.3 build 1 (20026-07-12)
 
