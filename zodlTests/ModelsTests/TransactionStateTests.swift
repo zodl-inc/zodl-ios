@@ -54,21 +54,29 @@ import Foundation
     }
 
     /// An output paying an explicit address -- the deliberately-sent portion of a self-send.
-    private func addressedOutput(value: Zatoshi) -> ZcashTransaction.Output {
+    /// `isChange` is a parameter because the two are independent in the SDK's data: a transparent
+    /// change or ephemeral output carries an address *and* is change (see
+    /// `transparentChangeOutputIsExcludedFromExternalTotal`).
+    private func addressedOutput(
+        value: Zatoshi,
+        pool: ZcashTransaction.Output.Pool = .orchard,
+        isChange: Bool = false,
+        index: Int = 0
+    ) -> ZcashTransaction.Output {
         ZcashTransaction.Output(
             rawID: Data([0x01, 0x02, 0x03, 0x04]),
-            pool: .orchard,
-            index: 0,
+            pool: pool,
+            index: index,
             fromAccount: nil,
             recipient: TransactionRecipient.address(Recipient.transparent(TransparentAddress(validatedEncoding: "tFixtureSelfSend"))),
             value: value,
-            isChange: false,
+            isChange: isChange,
             memo: nil
         )
     }
 
-    /// A wallet-internal output (e.g. change, or an Orchard -> Ironwood migration leg) -- the DB
-    /// reports no address for it, so it must be excluded from `externalOutputsTotal`.
+    /// A wallet-internal output (e.g. shielded change, or an Orchard -> Ironwood migration leg) --
+    /// the DB reports no address for it, so it must be excluded from `externalOutputsTotal`.
     private func internalOutput(value: Zatoshi) -> ZcashTransaction.Output {
         ZcashTransaction.Output(
             rawID: Data([0x01, 0x02, 0x03, 0x04]),
@@ -146,6 +154,30 @@ import Foundation
         #expect(state.netValue == Zatoshi(1_000_000).atLeastThreeDecimalsZashiFormatted())
     }
 
+    /// A shielding transaction has the same fee-collapsed shape as a self-transfer (its balance
+    /// delta is exactly -fee, since the funds stay in the account and only change pool), so the
+    /// predicate must exclude it explicitly. Without the guard, `resolvedAmount` still behaves --
+    /// it checks shielding first -- but `amountWithoutFee` branches on `isSelfTransfer` before
+    /// delegating and would silently start returning `totalSpent` instead of `zecAmount - fee`.
+    @Test func shieldingTransactionIsNotASelfTransfer() {
+        let state = TransactionState(
+            transaction: overview(
+                isShielding: true,
+                sentNoteCount: 0,
+                receivedNoteCount: 0,
+                value: Zatoshi(-10_000),
+                fee: Zatoshi(10_000),
+                totalSpent: Zatoshi(1_000_000),
+                totalReceived: Zatoshi(990_000)
+            )
+        )
+
+        #expect(state.isShieldingTransaction)
+        #expect(state.zecAmount == state.fee)
+        #expect(!state.isSelfTransfer)
+        #expect(state.amountWithoutFee == .zero)
+    }
+
     /// Guard hardening: a note-less (0/0) shape whose `totalReceived` is `.zero` — the same shape
     /// the swap-deposit initialiser produces — must stay on the `zecAmount` path rather than
     /// misreport a zero crossing amount. `zecAmount` is deliberately non-zero here, so a guard
@@ -210,6 +242,32 @@ import Foundation
             ]
         )
 
+        #expect(state.netValue == Zatoshi(12_000_000).atLeastThreeDecimalsZashiFormatted())
+    }
+
+    /// Change is excluded from `externalOutputsTotal` by its `isChange` flag, not merely by the
+    /// absence of an address. Shielded change carries no address, but the SDK resolves an address
+    /// row for every transparent output it receives -- including internal-scope change and
+    /// ephemeral outputs -- so an address-only filter would fold transparent change back into the
+    /// total and display the sent amount plus the change that returned.
+    @Test func transparentChangeOutputIsExcludedFromExternalTotal() {
+        let state = TransactionState(
+            transaction: overview(
+                sentNoteCount: 1,
+                receivedNoteCount: 1,
+                value: Zatoshi(-30_000),
+                fee: Zatoshi(30_000),
+                totalSpent: Zatoshi(16_494_726),
+                totalReceived: Zatoshi(16_464_726)
+            ),
+            outputs: [
+                addressedOutput(value: Zatoshi(12_000_000)),
+                addressedOutput(value: Zatoshi(4_464_726), pool: .transaparent, isChange: true, index: 1)
+            ]
+        )
+
+        #expect(state.isSelfTransfer)
+        #expect(state.externalOutputsTotal == Zatoshi(12_000_000))
         #expect(state.netValue == Zatoshi(12_000_000).atLeastThreeDecimalsZashiFormatted())
     }
 
@@ -388,7 +446,10 @@ import Foundation
         #expect(state.amountWithoutFee == Zatoshi(12_000_000))
     }
 
-    /// For an ordinary send, `amountWithoutFee` is unchanged: `zecAmount - fee`.
+    /// For an ordinary send, `amountWithoutFee` is unchanged: `zecAmount - fee`. The addressed
+    /// output is deliberately NOT `zecAmount - fee`, so the two branches of `amountWithoutFee`
+    /// yield different numbers and the assertion actually discriminates between them -- with a
+    /// matching value the test would pass even if `isSelfTransfer` wrongly fired here.
     @Test func amountWithoutFeeForOrdinarySendIsUnchanged() {
         let state = TransactionState(
             transaction: overview(
@@ -399,11 +460,70 @@ import Foundation
                 totalReceived: Zatoshi(4_464_726)
             ),
             outputs: [
-                addressedOutput(value: Zatoshi(12_000_000)),
+                addressedOutput(value: Zatoshi(11_000_000)),
                 internalOutput(value: Zatoshi(4_464_726))
             ]
         )
 
+        #expect(!state.isSelfTransfer)
         #expect(state.amountWithoutFee == Zatoshi(12_000_000))
+        #expect(state.amountWithoutFee != state.externalOutputsTotal)
+    }
+
+    // MARK: - SDK assembly (SDKSynchronizerClient.transactionState)
+
+    /// The SDK call site must feed each transaction's outputs into `TransactionState`. Every
+    /// assertion here covers a field derived from `outputs` at that seam, because dropping the
+    /// wiring degrades silently -- the display amount falls back to `totalReceived` (see
+    /// `selfTransferWithNoOutputsAvailableFallsBackToTotalReceived`) instead of failing. The
+    /// transparent-pool output also pins `hasTransparentOutputs` and the recipient derivation,
+    /// which now reads `outputs` rather than issuing a second query for the same rows.
+    @Test func sdkAssemblyWiresOutputsIntoTransactionState() {
+        let state = SDKSynchronizerClient.transactionState(
+            from: overview(
+                sentNoteCount: 1,
+                receivedNoteCount: 1,
+                value: Zatoshi(-30_000),
+                fee: Zatoshi(30_000),
+                totalSpent: Zatoshi(16_494_726),
+                totalReceived: Zatoshi(16_464_726)
+            ),
+            outputs: [
+                addressedOutput(value: Zatoshi(12_000_000), pool: .transaparent),
+                internalOutput(value: Zatoshi(4_464_726))
+            ],
+            currentChainTip: nil
+        )
+
+        #expect(state.externalOutputsTotal == Zatoshi(12_000_000))
+        #expect(state.netValue == Zatoshi(12_000_000).atLeastThreeDecimalsZashiFormatted())
+        #expect(state.hasTransparentOutputs)
+        #expect(state.zAddress == "tFixtureSelfSend")
+        #expect(state.isTransparentRecipient)
+        #expect(state.rawID == Data([0x01, 0x02, 0x03, 0x04]))
+    }
+
+    /// The mirror of the above: with no outputs, every outputs-derived field stays at its default
+    /// and the display amount degrades to `totalReceived`. Together the two tests pin the seam in
+    /// both directions, so a dropped `outputs:` argument fails here rather than shipping.
+    @Test func sdkAssemblyWithoutOutputsLeavesDerivedFieldsAtDefaults() {
+        let state = SDKSynchronizerClient.transactionState(
+            from: overview(
+                sentNoteCount: 1,
+                receivedNoteCount: 1,
+                value: Zatoshi(-30_000),
+                fee: Zatoshi(30_000),
+                totalSpent: Zatoshi(16_494_726),
+                totalReceived: Zatoshi(16_464_726)
+            ),
+            outputs: [],
+            currentChainTip: nil
+        )
+
+        #expect(state.externalOutputsTotal == .zero)
+        #expect(!state.hasTransparentOutputs)
+        #expect(state.zAddress == nil)
+        #expect(!state.isTransparentRecipient)
+        #expect(state.netValue == Zatoshi(16_464_726).atLeastThreeDecimalsZashiFormatted())
     }
 }

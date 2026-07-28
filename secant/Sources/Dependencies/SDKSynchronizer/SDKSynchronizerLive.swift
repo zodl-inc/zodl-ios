@@ -521,42 +521,65 @@ extension SDKSynchronizerClient {
         let currentChainTip: BlockHeight? = tipNow > 0 ? tipNow : nil
 
         for clearedTransaction in clearedTransactions {
-            var hasTransparentOutputs = false
             let outputs = await synchronizer.getTransactionOutputs(for: clearedTransaction)
-            for output in outputs {
-                if case .transaparent = output.pool {
-                    hasTransparentOutputs = true
-                    break
-                }
-            }
 
-            var transaction = TransactionState(
-                transaction: clearedTransaction,
-                memos: nil,
-                hasTransparentOutputs: hasTransparentOutputs,
-                currentChainTip: currentChainTip,
-                outputs: outputs
+            clearedTxs.append(
+                transactionState(
+                    from: clearedTransaction,
+                    outputs: outputs,
+                    currentChainTip: currentChainTip
+                )
             )
-
-            let recipients = await synchronizer.getRecipients(for: clearedTransaction)
-            let addresses = recipients.compactMap {
-                if case let .address(address) = $0 {
-                    return address
-                } else {
-                    return nil
-                }
-            }
-            
-            transaction.rawID = clearedTransaction.rawID
-            transaction.zAddress = addresses.first?.stringEncoded
-            if let someAddress = addresses.first,
-               case .transparent = someAddress {
-                transaction.isTransparentRecipient = true
-            }
-            
-            clearedTxs.append(transaction)
         }
 
         return IdentifiedArrayOf<TransactionState>(uniqueElements: clearedTxs)
+    }
+
+    /// Assembles one `TransactionState` from an SDK transaction and its outputs. Split out of
+    /// `transactionStatesFromZcashTransactions` so the outputs wiring is reachable from tests —
+    /// the enclosing function takes a concrete `SDKSynchronizer`, which the test target cannot
+    /// construct, and dropping the wiring degrades silently (the display amount falls back to
+    /// `totalReceived`) rather than failing.
+    ///
+    /// Recipients are derived from `outputs` instead of calling `synchronizer.getRecipients(for:)`,
+    /// which is defined as `getTransactionOutputs(for:).map(\.recipient)` and would therefore run
+    /// the same query a second time for every transaction on every refresh.
+    static func transactionState(
+        from transaction: ZcashTransaction.Overview,
+        outputs: [ZcashTransaction.Output],
+        currentChainTip: BlockHeight?
+    ) -> TransactionState {
+        var hasTransparentOutputs = false
+        for output in outputs {
+            if case .transaparent = output.pool {
+                hasTransparentOutputs = true
+                break
+            }
+        }
+
+        var state = TransactionState(
+            transaction: transaction,
+            memos: nil,
+            hasTransparentOutputs: hasTransparentOutputs,
+            currentChainTip: currentChainTip,
+            outputs: outputs
+        )
+
+        let addresses = outputs.compactMap {
+            if case let .address(address) = $0.recipient {
+                return address
+            } else {
+                return nil
+            }
+        }
+
+        state.rawID = transaction.rawID
+        state.zAddress = addresses.first?.stringEncoded
+        if let someAddress = addresses.first,
+           case .transparent = someAddress {
+            state.isTransparentRecipient = true
+        }
+
+        return state
     }
 }

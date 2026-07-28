@@ -57,9 +57,12 @@ struct TransactionState: Equatable, Identifiable {
     /// on the `zecAmount` path.
     var sentNoteCount = 0
     var receivedNoteCount = 0
-    /// Sum of this transaction's outputs that pay an explicit address (`recipient == .address`);
-    /// zero when outputs are unavailable. For a self-transfer this is the deliberately sent
-    /// portion — wallet-internal outputs (the DB reports no address for them) are excluded.
+    /// Sum of this transaction's outputs that pay an explicit address and are not change
+    /// (`recipient == .address` and `isChange == false`); zero when outputs are unavailable. For a
+    /// self-transfer this is the deliberately sent portion. Both conditions are needed: shielded
+    /// change carries no address (the SDK stores no address row for internal-scope notes), but a
+    /// transparent internal or ephemeral output does carry one, so the address check on its own
+    /// would fold transparent change back into the total.
     var externalOutputsTotal = Zatoshi.zero
 
     var rawID: Data? = nil
@@ -283,10 +286,15 @@ struct TransactionState: Equatable, Identifiable {
     /// A sent transaction every output of which returned to this account — a manual send to
     /// one's own address, or an Orchard -> Ironwood migration crossing. Detected by the net
     /// balance delta being exactly the fee (nothing left the wallet), with the SDK's note-count
-    /// shape as a fallback for rows whose fee is not yet recorded. Deliberately not based on the
-    /// DB's `is_change` flag, which upstream documents as unreliable for self-sends.
+    /// shape as a fallback for rows whose fee is not yet recorded. Detection deliberately does not
+    /// consult the DB's `is_change` flag, which upstream documents as unreliable for self-sends
+    /// (`externalOutputsTotal` does use it, but only to keep change out of a sum).
+    ///
+    /// A shielding transaction is excluded even though it has the same fee-collapsed shape: it
+    /// moves funds between the user's own pools rather than to an address, and it has its own
+    /// display amount (`totalSpent`, see `resolvedAmount`).
     var isSelfTransfer: Bool {
-        guard isSentTransaction else { return false }
+        guard isSentTransaction, !isShieldingTransaction else { return false }
         if let fee, fee.amount > 0, zecAmount.amount == fee.amount {
             return true
         }
@@ -447,7 +455,7 @@ extension TransactionState {
         receivedNoteCount = transaction.receivedNoteCount
         externalOutputsTotal = Zatoshi(
             outputs.reduce(Int64(0)) { total, output in
-                if case .address = output.recipient {
+                if case .address = output.recipient, !output.isChange {
                     return total + output.value.amount
                 }
                 return total
