@@ -49,14 +49,18 @@ struct TransactionState: Equatable, Identifiable {
     var hasTransparentOutputs = false
     var totalSpent: Zatoshi?
     var totalReceived: Zatoshi?
-    /// The SDK's per-transaction note counts, carried so the display amount can adopt Android's
-    /// migration-self-send fallback (see `netValue`). Default 0 for the non-SDK inits (a pending
-    /// send, a swap deposit). The swap-deposit init DOES land on the same 0/0 "note-less" shape,
-    /// but it sets `totalReceived = .zero`; `netValue`'s `totalReceived.amount > 0` guard keeps
-    /// that (and any other genuinely amount-less state) on the `zecAmount` path — only a real
-    /// migration crossing, which carries a positive `totalReceived`, takes the fallback.
+    /// The SDK's per-transaction note counts, carried so the display amount can detect a
+    /// self-transfer (see `isSelfTransfer`) for rows whose `fee` isn't recorded yet. Default 0
+    /// for the non-SDK inits (a pending send, a swap deposit). The swap-deposit init lands on
+    /// the same 0/0 "note-less" shape, but it sets `totalReceived = .zero`; the
+    /// `totalReceived.amount > 0` guards keep that (and any other genuinely amount-less state)
+    /// on the `zecAmount` path.
     var sentNoteCount = 0
     var receivedNoteCount = 0
+    /// Sum of this transaction's outputs that pay an explicit address (`recipient == .address`);
+    /// zero when outputs are unavailable. For a self-transfer this is the deliberately sent
+    /// portion — wallet-internal outputs (the DB reports no address for them) are excluded.
+    var externalOutputsTotal = Zatoshi.zero
 
     var rawID: Data? = nil
     
@@ -275,7 +279,20 @@ struct TransactionState: Equatable, Identifiable {
             return (type == .crossPay || type == .swapFromZec)
         }
     }
-    
+
+    /// A sent transaction every output of which returned to this account — a manual send to
+    /// one's own address, or an Orchard -> Ironwood migration crossing. Detected by the net
+    /// balance delta being exactly the fee (nothing left the wallet), with the SDK's note-count
+    /// shape as a fallback for rows whose fee is not yet recorded. Deliberately not based on the
+    /// DB's `is_change` flag, which upstream documents as unreliable for self-sends.
+    var isSelfTransfer: Bool {
+        guard isSentTransaction else { return false }
+        if let fee, fee.amount > 0, zecAmount.amount == fee.amount {
+            return true
+        }
+        return sentNoteCount == 0 && receivedNoteCount == 0 && (totalReceived?.amount ?? 0) > 0
+    }
+
     var transationIcon: Image {
         if type == .crossPay {
             return Asset.Assets.Icons.trPaid.image
@@ -295,26 +312,33 @@ struct TransactionState: Equatable, Identifiable {
         Zatoshi(zecAmount.amount + (fee?.amount ?? 0))
     }
     
-    var netValue: String {
+    var resolvedAmount: Zatoshi {
         if isShieldingTransaction {
-            return Zatoshi(totalSpent?.amount ?? 0).atLeastThreeDecimalsZashiFormatted()
+            return Zatoshi(totalSpent?.amount ?? 0)
         }
-        // An Orchard -> Ironwood turnstile transfer is a self-send: it collapses to a fee-only
-        // net value (`zecAmount`), which hides the real amount that crossed. Mirror Android's
-        // fallback (TransactionRepository.kt): a transaction with no counted sent OR received
-        // notes shows `totalReceived` — the true crossing amount — instead of the fee-collapsed
-        // net. Both the transaction list (TransactionRowView) and the detail screen
-        // (TransactionDetailsView) render this property, so both pick up the fallback
-        // consistently. Every other transaction kind keeps at least one note, so the guard
-        // leaves them byte-identical.
-        if sentNoteCount == 0, receivedNoteCount == 0, let totalReceived, totalReceived.amount > 0 {
-            return totalReceived.atLeastThreeDecimalsZashiFormatted()
+        if isSelfTransfer {
+            // A self-transfer's zecAmount is just the fee. Show what actually moved instead:
+            // the outputs deliberately addressed to the user's own address (a manual self-send),
+            // or — when every output is wallet-internal (the dedicated Orchard -> Ironwood
+            // migration) — the full amount that crossed, totalReceived.
+            if externalOutputsTotal.amount > 0 {
+                return externalOutputsTotal
+            }
+            if let totalReceived, totalReceived.amount > 0 {
+                return totalReceived
+            }
         }
-        return zecAmount.atLeastThreeDecimalsZashiFormatted()
+        return zecAmount
+    }
+
+    var netValue: String {
+        resolvedAmount.atLeastThreeDecimalsZashiFormatted()
     }
 
     var amountWithoutFee: Zatoshi {
-        Zatoshi(zecAmount.amount - (fee?.amount ?? 0))
+        isSelfTransfer
+        ? resolvedAmount
+        : Zatoshi(zecAmount.amount - (fee?.amount ?? 0))
     }
 
     init(
@@ -403,7 +427,8 @@ extension TransactionState {
         transaction: ZcashTransaction.Overview,
         memos: [Memo]? = nil,
         hasTransparentOutputs: Bool = false,
-        currentChainTip: BlockHeight? = nil
+        currentChainTip: BlockHeight? = nil,
+        outputs: [ZcashTransaction.Output] = []
     ) {
         expiryHeight = transaction.expiryHeight
         minedHeight = transaction.minedHeight
@@ -420,6 +445,14 @@ extension TransactionState {
         totalReceived = transaction.totalReceived
         sentNoteCount = transaction.sentNoteCount
         receivedNoteCount = transaction.receivedNoteCount
+        externalOutputsTotal = Zatoshi(
+            outputs.reduce(Int64(0)) { total, output in
+                if case .address = output.recipient {
+                    return total + output.value.amount
+                }
+                return total
+            }
+        )
 
         let isPending = isSentTransaction ? minedHeight == nil : transaction.state == .pending
         // Fallback for when the SDK's `expired_unmined` column lags (e.g. an unmined sent tx

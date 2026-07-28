@@ -530,11 +530,12 @@ extension SDKSynchronizerClient {
                 }
             }
 
-            var transaction = TransactionState.init(
+            var transaction = TransactionState(
                 transaction: clearedTransaction,
                 memos: nil,
                 hasTransparentOutputs: hasTransparentOutputs,
-                currentChainTip: currentChainTip
+                currentChainTip: currentChainTip,
+                outputs: outputs
             )
 
             let recipients = await synchronizer.getRecipients(for: clearedTransaction)
