@@ -49,21 +49,26 @@ struct TransactionState: Equatable, Identifiable {
     var hasTransparentOutputs = false
     var totalSpent: Zatoshi?
     var totalReceived: Zatoshi?
-    /// The SDK's per-transaction note counts, carried so the display amount can detect a
-    /// self-transfer (see `isSelfTransfer`) for rows whose `fee` isn't recorded yet. Default 0
-    /// for the non-SDK inits (a pending send, a swap deposit). The swap-deposit init lands on
-    /// the same 0/0 "note-less" shape, but it sets `totalReceived = .zero`; the
-    /// `totalReceived.amount > 0` guards keep that (and any other genuinely amount-less state)
-    /// on the `zecAmount` path.
+    /// The SDK's per-transaction note counts. Carried for reference only — deliberately NOT used
+    /// to detect a self-transfer, because neither count means what it appears to. `sent_note_count`
+    /// is `COUNT(sent_notes.id)`, and the `sent_notes` table only has rows on the device that
+    /// *created* the transaction, so it reads 0 on any other device holding the same wallet.
+    /// `received_note_count` excludes change. An ordinary send therefore presents as 0/0 with a
+    /// positive `totalReceived` (the change) on every device that merely scanned it, which is
+    /// indistinguishable from a genuine self-transfer.
     var sentNoteCount = 0
     var receivedNoteCount = 0
     /// Sum of this transaction's outputs that pay an explicit address and are not change
-    /// (`recipient == .address` and `isChange == false`); zero when outputs are unavailable. For a
-    /// self-transfer this is the deliberately sent portion. Both conditions are needed: shielded
-    /// change carries no address (the SDK stores no address row for internal-scope notes), but a
-    /// transparent internal or ephemeral output does carry one, so the address check on its own
-    /// would fold transparent change back into the total.
-    var externalOutputsTotal = Zatoshi.zero
+    /// (`recipient == .address` and `isChange == false`). For a self-transfer this is the
+    /// deliberately sent portion. Both conditions are needed: shielded change carries no address
+    /// (the SDK stores no address row for internal-scope notes), but a transparent internal or
+    /// ephemeral output does carry one, so the address check alone would fold transparent change
+    /// back into the total.
+    ///
+    /// `nil` means the SDK returned no per-output detail at all, which is a different statement
+    /// from "no output paid an address" and must not be read as zero — `isSelfTransfer` relies on
+    /// the distinction.
+    var externalOutputsTotal: Zatoshi?
 
     var rawID: Data? = nil
     
@@ -284,21 +289,30 @@ struct TransactionState: Equatable, Identifiable {
     }
 
     /// A sent transaction every output of which returned to this account — a manual send to
-    /// one's own address, or an Orchard -> Ironwood migration crossing. Detected by the net
-    /// balance delta being exactly the fee (nothing left the wallet), with the SDK's note-count
-    /// shape as a fallback for rows whose fee is not yet recorded. Detection deliberately does not
-    /// consult the DB's `is_change` flag, which upstream documents as unreliable for self-sends
-    /// (`externalOutputsTotal` does use it, but only to keep change out of a sum).
+    /// one's own address, or an Orchard -> Ironwood migration crossing.
+    ///
+    /// Every signal here is a property of the transaction rather than of this device. That rules
+    /// out the note counts (see `sentNoteCount`): `sent_note_count` is zero on any device that did
+    /// not create the transaction, and `received_note_count` excludes change, so an ordinary send
+    /// looks 0/0-with-change on a second device and would be misread as a self-transfer — showing
+    /// the change instead of the amount sent.
     ///
     /// A shielding transaction is excluded even though it has the same fee-collapsed shape: it
     /// moves funds between the user's own pools rather than to an address, and it has its own
     /// display amount (`totalSpent`, see `resolvedAmount`).
     var isSelfTransfer: Bool {
         guard isSentTransaction, !isShieldingTransaction else { return false }
-        if let fee, fee.amount > 0, zecAmount.amount == fee.amount {
-            return true
+
+        // Authoritative whenever the fee is recorded: nothing left the wallet exactly when the
+        // account balance delta is the fee alone. No fallback may override this.
+        if let fee, fee.amount > 0 {
+            return zecAmount.amount == fee.amount
         }
-        return sentNoteCount == 0 && receivedNoteCount == 0 && (totalReceived?.amount ?? 0) > 0
+
+        // Fee not recorded yet. Fall back to the outputs: a self-transfer paid no explicit,
+        // non-change address, yet something came back. `nil` means the SDK gave us no per-output
+        // detail, which proves nothing either way, so it deliberately fails this check.
+        return externalOutputsTotal?.amount == 0 && (totalReceived?.amount ?? 0) > 0
     }
 
     var transationIcon: Image {
@@ -336,7 +350,7 @@ struct TransactionState: Equatable, Identifiable {
             // sent to someone else and 12.000 when sent to oneself, with no way to tell from the
             // row which convention it used. `amountWithoutFee` strips the fee off again for the
             // send-again prefill, exactly as it does for an ordinary send.
-            if externalOutputsTotal.amount > 0 {
+            if let externalOutputsTotal, externalOutputsTotal.amount > 0 {
                 return Zatoshi(externalOutputsTotal.amount + (fee?.amount ?? 0))
             }
             if let totalReceived, totalReceived.amount > 0 {
@@ -465,7 +479,10 @@ extension TransactionState {
         totalReceived = transaction.totalReceived
         sentNoteCount = transaction.sentNoteCount
         receivedNoteCount = transaction.receivedNoteCount
-        externalOutputsTotal = Zatoshi(
+        // Left nil when the SDK returned no outputs at all — "we don't know" rather than "zero".
+        externalOutputsTotal = outputs.isEmpty
+        ? nil
+        : Zatoshi(
             outputs.reduce(Int64(0)) { total, output in
                 if case .address = output.recipient, !output.isChange {
                     return total + output.value.amount

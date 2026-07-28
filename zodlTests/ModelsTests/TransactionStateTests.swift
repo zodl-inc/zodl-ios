@@ -115,12 +115,12 @@ import Foundation
         #expect(state.receivedNoteCount == 2)
     }
 
-    // MARK: - Migration shape (the note-count fallback)
+    // MARK: - Migration shape
 
-    /// The migration shape: a self-send whose net value collapses to the fee, with no counted
-    /// sent or received notes, no per-output detail (an older/rescanned row), but a real
-    /// `totalReceived`. netValue must show the crossing amount (`totalReceived`), not the
-    /// misleading fee-collapsed net (`zecAmount`).
+    /// The migration shape: a self-send whose net value collapses to the fee, with no per-output
+    /// detail (an older/rescanned row) but a recorded fee and a real `totalReceived`. The recorded
+    /// fee matches the balance delta, so it is a self-transfer, and netValue must show the crossing
+    /// amount (`totalReceived`, plus the fee) rather than the misleading fee-collapsed net.
     @Test func migrationSelfSendWithNoNotesDisplaysTotalReceived() {
         let state = TransactionState(
             transaction: overview(
@@ -389,11 +389,62 @@ import Foundation
         #expect(swapDeposit.netValue == Zatoshi.zero.atLeastThreeDecimalsZashiFormatted())
     }
 
-    // MARK: - The note-count arm operates independently of the fee-based arm
+    // MARK: - Detection must not depend on which device created the transaction
 
-    /// When `fee` is nil (not yet recorded), the note-count arm alone must still catch a
-    /// self-transfer: 0/0 counts with a real `totalReceived` falls back to it.
-    @Test func nilFeeWithNoNotesStillFallsBackToTotalReceived() {
+    /// The regression this suite exists to prevent. `sent_note_count` counts rows in the SDK's
+    /// `sent_notes` table, which only the device that *created* the transaction has, and
+    /// `received_note_count` excludes change. So an ordinary external send presents as 0/0 with a
+    /// positive `totalReceived` (its change) on every other device holding the same wallet -- the
+    /// exact shape a genuine self-transfer has. Detection must therefore ignore the note counts
+    /// entirely: the recorded fee settles it, and this send's balance delta is not the fee.
+    @Test func ordinarySendSeenFromAnotherDeviceIsNotASelfTransfer() {
+        let state = TransactionState(
+            transaction: overview(
+                sentNoteCount: 0,
+                receivedNoteCount: 0,
+                value: Zatoshi(-12_030_000),
+                fee: Zatoshi(30_000),
+                totalSpent: Zatoshi(16_494_726),
+                totalReceived: Zatoshi(4_464_726)
+            ),
+            outputs: [
+                addressedOutput(value: Zatoshi(12_000_000)),
+                internalOutput(value: Zatoshi(4_464_726))
+            ]
+        )
+
+        #expect(!state.isSelfTransfer)
+        #expect(state.netValue == Zatoshi(12_030_000).atLeastThreeDecimalsZashiFormatted())
+        // Not the change, which is what the note-count shape used to resolve to.
+        #expect(state.netValue != Zatoshi(4_494_726).atLeastThreeDecimalsZashiFormatted())
+    }
+
+    /// Same, with no per-output detail to fall back on either: a recorded fee that the balance
+    /// delta does not match is conclusive on its own.
+    @Test func ordinarySendSeenFromAnotherDeviceWithoutOutputsIsNotASelfTransfer() {
+        let state = TransactionState(
+            transaction: overview(
+                sentNoteCount: 0,
+                receivedNoteCount: 0,
+                value: Zatoshi(-12_030_000),
+                fee: Zatoshi(30_000),
+                totalReceived: Zatoshi(4_464_726)
+            ),
+            outputs: []
+        )
+
+        #expect(state.externalOutputsTotal == nil)
+        #expect(!state.isSelfTransfer)
+        #expect(state.netValue == Zatoshi(12_030_000).atLeastThreeDecimalsZashiFormatted())
+    }
+
+    // MARK: - The outputs fallback, for rows whose fee is not recorded
+
+    /// With no recorded fee, detection falls back to the outputs: every output here is
+    /// wallet-internal, so nothing was paid to an address and the transaction is a self-transfer
+    /// (the Orchard -> Ironwood migration shape). It resolves to `totalReceived`, and adds no fee
+    /// because none is known.
+    @Test func nilFeeWithOnlyInternalOutputsFallsBackToTotalReceived() {
         let state = TransactionState(
             transaction: overview(
                 sentNoteCount: 0,
@@ -401,28 +452,57 @@ import Foundation
                 value: Zatoshi(-10_000),
                 fee: nil,
                 totalReceived: Zatoshi(25_000_000)
-            )
+            ),
+            outputs: [internalOutput(value: Zatoshi(25_000_000))]
         )
 
         #expect(state.fee == nil)
+        #expect(state.externalOutputsTotal == .zero)
+        #expect(state.isSelfTransfer)
         #expect(state.netValue == Zatoshi(25_000_000).atLeastThreeDecimalsZashiFormatted())
     }
 
-    /// When `fee` is nil AND at least one note is counted, neither arm fires -- the transaction
-    /// keeps showing `zecAmount`.
-    @Test func nilFeeWithNotesKeepsZecAmountPath() {
+    /// With no recorded fee AND an output paying an address, the fallback must not fire -- money
+    /// left the wallet.
+    @Test func nilFeeWithAddressedOutputIsNotASelfTransfer() {
         let state = TransactionState(
             transaction: overview(
-                sentNoteCount: 1,
-                receivedNoteCount: 1,
+                sentNoteCount: 0,
+                receivedNoteCount: 0,
                 value: Zatoshi(-12_030_000),
                 fee: nil,
                 totalReceived: Zatoshi(4_464_726)
-            )
+            ),
+            outputs: [
+                addressedOutput(value: Zatoshi(12_000_000)),
+                internalOutput(value: Zatoshi(4_464_726))
+            ]
+        )
+
+        #expect(!state.isSelfTransfer)
+        #expect(state.netValue == Zatoshi(12_030_000).atLeastThreeDecimalsZashiFormatted())
+    }
+
+    /// With no recorded fee and no per-output detail, nothing can be concluded, so the transaction
+    /// stays on the `zecAmount` path. This is the deliberate cost of dropping the note counts: a
+    /// migration crossing that has neither a fee nor output rows shows its fee-collapsed net until
+    /// one of the two lands. Guessing instead is what broke ordinary sends on a second device.
+    @Test func nilFeeWithoutOutputDetailKeepsZecAmountPath() {
+        let state = TransactionState(
+            transaction: overview(
+                sentNoteCount: 0,
+                receivedNoteCount: 0,
+                value: Zatoshi(-10_000),
+                fee: nil,
+                totalReceived: Zatoshi(25_000_000)
+            ),
+            outputs: []
         )
 
         #expect(state.fee == nil)
-        #expect(state.netValue == Zatoshi(12_030_000).atLeastThreeDecimalsZashiFormatted())
+        #expect(state.externalOutputsTotal == nil)
+        #expect(!state.isSelfTransfer)
+        #expect(state.netValue == Zatoshi(10_000).atLeastThreeDecimalsZashiFormatted())
     }
 
     // MARK: - amountWithoutFee (send-again prefill)
@@ -537,7 +617,7 @@ import Foundation
         )
 
         #expect(state.isSelfTransfer)
-        #expect(state.externalOutputsTotal == .zero)
+        #expect(state.externalOutputsTotal == nil)
         #expect(state.totalReceived == nil)
         #expect(state.amountWithoutFee == .zero)
     }
@@ -592,7 +672,7 @@ import Foundation
             currentChainTip: nil
         )
 
-        #expect(state.externalOutputsTotal == .zero)
+        #expect(state.externalOutputsTotal == nil)
         #expect(!state.hasTransparentOutputs)
         #expect(state.zAddress == nil)
         #expect(!state.isTransparentRecipient)
