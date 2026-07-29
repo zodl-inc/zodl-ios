@@ -20,7 +20,8 @@ struct SendForm {
     @ObservableState
     struct State: Equatable {
         var cancelId = UUID()
-        
+        var maxCancelId = UUID()
+
         var addMemoState: Bool
         var address: RedactableString = .empty
         @Shared(.inMemory(.addressBookContacts)) var addressBookContacts: AddressBookContacts = .empty
@@ -35,6 +36,7 @@ struct SendForm {
         var selectedCurrency: CurrencyISO4217 = .usd
         var isInsufficientBalance = false
         var isLatestInputFiat = false
+        var isMaxRequestInFlight = false
         var isNotAddressInAddressBook = false
         var isSheetTexAddressVisible = false
         var isValidAddress = false
@@ -128,6 +130,12 @@ struct SendForm {
             }
         }
 
+        var isMaxButtonEnabled: Bool {
+            isValidAddress
+            && walletBalancesState.spendability != .nothing
+            && !isMaxRequestInFlight
+        }
+
         var isValidForm: Bool {
             isValidAddress
             && !isInsufficientFunds
@@ -213,6 +221,9 @@ struct SendForm {
         case currencyUpdated(RedactableString)
         case dismissAddressBookHint
         case exchangeRateSetupChanged
+        case maxAmountFailed
+        case maxAmountResolved(Zatoshi)
+        case maxTapped
         case memo(MessageEditor.Action)
         case onAppear
         case onDisapear
@@ -263,7 +274,10 @@ struct SendForm {
                 return .send(.exchangeRateSetupChanged)
 
             case .onDisapear:
-                return .cancel(id: state.cancelId)
+                return .merge(
+                    .cancel(id: state.cancelId),
+                    .cancel(id: state.maxCancelId)
+                )
                 
             case .alert(.presented(let action)):
                 return .send(action)
@@ -391,6 +405,34 @@ struct SendForm {
                 return .none
 
             case .confirmationRequired:
+                return .none
+
+            case .maxTapped:
+                guard state.isValidAddress else {
+                    return .none
+                }
+                guard let account = state.selectedWalletAccount else {
+                    return .none
+                }
+                state.isMaxRequestInFlight = true
+                return .run { [address = state.address] send in
+                    do {
+                        let network = zcashSDKEnvironment.network().networkType
+                        let recipient = try Recipient(address.data, network: network)
+                        let amount = try await sdkSynchronizer.sendMaxAmount(account.id, recipient)
+                        await send(.maxAmountResolved(amount))
+                    } catch {
+                        await send(.maxAmountFailed)
+                    }
+                }
+                .cancellable(id: state.maxCancelId)
+
+            case let .maxAmountResolved(amount):
+                state.isMaxRequestInFlight = false
+                return .send(.zecAmountUpdated(amount.decimalString().redacted))
+
+            case .maxAmountFailed:
+                state.isMaxRequestInFlight = false
                 return .none
 
             case .resetForm:

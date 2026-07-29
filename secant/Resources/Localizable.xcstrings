@@ -8081,6 +8081,18 @@
         }
       }
     },
+    "general.max" : {
+      "comment" : "Debug-only, compiled in behind #if !SECANT_DISTRIB. Never ships to users, so it needs no translation — not now, not later.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Max"
+          }
+        }
+      }
+    },
     "general.more" : {
       "extractionState" : "manual",
       "localizations" : {
