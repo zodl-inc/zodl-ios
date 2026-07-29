@@ -53,7 +53,7 @@ extension SwapAndPayForm {
 
                                     Spacer()
 
-                                    #if !SECANT_DISTRIB
+                                    #if ZODL_INTERNAL || SECANT_TESTNET
                                     ZashiMaxChip(
                                         title: String(localizable: .generalMax),
                                         style: .standard,
