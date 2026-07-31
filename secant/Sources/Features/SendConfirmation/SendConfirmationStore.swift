@@ -53,18 +53,21 @@ struct SendConfirmation {
         var feeRequired: Zatoshi
         var isAddressExpanded = false
         var isKeystoneCodeFound = false
+        var isOrchardWarningPresented = false
         var isQRCodeEnlarged = false
         var isSending = false
         var isShielding = false
         var isTransparentAddress = false
         var message: String
         var messageToBeShared: String?
+        var orchardWarningShown = false
         var partialFailureTxIds: [String] = []
         var partialFailureStatuses: [String] = []
         var pczt: Pczt?
         var pcztForUI: Pczt?
         var pcztWithProofs: Pczt?
         var pcztWithSigs: Pczt?
+        var pendingCancelFromOrchardWarning = false
         var pendingDescription: String?
         var proposal: Proposal?
         var randomSuccessIconIndex = 0
@@ -146,6 +149,9 @@ struct SendConfirmation {
         case getSignatureTapped
         case goBackTappedFromRequestZec
         case onAppear
+        case orchardWarningCancelTapped
+        case orchardWarningContinueTapped
+        case orchardWarningDismissed
         case rejectRequestCanceled
         case rejectRequested
         case rejectTapped
@@ -233,6 +239,10 @@ struct SendConfirmation {
                         break
                     }
                 }
+                if state.proposal?.spendsLegacyOrchardFunds == true && !state.orchardWarningShown {
+                    state.isOrchardWarningPresented = true
+                    state.orchardWarningShown = true
+                }
                 return .none
 
             case .alert(.presented(let action)):
@@ -260,6 +270,25 @@ struct SendConfirmation {
                 return .none
 
             case .cancelTapped:
+                return .none
+
+            case .orchardWarningCancelTapped:
+                state.isOrchardWarningPresented = false
+                state.pendingCancelFromOrchardWarning = true
+                return .none
+
+            case .orchardWarningContinueTapped:
+                state.isOrchardWarningPresented = false
+                return .none
+
+            case .orchardWarningDismissed:
+                // Pop-back must happen only after the sheet finished dismissing (this action is
+                // sent from the sheet's `onDismiss`), otherwise SwiftUI would pop a screen that
+                // still presents a sheet.
+                if state.pendingCancelFromOrchardWarning {
+                    state.pendingCancelFromOrchardWarning = false
+                    return .send(.cancelTapped)
+                }
                 return .none
 
             case .viewTransactionTapped:
