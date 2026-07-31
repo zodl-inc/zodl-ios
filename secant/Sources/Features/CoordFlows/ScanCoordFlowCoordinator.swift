@@ -492,6 +492,10 @@ extension ScanCoordFlow {
                 let _ = state.path.removeLast()
                 return .none
 
+            case .path(.element(id: _, action: .requestZecConfirmation(.cancelTapped))):
+                let _ = state.path.removeLast()
+                return .none
+
             case .path(.element(id: _, action: .sendConfirmation(.sendRequested))):
                 for element in state.path {
                     if case .sendConfirmation(let sendConfirmationState) = element {

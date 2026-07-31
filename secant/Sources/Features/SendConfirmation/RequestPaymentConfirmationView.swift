@@ -233,6 +233,12 @@ struct RequestPaymentConfirmationView: View {
                     }
                 }
             }
+            .orchardSpendWarningSheet(
+                isPresented: $store.isOrchardWarningPresented,
+                onContinue: { store.send(.orchardWarningContinueTapped) },
+                onCancel: { store.send(.orchardWarningCancelTapped) },
+                onDismiss: { store.send(.orchardWarningDismissed) }
+            )
             .onAppear { store.send(.onAppear) }
             .screenTitle(String(localizable: .sendRequestPaymentTitle).uppercased())
             .zashiBack(store.isSending) {
