@@ -163,7 +163,13 @@ extension SendCoordFlow {
 
                 // MARK: - Request ZEC Confirmation
                 
-            case .path(.element(id: _, action: .requestZecConfirmation(.goBackTappedFromRequestZec))):
+            // Share this case with the screen's own back button rather than a separate single
+            // `popLast()`, so cancel from the Orchard-spend warning sheet can never diverge from
+            // whatever "go back" already does here — see the identical reasoning in
+            // ScanCoordFlowCoordinator, where diverging bodies actually did strand the user on a
+            // stale scan screen.
+            case .path(.element(id: _, action: .requestZecConfirmation(.goBackTappedFromRequestZec))),
+                    .path(.element(id: _, action: .requestZecConfirmation(.cancelTapped))):
                 state.path.removeAll()
                 return .none
 
@@ -276,10 +282,6 @@ extension SendCoordFlow {
                 // MARK: - Send Confirmation
 
             case .path(.element(id: _, action: .sendConfirmation(.cancelTapped))):
-                let _ = state.path.popLast()
-                return .none
-
-            case .path(.element(id: _, action: .requestZecConfirmation(.cancelTapped))):
                 let _ = state.path.popLast()
                 return .none
 
