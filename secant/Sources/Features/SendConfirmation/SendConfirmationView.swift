@@ -194,7 +194,10 @@ struct SendConfirmationView: View {
                 onCancel: { store.send(.orchardWarningCancelTapped) },
                 onDismiss: { store.send(.orchardWarningDismissed) }
             )
-            .onAppear { store.send(.onAppear) }
+            .onAppear {
+                store.send(.onAppear)
+                store.send(.confirmationScreenAppeared)
+            }
             .screenTitle(
                 store.selectedWalletAccount?.vendor == .keystone
                 ? String(localizable: .sendReview)

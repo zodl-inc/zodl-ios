@@ -3,12 +3,14 @@
 //  zodlTests
 //
 //  Covers the Orchard-spend warning bottom sheet shown on the send confirmation screen when the
-//  payment proposal spends legacy Orchard funds (Figma node 5139-23856): the `.onAppear`
-//  presentation gate, the one-shot `orchardWarningShown` flag that keeps it from re-presenting
-//  (SignWithKeystoneView shares this reducer and re-fires `.onAppear`), and the two-step cancel
-//  flow. Cancel must only turn into `.cancelTapped` once the sheet has actually finished
-//  dismissing (`.orchardWarningDismissed`, sent from the sheet's `onDismiss`) — otherwise SwiftUI
-//  would pop a screen that still presents a sheet.
+//  payment proposal spends legacy Orchard funds: the `.confirmationScreenAppeared` presentation
+//  gate (deliberately separate from `.onAppear`, so screens that share this reducer but never send
+//  `.confirmationScreenAppeared` — e.g. the SwapAndPay flow pushing `confirmWithKeystone` with a
+//  fresh state — can never trip or burn the one-shot latch), the `orchardWarningShown` flag that
+//  keeps it from re-presenting on a pop-return, and the two-step cancel flow. Cancel must only turn
+//  into `.cancelTapped` once the sheet has actually finished dismissing (`.orchardWarningDismissed`,
+//  sent from the sheet's `onDismiss`) — otherwise SwiftUI would pop a screen that still presents a
+//  sheet.
 //
 
 import Testing
@@ -37,15 +39,12 @@ import ComposableArchitecture
     private func makeStore(_ state: SendConfirmation.State) -> TestStore<SendConfirmation.State, SendConfirmation.Action> {
         TestStore(initialState: state) {
             SendConfirmation()
-        } withDependencies: {
-            $0.derivationTool = .liveValue
-            $0.zcashSDKEnvironment = .testnet
         }
     }
 
-    // MARK: - .onAppear presentation gate
+    // MARK: - .confirmationScreenAppeared presentation gate
 
-    @Test func onAppearPresentsWarningWhenProposalSpendsLegacyOrchardFunds() async {
+    @Test func confirmationScreenAppearedPresentsWarningWhenProposalSpendsLegacyOrchardFunds() async {
         await withDependencies {
             $0.defaultInMemoryStorage = InMemoryStorage()
         } operation: {
@@ -53,7 +52,7 @@ import ComposableArchitecture
             let store = makeStore(makeState(proposal: proposal))
             store.exhaustivity = .off
 
-            await store.send(.onAppear)
+            await store.send(.confirmationScreenAppeared)
             await store.finish()
             await store.skipReceivedActions(strict: false)
 
@@ -62,11 +61,75 @@ import ComposableArchitecture
         }
     }
 
-    @Test func onAppearDoesNotPresentWarningWhenProposalDoesNotSpendLegacyOrchardFunds() async {
+    @Test func confirmationScreenAppearedDoesNotPresentWarningWhenProposalDoesNotSpendLegacyOrchardFunds() async {
         await withDependencies {
             $0.defaultInMemoryStorage = InMemoryStorage()
         } operation: {
             let proposal = Proposal.testOnlyFakeProposal(totalFee: 0)
+            let store = makeStore(makeState(proposal: proposal))
+            store.exhaustivity = .off
+
+            await store.send(.confirmationScreenAppeared)
+            await store.finish()
+            await store.skipReceivedActions(strict: false)
+
+            #expect(!store.state.isOrchardWarningPresented)
+            #expect(!store.state.orchardWarningShown)
+        }
+    }
+
+    @Test func confirmationScreenAppearedDoesNotPresentWarningWhenProposalIsNil() async {
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let store = makeStore(makeState(proposal: nil))
+            store.exhaustivity = .off
+
+            await store.send(.confirmationScreenAppeared)
+            await store.finish()
+            await store.skipReceivedActions(strict: false)
+
+            #expect(!store.state.isOrchardWarningPresented)
+            #expect(!store.state.orchardWarningShown)
+        }
+    }
+
+    @Test func confirmationScreenAppearedDoesNotRepresentWarningOnceAlreadyShown() async {
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let proposal = Proposal.testOnlyFakeProposal(totalFee: 0, spendsLegacyOrchardFunds: true)
+            var initialState = makeState(proposal: proposal)
+            // Simulates returning to this screen a second time (e.g. after pushing into
+            // confirmWithKeystone and coming back), which re-fires `.confirmationScreenAppeared`,
+            // once the warning already ran its course.
+            initialState.orchardWarningShown = true
+            initialState.isOrchardWarningPresented = false
+
+            let store = makeStore(initialState)
+            store.exhaustivity = .off
+
+            await store.send(.confirmationScreenAppeared)
+            await store.finish()
+            await store.skipReceivedActions(strict: false)
+
+            #expect(!store.state.isOrchardWarningPresented)
+            #expect(store.state.orchardWarningShown)
+        }
+    }
+
+    // MARK: - .onAppear no longer gates the warning
+
+    @Test func onAppearAloneNeverPresentsWarningEvenWithOrchardSpendingProposal() async {
+        // Regression coverage: before the gate moved to a dedicated action, `.onAppear` alone
+        // would present the warning. Screens that only ever send `.onAppear` (none currently do,
+        // but nothing stops a future one) must never see it fire.
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+            $0.derivationTool = .liveValue
+            $0.zcashSDKEnvironment = .testnet
+        } operation: {
+            let proposal = Proposal.testOnlyFakeProposal(totalFee: 0, spendsLegacyOrchardFunds: true)
             let store = makeStore(makeState(proposal: proposal))
             store.exhaustivity = .off
 
@@ -76,45 +139,6 @@ import ComposableArchitecture
 
             #expect(!store.state.isOrchardWarningPresented)
             #expect(!store.state.orchardWarningShown)
-        }
-    }
-
-    @Test func onAppearDoesNotPresentWarningWhenProposalIsNil() async {
-        await withDependencies {
-            $0.defaultInMemoryStorage = InMemoryStorage()
-        } operation: {
-            let store = makeStore(makeState(proposal: nil))
-            store.exhaustivity = .off
-
-            await store.send(.onAppear)
-            await store.finish()
-            await store.skipReceivedActions(strict: false)
-
-            #expect(!store.state.isOrchardWarningPresented)
-            #expect(!store.state.orchardWarningShown)
-        }
-    }
-
-    @Test func onAppearDoesNotRepresentWarningOnceAlreadyShown() async {
-        await withDependencies {
-            $0.defaultInMemoryStorage = InMemoryStorage()
-        } operation: {
-            let proposal = Proposal.testOnlyFakeProposal(totalFee: 0, spendsLegacyOrchardFunds: true)
-            var initialState = makeState(proposal: proposal)
-            // Simulates returning to this reducer's `.onAppear` a second time (e.g. after pushing
-            // into `confirmWithKeystone` and coming back) once the warning already ran its course.
-            initialState.orchardWarningShown = true
-            initialState.isOrchardWarningPresented = false
-
-            let store = makeStore(initialState)
-            store.exhaustivity = .off
-
-            await store.send(.onAppear)
-            await store.finish()
-            await store.skipReceivedActions(strict: false)
-
-            #expect(!store.state.isOrchardWarningPresented)
-            #expect(store.state.orchardWarningShown)
         }
     }
 

@@ -144,6 +144,7 @@ struct SendConfirmation {
         case binding(BindingAction<SendConfirmation.State>)
         case cancelTapped
         case closeTapped
+        case confirmationScreenAppeared
         case confirmWithKeystoneTapped
         case enlargeQRCodeTapped
         case getSignatureTapped
@@ -239,6 +240,13 @@ struct SendConfirmation {
                         break
                     }
                 }
+                return .none
+
+            case .confirmationScreenAppeared:
+                // Deliberately separate from `.onAppear`: this reducer is also shared by screens
+                // that never attach the warning sheet (e.g. the SwapAndPay flow pushing
+                // `confirmWithKeystone` with a fresh state), which must never trip or burn this
+                // one-shot latch just because `.onAppear` fired.
                 if state.proposal?.spendsLegacyOrchardFunds == true && !state.orchardWarningShown {
                     state.isOrchardWarningPresented = true
                     state.orchardWarningShown = true

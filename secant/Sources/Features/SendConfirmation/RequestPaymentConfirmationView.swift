@@ -239,7 +239,10 @@ struct RequestPaymentConfirmationView: View {
                 onCancel: { store.send(.orchardWarningCancelTapped) },
                 onDismiss: { store.send(.orchardWarningDismissed) }
             )
-            .onAppear { store.send(.onAppear) }
+            .onAppear {
+                store.send(.onAppear)
+                store.send(.confirmationScreenAppeared)
+            }
             .screenTitle(String(localizable: .sendRequestPaymentTitle).uppercased())
             .zashiBack(store.isSending) {
                 store.send(.goBackTappedFromRequestZec)

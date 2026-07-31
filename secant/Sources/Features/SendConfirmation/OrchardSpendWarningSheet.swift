@@ -31,6 +31,7 @@ struct OrchardSpendWarningSheetModifier: ViewModifier {
 
                     Text(localizable: .sheetOrchardSpendTitle)
                         .zFont(.semiBold, size: 24, style: Design.Text.primary)
+                        .fixedSize(horizontal: false, vertical: true)
                         .padding(.top, 24)
                         .padding(.bottom, 12)
 

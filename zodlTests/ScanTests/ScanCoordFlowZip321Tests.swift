@@ -162,15 +162,14 @@ import ZcashPaymentURI
         }
     }
 
-    /// Fix-round regression (code review, not ZIP-321): cancelling the Orchard-spend warning sheet
-    /// sends `.requestZecConfirmation(.cancelTapped)`, which must pop back to `sendForm` exactly
-    /// like the screen's own back button (`.goBackTappedFromRequestZec`) — even when a stale `.scan`
-    /// element is still sitting on the path underneath `requestZecConfirmation`. That shape is
-    /// reproduced here: the send form's own Scan button pushes a second `.scan` on top of an
-    /// existing `.sendForm`, and resolving that scan to a full payment request pushes
-    /// `requestZecConfirmation` without first popping `.scan` (`.proposalResolvedExistingSendForm`)
-    /// — so a naive single `popLast()` on cancel would strand the user on the stale scan/camera
-    /// screen instead of the send form.
+    /// Cancelling the Orchard-spend warning sheet sends `.requestZecConfirmation(.cancelTapped)`,
+    /// which must pop back to `sendForm` exactly like the screen's own back button
+    /// (`.goBackTappedFromRequestZec`) — even when a stale `.scan` element is still sitting on the
+    /// path underneath `requestZecConfirmation`. That shape is reproduced here: the send form's
+    /// own Scan button pushes a second `.scan` on top of an existing `.sendForm`, and resolving
+    /// that scan to a full payment request pushes `requestZecConfirmation` without first popping
+    /// `.scan` (`.proposalResolvedExistingSendForm`) — so a naive single `popLast()` on cancel
+    /// would strand the user on the stale scan/camera screen instead of the send form.
     @Test func cancelFromRequestZecConfirmationPopsPastStaleScanToSendForm() async throws {
         let payment = try makePayment(amount: 0.001)
         let singleRequest = PaymentRequest(singlePayment: payment)
@@ -200,7 +199,7 @@ import ZcashPaymentURI
             // response to a path-element action (this one, and equally the screen's own
             // `.goBackTappedFromRequestZec` back button) removes the element before its child
             // reducer runs, and TCA reports "received an action for a missing element".
-            withKnownIssue {
+            withKnownIssue("pre-existing: coordinatorReduce() runs before .forEach, so the pop precedes the child reducer") {
                 store.send(.path(.element(id: requestZecId, action: .requestZecConfirmation(.cancelTapped))))
             }
 
