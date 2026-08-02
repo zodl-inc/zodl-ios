@@ -26,6 +26,7 @@ extension WhatsNewProviderClient: DependencyKey {
     private static func checkCountryCodeEligibility(_ code: String) -> Bool {
         switch code {
         case "es": return true
+        case "pt": return true
         default: return false
         }
     }

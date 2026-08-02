@@ -1,0 +1,911 @@
+{
+    "releases": [
+        {
+            "version": "3.6.0",
+            "date": "15-06-2026",
+            "timestamp": 1781544911,
+            "sections": [
+                {
+                    "title": "Adicionado:",
+                    "bulletpoints": [
+                        "Até agora, os saldos e montantes no Zodl só eram apresentados em dólares norte-americanos. Adicionámos suporte multimoeda: escolhe a tua moeda preferida nas definições de Conversão de Moeda e na ativação do widget de Estado da Carteira."
+                    ]
+                },
+                {
+                    "title": "Alterado:",
+                    "bulletpoints": [
+                        "Redesenhámos a seleção de servidor com um botão Automático/Manual para melhorar a fiabilidade. O modo Automático mantém a sincronização no melhor servidor; o Manual deixa-te escolher um. Todos passam para Automático por predefinição, exceto quem usa um servidor personalizado, que permanece em Manual.",
+                        "As novas carteiras sincronizam a partir da altura atual da cadeia, em vez do checkpoint integrado, evitando a análise inicial."
+                    ]
+                }
+            ]
+        },
+        {
+            "version": "3.5.3",
+            "date": "08-06-2026",
+            "timestamp": 1780930607,
+            "sections": [
+                {
+                    "title": "Corrigido:",
+                    "bulletpoints": [
+                        "Corrigimos as funcionalidades de Swap/Pagamento."
+                    ]
+                }
+            ]
+        },
+        {
+            "version": "3.5.2",
+            "date": "05-06-2026",
+            "timestamp": 1780658951,
+            "sections": [
+                {
+                    "title": "Alterado:",
+                    "bulletpoints": [
+                        "Foram removidos da lista de servidores os servidores descontinuados."
+                    ]
+                },
+                {
+                    "title": "Corrigido:",
+                    "bulletpoints": [
+                        "Corrigimos um tempo limite de ligação no iOS que podia deixar a carteira presa a meio da sincronização ao receber transações."
+                    ]
+                }
+            ]
+        },
+        {
+            "version": "3.5.1",
+            "date": "02-06-2026",
+            "timestamp": 1780404420,
+            "sections": [
+                {
+                    "title": "Alterado:",
+                    "bulletpoints": [
+                        "Compatibilidade atualizada com as mais recentes alterações da rede Zcash. Esta atualização é necessária para garantir o funcionamento correto da carteira.",
+                        "Atualizámos o servidor predefinido."
+                    ]
+                }
+            ]
+        },
+        {
+            "version": "3.5.0",
+            "date": "27-05-2026",
+            "timestamp": 1779388800,
+            "sections": [
+                {
+                    "title": "Adicionado:",
+                    "bulletpoints": [
+                        "O Coinholder Polling permite-te votar na governação da Zcash de forma privada, diretamente a partir das tuas carteiras Zodl e Keystone."
+                    ]
+                }
+            ]
+        },
+        {
+            "version": "3.4.1",
+            "date": "18-05-2026",
+            "timestamp": 1778606653,
+            "sections": [
+                {
+                    "title": "Alterado:",
+                    "bulletpoints": [
+                        "Atualizámos o texto do widget de estado de proteção."
+                    ]
+                },
+                {
+                    "title": "Corrigido:",
+                    "bulletpoints": [
+                        "Corrigimos um erro que impedia a proteção quando havia muitas entradas transparentes pequenas.",
+                        "Corrigimos um problema de navegação no fluxo de Restauro."
+                    ]
+                }
+            ]
+        },
+        {
+            "version": "3.4.0",
+            "date": "07-05-2026",
+            "timestamp": 1778001853,
+            "sections": [
+                {
+                    "title": "Adicionado:",
+                    "bulletpoints": [
+                        "Adicionámos suporte à altura de nascimento ao ligar uma carteira Keystone, para que o teu histórico e os teus fundos sejam restaurados corretamente.",
+                        "Adicionámos um breve guia sobre carteiras de hardware no ecrã Ligar."
+                    ]
+                },
+                {
+                    "title": "Alterado:",
+                    "bulletpoints": [
+                        "Atualizámos os textos e as notas informativas do fluxo de Restauro.",
+                        "Passámos a mostrar o nome personalizado da tua Keystone ao ligá-la."
+                    ]
+                },
+                {
+                    "title": "Corrigido:",
+                    "bulletpoints": [
+                        "Corrigimos vários detalhes de UX/UI, incluindo um ecrã de altura de nascimento bloqueado e entradas do livro de endereços que não apareciam até recarregar."
+                    ]
+                }
+            ]
+        },
+        {
+            "version": "3.3.1",
+            "date": "06-05-2026",
+            "timestamp": 1778079990,
+            "sections": [
+                {
+                    "title": "Corrigido:",
+                    "bulletpoints": [
+                        "Corrigimos uma falha no fluxo de Swap/Pagamento."
+                    ]
+                }
+            ]
+        },
+        {
+            "version": "3.3.0",
+            "date": "04-04-2026",
+            "timestamp": 1775303077,
+            "sections": [
+                {
+                    "title": "Adicionado:",
+                    "bulletpoints": [
+                        "Adicionámos uma funcionalidade para desligar uma carteira de hardware Keystone."
+                    ]
+                }
+            ]
+        },
+        {
+            "version": "3.2.0",
+            "date": "26-03-2026",
+            "timestamp": 1774522800,
+            "sections": [
+                {
+                    "title": "Adicionado:",
+                    "bulletpoints": [
+                        "Melhorámos as opções de visualização dos códigos QR para permitir ampliá-los."
+                    ]
+                },
+                {
+                    "title": "Alterado:",
+                    "bulletpoints": [
+                        "Alterámos a funcionalidade de swap para ZEC para FLEX_INPUT, para que os swaps não recebidos possam ser executados.",
+                        "Atualizámos e unificámos os elementos e o comportamento da interface de utilizador em ambas as plataformas."
+                    ]
+                },
+                {
+                    "title": "Corrigido:",
+                    "bulletpoints": [
+                        "Corrigimos outros problemas de inconsistência."
+                    ]
+                }
+            ]
+        },
+        {
+            "version": "3.1.0",
+            "date": "10-03-2026",
+            "timestamp": 1773133320,
+            "sections": [
+                {
+                    "title": "Adicionado:",
+                    "bulletpoints": [
+                        "Criámos um mecanismo na aplicação para contactar o suporte em caso de problemas com o Swap/Pagamento.",
+                        "Adicionámos um aviso de slippage baixo para evitar reembolsos.",
+                        "Implementámos a gestão de depósitos incompletos.",
+                        "Adicionámos também mais informação aos fluxos de estado do Swap/Pagamento."
+                    ]
+                },
+                {
+                    "title": "Alterado:",
+                    "bulletpoints": [
+                        "Atualizámos o slippage predefinido para 2% para uma execução mais rápida dos swaps.",
+                        "Alterámos o servidor predefinido.",
+                        "Melhorámos também a experiência de utilização do ecrã de depósito do Swap para ZEC.",
+                        "Realizámos outras melhorias de UX/UI."
+                    ]
+                },
+                {
+                    "title": "Corrigido:",
+                    "bulletpoints": [
+                        "Corrigimos um erro na árvore de compromissos de notas."
+                    ]
+                }
+            ]
+        },
+        {
+            "version": "3.0.1",
+            "date": "03-03-2026",
+            "timestamp": 1772534007,
+            "sections": [
+                {
+                    "title": "Corrigido:",
+                    "bulletpoints": [
+                        "Foi corrigida a ausência do botão “Voltar” em alguns fluxos iniciados a partir do ecrã principal.",
+                        "Melhoria no carregamento das atividades da conta atual.",
+                        "Correção no carregamento de metadados após restaurar a carteira."
+                    ]
+                }
+            ]
+        },
+        {
+            "version": "3.0.0",
+            "date": "25-02-2026",
+            "timestamp": 1772007905,
+            "sections": [
+                {
+                    "title": "Alterado:",
+                    "bulletpoints": [
+                        "Zashi -> Atualização da marca Zodl: mudámos a marca de Zashi para Zodl, sem afetar a experiência do utilizador. É uma nova marca para um novo capítulo, mas tudo o resto permanece igual: a carteira, a equipa que a apoia e o nosso compromisso com a Zcash.",
+                        "Esta atualização inclui a atualização para o iOS 26 e o suporte ao Liquid Glass.",
+                        "Melhorámos os detalhes da interface de utilizador do Swap/Pagamento."
+                    ]
+                }
+            ]
+        },
+        {
+            "version": "2.4.12",
+            "date": "28-01-2026",
+            "timestamp": 1769605663,
+            "sections": [
+                {
+                    "title": "Alterado:",
+                    "bulletpoints": [
+                        "Para resolver os problemas dos utilizadores causados pela seleção incorreta de ativos de swap, melhorámos a interface de utilizador do Swap e do CrossPay, mostrando explicitamente o token e a rede selecionados.",
+                        "Otimizámos a lista de ativos para evitar os erros mais frequentes dos utilizadores."
+                    ]
+                },
+                {
+                    "title": "Corrigido:",
+                    "bulletpoints": [
+                        "Resolvemos vários problemas com a leitura do código QR ZIP321.",
+                        "Corrigimos a gestão de transações falhadas."
+                    ]
+                }
+            ]
+        },
+        {
+            "version": "2.4.11",
+            "date": "18-12-2025",
+            "timestamp": 1766045724,
+            "sections": [
+                {
+                    "title": "Adicionado:",
+                    "bulletpoints": [
+                        "Atualizámos os ícones dos novos ativos e redes de Swap/Pay."
+                    ]
+                },
+                {
+                    "title": "Alterado:",
+                    "bulletpoints": [
+                        "Introduzimos um novo estado \"Pendente\" para os fluxos de transações, que substituiu os nossos estados de Erro.",
+                        "Atualizámos os ícones e os textos.",
+                        "Melhorámos a gestão de erros.",
+                        "Movemos a Conversão de Moeda das Definições Avançadas para Mais opções."
+                    ]
+                },
+                {
+                    "title": "Corrigido:",
+                    "bulletpoints": [
+                        "Adicionámos ZEC noutras redes aos fluxos de Swap/Pay.",
+                        "Melhorámos a interface/experiência de utilizador da gestão de erros.",
+                        "Melhorámos a experiência de descarregamento dos parâmetros Sapling."
+                    ]
+                }
+            ]
+        },
+        {
+            "version": "2.4.10",
+            "date": "16-12-2025",
+            "timestamp": 1765883822,
+            "sections": [
+                {
+                    "title": "Adicionado:",
+                    "bulletpoints": [
+                        "Atualizámos os ícones dos novos ativos e redes de Swap/Pay."
+                    ]
+                },
+                {
+                    "title": "Alterado:",
+                    "bulletpoints": [
+                        "Introduzimos um novo estado \"Pendente\" para os fluxos de transações, que substituiu os nossos estados de Erro.",
+                        "Atualizámos os ícones e os textos.",
+                        "Melhorámos a gestão de erros.",
+                        "Movemos a Conversão de Moeda das Definições Avançadas para Mais opções."
+                    ]
+                },
+                {
+                    "title": "Corrigido:",
+                    "bulletpoints": [
+                        "Adicionámos ZEC noutras redes aos fluxos de Swap/Pay.",
+                        "Melhorámos a interface/experiência de utilizador da gestão de erros.",
+                        "Melhorámos a experiência de descarregamento dos parâmetros Sapling."
+                    ]
+                }
+            ]
+        },
+        {
+            "version": "2.4.9",
+            "date": "03-12-2025",
+            "timestamp": 1764790914,
+            "sections": [
+                {
+                    "title": "Adicionado:",
+                    "bulletpoints": [
+                        "Melhorámos a gestão de erros, tornando-os mais fáceis de compreender e resolver.",
+                        "Adicionámos uma opção para ativar a proteção Tor no processo de Restauro."
+                    ]
+                },
+                {
+                    "title": "Alterado:",
+                    "bulletpoints": [
+                        "Adicionámos um botão de swap que te leva aos swaps.",
+                        "Melhorámos o desempenho da Conversão de Moeda.",
+                        "Movemos a funcionalidade Pagar com Flexa para Mais opções.",
+                        "Removemos a integração com o Coinbase Onramp."
+                    ]
+                },
+                {
+                    "title": "Corrigido:",
+                    "bulletpoints": [
+                        "Resolvemos problemas reportados pelos utilizadores.",
+                        "Implementámos uma funcionalidade para recuperar os dados das transações."
+                    ]
+                }
+            ]
+        },
+        {
+            "version": "2.4.8",
+            "date": "11-17-2025",
+            "timestamp": 1763124135,
+            "sections": [
+                {
+                    "title": "Alterado",
+                    "bulletpoints": [
+                        "Atualizámos as funcionalidades de Swap e Pagamento para usarem endereços protegidos em vez de transparentes. Privacidade ativada!"
+                    ]
+                }
+            ]
+        },
+        {
+            "version": "2.4.7",
+            "date": "11-05-2025",
+            "timestamp": 1762348565,
+            "sections": [
+                {
+                    "title": "Alterado",
+                    "bulletpoints": [
+                        "Adicionámos um novo servidor à lista de servidores do Zashi.",
+                        "Aumentámos o prazo para realizar swaps e evitar reembolsos antecipados."
+                    ]
+                },
+                {
+                    "title": "Corrigido",
+                    "bulletpoints": [
+                        "Realizámos numerosas correções de erros, refatoração e melhorias na experiência de utilização (UX/UI).",
+                        "Implementámos um mecanismo para detetar fundos de transações TEX falhadas."
+                    ]
+                }
+            ]
+        },
+        {
+            "version": "2.4.5",
+            "date": "10-23-2025",
+            "timestamp": 1761209533,
+            "sections": [
+                {
+                    "title": "Corrigido",
+                    "bulletpoints": [
+                        "Corrigimos um problema de saldo e proteção que afetava as carteiras de alguns utilizadores."
+                    ]
+                }
+            ]
+        },
+        {
+            "version": "2.4.4",
+            "date": "10-20-2025",
+            "timestamp": 1760967886,
+            "sections": [
+                {
+                    "title": "Alterado",
+                    "bulletpoints": [
+                        "Implementámos a atualização automática dos estados de swap/pagamento; já não é preciso clicar neles para os ver alterados.",
+                        "Removemos o logótipo da Keystone do código QR; ninguém tem de saber que tens uma.",
+                        "Melhorámos o fluxo de reposição do Zashi para que possas manter uma cópia de segurança dos metadados."
+                    ]
+                },
+                {
+                    "title": "Corrigido",
+                    "bulletpoints": [
+                        "Resolvemos um problema com uma transação recebida pendente permanente.",
+                        "Corrigimos também alguns erros adicionais."
+                    ]
+                }
+            ]
+        },
+        {
+            "version": "2.4.3",
+            "date": "10-11-2025",
+            "timestamp": 1760172160,
+            "sections": [
+                {
+                    "title": "2.4.3: Corrigido",
+                    "bulletpoints": [
+                        "Correção de erros",
+                        "Atualizações de UI/UX"
+                    ]
+                },
+                {
+                    "title": "2.4.x: A funcionalidade de swap para ZEC que estavas à espera! Com o apoio da Near Intents.",
+                    "bulletpoints": [
+                        "Usa o Zashi para fazer swap de qualquer criptomoeda compatível para Zcash.",
+                        "Deposita fundos com qualquer uma das tuas carteiras favoritas.",
+                        "Recebe ZEC no Zashi e protege-os.",
+                        "Vê as transações recebidas mais rapidamente com a deteção de mempool.",
+                        "Confirma o teu troco mais depressa com 3 confirmações.",
+                        "Removemos os servidores lwd da lista de servidores porque deixarão de ter suporte em breve."
+                    ]
+                }
+            ]
+        },
+        {
+            "version": "2.4.2",
+            "date": "10-08-2025",
+            "timestamp": 1759916882,
+            "sections": [
+                {
+                    "title": "2.4.2: Alterado",
+                    "bulletpoints": [
+                        "Removemos os servidores lwd da lista de servidores porque deixarão de ter suporte em breve."
+                    ]
+                },
+                {
+                    "title": "2.4.1: A funcionalidade de swap para ZEC que estavas à espera! Com o apoio da Near Intents.",
+                    "bulletpoints": [
+                        "Usa o Zashi para fazer swap de qualquer criptomoeda compatível para Zcash.",
+                        "Deposita fundos com qualquer uma das tuas carteiras favoritas.",
+                        "Recebe ZEC no Zashi e protege-os.",
+                        "Vê as transações recebidas mais rapidamente com a deteção de mempool.",
+                        "Confirma o teu troco mais depressa com 3 confirmações."
+                    ]
+                }
+            ]
+        },
+        {
+            "version": "2.4.1",
+            "date": "10-02-2025",
+            "timestamp": 1759411813,
+            "sections": [
+                {
+                    "title": "A funcionalidade de swap para ZEC que estavas à espera! Com o apoio da Near Intents.",
+                    "bulletpoints": [
+                        "Usa o Zashi para fazer swap de qualquer criptomoeda compatível para Zcash.",
+                        "Deposita fundos com qualquer uma das tuas carteiras favoritas.",
+                        "Recebe ZEC no Zashi e protege-os.",
+                        "Vê as transações recebidas mais rapidamente com a deteção de mempool.",
+                        "Confirma o teu troco mais depressa com 3 confirmações."
+                    ]
+                }
+            ]
+        },
+        {
+            "version": "2.4",
+            "date": "10-01-2025",
+            "timestamp": 1759312704,
+            "sections": [
+                {
+                    "title": "A funcionalidade de swap para ZEC que estavas à espera! Com o apoio da Near Intents.",
+                    "bulletpoints": [
+                        "Usa o Zashi para fazer swap de qualquer criptomoeda compatível para Zcash.",
+                        "Deposita fundos com qualquer uma das tuas carteiras favoritas.",
+                        "Recebe ZEC no Zashi e protege-os.",
+                        "Vê as transações recebidas mais rapidamente com a deteção de mempool.",
+                        "Confirma o teu troco mais depressa com 3 confirmações."
+                    ]
+                }
+            ]
+        },
+        {
+            "version": "2.3",
+            "date": "09-13-2025",
+            "timestamp": 1757746910,
+            "sections": [
+                {
+                    "title": "CrossPay com a Near Intents",
+                    "bulletpoints": [
+                        "Usa ZEC protegido para fazer pagamentos entre redes com o Zashi e a Near Intents.",
+                        "Acessível através do novo botão Pagar no ecrã inicial."
+                    ]
+                }
+            ]
+        },
+        {
+            "version": "2.2.1",
+            "date": "09-03-2025",
+            "timestamp": 1756889046,
+            "sections": [
+                {
+                    "title": "2.2.1: Correção de Erros",
+                    "bulletpoints": [
+                        "Resolvemos o problema da marcação errada de uma transação transparente como falhada."
+                    ]
+                },
+                {
+                    "title": "2.2: Swap de ZEC com o Zashi",
+                    "bulletpoints": [
+                        "Faz swap de ZEC protegidos por qualquer criptomoeda compatível com a integração da Near Intents.",
+                        "O Zashi é uma carteira exclusiva para ZEC, por isso vais precisar de um endereço de carteira válido para o ativo para o qual vais fazer swap."
+                    ]
+                }
+            ]
+        },
+        {
+            "version": "2.2",
+            "date": "08-28-2025",
+            "timestamp": 1756377767,
+            "sections": [
+                {
+                    "title": "Swap de ZEC com o Zashi",
+                    "bulletpoints": [
+                        "Faz swap de ZEC protegidos por qualquer criptomoeda compatível com a integração da Near Intents.",
+                        "O Zashi é uma carteira exclusiva para ZEC, por isso vais precisar de um endereço de carteira válido para o ativo para o qual vais fazer swap."
+                    ]
+                }
+            ]
+        },
+        {
+            "version": "2.1",
+            "date": "08-05-2025",
+            "timestamp": 1754387043,
+            "sections": [
+                {
+                    "title": "O Zashi acaba de expandir a sua integração com a rede Tor, lançando discretamente mais um grande avanço para os utilizadores de Zcash que valorizam a privacidade. Com a mais recente atualização Beta, o cliente Tor incorporado no Zashi pode agora ser utilizado para:",
+                    "bulletpoints": [
+                        "Enviar transações ZEC",
+                        "Obter dados de transações",
+                        "Ligar-se a APIs de terceiros (por exemplo, NEAR, muito em breve!)",
+                        "Obter taxas de câmbio ZEC-USD",
+                        "Se o Tor estiver disponível na tua região, recomendamos vivamente que o ative nas Definições Avançadas para adicionar uma camada extra de proteção."
+                    ]
+                },
+                {
+                    "title": "Outras Atualizações:",
+                    "bulletpoints": [
+                        "Adicionámos explicações sobre os endereços no ecrã de Receber."
+                    ]
+                }
+            ]
+        },
+        {
+            "version": "2.0.4",
+            "date": "06-16-2025",
+            "timestamp": 1750070962,
+            "sections": [
+                {
+                    "title": "Adicionado:",
+                    "bulletpoints": [
+                        "Adicionámos a funcionalidade Mostrar/Ocultar saldos no ecrã Enviar."
+                    ]
+                },
+                {
+                    "title": "Alterado:",
+                    "bulletpoints": [
+                        "Atualizámos os ícones Enviar e Receber.",
+                        "Atualizámos o texto no ecrã Receber.",
+                        "Atualizámos a animação no ecrã Enviar."
+                    ]
+                },
+                {
+                    "title": "Corrigido:",
+                    "bulletpoints": [
+                        "Resolvemos o problema com a obtenção da taxa de câmbio do USD e tornámo-la mais fiável."
+                    ]
+                }
+            ]
+        },
+        {
+            "version": "2.0.3",
+            "date": "05-19-2025",
+            "timestamp": 1747652167,
+            "sections": [
+                {
+                    "title": "Alterado:",
+                    "bulletpoints": [
+                        "O Zashi já não inclui recetores transparentes nos Endereços Unificados (endereços Zcash que começam pela letra \"u\"). O ecrã de Receber mostra agora um EU rotativo/protegido.",
+                        "O Zashi irá gerar um novo Endereço Protegido de Zcash sempre que o ecrã de Receber for aberto. A geração de endereços únicos é feita por razões de privacidade e segurança.",
+                        "Todas as transações enviadas para os teus diferentes Endereços Protegidos rotativos farão parte do saldo de uma carteira com a mesma frase de recuperação.",
+                        "Embora recomendemos usar sempre um novo endereço, os endereços únicos podem ser reutilizados.",
+                        "Tanto os ZEC transparentes como os protegidos podem ser enviados para os Endereços Protegidos do Zashi. Estes serão recebidos e armazenados como ZEC protegidos.",
+                        "As carteiras e plataformas de câmbio que não suportem o envio de fundos para recetores protegidos não aceitarão este formato de endereço. Exigirão endereços transparentes.",
+                        "Se os utilizadores precisarem de um endereço transparente (que começa pela letra \"t\"), este continua disponível e é mostrado separadamente no ecrã de Receber.",
+                        "Os utilizadores devem atualizar a aplicação para ativar esta alteração.",
+                        "Se partilhaste um endereço unificado de uma versão anterior do Zashi e não querias revelar o endereço transparente associado, recomendamos que o substituas por um endereço gerado recentemente a partir da aplicação atualizada."
+                    ]
+                }
+            ]
+        },
+        {
+            "version": "2.0.2",
+            "date": "05-08-2025",
+            "timestamp": 1746692913,
+            "sections": [
+                {
+                    "title": "Alterado:",
+                    "bulletpoints": [
+                        "Ao introduzir um montante em USD no fluxo de Enviar ou Solicitar ZEC, reduzimos automaticamente a quantidade de Zatoshi para os 5000 Zatoshi mais próximos, para evitar a criação de notas de poeira não utilizáveis na tua carteira.",
+                        "Atualizámos a política de privacidade para que seja apresentada no navegador da app e melhore a experiência do utilizador.",
+                        "Atualizámos a posição dos botões principal e secundário para seguir as melhores práticas de UX.",
+                        "Atualizámos o design do ecrã Receber para que se ajuste melhor à mudança de navegação da app.",
+                        "Depois de recebermos os vossos comentários, atualizámos os ícones dos ecrãs Enviar e Receber em toda a app. O que acham agora? Digam-nos!",
+                        "Melhorámos o texto em alguns sítios.",
+                        "Fizemos também outros ajustes na interface de utilizador."
+                    ]
+                },
+                {
+                    "title": "Corrigido:",
+                    "bulletpoints": [
+                        "Corrigimos o tamanho dos botões iniciais em todos os dispositivos.",
+                        "Corrigimos o espaçamento no ecrã Livro de Endereços.",
+                        "Corrigimos um problema com as sugestões de palavras durante o fluxo de Restauro.",
+                        "Corrigimos também um problema com o fecho automático da folha inferior Disponível em certos casos extremos."
+                    ]
+                }
+            ]
+        },
+        {
+            "version": "2.0.1",
+            "date": "04-25-2029",
+            "timestamp": 1745926301,
+            "sections": [
+                {
+                    "title": "Atualização de correção de erros do Zashi 2.0.1",
+                    "bulletpoints": [
+                        "Resolvemos um problema que, ocasionalmente, provocava um erro ao inicializar o SDK após repor o Zashi.",
+                        "Corrigimos e atualizámos também texto em determinados sítios."
+                    ]
+                },
+                {
+                    "title": "Zashi 2.0",
+                    "bulletpoints": [
+                        "O Zashi 2.0 já chegou, e vem repleto de melhorias de interface e experiência de utilizador!",
+                        "Ecrã inicial redesenhado e navegação da app otimizada.",
+                        "Novo widget de estado da carteira que te ajuda a navegar pelo Zashi facilmente e a obter mais informação com apenas um toque.",
+                        "Os separadores de Saldo disponível e Saldos foram redesenhados com um novo componente Disponível no ecrã de Envio. Obtém mais informação com apenas um toque ou protege os teus fundos transparentes.",
+                        "Restaurar nunca foi tão fácil com a interface e experiência de utilizador redesenhadas. Adicionámos uma nova funcionalidade que te ajuda a estimar a altura de nascimento da carteira e sugestões da biblioteca BIP 39 para a frase de recuperação secreta.",
+                        "Cria uma carteira com apenas um toque! O novo fluxo de cópia de segurança da carteira passou para o momento em que a tua carteira recebe os primeiros fundos."
+                    ]
+                }
+            ]
+        },
+        {
+            "version": "2.0",
+            "date": "04-25-2025",
+            "timestamp": 1745594869,
+            "sections": [
+                {
+                    "title": "",
+                    "bulletpoints": [
+                        "O Zashi 2.0 já chegou, e vem repleto de melhorias de interface e experiência de utilizador!",
+                        "Ecrã inicial redesenhado e navegação da app otimizada.",
+                        "Novo widget de estado da carteira que te ajuda a navegar pelo Zashi facilmente e a obter mais informação com apenas um toque.",
+                        "Os separadores de Saldo disponível e Saldos foram redesenhados com um novo componente Disponível no ecrã de Envio. Obtém mais informação com apenas um toque ou protege os teus fundos transparentes.",
+                        "Restaurar nunca foi tão fácil com a interface e experiência de utilizador redesenhadas. Adicionámos uma nova funcionalidade que te ajuda a estimar a altura de nascimento da carteira e sugestões da biblioteca BIP 39 para a frase de recuperação secreta.",
+                        "Cria uma carteira com apenas um toque! O novo fluxo de cópia de segurança da carteira passou para o momento em que a tua carteira recebe os primeiros fundos."
+                    ]
+                }
+            ]
+        },
+        {
+            "version": "1.5.3",
+            "date": "04-14-2025",
+            "timestamp": 1744615242,
+            "sections": [
+                {
+                    "title": "Corrigido:",
+                    "bulletpoints": [
+                        "Resolvemos um problema em que o fluxo de transação ficava bloqueado no ecrã de envio em caso de uma verificação biométrica falhada."
+                    ]
+                }
+            ]
+        },
+        {
+            "version": "1.5.2",
+            "date": "04-09-2025",
+            "timestamp": 1744196215,
+            "sections": [
+                {
+                    "title": "Alterado:",
+                    "bulletpoints": [
+                        "Atualizámos o relatório de falhas, de tal forma que agora utilizamos apenas os serviços da Apple, permitindo aos utilizadores ativá-lo e/ou desativá-lo nas definições do seu dispositivo.",
+                        "A integração com o Firebase Crashlytics foi completamente removida."
+                    ]
+                }
+            ]
+        },
+        {
+            "version": "1.5.1",
+            "date": "04-03-2025",
+            "timestamp": 1743687047,
+            "sections": [
+                {
+                    "title": "Corrigido:",
+                    "bulletpoints": [
+                        "Correção de erros 1.5!",
+                        "Resolvemos um problema de migração que afetava alguns utilizadores da versão 1.5 da app.",
+                        "Corrigimos o ícone do endereço transparente da Keystone.",
+                        "Resolvemos também um problema em que o ecrã inicial bloqueava ao carregar depois de tocar na carteira selecionada."
+                    ]
+                }
+            ]
+        },
+        {
+            "version": "1.5",
+            "date": "03-27-2025",
+            "timestamp": 1742891140,
+            "sections": [
+                {
+                    "title": "Adicionado:",
+                    "bulletpoints": [
+                        "Resgate de Fundos Transparentes: o Zashi pode agora ajudar-te a recuperar fundos de carteiras totalmente transparentes como a Ledger. Recomendamos importar a frase de recuperação da tua carteira de hardware transparente para uma carteira Keystone e depois emparelhá-la com o Zashi através da integração com a Keystone."
+                    ]
+                },
+                {
+                    "title": "Corrigido:",
+                    "bulletpoints": [
+                        "Resolvemos um problema antigo com a árvore de compromissos de notas que afetava um pequeno número de utilizadores. O Zashi permite agora gastar fundos que estavam presos."
+                    ]
+                }
+            ]
+        },
+        {
+            "version": "1.4",
+            "date": "03-03-2025",
+            "timestamp": 1741028813,
+            "sections": [
+                {
+                    "title": "Adicionado:",
+                    "bulletpoints": [
+                        "Exporta as tuas transações do último ano, com a nova opção \"Exportar Ficheiro de Impostos\".",
+                        "Personaliza as tuas transações com notas privadas que te ajudam a recordar detalhes dos pagamentos.",
+                        "Marca as tuas transações favoritas com a nova opção \"Favoritos\".",
+                        "Usa os novos filtros de transações para filtrar Recebidas, Enviadas, Memos, Notas ou Favoritas."
+                    ]
+                },
+                {
+                    "title": "Alterado:",
+                    "bulletpoints": [
+                        "Descobre a página de histórico de transações redesenhada, mais elegante e funcional.",
+                        "Acede à tua Keystone também a partir da página de integrações.",
+                        "Experiência de assinatura de transações da Keystone melhorada."
+                    ]
+                },
+                {
+                    "title": "Corrigido:",
+                    "bulletpoints": [
+                        "Acabaram-se as falhas ao enviar na Keystone, os parâmetros Sapling foram corrigidos."
+                    ]
+                }
+            ]
+        },
+        {
+            "version": "1.3.3",
+            "date": "02-07-2025",
+            "timestamp": 1738929599,
+            "sections": [
+                {
+                    "title": "Adicionado:",
+                    "bulletpoints": [
+                        "Incorporámos uma nova funcionalidade para assinar transações com um dispositivo Keystone, permitindo ampliar o código QR ao tocar nele."
+                    ]
+                },
+                {
+                    "title": "Alterado:",
+                    "bulletpoints": [
+                        "Implementámos o aumento automático do brilho do ecrã para melhorar a leitura de códigos QR com a Keystone.",
+                        "Atualizámos o SDK da Keystone para a versão 0.8.6, que inclui melhorias adicionais na leitura de códigos QR.",
+                        "Otimizámos e melhorámos também a lógica da Keystone para telemóveis mais antigos e lentos."
+                    ]
+                },
+                {
+                    "title": "Corrigido:",
+                    "bulletpoints": [
+                        "Adicionámos algumas correções para lidar com os casos em que a Reposição do Zashi não é concluída."
+                    ]
+                }
+            ]
+        },
+        {
+            "version": "1.3.2",
+            "date": "01-09-2025",
+            "timestamp": 1736420570,
+            "sections": [
+                {
+                    "title": "Corrigido:",
+                    "bulletpoints": [
+                        "Aspeto das cores quando o modo muda (escuro vs claro).",
+                        "Eliminado o encurtamento do texto no separador de saldos.",
+                        "A informação em “Novidades” já não está corrompida.",
+                        "As barras de estado duplicadas no separador de saldos foram removidas.",
+                        "Reiniciar o Zashi limpa as contas que estão em cache, pelo que as contas pré-selecionadas deixam de ser válidas.",
+                        "A conta selecionada não será encontrada dentro do livro de endereços entre as contas possíveis.",
+                        "O ecrã para enviar comentários é deslizável, tornando possível que o botão \"Enviar\" fique visível mesmo em ecrãs pequenos.",
+                        "O botão para reportar uma falha em algum ponto da aplicação usará por predefinição a opção \"enviar mensagem\" quando não houver uma conta de e-mail configurada no telemóvel.",
+                        "A migração para um novo dispositivo através da cópia de segurança da base de dados permite agora ao utilizador introduzir a altura de nascimento da carteira."
+                    ]
+                }
+            ]
+        },
+        {
+            "version": "1.3.1",
+            "date": "12-23-2024",
+            "timestamp": 1734964156,
+            "sections": [
+                {
+                    "title": "Corrigido:",
+                    "bulletpoints": [
+                        "Erro 'dataMismatch' nas transações da Keystone."
+                    ]
+                }
+            ]
+        },
+        {
+            "version": "1.3",
+            "date": "12-16-2024",
+            "timestamp": 1734351641,
+            "sections": [
+                {
+                    "title": "Adicionado:",
+                    "bulletpoints": [
+                        "A integração do Zashi com a Carteira Física Keystone já está disponível!",
+                        "Liga a tua carteira física Keystone ao Zashi.",
+                        "Assina as tuas transações com a tua carteira Keystone.",
+                        "Mantém os teus ZEC privados protegidos."
+                    ]
+                }
+            ]
+        },
+        {
+            "version": "1.2.4",
+            "date": "11-25-2024",
+            "timestamp": 1732369942,
+            "sections": [
+                {
+                    "title": "Adicionado:",
+                    "bulletpoints": [
+                        "Finalmente chegou! A integração da Flexa ao teu dispor!",
+                        "Paga com a Flexa em comerciantes compatíveis nos Estados Unidos, Canadá e El Salvador.",
+                        "Está à tua espera nas definições do Zashi."
+                    ]
+                }
+            ]
+        },
+        {
+            "version": "1.2.3",
+            "date": "11-18-2024",
+            "timestamp": 1731922524,
+            "sections": [
+                {
+                    "title": "Adicionado:",
+                    "bulletpoints": [
+                        "Olá! Ensinámos o Zashi a falar Português!",
+                        "Na última versão do SDK 2.2.7 adotámos uma nova implementação para a gestão de transações de baixas denominações, tornando possíveis transações mais rápidas e permitindo um uso mais eficiente do saldo remanescente na tua carteira.",
+                        "Implementámos a encriptação da informação e um método de armazenamento remoto para o livro de endereços.",
+                        "Adicionámos autenticação do dispositivo no arranque da aplicação.",
+                        "Adicionámos uma barra de progresso animada e, com ela, novos ecrãs para os casos de transações bem-sucedidas e/ou falhadas. Tornámos o Zashi divertido outra vez!"
+                    ]
+                },
+                {
+                    "title": "Alterado:",
+                    "bulletpoints": [
+                        "Redesenhámos as secções de definições e estado, tornando-as mais elegantes, e melhorámos o nível de segurança da frase de recuperação secreta (Recovery Phrase).",
+                        "Tratámos de melhorar o processo de envio de comentários e sugestões. Importa-nos saber o que achas do Zashi e o que podemos fazer para o melhorar!"
+                    ]
+                },
+                {
+                    "title": "Corrigido:",
+                    "bulletpoints": [
+                        "Corrigimos a funcionalidade do ícone das transações privadas (protegidas) no ecrã de histórico de transações.",
+                        "Corrigimos a funcionalidade da lanterna que bloqueava a aplicação.",
+                        "Corrigimos também o problema que existia com o funcionamento do botão de reanálise, que não estava a funcionar corretamente."
+                    ]
+                }
+            ]
+        }
+    ]
+}

@@ -192,7 +192,7 @@ struct SplashView: View {
             potentialCountryCode = Locale.current.languageCode
         }
         
-        if let potentialCountryCode, potentialCountryCode == "es" {
+        if let potentialCountryCode, potentialCountryCode == "es" || potentialCountryCode == "pt" {
             return 0.6
         } else {
             return 0.35

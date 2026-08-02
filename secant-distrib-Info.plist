@@ -13,6 +13,7 @@
 	<array>
 		<string>en</string>
 		<string>es</string>
+		<string>pt</string>
 	</array>
 	<key>CFBundleDisplayName</key>
 	<string>Zodl</string>

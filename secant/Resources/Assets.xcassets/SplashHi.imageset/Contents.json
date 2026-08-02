@@ -8,6 +8,11 @@
       "filename" : "Text.png",
       "idiom" : "universal",
       "locale" : "es"
+    },
+    {
+      "filename" : "TextPt.png",
+      "idiom" : "universal",
+      "locale" : "pt"
     }
   ],
   "info" : {

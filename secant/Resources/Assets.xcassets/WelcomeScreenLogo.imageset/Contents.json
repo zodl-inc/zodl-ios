@@ -29,6 +29,22 @@
       "filename" : "holaLogo.png",
       "idiom" : "universal",
       "locale" : "es"
+    },
+    {
+      "filename" : "olaLogoBlk.png",
+      "idiom" : "universal",
+      "locale" : "pt"
+    },
+    {
+      "appearances" : [
+        {
+          "appearance" : "luminosity",
+          "value" : "dark"
+        }
+      ],
+      "filename" : "olaLogo.png",
+      "idiom" : "universal",
+      "locale" : "pt"
     }
   ],
   "info" : {
