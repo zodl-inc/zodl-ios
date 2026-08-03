@@ -53,3 +53,62 @@ extension MigrationVisit {
         return hasDueBroadcast ? .send : .sync
     }
 }
+
+// MARK: - R12 v1: send-priority scheduling
+
+extension MigrationVisit {
+    /// GROUND_RULES R12 v1 (send-priority, Lukas 2026-08-03): how far ahead of a scheduled send a
+    /// session already belongs to the SEND rather than to sync.
+    ///
+    /// THE LIVELOCK THIS CLOSES (field, same day): every completed sync pass re-stamps
+    /// `privacyBuffer` seconds of send-silence, so a user who opens the app more often than
+    /// buffer+window NEVER broadcasts — and it selects exactly the anxious user opening Zodl to
+    /// check whether the migration works. The rule in Lukas's own casework: send in 60 min → safe
+    /// to sync; 20 min → still safe; inside the horizon → don't sync, deliver at the window, sync
+    /// after. ZIP 318 is unaffected: the same silence surrounds the send — which side yields is
+    /// scheduling, not exposure.
+    ///
+    /// "Safe to sync" means a pass can complete AND its silence stamp can fully expire before the
+    /// window opens — hence buffer plus a sync allowance.
+    static func syncSafetyHorizon(privacyBuffer: TimeInterval) -> TimeInterval {
+        privacyBuffer + 120
+    }
+
+    /// Upgrades a `.sync` verdict to `.send` when the next scheduled send is inside the horizon.
+    /// Pure, so the field discussion's 60/40/9-minute table is directly testable. A `.send` from
+    /// `decide` passes through untouched; `nil` ETA (nothing headed to the wire) never upgrades.
+    static func upgradedForImminence(
+        _ visit: MigrationVisit,
+        earliestSendETA: TimeInterval?,
+        privacyBuffer: TimeInterval
+    ) -> MigrationVisit {
+        guard visit == .sync, let earliestSendETA else { return visit }
+        return earliestSendETA <= syncSafetyHorizon(privacyBuffer: privacyBuffer) ? .send : .sync
+    }
+
+    /// The earliest moment a broadcast can actually go out, in seconds from now: the LATER of the
+    /// next broadcast-bound transaction's own window and the standing silence stamp
+    /// (`gateResidualSeconds`). `nil` when no signed/proved TRANSFER carries a schedule — the same
+    /// transfers-only rule as `decide`, and for the same reason (see the file header): preparations
+    /// are proved and broadcast at the same wake and are not timing-correlated, so they never claim
+    /// a session ahead of time either.
+    static func earliestSendETASeconds(
+        statuses: [MigrationTransactionStatus],
+        clock: MigrationChainClock,
+        gateResidualSeconds: TimeInterval?
+    ) -> TimeInterval? {
+        let candidateMinutes = statuses.compactMap { status -> Int? in
+            guard case MigrationTransactionStatus.Kind.transfer = status.kind else { return nil }
+            switch status.state {
+            case MigrationTransactionStatus.State.signed, MigrationTransactionStatus.State.proved:
+                return MigrationETA.minutesFromNow(scheduledHeight: status.scheduledHeight, clock: clock)
+            default:
+                // Broadcast/mined are already on the wire; invalid never sends; awaitingSignature
+                // needs a ceremony no amount of session-holding provides.
+                return nil
+            }
+        }
+        guard let windowMinutes = candidateMinutes.min() else { return nil }
+        return max(TimeInterval(max(0, windowMinutes)) * 60, gateResidualSeconds ?? 0)
+    }
+}

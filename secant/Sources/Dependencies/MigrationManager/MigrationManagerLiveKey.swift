@@ -981,6 +981,77 @@ final class MigrationManagerImpl: @unchecked Sendable {
         }
     }
 
+    // MARK: - R12 v1: the foreground send wait
+
+    /// GROUND_RULES R12 v1 — the session a send-priority classification reserved actually
+    /// DELIVERS: one task per account that sleeps to the effective send moment, stops any sync
+    /// defensively, runs the broadcast session, and re-arms the pokes. The in-place Send-now
+    /// lane's exact semantics (`MigrationStatusStore`'s D3 wait), automatic and screenless.
+    ///
+    /// In-memory and session-scoped by nature: backgrounding cancels every wait
+    /// (`cancelForegroundSendWaits`, called where the session's own BACKGROUND trace fires) and
+    /// the armed poke remains the delivery path for the closed app — I5: the wait never disarms
+    /// its own fallback. The `migrationSendWaitActive` fence is wallet-wide, so with several
+    /// accounts waiting the first finisher lowers it early — acceptable: the fence only guards
+    /// against sync RESTARTS, and each remaining wait stops sync again defensively at its own
+    /// fire time.
+    private let foregroundSendWaits = OSAllocatedUnfairLock<[AccountUUID: Task<Void, Never>]>(initialState: [:])
+
+    func armForegroundSendWait(accountUUID: AccountUUID, fireIn seconds: TimeInterval) {
+        let delay = max(1, seconds)
+        LoggerProxy.event(
+            "\(Self.logTag) R12 send-priority: foreground wait armed — delivering in ~\(Int(delay))s"
+        )
+        let task = Task { [weak self] in
+            @Shared(.inMemory(.migrationSendWaitActive)) var migrationSendWaitActive: Bool = false
+            $migrationSendWaitActive.withLock { $0 = true }
+            defer { $migrationSendWaitActive.withLock { $0 = false } }
+
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            guard !Task.isCancelled, let self else { return }
+
+            // One residual recompute: a pass that completed before the fence went up may have
+            // re-stamped the gate past our target. The fence prevents any FURTHER re-stamp, so
+            // this converges in one step — never a loop.
+            if case let MigrationSendGate.waitUntil(gateUntil) = await self.sendGate() {
+                let residual = gateUntil.timeIntervalSinceNow
+                if residual > 0 {
+                    LoggerProxy.event("\(Self.logTag) R12 send-priority: gate residual \(Int(residual))s — waiting it out")
+                    try? await Task.sleep(nanoseconds: UInt64(residual * 1_000_000_000))
+                }
+            }
+            guard !Task.isCancelled else { return }
+
+            await self.sdkSynchronizer.stopStartedSyncForMigrationGate()
+            let didBroadcast = await self.runBroadcastSession(vettedAccountUUID: accountUUID)
+            LoggerProxy.event(
+                "\(Self.logTag) R12 send-priority: foreground wait fired — broadcast \(didBroadcast ? "delivered" : "not delivered (session declined)")"
+            )
+            self.foregroundSendWaits.withLock { $0[accountUUID] = nil }
+            await self.armNextWindowNotifications(accountUUID: accountUUID)
+        }
+        foregroundSendWaits.withLock { waits in
+            waits[accountUUID]?.cancel()
+            waits[accountUUID] = task
+        }
+    }
+
+    /// Cancels every armed foreground wait and lowers the fence — the app is leaving the
+    /// foreground (or tearing the migration flow down), and the poke takes over from here.
+    func cancelForegroundSendWaits() {
+        let cancelled = foregroundSendWaits.withLock { waits -> Int in
+            let count = waits.count
+            waits.values.forEach { $0.cancel() }
+            waits.removeAll()
+            return count
+        }
+        if cancelled > 0 {
+            LoggerProxy.event("\(Self.logTag) R12 send-priority: \(cancelled) foreground wait(s) cancelled — poke stands")
+            @Shared(.inMemory(.migrationSendWaitActive)) var migrationSendWaitActive: Bool = false
+            $migrationSendWaitActive.withLock { $0 = false }
+        }
+    }
+
     /// The last banner each account derived, kept for the same reason as `rowsCache` and consulted
     /// by the same actor-starvation guard: a banner that takes 32 seconds to decide is a banner the
     /// user never sees.
@@ -2095,6 +2166,37 @@ final class MigrationManagerImpl: @unchecked Sendable {
         let visit = MigrationVisit.decide(advanceSteps: steps)
         if visit == .send {
             LoggerProxy.event("\(Self.logTag) broadcast due — this session will NOT sync")
+            return visit
+        }
+
+        // GROUND_RULES R12 v1 (send-priority, Lukas 2026-08-03): a scheduled send INSIDE the
+        // sync-safety horizon also claims the session — syncing now would complete a pass whose
+        // silence stamp pushes the send past its window, which is the anxious-opener livelock
+        // (any open cadence shorter than buffer+window starves the migration forever). The wait
+        // task armed here is what actually delivers at the window; the poke stays armed as the
+        // background fallback (I5).
+        let gateResidual: TimeInterval?
+        if case let MigrationSendGate.waitUntil(gateUntil) = await sendGate() {
+            gateResidual = max(0, gateUntil.timeIntervalSinceNow)
+        } else {
+            gateResidual = nil
+        }
+        for accountUUID in accountUUIDs {
+            let statuses = (try? await sdkSynchronizer.migrationTransactionStatuses(accountUUID)) ?? []
+            guard !statuses.isEmpty else { continue }
+            let eta = MigrationVisit.earliestSendETASeconds(
+                statuses: statuses,
+                clock: await chainClock(accountUUID: accountUUID),
+                gateResidualSeconds: gateResidual
+            )
+            let buffer = sdkSynchronizer.migrationPrivacySyncBufferDuration()
+            if let eta, MigrationVisit.upgradedForImminence(.sync, earliestSendETA: eta, privacyBuffer: buffer) == .send {
+                LoggerProxy.event(
+                    "\(Self.logTag) R12 send-priority: send in ~\(Int(eta))s (horizon \(Int(MigrationVisit.syncSafetyHorizon(privacyBuffer: buffer)))s) — this session will NOT sync"
+                )
+                armForegroundSendWait(accountUUID: accountUUID, fireIn: eta)
+                return .send
+            }
         }
         return visit
     }
