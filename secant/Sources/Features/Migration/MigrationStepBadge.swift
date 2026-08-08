@@ -55,6 +55,8 @@ struct MigrationStepBadge: View {
         /// originally shipped with — a checkmark read as "already done" on a step that had not run
         /// yet. Colors are unchanged. See this file's header doc.
         case neutral
+        /// split balance first row
+        case splitBalance
     }
 
     @Environment(\.colorScheme) private var colorScheme
@@ -91,7 +93,13 @@ struct MigrationStepBadge: View {
                 Circle().fill(Design.Surfaces.bgAlt.color(colorScheme))
                 Text("\(number)")
                     .zFont(.semiBold, size: 10, style: Design.Surfaces.bgPrimary)
+            case .splitBalance:
+                Circle().fill(Design.Surfaces.bgTertiary.color(colorScheme))
+                Asset.Assets.coinSwapSplit.image
+                    .frame(width: 12, height: 12)
+                
             }
+            
 
             // MOB-1487: 2pt white ring on every state — a "cutout" against the connector line
             // running behind the badge in MigrationTransferTimeline.

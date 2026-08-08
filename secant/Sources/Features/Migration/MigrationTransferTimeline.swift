@@ -182,6 +182,10 @@ struct MigrationTransferTimeline: View {
     /// task retires. Every other row (every element of `rows`) still uses the plain status mapping
     /// below unchanged.
     private func badgeStyle(for row: MigrationTransferRow) -> MigrationStepBadge.Style {
+        if row.index == 0 && row.kind == .splitBalance {
+            return .splitBalance
+        }
+        
         if row.kind == .splitBalance, row.status == .active {
             return .neutral
         }
@@ -230,7 +234,7 @@ struct MigrationTransferTimeline: View {
             return Design.Surfaces.strokePrimary
         case .warning:
             return Design.Utility.WarningYellow._500
-        case .neutral:
+        case .neutral, .splitBalance:
             // R11: reachable now — `.confirming` maps to `.neutral` in the status-only overload
             // above (it was structurally unreachable before, MOB-1497 T8). A confirming row's
             // trailing segment reads as pending gray: the chain is working, nothing green yet.

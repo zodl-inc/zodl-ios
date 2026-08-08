@@ -215,6 +215,7 @@ public enum Asset {
     public static let chevronDown = ImageAsset(name: "chevronDown")
     public static let chevronRight = ImageAsset(name: "chevronRight")
     public static let chevronUp = ImageAsset(name: "chevronUp")
+    public static let coinSwapSplit = ImageAsset(name: "coinSwapSplit")
     public static let convertIcon = ImageAsset(name: "convertIcon")
     public static let copy = ImageAsset(name: "copy")
     public static let eyeOff = ImageAsset(name: "eyeOff")
