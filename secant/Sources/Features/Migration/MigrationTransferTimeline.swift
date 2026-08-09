@@ -80,7 +80,7 @@ struct MigrationTransferTimeline: View {
     @ViewBuilder private func timelineRow(_ row: MigrationTransferRow, isLast: Bool) -> some View {
         HStack(alignment: .top, spacing: 12) {
             VStack(spacing: 4) {
-                MigrationStepBadge(number: row.index + 1, style: badgeStyle(for: row))
+                MigrationStepBadge(number: row.index + 1, style: Self.badgeStyle(for: row))
 
                 if !isLast {
                     Rectangle()
@@ -175,24 +175,43 @@ struct MigrationTransferTimeline: View {
         }
     }
 
-    /// MOB-1513 (A2): the split row is always check-style — the ordinary green check once it's
-    /// `.sent`, otherwise the `.neutral` "ready, not yet done" check (MOB-1497 T8) — never the
-    /// numbered circle every transfer row gets. Replaces the old opt-in
-    /// `usesNeutralCheckForReadyFirstStep`, which only ever existed to cover the row-0 relabel this
-    /// task retires. Every other row (every element of `rows`) still uses the plain status mapping
-    /// below unchanged.
-    private func badgeStyle(for row: MigrationTransferRow) -> MigrationStepBadge.Style {
-        if row.index == 0 && row.kind == .splitBalance {
-            return .splitBalance
+    /// A split row is never a numbered circle — while it still has work to do it carries the
+    /// `.splitBalance` coins-swap glyph, and only its two terminal outcomes fall through to the
+    /// shared status mapping (green check when `.sent`, amber warning when `.invalid`/`.expired`).
+    /// Supersedes MOB-1513 (A2)'s check-style rule, which relied on `.neutral` drawing a checkmark —
+    /// MOB-1466 later made `.neutral` render the step number instead. Every element of `rows` is a
+    /// genuine transfer and still uses the plain status mapping below unchanged.
+    ///
+    /// `static` so `MigrationTransferTimelineBadgeStyleTests` can exercise the mapping directly:
+    /// it is a pure `MigrationTransferRow -> MigrationStepBadge.Style` function that reads no view
+    /// state, and the "1"-instead-of-glyph regression this pins was invisible to every other test
+    /// in the suite precisely because the rule lived inside a `View`.
+    static func badgeStyle(for row: MigrationTransferRow) -> MigrationStepBadge.Style {
+        // A split row is identified by its coins-swap glyph, never by a step number — the numbering
+        // in this timeline belongs to the transfers. Every non-terminal split row gets
+        // `.splitBalance` at ANY index (a run's note-split can be several transactions — D14, see
+        // `splitRows`), leaving only the two terminal outcomes to the shared status mapping:
+        // `.sent` keeps the green check and `.invalid`/`.expired` keep the amber warning.
+        //
+        // Previously this was scoped to `row.index == 0` and `.pending`/`.active` only, so a split
+        // row that was `.confirming`, `.overdue`, or simply not the first of a multi-transaction
+        // split fell through to `.neutral`/`.active`/`.pending` — all of which render the step
+        // NUMBER since MOB-1466 dropped `.neutral`'s checkmark, showing "1" where the glyph belongs.
+        if row.kind == .splitBalance {
+            switch row.status {
+            case .pending, .active, .confirming, .overdue:
+                return .splitBalance
+            case .sent, .invalid, .expired:
+                break
+            }
         }
-        
-        if row.kind == .splitBalance, row.status == .active {
-            return .neutral
-        }
+
         return badgeStyle(for: row.status)
     }
 
-    private func badgeStyle(for status: MigrationTransferRow.Status) -> MigrationStepBadge.Style {
+    /// The status-only mapping every `.transfer` row uses, and the fallback a split row's two
+    /// terminal outcomes reach. `static` for the same reason as the overload above.
+    static func badgeStyle(for status: MigrationTransferRow.Status) -> MigrationStepBadge.Style {
         switch status {
         case .sent:
             return .sent
@@ -221,7 +240,7 @@ struct MigrationTransferTimeline: View {
     }
 
     private func connectorColor(for status: MigrationTransferRow.Status) -> Colorable {
-        switch badgeStyle(for: status) {
+        switch Self.badgeStyle(for: status) {
         case .sent:
             return Design.Utility.SuccessGreen._600
         case .active:
@@ -295,6 +314,39 @@ private extension IdentifiedArray where ID == MigrationTransferRow.ID, Element =
                     kind: .splitBalance
                 )
             ]
+        )
+        .padding()
+    }
+}
+
+/// Every split status side by side — the four non-terminal ones must all render the coins-swap
+/// glyph (never a step number), while `.sent` shows the green check and `.expired` the amber
+/// warning. `.confirming`, `.overdue` and any index past 0 are the cases that regressed to "1".
+#Preview("Split row badge, every status") {
+    ScrollView {
+        MigrationTransferTimeline(
+            rows: [],
+            caption: { row in "\(row.status)" },
+            splitRows: IdentifiedArrayOf(
+                uniqueElements: [
+                    MigrationTransferRow.Status.pending,
+                    .active,
+                    .confirming,
+                    .overdue,
+                    .sent,
+                    .expired
+                ].enumerated().map { index, status in
+                    MigrationTransferRow(
+                        id: "split-balance-\(index)",
+                        index: index,
+                        amount: nil,
+                        status: status,
+                        hoursFromNow: 0,
+                        minutesFromNow: 0,
+                        kind: .splitBalance
+                    )
+                }
+            )
         )
         .padding()
     }
