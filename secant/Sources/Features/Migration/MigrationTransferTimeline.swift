@@ -77,19 +77,49 @@ struct MigrationTransferTimeline: View {
         }
     }
 
+    /// MOB-1671 (Figma 5596:54861 dark / 5139:34036 light — identical geometry): the timeline is laid
+    /// out on a strict 48pt row pitch — `rowContentHeight` of content plus `rowGap` of air — which the
+    /// design expresses as seven `Summary` frames at y = 0, 48, 96, 144, 192, 240, 288.
+    ///
+    /// Every constant here is measured from that frame rather than eyeballed, because the previous
+    /// spacing was assembled from a pile of 2/4/16pt one-offs that summed to a 56pt pitch and a badge
+    /// riding 6pt high against its own title.
+    private enum Layout {
+        /// Design: `Summary` and `Padding` frames are both 36 tall (title 20 + caption 16, no gap).
+        static let rowContentHeight: CGFloat = 36
+        /// Design: 48pt pitch − 36pt content. Not applied after the last row (`Body` is 324 = 7×48−12).
+        static let rowGap: CGFloat = 12
+        /// Design: the text column starts at x=36, the badge column is x=0 width 24.
+        static let columnGap: CGFloat = 12
+        /// Design: the 24pt avatar sits at y=6 inside its 36pt row — vertically centered, `(36−24)/2`.
+        /// The badge was top-aligned before, with the TEXT pushed down 2pt to compensate.
+        static let badgeTopInset: CGFloat = (rowContentHeight - MigrationStepBadge.defaultSize) / 2
+        /// Design: badge bottom (y=30) to the next badge's top (y=48+6=54). The old 28pt segment plus
+        /// a 4pt `VStack` gap is what stretched the pitch to 56.
+        static let connectorHeight: CGFloat = 24
+        static let connectorWidth: CGFloat = 2
+    }
+
     @ViewBuilder private func timelineRow(_ row: MigrationTransferRow, isLast: Bool) -> some View {
-        HStack(alignment: .top, spacing: 12) {
-            VStack(spacing: 4) {
-                MigrationStepBadge(number: row.index + 1, style: Self.badgeStyle(for: row))
-
-                if !isLast {
-                    Rectangle()
-                        .fill(connectorColor(for: row).color(colorScheme))
-                        .frame(width: 2, height: 28)
+        HStack(alignment: .top, spacing: Layout.columnGap) {
+            // The connector is an OVERLAY rather than a sibling in a `VStack`, so it cannot
+            // contribute to the row's height — the 48pt pitch is set by the text/amount columns
+            // alone. Figma draws it as one continuous rectangle running behind every avatar
+            // (x=11, height=285) with the badges' 2pt `bgPrimary` rings punching the gaps; a single
+            // rect cannot carry the per-row status color `connectorColor` applies, so it stays
+            // segmented — but each segment now spans exactly badge-bottom to next-badge-top.
+            MigrationStepBadge(number: row.index + 1, style: Self.badgeStyle(for: row))
+                .padding(.top, Layout.badgeTopInset)
+                .overlay(alignment: .bottom) {
+                    if !isLast {
+                        Rectangle()
+                            .fill(connectorColor(for: row).color(colorScheme))
+                            .frame(width: Layout.connectorWidth, height: Layout.connectorHeight)
+                            .offset(y: Layout.connectorHeight)
+                    }
                 }
-            }
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 0) {
                 Text(rowTitle(for: row))
                     .zFont(.medium, size: 14, style: Design.Text.primary)
 
@@ -110,17 +140,18 @@ struct MigrationTransferTimeline: View {
                     .padding(.top, 2)
                 }
             }
-            .padding(.top, 2)
 
             Spacer(minLength: 8)
 
             // MOB-1513 (W1 fallback hydration): `row.amount` is `nil` for a status-only or
             // progress-only fallback row (no persisted schedule to read a real value from) — no
-            // amount/fiat text at all rather than a misleading placeholder "0 ZEC". The VStack
-            // itself (and its vertical padding, which sets this row's height/spacing to the next
-            // one) stays in place either way — only its text content is conditional — so a nil
-            // amount collapses just the trailing column's content, not the row's own rhythm.
-            VStack(alignment: .trailing, spacing: 2) {
+            // amount/fiat text at all rather than a misleading placeholder "0 ZEC".
+            //
+            // MOB-1671: the row's height and its gap to the next row are now owned by the HStack
+            // below, NOT by this column's padding. They used to live here, which meant a nil-amount
+            // row (this column empty) contributed only its padding and quietly lost the row rhythm
+            // the comment above it claimed to preserve.
+            VStack(alignment: .trailing, spacing: 0) {
                 if let amount = row.amount {
                     Text("\(amount.decimalString()) ZEC")
                         .zFont(.medium, size: 14, style: Design.Text.primary)
@@ -131,9 +162,9 @@ struct MigrationTransferTimeline: View {
                     }
                 }
             }
-            .padding(.top, 2)
-            .padding(.bottom, 16)
         }
+        .frame(minHeight: Layout.rowContentHeight, alignment: .top)
+        .padding(.bottom, isLast ? 0 : Layout.rowGap)
     }
 
     /// A split row reads "Split Balance" when it is the only one and "Split Balance N" when the run

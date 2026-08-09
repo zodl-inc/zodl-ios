@@ -62,11 +62,20 @@ struct MigrationStepBadge: View {
         case splitBalance
     }
 
+    /// MOB-1487: 24pt, from the Figma Avatar component. `static` since MOB-1671 so
+    /// `MigrationTransferTimeline.Layout` can center the badge in its 36pt row without restating the
+    /// number — the two must move together or the badge rides high against its own title.
+    ///
+    /// `nonisolated` because `View` conformance puts this type on the main actor, and
+    /// `MigrationTransferTimeline.Layout` is a plain nonisolated enum computing its constants at
+    /// initialization. An immutable `CGFloat` is `Sendable`, so there is nothing to isolate.
+    nonisolated static let defaultSize: CGFloat = 24
+
     @Environment(\.colorScheme) private var colorScheme
 
     let number: Int
     let style: Style
-    var size: CGFloat = 24
+    var size: CGFloat = Self.defaultSize
 
     var body: some View {
         ZStack {
