@@ -28,6 +28,7 @@
 //  `private` while the regression shipped — untestable by construction.
 //
 
+import SwiftUI
 import Testing
 import ZcashLightClientKit
 @testable import zodl_internal
@@ -111,5 +112,71 @@ import ZcashLightClientKit
     @Test(arguments: [0, 1, 7])
     func transferRowBadgeIgnoresIndex(index: Int) {
         #expect(MigrationTransferTimeline.badgeStyle(for: Self.row(.pending, kind: .transfer, index: index)) == .pending)
+    }
+
+    // MARK: - Connector segments
+
+    /// The trailing connector is derived from the row's badge style, so it inherits the rule above.
+    /// Field-caught from a screenshot of Confirm Transfer Plan: a BLACK segment under Split Balance
+    /// while every transfer below it was gray. `connectorColor` took a bare `Status` and called the
+    /// status-only `badgeStyle` overload, discarding `kind` — so an `.active` split resolved as an
+    /// active TRANSFER and took `Design.Text.primary`.
+    ///
+    /// `hasSentRow: false` is the condition that made it dark; with a sent row present the old code
+    /// would have returned gray by luck, which is exactly why this pins the false case.
+    ///
+    /// `@MainActor` because `connectorColor` is a static on a `View` and so inherits the main actor,
+    /// while `Colorable` is not `Sendable` — reading the result from a nonisolated test would cross
+    /// an actor boundary. The badge tests above need no annotation: `MigrationStepBadge.Style` is a
+    /// plain enum and crosses freely.
+    @MainActor
+    @Test(
+        arguments: [
+            MigrationTransferRow.Status.pending, .active, .confirming, .overdue
+        ]
+    )
+    func splitRowConnectorIsAlwaysGrayWhileItHasWorkToDo(status: MigrationTransferRow.Status) {
+        let color = MigrationTransferTimeline.connectorColor(
+            for: Self.row(status, kind: .splitBalance),
+            hasSentRow: false
+        )
+
+        #expect(color.color(.light) == Design.Surfaces.strokePrimary.color(.light))
+        #expect(color.color(.dark) == Design.Surfaces.strokePrimary.color(.dark))
+    }
+
+    /// The other half: the dark segment MOB-1487 introduced still belongs to the active TRANSFER,
+    /// and still switches to gray once any transfer has sent. Widening the split rule must not have
+    /// flattened this.
+    @MainActor
+    @Test(arguments: [false, true])
+    func activeTransferConnectorStaysDarkOnlyUntilSomethingHasSent(hasSentRow: Bool) {
+        let color = MigrationTransferTimeline.connectorColor(
+            for: Self.row(.active, kind: .transfer),
+            hasSentRow: hasSentRow
+        )
+        let expected: Colorable = hasSentRow ? Design.Surfaces.strokePrimary : Design.Text.primary
+
+        #expect(color.color(.light) == expected.color(.light))
+    }
+
+    /// A split that has sent takes the green segment like any completed row — the glyph rule governs
+    /// what the badge looks like, not whether completion still reads as completion.
+    @MainActor
+    @Test
+    func sentSplitRowConnectorGoesGreen() {
+        let color = MigrationTransferTimeline.connectorColor(
+            for: Self.row(.sent, kind: .splitBalance),
+            hasSentRow: false
+        )
+
+        #expect(color.color(.light) == Design.Utility.SuccessGreen._600.color(.light))
+    }
+
+    /// Guards the assertions above from becoming vacuous: if these two tokens ever resolved to the
+    /// same value, every connector test would pass regardless of the mapping.
+    @Test
+    func darkAndGrayConnectorTokensAreActuallyDifferent() {
+        #expect(Design.Text.primary.color(.light) != Design.Surfaces.strokePrimary.color(.light))
     }
 }

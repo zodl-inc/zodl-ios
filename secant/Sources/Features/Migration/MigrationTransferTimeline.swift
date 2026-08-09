@@ -84,7 +84,7 @@ struct MigrationTransferTimeline: View {
 
                 if !isLast {
                     Rectangle()
-                        .fill(connectorColor(for: row.status).color(colorScheme))
+                        .fill(connectorColor(for: row).color(colorScheme))
                         .frame(width: 2, height: 28)
                 }
             }
@@ -239,8 +239,24 @@ struct MigrationTransferTimeline: View {
         rows.contains { $0.status == .sent }
     }
 
-    private func connectorColor(for status: MigrationTransferRow.Status) -> Colorable {
-        switch Self.badgeStyle(for: status) {
+    private func connectorColor(for row: MigrationTransferRow) -> Colorable {
+        Self.connectorColor(for: row, hasSentRow: hasSentRow)
+    }
+
+    /// A row's trailing connector segment, derived from the SAME badge style the row draws — so the
+    /// two can never disagree about what kind of row this is.
+    ///
+    /// This used to take a bare `Status` and call the status-only `badgeStyle` overload, which threw
+    /// away `kind`. A `.splitBalance` row therefore resolved as a transfer: `.active` with nothing
+    /// sent yet took `Design.Text.primary` and drew a BLACK segment under the Split Balance row on
+    /// the Confirm Transfer Plan screen, where the design has every segment gray. The dark segment
+    /// MOB-1487 introduced belongs to the active TRANSFER, which is what `hasSentRow` gates; the
+    /// split is a precondition, never transfer N, so it never earns it.
+    ///
+    /// `static` (with `hasSentRow` passed in) so `MigrationTransferTimelineBadgeStyleTests` can
+    /// exercise it without building a `View`.
+    static func connectorColor(for row: MigrationTransferRow, hasSentRow: Bool) -> Colorable {
+        switch badgeStyle(for: row) {
         case .sent:
             return Design.Utility.SuccessGreen._600
         case .active:
@@ -254,9 +270,9 @@ struct MigrationTransferTimeline: View {
         case .warning:
             return Design.Utility.WarningYellow._500
         case .neutral, .splitBalance:
-            // R11: reachable now — `.confirming` maps to `.neutral` in the status-only overload
-            // above (it was structurally unreachable before, MOB-1497 T8). A confirming row's
-            // trailing segment reads as pending gray: the chain is working, nothing green yet.
+            // A confirming row's trailing segment reads as pending gray: the chain is working,
+            // nothing green yet. `.splitBalance` lands here for the same reason — gray until the
+            // split actually sends, at which point `.sent` takes the green above.
             return Design.Surfaces.strokePrimary
         }
     }
