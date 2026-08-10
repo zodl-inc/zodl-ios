@@ -7,7 +7,9 @@ explicitly labelled open question**. Nothing is inferred and left unmarked. If a
 "verified", it was read out of the repo or the GitHub API at the time stamped on it — not
 remembered.
 
-**Status:** starting point pinned, branches cut; same-day upstream movement recorded in §1.5. No code changed yet.
+**Status:** planning campaign live — base-on-main merge landed (SDK `a3823651`, §11.1), design
+thesis ratified (§7.5), four-proposal panel adjudicated (§11). No production code changed; docs
+and the validated merge only.
 **Branches:** `chp-re-enable` in both zodl-ios and zcash-swift-wallet-sdk.
 **Ticket:** [MOB-1678 — Coinholder polling adoption](https://linear.app/zodl/issue/MOB-1678/coinholder-polling-adoption)
 (the umbrella item; dominik's Android PRs in §6 are the Android half of the same ticket).
@@ -604,10 +606,12 @@ inherited from main's #1855 restore (the merge); the third is ours to reconcile.
 **Four unavoidable leak points** — deltas that provably cannot be absorbed below the app's client
 layer; none touches a pixel or a string:
 
-1. **Hotkey model** — old: derived per-round from the wallet seed; new: random
-   `static generateHotkey(networkId)` + app-stored secret, non-recoverable. Call-site + keychain
-   lifecycle change (`StoredVotingHotkey` machinery already exists). Security improvement: the
-   wallet seed no longer crosses into voting at all.
+1. **Hotkey model** — *amended by the panel (§11.4/D5): this point as first written OVERSTATED
+   the change.* The app never derived the hotkey from the wallet seed — it already generates
+   random material (`randomMnemonic()`) and keeps a per-account `StoredVotingHotkey` in the
+   keychain. The real delta is **format only**: mnemonic phrase → the SDK's `storedSecret` bytes
+   (~60 lines, one struct + call sites). And because the feature never shipped (§11.5/N3),
+   **no migration code exists to write** — an old-format record is simply "no hotkey".
 2. **Pipeline consolidation** — the six client members die; `commitVote` replaces them; store
    effects that sequenced them collapse to one call + progress callback.
 3. **Wire/config** — `tx1_effects` threaded into the delegation submission body
@@ -617,8 +621,11 @@ layer; none touches a pixel or a string:
 
 **Empirical proof of the shape:** Android shipped exactly this thesis — same UI, adapters
 reconciled — in 17 app files (+374/−126) and ~14 SDK files (+505/−124), verified on a live
-multi-bundle round. Their two PRs (§6) are the sizing template and porting reference. This
-mission is an **adoption, not a build**.
+multi-bundle round. *Amended by the panel (§11.4/D1): their PRs are the **wire-fix recipe book,
+not the sizing template*** — Android's app already sat on the `commitVote` API before those PRs,
+so their diff shows only the last (rc.3→rc.4) delta, while our app additionally owes the
+six-call→`commitVote` collapse. iOS sizing comes from §11.4/D4, not from Android's line counts.
+This mission remains an **adoption, not a build**.
 
 **The guard:** if any state in the new model needs a screen or a string that does not exist,
 it is identified and handed to product — never drafted here. The plan carries an explicit
@@ -665,11 +672,168 @@ Ordered so each step is independently gateable. Nothing here has been started.
 
 ---
 
+## §11 · Base-on-main merge + the four-proposal panel — verdicts (2026-08-10, night)
+
+### 11.1 · The merge (executed under nuttycom's ruling)
+
+Delegated to an Opus agent; result: **SDK `chp-re-enable` = `a3823651`** (merge of `origin/main`
+into the stack; message amended for truthfulness), **36 ahead / 0 behind** main, `cargo check`
+REAL exit 0 on the full graph **including the reinstated voting module**, only `Cargo.toml` +
+`Cargo.lock` conflicted. Local only — Lukas pushes by hand.
+
+Two briefing premises were **refuted by the compiler** (the delegate correctly disobeyed and
+documented): (1) main's librustzcash rev `41a1e17c` cannot resolve against this stack — it
+carries `zcash_pool_migration` rc.6 / `zcash_client_sqlite` rc.7, older than our rc.7/rc.8
+floors; the revs are divergent lineages and ours (`13ce6c4e`, 08-07) is strictly newer and
+already satisfies rc.3's needs (zcash_keys 0.16.1, zcash_protocol 0.10.4, pczt 0.9.3). The pin
+**stays at ours**. (2) Main never raised the manifest floors — those versions ride the patch
+rev. The slipstream dependency likewise stays ours (`zodl-slipstream` from crates.io).
+
+**Accidental discovery:** the delegate's first lock attempt let cargo freshly resolve voting →
+it pulled **rc.5** and hit a real `E0061` at `rust/src/voting/delegation.rs:420` (connect now
+takes 3 args) — the first *located* rc.3→rc.5 code change, found for free. Checkouts were then
+restored (zodl → `migration/gardening-test`, SDK → `fable/gardening-test`); CHP docs continue
+via the worktree `../zodl-ios-chp-docs` on `chp-re-enable`.
+
+### 11.2 · Panel setup
+
+Four independent investigators, identical minimal briefs, one variable per axis; verbatim
+reports preserved in `docs/chp-panel/`. Firewalls: none saw this document, the thesis, or each
+other (physical: CHP.md absent from the read tree); blind arms barred from all Android
+materials; SDK read via pinned SHAs only.
+
+| | Sonnet | Opus |
+|---|---|---|
+| **+ Android PR** | A-S | A-O |
+| **Blind** | B-S | B-O |
+
+### 11.3 · The convergence spine — unanimous across all four (two of them blind)
+
+1. The feature is complete and cleanly off behind one never-defined flag; flipping it is a
+   build-settings line, no pbxproj surgery (files already in targets).
+2. The merge is the foundation — "land what `a3823651` already proved; don't re-derive."
+3. Target **rc.5, pinned exactly** (`=2.0.0-rc.5` — cargo otherwise resolves 1.0.0); rc.3's
+   wire is server-rejected.
+4. **Let the compiler enumerate the app gap**: flip the flag on a scratch/internal config and
+   treat the error list as the authoritative work list.
+5. UI/views/strings untouched; the work lives in the dependency clients + ~3 regions of one
+   coordinator (`VotingCoordFlowCoordinator.swift`, 3,766 lines).
+6. Decode `pir_layout` in the app config — the live service **already serves it**
+   (`{pir_depth:19, tier0_layers:12, tier1_layers:7}`; two arms probed independently).
+7. Local FFI rebuild is mandatory (released XCFramework carries zero `zcashlc_voting_*`
+   symbols); budget the halo2 voting-circuits tax (Android: CI 30→60 min) and honor the
+   `--universal`-before-archive rule; gate with `nm -gU` for `zcashlc_voting_commit_vote`.
+8. Ironwood = the 2.0 crate line itself ("no custom compile flag" since rc.1; V3-only ingestion
+   since rc.3) — no separate protocol work.
+
+### 11.4 · Divergences, adjudicated
+
+- **D1 — A-S underscoped the app work** (renames only; missed the six→one collapse). Cause: the
+  Android PR shows only Android's *last* delta — their app already sat on `commitVote`. Ruling:
+  the collapse is real (three arms + this document's own reads); **the PR is a wire-recipe
+  book, not a sizing template** (§7.5 amended). Lesson: the reference *helped* Opus and
+  *anchored* Sonnet.
+- **D2 — does rc.4's PIR change hit our SDK glue?** B-S inferred no ("uses `with_transport`");
+  B-O predicted yes at `delegation.rs:419/461/542`. The compiler had already ruled (11.1's
+  accidental E0061): **yes**. Compiler beats inference.
+- **D3 — adopt Android's `DelegationPhase` surface?** A-S said add proactively; A-O **proved
+  the bug absent** (zero `update_round_phase_forward` / `require_round_phase_not_after`
+  occurrences in our tree) — Android's apparatus exists to route around an Android-only
+  invention. Ruling: **skip it** (§2.0 no-semantics + YAGNI). Noted as possible later
+  recovery-surface work (A-O's R3), not now.
+- **D4 — sizing.** Consensus after netting D1: **~30 lines SDK + ~240 lines app (largely
+  deletions)** against 17,647 existing voting lines; **2–4 focused days to a testnet round**
+  plus FFI build time; B-S's "~1 week" includes full E2E + soak, not a contradiction.
+- **D5 — hotkey.** Format-only change, no migration (never shipped). §7.5 amended. A-O adds the
+  one product-facing item: `storedSecret` is not seed-recoverable, so post-launch a lost secret
+  strands delegated voting power — **product conversation before mainnet** (R5), not an
+  engineering task, and squarely behind the zero-new-strings gate.
+
+### 11.5 · Novel finds (credit per arm)
+
+- **N1 (A-O) — a live Ironwood bug in our app:** `VotingCryptoClientLiveKey.swift:218` hardcodes
+  consensus branch `0xC8E7_1055` (NU6); Ironwood is **`0x37a5_165b`**, and rc.5's
+  `VotingShieldedProtocol::for_branch_id` hard-rejects anything but NU6.3. Fix includes making
+  the SDK's `nu63ConsensusBranchID` public instead of re-hardcoding. *This is the concrete
+  "with Ironwood support" item at the app layer.*
+- **N2 (A-O) — R1, the only genuine design risk:** `commitVote` takes
+  `voteCommitmentTreePosition` up front (feeds `build_share_payloads`), but the app learns the
+  position only after tx confirmation (`leaf_index` parse). Whether payloads built with a
+  provisional position survive the later `record_vc_position` correction is unresolved from
+  source. **Settled by one Rust test before any app code** — equal-bytes ⇒ pure rewiring;
+  unequal ⇒ a pre-commit position source is needed and the plan changes. B-O independently
+  flagged the same region (the old two-phase store dance).
+- **N3 (B-O) — never shipped ⇒ zero data migration.** No stored hotkeys, votes, or round state
+  exist in the wild; every compat question collapses to "just change it".
+- **N4 (B-O/B-S) — live infra already on the rc.4+ contract** (pir_layout served); **B-S:
+  9 vote-server operators in the prod config incl. `zvote.zodl.com`** — a server we operate,
+  QA-relevant.
+- **N5 (A-O) — upstream wrote the migration guide:** `a250cb76` rewrote MIGRATING.md +
+  rust/CHANGELOG with the exact app-facing delta. Spec input, free.
+- **N6 (A-O) — the six-method disposition table** incl. `storeCommitmentBundle` →
+  `recordVcPosition` and `decomposeWeight` removed-no-replacement; plus parameter-level deltas
+  (network fixed at `open`; `markVoteSubmitted` requires tx hash; round IDs must be 64-hex
+  canonical Pallas; `setupBundles` rejects empty note sets; `droppedCount` added).
+- **N7 (B-O) — dead weight:** `encryptShares` + `decomposeWeight` have **zero consumers** in
+  the app; delete, don't port. Also two corrections to the SDK's own module doc
+  (`generate_delegation_inputs` NOT superseded; `decompose_weight` genuinely gone).
+- **N8 (B-S) — standing structural risk:** the librustzcash-pin ↔ zcash_voting-floor coupling
+  recurs at *every* future librustzcash bump, not just this one. Goes in the spec's maintenance
+  notes.
+- **N9 (B-S/A-O) — isolation + test assets:** `VotingRustBackend` was never hooked into the
+  `Synchronizer` protocol (voting cannot destabilize sync); 1,527 lines of SDK offline voting
+  tests + the app's gated test files come back for free.
+
+### 11.6 · Amendments this panel forced on this document
+
+§7.5 leak-point 1 corrected (hotkey format-only); §7.5 sizing-template caveat added; **V1
+CLOSED** (bug absent, proven by grep — replaced by a light app-layer sweep for any home-grown
+phase gate, A-S's point); **Q4 gains its working answer** (flag on `zodl-internal` +
+`zodl-testnet` first; `zodl-production` only after soak — panel consensus, Lukas confirms at
+design review). The orchestrator's analysis was overruled twice; that was the design.
+
+### 11.7 · Consolidated ladder (panel synthesis — input to the spec, not the spec)
+
+0. **R1 test first** (Rust, ~an afternoon, delegated): the byte-equality experiment from N2.
+   Optionally: probe whether the testnet vote-chain still accepts `sighash` (A-O's V4).
+1. **rc.5 bump** on the merged SDK (`=2.0.0-rc.5`): thread `PirLayout`
+   (`delegation.rs:419/461/542` + the FFI struct feeding precompute/prove), carry
+   `tx1_effects` on the delegation-submission surface, drop `all_enc_shares` in `json.rs`.
+   ~30–100 lines, Android's diffs as recipes.
+2. **Full FFI rebuild** (`init-local-ffi.sh`; `--universal` before any archive) + `nm -gU`
+   symbol gate.
+3. **SDK gates:** `swift build` + OfflineTests (voting suite included, unmodified).
+4. **Flag on** `zodl-internal`/`zodl-testnet` → compiler enumerates the app work list.
+5. **App adaptations** (largely deletions): six→one `commitVote` collapse (coordinator
+   ~`:1872-1930` + recovery paths ~`:2171`/`~:3463`; `storeCommitmentBundle`→`recordVcPosition`;
+   delete the two zero-consumer members), hotkey format swap (~60 lines, no migration),
+   **N1 branch-ID fix** (publicize the SDK constant), `sighash`→`tx1_effects` + single-share
+   JSON, `pir_layout` decode, static-config URL re-pin (checksummed live URL).
+6. **Tests back on** (app + SDK suites).
+7. **Testnet E2E round** — note only one round is registered in prod with a fixed snapshot;
+   plan around the crate's local-PIR harness (#166) and `zvote.zodl.com`.
+   Production flag: after soak, and after the R5 product conversation.
+
+### 11.8 · Experiment readout
+
+**The owner's hypothesis is confirmed and strengthened.** Raw Android numbers: ~85% mechanical /
+~15% authored / 0% novel algorithm (A-S). A-O's correction goes further: the authored bucket was
+almost entirely Android's own phase-bug payback, which we provably don't have — **iOS-applicable
+transfer ≈ 48% mechanical + ~35 lines of adaptation; effectively 0% of their new logic
+transfers.** Four arms, one spine: *"a lot of work, but simple work"* is now a measured result.
+2×2 lessons: the reference PR helped the stronger model and anchored the cheaper one; blind
+derivation caught the scope truth; convergence across firewalled arms is the strongest
+overengineering guard we have. The one open technical question that could change the plan's
+shape is R1 — which is why it is task zero.
+
+---
+
 ## §10 · Log
 
 | Date | What |
 |---|---|
 | 2026-08-10 | Starting point pinned (§1). `chp-re-enable` cut in both repos at `fea8d600` / `93a11081`. Three off-switches mapped (§3). #1855 restore found on SDK `main`, 12 commits ahead of us (§4). Crate ladder traced across both orgs (§5). Android MOB-1678 fixes read and summarised (§6). Open: D1, Q1–Q4, V1–V2. |
+| 2026-08-10 (night 3) | CHP-M merge LANDED: SDK `chp-re-enable` = `a3823651` (36↑/0↓, cargo check exit 0 with voting compiled; pin stays `13ce6c4e` — main's `41a1e17c` refuted by the resolver; accidental rc.5 E0061 @ `delegation.rs:420` = first located bump task). Checkouts restored; docs → worktree. Four-proposal panel (2×2 model×PR) adjudicated → §11: spine ×8 unanimous, D1–D5 ruled, N1 branch-ID bug (`0xC8E7_1055`→`0x37a5_165b`), R1 vc_tree_position = the one design risk (test-first, task zero), zero-new-code CONFIRMED-strengthened (~48% mechanical + ~35 lines; 0% of Android's new logic transfers). §7.5 amended ×2 (panel overruled the orchestrator, as designed); V1 CLOSED; Q4 working answer = internal+testnet first. Verbatim reports: `docs/chp-panel/`. |
 | 2026-08-10 (night 2) | Design thesis ratified with Lukas → §7.5: same experience, new spine — UI/strings/flows FROZEN, crate taken as-is, all delta absorbed in the middleman (FFI → SDK wrapper → app dependency clients); compat-shim and UI-rebuild alternatives rejected on record; four leak points named (hotkey model, six→one consolidation, tx1_effects+pir_layout, per-bundle phase); zero-new-strings/zero-new-screens gate added. nuttycom's base-on-main ruling in execution: delegated merge of origin/main into SDK chp-re-enable running, gate = cargo check on the full graph incl. the reinstated voting module. |
 | 2026-08-10 (night) | Ladder dig (delegated, full-history clone + tag diffs): §5.5 written — two-axes model (API rework began in 1.0.0's #120; Ironwood at rc.1), tx1_effects anatomy (821-byte versioned blob, wire-only sighash replacement), PIR handshake = client-enforced + config now REQUIRES pir_layout (new app task + QA precondition), rc.4→rc.5 trivial (Keystone memo fix — we want it), rc.6 landmine (#172 requires re-signed rounds) ⇒ pin rule v2 (published rc + infra-precondition gate; today rc.5, floor rc.3), librustzcash family static across rc.3→rc.5 (V2 = one check), Rust ≥ 1.88 floor. New: V3 (which rung introduced commit_vote — API-diff fleet). |
 | 2026-08-10 (eve) | Blind re-verification by two delegated agents (neither shown this doc): one authoring error found+fixed (§2.1 → 48 files); same-day movement recorded as §1.5 — SDK main absorbed ironwood-slipstream via #1954 (now 35↑/17↓), voting pin rc.1→rc.3 crates.io (patch stanza gone), librustzcash rev → `41a1e17c`, `commitVote` lost `networkId:`, rc.1 never published on crates.io, valargroup round-auth-v2 branch pushed today. D1 cheap; Q1 → pin *rule* (newest published rc, floor rc.3, re-check gate); Q2 dissolved for published versions. M2 (tx1_effects) + V1/M4 (round-phase audit) re-verified still standing on today's main. |
