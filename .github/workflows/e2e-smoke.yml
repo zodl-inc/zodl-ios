@@ -36,7 +36,7 @@ jobs:
     # no pull_request context, so the guard lets them through.
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
     runs-on: macos-26
-    timeout-minutes: 25
+    timeout-minutes: 60
     permissions:
       contents: read
     steps:
@@ -54,6 +54,22 @@ jobs:
 
       - name: Checkout app
         uses: actions/checkout@v4
+
+      - name: Checkout Slipstream SDK
+        uses: actions/checkout@v4
+        with:
+          repository: zcash/zcash-swift-wallet-sdk
+          ref: 93a11081bba6fa195e362801ccd65f5f91930870
+          path: .ci/zcash-swift-wallet-sdk
+
+      - name: Link SDK at project-relative path
+        run: ln -s "$GITHUB_WORKSPACE/.ci/zcash-swift-wallet-sdk" "$GITHUB_WORKSPACE/../zcash-swift-wallet-sdk"
+
+      - name: Configure matching Slipstream FFI
+        uses: ./.github/actions/configure-exact-sdk-ffi
+        with:
+          slipstream-app-id: ${{ secrets.SLIPSTREAM_APP_ID }}
+          slipstream-app-private-key: ${{ secrets.SLIPSTREAM_APP_PRIVATE_KEY }}
 
       # Synchronized Xcode groups resolve .app bundle membership from the
       # on-disk file tree *before* build phases run. PartnerKeys.plist is
@@ -83,18 +99,22 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: ${{ env.SOURCE_PACKAGES_PATH }}
-          key: ${{ runner.os }}-${{ runner.arch }}-xcode-spm-e2e-${{ steps.xcode-cache-key.outputs.hash }}-${{ hashFiles('secant.xcodeproj/project.pbxproj', 'secant.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-xcode-spm-e2e-${{ steps.xcode-cache-key.outputs.hash }}-${{ hashFiles('secant.xcodeproj/project.pbxproj', 'secant.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved', '.ci/zcash-swift-wallet-sdk/Package.swift', '.ci/zcash-swift-wallet-sdk/Package.resolved', '.ci/zcash-swift-wallet-sdk/Cargo.lock', '.ci/zcash-swift-wallet-sdk/Sources/**', '.ci/zcash-swift-wallet-sdk/rust/**') }}
           restore-keys: |
             ${{ runner.os }}-${{ runner.arch }}-xcode-spm-e2e-${{ steps.xcode-cache-key.outputs.hash }}-
             ${{ runner.os }}-${{ runner.arch }}-xcode-spm-e2e-
 
       - name: Resolve packages
         run: |
-          xcodebuild -project secant.xcodeproj \
-            -scheme zodl-internal \
-            -resolvePackageDependencies \
-            -derivedDataPath "$DERIVED_DATA_PATH" \
-            -clonedSourcePackagesDirPath "$SOURCE_PACKAGES_PATH"
+          for attempt in 1 2 3; do
+            xcodebuild -project secant.xcodeproj \
+              -scheme zodl-internal \
+              -resolvePackageDependencies \
+              -derivedDataPath "$DERIVED_DATA_PATH" \
+              -clonedSourcePackagesDirPath "$SOURCE_PACKAGES_PATH" && break
+            if [ "$attempt" -eq 3 ]; then exit 1; fi
+            echo "::warning::Xcode package resolution failed on attempt $attempt; retrying."
+          done
 
       - name: Save Swift package cache
         if: ${{ steps.spm-cache.outputs.cache-hit != 'true' }}
@@ -112,7 +132,7 @@ jobs:
         uses: actions/cache@v5
         with:
           path: build/Build/Products/Debug-iphonesimulator
-          key: ${{ runner.os }}-${{ runner.arch }}-ios-app-${{ steps.xcode-cache-key.outputs.hash }}-${{ hashFiles('secant/Sources/**', 'modules/Sources/**', 'secant.xcodeproj/**/*.pbxproj', 'secant.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-ios-app-${{ steps.xcode-cache-key.outputs.hash }}-${{ hashFiles('secant/Sources/**', 'modules/Sources/**', 'secant.xcodeproj/**/*.pbxproj', 'secant.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved', '.ci/zcash-swift-wallet-sdk/Package.swift', '.ci/zcash-swift-wallet-sdk/Package.resolved', '.ci/zcash-swift-wallet-sdk/Cargo.lock', '.ci/zcash-swift-wallet-sdk/Sources/**', '.ci/zcash-swift-wallet-sdk/rust/**') }}
 
       - name: Build for simulator
         if: steps.app-cache.outputs.cache-hit != 'true'
@@ -331,9 +351,9 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: ~/.zodl-qa/cache
-          key: ${{ runner.os }}-${{ runner.arch }}-zodl-qa-ios-sdk-db-v2-${{ github.run_id }}
+          key: ${{ runner.os }}-${{ runner.arch }}-zodl-qa-ios-sdk-db-v3-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
-            ${{ runner.os }}-${{ runner.arch }}-zodl-qa-ios-sdk-db-v2-
+            ${{ runner.os }}-${{ runner.arch }}-zodl-qa-ios-sdk-db-v3-
 
       - name: Run smoke tests
         env:
@@ -383,18 +403,25 @@ jobs:
           chmod +x zodl-qa/scripts/run-smoke-ios.sh
           ./zodl-qa/scripts/run-smoke-ios.sh
 
-      # Persist the SDK DB regardless of test outcome — partial sync
-      # progress is still useful for the next run's warm-resume. If
-      # the job is hard-killed by the 75-min timeout the save won't
-      # fire, but the prior run's cache entry stays in the pool and
-      # restore-keys will pick it up next time.
-      - name: Save Zcash SDK DB cache
+      - name: Check for a cacheable Zcash SDK DB
         if: ${{ always() && matrix.phase == 2 }}
+        id: sdk-db
+        shell: bash
+        run: |
+          if find "$HOME/.zodl-qa/cache" -type f -name '*.db' -size +0c -print -quit 2>/dev/null | grep -q .; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::No SDK database was produced; skipping the empty cache."
+          fi
+
+      - name: Save Zcash SDK DB cache
+        if: ${{ always() && matrix.phase == 2 && steps.sdk-db.outputs.exists == 'true' }}
         continue-on-error: true
         uses: actions/cache/save@v5
         with:
           path: ~/.zodl-qa/cache
-          key: ${{ runner.os }}-${{ runner.arch }}-zodl-qa-ios-sdk-db-v2-${{ github.run_id }}
+          key: ${{ runner.os }}-${{ runner.arch }}-zodl-qa-ios-sdk-db-v3-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Upload test results
         if: always()
