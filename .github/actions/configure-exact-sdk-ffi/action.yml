@@ -1,0 +1,48 @@
+name: Configure exact SDK FFI
+description: Build and select the Rust FFI matching the checked-out Swift SDK revision.
+
+inputs:
+  slipstream-app-id:
+    description: GitHub App ID with read access to zodl-inc/slipstream.
+    required: false
+    default: ""
+  slipstream-app-private-key:
+    description: Private key for the Slipstream GitHub App.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Restore exact SDK FFI
+      id: ffi-cache
+      uses: actions/cache@v5
+      with:
+        path: .ci/zcash-swift-wallet-sdk/LocalPackages
+        key: ${{ runner.os }}-${{ runner.arch }}-sdk-ffi-ios-${{ hashFiles('.ci/zcash-swift-wallet-sdk/Cargo.lock', '.ci/zcash-swift-wallet-sdk/rust/**', '.ci/zcash-swift-wallet-sdk/BuildSupport/**', '.ci/zcash-swift-wallet-sdk/scripts/init-local-ffi.sh') }}
+
+    - name: Authorize exact SDK dependencies
+      if: steps.ffi-cache.outputs.cache-hit != 'true'
+      uses: ./.ci/zcash-swift-wallet-sdk/.github/actions/authorize-slipstream
+      with:
+        app-id: ${{ inputs.slipstream-app-id }}
+        app-private-key: ${{ inputs.slipstream-app-private-key }}
+
+    - name: Set up Rust for exact SDK FFI
+      if: steps.ffi-cache.outputs.cache-hit != 'true'
+      uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
+      with:
+        toolchain: stable
+        targets: aarch64-apple-ios-sim,aarch64-apple-ios
+
+    - name: Build exact SDK FFI
+      if: steps.ffi-cache.outputs.cache-hit != 'true'
+      shell: bash
+      working-directory: .ci/zcash-swift-wallet-sdk
+      run: ./scripts/init-local-ffi.sh --arm-ios
+
+    - name: Verify exact SDK FFI
+      shell: bash
+      run: |
+        test -f .ci/zcash-swift-wallet-sdk/LocalPackages/Package.swift
+        test -d .ci/zcash-swift-wallet-sdk/LocalPackages/libzcashlc.xcframework/ios-arm64_x86_64-simulator

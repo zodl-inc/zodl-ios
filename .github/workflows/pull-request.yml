@@ -29,12 +29,28 @@ jobs:
     # (matches the e2e/smoke suite guard in e2e-smoke.yml).
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
     runs-on: macos-26
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Checkout Slipstream SDK
+        uses: actions/checkout@v4
+        with:
+          repository: zcash/zcash-swift-wallet-sdk
+          ref: 93a11081bba6fa195e362801ccd65f5f91930870
+          path: .ci/zcash-swift-wallet-sdk
+
+      - name: Link SDK at project-relative path
+        run: ln -s "$GITHUB_WORKSPACE/.ci/zcash-swift-wallet-sdk" "$GITHUB_WORKSPACE/../zcash-swift-wallet-sdk"
+
+      - name: Configure matching Slipstream FFI
+        uses: ./.github/actions/configure-exact-sdk-ffi
+        with:
+          slipstream-app-id: ${{ secrets.SLIPSTREAM_APP_ID }}
+          slipstream-app-private-key: ${{ secrets.SLIPSTREAM_APP_PRIVATE_KEY }}
 
       - name: Select latest Xcode
         # macos-26 runners ship multiple Xcodes; default-selected is 16.x
@@ -62,7 +78,7 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: ${{ env.SOURCE_PACKAGES_PATH }}
-          key: ${{ runner.os }}-${{ runner.arch }}-xcode-spm-${{ steps.xcode-cache-key.outputs.hash }}-${{ hashFiles('secant.xcodeproj/project.pbxproj', 'secant.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-xcode-spm-${{ steps.xcode-cache-key.outputs.hash }}-${{ hashFiles('secant.xcodeproj/project.pbxproj', 'secant.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved', '.ci/zcash-swift-wallet-sdk/Package.swift', '.ci/zcash-swift-wallet-sdk/Package.resolved', '.ci/zcash-swift-wallet-sdk/Cargo.lock', '.ci/zcash-swift-wallet-sdk/Sources/**', '.ci/zcash-swift-wallet-sdk/rust/**') }}
           restore-keys: |
             ${{ runner.os }}-${{ runner.arch }}-xcode-spm-${{ steps.xcode-cache-key.outputs.hash }}-
             ${{ runner.os }}-${{ runner.arch }}-xcode-spm-
