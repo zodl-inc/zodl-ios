@@ -1,7 +1,5 @@
 name: E2E Smoke Tests
 
-# Keep this workflow PR-triggerable while its main-branch E2E baseline is repaired.
-
 on:
   pull_request:
     # Include ready_for_review so flipping a draft PR to "Ready for review"

@@ -1,5 +1,5 @@
 {
-  "originHash" : "e9ee1eee75be980eb7e5c2cfd98c919295ec44a8cdab428b94f159ccaad47bde",
+  "originHash" : "4c7373c5f3adfdcdcd7de6ca0dbccee8a5285b0fea671ef4c1ad7b8ee13a0c03",
   "pins" : [
     {
       "identity" : "base32",
@@ -485,6 +485,15 @@
       "state" : {
         "revision" : "798053ba8a2d80560b5e3f4899a8b35ac0c348bb",
         "version" : "1.0.1"
+      }
+    },
+    {
+      "identity" : "zcash-swift-wallet-sdk",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/zcash/zcash-swift-wallet-sdk.git",
+      "state" : {
+        "revision" : "64e1d590a9f6113ff6ac56ffb3dab32bde5997dc",
+        "version" : "2.8.0-rc.1"
       }
     }
   ],
