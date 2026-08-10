@@ -112,6 +112,35 @@ not 47) — the only authoring error the blind pass surfaced.
 
 ## §2 · Code overview — the anatomy of CHP
 
+### §2.0 · Ownership — whose code is this? (ruled 2026-08-10)
+
+**The voting core is 100% a third-party dependency: Valar Group's `zcash_voting` crate.** We own
+zero cryptography. Home repo `valargroup/zcash_voting`; `zodl-inc/zcash_voting` is only our
+pin-target fork, and since #1954 the SDK resolves the crate from crates.io like any other
+dependency. Everything the crate does — Halo 2 delegation + vote-commitment proofs, ElGamal share
+encryption, governance PCZT construction, Merkle/VAN witnesses, note eligibility, the voting
+SQLite DB, PIR fetch and commitment-tree sync — is theirs, exactly as `orchard` or `librustzcash`
+are theirs.
+
+What is OURS is adapters and presentation: the C FFI (§2.3, thin marshalling), the Swift wrapper
+(§2.2, typed projection), and the app (§2.1 — UI flows, vote-server REST client,
+config/endorsement verification, draft storage, hotkey keychain storage).
+
+The dependency is **two-level**: Valar's *crate* at compile time and Valar's *servers* at runtime
+(vote-chain server, PIR endpoints, commitment-tree service). The wire protocol is theirs too —
+which is why the crate pin is forced by server behavior (§6.1's `tx1_effects` 400), not by taste.
+
+**Design consequences, binding for the spec:**
+
+1. **Their API is the contract** — and more so in 2.0 than in v1: the vote-assembly logic our
+   layers used to hold (the six-call pipeline) was moved *into* the crate at our own request
+   (dominik: "they moved some logic inside voting rust crate as we requested earlier from core
+   team"). Our three layers are designed as a faithful, semantics-free projection of the crate's
+   API into Swift and SwiftUI.
+2. **No semantics in the adapters.** The one known place our layer added logic the crate never
+   does — Android's round-phase writes during PCZT construction (§6.2) — is precisely what broke
+   multi-bundle rounds. Any FFI/SDK addition beyond marshalling is a defect candidate by default.
+
 Four layers, top to bottom. Sizes are current, on our branch.
 
 ### 2.1 App — `zodl-ios`
