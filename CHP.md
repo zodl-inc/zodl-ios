@@ -573,6 +573,58 @@ These are not this task's scope, but they should not be silently re-enabled eith
 **[OPEN — Q3]** does re-enabling CHP require any of these closed first? That is Andrea's and
 security's call, not mine.
 
+## §7.5 · The design thesis — same experience, new spine (ratified with Lukas, 2026-08-10)
+
+Lukas's formulation, adopted as the campaign's governing principle: **the app's voting UI/flows/UX
+are complete — merely wired to an obsolete library generation. The crate is Valar's, taken as-is
+at the pinned rc. The work is confined to the middle: use the new library, serve the existing
+experience. No custom ideas, no invented code.**
+
+Two rejected alternatives, for the record:
+
+- *Compat shim in the SDK* (reproduce the old six-call pipeline on top of `commitVote` so the app
+  stays byte-identical) — rejected: semantics-in-the-adapter (§2.0 rule 2), the very pattern
+  behind Android's multi-bundle bug, and dishonest anyway — the intermediate artifacts no longer
+  exist as separable steps.
+- *Rebuild the UI against the new API* — rejected: violates the goal, the no-crafting rule, and
+  discards 15k lines of working, product-approved surface.
+
+**Precision — where the "middleman" boundary actually sits.** The app is three strata; only the
+outermost is frozen ground:
+
+| Stratum | Contents | Fate |
+|---|---|---|
+| Views + strings + flow topology | 23 screen files, 297 `coinVote.*` keys, CoordFlow structure, Figma parity | **FROZEN — zero changes** |
+| Stores/effects | the TCA reducers that sequenced the old six-call pipeline | minimal rewiring where the pipeline lived (six calls → one) |
+| Dependency clients | `VotingCryptoClient`, `VotingAPIClient`, models/config parsing | **adaptation surface** — the app's designed seam; part of the middleman |
+
+So the middleman = FFI → SDK Swift wrapper → app dependency clients. The first two are largely
+inherited from main's #1855 restore (the merge); the third is ours to reconcile.
+
+**Four unavoidable leak points** — deltas that provably cannot be absorbed below the app's client
+layer; none touches a pixel or a string:
+
+1. **Hotkey model** — old: derived per-round from the wallet seed; new: random
+   `static generateHotkey(networkId)` + app-stored secret, non-recoverable. Call-site + keychain
+   lifecycle change (`StoredVotingHotkey` machinery already exists). Security improvement: the
+   wallet seed no longer crosses into voting at all.
+2. **Pipeline consolidation** — the six client members die; `commitVote` replaces them; store
+   effects that sequenced them collapse to one call + progress callback.
+3. **Wire/config** — `tx1_effects` threaded into the delegation submission body
+   (`VotingAPIClient`), and required `pir_layout` parsing (config models).
+4. **Per-bundle `DelegationPhase` consumption** (post-V1) — construct/prove/submit decisions read
+   the crate's own phase, replacing any round-level invention.
+
+**Empirical proof of the shape:** Android shipped exactly this thesis — same UI, adapters
+reconciled — in 17 app files (+374/−126) and ~14 SDK files (+505/−124), verified on a live
+multi-bundle round. Their two PRs (§6) are the sizing template and porting reference. This
+mission is an **adoption, not a build**.
+
+**The guard:** if any state in the new model needs a screen or a string that does not exist,
+it is identified and handed to product — never drafted here. The plan carries an explicit
+**"zero new strings, zero new screens" verification gate**; deviations are product decisions,
+not engineering ones.
+
 ---
 
 ## §8 · Plan sketch (not yet approved)
@@ -618,5 +670,6 @@ Ordered so each step is independently gateable. Nothing here has been started.
 | Date | What |
 |---|---|
 | 2026-08-10 | Starting point pinned (§1). `chp-re-enable` cut in both repos at `fea8d600` / `93a11081`. Three off-switches mapped (§3). #1855 restore found on SDK `main`, 12 commits ahead of us (§4). Crate ladder traced across both orgs (§5). Android MOB-1678 fixes read and summarised (§6). Open: D1, Q1–Q4, V1–V2. |
+| 2026-08-10 (night 2) | Design thesis ratified with Lukas → §7.5: same experience, new spine — UI/strings/flows FROZEN, crate taken as-is, all delta absorbed in the middleman (FFI → SDK wrapper → app dependency clients); compat-shim and UI-rebuild alternatives rejected on record; four leak points named (hotkey model, six→one consolidation, tx1_effects+pir_layout, per-bundle phase); zero-new-strings/zero-new-screens gate added. nuttycom's base-on-main ruling in execution: delegated merge of origin/main into SDK chp-re-enable running, gate = cargo check on the full graph incl. the reinstated voting module. |
 | 2026-08-10 (night) | Ladder dig (delegated, full-history clone + tag diffs): §5.5 written — two-axes model (API rework began in 1.0.0's #120; Ironwood at rc.1), tx1_effects anatomy (821-byte versioned blob, wire-only sighash replacement), PIR handshake = client-enforced + config now REQUIRES pir_layout (new app task + QA precondition), rc.4→rc.5 trivial (Keystone memo fix — we want it), rc.6 landmine (#172 requires re-signed rounds) ⇒ pin rule v2 (published rc + infra-precondition gate; today rc.5, floor rc.3), librustzcash family static across rc.3→rc.5 (V2 = one check), Rust ≥ 1.88 floor. New: V3 (which rung introduced commit_vote — API-diff fleet). |
 | 2026-08-10 (eve) | Blind re-verification by two delegated agents (neither shown this doc): one authoring error found+fixed (§2.1 → 48 files); same-day movement recorded as §1.5 — SDK main absorbed ironwood-slipstream via #1954 (now 35↑/17↓), voting pin rc.1→rc.3 crates.io (patch stanza gone), librustzcash rev → `41a1e17c`, `commitVote` lost `networkId:`, rc.1 never published on crates.io, valargroup round-auth-v2 branch pushed today. D1 cheap; Q1 → pin *rule* (newest published rc, floor rc.3, re-check gate); Q2 dissolved for published versions. M2 (tx1_effects) + V1/M4 (round-phase audit) re-verified still standing on today's main. |
