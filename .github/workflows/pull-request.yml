@@ -85,11 +85,17 @@ jobs:
 
       - name: Resolve packages
         run: |
-          xcodebuild -project secant.xcodeproj \
-            -scheme zodl-internal \
-            -resolvePackageDependencies \
-            -derivedDataPath "$DERIVED_DATA_PATH" \
-            -clonedSourcePackagesDirPath "$SOURCE_PACKAGES_PATH"
+          for attempt in 1 2 3; do
+            xcodebuild -project secant.xcodeproj \
+              -scheme zodl-internal \
+              -resolvePackageDependencies \
+              -derivedDataPath "$DERIVED_DATA_PATH" \
+              -clonedSourcePackagesDirPath "$SOURCE_PACKAGES_PATH" && break
+            if [ "$attempt" -eq 3 ]; then
+              exit 1
+            fi
+            echo "::warning::Xcode package resolution failed on attempt $attempt; retrying with downloaded repositories."
+          done
 
       - name: Save Swift package cache
         if: ${{ steps.spm-cache.outputs.cache-hit != 'true' }}
