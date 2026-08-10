@@ -794,8 +794,10 @@ design review). The orchestrator's analysis was overruled twice; that was the de
 
 ### 11.7 · Consolidated ladder (panel synthesis — input to the spec, not the spec)
 
-0. **R1 test first** (Rust, ~an afternoon, delegated): the byte-equality experiment from N2.
-   Optionally: probe whether the testnet vote-chain still accepts `sighash` (A-O's V4).
+0. ~~R1 test first~~ **R1 RESOLVED → W2 (§11.9)**: no design work; step 5 below simply follows
+   the sanctioned 7-step sequence + 3 traps verbatim. Optionally still: probe whether the
+   testnet vote-chain accepts `sighash` (A-O's V4) — informational only, the rc.5 wire is the
+   target regardless.
 1. **rc.5 bump** on the merged SDK (`=2.0.0-rc.5`): thread `PirLayout`
    (`delegation.rs:419/461/542` + the FFI struct feeding precompute/prove), carry
    `tx1_effects` on the delegation-submission surface, drop `all_enc_shares` in `json.rs`.
@@ -813,6 +815,59 @@ design review). The orchestrator's analysis was overruled twice; that was the de
 7. **Testnet E2E round** — note only one round is registered in prod with a fixed snapshot;
    plan around the crate's local-PIR harness (#166) and `zvote.zodl.com`.
    Production flag: after soak, and after the R5 product conversation.
+
+### 11.9 · R1 verdict — W2, sanctioned correction path (Opus delegate, 2026-08-10 late)
+
+**The panel's one "could-turn-into-design-work" item is closed as rewiring.** Decided at rungs
+1+2 of the evidence ladder (crate source at `v2.0.0-rc.5` + Android's shipping code,
+independently agreeing); the rung-3 experiment was superseded by an analytical proof.
+
+- `vc_tree_position` is **not a cryptographic input** — exhaustive sweep of `zkp1/zkp2/
+  precompute/action`, the cast-vote sighash (`vote_commitment.rs:142-177`), and the share
+  nullifier (`share.rs:41-66`): zero references. It is one metadata scalar in the helper-share
+  wire JSON (`wire_codec.rs:59-62`), explicitly late-bindable (`VoteShareWire::with_late_bound`).
+- **The RNG confound is structurally void**: only ONE commit happens; `record_vc_position`
+  rewrites a single `u64` in the stored recovery JSON (`vote.rs:812-834`) — every randomized
+  artifact (proof, enc_shares, blinds, sigs) is carried byte-identically.
+- **No silent failure mode**: commit never sets the position column (`vote.rs:900-916`), so the
+  first correction is always legal, and until it lands every consumer hard-errors —
+  `"commitment bundle is stored without vc_tree_position; refusing to assume position 0"`
+  (`storage/queries.rs:2479-2483`). The crate's own test (`vote.rs:1925-1980`) runs exactly our
+  scenario: commit@456 → record 789 → replay ok at 789, refused at 790.
+
+**The sanctioned sequence (spec-verbatim), per bundle/proposal:**
+
+1. `commitVote(..., voteCommitmentTreePosition: 0, ...)` — provisional; **do not submit the
+   returned payloads**.
+2. Broadcast the cast-vote tx (pre-confirmation resends via the submission accessor, never the
+   commit result's payloads).
+3. `markVoteSubmitted` (record the tx hash).
+4. Await confirmation; parse `cast_vote` `leaf_index` = `"van_position,vc_position"`; take the
+   **second** component.
+5. `recordVcPosition(..., <confirmed vc_position>)` — idempotent on same-value replay.
+6. **Re-call `commitVote` with the identical draft except the confirmed position** — it
+   short-circuits into `commit_from_recovery` (**no re-proving**) and returns corrected
+   payloads. (iOS ruling: this replay IS step 6 — our `getCommitmentBundle` returns raw
+   recovery, not fresh payloads, so the replay path needs **zero FFI change**; adding a
+   `recover_commit`-backed FFI to match Android's convenience is optional-later.)
+7. Submit those payloads to the helper servers; record/confirm each share delegation.
+
+**Three traps, encoded:** (T1) never replay the stale provisional draft once a tx hash exists —
+`recovery_matches_draft` compares the position and a mismatch hard-errors ("submitted vote
+that conflicts with requested draft"); update the cached draft to the confirmed position first.
+(T2) commit **before** `record_vc_position` — the reverse order sets only the column and
+self-heals only on a second record call; the sequence above avoids the state entirely.
+(T3) the between-steps hard-errors are correct behavior — surface, don't swallow.
+
+**Android corroboration:** their granular API doesn't even take a position at commit; their
+`SubmitVotesUseCase` runs exactly this order (commit → submit → store hash → await → parse
+`leaf_index` → `recordVcPosition` → submit shares), and their SDK test passes
+`vcTreePosition = 0` literally.
+
+**New open item — [OPEN — Q5]:** does the helper server cross-check the submitted
+`tree_position` against its own VC-tree view (loud vs. silent failure on a wrong position)?
+Server-side, outside the crate; does not change the app's obligations. One question to Valar,
+non-blocking.
 
 ### 11.8 · Experiment readout
 
@@ -833,6 +888,7 @@ shape is R1 — which is why it is task zero.
 | Date | What |
 |---|---|
 | 2026-08-10 | Starting point pinned (§1). `chp-re-enable` cut in both repos at `fea8d600` / `93a11081`. Three off-switches mapped (§3). #1855 restore found on SDK `main`, 12 commits ahead of us (§4). Crate ladder traced across both orgs (§5). Android MOB-1678 fixes read and summarised (§6). Open: D1, Q1–Q4, V1–V2. |
+| 2026-08-10 (night 4) | **R1 RESOLVED → W2** (§11.9): `vc_tree_position` is metadata, not crypto (exhaustive circuit/sighash/nullifier sweep = zero refs); correction = one-u64 recovery-JSON rewrite, byte-identical everything else, "refusing to assume position 0" guard makes wrong-position unshippable; sanctioned 7-step sequence + 3 traps captured spec-verbatim; Android ships the identical order; iOS step 6 = idempotent commitVote replay, ZERO FFI change. RNG confound structurally void (one commit only). Rung 3 unnecessary. New Q5 (server-side tree_position cross-check — Valar, non-blocking). Last open technical question closed; design presentation unblocked. |
 | 2026-08-10 (night 3) | CHP-M merge LANDED: SDK `chp-re-enable` = `a3823651` (36↑/0↓, cargo check exit 0 with voting compiled; pin stays `13ce6c4e` — main's `41a1e17c` refuted by the resolver; accidental rc.5 E0061 @ `delegation.rs:420` = first located bump task). Checkouts restored; docs → worktree. Four-proposal panel (2×2 model×PR) adjudicated → §11: spine ×8 unanimous, D1–D5 ruled, N1 branch-ID bug (`0xC8E7_1055`→`0x37a5_165b`), R1 vc_tree_position = the one design risk (test-first, task zero), zero-new-code CONFIRMED-strengthened (~48% mechanical + ~35 lines; 0% of Android's new logic transfers). §7.5 amended ×2 (panel overruled the orchestrator, as designed); V1 CLOSED; Q4 working answer = internal+testnet first. Verbatim reports: `docs/chp-panel/`. |
 | 2026-08-10 (night 2) | Design thesis ratified with Lukas → §7.5: same experience, new spine — UI/strings/flows FROZEN, crate taken as-is, all delta absorbed in the middleman (FFI → SDK wrapper → app dependency clients); compat-shim and UI-rebuild alternatives rejected on record; four leak points named (hotkey model, six→one consolidation, tx1_effects+pir_layout, per-bundle phase); zero-new-strings/zero-new-screens gate added. nuttycom's base-on-main ruling in execution: delegated merge of origin/main into SDK chp-re-enable running, gate = cargo check on the full graph incl. the reinstated voting module. |
 | 2026-08-10 (night) | Ladder dig (delegated, full-history clone + tag diffs): §5.5 written — two-axes model (API rework began in 1.0.0's #120; Ironwood at rc.1), tx1_effects anatomy (821-byte versioned blob, wire-only sighash replacement), PIR handshake = client-enforced + config now REQUIRES pir_layout (new app task + QA precondition), rc.4→rc.5 trivial (Keystone memo fix — we want it), rc.6 landmine (#172 requires re-signed rounds) ⇒ pin rule v2 (published rc + infra-precondition gate; today rc.5, floor rc.3), librustzcash family static across rc.3→rc.5 (V2 = one check), Rust ≥ 1.88 floor. New: V3 (which rung introduced commit_vote — API-diff fleet). |
