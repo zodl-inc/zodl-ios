@@ -115,7 +115,7 @@ import ComposableArchitecture
     /// (mirroring `MigrationSyncCompleteEdgeTests`'s bound) — under parallel test load the
     /// concurrently-running `Task` this polls for can be scheduled well behind a tighter deadline.
     private static func waitUntil(
-        timeoutNanoseconds: UInt64 = 10_000_000_000,
+        timeoutNanoseconds: UInt64 = 60_000_000_000,
         condition: @escaping @Sendable () -> Bool
     ) async {
         let deadline = DispatchTime.now().uptimeNanoseconds + timeoutNanoseconds

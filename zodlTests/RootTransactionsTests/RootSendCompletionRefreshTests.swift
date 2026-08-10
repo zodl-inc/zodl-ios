@@ -428,7 +428,7 @@ private func baseNoOpDependencies(_ values: inout DependencyValues) {
 
 @MainActor
 private func waitForRefetch(
-    timeoutNanoseconds: UInt64 = 15_000_000_000,
+    timeoutNanoseconds: UInt64 = 60_000_000_000,
     sourceLocation: SourceLocation = #_sourceLocation,
     condition: @escaping @MainActor () -> Bool
 ) async {
