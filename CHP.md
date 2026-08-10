@@ -402,6 +402,81 @@ and produces confusing failures at the PIR/proof layer.
 `valargroup`. Is `zodl-inc` meant to be the canonical fork going forward (SDK main points at it),
 and if so does it need rc.4/rc.5 merged in?
 
+### §5.5 · The ladder, taught (dug from tags, CHANGELOG @ v2.0.0-rc.5, and diffs — 2026-08-10)
+
+Derived by a delegated dig through the crate's own history (full clone, tag-to-tag diffs,
+CHANGELOG, PR bodies) — not from memory or Slack.
+
+**The two axes.** "Old vs new voting" is two migrations that overlapped:
+
+- **API generation** — the rework the CEO doc calls "the commitVote consolidation" is the crate's
+  *"v2 voting api"* arc: it starts inside crate **1.0.0** (`0b5fffb7 feat!: v2 voting api
+  (#120)`, Jun 7) and completes through rc.1's restructuring (governance PCZT construction moved
+  behind `VotingDb::build_governance_pczt`; round-init + delegation APIs require an explicit
+  network). Exactly which rung introduced `commit_vote` itself is a per-tag grep the API-diff
+  fleet owes us → **[TO VERIFY — V3]**.
+- **Dependency generation** — **Ironwood arrives at 2.0.0-rc.1**: V3-notes-only, compile flag
+  gone, librustzcash 0.30/0.24/0.22 family, **Rust ≥ 1.88**.
+
+Our app was written against the pre-1.0 API on pre-Ironwood deps — both axes moved under it.
+
+**The rungs:**
+
+| Version | Date | Published? | Essence |
+|---|---|---|---|
+| 0.11.0 | Jun 3 | crates.io only — **never git-tagged** | last of the old-API line |
+| **1.0.0** | Jun 7 | yes (max stable) | "v2 voting api" lands (#120) |
+| 2.0.0-rc.1 | Jul 25 | **tag only — never published** | the Ironwood port (a "2.0.0 final" prep commit exists — walked back to rc.1) |
+| rc.2 | Jul 28 | yes | dependency alignment only (shardtree-0.7 vote tree, librustzcash rc.4 family); direct push, no release PR |
+| **rc.3** | Aug 5 | yes — both SDK mains sit here | fail-early: `NoteInfo::from_orchard_note` rejects non-Ironwood/V3 at ingestion (previously failed only during proof construction — **after** the PCZT was built and signed); librustzcash rc.7 family |
+| **rc.4** | Aug 7 | yes | **the wire release** — tx1_effects, PIR handshake, required `pir_layout` config, deferred PCZT anchor, per-helper-only share JSON (`all_enc_shares` removed); direct push, no release PR |
+| **rc.5** | Aug 8 | yes (max) | one Keystone fix: zero-value hotkey outputs marked with their user-facing address so signer devices display the bundle memo. rc.4→rc.5 = 3 commits / 2 source files |
+
+**tx1_effects, precisely** (rc.4; `zcash_voting/src/tx1.rs`, commits `c66c32e3` #156 +
+`989bc681` #164): an **821-byte versioned blob** — `version[1]=0x01 ‖ action[820]`, action =
+cv_net‖nullifier‖rk‖cmx‖ephemeral_key (5×32) + enc_ciphertext (580) + out_ciphertext (80).
+Version 1 fixes the profile to NU6.3, one Ironwood V3 bundle, flags 0x07, +1-zatoshi value
+balance, one action. It replaces the client-supplied `sighash` **on the wire only**
+(`DelegationSubmissionWire.sighash` → `.tx1_effects`; wire tests assert `sighash` absent).
+Internally sighash survives — it is still what Keystone/software signers actually sign and is
+still stored in `bundles.pczt_sighash`. Purpose: the **server derives the signing digest itself**
+instead of trusting a client hash — which is the entire mechanism behind Android's
+`400: tx1 effects must be 821 bytes, got 0`.
+
+**The PIR handshake, precisely** (rc.4; PR #162, `53a69bcd`): `connect_pir` /
+`connect_pir_blocking` are NEW functions taking an explicit `PirLayout` from resolved dynamic
+config; they **fail closed** (`VotingError::InvalidInput`) when the server's advertised
+`/root.pir_layout` mismatches, before any private query. **Client-side** enforcement per the
+code; an rc.3 client has no such code path at all (bare re-exported `PirClient` with a
+compiled-in layout — mismatches went undetected). **Config schema consequence:** dynamic voting
+config now **requires** top-level `pir_layout {pir_depth, tier0_layers, tier1_layers}` —
+an app-layer parsing change AND a deployment precondition (the config service must serve it; the
+QA test round must carry it). Feeds CEO items 4 and 5.
+
+**Post-rc.5 — the rc.6 forecast and its landmine.** Merged-unreleased: #168 bounds vote-tree
+sync (8 MiB response cap, 60 s timeout, per-round locks — DoS hardening for the caller-supplied
+node URL). Open: #169 (PIR layout validation alignment) and **#172 round-auth v2** — binds
+round_id + the advertised PIR layout into the round-authentication signature preimage and states
+its own rollout precondition: a paired vote-sdk change plus **re-signing all active rounds before
+wallets adopt it**. Hence:
+
+> **Pin rule v2 (supersedes §1.5's rule):** newest **published** crates.io rc **whose runtime
+> preconditions the deployed Valar infra meets** — today **rc.5** (strictly preferred over rc.4:
+> the Keystone memo fix is ours to ship). Floor rc.3. Every future re-pin checks the CHANGELOG
+> for #172-style coordination preconditions before taking it.
+
+**Graph-coherence good news:** the librustzcash family requirements did NOT move between rc.3
+and rc.5 (`zcash_client_backend ^0.24.0-rc.7`, `zcash_client_sqlite ^0.22.0-rc.7`, `pczt
+^0.9.2`, `zcash_keys ^0.16.1`, `zcash_protocol ^0.10.4`, `orchard ^0.15` +
+`unstable-voting-circuits`, `zcash_primitives ^0.30.0`); all rc.3→rc.5 churn is confined to the
+PIR/tree family (pir-client/pir-types → rc.4, imt-tree 0.2.1, vote-commitment-tree 0.4.0-rc.2 +
+client 0.6.0-rc.2). So V2's "does it co-resolve with our git-pinned librustzcash rev" is ONE
+check covering the whole 2.0 line. docs.rs builds exist for rc.5.
+
+**Meta-lesson:** tags and crates.io are not interchangeable signals in this repo — 0.11.0 (and
+0.3.1, 0.4.0, 0.5.10) were published without tags; 2.0.0-rc.1 was tagged without publishing;
+rc.2/rc.4 shipped as direct pushes with no release PR. **Pin by crates.io; diff by tags.**
+
 ---
 
 ## §6 · The Android reference — MOB-1678
@@ -510,7 +585,9 @@ Ordered so each step is independently gateable. Nothing here has been started.
    the chosen ref. Full FFI rebuild, all needed slices.
 4. **SDK Swift**: the four `Rust/Voting/*.swift` files back, reconciled against the ported FFI.
 5. **V1 audit** (§6.2) — check our `build_pczt` for the round-phase write. Port Fix B if present.
-6. **Fix A** (§6.1) — `tx1_effects` end-to-end: FFI → Swift wrapper → `VotingAPIClientLiveKey`.
+6. **Fix A** (§6.1) — `tx1_effects` end-to-end: FFI → Swift wrapper → `VotingAPIClientLiveKey` —
+   plus the rc.4 config-schema adoption (required `pir_layout`) in the app's config parser, and
+   the matching QA precondition that the test round's dynamic config serves it (§5.5).
 7. **App**: define `VOTING_ENABLED` in the right configurations — *which* is itself a question
    (internal-only? testnet? all?). **[OPEN — Q4]**
 8. **Gates**: full zodl suite + testnet `generic/platform=iOS` build + a live multi-bundle round
@@ -541,4 +618,5 @@ Ordered so each step is independently gateable. Nothing here has been started.
 | Date | What |
 |---|---|
 | 2026-08-10 | Starting point pinned (§1). `chp-re-enable` cut in both repos at `fea8d600` / `93a11081`. Three off-switches mapped (§3). #1855 restore found on SDK `main`, 12 commits ahead of us (§4). Crate ladder traced across both orgs (§5). Android MOB-1678 fixes read and summarised (§6). Open: D1, Q1–Q4, V1–V2. |
+| 2026-08-10 (night) | Ladder dig (delegated, full-history clone + tag diffs): §5.5 written — two-axes model (API rework began in 1.0.0's #120; Ironwood at rc.1), tx1_effects anatomy (821-byte versioned blob, wire-only sighash replacement), PIR handshake = client-enforced + config now REQUIRES pir_layout (new app task + QA precondition), rc.4→rc.5 trivial (Keystone memo fix — we want it), rc.6 landmine (#172 requires re-signed rounds) ⇒ pin rule v2 (published rc + infra-precondition gate; today rc.5, floor rc.3), librustzcash family static across rc.3→rc.5 (V2 = one check), Rust ≥ 1.88 floor. New: V3 (which rung introduced commit_vote — API-diff fleet). |
 | 2026-08-10 (eve) | Blind re-verification by two delegated agents (neither shown this doc): one authoring error found+fixed (§2.1 → 48 files); same-day movement recorded as §1.5 — SDK main absorbed ironwood-slipstream via #1954 (now 35↑/17↓), voting pin rc.1→rc.3 crates.io (patch stanza gone), librustzcash rev → `41a1e17c`, `commitVote` lost `networkId:`, rc.1 never published on crates.io, valargroup round-auth-v2 branch pushed today. D1 cheap; Q1 → pin *rule* (newest published rc, floor rc.3, re-check gate); Q2 dissolved for published versions. M2 (tx1_effects) + V1/M4 (round-phase audit) re-verified still standing on today's main. |
