@@ -1,0 +1,461 @@
+# CHP — Coinholder Polling
+
+Working document for re-enabling Coinholder Polling (CHP) on iOS, on the Ironwood stack.
+
+Everything here is either **pinned fact** (a hash, a line of code, a verified state) or **an
+explicitly labelled open question**. Nothing is inferred and left unmarked. If a row says
+"verified", it was read out of the repo or the GitHub API at the time stamped on it — not
+remembered.
+
+**Status:** starting point pinned, branches cut. No code changed yet.
+**Branches:** `chp-re-enable` in both zodl-ios and zcash-swift-wallet-sdk.
+**Ticket:** [MOB-1678 — Coinholder polling adoption](https://linear.app/zodl/issue/MOB-1678/coinholder-polling-adoption)
+(the umbrella item; dominik's Android PRs in §6 are the Android half of the same ticket).
+**Date opened:** 2026-08-10.
+
+---
+
+## §0 · Why this document exists
+
+Michal is merging in parallel, and `main` moved under us while we were doing migration work.
+The single most expensive failure mode on this task is *not knowing which generation of code a
+given symptom belongs to* — the voting crate alone has moved through five release candidates in
+eleven days, across two GitHub orgs.
+
+So before touching anything: pin the floor. §1 is that floor. Every later claim in this document
+is relative to it.
+
+---
+
+## §1 · The starting point (pinned 2026-08-10)
+
+### The four layers
+
+| Layer | Repo | Branch | HEAD |
+|---|---|---|---|
+| App | `zodl-inc/zodl-ios` | `chp-re-enable` (cut from `migration/gardening-test`) | `fea8d600e8099cdd21f902ddd42a182f58e5f8fd` |
+| SDK — Swift + Rust FFI | `zcash/zcash-swift-wallet-sdk` | `chp-re-enable` (cut from `fable/gardening-test`) | `93a11081bba6fa195e362801ccd65f5f91930870` |
+| Wallet core | `zcash/librustzcash` | pinned rev (11 crates via `[patch.crates-io]`) | `13ce6c4ef57a6c7e8837d797d85112ae16ac7455` |
+| Voting core | — | **not in the graph** | dependency commented out |
+
+Both `chp-re-enable` branches sit at exactly the commit Lukas has been building from. They are
+not cut from `main`; see §4.3 for why, and for the decision that still has to be made about it.
+
+### Position relative to upstream
+
+| | ahead of `origin/main` | behind `origin/main` | `origin/main` tip |
+|---|---|---|---|
+| zodl-ios | 244 | **0** | `512fa1c8` (2026-08-01, Michal, merge #1966 release/3.8.1) |
+| SDK | 277 | **12** | `468d1e9f` (2026-08-03, nuttycom, merge #1914 maint-v2.8.x) |
+
+Those 12 SDK commits are the whole story of this task — see §4.
+
+### FFI build mode
+
+`LocalPackages/` exists ⇒ **local FFI mode**. `libzcashlc.xcframework` carries three slices:
+`ios-arm64`, `ios-arm64_x86_64-simulator`, `macos-arm64_x86_64`. The Rust compiles from the
+librustzcash rev above. Turning voting back on is a **Rust-graph change**, so it will require a
+full FFI rebuild, not just a Swift build.
+
+### Working-tree state at pin time
+
+- zodl-ios: one modified file, `secant.xcodeproj/project.pbxproj` — `CURRENT_PROJECT_VERSION`
+  10 → 11 across four configs. That is Lukas's Xcode build-number bump, not our change. Left
+  uncommitted deliberately.
+- SDK: clean.
+
+---
+
+## §2 · Code overview — the anatomy of CHP
+
+Four layers, top to bottom. Sizes are current, on our branch.
+
+### 2.1 App — `zodl-ios`
+
+**~15,070 lines of Swift across 47 files**, plus 5 test files and **297 `coinVote.*` string keys**
+in the catalog.
+
+| Area | Path | What it is |
+|---|---|---|
+| Feature screens | `secant/Sources/Features/Voting/` (23 files) | Proposal list/detail, results, tallying, confirm-submission, delegation signing, ineligible, no-rounds, wallet-syncing, error surfaces, chain-config settings |
+| Flow coordinator | `secant/Sources/Features/CoordFlows/VotingCoordFlow/` (4 files) | `VotingCoordFlowCoordinator`, `…Store`, `…View`, `RoundSession` |
+| Network client | `secant/Sources/Dependencies/VotingAPIClient/` (5 files) | Vote-server + PIR HTTP, `RoundAuthenticator` (Ed25519 round signatures), `ServerHealthTracker` |
+| Crypto client | `secant/Sources/Dependencies/VotingCryptoClient/` (3 files) | The bridge to the SDK. Calls `VotingRustBackend` — **this is where the app touches the FFI** |
+| Storage | `secant/Sources/Dependencies/VotingStorageClient/` (3 files) | Drafts + vote records |
+| Metadata | `secant/Sources/Dependencies/VotingMetadataProvider/` (3 files) | Round metadata cache |
+| Models | `secant/Sources/Dependencies/VotingModels/` (7 files) | `Proposal`, `VotingRound`, `VoteChoice`, `StaticVotingConfig`, `VotingServiceConfig`, `VotingSessionState` |
+| Keychain | `secant/Sources/Dependencies/WalletStorage/StoredVotingHotkey.swift` | Per-round hotkey (a full BIP-39 mnemonic — see §7.3) |
+
+Entry point: one row in Settings (`SettingsView.swift:37-44` → `.coinholderPollingTapped`),
+presenting `VotingCoordFlow` as a `fullScreenCover`.
+
+Note the shape has changed since the May review: the old monolithic `VotingStore` +
+`VotingStore+Delegation/Session/Submission/Navigation/Helpers` split has been refactored into the
+CoordFlow architecture above. **The May-15 review at
+`~/Dev/Xcode/GitHub/LukasKorba/coinholder-polling-review.md` describes files that no longer
+exist** — its *findings* mostly still apply, its *line references* do not. Treat it as a
+findings list, not a map.
+
+### 2.2 SDK Swift — `zcash-swift-wallet-sdk`
+
+**Four files, all currently absent from our branch:**
+
+```
+Sources/ZcashLightClientKit/Rust/Voting/VotingRustBackend.swift
+Sources/ZcashLightClientKit/Rust/Voting/VotingTypes.swift
+Sources/ZcashLightClientKit/Rust/Voting/VotingConstants.swift
+Sources/ZcashLightClientKit/Rust/Voting/PirSnapshotResolver.swift
+```
+
+This is the typed Swift wrapper over the `zcashlc_voting_*` C symbols. The app calls it directly
+(`VotingCryptoClientLiveKey` imports `ZcashLightClientKit` and calls `VotingRustBackend.…`), so
+its absence is what makes the app's voting code unbuildable even if you flip the app's flag.
+
+### 2.3 SDK Rust (the FFI) — `rust/src/voting*`
+
+**4,469 lines across 16 files, exposing 66 `extern "C"` functions.** All present on disk, none
+compiled (see §3.3).
+
+| File | Surface |
+|---|---|
+| `voting.rs` | DB open/free, wallet id, hotkey generation, bundle setup, PCZT build, tree state, note witnesses, PIR precompute, **`zcashlc_voting_build_and_prove_delegation`**, delegation submission (plain + Keystone-signed), VAN position, PIR proof validation |
+| `voting/rounds.rs` | init round, round state, list rounds, votes, clear round, delete skipped bundles |
+| `voting/recovery.rs` | tx-hash store/read (delegation + vote), commitment bundle, VC position, **`recover_committed_vote`**, Keystone signature store/read, clear recovery state |
+| `voting/share_tracking.rs` | share nullifier, scheduled submit-at, record/read share delegations, unconfirmed, mark confirmed, sent servers |
+| `voting/tree.rs` | sync vote tree, generate VAN witness, reset tree client |
+| `voting/ffi_types.rs` | the free-functions for returned structs |
+| `voting/{notes,delegation,vote,db,json,helpers,util,progress,constants,test_helpers}.rs` | supporting |
+
+### 2.4 Voting core — the `zcash_voting` crate
+
+Not a file in our repos: an external crate. **This is the layer that moved**, and the layer
+dominik's Slack message is about ("they moved some logic inside voting rust crate as we requested
+earlier from core team"). See §5 — it is the most volatile thing in this whole task.
+
+---
+
+## §3 · The three off-switches
+
+CHP is off in three independent places. All three must flip. Verified 2026-08-10 on our branch.
+
+### 3.1 App — `#if VOTING_ENABLED`, and the flag is defined nowhere
+
+56 Swift files carry `#if VOTING_ENABLED`. The flag appears in **zero** `.pbxproj`,
+`.xcconfig`, or `.xcscheme` entries — `SWIFT_ACTIVE_COMPILATION_CONDITIONS` across all 11 build
+configurations lists only `DEBUG`, `UNREDACTED`, `SECANT_TESTNET`, `SECANT_MAINNET`,
+`SECANT_DISTRIB`. So the entire feature — screens, coordinator, clients, models, tests — is
+compiled out of every configuration.
+
+`origin/main` of zodl-ios also has zero. **iOS has not re-enabled anything; only the SDK side
+moved.**
+
+### 3.2 SDK Swift — the wrapper was deleted
+
+`248d46f9` (2026-07-25, Danny Willems) — *"[#1806] Remove the Swift voting surface (voting
+disabled on 2.5.x)"* — deleted the four files in §2.2. That commit **is** an ancestor of our HEAD.
+
+### 3.3 SDK Rust — cfg gate + commented-out dependency
+
+`rust/src/lib.rs:107-111`:
+
+```rust
+// Voting is gated off on this line: the `zcash_voting` dependency is commented out in
+// Cargo.toml (see there), so the module and its `zcashlc_voting_*` symbols are not compiled.
+// The sources are retained so the surface can be reinstated by re-enabling the dependency.
+#[cfg(zcash_voting)]
+mod voting;
+```
+
+`zcash_voting` is never set as a cfg, so `mod voting` is dead. Three matching stanzas in
+`Cargo.toml` are commented out:
+
+- `:107` — `# zcash_voting = { version = "2.0.0-rc.1", optional = true }` (and `# zeroize = "1"`)
+- `:137` — `#voting = ["dep:zcash_voting"]` in `[features]`
+- `:186` — `# zcash_voting = { git = "https://github.com/valargroup/zcash_voting.git", rev = "e53e74487d31ad0f5713580fb2f0222b53ae9db8" }` in `[patch.crates-io]`
+
+`[lints.rust] unexpected_cfgs` explicitly allow-lists `cfg(zcash_voting)` so the dead gate does
+not warn.
+
+**Note the stale org in that commented pin:** `valargroup`. The crate has since moved — §5.
+
+---
+
+## §4 · What upstream already did — the #1855 restore
+
+This is the single most important fact on the task, and it matches nuttycom's Slack message
+verbatim ("main itself has polling re-enabled already").
+
+### 4.1 The three commits
+
+All on `origin/main` of the SDK. **None are ancestors of our HEAD.**
+
+| Commit | Date | Author | Subject |
+|---|---|---|---|
+| `7d8e9b15` | 2026-07-26 | nuttycom | `[#1855] Reinstate the voting module on the Ironwood stack` |
+| `1e8c247e` | 2026-07-26 | nuttycom | `[#1855] Restore the Swift voting surface against the ported FFI` |
+| `a250cb76` | 2026-07-26 | nuttycom | `[#1855] Document the voting reinstatement and its breaking changes` |
+
+Note the first one's subject: **"on the Ironwood stack"**. The reinstatement was done *against*
+Ironwood, not before it. That is the opposite of what "get polling working again with Ironwood"
+would suggest if we assumed we were starting from scratch.
+
+### 4.2 What main's wiring looks like
+
+Read out of `origin/main` 2026-08-10:
+
+```rust
+// rust/src/lib.rs:96 — no cfg, no feature
+mod voting;
+```
+
+```toml
+# Cargo.toml — unconditional, not optional, no feature gate
+zcash_voting = { version = "2.0.0-rc.1" }
+zcash_keys   = { version = "0.16", features = ["orchard"] }
+incrementalmerkletree = { version = "0.8", default-features = false }
+zeroize = "1"
+
+[patch.crates-io]
+zcash_voting = { git = "https://github.com/zodl-inc/zcash_voting", rev = "3c9900e56081966b74dd57a0c880c782f4f602bb" }
+```
+
+And all four Swift files in `Sources/ZcashLightClientKit/Rust/Voting/` are present.
+
+Two things to notice. First, the `voting` **feature is gone** — voting is now an unconditional
+dependency, not an opt-in. Second, the crate's home moved **`valargroup` → `zodl-inc`**.
+
+### 4.3 The 12 commits we are behind — and the decision they force
+
+```
+468d1e9f  Merge pull request #1914 from zcash/merge/maint-v2.8.x
+4104d332  Merge remote-tracking branch 'upstream/maint/v2.8.x' into merge/maint-v2.8.x
+f51ed74a  Merge pull request #1854 from zcash/merge/maint-2.7.x
+fb21631e  Merge branch 'maint/v2.8.x' into merge/maint-2.7.x
+172b3b1d  Merge branch 'release/v2.8.0-rc.1' into merge/maint-2.7.x
+a250cb76  [#1855] Document the voting reinstatement and its breaking changes   ← restore
+1e8c247e  [#1855] Restore the Swift voting surface against the ported FFI      ← restore
+7d8e9b15  [#1855] Reinstate the voting module on the Ironwood stack            ← restore
+52416cab  Keep design docs and plans in a gitignored .plans directory
+ed8ec4f9  Merge branch 'maint/v2.7.x' into merge/maint-2.7.x
+769809a2  Merge pull request #1832 from pacu/pacu/1831-agents-md
+70716b34  [#1831] Add AGENTS.md with security-critical API rules
+```
+
+Merge base: `ab4685d2` (2026-07-29).
+
+**[DECISION NEEDED — D1]** nuttycom's guidance is *"chp work should be based on main"*. Taken
+literally that means cutting from `origin/main`, which would drop the 277 SDK / 244 zodl commits
+of migration work Lukas is currently building and shipping from. That cannot be what's meant for
+us — his message was addressed to dominik, whose Android branch was based on a `maint/` line.
+
+The equivalent-in-spirit move for our side is: **merge `origin/main` forward into
+`chp-re-enable`**, which brings the three #1855 commits (plus 9 merge/doc commits) onto our
+stack. That is what I'd recommend, and it is what the plan in §8 assumes. It needs Lukas's word
+before I do it, because it is the first irreversible-ish step and it touches the branch he
+builds from.
+
+---
+
+## §5 · The crate ladder — the volatile layer
+
+`zcash_voting` has moved through five release candidates in eleven days, across two orgs. This
+table is the reason §1 exists.
+
+| Where | Ref | Head | Date | Crate version |
+|---|---|---|---|---|
+| Our branch | — | *(commented out)* | — | — |
+| Our commented-out pin | `valargroup/zcash_voting` | `e53e7448` | — | 2.0.0-rc.1 (stale org) |
+| **SDK `origin/main` pin** | `zodl-inc/zcash_voting` | `3c9900e5` | 2026-07-30 | **2.0.0-rc.1** |
+| `zodl-inc` default branch | `zodl-inc/zcash_voting` `main` | `c9b06e92` | 2026-06-03 | 0.10.2 *(old — main is behind)* |
+| **Ironwood line** | `zodl-inc/zcash_voting` `merge/valargroup-ironwood` | `d1b7eed8` | 2026-08-06 | **2.0.0-rc.3** |
+| **Newest release** | `valargroup/zcash_voting` `adam/release-zcash-voting-2.0.0-rc.5` | `d98fc12b` | 2026-08-08 | **2.0.0-rc.5** |
+| tx1_effects source | `valargroup/zcash_voting` `adam/ironwood-delegation-signing-effects` | `7d9e91b6` | 2026-08-07 | — |
+
+### 5.1 What main's pin is missing (8 commits)
+
+`3c9900e5 … merge/valargroup-ironwood` is **0 behind / 8 ahead**:
+
+```
+0d224b1d  2026-07-30  Specify delegation signing transaction
+0c057d0c  2026-07-30  Clarify delegation note and export format
+b5bc1683  2026-07-30  State TX1 cannot become a Zcash transaction
+d6995429  2026-07-30  Merge PR #151 agent/specify-delegation-signing-tx1
+98fe6496  2026-08-05  Fix and run the end-to-end Ironwood delegation proof test (#152)   ← Ironwood
+79d3b7b0  2026-08-05  Reject non-Ironwood/V3 notes at NoteInfo ingestion (#153)          ← Ironwood
+ea385645  2026-08-05  Prepare zcash_voting 2.0.0-rc.3 (#155)
+d1b7eed8  2026-08-06  Merge upstream/main into merge/valargroup-ironwood
+```
+
+**#152 and #153 are the Ironwood work.** #153 in particular — *reject non-Ironwood/V3 notes at
+NoteInfo ingestion* — is the crate learning what an Ironwood note is at the point where voting
+power is counted. Any "voting sees no eligible notes on Ironwood" symptom should be read against
+that commit first.
+
+### 5.2 rc.5 vs the Ironwood line — they have diverged
+
+`d1b7eed8 … adam/release-zcash-voting-2.0.0-rc.5` = **13 ahead / 11 behind — diverged.**
+
+rc.5 (on `valargroup`, 2026-08-08) carries, beyond rc.3:
+
+```
+53a69bcd  Require pir_layout handshake and pin runtime two-tier PIR (#162)
+7f715a59  Add local PIR smoke harness (#166)
+0b9a24ad  v2.0.0-rc.4
+786a9ba5  v2.0.0-rc.4 crates
+60f468a4  update vote commitment tree crates
+5ed0c56b  Display Keystone voting memos (#170)
+d98fc12b  Release zcash_voting 2.0.0-rc.5
+```
+
+And `adam/ironwood-delegation-signing-effects` carries `6f5b390a Add Ironwood delegation signing
+effects` (2026-08-06) — **that is the tx1_effects source Android adopted** (§6).
+
+**[OPEN — Q1]** Which ref do we ride? The Android PRs say they target `zcash_voting 2.0.0-rc.4`.
+rc.4/rc.5 live on `valargroup`; the Ironwood merge line lives on `zodl-inc`; they have diverged
+both ways. Somebody who owns the crate (Adam / nuttycom / dominik) needs to say which ref is the
+one CHP-on-Ironwood should pin. I will not guess this — picking wrong costs a full FFI rebuild
+and produces confusing failures at the PIR/proof layer.
+
+**[OPEN — Q2]** No `2.0.0-rc.4` commit exists in `zodl-inc/zcash_voting`; it is only on
+`valargroup`. Is `zodl-inc` meant to be the canonical fork going forward (SDK main points at it),
+and if so does it need rc.4/rc.5 merged in?
+
+---
+
+## §6 · The Android reference — MOB-1678
+
+dominik's "record of what changed that we could use for iOS". Two open PRs, both on
+`bugfix/MOB-1678`; he has said the final versions will be re-targeted at `main`.
+
+| | PR | Base | Size |
+|---|---|---|---|
+| App | [zodl-inc/zodl-android#2406](https://github.com/zodl-inc/zodl-android/pull/2406) | `maint/v3.9.x` | 17 files, +374 / −126 |
+| SDK | [zcash/zcash-android-wallet-sdk#2157](https://github.com/zcash/zcash-android-wallet-sdk/pull/2157) | `maint/v3.0.x` | 13 files, +494 / −122 |
+
+Both verified end-to-end on-device: a live multi-bundle CHP round completing construction,
+proving and submission.
+
+### 6.1 Fix A — `tx1_effects` replaces `sighash`
+
+**Symptom:** `delegate-vote` submissions rejected with HTTP 400 —
+`invalid message field: tx1 effects must be 821 bytes, got 0`.
+
+**Cause:** the vote-chain server now requires a versioned `tx1_effects` blob (`zcash_voting`
+2.0.0-rc.4). The app was still sending the legacy `sighash` field.
+
+**Fix:** thread `tx1_effects` from the JNI/FFI layer up into the API request body.
+
+**iOS bearing:** this crosses all three of our layers — the Rust FFI must expose it, the Swift
+wrapper must carry it, `VotingAPIClientLiveKey` must put it on the wire. Our
+`zcashlc_voting_get_delegation_submission` / `…_with_keystone_sig` are the symbols to look at.
+
+### 6.2 Fix B — stop writing round-level phase during bundle construction
+
+**Symptom:** multi-bundle rounds crash constructing bundle 1+ —
+`no alpha for round=…, bundle=1`.
+
+**Cause:** `build_governance_pczt_for_bundle` advanced the *round's* phase to
+`HotkeyGenerated` / `DelegationConstructed` during construction. That write was a **zodl-SDK
+addition the crate itself never does**. Once bundle 0 was proved, constructing bundle 1 was
+hard-rejected as a phase regression ("refusing to regress round phase"), leaving bundle 1's
+`alpha` NULL, which then crashed `build_and_prove_delegation`.
+
+**Fix:** remove every round-level phase write and gate from the voting flow. Expose the crate's
+own **per-bundle `DelegationPhase`** (`delegationPhasesNative`) and the sanctioned setup-reset
+recovery path (`resetVotingSessionStateNative`). Base every "should I (re)construct / prove /
+submit this bundle" decision on the per-bundle phase, with an overwrite-refusal-aware retry so a
+`resetVotingSessionState` recovery cannot leave a stale `Proved` read pointing at NULL data.
+
+**iOS bearing:** this is the one that matters most for us, because it is a *bug we may have
+inherited by construction* — it lives in the SDK's own additions over the crate, and the iOS SDK
+was written from the same brief as the Android one. **[TO VERIFY — V1]** does our
+`zcashlc_voting_build_pczt` write round phase the way Android's did? The answer decides whether
+we port a fix or discover we never had the bug.
+
+### 6.3 Also on the Android app PR
+
+One unrelated carry: `MigrationSendingVM` no longer bypasses `DRIVE_LOCK`. Not ours.
+
+---
+
+## §7 · Ironwood — what is actually known
+
+### 7.1 The crate is Ironwood-aware, at rc.3+
+
+`#152` (end-to-end Ironwood delegation proof test) and `#153` (reject non-Ironwood/V3 notes at
+NoteInfo ingestion) landed 2026-08-05 on `merge/valargroup-ironwood`. So "make polling work with
+Ironwood" is substantially **a pin-and-wire problem, not a protocol problem** — the protocol work
+exists, upstream, and nuttycom's `7d8e9b15` reinstated the FFI module against it.
+
+### 7.2 Our Ironwood floor
+
+Our librustzcash pin `13ce6c4e` already carries the Ironwood work our own stack rides (per the
+IW-6 re-ride: engine on librustzcash `main`, valargroup graph retired). **[TO VERIFY — V2]** that
+the `zcash_voting` ref we pick resolves against `13ce6c4e` as a single graph instance — a voting
+crate built against a different librustzcash generation will not co-resolve. This is the same
+class of failure the Cargo.toml comment in our own repo warns about.
+
+### 7.3 Carried-forward security findings
+
+From the May-15 review, still open and still relevant — file paths have changed, findings have
+not:
+
+- **No Tor, no TLS/SPKI pinning** on vote/PIR/helper traffic. `ServerHealthTracker` probes every
+  configured server every 60 s while the screen is alive. Voting de-anonymises the user's IP to
+  every vote server and PIR endpoint.
+- **Dynamic config is not hash-pinned**; `vote_servers` / `pir_endpoints` are not signed. A
+  hostile CDN can swap the endpoint list for servers that report truthful chain data while
+  harvesting IP + timing.
+- **The hotkey is a full BIP-39 mnemonic** in the keychain
+  (`kSecAttrAccessibleWhenUnlockedThisDeviceOnly`, no biometric ACL), and `accountTag` is
+  hardcoded `""` — one voting identity shared across all accounts on the device.
+- **Drafts + vote records live in `UserDefaults` plaintext**.
+- Seed/mnemonic bytes are not zeroized after use.
+
+These are not this task's scope, but they should not be silently re-enabled either.
+**[OPEN — Q3]** does re-enabling CHP require any of these closed first? That is Andrea's and
+security's call, not mine.
+
+---
+
+## §8 · Plan sketch (not yet approved)
+
+Ordered so each step is independently gateable. Nothing here has been started.
+
+1. **D1 decision** (§4.3) — merge `origin/main` forward into `chp-re-enable`, or re-base off main.
+2. **Q1 decision** (§5.2) — which `zcash_voting` ref to pin.
+3. **SDK Rust**: adopt main's wiring — `mod voting` ungated, dependency + patch stanza restored at
+   the chosen ref. Full FFI rebuild, all needed slices.
+4. **SDK Swift**: the four `Rust/Voting/*.swift` files back, reconciled against the ported FFI.
+5. **V1 audit** (§6.2) — check our `build_pczt` for the round-phase write. Port Fix B if present.
+6. **Fix A** (§6.1) — `tx1_effects` end-to-end: FFI → Swift wrapper → `VotingAPIClientLiveKey`.
+7. **App**: define `VOTING_ENABLED` in the right configurations — *which* is itself a question
+   (internal-only? testnet? all?). **[OPEN — Q4]**
+8. **Gates**: full zodl suite + testnet `generic/platform=iOS` build + a live multi-bundle round
+   on device, mirroring Android's acceptance.
+
+---
+
+## §9 · Working rules for this task
+
+1. **Pin before you move.** Any new crate/rev/branch that enters the graph gets a row in §5 with
+   its date and version, in the same commit that introduces it.
+2. **Ironwood-first.** A `zcash_voting` ref that is not on the Ironwood line is not a candidate,
+   however new it is.
+3. **Do not invent the answer to Q1/Q2.** Crate ownership is Adam's / nuttycom's / dominik's.
+   Ask; do not pick.
+4. **Android is a reference, not a spec.** Their fixes were verified on their stack. Every port
+   gets checked against our code before it is applied — §6.2 may be a bug we never had.
+5. **No UI or copy invention.** CHP has 297 existing `coinVote.*` keys. If a state needs words
+   that do not exist, that is identified and handed to product — never drafted here.
+6. **Security findings in §7.3 are carried, not cleared.** Re-enabling does not close them.
+7. **Commit trailers and branches** follow the existing conventions: zodl → `origin`
+   (`zodl-inc/zodl-ios`); SDK checkout is push-guarded, Lukas pushes it by hand.
+
+---
+
+## §10 · Log
+
+| Date | What |
+|---|---|
+| 2026-08-10 | Starting point pinned (§1). `chp-re-enable` cut in both repos at `fea8d600` / `93a11081`. Three off-switches mapped (§3). #1855 restore found on SDK `main`, 12 commits ahead of us (§4). Crate ladder traced across both orgs (§5). Android MOB-1678 fixes read and summarised (§6). Open: D1, Q1–Q4, V1–V2. |
