@@ -7,7 +7,7 @@ explicitly labelled open question**. Nothing is inferred and left unmarked. If a
 "verified", it was read out of the repo or the GitHub API at the time stamped on it — not
 remembered.
 
-**Status:** starting point pinned, branches cut. No code changed yet.
+**Status:** starting point pinned, branches cut; same-day upstream movement recorded in §1.5. No code changed yet.
 **Branches:** `chp-re-enable` in both zodl-ios and zcash-swift-wallet-sdk.
 **Ticket:** [MOB-1678 — Coinholder polling adoption](https://linear.app/zodl/issue/MOB-1678/coinholder-polling-adoption)
 (the umbrella item; dominik's Android PRs in §6 are the Android half of the same ticket).
@@ -64,6 +64,50 @@ full FFI rebuild, not just a Swift build.
   uncommitted deliberately.
 - SDK: clean.
 
+### §1.5 · Movement since the pin — the same day (blind re-verification, 2026-08-10 ~17:30 UTC)
+
+The pin in §1 held for hours, not days. A blind re-derivation (two delegated agents, neither
+shown this document) found the world moved the same afternoon:
+
+**SDK `origin/main` absorbed the ironwood-slipstream line.** PR #1954 (`merge/ironwood-slipstream`,
+nuttycom, merged 2026-08-10) moved main `468d1e9f` → `a1234039`. That merge carries the lineage our
+own stack descends from, so our relation to main collapsed from **277 ahead / 12 behind** to
+**35 ahead / 17 behind** (merge-base `ab4685d2` → `9d0277de`). The 17 we are behind now contain
+exactly what this task wants from upstream: the #1855 voting-restore trio, the rc.3 adoption,
+`0076d56a` (slipstream dependency pin shifted to `slipstream-internal`), and the Keystone
+batch-signing redaction pin `1a544bf4`.
+
+**Main's voting pin moved rc.1 → rc.3, and the git patch is gone.** `origin/main` Cargo.toml now
+reads `zcash_voting = { version = "2.0.0-rc.3" }` resolving from crates.io, with **no**
+`[patch.crates-io]` zcash_voting entry — §4.2's wiring description is superseded. Main's
+librustzcash patch rev also moved to `41a1e17c…` (ours: `13ce6c4e…`), so absorbing main is an
+FFI-generation move plus a full rebuild, not a plain merge.
+
+**The ported Swift wrapper drifted within hours.** `commitVote` on main no longer takes
+`networkId:` (the rc.3 adoption derives it internally); the wrapper is now 1,940 LOC. Diff work
+must target main-of-today, not main-of-this-morning.
+
+**crates.io is the canonical channel — and rc.1 was never on it.** Published: 0.11.0 (Jun 3),
+1.0.0 (Jun 7, max stable), 2.0.0-rc.2 (Jul 28), rc.3 (Aug 5), rc.4 (Aug 7), rc.5 (Aug 8,
+max_version). 2.0.0-rc.1 was **never published** — which is *why* the old wiring needed a git
+pin, and why §5's "which git ref?" framing was partly malformed: for published rcs the
+distribution is crates.io, and the zodl-inc/valargroup fork divergence stops mattering unless we
+need unreleased commits.
+
+**Android moved today too.** zodl-android #2408 (maint/v3.9.x → main) MERGED; #2406/#2157 still
+OPEN on maint bases and still growing (#2157 now 14 files, +505/−124); no main-targeted successor
+PRs exist yet in either Android repo.
+
+**valargroup is still hot.** Since rc.5: `main`@`a7a8a45` (#168 "bound vote tree sync", Aug 8)
+and `fix/bind-round-auth-to-round-id`@`f2f7c0a` (**Aug 10**, "Bind the advertised PIR layout into
+round-auth v2 signatures") — an rc.6 era is forming. The plan must carry the pin as a rule
+("newest published rc at pin time, floor rc.3") with a re-check gate, not a frozen number.
+
+**Consequences for the open items:** D1 (§4.3) became cheap — 17 commits, exactly the ones we
+want. Q1 reshapes from "ask the crate owners which git ref" into a decision rule we can own.
+Q2 largely dissolves for published versions. One §2.1 arithmetic error found and fixed (48 files,
+not 47) — the only authoring error the blind pass surfaced.
+
 ---
 
 ## §2 · Code overview — the anatomy of CHP
@@ -72,7 +116,7 @@ Four layers, top to bottom. Sizes are current, on our branch.
 
 ### 2.1 App — `zodl-ios`
 
-**~15,070 lines of Swift across 47 files**, plus 5 test files and **297 `coinVote.*` string keys**
+**15,071 lines of Swift across 48 files**, plus 5 test files and **297 `coinVote.*` string keys**
 in the catalog.
 
 | Area | Path | What it is |
@@ -201,7 +245,11 @@ would suggest if we assumed we were starting from scratch.
 
 ### 4.2 What main's wiring looks like
 
-Read out of `origin/main` 2026-08-10:
+> **Superseded the same day — see §1.5.** After PR #1954, main pins `zcash_voting = "2.0.0-rc.3"`
+> from crates.io and the `[patch.crates-io]` zcash_voting stanza below no longer exists. The
+> morning snapshot is kept for the record.
+
+Read out of `origin/main` 2026-08-10 (morning):
 
 ```rust
 // rust/src/lib.rs:96 — no cfg, no feature
@@ -257,6 +305,11 @@ builds from.
 ---
 
 ## §5 · The crate ladder — the volatile layer
+
+> **Amended same day — see §1.5.** The SDK-main row moved to rc.3/crates.io hours after this
+> table was written, and the publication facts reshape it: crates.io carries 0.11.0, 1.0.0,
+> rc.2, rc.3, rc.4, rc.5 (max) — and **rc.1 was never published**. Treat the table below as the
+> morning snapshot; the operative pin rule is in §1.5.
 
 `zcash_voting` has moved through five release candidates in eleven days, across two orgs. This
 table is the reason §1 exists.
@@ -459,3 +512,4 @@ Ordered so each step is independently gateable. Nothing here has been started.
 | Date | What |
 |---|---|
 | 2026-08-10 | Starting point pinned (§1). `chp-re-enable` cut in both repos at `fea8d600` / `93a11081`. Three off-switches mapped (§3). #1855 restore found on SDK `main`, 12 commits ahead of us (§4). Crate ladder traced across both orgs (§5). Android MOB-1678 fixes read and summarised (§6). Open: D1, Q1–Q4, V1–V2. |
+| 2026-08-10 (eve) | Blind re-verification by two delegated agents (neither shown this doc): one authoring error found+fixed (§2.1 → 48 files); same-day movement recorded as §1.5 — SDK main absorbed ironwood-slipstream via #1954 (now 35↑/17↓), voting pin rc.1→rc.3 crates.io (patch stanza gone), librustzcash rev → `41a1e17c`, `commitVote` lost `networkId:`, rc.1 never published on crates.io, valargroup round-auth-v2 branch pushed today. D1 cheap; Q1 → pin *rule* (newest published rc, floor rc.3, re-check gate); Q2 dissolved for published versions. M2 (tx1_effects) + V1/M4 (round-phase audit) re-verified still standing on today's main. |
