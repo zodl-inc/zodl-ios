@@ -714,7 +714,8 @@ func serviceConfigRetainingRoundsWithValidSignatures(
         voteServers: config.voteServers,
         pirEndpoints: config.pirEndpoints,
         supportedVersions: config.supportedVersions,
-        rounds: authenticatedRounds
+        rounds: authenticatedRounds,
+        pirLayout: config.pirLayout
     )
 }
 

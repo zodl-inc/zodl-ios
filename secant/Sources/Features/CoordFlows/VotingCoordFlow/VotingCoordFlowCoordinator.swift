@@ -1731,6 +1731,7 @@ extension VotingCoordFlow {
             let chainNodeUrl = state.serviceConfig?.voteServers.first?.url,
             let voteServerURLs = state.serviceConfig?.voteServers.map(\.url).nonEmpty,
             let pirEndpoints = state.serviceConfig?.pirEndpoints.map(\.url).nonEmpty,
+            let pirLayout = state.serviceConfig?.pirLayout,
             let accountId = state.selectedWalletAccount?.id
         else {
             LoggerProxy.error("serviceConfig/activeSession/selectedAccount unexpectedly nil during vote submission; aborting")
@@ -1752,7 +1753,7 @@ extension VotingCoordFlow {
             submitAtDeadline = nil
         }
 
-        return .run { [backgroundTask, votingAPI, votingCrypto, mnemonic, walletStorage] send in
+        return .run { [backgroundTask, votingAPI, votingCrypto, mnemonic, walletStorage, pirLayout] send in
             let bgTaskId = await backgroundTask.beginTask("Batch vote submission")
             _ = await backgroundTask.beginContinuedProcessing(
                 "co.zodl.voting.*",
@@ -1785,6 +1786,9 @@ extension VotingCoordFlow {
                         roundName: roundName,
                         pirEndpoints: pirEndpoints,
                         expectedSnapshotHeight: expectedSnapshotHeight,
+                        pirDepth: pirLayout.pirDepth,
+                        tier0Layers: pirLayout.tier0Layers,
+                        tier1Layers: pirLayout.tier1Layers,
                         delegationPrepared: delegationPrepared,
                         seedFingerprint: seedFingerprint,
                         votingCrypto: votingCrypto,
@@ -2008,6 +2012,7 @@ extension VotingCoordFlow {
         else { return .none }
         guard
             let pirEndpoints = state.serviceConfig?.pirEndpoints.map(\.url).nonEmpty,
+            let pirLayout = state.serviceConfig?.pirLayout,
             let seedFingerprint = votingSeedFingerprint(for: state.selectedWalletAccount),
             let accountId = state.selectedWalletAccount?.id
         else {
@@ -2027,7 +2032,7 @@ extension VotingCoordFlow {
         let accountIndex = votingAccountIndex(for: state.selectedWalletAccount)
         let roundName = activeSession.title
 
-        return .run { [votingCrypto, mnemonic, walletStorage] send in
+        return .run { [votingCrypto, mnemonic, walletStorage, pirLayout] send in
             let hotkeySeed = try [UInt8](walletStorage.exportVotingHotkey(accountId).storedSecret.value())
             let noteChunks = cachedNotes.smartBundles().bundles
             guard Int(bundleCount) <= noteChunks.count else {
@@ -2071,7 +2076,10 @@ extension VotingCoordFlow {
                     bundleNotes,
                     pirEndpoints,
                     expectedSnapshotHeight,
-                    networkId
+                    networkId,
+                    pirLayout.pirDepth,
+                    pirLayout.tier0Layers,
+                    pirLayout.tier1Layers
                 )
                 totalCached += result.cachedCount
                 totalFetched += result.fetchedCount
@@ -2774,6 +2782,7 @@ extension VotingCoordFlow {
         guard
             let pirEndpoints = state.serviceConfig?.pirEndpoints.map(\.url),
             !pirEndpoints.isEmpty,
+            let pirLayout = state.serviceConfig?.pirLayout,
             let accountId = state.selectedWalletAccount?.id
         else {
             LoggerProxy.error("serviceConfig/selectedAccount unexpectedly nil during Keystone delegation proof")
@@ -2793,7 +2802,7 @@ extension VotingCoordFlow {
             ))
         }
 
-        return .run { [backgroundTask, votingCrypto, votingAPI, mnemonic, walletStorage] send in
+        return .run { [backgroundTask, votingCrypto, votingAPI, mnemonic, walletStorage, pirLayout] send in
             let bgTaskId = await backgroundTask.beginTask("Keystone delegation proof")
             do {
                 let senderPhrase = try walletStorage.exportWallet().seedPhrase.value()
@@ -2852,7 +2861,10 @@ extension VotingCoordFlow {
                         accountIndex,
                         roundName,
                         pirEndpoints,
-                        expectedSnapshotHeight
+                        expectedSnapshotHeight,
+                        pirLayout.pirDepth,
+                        pirLayout.tier0Layers,
+                        pirLayout.tier1Layers
                     ) {
                         switch event {
                         case .progress(let progress):
@@ -3499,6 +3511,9 @@ extension VotingCoordFlow {
         roundName: String,
         pirEndpoints: [String],
         expectedSnapshotHeight: UInt64,
+        pirDepth: UInt32,
+        tier0Layers: UInt32,
+        tier1Layers: UInt32,
         delegationPrepared: Bool = false,
         seedFingerprint: Data? = nil,
         votingCrypto: VotingCryptoClient,
@@ -3568,7 +3583,7 @@ extension VotingCoordFlow {
                 for try await event in votingCrypto.buildAndProveDelegation(
                     roundId, bundleIndex, bundleNotes,
                     senderSeed, hotkeySeed, networkId, accountIndex, roundName,
-                    pirEndpoints, expectedSnapshotHeight
+                    pirEndpoints, expectedSnapshotHeight, pirDepth, tier0Layers, tier1Layers
                 ) {
                     switch event {
                     case .progress(let progress):

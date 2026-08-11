@@ -99,7 +99,10 @@ struct VotingCryptoClient {
         _ bundleNotes: [NoteInfo],
         _ pirEndpoints: [String],
         _ expectedSnapshotHeight: UInt64,
-        _ networkId: UInt32
+        _ networkId: UInt32,
+        _ pirDepth: UInt32,
+        _ tier0Layers: UInt32,
+        _ tier1Layers: UInt32
     ) async throws -> DelegationPirPrecomputeResult
     /// Build and prove the real delegation ZKP (#1). Long-running.
     /// Loads data from voting DB and wallet DB, fetches IMT proofs from server,
@@ -123,9 +126,12 @@ struct VotingCryptoClient {
         _ accountIndex: UInt32,
         _ roundName: String,
         _ pirEndpoints: [String],
-        _ expectedSnapshotHeight: UInt64
+        _ expectedSnapshotHeight: UInt64,
+        _ pirDepth: UInt32,
+        _ tier0Layers: UInt32,
+        _ tier1Layers: UInt32
     ) -> AsyncThrowingStream<ProofEvent, Error>
-        = { _, _, _, _, _, _, _, _, _, _ in AsyncThrowingStream { $0.finish() } }
+        = { _, _, _, _, _, _, _, _, _, _, _, _, _ in AsyncThrowingStream { $0.finish() } }
     /// Extract Orchard FVK bytes from a UFVK string.
     var extractOrchardFvkFromUfvk: @Sendable (_ ufvkStr: String, _ networkId: UInt32) throws -> Data
     /// Build, sign, and persist the cast-vote commitment for one proposal in a single call.

@@ -9,6 +9,30 @@ struct VotingServiceConfig: Codable, Equatable, Sendable {
     let pirEndpoints: [ServiceEndpoint]
     let supportedVersions: SupportedVersions
     let rounds: [String: RoundEntry]
+    /// PIR tree geometry the round's dynamic config advertises. Required, not optional:
+    /// `zcash_voting` (rc.4+) runs a config/server layout handshake and fails closed before
+    /// any private query if a caller's layout disagrees with what the PIR server serves, so a
+    /// wallet that cannot decode this has nothing safe to fall back to.
+    let pirLayout: PirLayout
+
+    /// Mirrors `zcash_voting::config::PirLayout` field for field.
+    struct PirLayout: Codable, Equatable, Sendable {
+        let pirDepth: UInt32
+        let tier0Layers: UInt32
+        let tier1Layers: UInt32
+
+        enum CodingKeys: String, CodingKey {
+            case pirDepth = "pir_depth"
+            case tier0Layers = "tier0_layers"
+            case tier1Layers = "tier1_layers"
+        }
+
+        init(pirDepth: UInt32, tier0Layers: UInt32, tier1Layers: UInt32) {
+            self.pirDepth = pirDepth
+            self.tier0Layers = tier0Layers
+            self.tier1Layers = tier1Layers
+        }
+    }
 
     struct ServiceEndpoint: Codable, Equatable, Sendable {
         let url: String
@@ -70,13 +94,15 @@ struct VotingServiceConfig: Codable, Equatable, Sendable {
         voteServers: [ServiceEndpoint],
         pirEndpoints: [ServiceEndpoint],
         supportedVersions: SupportedVersions,
-        rounds: [String: RoundEntry]
+        rounds: [String: RoundEntry],
+        pirLayout: PirLayout
     ) {
         self.configVersion = configVersion
         self.voteServers = voteServers
         self.pirEndpoints = pirEndpoints
         self.supportedVersions = supportedVersions
         self.rounds = rounds
+        self.pirLayout = pirLayout
     }
 
     enum CodingKeys: String, CodingKey {
@@ -85,6 +111,7 @@ struct VotingServiceConfig: Codable, Equatable, Sendable {
         case pirEndpoints = "pir_endpoints"
         case supportedVersions = "supported_versions"
         case rounds
+        case pirLayout = "pir_layout"
     }
 
 }
