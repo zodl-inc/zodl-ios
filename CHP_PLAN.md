@@ -25,9 +25,10 @@ task heading, and spliced verbatim. The same rule governs execution: delegates w
 
 **Companion files:** in-task references to `## CORRECTIONS`, `## PROBE EVIDENCE`,
 `## INTERFACES-FOR-APP`, and `## VERIFICATION EVIDENCE` resolve to the authoring lane's
-verbatim deliverable in `docs/chp-plan/` — `plan-sdk-lane.md` for Tasks 1–4,
-`plan-app-lane.md` for Tasks 7–14. Read the referenced item there before executing the step
-that cites it.
+verbatim deliverable in `docs/chp-plan/` — `plan-sdk-lane.md` for Tasks 1–4 (its
+`## INTERFACES-FOR-APP` also carries Task 4B's addendum), `plan-app-lane.md` for Tasks 7–14,
+and `plan-f1-amendment.md` for Task 4B + step 8.14 (its `## EVIDENCE` block is that lane's
+provenance). Read the referenced item there before executing the step that cites it.
 
 ## Workspace (verified 2026-08-11)
 
@@ -69,8 +70,9 @@ mode** (no `LocalPackages/`); T5 switches it to local FFI mode. All commit trail
 
 ## Task ladder
 
-Order is load-bearing: **T0 → T1–T4 (SDK wave) → T5–T6 (rebuild + SDK gates) → T7
-(enumeration) → T8–T13 (burn the list) → T14–T15 (green gates) → T16 (wrap-up)**.
+Order is load-bearing: **T0 → T1–T4 + T4B (SDK wave; 4B = the F1 signing passthrough, added
+2026-08-11 after the recon resolved the software-signing gap) → T5–T6 (rebuild + SDK gates) →
+T7 (enumeration) → T8–T13 (burn the list) → T14–T15 (green gates) → T16 (wrap-up)**.
 
 The `S1–S6` / `A1–A7` codes in task headings are the spec's change items, defined in
 `CHP_DESIGN.md` §3 (S = SDK workstream, A = app workstream). Every task assumes all
