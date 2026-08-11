@@ -142,6 +142,11 @@ which is why the crate pin is forced by server behavior (§6.1's `tx1_effects` 4
 2. **No semantics in the adapters.** The one known place our layer added logic the crate never
    does — Android's round-phase writes during PCZT construction (§6.2) — is precisely what broke
    multi-bundle rounds. Any FFI/SDK addition beyond marshalling is a defect candidate by default.
+3. **No wire mirrors** *(added 2026-08-11 from the Vizor study, §12)*: adapters marshal the
+   crate's own `zcash_voting::wire` types; they never maintain parallel serialization structs.
+   The reference wallet keeps zero wire DTOs — which is why rc.4's wire changes were test-only
+   diffs for Vizor and a production bug for Android. Our FFI's 359-line `json.rs` mirror layer
+   is scheduled for deletion (§12.4, item 1).
 
 Four layers, top to bottom. Sizes are current, on our branch.
 
@@ -792,7 +797,7 @@ phase gate, A-S's point); **Q4 gains its working answer** (flag on `zodl-interna
 `zodl-testnet` first; `zodl-production` only after soak — panel consensus, Lukas confirms at
 design review). The orchestrator's analysis was overruled twice; that was the design.
 
-### 11.7 · Consolidated ladder (panel synthesis — input to the spec, not the spec)
+### 11.7 · Consolidated ladder (panel synthesis) — **SUPERSEDED by §12.4 (ladder v2)**
 
 0. ~~R1 test first~~ **R1 RESOLVED → W2 (§11.9)**: no design work; step 5 below simply follows
    the sanctioned 7-step sequence + 3 traps verbatim. Optionally still: probe whether the
@@ -860,9 +865,17 @@ self-heals only on a second record call; the sequence above avoids the state ent
 (T3) the between-steps hard-errors are correct behavior — surface, don't swallow.
 
 **Android corroboration:** their granular API doesn't even take a position at commit; their
-`SubmitVotesUseCase` runs exactly this order (commit → submit → store hash → await → parse
-`leaf_index` → `recordVcPosition` → submit shares), and their SDK test passes
-`vcTreePosition = 0` literally.
+`SubmitVotesUseCase` runs this order (commit → submit → store hash → await → parse
+`leaf_index` → `recordVcPosition` → then `recoverCommittedVote` re-derives payloads — *precision
+amended 2026-08-11: their step 6 is the recovery accessor, not a commit replay; physics
+identical*), and their SDK test passes `vcTreePosition = 0` literally.
+
+> **AMENDED 2026-08-11 (Vizor study, §12): steps 4–6 above are superseded.** The reference
+> wallet showed the crate provides `confirmation::confirm_vote_submission` (steps 3–5 in ONE
+> atomic DB transaction, no manual `leaf_index` parsing) and `share::recover_wire_json` /
+> `with_late_bound` (step 6 without any second commit). Both exist at our pin. Ladder v2
+> (§12.4) adopts them; traps T1/T2 dissolve with the replay; T3 stands. The W2 verdict and the
+> physics of this section are unchanged — only the mechanism got simpler.
 
 **New open item — [OPEN — Q5]:** does the helper server cross-check the submitted
 `tree_position` against its own VC-tree view (loud vs. silent failure on a wrong position)?
@@ -881,6 +894,94 @@ derivation caught the scope truth; convergence across firewalled arms is the str
 overengineering guard we have. The one open technical question that could change the plan's
 shape is R1 — which is why it is task zero.
 
+## §12 · The reference wallet — Vizor three-way study (2026-08-11)
+
+The last concept-phase input, per Lukas's call: *"see it in action somewhere else."* One Opus
+delegate studied `chainapsis/vizor-wallet` — Valar's own Flutter reference wallet — and ran the
+three-way comparison (Vizor / Android / this plan) across nine dimensions. Full report retained
+by the orchestrator; decisive evidence quoted below.
+
+### 12.1 · Snapshot + the authorship fact
+
+`chainapsis/vizor-wallet`, HEAD one day old. Flutter + Rust via `flutter_rust_bridge 2.11.1` —
+and the architectural story is one config line: `rust_input: crate::api,zcash_voting::wire`.
+**The bridge codegen scans the crate's own `wire` module; Vizor writes zero wire DTOs.**
+17,303 hand-written Dart voting lines (≈ our 15,071 Swift), ~2,400 adapter Rust lines.
+`main` pins rc.2 (releases cut from it); active `adam/*` branches chase rc.4/rc.5 within days,
+always `=exact`. **The crate's top committers (~149 of 231 commits) are Vizor's voting
+authors** — the reference wallet is the API's intent, in code. ("Vizor PRs moved logic into the
+crate" = the same people refactoring across two repos: crate #120 `feat!: v2 voting api`,
++21,429/−2,149, explicitly *"so wallet clients can reuse one implementation instead of
+duplicating"* — after which Vizor deleted 660 lines of app-side tree-sync/workflow/recovery.)
+
+### 12.2 · Verdicts (D1–D9, compressed)
+
+| Dim | Verdict | One line |
+|---|---|---|
+| D1 layering | **DEVIATES→rule adopted** | Vizor's adapter is provably semantics-free; our FFI carries wire mirrors + phase-flattening → §2.0 rule 3, cleanup in ladder v2 |
+| D2 vote-cast | CONFIRMS | one-shot confirmed; `commit_batch` (per-bundle batch variant) noted as available |
+| D3 R1 sequence | **CONFIRMS physics, simpler mechanism** | third independent confirmation; `confirm_vote_submission` + late-binding replace our steps 4–6 (§11.9 amendment) |
+| D4 hotkey | CONFIRMS | format-swap-only reading holds; all three wallets fail-closed, no backup warning — R5 remains real product ground |
+| D5 config/trust | **DEVIATES** | the crate does Ed25519 round verification itself (`config/mod.rs:742`); both mobile apps hand-roll a duplicate. **Endorsement: zero hits in crate AND reference — a zodl invention, silent-failing on both mobiles** |
+| D6 wire | **DEVIATES→adopted** | crate `to_json()` as sole serializer made rc.4 a test-only diff for Vizor (their whole rc.2→rc.5: ~4 Dart lines + adapter mechanics, net-negative) vs Android's production bug |
+| D7 recovery | **DEBT, recorded** | the reference leans on `session::resume_plan` at 25+ sites; both mobile apps hand-roll. Not adopted this release (would restructure the frozen CoordFlow); §11 R3 reclassified from "fine" to sized debt |
+| D8 archaeology | CONFIRMS §2.0 | the stop-doing list is concrete: tree-sync, workflow state, recovery wrappers, confirmation DTOs — all deleted app-side by the reference when the crate absorbed them |
+| D9 both-directions | mixed | adoption candidates: crate config auth, crate wire, resume_plan, commit_batch. Shared-mobile overengineering candidates: app Ed25519, endorsement gate, wire mirrors, bespoke circuit breakers |
+
+### 12.3 · Adopted / scheduled / escalated
+
+**Adopted into ladder v2 (all three are passthroughs to crate-owned operations — MORE
+semantics-free than what they replace, not less):**
+
+1. `confirmation::confirm_vote_submission` FFI+Swift passthrough (~50+25 lines; deletes ~40 app
+   lines incl. the manual `leaf_index` parser and the non-atomic two-write window).
+2. `share::recover_wire_json` passthrough (~40+20 lines; deletes ~80 app lines; no
+   replay-commit; makes `tx1_effects` + single-share wire correctness free).
+3. Wire-mirror deletion: `rust/src/voting/json.rs` (359 lines) retired; adapters marshal
+   `zcash_voting::wire::*` (≈1 day; pays back every future rc). Includes auditing our FFI's
+   phase-flattening against crate phases (D1).
+
+**Scheduled phase-2 (after the flag is green, before mainnet):** crate config resolution
+(`resolve_static_voting_config` / `resolve_voting_config`) — deletes the app-side
+`RoundAuthenticator` Ed25519 duplicate and makes `pir_layout` handling crate-owned. ~1–1.5 days,
+trust-critical, deliberately not bundled into the bump.
+
+**Escalated to product (zero engineering here):** the **endorsement gate** — the concept exists
+in neither the crate nor the reference; on both mobile apps a missing/unregistered/unreachable
+endorser renders as "No polls" with no distinct state. Explicit-state fix needs a new state and
+likely a new string → product decision per §7.5's gate. This is CEO plan item 1, now with
+evidence. **[OPEN — Q6, product]**
+
+### 12.4 · Ladder v2 (supersedes §11.7)
+
+1. **SDK bump + de-mirror**: `=2.0.0-rc.5`; thread `PirLayout` (`delegation.rs:419/461/542` +
+   FFI struct); **delete `json.rs` mirrors, marshal crate wire types** (tx1_effects +
+   single-share become free); audit phase-flattening.
+2. **SDK additions (thin passthroughs)**: `confirm_vote_submission` + `recover_wire_json`
+   (+ Swift wrappers). Upstream-PR both to the SDK repo afterwards, as Android did theirs.
+3. **FFI rebuild** (`init-local-ffi.sh`; `--universal` before archives) + `nm -gU` gate for
+   `zcashlc_voting_commit_vote` and the two new symbols.
+4. **SDK gates**: `swift build` + OfflineTests (voting suite unmodified).
+5. **Flag on** `zodl-internal` + `zodl-testnet` → compiler enumerates the app work list.
+6. **App adaptations** (net deletions): six→one `commitVote` collapse; hotkey format swap
+   (~60 lines, no migration); **N1 branch-ID fix** (publicize `nu63ConsensusBranchID`);
+   `pir_layout` decode; static-config URL re-pin; sequence per §11.9-as-amended
+   (commit(0) → broadcast → mark → `confirmVoteSubmission` → `recoverWireJson` → submit
+   shares; T3 stands: mid-sequence hard-errors are surfaced, never swallowed).
+7. **Tests + testnet E2E round** (only one prod round registered; plan around the crate's
+   local-PIR harness #166 and `zvote.zodl.com`). Production flag: after soak + the R5 and Q6
+   product decisions.
+
+### 12.5 · Corrections this study forced
+
+- **Android app PR #2406 is still OPEN** (base `maint/v3.9.x`); only SDK #2157 merged
+  (2026-08-10). A-S's "both MERGED" claim — and the orchestrator's relay of it — corrected.
+- §11.9's Android-corroboration line made precise (their step 6 = `recoverCommittedVote`).
+- Vizor residuals, honestly: their rc.5 work sits on unmerged `adam/*` branches (the reference's
+  *shipped* artifact may still be rc.2); their user-facing hotkey copy is undetermined (no l10n
+  files); D8 causality rests on authorship + timelines, not PR threads; Q5 (server-side
+  `tree_position` cross-check) unchanged — still a Valar question.
+
 ---
 
 ## §10 · Log
@@ -888,6 +989,7 @@ shape is R1 — which is why it is task zero.
 | Date | What |
 |---|---|
 | 2026-08-10 | Starting point pinned (§1). `chp-re-enable` cut in both repos at `fea8d600` / `93a11081`. Three off-switches mapped (§3). #1855 restore found on SDK `main`, 12 commits ahead of us (§4). Crate ladder traced across both orgs (§5). Android MOB-1678 fixes read and summarised (§6). Open: D1, Q1–Q4, V1–V2. |
+| 2026-08-11 | **VIZOR STUDY → §12** (Lukas's "see it in action somewhere else"): reference wallet = crate authors' own code (149/231 crate commits), adapter provably semantics-free, zero wire DTOs (FRB scans `zcash_voting::wire`). R1 physics confirmed a 3rd time; §11.9 steps 4–6 SUPERSEDED by `confirm_vote_submission` (atomic) + `recover_wire_json` (late-bind, no replay) — traps T1/T2 dissolve. Adopted: the two passthroughs + wire-mirror deletion (§2.0 rule 3; rc.4 wire becomes free) → **ladder v2 (§12.4)**. Scheduled phase-2: crate config resolution. Escalated Q6: endorsement gate = zodl invention absent from crate AND reference, silent on both mobiles → product w/ evidence (CEO item 1). resume_plan omission reclassified DEBT. Corrections: #2406 still OPEN (A-S + orchestrator relay wrong); Android step-6 precision. Concept phase COMPLETE — five inputs cross-checked (old iOS, Android, CEO plan, crate history, reference wallet). |
 | 2026-08-10 (night 4) | **R1 RESOLVED → W2** (§11.9): `vc_tree_position` is metadata, not crypto (exhaustive circuit/sighash/nullifier sweep = zero refs); correction = one-u64 recovery-JSON rewrite, byte-identical everything else, "refusing to assume position 0" guard makes wrong-position unshippable; sanctioned 7-step sequence + 3 traps captured spec-verbatim; Android ships the identical order; iOS step 6 = idempotent commitVote replay, ZERO FFI change. RNG confound structurally void (one commit only). Rung 3 unnecessary. New Q5 (server-side tree_position cross-check — Valar, non-blocking). Last open technical question closed; design presentation unblocked. |
 | 2026-08-10 (night 3) | CHP-M merge LANDED: SDK `chp-re-enable` = `a3823651` (36↑/0↓, cargo check exit 0 with voting compiled; pin stays `13ce6c4e` — main's `41a1e17c` refuted by the resolver; accidental rc.5 E0061 @ `delegation.rs:420` = first located bump task). Checkouts restored; docs → worktree. Four-proposal panel (2×2 model×PR) adjudicated → §11: spine ×8 unanimous, D1–D5 ruled, N1 branch-ID bug (`0xC8E7_1055`→`0x37a5_165b`), R1 vc_tree_position = the one design risk (test-first, task zero), zero-new-code CONFIRMED-strengthened (~48% mechanical + ~35 lines; 0% of Android's new logic transfers). §7.5 amended ×2 (panel overruled the orchestrator, as designed); V1 CLOSED; Q4 working answer = internal+testnet first. Verbatim reports: `docs/chp-panel/`. |
 | 2026-08-10 (night 2) | Design thesis ratified with Lukas → §7.5: same experience, new spine — UI/strings/flows FROZEN, crate taken as-is, all delta absorbed in the middleman (FFI → SDK wrapper → app dependency clients); compat-shim and UI-rebuild alternatives rejected on record; four leak points named (hotkey model, six→one consolidation, tx1_effects+pir_layout, per-bundle phase); zero-new-strings/zero-new-screens gate added. nuttycom's base-on-main ruling in execution: delegated merge of origin/main into SDK chp-re-enable running, gate = cargo check on the full graph incl. the reinstated voting module. |
