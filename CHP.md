@@ -7,10 +7,13 @@ explicitly labelled open question**. Nothing is inferred and left unmarked. If a
 "verified", it was read out of the repo or the GitHub API at the time stamped on it — not
 remembered.
 
-**Status:** design APPROVED — sections 1–6 walked with Lukas and approved 2026-08-11; the
-specification is **`CHP_DESIGN.md`** (same directory; self-contained handoff for any
-engineer/delegate). Awaiting Lukas's written-spec review, then writing-plans produces the
-implementation ladder. No production code changed; docs + the validated SDK merge only.
+**Status:** implementation plan WRITTEN — **`CHP_PLAN.md`** (same directory; T0–T16, every
+code block delegate-authored, SDK lane compiler-proven in a throwaway rc.5 probe; verbatim
+lane deliverables archived in `docs/chp-plan/`). Spec `CHP_DESIGN.md` approved by Lukas
+2026-08-11. **Three STOP findings await ruling** (software delegation-signing gap ·
+hotkey display-address encoder · crash-recovery share enumeration — plan steps 8.14 / 10.15 /
+9.13). Next: Lukas's GO → orchestrated delegated execution per CHP_DESIGN §8. No production
+code changed; docs + the validated SDK merge only.
 **Branches:** `chp-re-enable` in both zodl-ios and zcash-swift-wallet-sdk.
 **Ticket:** [MOB-1678 — Coinholder polling adoption](https://linear.app/zodl/issue/MOB-1678/coinholder-polling-adoption)
 (the umbrella item; dominik's Android PRs in §6 are the Android half of the same ticket).
@@ -699,7 +702,9 @@ rev. The slipstream dependency likewise stays ours (`zodl-slipstream` from crate
 it pulled **rc.5** and hit a real `E0061` at `rust/src/voting/delegation.rs:420` (connect now
 takes 3 args) — the first *located* rc.3→rc.5 code change, found for free. Checkouts were then
 restored (zodl → `migration/gardening-test`, SDK → `fable/gardening-test`); CHP docs continue
-via the worktree `../zodl-ios-chp-docs` on `chp-re-enable`.
+via the worktree `../zodl-ios-chp-docs` on `chp-re-enable`. *(2026-08-11: that worktree moved
+to `_chp/zodl-ios` and gained an SDK sibling worktree `_chp/zcash-swift-wallet-sdk` @
+`a3823651` — the execution workspace; see CHP_PLAN.md → Workspace.)*
 
 ### 11.2 · Panel setup
 
@@ -990,6 +995,7 @@ evidence. **[OPEN — Q6, product]**
 | Date | What |
 |---|---|
 | 2026-08-10 | Starting point pinned (§1). `chp-re-enable` cut in both repos at `fea8d600` / `93a11081`. Three off-switches mapped (§3). #1855 restore found on SDK `main`, 12 commits ahead of us (§4). Crate ladder traced across both orgs (§5). Android MOB-1678 fixes read and summarised (§6). Open: D1, Q1–Q4, V1–V2. |
+| 2026-08-11 (3) | **IMPLEMENTATION PLAN WRITTEN → `CHP_PLAN.md`** (T0–T16, 5,309 lines, 100+ steps; verbatim lane deliverables archived `docs/chp-plan/`). Orchestrator authored skeleton + commands only; ALL code blocks delegate-authored: Opus SDK lane T1–T4 **compiler-proven in a throwaway rc.5 probe** (real rc.3→rc.5 delta = ONE E0061 at `delegation.rs:420` — exactly §11 D2's prediction — plus 2 hidden `cfg(test)` breaks `cargo check` cannot see), Sonnet app lane T7–T14 static-verified (every anchor grep-checked; pbxproj config UUIDs pinned; T13 URL double-verified gh-diff + independent curl/shasum). Spec amendments surfaced, not absorbed: `json.rs` 359→223 not deleted (6 types transport non-`Serialize` crate types; one FORBIDS Serialize — holds share plaintexts); `${PIPESTATUS[0]}` idiom bash-only/zsh-empty → pipefail everywhere; "5 test files return unmodified" FALSE ×2 (1-line Keystone-stub rename + 12-line `SharePayload` helper rewrite, both fully specified in T14); S5 constant moved to `ZcashSDK` (original site internal — `public` there is a no-op). **THREE STOP findings → status line** (F1 software delegation-signing gap: crate 2.0 signs for nobody, no seed-based PCZT signer exists in the iOS SDK, Android supplies sigs externally too — blocks the software delegation path pending an S4-pattern passthrough or scope ruling; F2 hotkey display-address encoder absent — their SDK returns a string, ours raw bytes; renders blank, non-blocking; F3 crash-recovery share-index enumeration — non-blocking, resolve before the E2E crash scenario). Cold-reader acceptance test: T0/T2 EXECUTABLE-COLD, T10 with-guesses → 4 defects fixed same-day (headline: the red-ladder `grep -c` gate reported FAILURE at zero errors — the goal state). Workspace: worktrees moved to the `_chp/` sibling pair. Awaiting Lukas's GO for delegated execution. |
 | 2026-08-11 (2) | **DESIGN PRESENTED + APPROVED → `CHP_DESIGN.md`**: six sections walked one-by-one (interface journey · why-the-drift · tagged change list S1–S6/A1–A7 · CEO ledger w/ Android-gap column · rollout+gates (Q4 CONFIRMED: internal+testnet first) · pending/debt). Spec is cold-reader self-contained: hard rules, per-change acceptance criteria, the amended vote sequence, Kris sign-off chapter (§7, serves CEO item 2 incl. his raw-vs-convenience question: raw, evidence attached), handoff protocol (§8: delegation model, execution order, world-moves re-check). Self-review fixed 2 items (execution-order consistency, eventsJson provenance). Lukas's framing confirmed by arithmetic: net-deletion campaign. |
 | 2026-08-11 | **VIZOR STUDY → §12** (Lukas's "see it in action somewhere else"): reference wallet = crate authors' own code (149/231 crate commits), adapter provably semantics-free, zero wire DTOs (FRB scans `zcash_voting::wire`). R1 physics confirmed a 3rd time; §11.9 steps 4–6 SUPERSEDED by `confirm_vote_submission` (atomic) + `recover_wire_json` (late-bind, no replay) — traps T1/T2 dissolve. Adopted: the two passthroughs + wire-mirror deletion (§2.0 rule 3; rc.4 wire becomes free) → **ladder v2 (§12.4)**. Scheduled phase-2: crate config resolution. Escalated Q6: endorsement gate = zodl invention absent from crate AND reference, silent on both mobiles → product w/ evidence (CEO item 1). resume_plan omission reclassified DEBT. Corrections: #2406 still OPEN (A-S + orchestrator relay wrong); Android step-6 precision. Concept phase COMPLETE — five inputs cross-checked (old iOS, Android, CEO plan, crate history, reference wallet). |
 | 2026-08-10 (night 4) | **R1 RESOLVED → W2** (§11.9): `vc_tree_position` is metadata, not crypto (exhaustive circuit/sighash/nullifier sweep = zero refs); correction = one-u64 recovery-JSON rewrite, byte-identical everything else, "refusing to assume position 0" guard makes wrong-position unshippable; sanctioned 7-step sequence + 3 traps captured spec-verbatim; Android ships the identical order; iOS step 6 = idempotent commitVote replay, ZERO FFI change. RNG confound structurally void (one commit only). Rung 3 unnecessary. New Q5 (server-side tree_position cross-check — Valar, non-blocking). Last open technical question closed; design presentation unblocked. |
