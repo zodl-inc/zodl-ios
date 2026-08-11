@@ -79,7 +79,8 @@ import Testing
                     eaPk: Data(repeating: 0x01, count: 32),
                     signatures: []
                 )
-            ]
+            ],
+            pirLayout: .init(pirDepth: 1, tier0Layers: 1, tier1Layers: 1)
         )
 
         #expect(throws: (any Error).self) {
@@ -253,7 +254,8 @@ import Testing
             voteServers: [.init(url: "https://x", label: "a")],
             pirEndpoints: [.init(url: "https://y", label: "b")],
             supportedVersions: supportedVersions,
-            rounds: [:]
+            rounds: [:],
+            pirLayout: .init(pirDepth: 1, tier0Layers: 1, tier1Layers: 1)
         )
     }
 
@@ -404,7 +406,8 @@ import Testing
             rounds: [
                 roundId: makeEntry(),
                 invalidRoundId: makeEntry(signature: badSignature)
-            ]
+            ],
+            pirLayout: .init(pirDepth: 1, tier0Layers: 1, tier1Layers: 1)
         )
 
         let filtered = serviceConfigRetainingRoundsWithValidSignatures(config, trustedKeys: [makeTrustedKey()])
@@ -716,6 +719,7 @@ import Testing
         let result = try await delegateSharePayloads(
             [payload],
             roundIdHex: "aabb",
+            proposalId: 1,
             initialServerURLs: [
                 "https://online-one.example.com",
                 "https://offline.example.com",
@@ -754,6 +758,7 @@ import Testing
         let result = try await delegateSharePayloads(
             payloads,
             roundIdHex: "aabb",
+            proposalId: 1,
             initialServerURLs: [
                 "https://offline.example.com",
                 "https://online.example.com"
@@ -787,6 +792,7 @@ import Testing
         let result = try await delegateSharePayloads(
             [payload],
             roundIdHex: "aabb",
+            proposalId: 1,
             initialServerURLs: [
                 "https://offline-one.example.com",
                 "https://offline-two.example.com",
@@ -817,6 +823,7 @@ import Testing
             _ = try await delegateSharePayloads(
                 [makeRecoverySharePayload()],
                 roundIdHex: "aabb",
+                proposalId: 1,
                 initialServerURLs: [
                     "https://offline-one.example.com",
                     "https://offline-two.example.com"
@@ -832,7 +839,7 @@ import Testing
     @Test func delegateSharesWithFallbackRetriesReachabilityExhaustion() async throws {
         let attempts = AttemptCounter()
         var votingAPI = VotingAPIClient()
-        votingAPI.delegateShares = { _, _, serverURLs in
+        votingAPI.delegateShares = { _, _, _, serverURLs in
             let attempt = await attempts.increment()
             if attempt < 3 {
                 throw ShareDelegationError.noReachableVoteServers
@@ -843,6 +850,7 @@ import Testing
         let result = try await Voting.delegateSharesWithFallback(
             [],
             roundId: "aabb",
+            proposalId: 1,
             votingAPI: votingAPI,
             serverURLs: ["https://vote.example.com"],
             retryDelay: .zero
@@ -856,7 +864,7 @@ import Testing
     @Test func delegateSharesWithFallbackRethrowsUnexpectedErrorWithoutRetry() async {
         let attempts = AttemptCounter()
         var votingAPI = VotingAPIClient()
-        votingAPI.delegateShares = { _, _, _ in
+        votingAPI.delegateShares = { _, _, _, _ in
             _ = await attempts.increment()
             throw SharePostFailure()
         }
@@ -865,6 +873,7 @@ import Testing
             _ = try await Voting.delegateSharesWithFallback(
                 [],
                 roundId: "aabb",
+                proposalId: 1,
                 votingAPI: votingAPI,
                 serverURLs: ["https://vote.example.com"],
                 retryDelay: .zero
@@ -929,21 +938,9 @@ private func makeShareDelegation(
 }
 
 private func makeRecoverySharePayload(index: UInt32 = 0) -> SharePayload {
-    let share = EncryptedShare(
-        c1: Data(repeating: UInt8(index + 1), count: 32),
-        c2: Data(repeating: UInt8(index + 2), count: 32),
+    SharePayload(
+        wireJson: "{\"share_index\":\(index),\"submit_at\":99}",
         shareIndex: index
-    )
-    return SharePayload(
-        sharesHash: Data(repeating: 0x01, count: 32),
-        proposalId: 1,
-        voteDecision: 0,
-        encShare: share,
-        treePosition: 10,
-        allEncShares: [share],
-        shareComms: [Data(repeating: 0x03, count: 32)],
-        primaryBlind: Data(repeating: 0x04, count: 32),
-        submitAt: 99
     )
 }
 #endif

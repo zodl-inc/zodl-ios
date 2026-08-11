@@ -700,6 +700,9 @@ import Testing
             roundName: "Round",
             pirEndpoints: ["https://pir.example.com"],
             expectedSnapshotHeight: 1,
+            pirDepth: 1,
+            tier0Layers: 1,
+            tier1Layers: 1,
             votingCrypto: votingCrypto,
             votingAPI: votingAPI,
             send: Send<VotingCoordFlow.Action>(send: { _ in }),
@@ -718,7 +721,7 @@ import Testing
         votingCrypto.buildVotingPczt = { _, _, _, _, _, _, _, _, _, _ in
             Self.makeVotingPcztResult()
         }
-        votingCrypto.getDelegationSubmission = { _, _, _, _, _ in
+        votingCrypto.getDelegationSubmission = { _, _, _, _ in
             await recorder.record("registration")
             return Self.makeDelegationRegistration()
         }
@@ -752,6 +755,9 @@ import Testing
             roundName: "Round",
             pirEndpoints: ["https://pir.example.com"],
             expectedSnapshotHeight: 1,
+            pirDepth: 1,
+            tier0Layers: 1,
+            tier1Layers: 1,
             votingCrypto: votingCrypto,
             votingAPI: votingAPI,
             send: Send<VotingCoordFlow.Action>(send: { _ in }),
@@ -895,7 +901,8 @@ import Testing
             voteServers: [],
             pirEndpoints: [.init(url: "https://pir.example.com", label: "pir")],
             supportedVersions: .init(pir: ["v0"], voteProtocol: "v0", tally: "v0", voteServer: "v1"),
-            rounds: [:]
+            rounds: [:],
+            pirLayout: .init(pirDepth: 1, tier0Layers: 1, tier1Layers: 1)
         )
         state.isKeystoneUser = true
         state.$selectedWalletAccount.withLock { $0 = keystoneWalletAccount() }
@@ -1011,7 +1018,7 @@ import Testing
             }
             return .notFound
         }
-        dependencies.votingCrypto.buildAndProveDelegation = { _, bundleIndex, _, _, _, _, _, _, _ in
+        dependencies.votingCrypto.buildAndProveDelegation = { _, bundleIndex, _, _, _, _, _, _, _, _, _, _, _ in
             recorder.record("prove:\(bundleIndex)")
             return AsyncThrowingStream { continuation in
                 if bundleIndex == failingProofBundleIndex {
@@ -1022,7 +1029,7 @@ import Testing
                 }
             }
         }
-        dependencies.votingCrypto.getDelegationSubmissionWithKeystoneSig = { _, bundleIndex, sig, sighash in
+        dependencies.votingCrypto.getDelegationSubmission = { _, bundleIndex, sig, sighash in
             recorder.record("registration:\(bundleIndex)")
             return Self.makeDelegationRegistration(
                 rk: Data(repeating: UInt8(bundleIndex + 3), count: 32),
