@@ -211,10 +211,10 @@ extension VotingCryptoClient: DependencyKey {
                     actualFvkBytes = inputs.fvkBytes
                 }
                 let sdkNotes = notes.map { $0.toSDK() }
-                // NU6 consensus branch ID; BIP44 coin type 133 = Zcash mainnet, 1 = testnet
-                // (`network_id` 1 / 0 per `parse_network` in libzcashlc).
-                // Plan Task 11 replaces this literal with the SDK's public constant.
-                let consensusBranchId: UInt32 = 0xC8E7_1055
+                // Ironwood (NU6.3) consensus branch ID, published by the SDK so a future
+                // network upgrade cannot go stale here the way the old hardcoded NU6 literal
+                // did (CHP.md §11.5 N1).
+                let consensusBranchId = UInt32(bitPattern: ZcashSDK.nu63ConsensusBranchID)
                 let keys = VotingDelegationKeyInputs(
                     fvk: actualFvkBytes,
                     hotkeyStoredSecret: hotkeyStoredSecret,
