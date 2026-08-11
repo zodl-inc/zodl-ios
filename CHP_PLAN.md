@@ -2715,15 +2715,36 @@ file — included to prove this is the last of the six edits.)
 cd ~/Dev/Xcode/GitHub/LukasKorba/_chp/zodl-ios && grep -c 'VOTING_ENABLED' secant.xcodeproj/project.pbxproj
 ```
 
-Expected: `6`. Then run:
+Expected: `6`. Then run — three separate per-block checks, not one range scan: a single
+`Debug`-to-`Release-AppStore` awk range is unsafe here because `9E4AB2BA2BA1C05100F5D6DB /*
+Release-AppStore */` (line 1040) is a *different*, non-`zodl-production` block that happens to
+share that name and sit right after `zodl-production`'s Release-Testflight config — a range
+ending there stops around line 1040 and never reaches `zodl-production`'s own real
+Release-AppStore block, `9E4AB2BF2BA1C05100F5D6DB` (lines 1120-1158). Every boundary UUID below
+also has a *second*, harmless-looking occurrence later in the file, inside its target's own
+`XCConfigurationList` `buildConfigurations = (...)` reference array (e.g.
+`9E4AB2B52BA1BEE900F5D6DB /* Debug */,` around line 1283) — an `awk` range re-opens on any
+repeat match of its start pattern, so a boundary without the trailing ` = {` silently re-fires
+there and can leak a second, unwanted chunk into the count (verified empirically: it happens to
+add 0 in this file today only because those reference lines never contain the literal string
+`VOTING_ENABLED` — not something to rely on). Anchoring every boundary on the block-definition
+form, `UUID /* Name */ = {`, makes it match only the one real block header:
 
 ```bash
-cd ~/Dev/Xcode/GitHub/LukasKorba/_chp/zodl-ios && awk '/9E4AB2B52BA1BEE900F5D6DB \/\* Debug \*\//,/9E4AB2BA2BA1C05100F5D6DB \/\* Release-AppStore \*\//' secant.xcodeproj/project.pbxproj | grep -c VOTING_ENABLED
+cd ~/Dev/Xcode/GitHub/LukasKorba/_chp/zodl-ios
+awk '/9E4AB2B52BA1BEE900F5D6DB \/\* Debug \*\/ = \{/,/9E4AB2B62BA1BEE900F5D6DB \/\* Release-Testflight \*\/ = \{/' secant.xcodeproj/project.pbxproj | grep -c VOTING_ENABLED
+awk '/9E4AB2B62BA1BEE900F5D6DB \/\* Release-Testflight \*\/ = \{/,/9E4AB2BA2BA1C05100F5D6DB \/\* Release-AppStore \*\/ = \{/' secant.xcodeproj/project.pbxproj | grep -c VOTING_ENABLED
+awk '/9E4AB2BF2BA1C05100F5D6DB \/\* Release-AppStore \*\/ = \{/,/9E5AB47F2C94777800065483 \/\* Debug \*\/ = \{/' secant.xcodeproj/project.pbxproj | grep -c VOTING_ENABLED
 ```
 
-Expected: `0` — the three `zodl-production` configs (Debug through the start of its
-Release-AppStore block) contain no occurrence. Any other count on either check → the edits
-landed in the wrong block; revert and redo before proceeding.
+Expected: `0`, `0`, `0` — one per real `zodl-production` config (Debug, Release-Testflight, and
+its actual Release-AppStore block via `9E4AB2BF2BA1C05100F5D6DB`, each isolated by scanning to
+the *next* real block-definition header — `zodl-internal`'s own Debug config, in the third
+check — so no later block's settings can leak in). Verified directly against the post-T7 tree:
+these three commands print `41`, `40`, `40` total lines respectively (matching each block's true
+span exactly, with no re-triggered second chunk), and `0`, `0`, `0` for the `VOTING_ENABLED`
+count. Any other count on any of the four checks (this trio plus the total-6 check above) → the
+edits landed in the wrong block; revert and redo before proceeding.
 
 - [ ] **Step 7.8: Full internal-scheme build, capturing the complete log.** Run:
 
@@ -2770,16 +2791,161 @@ rewrite), `encryptShares`, `decomposeWeight`, `storeVoteCommitmentBundle` (main-
 only — same reason for its other two sites), and the Keystone half of item 4's finding.
 
 **Files:**
-- Modify: `secant/Sources/Dependencies/VotingCryptoClient/VotingCryptoClientInterface.swift`
+- Modify: `secant/Sources/Dependencies/VotingCryptoClient/VotingCryptoClientInterface.swift:29` (step 8.0) and elsewhere (steps 8.1-8.4, 8.14)
 - Modify: `secant/Sources/Dependencies/VotingCryptoClient/VotingCryptoClientLiveKey.swift`
 - Verify (no edit expected): `secant/Sources/Dependencies/VotingCryptoClient/VotingCryptoClientTestKey.swift`
-- Modify: `secant/Sources/Features/CoordFlows/VotingCoordFlow/VotingCoordFlowCoordinator.swift:1875-1893` (main construction), `:2900` (Keystone submission)
+- Modify: `secant/Sources/Features/CoordFlows/VotingCoordFlow/VotingCoordFlowCoordinator.swift:144-155` (step 8.0, database open), `:1875-1893` (main construction), `:2900` (Keystone submission), `:3557`/`:3591`-region (step 8.14, software signing)
 
 **Interfaces:**
-- Consumes: `VotingRustBackend.commitVote(roundId:bundleIndex:hotkeyStoredSecret:proposalId:choice:numOptions:voteCommitmentTreePosition:vanWitness:singleShare:progress:) async throws -> VotingVoteCommit` and `VotingRustBackend.getDelegationSubmission(roundId:bundleIndex:signature:sighash:) throws -> VotingDelegationSubmission` (both real, current, unaffected by SDK-lane Tasks 1–4 — see `## VERIFICATION EVIDENCE`).
-- Produces: `VotingCryptoClient.commitVote(...) async throws -> (bundle: VoteCommitmentBundle, signature: CastVoteSignature)`; `VotingCryptoClient.getDelegationSubmission(...)` re-typed to `(_ roundId: String, _ bundleIndex: UInt32, _ signature: Data, _ sighash: Data) async throws -> DelegationRegistration`, consumed by plan Task 9 (the confirm/recover rewrite) and by Task 8's own Keystone call-site fix.
+- Consumes: `VotingRustBackend.open(path: String, networkId: UInt32) throws` (`VotingRustBackend.swift:72`, real, unaffected by the SDK lane); `VotingRustBackend.commitVote(roundId:bundleIndex:hotkeyStoredSecret:proposalId:choice:numOptions:voteCommitmentTreePosition:vanWitness:singleShare:progress:) async throws -> VotingVoteCommit` and `VotingRustBackend.getDelegationSubmission(roundId:bundleIndex:signature:sighash:) throws -> VotingDelegationSubmission` (both real, current, unaffected by SDK-lane Tasks 1–4 — see `## VERIFICATION EVIDENCE`); `VotingRustBackend.signDelegationRequest(roundId:bundleIndex:keys:seed:)` (SDK-lane Task 4B, step 8.14).
+- Produces: `VotingCryptoClient.openDatabase(_ path: String, _ networkId: UInt32) async throws -> Void`; `VotingCryptoClient.commitVote(...) async throws -> (bundle: VoteCommitmentBundle, signature: CastVoteSignature)`; `VotingCryptoClient.getDelegationSubmission(...)` re-typed to `(_ roundId: String, _ bundleIndex: UInt32, _ signature: Data, _ sighash: Data) async throws -> DelegationRegistration`, consumed by plan Task 9 (the confirm/recover rewrite) and by Task 8's own Keystone call-site fix; `VotingCryptoClient.signDelegationRequest(...)` (step 8.14).
 
 ---
+
+- [ ] **Step 8.0: Thread `networkId` through the voting-database open call.** T7's red-build
+enumeration surfaced a compile error no other step in this plan (or in `CHP_DESIGN.md` §3's
+A1-A6 list) covers: `VotingCryptoClientLiveKey.swift`'s `DatabaseActor.open` calls
+`b.open(path: path)`, but the real SDK signature is `open(path: String, networkId: UInt32)
+throws` (`VotingRustBackend.swift:72` in the SDK worktree — this function is outside every
+`Files:` list in the SDK lane's Tasks 1-4B, so it was never touched; the mismatch predates this
+campaign). The app-level `openDatabase` member never carried a `networkId` parameter either.
+Verify both anchors first:
+
+```bash
+cd ~/Dev/Xcode/GitHub/LukasKorba/_chp/zodl-ios && grep -n "func open(path: String) throws" secant/Sources/Dependencies/VotingCryptoClient/VotingCryptoClientLiveKey.swift
+grep -n "public func open(path" ~/Dev/Xcode/GitHub/LukasKorba/_chp/zcash-swift-wallet-sdk/Sources/ZcashLightClientKit/Rust/Voting/VotingRustBackend.swift
+```
+
+Expected: one hit each — `DatabaseActor.open`'s old 1-arg signature in the app, and the real
+2-arg `open(path:networkId:)` in the SDK. Then locate the one call site:
+
+```bash
+grep -n "votingCrypto.openDatabase" secant/Sources/Features/CoordFlows/VotingCoordFlow/VotingCoordFlowCoordinator.swift
+```
+
+Expected: exactly one hit, `:155`, inside the `.serviceConfigLoaded` reducer case — the only
+place the app opens the voting database. `networkId` is sourced the same way every other
+`VotingCryptoClient` member in this file already does it (5 sites: `:808-810`, `:1725-1726`,
+`:2037-2038`, `:2594-2595`, `:2804-2805`) — `zcashSDKEnvironment.network().networkType.
+votingRustNetworkId` — not invented here.
+
+First, the interface. In `VotingCryptoClientInterface.swift`, replace:
+
+```swift
+    // --- Database lifecycle ---
+    var openDatabase: @Sendable (_ path: String) async throws -> Void
+    var setWalletId: @Sendable (_ walletId: String) async throws -> Void
+```
+
+with:
+
+```swift
+    // --- Database lifecycle ---
+    var openDatabase: @Sendable (_ path: String, _ networkId: UInt32) async throws -> Void
+    var setWalletId: @Sendable (_ walletId: String) async throws -> Void
+```
+
+Second, the `LiveKey` closure. In `VotingCryptoClientLiveKey.swift`, replace:
+
+```swift
+            openDatabase: { path in
+                try await dbActor.open(path: path)
+            },
+```
+
+with:
+
+```swift
+            openDatabase: { path, networkId in
+                try await dbActor.open(path: path, networkId: networkId)
+            },
+```
+
+Third, `DatabaseActor` itself. In the same file, replace:
+
+```swift
+    func open(path: String) throws {
+        // If already open, close the old backend before opening a fresh one.
+        // This makes re-initialization safe (e.g. onAppear firing twice).
+        if let old = _backend {
+            old.close()
+            _backend = nil
+        }
+        let b = VotingRustBackend()
+        try b.open(path: path)
+        _backend = b
+    }
+```
+
+with:
+
+```swift
+    func open(path: String, networkId: UInt32) throws {
+        // If already open, close the old backend before opening a fresh one.
+        // This makes re-initialization safe (e.g. onAppear firing twice).
+        if let old = _backend {
+            old.close()
+            _backend = nil
+        }
+        let b = VotingRustBackend()
+        try b.open(path: path, networkId: networkId)
+        _backend = b
+    }
+```
+
+Fourth, the one call site. In `VotingCoordFlowCoordinator.swift`, replace:
+
+```swift
+            case .serviceConfigLoaded(let config):
+                state.serviceConfig = config
+                let walletId = state.walletId
+                return .run { [votingAPI, votingCrypto] send in
+                    // 1. Configure API client URLs from the loaded config.
+                    await votingAPI.configureURLs(config)
+
+                    // 2. Open the voting DB and scope it to this wallet.
+                    let dbPath = FileManager.default
+                        .urls(for: .documentDirectory, in: .userDomainMask)[0]
+                        .appendingPathComponent("voting.sqlite3").path
+                    try await votingCrypto.openDatabase(dbPath)
+                    try await votingCrypto.setWalletId(walletId)
+```
+
+with:
+
+```swift
+            case .serviceConfigLoaded(let config):
+                state.serviceConfig = config
+                let walletId = state.walletId
+                let network = zcashSDKEnvironment.network()
+                let networkId: UInt32 = network.networkType.votingRustNetworkId
+                return .run { [votingAPI, votingCrypto, networkId] send in
+                    // 1. Configure API client URLs from the loaded config.
+                    await votingAPI.configureURLs(config)
+
+                    // 2. Open the voting DB and scope it to this wallet.
+                    let dbPath = FileManager.default
+                        .urls(for: .documentDirectory, in: .userDomainMask)[0]
+                        .appendingPathComponent("voting.sqlite3").path
+                    try await votingCrypto.openDatabase(dbPath, networkId)
+                    try await votingCrypto.setWalletId(walletId)
+```
+
+`zcashSDKEnvironment.network()` / `.networkType.votingRustNetworkId` is the exact two-line idiom
+already used at the five sites listed above — reused here, not invented — and it must be
+computed in the reducer's synchronous body (before `.run`, as shown), then added to the
+closure's explicit capture list, the same pattern every other `.run` site in this file already
+follows for values it needs from outside the closure.
+
+Finally, confirm this was the only call site (so no second one was missed):
+
+```bash
+grep -rn '\.openDatabase(' secant/Sources/ zodlTests/
+```
+
+Expected: exactly one hit, the now-two-argument call inside `.serviceConfigLoaded` above. Any
+other hit — including in a test file — is a second call site this step must also fix before
+proceeding to step 8.1.
 
 - [ ] **Step 8.1: Delete `decomposeWeight` and `encryptShares` from the interface.** In
 `VotingCryptoClientInterface.swift`, delete these two members (lines 125-129):
