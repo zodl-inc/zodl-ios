@@ -36,7 +36,7 @@ jobs:
     # no pull_request context, so the guard lets them through.
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
     runs-on: macos-26
-    timeout-minutes: 60
+    timeout-minutes: 25
     permissions:
       contents: read
     steps:
@@ -64,12 +64,6 @@ jobs:
 
       - name: Link SDK at project-relative path
         run: ln -s "$GITHUB_WORKSPACE/.ci/zcash-swift-wallet-sdk" "$GITHUB_WORKSPACE/../zcash-swift-wallet-sdk"
-
-      - name: Configure matching SDK FFI
-        uses: ./.github/actions/configure-sdk-ffi
-        with:
-          slipstream-app-id: ${{ secrets.SLIPSTREAM_APP_ID }}
-          slipstream-app-private-key: ${{ secrets.SLIPSTREAM_APP_PRIVATE_KEY }}
 
       # Synchronized Xcode groups resolve .app bundle membership from the
       # on-disk file tree *before* build phases run. PartnerKeys.plist is
@@ -99,7 +93,7 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: ${{ env.SOURCE_PACKAGES_PATH }}
-          key: ${{ runner.os }}-${{ runner.arch }}-xcode-spm-e2e-${{ steps.xcode-cache-key.outputs.hash }}-${{ hashFiles('secant.xcodeproj/project.pbxproj', 'secant.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved', '.ci/zcash-swift-wallet-sdk/Package.swift', '.ci/zcash-swift-wallet-sdk/Package.resolved', '.ci/zcash-swift-wallet-sdk/Cargo.lock', '.ci/zcash-swift-wallet-sdk/Sources/**', '.ci/zcash-swift-wallet-sdk/rust/**') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-xcode-spm-e2e-${{ steps.xcode-cache-key.outputs.hash }}-${{ hashFiles('secant.xcodeproj/project.pbxproj', 'secant.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved', '.ci/zcash-swift-wallet-sdk/Package.swift', '.ci/zcash-swift-wallet-sdk/Package.resolved', '.ci/zcash-swift-wallet-sdk/Sources/**') }}
           restore-keys: |
             ${{ runner.os }}-${{ runner.arch }}-xcode-spm-e2e-${{ steps.xcode-cache-key.outputs.hash }}-
             ${{ runner.os }}-${{ runner.arch }}-xcode-spm-e2e-
@@ -132,7 +126,7 @@ jobs:
         uses: actions/cache@v5
         with:
           path: build/Build/Products/Debug-iphonesimulator
-          key: ${{ runner.os }}-${{ runner.arch }}-ios-app-${{ steps.xcode-cache-key.outputs.hash }}-${{ hashFiles('secant/Sources/**', 'modules/Sources/**', 'secant.xcodeproj/**/*.pbxproj', 'secant.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved', '.ci/zcash-swift-wallet-sdk/Package.swift', '.ci/zcash-swift-wallet-sdk/Package.resolved', '.ci/zcash-swift-wallet-sdk/Cargo.lock', '.ci/zcash-swift-wallet-sdk/Sources/**', '.ci/zcash-swift-wallet-sdk/rust/**') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-ios-app-${{ steps.xcode-cache-key.outputs.hash }}-${{ hashFiles('secant/Sources/**', 'modules/Sources/**', 'secant.xcodeproj/**/*.pbxproj', 'secant.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved', '.ci/zcash-swift-wallet-sdk/Package.swift', '.ci/zcash-swift-wallet-sdk/Package.resolved', '.ci/zcash-swift-wallet-sdk/Sources/**') }}
 
       - name: Build for simulator
         if: steps.app-cache.outputs.cache-hit != 'true'
