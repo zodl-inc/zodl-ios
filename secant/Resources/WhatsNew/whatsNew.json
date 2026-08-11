@@ -1,6 +1,20 @@
 {
     "releases": [
         {
+            "version": "3.9.2",
+            "date": "11-08-2026",
+            "timestamp": 1786458854,
+            "sections": [
+                {
+                    "title": "Fixed:",
+                    "bulletpoints": [
+                        "We fixed a few issues with how transactions are displayed in the activity list.",
+                        "We fixed a few UI/UX issues in the migration flow."
+                    ]
+                }
+            ]
+        },
+        {
             "version": "3.9.1",
             "date": "09-08-2026",
             "timestamp": 1786300755,
