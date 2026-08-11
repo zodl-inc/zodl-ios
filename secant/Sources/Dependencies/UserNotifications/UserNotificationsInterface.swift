@@ -35,4 +35,8 @@ struct UserNotificationsClient: Sendable {
     var cancelMigrationNotifications: @Sendable (_ scopedToAccountHex: String?) async -> Void
     // delivered ONLY — pending (manual ready reminder) must survive
     var clearDeliveredMigrationNotifications: @Sendable () async -> Void
+    // Debug read-back (What's New debug screen `print_notifs`): every pending "migration."
+    // request mapped to the value the pure report formatter renders. Deliberately pending-only —
+    // delivered ones are visible in the OS notification center itself.
+    var pendingMigrationNotifications: @Sendable () async -> [PendingMigrationNotification] = { [] }
 }
