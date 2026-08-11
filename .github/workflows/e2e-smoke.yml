@@ -227,9 +227,12 @@ jobs:
     # birthday height on the iOS sim — no inter-run cache like the
     # Android wrapper has via ~/.zodl-qa/cache). After sync we still
     # need ~30 min for the 7 tx + verification flows that follow.
-    # 75 min covers cold cases; warm-cache runs (when we add that)
-    # will land well under.
-    timeout-minutes: 75
+    # Keep phase 1 at 75 min. Phase 2 runs the restore plus every
+    # transaction/export verification flow; iOS 26 Maestro actions can
+    # settle slowly enough for a healthy run to exceed 75 min, so give
+    # that phase a 120-minute job envelope. Individual flow assertions
+    # retain their existing timeouts and still fail promptly.
+    timeout-minutes: ${{ matrix.phase == 2 && 120 || 75 }}
     permissions:
       contents: read
     strategy:
