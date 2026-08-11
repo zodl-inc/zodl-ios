@@ -2519,15 +2519,22 @@ cd ~/Dev/Xcode/GitHub/LukasKorba/_chp/zcash-swift-wallet-sdk && set -o pipefail;
 
 Expected: `REAL_EXIT=0`, zero failures. Record the executed-test count in the report.
 
-- [ ] **Step 6.3: Voting suite unmodified assert (spec S3 acceptance).** Run:
+- [ ] **Step 6.3: Voting suite unmodified assert (spec S3 acceptance).** Two parts
+(amended 2026-08-11: base moved to the re-base merge `f74f13b8`, and Task 4B's third new test
+file joined the exclusion list). Run:
 
 ```bash
-cd ~/Dev/Xcode/GitHub/LukasKorba/_chp/zcash-swift-wallet-sdk && git diff a3823651 --stat -- Tests/ | grep -iv 'voting.*confirm\|voting.*recover' | grep -i voting; echo "EXIT=$?"
+cd ~/Dev/Xcode/GitHub/LukasKorba/_chp/zcash-swift-wallet-sdk && git diff f74f13b8 --stat -- Tests/ | grep -i voting | grep -v 'ConfirmVoteSubmission\|RecoverWireJson\|SignDelegationRequest'; echo "EXIT=$?"
 ```
 
-Expected: `EXIT=1` (no hits) — pre-existing voting tests untouched; only T3's two *new* test
-files exist beyond the base. Any modified pre-existing voting test file → deviation, surface
-it.
+Expected: `EXIT=1` (no hits) — pre-existing voting tests untouched. Then:
+
+```bash
+cd ~/Dev/Xcode/GitHub/LukasKorba/_chp/zcash-swift-wallet-sdk && git diff f74f13b8 --stat -- Tests/ | grep -i voting | grep -c 'ConfirmVoteSubmission\|RecoverWireJson\|SignDelegationRequest'
+```
+
+Expected: `3` — exactly the T3 pair + T4B's signing test exist beyond the base. Any modified
+pre-existing voting test file → deviation, surface it.
 
 ---
 
