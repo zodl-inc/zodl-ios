@@ -366,6 +366,7 @@ func sharePostBody(
 func delegateSharePayloads(
     _ payloads: [SharePayload],
     roundIdHex: String,
+    proposalId: UInt32,
     initialServerURLs: [String],
     postShare: @escaping SharePost,
     selectTargets: @escaping ShareTargetSelector = { Array($0.shuffled().prefix($1)) }
@@ -427,8 +428,8 @@ func delegateSharePayloads(
         }
 
         results.append(DelegatedShareInfo(
-            shareIndex: payload.encShare.shareIndex,
-            proposalId: payload.proposalId,
+            shareIndex: payload.shareIndex,
+            proposalId: proposalId,
             acceptedByServers: acceptedServers
         ))
     }
@@ -915,7 +916,7 @@ extension VotingAPIClient: DependencyKey {
                     }
                 }
             },
-            delegateShares: { payloads, roundIdHex, serverURLs in
+            delegateShares: { payloads, roundIdHex, proposalId, serverURLs in
                 @Dependency(\.transactionGuard) var transactionGuard
                 return try await transactionGuard.withSubmission {
                     // Active foreground delivery uses the submission-local server set.
@@ -927,6 +928,7 @@ extension VotingAPIClient: DependencyKey {
                     return try await delegateSharePayloads(
                         payloads,
                         roundIdHex: roundIdHex,
+                        proposalId: proposalId,
                         initialServerURLs: serverURLs,
                         postShare: { server, body in
                             do {

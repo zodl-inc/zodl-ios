@@ -72,6 +72,7 @@ struct VotingAPIClient {
     var delegateShares: @Sendable (
         _ payloads: [SharePayload],
         _ roundIdHex: String,
+        _ proposalId: UInt32,
         _ serverURLs: [String]
     ) async throws -> ShareDelegationResult
     /// Poll a helper server for the confirmation status of a share identified by its nullifier.

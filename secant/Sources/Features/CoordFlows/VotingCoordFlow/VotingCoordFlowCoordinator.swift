@@ -1937,6 +1937,7 @@ extension VotingCoordFlow {
                         let batchDelegationResult = try await Voting.delegateSharesWithFallback(
                             payloads,
                             roundId: roundId,
+                            proposalId: proposalId,
                             votingAPI: votingAPI,
                             serverURLs: shareServerURLs
                         )
@@ -3399,20 +3400,30 @@ extension VotingCoordFlow {
             return false
         }
         guard let confirmation = try? await votingAPI.fetchTxConfirmation(cachedTxHash),
-              confirmation.code == 0,
-              let leafPair = confirmation.event(ofType: "cast_vote")?.attribute(forKey: "leaf_index") else {
-            return false
-        }
-        let leafParts = leafPair.split(separator: ",")
-        guard leafParts.count == 2,
-              let vanIdx = UInt32(leafParts[0]),
-              let vcIdx = UInt64(leafParts[1]) else {
+              confirmation.code == 0 else {
             return false
         }
 
-        try await votingCrypto.storeVanPosition(roundId, bundleIndex, vanIdx)
+        let eventsPayload: [[String: Any]] = confirmation.events.map { event in
+            [
+                "type": event.type,
+                "attributes": event.attributes.map { attribute in
+                    ["key": attribute.key, "value": attribute.value]
+                }
+            ]
+        }
+        guard let eventsData = try? JSONSerialization.data(withJSONObject: eventsPayload) else {
+            return false
+        }
+        let eventsJson = String(decoding: eventsData, as: UTF8.self)
 
-        guard let savedBundle = try? await votingCrypto.getVoteCommitmentBundle(roundId, bundleIndex, proposalId) else {
+        guard let voteConfirmation = try? await votingCrypto.confirmVoteSubmission(
+            roundId, bundleIndex, proposalId, cachedTxHash, eventsJson
+        ) else {
+            return false
+        }
+
+        guard let stored = try? await votingCrypto.getCommitmentBundleJson(roundId, bundleIndex, proposalId) else {
             LoggerProxy.error(
                 """
                 Recovered on-chain vote \(proposalId) for bundle \(bundleIndex), \
@@ -3422,50 +3433,53 @@ extension VotingCoordFlow {
             throw VotingFlowError.missingVoteCommitmentBundle
         }
 
-        try await votingCrypto.storeVoteCommitmentBundle(roundId, bundleIndex, proposalId, savedBundle, vcIdx)
         await send(.voteSubmissionStepUpdated(roundId: roundIdAction(), step: .sendingShares))
 
-        var payloads = try await votingCrypto.buildSharePayloads(
-            savedBundle.encShares, savedBundle, choice, numOptions, vcIdx, singleShare
-        )
+        // Share count is `singleShare ? 1 : numOptions` — the same two values
+        // `zcash_voting::share::recover_payloads` (rc.5 `share.rs:148-188`) slices its own
+        // encrypted-share list by, and the same two values Valar's reference wallet (Vizor)
+        // resolves client-side rather than asking the crate for a share list: its FRB bridge
+        // exposes only the per-index `recovered_vote_share_wire_json` →
+        // `zcash_voting::share::recover_wire_json`, never the plural `recover_payloads`. No new
+        // FFI symbol; this is the sanctioned pattern on the surface already built.
+        let shareCount = singleShare ? 1 : numOptions
         let now = Date().timeIntervalSince1970
-        for i in payloads.indices {
+        var payloads: [SharePayload] = []
+        var submitAtByShareIndex: [UInt32: UInt64] = [:]
+        for shareIndex: UInt32 in 0..<shareCount {
+            let submitAt: UInt64
             if let deadline = submitAtDeadline, deadline > now {
-                payloads[i].submitAt = UInt64(now + Double.random(in: 0..<(deadline - now)))
+                submitAt = UInt64(now + Double.random(in: 0..<(deadline - now)))
             } else {
-                payloads[i].submitAt = 0
+                submitAt = 0
             }
+            submitAtByShareIndex[shareIndex] = submitAt
+            let wireJson = try await votingCrypto.recoverWireJson(
+                stored.bundleJson, proposalId, shareIndex,
+                voteConfirmation.voteCommitmentTreePosition, submitAt
+            )
+            payloads.append(SharePayload(wireJson: wireJson, shareIndex: shareIndex))
         }
 
         let recoveryResult = try await Voting.delegateSharesWithFallback(
             payloads,
             roundId: roundId,
+            proposalId: proposalId,
             votingAPI: votingAPI,
             serverURLs: shareServerURLs
         )
         shareServerURLs = recoveryResult.remainingServerURLs
         for info in recoveryResult.delegatedShares {
-            guard let payload = payloads.first(where: {
-                $0.encShare.shareIndex == info.shareIndex && $0.proposalId == info.proposalId
-            }) else { continue }
-            let blindIdx = Int(info.shareIndex)
-            guard blindIdx < savedBundle.shareBlindFactors.count else { continue }
             do {
-                let nfHex = try votingCrypto.computeShareNullifier(
-                    [UInt8](savedBundle.voteCommitment),
-                    info.shareIndex,
-                    [UInt8](savedBundle.shareBlindFactors[blindIdx])
-                )
                 try await votingCrypto.recordShareDelegation(
-                    roundId, bundleIndex, info.proposalId,
-                    info.shareIndex, info.acceptedByServers,
-                    [UInt8](votingDataFromHex(nfHex)), payload.submitAt
+                    roundId, bundleIndex, info.proposalId, info.shareIndex,
+                    info.acceptedByServers, submitAtByShareIndex[info.shareIndex] ?? 0
                 )
             } catch {
                 LoggerProxy.warn("Batch recovery: failed to record share delegation for share \(info.shareIndex): \(error)")
             }
         }
-        try await votingCrypto.markVoteSubmitted(roundId, bundleIndex, proposalId)
+        try await votingCrypto.markVoteSubmitted(roundId, bundleIndex, proposalId, cachedTxHash)
         return true
     }
 
