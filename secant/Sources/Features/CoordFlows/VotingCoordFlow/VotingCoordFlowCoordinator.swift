@@ -144,7 +144,9 @@ extension VotingCoordFlow {
             case .serviceConfigLoaded(let config):
                 state.serviceConfig = config
                 let walletId = state.walletId
-                return .run { [votingAPI, votingCrypto] send in
+                let network = zcashSDKEnvironment.network()
+                let networkId: UInt32 = network.networkType.votingRustNetworkId
+                return .run { [votingAPI, votingCrypto, networkId] send in
                     // 1. Configure API client URLs from the loaded config.
                     await votingAPI.configureURLs(config)
 
@@ -152,7 +154,7 @@ extension VotingCoordFlow {
                     let dbPath = FileManager.default
                         .urls(for: .documentDirectory, in: .userDomainMask)[0]
                         .appendingPathComponent("voting.sqlite3").path
-                    try await votingCrypto.openDatabase(dbPath)
+                    try await votingCrypto.openDatabase(dbPath, networkId)
                     try await votingCrypto.setWalletId(walletId)
 
                     // 3. Fetch rounds. Network failures surface as a
@@ -1872,22 +1874,10 @@ extension VotingCoordFlow {
                         let anchorHeight = try await votingCrypto.syncVoteTree(roundId, chainNodeUrl)
                         let vanWitness = try await votingCrypto.generateVanWitness(roundId, bundleIndex, anchorHeight)
 
-                        var builtBundle: VoteCommitmentBundle?
-                        for try await event in votingCrypto.buildVoteCommitment(
-                            roundId, bundleIndex, hotkeySeed, networkId, proposalId, choice,
-                            numOptions, vanWitness.authPath, vanWitness.position, vanWitness.anchorHeight, singleShare
-                        ) {
-                            if case .completed(let bundle) = event {
-                                builtBundle = bundle
-                            }
-                        }
-                        guard let builtBundle else {
-                            throw VotingFlowError.missingVoteCommitmentBundle
-                        }
-
-                        try await votingCrypto.storeVoteCommitmentBundle(roundId, bundleIndex, proposalId, builtBundle, 0)
-
-                        let castVoteSig = try await votingCrypto.signCastVote(hotkeySeed, networkId, builtBundle)
+                        let (builtBundle, castVoteSig) = try await votingCrypto.commitVote(
+                            roundId, bundleIndex, hotkeySeed, proposalId, choice,
+                            numOptions, 0, vanWitness.authPath, vanWitness.position, vanWitness.anchorHeight, singleShare
+                        )
 
                         await send(.voteSubmissionStepUpdated(roundId: roundId, step: .confirming))
                         let txResult = try await votingAPI.submitVoteCommitment(builtBundle, castVoteSig)
@@ -2897,7 +2887,7 @@ extension VotingCoordFlow {
                         }
                     }
 
-                    let registration = try await votingCrypto.getDelegationSubmissionWithKeystoneSig(
+                    let registration = try await votingCrypto.getDelegationSubmission(
                         roundId, bundleIdx, sig.sig, sig.sighash
                     )
                     if registration.rk != sig.rk ||
@@ -3554,9 +3544,22 @@ extension VotingCoordFlow {
             LoggerProxy.info("Delegation bundle \(bundleIndex + 1)/\(bundleCount) (\(bundleNotes.count) notes)")
 
             let registration: DelegationRegistration
-            if let cachedRegistration = try? await votingCrypto.getDelegationSubmission(
-                roundId, bundleIndex, senderSeed, networkId, accountIndex
-            ) {
+            // The cache probe is now two calls: signing succeeds once the bundle's PCZT setup
+            // is stored, and the submission only assembles once its proof is too. Either one
+            // failing means this bundle is not finished yet, so fall through and build it.
+            let cachedSignature = try? await votingCrypto.signDelegationRequest(
+                roundId, bundleIndex, senderSeed, hotkeySeed, networkId, accountIndex, roundName
+            )
+            let cachedRegistration: DelegationRegistration?
+            if let cachedSignature {
+                cachedRegistration = try? await votingCrypto.getDelegationSubmission(
+                    roundId, bundleIndex, cachedSignature.signature, cachedSignature.sighash
+                )
+            } else {
+                cachedRegistration = nil
+            }
+
+            if let cachedRegistration {
                 LoggerProxy.debug("Delegation bundle \(bundleIndex + 1)/\(bundleCount) using cached submission")
                 registration = cachedRegistration
             } else {
@@ -3588,8 +3591,11 @@ extension VotingCoordFlow {
                     }
                 }
 
+                let signed = try await votingCrypto.signDelegationRequest(
+                    roundId, bundleIndex, senderSeed, hotkeySeed, networkId, accountIndex, roundName
+                )
                 registration = try await votingCrypto.getDelegationSubmission(
-                    roundId, bundleIndex, senderSeed, networkId, accountIndex
+                    roundId, bundleIndex, signed.signature, signed.sighash
                 )
             }
             let delegTxResult = try await votingAPI.submitDelegation(registration)

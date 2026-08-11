@@ -42,8 +42,8 @@ extension VotingCryptoClient: DependencyKey {
                 guard let backend = try? await dbActor.backend() else { return }
                 publishState(backend: backend, roundId: roundId)
             },
-            openDatabase: { path in
-                try await dbActor.open(path: path)
+            openDatabase: { path, networkId in
+                try await dbActor.open(path: path, networkId: networkId)
             },
             setWalletId: { walletId in
                 let backend = try await dbActor.backend()
@@ -334,191 +334,82 @@ extension VotingCryptoClient: DependencyKey {
             extractOrchardFvkFromUfvk: { ufvkStr, networkId in
                 Data(try VotingRustBackend.extractOrchardFvk(ufvk: ufvkStr, networkId: networkId))
             },
-            decomposeWeight: { weight in
-                (try? VotingRustBackend.decomposeWeight(weight)) ?? []
-            },
-            encryptShares: { roundId, shares in
+            // swiftlint:disable:next function_parameter_count
+            commitVote: { roundId, bundleIndex, hotkeyStoredSecret, proposalId, choice, numOptions, voteCommitmentTreePosition, vanAuthPath, vanPosition, vanAnchorHeight, singleShare in
                 let backend = try await dbActor.backend()
-                let wireShares: [VotingWireEncryptedShare] = try backend.encryptShares(
-                    roundId: roundId,
-                    shares: shares
+                let vanWitness = try VotingVanWitness.make(
+                    authPath: vanAuthPath.map { [UInt8]($0) },
+                    position: vanPosition,
+                    anchorHeight: vanAnchorHeight
                 )
-                return wireShares.map { (share: VotingWireEncryptedShare) -> EncryptedShare in
-                    EncryptedShare(
-                        c1: Data(share.ciphertext1),
-                        c2: Data(share.ciphertext2),
-                        shareIndex: share.shareIndex
-                    )
-                }
-            },
-            // swiftlint:disable:next line_length
-            buildVoteCommitment: { roundId, bundleIndex, hotkeySeed, networkId, proposalId, choice, numOptions, vanAuthPath, vanPosition, anchorHeight, singleShare in
-                AsyncThrowingStream<VoteCommitmentBuildEvent, Error> { continuation in
-                    Task.detached {
-                        do {
-                            let backend = try await dbActor.backend()
-                            let vanWitness = try VotingVanWitness.make(
-                                authPath: vanAuthPath.map { [UInt8]($0) },
-                                position: vanPosition,
-                                anchorHeight: anchorHeight
-                            )
-                            let result = try await backend.buildVoteCommitment(
-                                roundId: roundId,
-                                bundleIndex: bundleIndex,
-                                hotkeySeed: hotkeySeed,
-                                networkId: networkId,
-                                proposalId: proposalId,
-                                choice: choice.ffiValue,
-                                numOptions: numOptions,
-                                vanWitness: vanWitness,
-                                singleShare: singleShare,
-                                progress: { progress in
-                                    continuation.yield(.progress(progress))
-                                }
-                            )
-                            publishState(backend: backend, roundId: roundId)
-                            let vanNullifier: Data = Data(result.vanNullifier)
-                            let voteAuthorityNoteNew: Data = Data(result.voteAuthorityNoteNew)
-                            let voteCommitment: Data = Data(result.voteCommitment)
-                            let proof: Data = Data(result.proof)
-                            let sharesHash: Data = Data(result.sharesHash)
-                            let rVpkBytes: Data = Data(result.rVpkBytes)
-                            let alphaV: Data = Data(result.alphaV)
-                            let encShares: [EncryptedShare] = result.encShares.map { share in
-                                EncryptedShare(
-                                    c1: Data(share.ciphertext1),
-                                    c2: Data(share.ciphertext2),
-                                    shareIndex: share.shareIndex
-                                )
-                            }
-                            let shareBlindFactors: [Data] = result.shareBlinds.map { Data($0) }
-                            let shareComms: [Data] = result.shareComms.map { Data($0) }
-                            let bundle = VoteCommitmentBundle(
-                                vanNullifier: vanNullifier,
-                                voteAuthorityNoteNew: voteAuthorityNoteNew,
-                                voteCommitment: voteCommitment,
-                                proposalId: proposalId,
-                                proof: proof,
-                                encShares: encShares,
-                                anchorHeight: result.anchorHeight,
-                                voteRoundId: result.voteRoundId,
-                                sharesHash: sharesHash,
-                                shareBlindFactors: shareBlindFactors,
-                                shareComms: shareComms,
-                                rVpkBytes: rVpkBytes,
-                                alphaV: alphaV
-                            )
-                            continuation.yield(.completed(bundle))
-                            continuation.finish()
-                        } catch {
-                            continuation.finish(throwing: error)
-                        }
-                    }
-                }
-            },
-            buildSharePayloads: { encShares, commitment, voteDecision, numOptions, vcTreePosition, singleShare in
-                let backend = try await dbActor.backend()
-                let sdkShares = encShares.map {
-                    VotingWireEncryptedShare(
-                        ciphertext1: [UInt8]($0.c1),
-                        ciphertext2: [UInt8]($0.c2),
-                        shareIndex: $0.shareIndex
-                    )
-                }
-                let vanNullifier: [UInt8] = [UInt8](commitment.vanNullifier)
-                let voteAuthorityNoteNew: [UInt8] = [UInt8](commitment.voteAuthorityNoteNew)
-                let voteCommitment: [UInt8] = [UInt8](commitment.voteCommitment)
-                let proof: [UInt8] = [UInt8](commitment.proof)
-                let sharesHash: [UInt8] = [UInt8](commitment.sharesHash)
-                let shareBlinds: [[UInt8]] = commitment.shareBlindFactors.map { [UInt8]($0) }
-                let shareComms: [[UInt8]] = commitment.shareComms.map { [UInt8]($0) }
-                let rVpkBytes: [UInt8] = [UInt8](commitment.rVpkBytes)
-                let alphaV: [UInt8] = [UInt8](commitment.alphaV)
-                let sdkCommitment = VotingVoteCommitmentBundle(
-                    vanNullifier: vanNullifier,
-                    voteAuthorityNoteNew: voteAuthorityNoteNew,
-                    voteCommitment: voteCommitment,
-                    proposalId: commitment.proposalId,
-                    proof: proof,
-                    encShares: sdkShares,
-                    anchorHeight: commitment.anchorHeight,
-                    voteRoundId: commitment.voteRoundId,
-                    sharesHash: sharesHash,
-                    shareBlinds: shareBlinds,
-                    shareComms: shareComms,
-                    rVpkBytes: rVpkBytes,
-                    alphaV: alphaV
-                )
-                let payloads = try backend.buildSharePayloads(
-                    commitment: sdkCommitment,
-                    voteDecision: voteDecision.ffiValue,
-                    numOptions: numOptions,
-                    voteCommitmentTreePosition: vcTreePosition,
-                    singleShare: singleShare
-                )
-                return payloads.map { payload in
-                    let encShare = EncryptedShare(
-                        c1: Data(payload.encShare.ciphertext1),
-                        c2: Data(payload.encShare.ciphertext2),
-                        shareIndex: payload.encShare.shareIndex
-                    )
-                    let allEncShares = payload.allEncShares.map { wire in
-                        EncryptedShare(
-                            c1: Data(wire.ciphertext1),
-                            c2: Data(wire.ciphertext2),
-                            shareIndex: wire.shareIndex
-                        )
-                    }
-                    let shareComms = payload.shareComms.map { Data($0) }
-                    return SharePayload(
-                        sharesHash: Data(payload.sharesHash),
-                        proposalId: payload.proposalId,
-                        voteDecision: payload.voteDecision,
-                        encShare: encShare,
-                        treePosition: payload.treePosition,
-                        allEncShares: allEncShares,
-                        shareComms: shareComms,
-                        primaryBlind: Data(payload.primaryBlind)
-                    )
-                }
-            },
-            getDelegationSubmission: { roundId, bundleIndex, senderSeed, networkId, accountIndex in
-                let backend = try await dbActor.backend()
-                let sub = try backend.getDelegationSubmission(
+                let result = try await backend.commitVote(
                     roundId: roundId,
                     bundleIndex: bundleIndex,
+                    hotkeyStoredSecret: hotkeyStoredSecret,
+                    proposalId: proposalId,
+                    choice: choice.ffiValue,
+                    numOptions: numOptions,
+                    voteCommitmentTreePosition: voteCommitmentTreePosition,
+                    vanWitness: vanWitness,
+                    singleShare: singleShare
+                )
+                publishState(backend: backend, roundId: roundId)
+                let encShares: [EncryptedShare] = try result.encShares.map { share in
+                    guard
+                        let c1 = Data(base64Encoded: share.ciphertext1),
+                        let c2 = Data(base64Encoded: share.ciphertext2)
+                    else {
+                        throw VotingCryptoError.malformedWireShare(share.shareIndex)
+                    }
+                    return EncryptedShare(c1: c1, c2: c2, shareIndex: share.shareIndex)
+                }
+                let bundle = VoteCommitmentBundle(
+                    vanNullifier: Data(result.vanNullifier),
+                    voteAuthorityNoteNew: Data(result.voteAuthorityNoteNew),
+                    voteCommitment: Data(result.voteCommitment),
+                    proposalId: result.proposalId,
+                    proof: Data(result.proof),
+                    encShares: encShares,
+                    anchorHeight: result.anchorHeight,
+                    voteRoundId: roundId,
+                    sharesHash: Data(),
+                    rVpkBytes: Data(result.voteKeyRandomizer)
+                )
+                let signature = CastVoteSignature(voteAuthSig: Data(result.voteAuthSig))
+                return (bundle, signature)
+            },
+            signDelegationRequest: { roundId, bundleIndex, senderSeed, hotkeyStoredSecret, networkId, accountIndex, roundName in
+                let backend = try await dbActor.backend()
+                // Same derivation the software branch of `buildVotingPczt` uses: the sender's
+                // Orchard FVK and ZIP-32 seed fingerprint come from the seed itself, so the
+                // delegation keys here are byte-identical to the ones that built the PCZT.
+                let inputs = try VotingRustBackend.generateDelegationInputs(
                     senderSeed: senderSeed,
+                    hotkeyStoredSecret: hotkeyStoredSecret,
                     networkId: networkId,
                     accountIndex: accountIndex
                 )
-                let voteRoundIdBytes = Data(hexString: sub.voteRoundId)
-                let rk: Data = Data(sub.randomizedKey)
-                let spendAuthSig: Data = Data(sub.spendAuthSig)
-                let signedNoteNullifier: Data = Data(sub.nfSigned)
-                let cmxNew: Data = Data(sub.cmxNew)
-                let vanCmx: Data = Data(sub.govComm)
-                let govNullifiers: [Data] = sub.govNullifiers.map { Data($0) }
-                let proof: Data = Data(sub.proof)
-                let sighash: Data = Data(sub.sighash)
-                return DelegationRegistration(
-                    rk: rk,
-                    spendAuthSig: spendAuthSig,
-                    signedNoteNullifier: signedNoteNullifier,
-                    cmxNew: cmxNew,
-                    vanCmx: vanCmx,
-                    govNullifiers: govNullifiers,
-                    proof: proof,
-                    voteRoundId: voteRoundIdBytes,
-                    sighash: sighash
+                let signed = try backend.signDelegationRequest(
+                    roundId: roundId,
+                    bundleIndex: bundleIndex,
+                    keys: VotingDelegationKeyInputs(
+                        fvk: inputs.fvkBytes,
+                        hotkeyStoredSecret: hotkeyStoredSecret,
+                        seedFingerprint: inputs.seedFingerprint,
+                        accountIndex: accountIndex,
+                        roundName: roundName
+                    ),
+                    seed: senderSeed
                 )
+                return (signature: Data(signed.signature), sighash: Data(signed.sighash))
             },
-            getDelegationSubmissionWithKeystoneSig: { roundId, bundleIndex, keystoneSig, keystoneSighash in
+            getDelegationSubmission: { roundId, bundleIndex, signature, sighash in
                 let backend = try await dbActor.backend()
                 let sub = try backend.getDelegationSubmission(
                     roundId: roundId,
                     bundleIndex: bundleIndex,
-                    keystoneSig: [UInt8](keystoneSig),
-                    sighash: [UInt8](keystoneSighash)
+                    signature: [UInt8](signature),
+                    sighash: [UInt8](sighash)
                 )
                 let voteRoundIdBytes = Data(hexString: sub.voteRoundId)
                 let rk: Data = Data(sub.randomizedKey)
@@ -528,7 +419,7 @@ extension VotingCryptoClient: DependencyKey {
                 let vanCmx: Data = Data(sub.govComm)
                 let govNullifiers: [Data] = sub.govNullifiers.map { Data($0) }
                 let proof: Data = Data(sub.proof)
-                let sighash: Data = Data(sub.sighash)
+                let sighashOut: Data = Data(sub.sighash)
                 return DelegationRegistration(
                     rk: rk,
                     spendAuthSig: spendAuthSig,
@@ -538,7 +429,7 @@ extension VotingCryptoClient: DependencyKey {
                     govNullifiers: govNullifiers,
                     proof: proof,
                     voteRoundId: voteRoundIdBytes,
-                    sighash: sighash
+                    sighash: sighashOut
                 )
             },
             storeVanPosition: { roundId, bundleIndex, position in
@@ -566,16 +457,6 @@ extension VotingCryptoClient: DependencyKey {
             resetTreeClient: {
                 let backend = try await dbActor.backend()
                 try backend.resetTreeClient()
-            },
-            signCastVote: { hotkeySeed, networkId, bundle in
-                let sig = try VotingRustBackend.signCastVote(
-                    hotkeySeed: hotkeySeed,
-                    networkId: networkId,
-                    commitment: bundle.toSDK()
-                )
-                return CastVoteSignature(
-                    voteAuthSig: Data(sig.voteAuthSig)
-                )
             },
             extractNcRoot: { treeStateBytes in
                 Data(try VotingRustBackend.extractNcRoot(treeState: [UInt8](treeStateBytes)))
@@ -625,17 +506,6 @@ extension VotingCryptoClient: DependencyKey {
                         rk: rk
                     )
                 }
-            },
-            storeVoteCommitmentBundle: { roundId, bundleIndex, proposalId, bundle, vcTreePosition in
-                let backend = try await dbActor.backend()
-                let json = String(data: try JSONEncoder().encode(bundle), encoding: .utf8) ?? "{}"
-                try backend.storeCommitmentBundle(
-                    roundId: roundId,
-                    bundleIndex: bundleIndex,
-                    proposalId: proposalId,
-                    bundleJson: json,
-                    voteCommitmentTreePosition: vcTreePosition
-                )
             },
             getVoteCommitmentBundle: { roundId, bundleIndex, proposalId in
                 let backend = try await dbActor.backend()
@@ -708,7 +578,7 @@ extension VotingCryptoClient: DependencyKey {
 private actor DatabaseActor {
     private var _backend: VotingRustBackend?
 
-    func open(path: String) throws {
+    func open(path: String, networkId: UInt32) throws {
         // If already open, close the old backend before opening a fresh one.
         // This makes re-initialization safe (e.g. onAppear firing twice).
         if let old = _backend {
@@ -716,7 +586,7 @@ private actor DatabaseActor {
             _backend = nil
         }
         let b = VotingRustBackend()
-        try b.open(path: path)
+        try b.open(path: path, networkId: networkId)
         _backend = b
     }
 
@@ -736,6 +606,7 @@ enum VotingCryptoError: LocalizedError {
     case hotkeySeedBindingMismatch
     case invalidSpendAuthSignatureLength(Int)
     case invalidKeystoneMetadata
+    case malformedWireShare(UInt32)
 
     var errorDescription: String? {
         switch self {
@@ -749,6 +620,8 @@ enum VotingCryptoError: LocalizedError {
             return "SpendAuthSig must be 64 bytes, got \(actual)."
         case .invalidKeystoneMetadata:
             return "Missing or invalid Keystone signing metadata."
+        case .malformedWireShare(let shareIndex):
+            return "commitVote returned a non-base64 encrypted share at index \(shareIndex)."
         }
     }
 }

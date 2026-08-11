@@ -26,7 +26,7 @@ struct VotingCryptoClient {
     var refreshState: @Sendable (_ roundId: String) async -> Void = { _ in }
 
     // --- Database lifecycle ---
-    var openDatabase: @Sendable (_ path: String) async throws -> Void
+    var openDatabase: @Sendable (_ path: String, _ networkId: UInt32) async throws -> Void
     var setWalletId: @Sendable (_ walletId: String) async throws -> Void
     var initRound: @Sendable (_ params: VotingRoundParams, _ sessionJson: String?) async throws -> Void
     var getRoundState: @Sendable (_ roundId: String) async throws -> RoundStateInfo
@@ -122,50 +122,64 @@ struct VotingCryptoClient {
         = { _, _, _, _, _, _, _, _, _ in AsyncThrowingStream { $0.finish() } }
     /// Extract Orchard FVK bytes from a UFVK string.
     var extractOrchardFvkFromUfvk: @Sendable (_ ufvkStr: String, _ networkId: UInt32) throws -> Data
-    var decomposeWeight: @Sendable (_ weight: UInt64) -> [UInt64] = { _ in [] }
-    var encryptShares: @Sendable (
-        _ roundId: String,
-        _ shares: [UInt64]
-    ) async throws -> [EncryptedShare]
-    var buildVoteCommitment: @Sendable (
+    /// Build, sign, and persist the cast-vote commitment for one proposal in a single call.
+    /// Replaces the former three-member sequence — build the commitment, sign the cast vote,
+    /// build the share payloads — because `zcash_voting` now owns that orchestration
+    /// internally and the intermediate artifacts are no longer separable steps.
+    ///
+    /// `voteCommitmentTreePosition` must be `0` for the provisional call in the sanctioned
+    /// sequence (plan Task 9, spec `CHP_DESIGN.md` §3/A2 step 1) — the true position is not
+    /// known until the cast-vote transaction confirms on chain. The call is idempotent:
+    /// repeating it for the same (round, bundle, proposal) returns the persisted recovery
+    /// bundle rather than re-proving.
+    ///
+    /// `hotkeyStoredSecret` is the voting hotkey's stored secret bytes (plan Task 10), not a
+    /// derived seed. The returned pair feeds `VotingAPIClient.submitVoteCommitment(bundle:
+    /// signature:)` verbatim — `bundle.sharesHash` is populated empty; `submitVoteCommitment`'s
+    /// wire-body construction never reads it (verified: `VotingAPIClientLiveKey.swift:912-933`).
+    // swiftlint:disable:next function_parameter_count
+    var commitVote: @Sendable (
         _ roundId: String,
         _ bundleIndex: UInt32,
-        _ hotkeySeed: [UInt8],
-        _ networkId: UInt32,
+        _ hotkeyStoredSecret: [UInt8],
         _ proposalId: UInt32,
         _ choice: VoteChoice,
         _ numOptions: UInt32,
+        _ voteCommitmentTreePosition: UInt64,
         _ vanAuthPath: [Data],
         _ vanPosition: UInt32,
-        _ anchorHeight: UInt32,
+        _ vanAnchorHeight: UInt32,
         _ singleShare: Bool
-    ) -> AsyncThrowingStream<VoteCommitmentBuildEvent, Error>
-        = { _, _, _, _, _, _, _, _, _, _, _ in AsyncThrowingStream { $0.finish() } }
-    var buildSharePayloads: @Sendable (
-        _ encShares: [EncryptedShare],
-        _ commitment: VoteCommitmentBundle,
-        _ voteDecision: VoteChoice,
-        _ numOptions: UInt32,
-        _ vcTreePosition: UInt64,
-        _ singleShare: Bool
-    ) async throws -> [SharePayload]
-    /// Reconstruct the full chain-ready delegation TX payload from DB + seed.
-    /// Call after `buildAndProveDelegation` completes.
-    var getDelegationSubmission: @Sendable (
+    ) async throws -> (bundle: VoteCommitmentBundle, signature: CastVoteSignature)
+    /// Produce this wallet's own SpendAuth signature for one delegation bundle.
+    /// The software counterpart of the Keystone QR round-trip: `zcash_voting` 2.0 no longer
+    /// derives account keys or signs for its callers, and prescribes exactly this instead —
+    /// load the bundle's signing request, derive the account SpendAuth key from the seed,
+    /// randomize it with the request's randomizer, sign the request's sighash. All of it
+    /// happens inside the SDK; the seed goes in, only the detached signature comes back.
+    /// Feed the result straight into `getDelegationSubmission`.
+    var signDelegationRequest: @Sendable (
         _ roundId: String,
         _ bundleIndex: UInt32,
         _ senderSeed: [UInt8],
+        _ hotkeyStoredSecret: [UInt8],
         _ networkId: UInt32,
-        _ accountIndex: UInt32
-    ) async throws -> DelegationRegistration
-    /// Reconstruct the delegation TX payload using a Keystone-provided signature.
-    /// Uses the externally-provided signature and ZIP-244 sighash instead of
-    /// deriving `ask` from seed.
-    var getDelegationSubmissionWithKeystoneSig: @Sendable (
+        _ accountIndex: UInt32,
+        _ roundName: String
+    ) async throws -> (signature: Data, sighash: Data)
+
+    /// Reconstruct the chain-ready delegation TX payload from a previously-produced
+    /// SpendAuth signature + ZIP-244 sighash. `zcash_voting` no longer derives account keys
+    /// or signs on the caller's behalf, so an externally-produced signature is the only
+    /// remaining path — this one member now serves both the Keystone-signed call site
+    /// (`VotingCoordFlowCoordinator.swift:2900`, signature off the scanned QR) and the
+    /// software-signed call sites (`:3557`, `:3591` — see this task's step 8.10 finding for
+    /// their unresolved signature source).
+    var getDelegationSubmission: @Sendable (
         _ roundId: String,
         _ bundleIndex: UInt32,
-        _ keystoneSig: Data,
-        _ keystoneSighash: Data
+        _ signature: Data,
+        _ sighash: Data
     ) async throws -> DelegationRegistration
     var storeVanPosition: @Sendable (_ roundId: String, _ bundleIndex: UInt32, _ position: UInt32) async throws -> Void
     var syncVoteTree: @Sendable (_ roundId: String, _ nodeUrl: String) async throws -> UInt32
@@ -174,13 +188,6 @@ struct VotingCryptoClient {
     /// Drop the in-memory TreeClient so the next `syncVoteTree` starts fresh.
     /// Recovers from stale state after commitment tree timeout.
     var resetTreeClient: @Sendable () async throws -> Void
-    /// Decompress r_vpk and sign the canonical cast-vote sighash.
-    /// Call after `buildVoteCommitment` completes, before `submitVoteCommitment`.
-    var signCastVote: @Sendable (
-        _ hotkeySeed: [UInt8],
-        _ networkId: UInt32,
-        _ bundle: VoteCommitmentBundle
-    ) async throws -> CastVoteSignature
     /// Extract the Orchard nc_root from a protobuf-encoded TreeState.
     var extractNcRoot: @Sendable (_ treeStateBytes: Data) throws -> Data
 
@@ -221,15 +228,6 @@ struct VotingCryptoClient {
     var loadKeystoneBundleSignatures: @Sendable (
         _ roundId: String
     ) async throws -> [KeystoneBundleSignatureInfo]
-    /// Persist the vote commitment bundle + VC tree position before TX submission.
-    /// Required for share delegation if the app crashes between TX confirm and share send.
-    var storeVoteCommitmentBundle: @Sendable (
-        _ roundId: String,
-        _ bundleIndex: UInt32,
-        _ proposalId: UInt32,
-        _ bundle: VoteCommitmentBundle,
-        _ vcTreePosition: UInt64
-    ) async throws -> Void
     /// Load a persisted vote commitment bundle (nil if never stored).
     var getVoteCommitmentBundle: @Sendable (
         _ roundId: String,
