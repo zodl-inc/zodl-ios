@@ -1570,9 +1570,10 @@ landed — it starts from the "after" state of Task 8's step 8.11.
 **Files:**
 - Modify: `secant/Sources/Dependencies/VotingCryptoClient/VotingCryptoClientInterface.swift`
 - Modify: `secant/Sources/Dependencies/VotingCryptoClient/VotingCryptoClientLiveKey.swift`
-- Modify: `secant/Sources/Dependencies/VotingModels/VotingModels.swift` (`SharePayload`)
-- Modify: `secant/Sources/Dependencies/VotingAPIClient/VotingAPIClientLiveKey.swift` (`sharePostBody`)
+- Modify: `secant/Sources/Dependencies/VotingModels/VotingModels.swift` (`SharePayload`, `DelegationRegistration`)
+- Modify: `secant/Sources/Dependencies/VotingAPIClient/VotingAPIClientLiveKey.swift` (`sharePostBody`, `submitDelegation`)
 - Modify: `secant/Sources/Features/CoordFlows/VotingCoordFlow/VotingCoordFlowCoordinator.swift:1892-1966` (main path), `:2151-2210` (share-status-poll resubmission), `:3419-3505` (`tryRecoverInflightVote`)
+- Modify: `zodlTests/VotingTests/VotingCoordFlowCoordinatorTests.swift` (step 9.0a's `makeDelegationRegistration` fixture — a third `DelegationRegistration(...)` call site found beyond the two Task 8/14 already knew about)
 
 **Interfaces:**
 - Consumes (from SDK-lane `## INTERFACES-FOR-APP`, not yet in the tree — this task's build gate
@@ -1582,14 +1583,396 @@ landed — it starts from the "after" state of Task 8's step 8.11.
   voteCommitmentTreePosition:submitAt:) throws -> String` (static). Consumes the real, current
   `VotingRustBackend.recordShareDelegation(roundId:bundleIndex:proposalId:shareIndex:
   sentToURLs:submitAt:) throws` (`## VERIFICATION EVIDENCE` — 6 args, no nullifier; unaffected
-  by SDK-lane Tasks 1–4).
+  by SDK-lane Tasks 1–4). Consumes the real, current `VotingDelegationSubmission`
+  (`VotingTypes.swift:281-296` in the SDK worktree — all-`String`/base64, **no** `sighash`
+  field; step 9.0a).
 - Produces: `VotingCryptoClient.confirmVoteSubmission(...)`,
   `.getCommitmentBundleJson(...) -> (bundleJson: String, vcTreePosition: UInt64)?`,
   `.recoverWireJson(...) -> String`; re-typed `.markVoteSubmitted(...txHash:)` and
   `.recordShareDelegation(...)` (nullifier dropped); `SharePayload` re-typed to
-  `{ wireJson: String, shareIndex: UInt32 }`.
+  `{ wireJson: String, shareIndex: UInt32 }`; `DelegationRegistration` re-typed (step 9.0a):
+  `signedNoteNullifier`/`cmxNew`/`vanCmx`/`proof` become `String`, `govNullifiers` becomes
+  `[String]`, `rk`/`spendAuthSig`/`sighash`/`voteRoundId` stay `Data`.
 
 ---
+
+- [ ] **Step 9.0a: Fix step 8.9's wire-type drift in `getDelegationSubmission`.** Step 8.9's
+`LiveKey` closure was written against the pre-SDK-lane-Task-2 shape of `VotingDelegationSubmission`
+(all `[UInt8]`, plus a `sighash` field) — the real, post-Task-2 type is all-`String`/base64 and
+has **no** `sighash` field at all (`## VERIFICATION EVIDENCE`'s SDK-signatures block already
+quoted its doc comment: *"the legacy `sighash` field is gone from the wire. The signer's
+sighash still exists; it simply never belonged in the submission body, because the server
+derives the signing digest itself."*). The live error is
+`VotingCryptoClientLiveKey.swift:415: missing argument label 'hexString:' in call` — `Data(sub.
+randomizedKey)` resolves against this file's own `Data(hexString:)` extension instead of a
+byte-array initializer, because `sub.randomizedKey` is now a `String`. Verify first:
+
+```bash
+cd ~/Dev/Xcode/GitHub/LukasKorba/_chp/zodl-ios && sed -n '406,434p' secant/Sources/Dependencies/VotingCryptoClient/VotingCryptoClientLiveKey.swift
+grep -n "public struct VotingDelegationSubmission" -A16 ~/Dev/Xcode/GitHub/LukasKorba/_chp/zcash-swift-wallet-sdk/Sources/ZcashLightClientKit/Rust/Voting/VotingTypes.swift
+```
+
+Expected: the closure shown below (unchanged from what step 8.9 landed) and the SDK struct with
+all-`String` fields and no `sighash`.
+
+**Consumer verdict** (per §2.0's no-reshaping rule — keep the crate's base64 strings end-to-end
+wherever the consumer permits, decode to `Data` only where a genuine byte-level need exists).
+`DelegationRegistration`'s only two consumers are the wire-body builder
+(`VotingAPIClientLiveKey.swift`'s `submitDelegation`, which currently calls
+`.base64EncodedString()` on every field — i.e. it already wants base64 text, so handing it the
+SDK's base64 strings directly instead of decode-then-reencode is strictly more correct, not
+less) and the Keystone signature check
+(`VotingCoordFlowCoordinator.swift:2893-2895`: `registration.rk != sig.rk`,
+`.spendAuthSig != sig.sig`, `.sighash != sig.sighash`, each against a `Data` from
+`KeystoneBundleSignature`). That second site is the *only* genuine byte-level requirement in
+the app — so `rk`, `spendAuthSig`, and `sighash` stay `Data`; `signedNoteNullifier`, `cmxNew`,
+`vanCmx`, `govNullifiers`, and `proof` (wire-only, never compared) become the SDK's base64
+`String`s verbatim. `voteRoundId` is untouched either way: it was never base64 — `sub.
+voteRoundId` is the round's *hex* id in both SDK generations, and line 414's `Data(hexString:
+sub.voteRoundId)` already converts it correctly; that line does not appear in either diff below.
+`sighash` itself never came from `sub` at all going forward — the crate stopped returning one,
+and correctly so: the closure's own `sighash` parameter (supplied by the caller, already `Data`)
+is the only sighash that ever existed for this call.
+
+First, re-type the model. In `secant/Sources/Dependencies/VotingModels/VotingModels.swift`,
+replace:
+
+```swift
+struct DelegationRegistration: Equatable, Sendable {
+    let rk: Data // swiftlint:disable:this identifier_name
+    let spendAuthSig: Data
+    let signedNoteNullifier: Data
+    let cmxNew: Data
+    let vanCmx: Data
+    let govNullifiers: [Data]
+    let proof: Data
+    let voteRoundId: Data
+    let sighash: Data
+
+    init(
+        rk: Data, // swiftlint:disable:this identifier_name
+        spendAuthSig: Data,
+        signedNoteNullifier: Data,
+        cmxNew: Data,
+        vanCmx: Data,
+        govNullifiers: [Data],
+        proof: Data,
+        voteRoundId: Data,
+        sighash: Data
+    ) {
+        self.rk = rk
+        self.spendAuthSig = spendAuthSig
+        self.signedNoteNullifier = signedNoteNullifier
+        self.cmxNew = cmxNew
+        self.vanCmx = vanCmx
+        self.govNullifiers = govNullifiers
+        self.proof = proof
+        self.voteRoundId = voteRoundId
+        self.sighash = sighash
+    }
+}
+```
+
+with:
+
+```swift
+struct DelegationRegistration: Equatable, Sendable {
+    let rk: Data // swiftlint:disable:this identifier_name
+    let spendAuthSig: Data
+    /// Base64, verbatim from `VotingDelegationSubmission` — never compared as bytes, only
+    /// ever placed on the wire, so it is never decoded.
+    let signedNoteNullifier: String
+    let cmxNew: String
+    let vanCmx: String
+    let govNullifiers: [String]
+    let proof: String
+    let voteRoundId: Data
+    let sighash: Data
+
+    init(
+        rk: Data, // swiftlint:disable:this identifier_name
+        spendAuthSig: Data,
+        signedNoteNullifier: String,
+        cmxNew: String,
+        vanCmx: String,
+        govNullifiers: [String],
+        proof: String,
+        voteRoundId: Data,
+        sighash: Data
+    ) {
+        self.rk = rk
+        self.spendAuthSig = spendAuthSig
+        self.signedNoteNullifier = signedNoteNullifier
+        self.cmxNew = cmxNew
+        self.vanCmx = vanCmx
+        self.govNullifiers = govNullifiers
+        self.proof = proof
+        self.voteRoundId = voteRoundId
+        self.sighash = sighash
+    }
+}
+```
+
+Second, add the decode-failure error case this closure needs (`rk`/`spendAuthSig` are the only
+two fields still decoded from base64, and a malformed value from the crate must not silently
+proceed). In `VotingCryptoClientLiveKey.swift`, in the `VotingCryptoError` enum step 8.7 last
+edited, replace:
+
+```swift
+    case malformedWireShare(UInt32)
+
+    var errorDescription: String? {
+        switch self {
+        case .proofFailed(let reason):
+            return "Delegation proof generation failed: \(reason)"
+        case .databaseNotOpen:
+            return "Voting database is not open."
+        case .hotkeySeedBindingMismatch:
+            return "Hotkey derivation mismatch while building delegation sign action."
+        case .invalidSpendAuthSignatureLength(let actual):
+            return "SpendAuthSig must be 64 bytes, got \(actual)."
+        case .invalidKeystoneMetadata:
+            return "Missing or invalid Keystone signing metadata."
+        case .malformedWireShare(let shareIndex):
+            return "commitVote returned a non-base64 encrypted share at index \(shareIndex)."
+        }
+    }
+}
+```
+
+with:
+
+```swift
+    case malformedWireShare(UInt32)
+    case malformedDelegationSubmission(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .proofFailed(let reason):
+            return "Delegation proof generation failed: \(reason)"
+        case .databaseNotOpen:
+            return "Voting database is not open."
+        case .hotkeySeedBindingMismatch:
+            return "Hotkey derivation mismatch while building delegation sign action."
+        case .invalidSpendAuthSignatureLength(let actual):
+            return "SpendAuthSig must be 64 bytes, got \(actual)."
+        case .invalidKeystoneMetadata:
+            return "Missing or invalid Keystone signing metadata."
+        case .malformedWireShare(let shareIndex):
+            return "commitVote returned a non-base64 encrypted share at index \(shareIndex)."
+        case .malformedDelegationSubmission(let detail):
+            return "getDelegationSubmission returned malformed wire data: \(detail)"
+        }
+    }
+}
+```
+
+Third, fix the closure itself. In the same file, replace:
+
+```swift
+            getDelegationSubmission: { roundId, bundleIndex, signature, sighash in
+                let backend = try await dbActor.backend()
+                let sub = try backend.getDelegationSubmission(
+                    roundId: roundId,
+                    bundleIndex: bundleIndex,
+                    signature: [UInt8](signature),
+                    sighash: [UInt8](sighash)
+                )
+                let voteRoundIdBytes = Data(hexString: sub.voteRoundId)
+                let rk: Data = Data(sub.randomizedKey)
+                let spendAuthSig: Data = Data(sub.spendAuthSig)
+                let signedNoteNullifier: Data = Data(sub.nfSigned)
+                let cmxNew: Data = Data(sub.cmxNew)
+                let vanCmx: Data = Data(sub.govComm)
+                let govNullifiers: [Data] = sub.govNullifiers.map { Data($0) }
+                let proof: Data = Data(sub.proof)
+                let sighashOut: Data = Data(sub.sighash)
+                return DelegationRegistration(
+                    rk: rk,
+                    spendAuthSig: spendAuthSig,
+                    signedNoteNullifier: signedNoteNullifier,
+                    cmxNew: cmxNew,
+                    vanCmx: vanCmx,
+                    govNullifiers: govNullifiers,
+                    proof: proof,
+                    voteRoundId: voteRoundIdBytes,
+                    sighash: sighashOut
+                )
+            },
+```
+
+with:
+
+```swift
+            getDelegationSubmission: { roundId, bundleIndex, signature, sighash in
+                let backend = try await dbActor.backend()
+                let sub = try backend.getDelegationSubmission(
+                    roundId: roundId,
+                    bundleIndex: bundleIndex,
+                    signature: [UInt8](signature),
+                    sighash: [UInt8](sighash)
+                )
+                guard
+                    let rk = Data(base64Encoded: sub.randomizedKey),
+                    let spendAuthSig = Data(base64Encoded: sub.spendAuthSig)
+                else {
+                    throw VotingCryptoError.malformedDelegationSubmission(
+                        "rk/spend_auth_sig did not base64-decode"
+                    )
+                }
+                let voteRoundIdBytes = Data(hexString: sub.voteRoundId)
+                return DelegationRegistration(
+                    rk: rk,
+                    spendAuthSig: spendAuthSig,
+                    signedNoteNullifier: sub.nfSigned,
+                    cmxNew: sub.cmxNew,
+                    vanCmx: sub.govComm,
+                    govNullifiers: sub.govNullifiers,
+                    proof: sub.proof,
+                    voteRoundId: voteRoundIdBytes,
+                    sighash: sighash
+                )
+            },
+```
+
+`sighash` on the last line is the closure's own parameter (already `Data`) — never `sub.sighash`,
+which no longer exists.
+
+Fourth, stop re-encoding what is already base64 text. In
+`secant/Sources/Dependencies/VotingAPIClient/VotingAPIClientLiveKey.swift`, replace:
+
+```swift
+            submitDelegation: { registration in
+                @Dependency(\.transactionGuard) var transactionGuard
+                return try await transactionGuard.withSubmission {
+                    let body: [String: Any] = [
+                        "rk": registration.rk.base64EncodedString(),
+                        "spend_auth_sig": registration.spendAuthSig.base64EncodedString(),
+                        "sighash": registration.sighash.base64EncodedString(),
+                        "signed_note_nullifier": registration.signedNoteNullifier.base64EncodedString(),
+                        "cmx_new": registration.cmxNew.base64EncodedString(),
+                        "van_cmx": registration.vanCmx.base64EncodedString(),
+                        "gov_nullifiers": registration.govNullifiers.map { $0.base64EncodedString() },
+                        "proof": registration.proof.base64EncodedString(),
+                        "vote_round_id": registration.voteRoundId.base64EncodedString()
+                    ]
+```
+
+with:
+
+```swift
+            submitDelegation: { registration in
+                @Dependency(\.transactionGuard) var transactionGuard
+                return try await transactionGuard.withSubmission {
+                    let body: [String: Any] = [
+                        "rk": registration.rk.base64EncodedString(),
+                        "spend_auth_sig": registration.spendAuthSig.base64EncodedString(),
+                        "sighash": registration.sighash.base64EncodedString(),
+                        "signed_note_nullifier": registration.signedNoteNullifier,
+                        "cmx_new": registration.cmxNew,
+                        "van_cmx": registration.vanCmx,
+                        "gov_nullifiers": registration.govNullifiers,
+                        "proof": registration.proof,
+                        "vote_round_id": registration.voteRoundId.base64EncodedString()
+                    ]
+```
+
+Fifth, a third `DelegationRegistration(...)` call site this same field-type change breaks: the
+test fixture. In `zodlTests/VotingTests/VotingCoordFlowCoordinatorTests.swift`, replace:
+
+```swift
+    private static func makeDelegationRegistration(
+        rk: Data = Data(repeating: 0x01, count: 32),
+        spendAuthSig: Data = Data(repeating: 0x02, count: 64),
+        sighash: Data = Data(repeating: 0x08, count: 32)
+    ) -> DelegationRegistration {
+        DelegationRegistration(
+            rk: rk,
+            spendAuthSig: spendAuthSig,
+            signedNoteNullifier: Data(repeating: 0x03, count: 32),
+            cmxNew: Data(repeating: 0x04, count: 32),
+            vanCmx: Data(repeating: 0x05, count: 32),
+            govNullifiers: [Data(repeating: 0x06, count: 32)],
+            proof: Data(repeating: 0x07, count: 32),
+            voteRoundId: Data([0xAA, 0xBB]),
+            sighash: sighash
+        )
+    }
+```
+
+with:
+
+```swift
+    private static func makeDelegationRegistration(
+        rk: Data = Data(repeating: 0x01, count: 32),
+        spendAuthSig: Data = Data(repeating: 0x02, count: 64),
+        sighash: Data = Data(repeating: 0x08, count: 32)
+    ) -> DelegationRegistration {
+        DelegationRegistration(
+            rk: rk,
+            spendAuthSig: spendAuthSig,
+            signedNoteNullifier: Data(repeating: 0x03, count: 32).base64EncodedString(),
+            cmxNew: Data(repeating: 0x04, count: 32).base64EncodedString(),
+            vanCmx: Data(repeating: 0x05, count: 32).base64EncodedString(),
+            govNullifiers: [Data(repeating: 0x06, count: 32).base64EncodedString()],
+            proof: Data(repeating: 0x07, count: 32).base64EncodedString(),
+            voteRoundId: Data([0xAA, 0xBB]),
+            sighash: sighash
+        )
+    }
+```
+
+This test file is edited twice across this plan at two non-overlapping locations — this fixture
+here (`:928-944` at plan-writing time) by step 9.0a, and the Keystone stub rename (`:1025`) by
+Task 14 — so Task 14 will encounter this file already modified by this step; that is expected,
+not a conflict.
+
+- [ ] **Step 9.0b: Delete the dead `toSDK()` extension.** `private extension
+VoteCommitmentBundle { func toSDK() -> VotingVoteCommitmentBundle { ... } }` references
+`VotingVoteCommitmentBundle`, a type that exists nowhere in the real SDK (it was invented for
+the pre-SDK-lane-Task-2 `buildSharePayloads`/`signCastVote` pipeline). Its only caller was
+`signCastVote`'s `LiveKey` implementation, which step 8.8 already deleted — no task owns
+deleting the now-dead extension itself. Verify first:
+
+```bash
+cd ~/Dev/Xcode/GitHub/LukasKorba/_chp/zodl-ios && grep -n "VotingVoteCommitmentBundle\|private extension VoteCommitmentBundle" secant/Sources/Dependencies/VotingCryptoClient/VotingCryptoClientLiveKey.swift
+```
+
+Expected: exactly the one extension block, no other reference anywhere in the file (confirming
+it is genuinely unreferenced, not just unreferenced by the deleted closure). In the same file,
+replace:
+
+```swift
+private extension VoteCommitmentBundle {
+    func toSDK() -> VotingVoteCommitmentBundle {
+        VotingVoteCommitmentBundle(
+            vanNullifier: [UInt8](vanNullifier),
+            voteAuthorityNoteNew: [UInt8](voteAuthorityNoteNew),
+            voteCommitment: [UInt8](voteCommitment),
+            proposalId: proposalId,
+            proof: [UInt8](proof),
+            encShares: encShares.map {
+                VotingWireEncryptedShare(
+                    ciphertext1: [UInt8]($0.c1),
+                    ciphertext2: [UInt8]($0.c2),
+                    shareIndex: $0.shareIndex
+                )
+            },
+            anchorHeight: anchorHeight,
+            voteRoundId: voteRoundId,
+            sharesHash: [UInt8](sharesHash),
+            shareBlinds: shareBlindFactors.map { [UInt8]($0) },
+            shareComms: shareComms.map { [UInt8]($0) },
+            rVpkBytes: [UInt8](rVpkBytes),
+            alphaV: [UInt8](alphaV)
+        )
+    }
+}
+```
+
+with nothing (delete the block and the blank line immediately above it, so the file reads
+straight from whatever precedes it into whatever follows — verify at edit time that no other
+blank-line adjustment is needed; do not leave two consecutive blank lines behind).
 
 - [ ] **Step 9.1: Thread `txHash` through `markVoteSubmitted`.** In
 `VotingCryptoClientInterface.swift`, replace:
