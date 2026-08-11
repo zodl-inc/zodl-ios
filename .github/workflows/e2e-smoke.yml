@@ -55,18 +55,18 @@ jobs:
       - name: Checkout app
         uses: actions/checkout@v4
 
-      - name: Checkout Slipstream SDK
+      - name: Checkout SDK main
         uses: actions/checkout@v4
         with:
           repository: zcash/zcash-swift-wallet-sdk
-          ref: 93a11081bba6fa195e362801ccd65f5f91930870
+          ref: main
           path: .ci/zcash-swift-wallet-sdk
 
       - name: Link SDK at project-relative path
         run: ln -s "$GITHUB_WORKSPACE/.ci/zcash-swift-wallet-sdk" "$GITHUB_WORKSPACE/../zcash-swift-wallet-sdk"
 
-      - name: Configure matching Slipstream FFI
-        uses: ./.github/actions/configure-exact-sdk-ffi
+      - name: Configure matching SDK FFI
+        uses: ./.github/actions/configure-sdk-ffi
         with:
           slipstream-app-id: ${{ secrets.SLIPSTREAM_APP_ID }}
           slipstream-app-private-key: ${{ secrets.SLIPSTREAM_APP_PRIVATE_KEY }}
