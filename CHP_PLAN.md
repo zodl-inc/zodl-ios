@@ -7065,6 +7065,383 @@ against `CHP_PLAN.md` Task 16's wrap-up log.
 
 ---
 
+### Task 14B: the silent-false-green fix — flag into zodlTests + 3 real test issues
+
+*Code blocks by: Sonnet (app delegate).*
+
+Task 14's own gate ran green for the wrong reason: `zodlTests` never received `VOTING_ENABLED`
+(Task 7's table enumerated only the three *app* targets — `zodlTests` is a fourth,
+`TestTargetID`-linked target this plan never looked at), so every `#if VOTING_ENABLED`-gated
+test file — all five under `zodlTests/VotingTests/`, both files Task 14 itself edited — compiled
+to nothing, and "TEST SUCCEEDED" at Task 14's step 14.5 meant "zero voting tests ran," not "all
+voting tests passed." This section closes that gap and the 6 real problems it was hiding.
+
+**Files:**
+- Modify: `secant.xcodeproj/project.pbxproj` (`zodlTests` target, Debug configuration only)
+- Modify: `zodlTests/VotingTests/VotingServiceConfigTests.swift` (3 JSON fixture literals)
+- Modify: `zodlTests/VotingTests/VotingCoordFlowCoordinatorTests.swift` (1 test's mock surface)
+
+**Interfaces:**
+- Consumes: nothing new — every symbol these three fixes touch already exists from Tasks
+  8/8.14/9/9B/12.
+- Produces: nothing new — this section makes existing, already-shipped code and tests agree.
+
+---
+
+- [ ] **Step 14B.1: Enumerate `zodlTests`'s build configurations and flip the one that runs.**
+`zodlTests` (`PBXNativeTarget` `0D4E7A1526B364180058B01E`) has exactly three configurations,
+via its own `XCConfigurationList` (`0D4E7A2D26B364180058B01E`):
+
+| Config | UUID | Current `SWIFT_ACTIVE_COMPILATION_CONDITIONS` | Used by any scheme's `TestAction`? |
+|---|---|---|---|
+| Debug | `0D4E7A2E26B364180058B01E` | `"DEBUG UNREDACTED"` | **Yes** — `zodl-internal.xcscheme`'s `<TestAction buildConfiguration = "Debug">` |
+| Release-Testflight | `0D4E7A2F26B364180058B01E` | (none set) | No |
+| Release-AppStore | `9E4AB2BD2BA1C05100F5D6DB` | (none set) | No |
+
+Verify this against the tree before editing:
+
+```bash
+cd ~/Dev/Xcode/GitHub/LukasKorba/_chp/zodl-ios && grep -A3 "<TestAction" secant.xcodeproj/xcshareddata/xcschemes/zodl-internal.xcscheme | head -4
+sed -n '826,850p' secant.xcodeproj/project.pbxproj
+```
+
+Expected: `buildConfiguration = "Debug"` and the block shown in step 14B.1's edit below,
+verbatim. **Only the Debug configuration needs the flag** — every Xcode scheme's `TestAction`
+runs whichever single configuration its `buildConfiguration` attribute names (Debug, here,
+for all three of this project's schemes — `zodl-internal`, `zodl-testnet`, and
+`zodl-AppStore` alike default their `TestAction` to Debug), so `zodlTests`'s
+Release-Testflight/Release-AppStore configurations are never invoked by a test run regardless
+of this flag; leaving them untouched is correct, not an oversight.
+
+**The testnet scheme's test action is explicitly out of scope, structurally, not just by
+policy.** `zodl-testnet.xcscheme` also declares a `<TestAction buildConfiguration = "Debug">`,
+but it does not reference `zodlTests` as a testable at all (`grep -c 'zodlTests'
+zodl-testnet.xcscheme` → `0`) — and `zodlTests`'s own Debug configuration hardcodes
+`TEST_HOST = "$(BUILT_PRODUCTS_DIR)/zodl-internal.app/zodl-internal"` (visible in the block
+below), so this exact test bundle cannot be hosted by `zodl-testnet.app` even if a future
+scheme edit tried to wire it in. `CHP_PLAN.md`'s own gate ladder only ever runs
+`xcodebuild test` against `zodl-internal` (step 15.1) — `zodl-testnet`'s standing gate (step
+15.2) is a plain `build`, never `test` — so there is no gate anywhere in this plan that this
+finding needs to extend to.
+
+In `secant.xcodeproj/project.pbxproj`, replace:
+
+```
+		0D4E7A2E26B364180058B01E /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = RLPRR8CPQG;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				INFOPLIST_FILE = zodlTests/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = co.electriccoin.zodlTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG UNREDACTED";
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/zodl-internal.app/zodl-internal";
+			};
+			name = Debug;
+		};
+```
+
+with:
+
+```
+		0D4E7A2E26B364180058B01E /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = RLPRR8CPQG;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				INFOPLIST_FILE = zodlTests/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = co.electriccoin.zodlTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG UNREDACTED VOTING_ENABLED";
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/zodl-internal.app/zodl-internal";
+			};
+			name = Debug;
+		};
+```
+
+Then verify uniqueness and the new total:
+
+```bash
+grep -c 'VOTING_ENABLED' secant.xcodeproj/project.pbxproj
+```
+
+Expected: `7` (Task 7's six app-target configs, plus this one). `SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG UNREDACTED";` (the exact pre-edit string, with no other flags) appeared exactly once in the file before this edit — confirmed uniquely locatable, not just line-number-adjacent.
+
+- [ ] **Step 14B.2: Add the missing `pir_layout` to three JSON fixture literals.** Task 12
+added a required `pir_layout` field to `VotingServiceConfig`; these three tests predate that
+task and decode a JSON literal that no longer satisfies it
+(`DecodingError.keyNotFound(pir_layout)`). All three assertions are about decode/validate
+*mechanics*, not about `pirLayout`'s values, so any well-formed layout is correct test data —
+matching the value `validateRejectsNonHexRoundId` (a fourth test in this same file, already
+correct — it builds a `VotingServiceConfig` directly rather than via JSON, so it was never
+broken) already uses: `.init(pirDepth: 1, tier0Layers: 1, tier1Layers: 1)`.
+
+In `zodlTests/VotingTests/VotingServiceConfigTests.swift`, replace:
+
+```swift
+        let json = """
+        {
+          "config_version": 1,
+          "vote_servers": [
+            {"url": "https://vote1.example.com", "label": "validator-1"}
+          ],
+          "pir_endpoints": [
+            {"url": "https://pir1.example.com", "label": "pir-1"}
+          ],
+          "supported_versions": {
+            "pir": ["v0", "v1"],
+            "vote_protocol": "v0",
+            "tally": "v0",
+            "vote_server": "v1"
+          },
+          "rounds": {}
+        }
+        """
+        let config = try JSONDecoder().decode(VotingServiceConfig.self, from: Data(json.utf8))
+
+        #expect(config.configVersion == 1)
+        #expect(config.voteServers.count == 1)
+        #expect(config.pirEndpoints.first?.label == "pir-1")
+        #expect(config.supportedVersions.voteServer == "v1")
+        #expect(config.supportedVersions.pir == ["v0", "v1"])
+    }
+```
+
+with:
+
+```swift
+        let json = """
+        {
+          "config_version": 1,
+          "vote_servers": [
+            {"url": "https://vote1.example.com", "label": "validator-1"}
+          ],
+          "pir_endpoints": [
+            {"url": "https://pir1.example.com", "label": "pir-1"}
+          ],
+          "supported_versions": {
+            "pir": ["v0", "v1"],
+            "vote_protocol": "v0",
+            "tally": "v0",
+            "vote_server": "v1"
+          },
+          "rounds": {},
+          "pir_layout": {"pir_depth": 1, "tier0_layers": 1, "tier1_layers": 1}
+        }
+        """
+        let config = try JSONDecoder().decode(VotingServiceConfig.self, from: Data(json.utf8))
+
+        #expect(config.configVersion == 1)
+        #expect(config.voteServers.count == 1)
+        #expect(config.pirEndpoints.first?.label == "pir-1")
+        #expect(config.supportedVersions.voteServer == "v1")
+        #expect(config.supportedVersions.pir == ["v0", "v1"])
+    }
+```
+
+Then, in the same file, replace:
+
+```swift
+        let json = """
+        {
+          "config_version": 1,
+          "vote_servers": [{"url": "https://x", "label": "a"}],
+          "pir_endpoints": [{"url": "https://y", "label": "b"}],
+          "supported_versions": {"pir": ["v0"], "vote_protocol": "v0", "tally": "v0", "vote_server": "v1"},
+          "rounds": {}
+        }
+        """
+
+        #expect(throws: Never.self) {
+            try JSONDecoder().decode(VotingServiceConfig.self, from: Data(json.utf8))
+        }
+    }
+```
+
+with:
+
+```swift
+        let json = """
+        {
+          "config_version": 1,
+          "vote_servers": [{"url": "https://x", "label": "a"}],
+          "pir_endpoints": [{"url": "https://y", "label": "b"}],
+          "supported_versions": {"pir": ["v0"], "vote_protocol": "v0", "tally": "v0", "vote_server": "v1"},
+          "rounds": {},
+          "pir_layout": {"pir_depth": 1, "tier0_layers": 1, "tier1_layers": 1}
+        }
+        """
+
+        #expect(throws: Never.self) {
+            try JSONDecoder().decode(VotingServiceConfig.self, from: Data(json.utf8))
+        }
+    }
+```
+
+Then, still in the same file, replace:
+
+```swift
+        let config = try JSONDecoder().decode(VotingServiceConfig.self, from: Data("""
+        {
+          "config_version": 1,
+          "vote_servers": [{"url": "https://x", "label": "a"}],
+          "pir_endpoints": [{"url": "https://y", "label": "b"}],
+          "supported_versions": {"pir": ["v0"], "vote_protocol": "v0", "tally": "v0", "vote_server": "v1"},
+          "rounds": {}
+        }
+        """.utf8))
+
+        #expect(config.rounds.isEmpty)
+        #expect(throws: Never.self) {
+            try config.validate()
+        }
+    }
+```
+
+with:
+
+```swift
+        let config = try JSONDecoder().decode(VotingServiceConfig.self, from: Data("""
+        {
+          "config_version": 1,
+          "vote_servers": [{"url": "https://x", "label": "a"}],
+          "pir_endpoints": [{"url": "https://y", "label": "b"}],
+          "supported_versions": {"pir": ["v0"], "vote_protocol": "v0", "tally": "v0", "vote_server": "v1"},
+          "rounds": {},
+          "pir_layout": {"pir_depth": 1, "tier0_layers": 1, "tier1_layers": 1}
+        }
+        """.utf8))
+
+        #expect(config.rounds.isEmpty)
+        #expect(throws: Never.self) {
+            try config.validate()
+        }
+    }
+```
+
+No assertion in any of the three tests changes — each still checks exactly what it checked
+before; only the fixture JSON gained the field the type now requires to exist at all.
+
+- [ ] **Step 14B.3: Port `delegationPipelineDoesNotSkipCachedTxWithoutConfirmedVanPosition` —
+add the missing half of the mocked probe.**
+
+**Faithfulness argument (read before applying the edit).** `git show
+8ba799f1:zodlTests/VotingTests/VotingCoordFlowCoordinatorTests.swift` (the tree immediately
+before Task 8 landed) shows this test's original mock:
+`votingCrypto.getDelegationSubmission = { _, _, _, _, _ in await recorder.record("registration");
+return Self.makeDelegationRegistration() }` — five wildcarded parameters, matching the
+*old* `getDelegationSubmission(roundId:bundleIndex:senderSeed:networkId:accountIndex:)`. Every
+argument was already thrown away (`_`); the mock's only job was to unconditionally mark
+`"registration"` and hand back a canned `DelegationRegistration` the instant the cached-submission
+probe reached it. Task 8.14 split that one call into two
+(`signDelegationRequest` → `getDelegationSubmission`), and the current file already re-typed the
+`getDelegationSubmission` mock for the new 4-argument signature (still fully wildcarded, still
+recording `"registration"` unconditionally) — but never added a mock for the new first half, so
+the probe now throws `XCTFail`'s `@DependencyClient` "unimplemented" at
+`signDelegationRequest` before it ever reaches the `getDelegationSubmission` mock this test's
+assertion actually depends on. The test's own assertion (`#expect(events == ["fetch:cached-tx",
+"registration", "submit", "store-tx:new-tx", "fetch:new-tx", "van:0:9"])`) has never once
+depended on *how* the cached registration gets reconstructed — only on *whether* the pipeline,
+having reconstructed one, still resubmits when `fetchTxConfirmation` reports the cached tx
+unconfirmed. A `signDelegationRequest` mock that — like its neighbor — ignores its inputs and
+unconditionally succeeds with canned bytes completes the probe's mock surface without adding or
+removing any gate the test was never exercising; it changes zero recorded events and zero
+assertions. This is a faithful port, not a semantic change: **port, not STOP.**
+
+In `zodlTests/VotingTests/VotingCoordFlowCoordinatorTests.swift`, replace:
+
+```swift
+        votingCrypto.getDelegationSubmission = { _, _, _, _ in
+            await recorder.record("registration")
+            return Self.makeDelegationRegistration()
+        }
+```
+
+with:
+
+```swift
+        votingCrypto.signDelegationRequest = { _, _, _, _, _, _, _ in
+            (signature: Data(repeating: 0x09, count: 64), sighash: Data(repeating: 0x0A, count: 32))
+        }
+        votingCrypto.getDelegationSubmission = { _, _, _, _ in
+            await recorder.record("registration")
+            return Self.makeDelegationRegistration()
+        }
+```
+
+No other line in this test changes — same setup, same `runDelegationPipeline` call, same
+expected `events` array.
+
+- [ ] **Step 14B.4: The real gate — full internal test run, flag actually compiled in.** Run:
+
+```bash
+cd ~/Dev/Xcode/GitHub/LukasKorba/_chp/zodl-ios && set -o pipefail; xcodebuild test -scheme zodl-internal -destination 'platform=iOS Simulator,name=iPhone 17 Pro' 2>&1 | tee /tmp/chp-t14b-test.log | tail -30; echo "TEST_EXIT=$?"
+```
+
+Expected: `TEST_EXIT=0`, `** TEST SUCCEEDED **`. Confirm the voting suites actually ran this
+time (the exact failure mode this section exists to close):
+
+```bash
+grep -c "Test Suite '.*Voting.*'" /tmp/chp-t14b-test.log
+grep -c "Test Suite '.*' started" /tmp/chp-t14b-test.log
+```
+
+Expected: the first command reports the voting suites present (11, per the coordinator's live
+count — five files, but `@Suite struct` splits some files into more than one named suite);
+the second reports a total near `1249` (the coordinator's live count with the flag on).
+Confirm zero failures:
+
+```bash
+grep -c ' failed ' /tmp/chp-t14b-test.log
+```
+
+Expected: `0`, **with one named, tolerated exception**: if the log shows a failure inside
+`CurrencyConversionSetupTests`, that is a pre-existing, unrelated issue this campaign does not
+own (not a voting file, not touched by any task in this plan) — confirm it is exactly that
+suite and no other before treating the count as acceptable; any voting-suite failure is this
+section's own regression and must be fixed here, not waved through.
+
+- [ ] **Step 14B.5: Commit and push.**
+
+```bash
+cd ~/Dev/Xcode/GitHub/LukasKorba/_chp/zodl-ios && git add secant.xcodeproj/project.pbxproj zodlTests/VotingTests/VotingServiceConfigTests.swift zodlTests/VotingTests/VotingCoordFlowCoordinatorTests.swift && git commit -m "[MOB-1678] Enable VOTING_ENABLED for zodlTests so the voting suites actually run, and fix the 3 real issues that surfaces" -m "Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>" && git push origin chp-re-enable
+```
+
+This is still within gate 5's sanction (`CHP_PLAN.md` Task 14's own scope: "zero errors + tests
++ first push") — the first push already happened at step 14.7; this is an amending push on the
+same branch, not a second "first" push.
+
+---
+
+---
+
 ### Task 15: Standing gates + conformance sweep (gate 6)
 
 *No code blocks (commands only) — orchestrator-authored.*
