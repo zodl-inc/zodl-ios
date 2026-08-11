@@ -22,7 +22,8 @@ import Testing
             "tally": "v0",
             "vote_server": "v1"
           },
-          "rounds": {}
+          "rounds": {},
+          "pir_layout": {"pir_depth": 1, "tier0_layers": 1, "tier1_layers": 1}
         }
         """
         let config = try JSONDecoder().decode(VotingServiceConfig.self, from: Data(json.utf8))
@@ -41,7 +42,8 @@ import Testing
           "vote_servers": [{"url": "https://x", "label": "a"}],
           "pir_endpoints": [{"url": "https://y", "label": "b"}],
           "supported_versions": {"pir": ["v0"], "vote_protocol": "v0", "tally": "v0", "vote_server": "v1"},
-          "rounds": {}
+          "rounds": {},
+          "pir_layout": {"pir_depth": 1, "tier0_layers": 1, "tier1_layers": 1}
         }
         """
 
@@ -57,7 +59,8 @@ import Testing
           "vote_servers": [{"url": "https://x", "label": "a"}],
           "pir_endpoints": [{"url": "https://y", "label": "b"}],
           "supported_versions": {"pir": ["v0"], "vote_protocol": "v0", "tally": "v0", "vote_server": "v1"},
-          "rounds": {}
+          "rounds": {},
+          "pir_layout": {"pir_depth": 1, "tier0_layers": 1, "tier1_layers": 1}
         }
         """.utf8))
 

@@ -721,6 +721,9 @@ import Testing
         votingCrypto.buildVotingPczt = { _, _, _, _, _, _, _, _, _, _ in
             Self.makeVotingPcztResult()
         }
+        votingCrypto.signDelegationRequest = { _, _, _, _, _, _, _ in
+            (signature: Data(repeating: 0x09, count: 64), sighash: Data(repeating: 0x0A, count: 32))
+        }
         votingCrypto.getDelegationSubmission = { _, _, _, _ in
             await recorder.record("registration")
             return Self.makeDelegationRegistration()
