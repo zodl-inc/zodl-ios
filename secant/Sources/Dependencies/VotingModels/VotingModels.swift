@@ -255,14 +255,18 @@ struct VotingDbState: Equatable, Sendable {
 // MARK: - Hotkey
 
 struct VotingHotkey: Equatable, Sendable {
-    let secretKey: Data
-    let publicKey: Data
-    let address: String
+    /// The material to persist via `WalletStorage.importVotingHotkey(_:accountId:)`. Treat it
+    /// as key material, not as an identifier.
+    let storedSecret: Data
+    /// Raw Orchard address bytes for the hotkey, derived from `storedSecret`.
+    let rawOrchardAddress: Data
+    /// Address index the hotkey's Orchard address was derived at.
+    let addressIndex: UInt32
 
-    init(secretKey: Data, publicKey: Data, address: String) {
-        self.secretKey = secretKey
-        self.publicKey = publicKey
-        self.address = address
+    init(storedSecret: Data, rawOrchardAddress: Data, addressIndex: UInt32) {
+        self.storedSecret = storedSecret
+        self.rawOrchardAddress = rawOrchardAddress
+        self.addressIndex = addressIndex
     }
 }
 

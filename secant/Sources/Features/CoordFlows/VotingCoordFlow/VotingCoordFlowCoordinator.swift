@@ -979,16 +979,15 @@ extension VotingCoordFlow {
                         LoggerProxy.error("No selected account; skipping voting hotkey generation")
                         return
                     }
-                    let phrase: String
+                    let storedSecret: Data
                     if let stored = try? walletStorage.exportVotingHotkey(accountId) {
-                        phrase = stored.seedPhrase.value()
+                        storedSecret = stored.storedSecret.value()
                     } else {
-                        phrase = try mnemonic.randomMnemonic()
-                        try walletStorage.importVotingHotkey(phrase, accountId)
+                        let hotkey = try await votingCrypto.generateHotkey(networkId)
+                        storedSecret = hotkey.storedSecret
+                        try walletStorage.importVotingHotkey(storedSecret, accountId)
                     }
-                    let seed = try mnemonic.toSeed(phrase)
-                    let hotkey = try await votingCrypto.generateHotkey(roundId, seed)
-                    await send(.hotkeyLoaded(roundId: roundId, address: hotkey.address))
+                    await send(.hotkeyLoaded(roundId: roundId, address: ""))
 
                     if shouldRestoreKeystoneSignatures {
                         let savedSignatures = didPrepareFreshRound
@@ -1769,8 +1768,7 @@ extension VotingCoordFlow {
                 }
             }
 
-            let hotkeyPhrase = try walletStorage.exportVotingHotkey(accountId).seedPhrase.value()
-            let hotkeySeed = try mnemonic.toSeed(hotkeyPhrase)
+            let hotkeySeed = try [UInt8](walletStorage.exportVotingHotkey(accountId).storedSecret.value())
 
             // --- Delegation (ZKP #1) — run inline if not already done ---
             if !delegationDone {
@@ -2029,8 +2027,7 @@ extension VotingCoordFlow {
         let roundName = activeSession.title
 
         return .run { [votingCrypto, mnemonic, walletStorage] send in
-            let hotkeyPhrase = try walletStorage.exportVotingHotkey(accountId).seedPhrase.value()
-            let hotkeySeed = try mnemonic.toSeed(hotkeyPhrase)
+            let hotkeySeed = try [UInt8](walletStorage.exportVotingHotkey(accountId).storedSecret.value())
             let noteChunks = cachedNotes.smartBundles().bundles
             guard Int(bundleCount) <= noteChunks.count else {
                 throw VotingFlowError.inconsistentBundleSetup(
@@ -2594,8 +2591,7 @@ extension VotingCoordFlow {
         return .run { [backgroundTask, sdkSynchronizer, votingCrypto, mnemonic, walletStorage] send in
             let bgTaskId = await backgroundTask.beginTask("Keystone PCZT prep")
             do {
-                let hotkeyPhrase = try walletStorage.exportVotingHotkey(accountId).seedPhrase.value()
-                let hotkeySeed = try mnemonic.toSeed(hotkeyPhrase)
+                let hotkeySeed = try [UInt8](walletStorage.exportVotingHotkey(accountId).storedSecret.value())
                 let bundleNotes = noteChunks[Int(keystoneBundleIndex)]
                 let orchardFvk = try votingCrypto.extractOrchardFvkFromUfvk(
                     bundleNotes[0].ufvkStr, networkId
@@ -2783,6 +2779,7 @@ extension VotingCoordFlow {
             return .none
         }
         let bundleCount = session.bundleCount
+        let roundName = activeSession.title
         let storedSignatures = session.keystoneBundleSignatures.sorted { $0.bundleIndex < $1.bundleIndex }
         let initiallyCompletedBundles = session.completedKeystoneDelegationBundleIndices
         let noteChunks = cachedNotes.smartBundles().bundles
@@ -2800,8 +2797,7 @@ extension VotingCoordFlow {
             do {
                 let senderPhrase = try walletStorage.exportWallet().seedPhrase.value()
                 let senderSeed = try mnemonic.toSeed(senderPhrase)
-                let hotkeyPhrase = try walletStorage.exportVotingHotkey(accountId).seedPhrase.value()
-                let hotkeySeed = try mnemonic.toSeed(hotkeyPhrase)
+                let hotkeySeed = try [UInt8](walletStorage.exportVotingHotkey(accountId).storedSecret.value())
                 let normalizedInitialCompletedBundles = initiallyCompletedBundles.filter { $0 < bundleCount }
                 var completedBundles = normalizedInitialCompletedBundles
                 for idx: UInt32 in 0..<bundleCount {
@@ -2853,6 +2849,7 @@ extension VotingCoordFlow {
                         hotkeySeed,
                         networkId,
                         accountIndex,
+                        roundName,
                         pirEndpoints,
                         expectedSnapshotHeight
                     ) {
@@ -3556,7 +3553,7 @@ extension VotingCoordFlow {
 
                 for try await event in votingCrypto.buildAndProveDelegation(
                     roundId, bundleIndex, bundleNotes,
-                    senderSeed, hotkeySeed, networkId, accountIndex,
+                    senderSeed, hotkeySeed, networkId, accountIndex, roundName,
                     pirEndpoints, expectedSnapshotHeight
                 ) {
                     switch event {

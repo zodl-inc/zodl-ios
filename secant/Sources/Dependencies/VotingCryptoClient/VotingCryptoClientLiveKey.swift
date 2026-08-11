@@ -177,19 +177,17 @@ extension VotingCryptoClient: DependencyKey {
                 )
                 return try VotingRustBackend.verifyWitness(sdkWitness)
             },
-            generateHotkey: { roundId, seed in
-                let backend = try await dbActor.backend()
-                let hotkey = try backend.generateHotkey(seed: seed)
+            generateHotkey: { networkId in
+                let hotkey = try VotingRustBackend.generateHotkey(networkId: networkId)
                 return VotingHotkey(
-                    secretKey: Data(hotkey.secretKey),
-                    publicKey: Data(hotkey.publicKey),
-                    address: hotkey.address
+                    storedSecret: Data(hotkey.storedSecret),
+                    rawOrchardAddress: Data(hotkey.rawOrchardAddress),
+                    addressIndex: hotkey.addressIndex
                 )
             },
             // swiftlint:disable:next line_length
-            buildVotingPczt: { roundId, bundleIndex, notes, senderSeed, hotkeySeed, networkId, accountIndex, roundName, orchardFvkOverride, keystoneSeedFingerprintOverride in
+            buildVotingPczt: { roundId, bundleIndex, notes, senderSeed, hotkeyStoredSecret, networkId, accountIndex, roundName, orchardFvkOverride, keystoneSeedFingerprintOverride in
                 let backend = try await dbActor.backend()
-                _ = try backend.generateHotkey(seed: hotkeySeed)
                 let inputs: VotingDelegationInputs
                 let actualFvkBytes: [UInt8]
                 if let orchardFvkOverride {
@@ -198,7 +196,7 @@ extension VotingCryptoClient: DependencyKey {
                     }
                     inputs = try VotingRustBackend.generateDelegationInputs(
                         senderFvk: [UInt8](orchardFvkOverride),
-                        hotkeySeed: hotkeySeed,
+                        hotkeyStoredSecret: hotkeyStoredSecret,
                         networkId: networkId,
                         seedFingerprint: [UInt8](keystoneSeedFingerprintOverride)
                     )
@@ -206,7 +204,7 @@ extension VotingCryptoClient: DependencyKey {
                 } else {
                     inputs = try VotingRustBackend.generateDelegationInputs(
                         senderSeed: senderSeed,
-                        hotkeySeed: hotkeySeed,
+                        hotkeyStoredSecret: hotkeyStoredSecret,
                         networkId: networkId,
                         accountIndex: accountIndex
                     )
@@ -215,20 +213,21 @@ extension VotingCryptoClient: DependencyKey {
                 let sdkNotes = notes.map { $0.toSDK() }
                 // NU6 consensus branch ID; BIP44 coin type 133 = Zcash mainnet, 1 = testnet
                 // (`network_id` 1 / 0 per `parse_network` in libzcashlc).
+                // Plan Task 11 replaces this literal with the SDK's public constant.
                 let consensusBranchId: UInt32 = 0xC8E7_1055
-                let coinType: UInt32 = networkId == 1 ? 133 : 1
+                let keys = VotingDelegationKeyInputs(
+                    fvk: actualFvkBytes,
+                    hotkeyStoredSecret: hotkeyStoredSecret,
+                    seedFingerprint: inputs.seedFingerprint,
+                    accountIndex: accountIndex,
+                    roundName: roundName
+                )
                 let result = try backend.buildPczt(VotingBuildPcztParams(
                     roundId: roundId,
                     bundleIndex: bundleIndex,
                     notes: sdkNotes,
-                    fvk: actualFvkBytes,
-                    hotkeyRawAddress: inputs.hotkeyRawAddress,
-                    consensusBranchId: consensusBranchId,
-                    coinType: coinType,
-                    seedFingerprint: inputs.seedFingerprint,
-                    accountIndex: accountIndex,
-                    roundName: roundName,
-                    addressIndex: 0
+                    keys: keys,
+                    consensusBranchId: consensusBranchId
                 ))
                 publishState(backend: backend, roundId: roundId)
                 let pcztBytes: Data = Data(result.pcztBytes)
@@ -295,26 +294,35 @@ extension VotingCryptoClient: DependencyKey {
                 )
             },
             // swiftlint:disable:next line_length
-            buildAndProveDelegation: { roundId, bundleIndex, bundleNotes, senderSeed, hotkeySeed, networkId, accountIndex, pirEndpoints, expectedSnapshotHeight in
+            buildAndProveDelegation: { roundId, bundleIndex, bundleNotes, senderSeed, hotkeyStoredSecret, networkId, accountIndex, roundName, pirEndpoints, expectedSnapshotHeight in
                 AsyncThrowingStream<ProofEvent, Error> { continuation in
                     Task.detached {
                         do {
                             let backend = try await dbActor.backend()
                             let inputs = try VotingRustBackend.generateDelegationInputs(
                                 senderSeed: senderSeed,
-                                hotkeySeed: hotkeySeed,
+                                hotkeyStoredSecret: hotkeyStoredSecret,
                                 networkId: networkId,
                                 accountIndex: accountIndex
                             )
                             let sdkNotes = bundleNotes.map { $0.toSDK() }
-                            let result = try await backend.buildAndProveDelegation(
+                            let keys = VotingDelegationKeyInputs(
+                                fvk: inputs.fvkBytes,
+                                hotkeyStoredSecret: hotkeyStoredSecret,
+                                seedFingerprint: inputs.seedFingerprint,
+                                accountIndex: accountIndex,
+                                roundName: roundName
+                            )
+                            let params = VotingDelegationProofParams(
                                 roundId: roundId,
                                 bundleIndex: bundleIndex,
                                 notes: sdkNotes,
-                                hotkeyRawAddress: inputs.hotkeyRawAddress,
+                                keys: keys
+                            )
+                            let result = try await backend.buildAndProveDelegation(
+                                params,
                                 pirEndpoints: pirEndpoints,
                                 expectedSnapshotHeight: expectedSnapshotHeight,
-                                networkId: networkId,
                                 progress: { progress in
                                     continuation.yield(.progress(progress))
                                 }

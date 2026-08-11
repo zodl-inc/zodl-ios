@@ -62,7 +62,12 @@ struct VotingCryptoClient {
     var verifyWitness: @Sendable (_ witness: WitnessData) async throws -> Bool
 
     // --- Crypto operations ---
-    var generateHotkey: @Sendable (_ roundId: String, _ seed: [UInt8]) async throws -> VotingHotkey
+    /// Generate a new voting hotkey for `networkId`. The application must persist the returned
+    /// `storedSecret` — it cannot be recovered from the wallet seed (spec `CHP_DESIGN.md` §7.5
+    /// leak point 1 / CHP.md §11.5 N... hotkey is app-owned random material, not a wallet-seed
+    /// derivation). Calling this again produces an unrelated hotkey, not a recovery of the
+    /// previous one.
+    var generateHotkey: @Sendable (_ networkId: UInt32) async throws -> VotingHotkey
     /// Build a voting PCZT for Keystone signing.
     /// The PCZT's single Orchard action IS the voting dummy action, so Keystone's
     /// SpendAuth signature will be over the voting-bound ZIP-244 sighash.
@@ -113,13 +118,14 @@ struct VotingCryptoClient {
         _ bundleIndex: UInt32,
         _ bundleNotes: [NoteInfo],
         _ senderSeed: [UInt8],
-        _ hotkeySeed: [UInt8],
+        _ hotkeyStoredSecret: [UInt8],
         _ networkId: UInt32,
         _ accountIndex: UInt32,
+        _ roundName: String,
         _ pirEndpoints: [String],
         _ expectedSnapshotHeight: UInt64
     ) -> AsyncThrowingStream<ProofEvent, Error>
-        = { _, _, _, _, _, _, _, _, _ in AsyncThrowingStream { $0.finish() } }
+        = { _, _, _, _, _, _, _, _, _, _ in AsyncThrowingStream { $0.finish() } }
     /// Extract Orchard FVK bytes from a UFVK string.
     var extractOrchardFvkFromUfvk: @Sendable (_ ufvkStr: String, _ networkId: UInt32) throws -> Data
     /// Build, sign, and persist the cast-vote commitment for one proposal in a single call.
