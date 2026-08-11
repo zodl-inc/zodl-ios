@@ -13,6 +13,8 @@ enum AccessibilityID {
     }
 
     enum Home {
+        static let syncComplete = "home.syncComplete"
+        static let syncPending = "home.syncPending"
         static let receiveButton = "home.receiveButton"
         static let sendButton = "home.sendButton"
         static let payButton = "home.payButton"

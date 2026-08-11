@@ -102,6 +102,11 @@ struct HomeView: View {
                     }
                 }
             }
+            .accessibilityIdentifier(
+                store.smartBannerState.isSyncComplete
+                    ? AccessibilityID.Home.syncComplete
+                    : AccessibilityID.Home.syncPending
+            )
             .sheet(isPresented: $store.isInAppBrowserKeystoneOn) {
                 if let url = URL(string: store.inAppBrowserURLKeystone) {
                     InAppBrowserView(url: url)

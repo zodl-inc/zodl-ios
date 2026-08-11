@@ -142,6 +142,14 @@ struct SmartBanner {
             isScanProgressComplete && spendableBalance.amount > 0
         }
 
+        var isSyncComplete: Bool {
+            guard case .upToDate = synchronizerStatusSnapshot.syncStatus else {
+                return false
+            }
+
+            return !walletStatus.isNotReadyForFullySyncedOperation
+        }
+
         var feeStr: String {
             Zatoshi(100_000).decimalString()
         }
