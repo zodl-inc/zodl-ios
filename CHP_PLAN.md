@@ -34,7 +34,7 @@ that cites it.
 | Path | What | Rules |
 |---|---|---|
 | `~/Dev/Xcode/GitHub/LukasKorba/_chp/zodl-ios` | zodl worktree, branch `chp-re-enable` (this file's home) | commits `[MOB-1678] <title>`; pushes to `origin` only at T14/T16 |
-| `~/Dev/Xcode/GitHub/LukasKorba/_chp/zcash-swift-wallet-sdk` | SDK worktree, branch `chp-re-enable` @ `a3823651` | commits `[#1855] <title>`; **NEVER push** (remote is push-guarded; Lukas pushes by hand — T16 hands him the command) |
+| `~/Dev/Xcode/GitHub/LukasKorba/_chp/zcash-swift-wallet-sdk` | SDK worktree, branch `chp-re-enable` @ `f74f13b8` (re-based on main `ee7b05c9`, 2026-08-11; tree byte-identical to it) | commits `[#1855] <title>`; **NEVER push** (remote is push-guarded; Lukas pushes by hand — T16 hands him the command) |
 | `~/Dev/Xcode/GitHub/LukasKorba/_migration/*` | Michal's gardening lanes | **do not touch, do not switch branches** |
 
 The pair is deliberate: the app's SPM dependency is the literal sibling path
@@ -103,9 +103,13 @@ changes.
 cd ~/Dev/Xcode/GitHub/LukasKorba/_chp/zcash-swift-wallet-sdk && git fetch origin main --quiet; git log --oneline -1 origin/main && git log --oneline -1
 ```
 
-Expected: `origin/main` = `a1234039 …`, HEAD = `a3823651 [#1855] Merge origin/main into
-chp-re-enable…`. **If origin/main moved → STOP** and re-merge per `CHP.md` §11.1 policy
-(voting→main, migration/slipstream→ours, librustzcash pin→ours `13ce6c4e`) before T1.
+Expected: `origin/main` = `ee7b05c9 …`, HEAD = `f74f13b8 [#1855] Merge origin/main: mains
+absorbed the gardening stack…` (the 2026-08-11 re-base; that merge's tree is byte-identical
+to this main). **If origin/main moved again → STOP** and re-merge before T1, taking main's
+side everywhere; if a conflict falls outside `Cargo.toml`/`Cargo.lock`, re-derive the policy
+from `CHP.md` §11.1 and log it. Beware `git rerere`: this repo's cache once silently
+re-applied a stale `Cargo.toml` resolution — inspect resolved conflict content, never trust
+it blind (CHP.md §10, 2026-08-11 (4)).
 
 - [ ] **Step 0.3: Workspace asserts.** Run:
 
@@ -123,7 +127,12 @@ cd ~/Dev/Xcode/GitHub/LukasKorba/_chp/zcash-swift-wallet-sdk && set -o pipefail;
 ```
 
 Expected: `REAL_EXIT=0` (proven at the merge; first run in this worktree compiles from
-scratch — minutes, not seconds). Non-zero → STOP, report the log tail.
+scratch — minutes, not seconds). Non-zero → STOP, report the log tail. One warning is
+expected and known: `Patch 'slipstream-core v0.6.4 (…slipstream-internal…)' was not used in
+the crate graph` — main's patch key doesn't match the renamed `zodl-slipstream` package, so
+the pin is inert and the engine resolves from crates.io (surfaced to Michal; not ours to
+fix). If local builds rewrite `Cargo.lock` with a `[[patch.unused]]` stanza, that is
+cargo-canonical — include it in the next task's commit rather than reverting it repeatedly.
 
 - [ ] **Step 0.5: Android PR context (informational, no STOP).** Run:
 
