@@ -1835,6 +1835,625 @@ cd ~/Dev/Xcode/GitHub/LukasKorba/_chp/zcash-swift-wallet-sdk && git add Sources/
 
 ---
 
+### Task 4B: S4b — software delegation-signing passthrough [F1 resolution]
+
+*Code blocks by: Opus (F1 amendment delegate). Rust and Swift are written-from-reading against
+`zcash_voting 2.0.0-rc.5`'s cached source and the SDK worktree pinned at `7e4f03e7`; the Rust
+compiles at this task's own steps 4B.4/4B.5, the Swift compiles and the test executes at plan
+Task 6.*
+
+This task resolves the STOP finding that Task 8's step 8.14 used to raise (`## CORRECTIONS`
+item 4, app lane): the software (non-Keystone) delegation path had no signature source under
+the 2.0 API. It does have one — `zcash_voting` prescribes it. The crate stopped deriving
+account keys and signing on the caller's behalf, and in the same release added
+`delegate::signing_request`, which hands the wallet the account index, network, seed
+fingerprint, PCZT sighash and spend-auth randomizer for one bundle and expects the wallet to
+derive its own Orchard SpendAuth key, randomize it with the randomizer, sign the sighash, and
+hand back the detached signature. That recipe is stated in the crate's own doc comment
+(`src/delegate.rs:405-410`) and README ("Secret boundaries", `README.md:235-241`), and is
+implemented, shipped and unit-tested in the crate authors' own reference wallet, Vizor
+(`chainapsis/vizor-wallet`, `rust/src/wallet/voting/delegation.rs:318-349`). This task
+transcribes that implementation behind one FFI symbol.
+
+Shape: the S4 passthrough pattern (Task 3) plus ~20 lines of crypto that are transcribed, not
+designed. Everything the recipe needs — `orchard`, `pasta_curves`, `ff`, `zip32`, `rand`,
+`zcash_keys` — is already a direct dependency of `rust/Cargo.toml`, so no dependency changes.
+The FFI generates its C header with cbindgen (`rust/build.rs`), so there is **no header file to
+edit**.
+
+**Files:**
+- Create: `~/Dev/Xcode/GitHub/LukasKorba/_chp/zcash-swift-wallet-sdk/rust/src/voting/signing.rs`
+- Modify: `~/Dev/Xcode/GitHub/LukasKorba/_chp/zcash-swift-wallet-sdk/rust/src/voting.rs` (module list)
+- Modify: `~/Dev/Xcode/GitHub/LukasKorba/_chp/zcash-swift-wallet-sdk/Sources/ZcashLightClientKit/Rust/Voting/VotingTypes.swift`
+- Modify: `~/Dev/Xcode/GitHub/LukasKorba/_chp/zcash-swift-wallet-sdk/Sources/ZcashLightClientKit/Rust/Voting/VotingRustBackend.swift`
+- Modify: `~/Dev/Xcode/GitHub/LukasKorba/_chp/zcash-swift-wallet-sdk/CHANGELOG.md`
+- Test: `~/Dev/Xcode/GitHub/LukasKorba/_chp/zcash-swift-wallet-sdk/Tests/OfflineTests/VotingSignDelegationRequestTests.swift`
+
+**Interfaces:**
+- Consumes: `zcash_voting::delegate::signing_request` (rc.5 `delegate.rs:874`) and its result
+  `delegate::DelegationSigningRequest` (`delegate.rs:412-426`); `delegate::DelegationKeys::with_voting_hotkey`
+  (`delegate.rs:84-100`), reconstructed exactly as `zcashlc_voting_build_and_prove_delegation`
+  already does; `zcash_keys::keys::UnifiedSpendingKey`, `orchard::keys::SpendAuthorizingKey`,
+  `pasta_curves::pallas::Scalar`, `zip32::fingerprint::SeedFingerprint` — all existing direct
+  dependencies.
+- Produces: C symbol `zcashlc_voting_sign_delegation_request`; Swift
+  `VotingRustBackend.signDelegationRequest(roundId:bundleIndex:keys:seed:)` returning the new
+  `VotingDelegationSignature`. Plan Task 8 (step 8.14) consumes it; the exact signature is in
+  `## INTERFACES-FOR-APP`.
+
+**Security note for the executing delegate:** `seed` is wallet root seed material and this is
+the only voting FFI entry point that takes it. Handle it exactly as the existing seed-taking
+voting FFI does (`zcashlc_voting_generate_delegation_inputs`, `rust/src/voting/util.rs:33-86`):
+borrow it through `bytes_from_ptr`, never copy it into an owned buffer, never log it, never
+persist it, never pass it to `zcash_voting`. There is deliberately no zeroization step, because
+there is deliberately no copy to zeroize — the Swift caller owns the allocation and its
+lifetime, which is the same contract every other voting FFI byte input has. Do not add
+`println!`/`dbg!`/`log::` calls to this module, even temporarily while debugging.
+
+---
+
+- [ ] **Step 4B.1: Create the signing FFI module.** Create `rust/src/voting/signing.rs` with
+exactly this content:
+
+```rust
+use std::panic::AssertUnwindSafe;
+
+use anyhow::anyhow;
+use ff::PrimeField;
+use ffi_helpers::panic::catch_panic;
+use pasta_curves::pallas;
+use serde::Serialize;
+use zcash_voting as voting;
+use zip32::AccountId;
+
+use crate::unwrap_exc_or_null;
+
+use super::constants::SEED_FINGERPRINT_LEN;
+use super::db::VotingDatabaseHandle;
+use super::helpers::{bytes_from_ptr, json_to_boxed_slice, str_from_ptr, usk_from_seed};
+
+/// The detached SpendAuth signature this wallet produced for one delegation
+/// bundle, with the sighash it covers.
+///
+/// Not a mirror of any `zcash_voting` wire type: the crate has no type for a
+/// bare `(signature, sighash)` pair, because it never sees the signing step.
+/// This is the FFI's own two-field return envelope, so it lives here rather
+/// than in `json.rs`.
+#[derive(Serialize)]
+struct JsonDelegationSignature {
+    sig: Vec<u8>,
+    sighash: Vec<u8>,
+}
+
+/// Sign one delegation bundle's PCZT sighash with the account's own Orchard
+/// SpendAuth key.
+///
+/// This implements `zcash_voting`'s own prescribed software-wallet recipe; it
+/// is not an SDK invention. The crate stopped deriving account keys and signing
+/// on the caller's behalf in 2.0 and documents the replacement on
+/// `delegate::DelegationSigningRequest` (rc.5 `src/delegate.rs:405-410`): a
+/// software wallet uses `account_index`, `network`, `sighash` and `alpha` to
+/// derive its account SpendAuth key locally, randomizes it, signs `sighash`,
+/// and passes the resulting signature back. The crate README states the same
+/// under "Secret boundaries" (`README.md:235-241`). The derive → randomize →
+/// sign body below is transcribed from the crate authors' own reference wallet,
+/// Vizor (`chainapsis/vizor-wallet`, `rust/src/wallet/voting/delegation.rs:318-349`),
+/// which ships it with a signature-verifying round-trip test.
+///
+/// Two calls make one delegation submission: this one produces the signature,
+/// then `zcashlc_voting_get_delegation_submission_with_signature` consumes it.
+/// The sighash returned here is not decorative — the crate checks it against
+/// the sighash it stored at setup and refuses the submission if they disagree.
+/// The Keystone flow differs only in where the signature comes from.
+///
+/// `fvk_bytes`, `hotkey_stored_secret`, `seed_fingerprint`, `account_index` and
+/// `round_name` are the same delegation-key inputs
+/// `zcashlc_voting_build_and_prove_delegation` takes, because the crate loads
+/// the signing request through the same `DelegationKeys` value that built the
+/// PCZT.
+///
+/// # Key material
+///
+/// `seed` is wallet root seed material — the only voting FFI entry point that
+/// takes it. It is borrowed for the duration of the call through
+/// `bytes_from_ptr` and never copied into an owned buffer, so there is nothing
+/// here to zeroize; the caller owns the allocation and its lifetime, exactly as
+/// for every other voting FFI byte input. It is never logged, never persisted
+/// and never handed to `zcash_voting`: only the locally derived randomized key
+/// touches it, and only the 64-byte detached signature leaves this function.
+///
+/// Returns JSON-encoded `{"sig": [..64], "sighash": [..32]}` as
+/// `*mut FfiBoxedSlice`, or null on error.
+///
+/// # Safety
+///
+/// - `db` must be a valid, non-null `VotingDatabaseHandle` pointer.
+/// - For every `(ptr, len)` byte argument (`round_id`, `fvk_bytes`,
+///   `hotkey_stored_secret`, `seed_fingerprint`, `round_name`, `seed`): if
+///   `len > 0` then `ptr` must be non-null and valid for reads for `len` bytes;
+///   if `len == 0`, `ptr` is ignored.
+/// - `seed` must remain valid and unmutated for the duration of the call. The
+///   callee neither retains nor frees it.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zcashlc_voting_sign_delegation_request(
+    db: *mut VotingDatabaseHandle,
+    round_id: *const u8,
+    round_id_len: usize,
+    bundle_index: u32,
+    fvk_bytes: *const u8,
+    fvk_bytes_len: usize,
+    hotkey_stored_secret: *const u8,
+    hotkey_stored_secret_len: usize,
+    seed_fingerprint: *const u8,
+    seed_fingerprint_len: usize,
+    account_index: u32,
+    round_name: *const u8,
+    round_name_len: usize,
+    seed: *const u8,
+    seed_len: usize,
+) -> *mut crate::ffi::BoxedSlice {
+    let db = AssertUnwindSafe(db);
+    let res = catch_panic(|| {
+        let handle =
+            unsafe { db.as_ref() }.ok_or_else(|| anyhow!("VotingDatabaseHandle is null"))?;
+        let round_id_str = unsafe { str_from_ptr(round_id, round_id_len) }?;
+        let fvk = unsafe { bytes_from_ptr(fvk_bytes, fvk_bytes_len) }?;
+        let hotkey_secret =
+            unsafe { bytes_from_ptr(hotkey_stored_secret, hotkey_stored_secret_len) }?;
+        let seed_fp_bytes = unsafe { bytes_from_ptr(seed_fingerprint, seed_fingerprint_len) }?;
+        let seed_fp_32: [u8; SEED_FINGERPRINT_LEN] = seed_fp_bytes.try_into().map_err(|_| {
+            anyhow!(
+                "seed_fingerprint must be {} bytes, got {}",
+                SEED_FINGERPRINT_LEN,
+                seed_fp_bytes.len()
+            )
+        })?;
+        let round_name_str = unsafe { str_from_ptr(round_name, round_name_len) }?;
+        let seed_bytes = unsafe { bytes_from_ptr(seed, seed_len) }?;
+
+        let hotkey = voting::VotingHotkey::from_stored_secret(hotkey_secret, handle.network)
+            .map_err(|e| anyhow!("failed to reconstruct voting hotkey: {}", e))?;
+        let keys = voting::delegate::DelegationKeys::with_voting_hotkey(
+            fvk.to_vec(),
+            &hotkey,
+            seed_fp_32,
+            account_index,
+            round_name_str,
+        )
+        .map_err(|e| anyhow!("failed to build delegation keys: {}", e))?;
+
+        let request =
+            voting::delegate::signing_request(&handle.db, &round_id_str, bundle_index, &keys)
+                .map_err(|e| anyhow!("signing_request failed: {}", e))?;
+
+        // Bind the request to this exact wallet seed before deriving any keys.
+        let seed_fp = zip32::fingerprint::SeedFingerprint::from_seed(seed_bytes)
+            .ok_or_else(|| anyhow!("seed length is not valid for ZIP-32"))?;
+        if seed_fp.to_bytes() != request.seed_fingerprint {
+            return Err(anyhow!(
+                "wallet seed fingerprint does not match the delegation signing request"
+            ));
+        }
+
+        // The request's network is the round's stored network: the crate
+        // validated `keys.network` (which came from `handle.network` through
+        // the hotkey) against it before answering. Asserting it here is what
+        // makes deriving through the SDK's own `usk_from_seed(handle.network_id,
+        // ..)` provably equivalent to deriving from `request.network` directly,
+        // and it fails closed if a later release sources that field elsewhere.
+        if request.network != handle.network {
+            return Err(anyhow!(
+                "delegation signing request network does not match the open voting database"
+            ));
+        }
+
+        let account = AccountId::try_from(request.account_index).map_err(|_| {
+            anyhow!(
+                "account_index must be < 2^31, got {}",
+                request.account_index
+            )
+        })?;
+        let usk = usk_from_seed(handle.network_id, seed_bytes, account)
+            .map_err(|e| anyhow!("failed to derive sender UnifiedSpendingKey: {}", e))?;
+        let ask = orchard::keys::SpendAuthorizingKey::from(usk.orchard());
+
+        // The alpha randomizer must decode as a canonical Pallas scalar.
+        let alpha = Option::<pallas::Scalar>::from(pallas::Scalar::from_repr(request.alpha))
+            .ok_or_else(|| anyhow!("delegation alpha is not a canonical Pallas scalar"))?;
+
+        // Sign the request's own sighash with the randomized spend auth key.
+        let rsk = ask.randomize(&alpha);
+        let sig = rsk.sign(rand::rngs::OsRng, &request.sighash);
+        let sig_bytes: [u8; 64] = (&sig).into();
+
+        json_to_boxed_slice(&JsonDelegationSignature {
+            sig: sig_bytes.to_vec(),
+            sighash: request.sighash.to_vec(),
+        })
+    });
+    unwrap_exc_or_null(res)
+}
+```
+
+- [ ] **Step 4B.2: Register the module.** In `rust/src/voting.rs`, replace:
+
+```rust
+pub mod share_tracking;
+#[cfg(test)]
+```
+
+with:
+
+```rust
+pub mod share_tracking;
+pub mod signing;
+#[cfg(test)]
+```
+
+(This is the post-Task-3 module list, which already begins with `pub mod confirmation;`. If
+`pub mod share_tracking;` is not present, Task 3 did not land — stop and check the SDK
+worktree's `git log --oneline -6` before continuing.)
+
+- [ ] **Step 4B.3: No dependency changes — assert it.** The recipe's crates must already be
+direct dependencies. Run:
+
+```bash
+cd ~/Dev/Xcode/GitHub/LukasKorba/_chp/zcash-swift-wallet-sdk && grep -n '^orchard\|^pasta_curves\|^ff \|^zip32\|^rand ' Cargo.toml; git diff --stat -- Cargo.toml Cargo.lock
+```
+
+Expected: five lines from the `grep` (`orchard`, `pasta_curves`, `ff`, `zip32`, `rand`), and
+**no output at all** from `git diff --stat` — this task adds no dependency and must not touch
+either manifest. If a crate is missing from `Cargo.toml`, **stop**: the transcription assumed
+it, and adding a dependency is outside this task's scope. If a manifest diff appears, it came
+from somewhere else — surface it rather than committing it here.
+
+- [ ] **Step 4B.4: Rust format + compile gates.** Run:
+
+```bash
+cd ~/Dev/Xcode/GitHub/LukasKorba/_chp/zcash-swift-wallet-sdk && cargo fmt && cargo fmt -- --check && set -o pipefail && cargo check 2>&1 | tee /tmp/chp-t4b-cargo.log | tail -5; echo "REAL_EXIT=$?"
+```
+
+Expected: `REAL_EXIT=0`, only the pre-existing `migration_plan_cache.rs:77` warning. A
+`too_many_arguments` complaint cannot appear here (the gates run `cargo check`, not `cargo
+clippy`, and no sibling FFI function in this crate carries an allow attribute for it — do not
+add one).
+
+- [ ] **Step 4B.5: Header-generation assert.** cbindgen writes the C header during the build, so
+the new declaration must already be there. Run:
+
+```bash
+cd ~/Dev/Xcode/GitHub/LukasKorba/_chp/zcash-swift-wallet-sdk && grep -c 'zcashlc_voting_sign_delegation_request' target/Headers/zcashlc.h
+```
+
+Expected: `1`. If the file does not exist, run `cargo check` once more (the header is a
+build-script side effect) and retry. `0` means the symbol did not export — report it and stop.
+
+- [ ] **Step 4B.6: Rust test gate (count must not move).** This task adds no Rust unit tests, so
+the voting suite's count must be exactly what Task 3's step 3.6 reported. Run:
+
+```bash
+cd ~/Dev/Xcode/GitHub/LukasKorba/_chp/zcash-swift-wallet-sdk && set -o pipefail; cargo test --lib voting 2>&1 | tee /tmp/chp-t4b-cargotest.log | tail -5; echo "REAL_EXIT=$?"
+```
+
+Expected: `REAL_EXIT=0`, `test result: ok. 72 passed; 0 failed` — the same 72 Task 3 gated on. A
+different count means something other than this task changed the suite; surface it.
+
+- [ ] **Step 4B.7: Add the Swift signature type.** Append to the end of
+`Sources/ZcashLightClientKit/Rust/Voting/VotingTypes.swift` (after the `VotingVoteConfirmation`
+block Task 3 added):
+
+```swift
+
+// MARK: - Delegation signature (JSON)
+
+/// A SpendAuth signature this wallet produced for one delegation bundle, with
+/// the sighash it covers.
+///
+/// Both values go straight into
+/// ``VotingRustBackend/getDelegationSubmission(roundId:bundleIndex:signature:sighash:)``.
+/// The sighash is not informational: `zcash_voting` checks it against the one it
+/// stored when the bundle's PCZT was set up and rejects the submission if they
+/// disagree, so pass back the value that came out with the signature rather than
+/// one recomputed elsewhere.
+public struct VotingDelegationSignature: Codable, Sendable, Equatable {
+    /// The 64-byte detached RedPallas SpendAuth signature.
+    public let signature: [UInt8]
+    /// The 32-byte ZIP-244 sighash the signature covers.
+    public let sighash: [UInt8]
+
+    enum CodingKeys: String, CodingKey {
+        case signature = "sig"
+        case sighash
+    }
+}
+```
+
+- [ ] **Step 4B.8: Add the `signDelegationRequest` wrapper.** In
+`Sources/ZcashLightClientKit/Rust/Voting/VotingRustBackend.swift`, inside the
+`// MARK: - Delegation workflow` extension, replace:
+
+```swift
+    /// Get the delegation submission payload for an externally produced
+    /// signature.
+```
+
+with:
+
+```swift
+    /// Sign one delegation bundle's PCZT sighash with this account's own Orchard
+    /// SpendAuth key.
+    ///
+    /// `zcash_voting` 2.0 stopped deriving account keys and signing for its
+    /// callers, and prescribes this replacement for software wallets: load the
+    /// bundle's signing request (account index, network, seed fingerprint,
+    /// sighash and spend-auth randomizer), derive the account SpendAuth key from
+    /// the wallet seed, randomize it with the randomizer, and sign the sighash.
+    /// All of that happens in Rust — the seed goes in, only the detached
+    /// signature comes back out.
+    ///
+    /// This is the software counterpart of the Keystone flow: there, the device
+    /// produces the signature and the app extracts it from the signed PCZT; here
+    /// the wallet produces it itself. Both then call the same
+    /// ``getDelegationSubmission(roundId:bundleIndex:signature:sighash:)``,
+    /// which is the only remaining path into a submission payload.
+    ///
+    /// - Parameters:
+    ///   - keys: the same ``VotingDelegationKeyInputs`` used to build and prove
+    ///     this bundle. The crate loads the signing request through them, so a
+    ///     different account index, hotkey secret or seed fingerprint fails
+    ///     instead of silently signing for the wrong account.
+    ///   - seed: the wallet's root seed, at least 32 bytes. It is borrowed for
+    ///     the duration of this call, is never persisted or logged, and must be
+    ///     the seed whose fingerprint is in `keys` — a mismatch throws rather
+    ///     than producing a signature the chain would reject.
+    /// - Returns: the detached 64-byte SpendAuth signature and the 32-byte
+    ///   ZIP-244 sighash it covers. Pass both to `getDelegationSubmission`
+    ///   unchanged.
+    /// - Throws: ``VotingRustBackendError/databaseNotOpen`` if no database is
+    ///   open; ``VotingRustBackendError/invalidData`` if `seed` or the seed
+    ///   fingerprint is the wrong length; ``VotingRustBackendError/rustError``
+    ///   if the bundle has no stored signing request yet (its PCZT setup has not
+    ///   run), or the seed does not match the request.
+    public func signDelegationRequest(
+        roundId: String,
+        bundleIndex: UInt32,
+        keys: VotingDelegationKeyInputs,
+        seed: [UInt8]
+    ) throws -> VotingDelegationSignature {
+        guard keys.seedFingerprint.count == votingSeedFingerprintByteCount else {
+            throw VotingRustBackendError.invalidData(
+                "seedFingerprint must be exactly \(votingSeedFingerprintByteCount) bytes"
+            )
+        }
+        guard seed.count >= votingMinSeedByteCount else {
+            throw VotingRustBackendError.invalidData(
+                "seed must be at least \(votingMinSeedByteCount) bytes"
+            )
+        }
+
+        let roundIdBytes = [UInt8](roundId.utf8)
+        let roundNameBytes = [UInt8](keys.roundName.utf8)
+
+        let ptr: UnsafeMutablePointer<FfiBoxedSlice> = try withHandle { dbh in
+            let ptr: UnsafeMutablePointer<FfiBoxedSlice>? = roundIdBytes.withUnsafeBufferPointer { ridBuf in
+                keys.fvk.withUnsafeBufferPointer { fvkBuf in
+                    keys.hotkeyStoredSecret.withUnsafeBufferPointer { secretBuf in
+                        keys.seedFingerprint.withUnsafeBufferPointer { fpBuf in
+                            roundNameBytes.withUnsafeBufferPointer { nameBuf in
+                                seed.withUnsafeBufferPointer { seedBuf in
+                                    zcashlc_voting_sign_delegation_request(
+                                        dbh,
+                                        ridBuf.baseAddress,
+                                        UInt(ridBuf.count),
+                                        bundleIndex,
+                                        fvkBuf.baseAddress,
+                                        UInt(fvkBuf.count),
+                                        secretBuf.baseAddress,
+                                        UInt(secretBuf.count),
+                                        fpBuf.baseAddress,
+                                        UInt(fpBuf.count),
+                                        keys.accountIndex,
+                                        nameBuf.baseAddress,
+                                        UInt(nameBuf.count),
+                                        seedBuf.baseAddress,
+                                        UInt(seedBuf.count)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            guard let ptr else {
+                throw VotingRustBackendError.rustError(
+                    lastErrorMessage(fallback: "`sign_delegation_request` failed")
+                )
+            }
+            return ptr
+        }
+        defer { zcashlc_free_boxed_slice(ptr) }
+        return try decodeJSON(from: ptr)
+    }
+
+    /// Get the delegation submission payload for an externally produced
+    /// signature.
+```
+
+The two methods are now adjacent and in call order — sign, then submit.
+
+- [ ] **Step 4B.9: Add the offline test file.** Create
+`Tests/OfflineTests/VotingSignDelegationRequestTests.swift` with exactly this content. It
+follows the existing suite's DB-fixture pattern (`VotingRustBackendTests.swift`, and Task 3's
+two files): a canonical 64-hex round id, a temp-path database opened per test and cleaned up in
+`tearDown`, and assertions on the error surfaces an offline test can reach. The success path is
+not testable offline — a signature requires a bundle whose PCZT setup ran against a real round,
+so it belongs to the testnet E2E round.
+
+```swift
+//
+//  VotingSignDelegationRequestTests.swift
+//  ZcashLightClientKitTests
+//
+
+import XCTest
+@testable import ZcashLightClientKit
+
+/// Builds a round identifier that satisfies the Rust round-parameter validation,
+/// which requires 64 lowercase hex characters encoding a canonical Pallas field
+/// element. `tag` occupies the low byte so each caller gets a distinct round.
+private func signHexRoundId(_ tag: UInt8) -> String {
+    String(format: "%02x", tag) + String(repeating: "00", count: 31)
+}
+
+private let signWalletId = "test-wallet"
+private let signNetworkId: UInt32 = 1
+/// A well-formed round identifier that is never initialized, so the crate has no
+/// stored signing request to answer with.
+private let signMissingRoundId = signHexRoundId(0xfc)
+/// Orchard FVK length. The value is never used as a key here: the crate reads
+/// only the account index, seed fingerprint and network out of the delegation
+/// keys when loading a signing request.
+private let signFvk = [UInt8](repeating: 0, count: 96)
+private let signSeedFingerprint = [UInt8](repeating: 7, count: 32)
+private let signSeed = [UInt8](repeating: 9, count: 32)
+private let signRoundName = "chp-offline"
+
+final class VotingSignDelegationRequestTests: XCTestCase {
+    private var dbPath: String?
+
+    override func tearDown() {
+        if let dbPath {
+            try? FileManager.default.removeItem(atPath: dbPath)
+        }
+        dbPath = nil
+        super.tearDown()
+    }
+
+    func test_signDelegationRequest_shortSeed_throwsInvalidData() throws {
+        let backend = VotingRustBackend()
+
+        XCTAssertThrowsError(
+            try backend.signDelegationRequest(
+                roundId: signMissingRoundId,
+                bundleIndex: 0,
+                keys: try makeKeys(),
+                seed: [UInt8](repeating: 9, count: 31)
+            )
+        ) { error in
+            guard case VotingRustBackendError.invalidData(let message) = error else {
+                XCTFail("expected .invalidData, got \(error.localizedDescription)")
+                return
+            }
+            XCTAssertTrue(
+                message.contains("seed must be at least"),
+                "unexpected message: \(message)"
+            )
+        }
+    }
+
+    func test_signDelegationRequest_beforeOpen_throwsDatabaseNotOpen() throws {
+        let backend = VotingRustBackend()
+
+        XCTAssertThrowsError(
+            try backend.signDelegationRequest(
+                roundId: signMissingRoundId,
+                bundleIndex: 0,
+                keys: try makeKeys(),
+                seed: signSeed
+            )
+        ) { error in
+            guard case VotingRustBackendError.databaseNotOpen = error else {
+                XCTFail("expected .databaseNotOpen, got \(error.localizedDescription)")
+                return
+            }
+        }
+    }
+
+    func test_signDelegationRequest_afterOpen_missingRound_throwsRustError() throws {
+        let backend = try makeOpenBackend()
+        defer { backend.close() }
+
+        XCTAssertThrowsError(
+            try backend.signDelegationRequest(
+                roundId: signMissingRoundId,
+                bundleIndex: 0,
+                keys: try makeKeys(),
+                seed: signSeed
+            )
+        ) { error in
+            guard case VotingRustBackendError.rustError(let message) = error else {
+                XCTFail("expected .rustError, got \(error.localizedDescription)")
+                return
+            }
+            XCTAssertTrue(
+                message.contains("signing_request failed"),
+                "unexpected message: \(message)"
+            )
+        }
+    }
+
+    // MARK: - Helpers
+
+    /// A hotkey secret has to be real: the FFI reconstructs a `VotingHotkey`
+    /// from it before it can build the delegation keys the signing request is
+    /// loaded through. `generateHotkey` is static and needs no database.
+    private func makeKeys() throws -> VotingDelegationKeyInputs {
+        let hotkey = try VotingRustBackend.generateHotkey(networkId: signNetworkId)
+        return VotingDelegationKeyInputs(
+            fvk: signFvk,
+            hotkeyStoredSecret: hotkey.storedSecret,
+            seedFingerprint: signSeedFingerprint,
+            accountIndex: 0,
+            roundName: signRoundName
+        )
+    }
+
+    private func makeTempDbPath() -> String {
+        let unique = ProcessInfo.processInfo.globallyUniqueString
+        let path = "\(NSTemporaryDirectory())VotingSignDelegationRequestTests-\(unique).sqlite"
+        dbPath = path
+        return path
+    }
+
+    private func makeOpenBackend() throws -> VotingRustBackend {
+        let backend = VotingRustBackend()
+        try backend.open(path: makeTempDbPath(), networkId: signNetworkId)
+        try backend.setWalletId(signWalletId)
+        return backend
+    }
+}
+```
+
+This file runs at plan Task 6 (`swift test --filter OfflineTests`), after the FFI rebuild in
+plan Task 5 puts the new symbol in the library. It cannot run before that.
+
+- [ ] **Step 4B.10: CHANGELOG.** In `CHANGELOG.md`, under `# Unreleased` → `## Added`, append
+this bullet at the end of that section (immediately before the `## Changed` heading — after the
+bullet Task 4 added):
+
+```markdown
+- `VotingRustBackend.signDelegationRequest(roundId:bundleIndex:keys:seed:)` lets a software
+  wallet produce the SpendAuth signature a delegation submission needs. `zcash_voting 2.0` no
+  longer derives account keys or signs for its callers, which left
+  `getDelegationSubmission(roundId:bundleIndex:signature:sighash:)` reachable only by hardware
+  signers; this is the crate's own prescribed software path — it loads the bundle's signing
+  request, derives the account Orchard SpendAuth key from the wallet seed, randomizes it with
+  the request's spend-auth randomizer and signs the stored ZIP-244 sighash, returning the
+  detached signature and that sighash as `VotingDelegationSignature`. The seed is borrowed for
+  the call and never persisted, logged or handed to `zcash_voting`; the signature is checked
+  against the seed fingerprint the bundle was built for, so signing with the wrong seed fails
+  instead of producing a rejected transaction. Software and hardware delegation now converge on
+  the same submission entry point.
+```
+
+- [ ] **Step 4B.11: Commit.**
+
+```bash
+cd ~/Dev/Xcode/GitHub/LukasKorba/_chp/zcash-swift-wallet-sdk && git add rust/src/voting.rs rust/src/voting/signing.rs Sources/ZcashLightClientKit/Rust/Voting/VotingTypes.swift Sources/ZcashLightClientKit/Rust/Voting/VotingRustBackend.swift Tests/OfflineTests/VotingSignDelegationRequestTests.swift CHANGELOG.md && git commit -m "[#1855] Add the software delegation-signing passthrough zcash_voting 2.0 prescribes" -m "Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
+```
+
+---
+
 ### Task 5: S6 — full FFI rebuild + symbol gate
 
 *No code blocks (commands only) — orchestrator-authored.*
@@ -1857,13 +2476,14 @@ lines; do not proceed.
 - [ ] **Step 5.2: Slice + symbol gate.** Run:
 
 ```bash
-cd ~/Dev/Xcode/GitHub/LukasKorba/_chp/zcash-swift-wallet-sdk && FW=$(find LocalPackages -name 'libzcashlc' -path '*macos*' | head -1) && lipo -archs "$FW" && nm -gU "$FW" | grep -c 'zcashlc_voting_commit_vote\|zcashlc_voting_confirm_vote_submission\|zcashlc_voting_recover_wire_json'
+cd ~/Dev/Xcode/GitHub/LukasKorba/_chp/zcash-swift-wallet-sdk && FW=$(find LocalPackages -name 'libzcashlc' -path '*macos*' | head -1) && lipo -archs "$FW" && nm -gU "$FW" | grep -c 'zcashlc_voting_commit_vote\|zcashlc_voting_confirm_vote_submission\|zcashlc_voting_recover_wire_json\|zcashlc_voting_sign_delegation_request'
 ```
 
-Expected: `lipo` prints the macOS slice arch(s); the grep count is **exactly 3**. Fewer → a
-T3 symbol didn't export (check `nm -gU "$FW" | grep zcashlc_voting_` for what's actually
+Expected: `lipo` prints the macOS slice arch(s); the grep count is **exactly 4** (the three
+Task 3-era symbols plus Task 4B's `zcashlc_voting_sign_delegation_request`). Fewer → a T3 or
+T4B symbol didn't export (check `nm -gU "$FW" | grep zcashlc_voting_` for what's actually
 there and report); do not proceed. Repeat the `nm` gate for the ios-sim slice
-(`-path '*simulator*'`).
+(`-path '*simulator*'`), same expected 4.
 
 - [ ] **Step 5.3: No commit.** This task produces build artifacts only. Verify:
 
@@ -2814,37 +3434,157 @@ log. `buildSharePayloads` and `storeVoteCommitmentBundle` **are** expected to st
 (the `:1937`, `:2171`, `:3460`/`:3463` call sites this task deliberately left standing) — that
 is Task 9's targeted work, not a regression here.
 
-- [ ] **Step 8.14: STOP-and-report — the software delegation-signing gap (finding, not a code
-step).** Read `## CORRECTIONS` item 4 in full before acting on this step.
-`VotingCoordFlowCoordinator.swift:3557` and `:3591` (inside `static func
-runDelegationPipeline`, the non-Keystone / software-signing path) call
-`votingCrypto.getDelegationSubmission(roundId, bundleIndex, senderSeed, networkId,
-accountIndex)` — a 5-argument, seed-based shape that step 8.4/8.9's re-typed member
-(4 arguments, signature+sighash-based) cannot satisfy positionally or semantically: the
-software path has no externally-produced SpendAuth signature to pass, because deriving one used
-to be exactly what the old `getDelegationSubmission(senderSeed:...)` did *inside* the crate,
-and `zcash_voting` no longer does that for any caller.
+- [ ] **Step 8.14: Wire the software delegation path to the new signing wrapper.**
+`VotingCoordFlowCoordinator.swift` calls `votingCrypto.getDelegationSubmission(roundId,
+bundleIndex, senderSeed, networkId, accountIndex)` twice inside `static func
+runDelegationPipeline` — once as a "is it already cached?" probe (near `:3557`) and once for
+real after proving (near `:3591`). Both become a two-call chain: sign, then submit. Locate them
+by the quoted context, not by line number.
 
-Decision procedure:
-1. Confirm at the T8 partial-build log (step 8.13) that `:3557`/`:3591` do in fact error, and
-   capture the exact compiler message for both.
-2. Grep for a software (seed-based, no hardware) PCZT-signing primitive one more time, scoped
-   to whatever the SDK lane's Tasks 1–4 actually landed (their `Files:` sections touch only
-   `delegation.rs`, `json.rs`, `tree.rs`, `confirmation.rs`, `share_tracking.rs`,
-   `VotingTypes.swift`, `VotingRustBackend.swift`, `ZcashSDK.swift`,
-   `ValidateServerAction.swift` — none of which add a signing entry point): run
-   `grep -rn 'func.*[Ss]ign' Sources/ZcashLightClientKit/Rust/Voting/` in the SDK worktree and
-   `grep -rn 'sign' secant/Sources/Dependencies/SDKSynchronizer/SDKSynchronizerInterface.swift`
-   in the app worktree. If either now shows a seed-based, non-Keystone PCZT-signing function
-   that did not exist at plan-writing time, use it and treat this finding as resolved — write
-   up the concrete call as a follow-up step before continuing to Task 9.
-3. If neither shows one (the expected outcome, matching this plan's research): **do not invent
-   signing code.** Leave `:3557`/`:3591` red. Surface to Lukas/the orchestrator as a named,
-   blocking finding: *"the software (non-Keystone) delegation path has no signature source
-   under the 2.0 API; needs either a new SDK-lane passthrough (the S4-passthrough pattern —
-   `confirm_vote_submission`/`recover_wire_json` are the precedent) or a ruling that the
-   software path is out of scope for this campaign."* This finding is independent of, and
-   additional to, the software-signing note already logged for T7's error-mapping step.
+First, add the client member. In `VotingCryptoClientInterface.swift`, replace:
+
+```swift
+    /// Reconstruct the chain-ready delegation TX payload from a previously-produced
+    /// SpendAuth signature + ZIP-244 sighash.
+```
+
+with:
+
+```swift
+    /// Produce this wallet's own SpendAuth signature for one delegation bundle.
+    /// The software counterpart of the Keystone QR round-trip: `zcash_voting` 2.0 no longer
+    /// derives account keys or signs for its callers, and prescribes exactly this instead —
+    /// load the bundle's signing request, derive the account SpendAuth key from the seed,
+    /// randomize it with the request's randomizer, sign the request's sighash. All of it
+    /// happens inside the SDK; the seed goes in, only the detached signature comes back.
+    /// Feed the result straight into `getDelegationSubmission`.
+    var signDelegationRequest: @Sendable (
+        _ roundId: String,
+        _ bundleIndex: UInt32,
+        _ senderSeed: [UInt8],
+        _ hotkeyStoredSecret: [UInt8],
+        _ networkId: UInt32,
+        _ accountIndex: UInt32,
+        _ roundName: String
+    ) async throws -> (signature: Data, sighash: Data)
+
+    /// Reconstruct the chain-ready delegation TX payload from a previously-produced
+    /// SpendAuth signature + ZIP-244 sighash.
+```
+
+(The anchor is the first two lines of the doc comment step 8.4 wrote; the new member goes
+immediately above it. `VotingCryptoClientTestKey.swift` still needs no edit — `@DependencyClient`
+synthesizes the unimplemented default, per `## CORRECTIONS` item 2.)
+
+Second, implement it. In `VotingCryptoClientLiveKey.swift`, replace:
+
+```swift
+            getDelegationSubmission: { roundId, bundleIndex, signature, sighash in
+```
+
+with:
+
+```swift
+            signDelegationRequest: { roundId, bundleIndex, senderSeed, hotkeyStoredSecret, networkId, accountIndex, roundName in
+                let backend = try await dbActor.backend()
+                // Same derivation the software branch of `buildVotingPczt` uses: the sender's
+                // Orchard FVK and ZIP-32 seed fingerprint come from the seed itself, so the
+                // delegation keys here are byte-identical to the ones that built the PCZT.
+                let inputs = try VotingRustBackend.generateDelegationInputs(
+                    senderSeed: senderSeed,
+                    hotkeyStoredSecret: hotkeyStoredSecret,
+                    networkId: networkId,
+                    accountIndex: accountIndex
+                )
+                let signed = try backend.signDelegationRequest(
+                    roundId: roundId,
+                    bundleIndex: bundleIndex,
+                    keys: VotingDelegationKeyInputs(
+                        fvk: inputs.fvkBytes,
+                        hotkeyStoredSecret: hotkeyStoredSecret,
+                        seedFingerprint: inputs.seedFingerprint,
+                        accountIndex: accountIndex,
+                        roundName: roundName
+                    ),
+                    seed: senderSeed
+                )
+                return (signature: Data(signed.signature), sighash: Data(signed.sighash))
+            },
+            getDelegationSubmission: { roundId, bundleIndex, signature, sighash in
+```
+
+Third, rewire the cached-submission probe. In `VotingCoordFlowCoordinator.swift`, replace:
+
+```swift
+            let registration: DelegationRegistration
+            if let cachedRegistration = try? await votingCrypto.getDelegationSubmission(
+                roundId, bundleIndex, senderSeed, networkId, accountIndex
+            ) {
+                LoggerProxy.debug("Delegation bundle \(bundleIndex + 1)/\(bundleCount) using cached submission")
+                registration = cachedRegistration
+            } else {
+```
+
+with:
+
+```swift
+            let registration: DelegationRegistration
+            // The cache probe is now two calls: signing succeeds once the bundle's PCZT setup
+            // is stored, and the submission only assembles once its proof is too. Either one
+            // failing means this bundle is not finished yet, so fall through and build it.
+            let cachedSignature = try? await votingCrypto.signDelegationRequest(
+                roundId, bundleIndex, senderSeed, hotkeySeed, networkId, accountIndex, roundName
+            )
+            let cachedRegistration: DelegationRegistration?
+            if let cachedSignature {
+                cachedRegistration = try? await votingCrypto.getDelegationSubmission(
+                    roundId, bundleIndex, cachedSignature.signature, cachedSignature.sighash
+                )
+            } else {
+                cachedRegistration = nil
+            }
+
+            if let cachedRegistration {
+                LoggerProxy.debug("Delegation bundle \(bundleIndex + 1)/\(bundleCount) using cached submission")
+                registration = cachedRegistration
+            } else {
+```
+
+Fourth, rewire the post-proving call. In the same function, replace:
+
+```swift
+                registration = try await votingCrypto.getDelegationSubmission(
+                    roundId, bundleIndex, senderSeed, networkId, accountIndex
+                )
+```
+
+with:
+
+```swift
+                let signed = try await votingCrypto.signDelegationRequest(
+                    roundId, bundleIndex, senderSeed, hotkeySeed, networkId, accountIndex, roundName
+                )
+                registration = try await votingCrypto.getDelegationSubmission(
+                    roundId, bundleIndex, signed.signature, signed.sighash
+                )
+```
+
+`hotkeySeed` and `roundName` are both `runDelegationPipeline` parameters already in scope at
+both sites, so nothing new is threaded through the coordinator. The `hotkeySeed` local keeps
+its name and starts carrying the hotkey **stored secret** at Task 10 step 10.14, exactly as it
+does for the neighbouring `buildVotingPczt` / `buildAndProveDelegation` calls in this same
+function — which is why the new member's parameter is named `hotkeyStoredSecret` from the
+start. Task 10 needs no amendment for this member.
+
+`runDelegationPipeline` already carries
+`// swiftlint:disable:next function_body_length function_parameter_count`, which covers the
+handful of lines this step adds.
+
+**Reporting:** record in the T8 report that the F1 STOP finding is closed by plan Task 4B (SDK
+commit `[#1855] Add the software delegation-signing passthrough zcash_voting 2.0 prescribes`),
+and that `:3557`/`:3591` are now expected to compile. If Task 4B's commit is not present in the
+SDK worktree (`git log --oneline -8` there), **stop** — do not hand-roll signing code in the
+app; that would put key derivation in the wrong layer and is forbidden by §0.2.
 
 - [ ] **Step 8.15: Commit.**
 

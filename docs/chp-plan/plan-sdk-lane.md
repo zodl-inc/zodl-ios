@@ -326,6 +326,69 @@ crate's own `VanWitness` serializes identically to the deleted mirror), `getComm
 `recordVcPosition`, `markVoteSubmitted`, `storeKeystoneSignature`, `getKeystoneSignatures`, all
 share-tracking members, and every round-lifecycle member.
 
+### New type (Task 4B)
+
+```swift
+/// A SpendAuth signature this wallet produced for one delegation bundle, with the
+/// sighash it covers. Both go into `getDelegationSubmission` unchanged — the crate
+/// checks the sighash against the one it stored at PCZT setup.
+public struct VotingDelegationSignature: Codable, Sendable, Equatable {
+    public let signature: [UInt8]  // "sig", 64 bytes
+    public let sighash: [UInt8]    // "sighash", 32 bytes
+}
+```
+
+### New method on `VotingRustBackend` (Task 4B)
+
+```swift
+/// Produce this wallet's own SpendAuth signature for one delegation bundle — the
+/// software counterpart of the Keystone signature the app extracts from a signed
+/// PCZT. `zcash_voting` 2.0 no longer derives account keys or signs for its
+/// callers; this is the crate's own prescribed replacement (it loads the bundle's
+/// signing request, derives the account Orchard SpendAuth key from `seed`,
+/// randomizes it with the request's spend-auth randomizer, and signs the stored
+/// ZIP-244 sighash). Everything happens in Rust: the seed is borrowed for the
+/// call, never persisted or logged, and never reaches `zcash_voting`.
+///
+/// `keys` must be the same `VotingDelegationKeyInputs` that built and proved this
+/// bundle. `seed` is the wallet root seed, ≥ 32 bytes, and must be the seed whose
+/// fingerprint is in `keys` — a mismatch throws rather than producing a signature
+/// the chain would reject.
+///
+/// Throws `.databaseNotOpen`, `.invalidData` (wrong seed or fingerprint length),
+/// or `.rustError` (no stored signing request for the bundle yet — its PCZT setup
+/// has not run — or a seed/fingerprint mismatch).
+public func signDelegationRequest(
+    roundId: String,
+    bundleIndex: UInt32,
+    keys: VotingDelegationKeyInputs,
+    seed: [UInt8]
+) throws -> VotingDelegationSignature
+```
+
+**Call it immediately before `getDelegationSubmission`, every time.** The software delegation
+path is now two calls, not one:
+
+```swift
+let signed = try backend.signDelegationRequest(
+    roundId: roundId, bundleIndex: bundleIndex, keys: keys, seed: senderSeed
+)
+let submission = try backend.getDelegationSubmission(
+    roundId: roundId,
+    bundleIndex: bundleIndex,
+    signature: signed.signature,
+    sighash: signed.sighash
+)
+```
+
+The signature is not persisted by the SDK, so a caller that needs a submission twice signs
+twice; signing is cheap (one key derivation and one RedPallas signature — no proving) and
+deterministic in effect, though not byte-identical, since the signature is randomized. `keys`
+for the software path is built from
+`VotingRustBackend.generateDelegationInputs(senderSeed:hotkeyStoredSecret:networkId:accountIndex:)`
+— `inputs.fvkBytes` and `inputs.seedFingerprint` are exactly the values that entry point
+already returns.
+
 ---
 
 ## TASK 1
