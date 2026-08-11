@@ -621,6 +621,11 @@ def submit_to_review(sub, api_key)
     force: true # non-interactive: skip deliver's HTML preview confirmation
   }
   opts[:promotional_text] = promo unless promo.empty?
+  # When this run also built, build_app left its ipa path in the lane context, and
+  # upload_to_app_store silently inherits it (config[:ipa] ||= lane_context[...])
+  # and verifies the file exists — but the build worktree holding it is already
+  # removed by then, and this step never needs the binary (skip_binary_upload).
+  Actions.lane_context.delete(Actions::SharedValues::IPA_OUTPUT_PATH)
   upload_to_app_store(**opts)
   UI.success("Submitted #{sub[:cfg][:app_identifier]} #{sub[:version]} (#{sub[:build]}) to App Review.")
 end
