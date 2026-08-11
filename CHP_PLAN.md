@@ -4882,6 +4882,540 @@ cd ~/Dev/Xcode/GitHub/LukasKorba/_chp/zodl-ios && git add secant/Sources/Depende
 
 ---
 
+### Task 9B: recovery-path closure — F3 resolution + SharePayload residue
+
+*Code blocks by: Sonnet (app delegate).*
+
+**Execution order note:** this section sits between Tasks 9 and 10 in this file (its subject —
+the crash-recovery function Task 9's step 9.13 deliberately left red — is Task 9's own unclosed
+scope) but **executes after Task 10**, per the coordinator's live-build sequencing. A Task 10
+executor may be running concurrently on the same tree; Task 10's scope is hotkey/PCZT regions
+only (`VotingCryptoClientInterface.swift`'s `generateHotkey`/`buildVotingPczt`/
+`buildAndProveDelegation` members, `StoredVotingHotkey.swift`, `WalletStorage*.swift`,
+`VotingModels.swift`'s `VotingHotkey`, and four `mnemonic.toSeed` coordinator sites far above
+line 3300) — disjoint from everything this section touches. Every anchor below is stated as
+**unique code content**, not a trusted line number, for exactly that reason: the tree this
+section was written against is post-T9 `f8cdac12`, and by the time it executes (after Task 10)
+line numbers upstream of `tryRecoverInflightVote` will have shifted from Task 10's own edits.
+
+**Files:**
+- Modify: `secant/Sources/Features/Voting/VotingHelpers.swift` (`Voting.delegateSharesWithFallback`)
+- Modify: `secant/Sources/Dependencies/VotingAPIClient/VotingAPIClientInterface.swift` (`delegateShares`)
+- Modify: `secant/Sources/Dependencies/VotingAPIClient/VotingAPIClientLiveKey.swift` (`delegateShares` closure, `delegateSharePayloads`)
+- Modify: `secant/Sources/Features/CoordFlows/VotingCoordFlow/VotingCoordFlowCoordinator.swift` (the step-9.9 main-path `delegateSharesWithFallback` call site, and the full body of `static func tryRecoverInflightVote`)
+
+**Interfaces:**
+- Consumes: `zcash_voting` rc.5's own recovery surface, read directly from the vendored crate
+  source (`~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zcash_voting-2.0.0-rc.5/src/
+  share.rs` — the standard cargo registry cache path for the crates.io registry, stable across
+  machines that use the default registry) — `recover_payloads(bundle: &VoteRecoveryBundle) ->
+  Result<Vec<SharePayload>, VotingError>` (`:148-188`) slices `bundle.encrypted_shares` by
+  exactly `bundle.single_share` (`&all_enc_shares[..1]` if true, the full vector otherwise);
+  `recover_payload`/`recover_wire_json` (`:135-145`, `:192-210`) are both single-`share_index`
+  accessors built on top of it — the crate never exposes the plural form outward. Also
+  consumes the already-landed `VotingCryptoClient.confirmVoteSubmission`/`.getCommitmentBundleJson`/
+  `.recoverWireJson`/`.recordShareDelegation`/`.markVoteSubmitted` (Task 9) unchanged.
+- Produces: `Voting.delegateSharesWithFallback(...)` and `VotingAPIClient.delegateShares(...)`
+  both gain a `proposalId: UInt32` parameter; `tryRecoverInflightVote`'s body is fully rewired,
+  its signature unchanged.
+
+---
+
+**F3 evidence and decision (read before step 9B.1).** The share-index-enumeration question
+Task 9's step 9.13 left open now has a sourced answer, not a guess:
+
+1. **The crate's own plural recovery function exists but is not the sanctioned host surface.**
+   `zcash_voting-2.0.0-rc.5/src/share.rs:148` — `pub fn recover_payloads(bundle:
+   &VoteRecoveryBundle) -> Result<Vec<SharePayload>, VotingError>` — reconstructs every share
+   payload for a bundle in one call, slicing `bundle.encrypted_shares` by `bundle.single_share`
+   (`:156-160`: `if bundle.single_share { &all_enc_shares[..1] } else { &all_enc_shares }`).
+   This confirms the *crate-internal* fact this section needs: share count is a pure function
+   of two values the app already threads through `tryRecoverInflightVote` today —
+   `singleShare: Bool` and (when not single-share) `bundle.encrypted_shares.len()`, which
+   `vote.rs:592-599`'s `db.build_vote_commitment(..., draft.num_options, ..., draft.
+   single_share, ...)` sizes from `num_options` at commit time — i.e. `numOptions` when not
+   single-share, `1` when single-share.
+2. **Valar's own reference wallet does not expose the plural function either.** Fetched
+   `chainapsis/vizor-wallet`'s `rust/src/api/voting.rs` (`gh api repos/chainapsis/vizor-wallet/
+   contents/rust/src/api/voting.rs`, decoded, 3452 lines). Its FRB bridge function
+   `recovered_vote_share_wire_json(commitment_bundle_json, proposal_id, share_index,
+   vc_tree_position, submit_at) -> Result<String, String>` (`:362-379`) is a direct, thin
+   passthrough to `zcash_voting::share::recover_wire_json(...)` — the exact same per-index
+   function our SDK's `recoverWireJson` already wraps. Vizor's Rust layer has full, direct
+   access to the crate (no FFI marshalling boundary the way our Swift app has) and *still*
+   exposes only the per-index accessor to its own Dart layer above it. That is the sanctioning
+   precedent: even the reference wallet resolves "how many shares, which indices" from
+   app-layer round/bundle context, not from a crate list call.
+3. **Decision: no new FFI symbol.** Both sources agree the per-index `recoverWireJson` already
+   on this SDK (SDK-lane Task 3, already built into the current FFI slices) is the intended
+   surface. Bounded enumeration over `0..<(singleShare ? 1 : numOptions)` — values already
+   present in this function's own parameter list — is not a guess or a workaround; it is the
+   same computation the crate performs internally and the same resolution Valar's own
+   reference wallet's app layer performs externally. The ~1-hour FFI rebuild + gates 2–3
+   re-run this would have cost is avoided correctly, not just conveniently.
+
+**`DelegatedShareInfo` re-sourcing verdict (read before step 9B.1).** Traced
+`DelegatedShareInfo`'s full consumer chain: it is constructed once
+(`VotingAPIClientLiveKey.swift`'s `delegateSharePayloads`, currently reading the now-nonexistent
+`payload.encShare.shareIndex`/`payload.proposalId`) and consumed twice — Task 9's step 9.9 main
+path and this section's rewritten `tryRecoverInflightVote` — both of which call
+`recordShareDelegation(..., info.proposalId, info.shareIndex, ...)`. `shareIndex` survives on the
+Task-9-reshaped `SharePayload` unchanged (`payload.shareIndex` — a one-word fix). `proposalId`
+does not survive on `SharePayload` at all, but every call site that builds a `[SharePayload]`
+batch for `delegateSharePayloads` builds it for exactly one proposal at a time (Task 9's step 9.9
+loop and this section's F3 rewrite both construct `payloads` once per `commitVote`/recovery pass,
+one proposal each) — so `proposalId` is a per-*call* invariant, not a per-*payload* one. It
+belongs as an explicit parameter threaded once through the transport chain, not reconstructed
+per element from data that no longer carries it (§2.0: the app must not re-derive what it can be
+handed directly).
+
+- [ ] **Step 9B.1: Thread `proposalId` through the share-delegation transport chain.** In
+`secant/Sources/Features/Voting/VotingHelpers.swift`, locate the unique block:
+
+```swift
+    static func delegateSharesWithFallback(
+        _ payloads: [SharePayload],
+        roundId: String,
+        votingAPI: VotingAPIClient,
+        serverURLs: [String],
+        retryDelay: Duration = .seconds(2)
+    ) async throws -> ShareDelegationResult {
+        guard !serverURLs.isEmpty else {
+            throw ShareDelegationError.noReachableVoteServers
+        }
+```
+
+and replace it with:
+
+```swift
+    static func delegateSharesWithFallback(
+        _ payloads: [SharePayload],
+        roundId: String,
+        proposalId: UInt32,
+        votingAPI: VotingAPIClient,
+        serverURLs: [String],
+        retryDelay: Duration = .seconds(2)
+    ) async throws -> ShareDelegationResult {
+        guard !serverURLs.isEmpty else {
+            throw ShareDelegationError.noReachableVoteServers
+        }
+```
+
+Then, in the same function, locate the unique line:
+
+```swift
+                return try await votingAPI.delegateShares(payloads, roundId, serverURLs)
+```
+
+and replace it with:
+
+```swift
+                return try await votingAPI.delegateShares(payloads, roundId, proposalId, serverURLs)
+```
+
+Second, in `secant/Sources/Dependencies/VotingAPIClient/VotingAPIClientInterface.swift`, locate
+the unique block:
+
+```swift
+    var delegateShares: @Sendable (
+        _ payloads: [SharePayload],
+        _ roundIdHex: String,
+        _ serverURLs: [String]
+    ) async throws -> ShareDelegationResult
+```
+
+and replace it with:
+
+```swift
+    var delegateShares: @Sendable (
+        _ payloads: [SharePayload],
+        _ roundIdHex: String,
+        _ proposalId: UInt32,
+        _ serverURLs: [String]
+    ) async throws -> ShareDelegationResult
+```
+
+Third, in `secant/Sources/Dependencies/VotingAPIClient/VotingAPIClientLiveKey.swift`, locate the
+unique block:
+
+```swift
+            delegateShares: { payloads, roundIdHex, serverURLs in
+                @Dependency(\.transactionGuard) var transactionGuard
+                return try await transactionGuard.withSubmission {
+                    // Active foreground delivery uses the submission-local server set.
+                    // POST failures prune that local set immediately; cached helper
+                    // health and /status probes are intentionally not consulted here.
+                    // Successful/failed foreground POSTs still update the tracker for
+                    // later background recovery decisions.
+                    let tracker = ServerHealthTracker.shared
+                    return try await delegateSharePayloads(
+                        payloads,
+                        roundIdHex: roundIdHex,
+                        initialServerURLs: serverURLs,
+                        postShare: { server, body in
+                            do {
+                                _ = try await postServerJSON(server, "/shielded-vote/v1/shares", body: body)
+                                await tracker.recordSuccess(for: server)
+                            } catch {
+                                await tracker.recordFailure(for: server)
+                                throw error
+                            }
+                        }
+                    )
+                }
+            },
+```
+
+and replace it with:
+
+```swift
+            delegateShares: { payloads, roundIdHex, proposalId, serverURLs in
+                @Dependency(\.transactionGuard) var transactionGuard
+                return try await transactionGuard.withSubmission {
+                    // Active foreground delivery uses the submission-local server set.
+                    // POST failures prune that local set immediately; cached helper
+                    // health and /status probes are intentionally not consulted here.
+                    // Successful/failed foreground POSTs still update the tracker for
+                    // later background recovery decisions.
+                    let tracker = ServerHealthTracker.shared
+                    return try await delegateSharePayloads(
+                        payloads,
+                        roundIdHex: roundIdHex,
+                        proposalId: proposalId,
+                        initialServerURLs: serverURLs,
+                        postShare: { server, body in
+                            do {
+                                _ = try await postServerJSON(server, "/shielded-vote/v1/shares", body: body)
+                                await tracker.recordSuccess(for: server)
+                            } catch {
+                                await tracker.recordFailure(for: server)
+                                throw error
+                            }
+                        }
+                    )
+                }
+            },
+```
+
+Fourth, in the same file, locate the unique block:
+
+```swift
+func delegateSharePayloads(
+    _ payloads: [SharePayload],
+    roundIdHex: String,
+    initialServerURLs: [String],
+    postShare: @escaping SharePost,
+    selectTargets: @escaping ShareTargetSelector = { Array($0.shuffled().prefix($1)) }
+) async throws -> ShareDelegationResult {
+```
+
+and replace it with:
+
+```swift
+func delegateSharePayloads(
+    _ payloads: [SharePayload],
+    roundIdHex: String,
+    proposalId: UInt32,
+    initialServerURLs: [String],
+    postShare: @escaping SharePost,
+    selectTargets: @escaping ShareTargetSelector = { Array($0.shuffled().prefix($1)) }
+) async throws -> ShareDelegationResult {
+```
+
+Then, still in `delegateSharePayloads`, locate the unique block:
+
+```swift
+        results.append(DelegatedShareInfo(
+            shareIndex: payload.encShare.shareIndex,
+            proposalId: payload.proposalId,
+            acceptedByServers: acceptedServers
+        ))
+```
+
+and replace it with:
+
+```swift
+        results.append(DelegatedShareInfo(
+            shareIndex: payload.shareIndex,
+            proposalId: proposalId,
+            acceptedByServers: acceptedServers
+        ))
+```
+
+- [ ] **Step 9B.2: Fix the one existing caller — Task 9's main-path `delegateSharesWithFallback`
+call.** In `VotingCoordFlowCoordinator.swift`, locate the unique block (landed by Task 9's step
+9.9):
+
+```swift
+                        let batchDelegationResult = try await Voting.delegateSharesWithFallback(
+                            payloads,
+                            roundId: roundId,
+                            votingAPI: votingAPI,
+                            serverURLs: shareServerURLs
+                        )
+```
+
+and replace it with:
+
+```swift
+                        let batchDelegationResult = try await Voting.delegateSharesWithFallback(
+                            payloads,
+                            roundId: roundId,
+                            proposalId: proposalId,
+                            votingAPI: votingAPI,
+                            serverURLs: shareServerURLs
+                        )
+```
+
+`proposalId` is already in scope at this call site — it is the same `draftLoop`/`drafts.
+enumerated()` loop variable step 9.9's surrounding code already reads throughout.
+
+- [ ] **Step 9B.3: Rewrite `tryRecoverInflightVote` — F3.** In `VotingCoordFlowCoordinator.swift`,
+verify the anchor first (content-based, not line-based — see this section's intro):
+
+```bash
+cd ~/Dev/Xcode/GitHub/LukasKorba/_chp/zodl-ios && grep -n "static func tryRecoverInflightVote" secant/Sources/Features/CoordFlows/VotingCoordFlow/VotingCoordFlowCoordinator.swift
+```
+
+Expected: one hit. Locate the full function by that signature and the matching closing `}` two
+levels up (the function is `swiftlint:disable:next function_body_length cyclomatic_complexity
+function_parameter_count`-annotated in the line immediately above its signature — that
+attribute comment is untouched by this step and is not part of either block below). Replace the
+entire function body — everything from the opening `{` of the signature through its closing
+`}` — currently:
+
+```swift
+    ) async throws -> Bool {
+        guard case let .present(cachedTxHash)? = try? await votingCrypto.getVoteTxHash(roundId, bundleIndex, proposalId) else {
+            return false
+        }
+        guard let confirmation = try? await votingAPI.fetchTxConfirmation(cachedTxHash),
+              confirmation.code == 0,
+              let leafPair = confirmation.event(ofType: "cast_vote")?.attribute(forKey: "leaf_index") else {
+            return false
+        }
+        let leafParts = leafPair.split(separator: ",")
+        guard leafParts.count == 2,
+              let vanIdx = UInt32(leafParts[0]),
+              let vcIdx = UInt64(leafParts[1]) else {
+            return false
+        }
+
+        try await votingCrypto.storeVanPosition(roundId, bundleIndex, vanIdx)
+
+        guard let savedBundle = try? await votingCrypto.getVoteCommitmentBundle(roundId, bundleIndex, proposalId) else {
+            LoggerProxy.error(
+                """
+                Recovered on-chain vote \(proposalId) for bundle \(bundleIndex), \
+                but the saved commitment bundle is missing; cannot delegate tally shares.
+                """
+            )
+            throw VotingFlowError.missingVoteCommitmentBundle
+        }
+
+        try await votingCrypto.storeVoteCommitmentBundle(roundId, bundleIndex, proposalId, savedBundle, vcIdx)
+        await send(.voteSubmissionStepUpdated(roundId: roundIdAction(), step: .sendingShares))
+
+        var payloads = try await votingCrypto.buildSharePayloads(
+            savedBundle.encShares, savedBundle, choice, numOptions, vcIdx, singleShare
+        )
+        let now = Date().timeIntervalSince1970
+        for i in payloads.indices {
+            if let deadline = submitAtDeadline, deadline > now {
+                payloads[i].submitAt = UInt64(now + Double.random(in: 0..<(deadline - now)))
+            } else {
+                payloads[i].submitAt = 0
+            }
+        }
+
+        let recoveryResult = try await Voting.delegateSharesWithFallback(
+            payloads,
+            roundId: roundId,
+            votingAPI: votingAPI,
+            serverURLs: shareServerURLs
+        )
+        shareServerURLs = recoveryResult.remainingServerURLs
+        for info in recoveryResult.delegatedShares {
+            guard let payload = payloads.first(where: {
+                $0.encShare.shareIndex == info.shareIndex && $0.proposalId == info.proposalId
+            }) else { continue }
+            let blindIdx = Int(info.shareIndex)
+            guard blindIdx < savedBundle.shareBlindFactors.count else { continue }
+            do {
+                let nfHex = try votingCrypto.computeShareNullifier(
+                    [UInt8](savedBundle.voteCommitment),
+                    info.shareIndex,
+                    [UInt8](savedBundle.shareBlindFactors[blindIdx])
+                )
+                try await votingCrypto.recordShareDelegation(
+                    roundId, bundleIndex, info.proposalId,
+                    info.shareIndex, info.acceptedByServers,
+                    [UInt8](votingDataFromHex(nfHex)), payload.submitAt
+                )
+            } catch {
+                LoggerProxy.warn("Batch recovery: failed to record share delegation for share \(info.shareIndex): \(error)")
+            }
+        }
+        try await votingCrypto.markVoteSubmitted(roundId, bundleIndex, proposalId)
+        return true
+    }
+```
+
+with:
+
+```swift
+    ) async throws -> Bool {
+        guard case let .present(cachedTxHash)? = try? await votingCrypto.getVoteTxHash(roundId, bundleIndex, proposalId) else {
+            return false
+        }
+        guard let confirmation = try? await votingAPI.fetchTxConfirmation(cachedTxHash),
+              confirmation.code == 0 else {
+            return false
+        }
+
+        let eventsPayload: [[String: Any]] = confirmation.events.map { event in
+            [
+                "type": event.type,
+                "attributes": event.attributes.map { attribute in
+                    ["key": attribute.key, "value": attribute.value]
+                }
+            ]
+        }
+        guard let eventsData = try? JSONSerialization.data(withJSONObject: eventsPayload) else {
+            return false
+        }
+        let eventsJson = String(decoding: eventsData, as: UTF8.self)
+
+        guard let voteConfirmation = try? await votingCrypto.confirmVoteSubmission(
+            roundId, bundleIndex, proposalId, cachedTxHash, eventsJson
+        ) else {
+            return false
+        }
+
+        guard let stored = try? await votingCrypto.getCommitmentBundleJson(roundId, bundleIndex, proposalId) else {
+            LoggerProxy.error(
+                """
+                Recovered on-chain vote \(proposalId) for bundle \(bundleIndex), \
+                but the saved commitment bundle is missing; cannot delegate tally shares.
+                """
+            )
+            throw VotingFlowError.missingVoteCommitmentBundle
+        }
+
+        await send(.voteSubmissionStepUpdated(roundId: roundIdAction(), step: .sendingShares))
+
+        // Share count is `singleShare ? 1 : numOptions` — the same two values
+        // `zcash_voting::share::recover_payloads` (rc.5 `share.rs:148-188`) slices its own
+        // encrypted-share list by, and the same two values Valar's reference wallet (Vizor)
+        // resolves client-side rather than asking the crate for a share list: its FRB bridge
+        // exposes only the per-index `recovered_vote_share_wire_json` →
+        // `zcash_voting::share::recover_wire_json`, never the plural `recover_payloads`. No new
+        // FFI symbol; this is the sanctioned pattern on the surface already built.
+        let shareCount = singleShare ? 1 : numOptions
+        let now = Date().timeIntervalSince1970
+        var payloads: [SharePayload] = []
+        var submitAtByShareIndex: [UInt32: UInt64] = [:]
+        for shareIndex: UInt32 in 0..<shareCount {
+            let submitAt: UInt64
+            if let deadline = submitAtDeadline, deadline > now {
+                submitAt = UInt64(now + Double.random(in: 0..<(deadline - now)))
+            } else {
+                submitAt = 0
+            }
+            submitAtByShareIndex[shareIndex] = submitAt
+            let wireJson = try await votingCrypto.recoverWireJson(
+                stored.bundleJson, proposalId, shareIndex,
+                voteConfirmation.voteCommitmentTreePosition, submitAt
+            )
+            payloads.append(SharePayload(wireJson: wireJson, shareIndex: shareIndex))
+        }
+
+        let recoveryResult = try await Voting.delegateSharesWithFallback(
+            payloads,
+            roundId: roundId,
+            proposalId: proposalId,
+            votingAPI: votingAPI,
+            serverURLs: shareServerURLs
+        )
+        shareServerURLs = recoveryResult.remainingServerURLs
+        for info in recoveryResult.delegatedShares {
+            do {
+                try await votingCrypto.recordShareDelegation(
+                    roundId, bundleIndex, info.proposalId, info.shareIndex,
+                    info.acceptedByServers, submitAtByShareIndex[info.shareIndex] ?? 0
+                )
+            } catch {
+                LoggerProxy.warn("Batch recovery: failed to record share delegation for share \(info.shareIndex): \(error)")
+            }
+        }
+        try await votingCrypto.markVoteSubmitted(roundId, bundleIndex, proposalId, cachedTxHash)
+        return true
+    }
+```
+
+`leaf_index` parsing, `storeVanPosition`, `getVoteCommitmentBundle`/`storeVoteCommitmentBundle`,
+and `computeShareNullifier` are gone for the same reasons step 9.9 already removed them from the
+main path: `confirmVoteSubmission` persists both positions atomically, and the crate derives the
+share nullifier internally now (`## CORRECTIONS` item 13). `choice: VoteChoice` becomes an unused
+parameter — left in the signature deliberately (the one call site already supplies it, and Swift
+does not error on an unused function parameter); do not remove it or touch the call site as part
+of this step. Every `try?`-guarded probe at the top keeps the function's own established idiom
+("this recovery shortcut doesn't apply, fall through to a fresh build" is not the same as
+swallowing a real error — the un-swallowed slow path re-attempts the identical calls with full
+error propagation, satisfying Trap T3 at the system level even though this one fast-path
+attempt tolerates a miss).
+
+- [ ] **Step 9B.4: The honest-gate idiom, complete-error-list variant.** The T9 executor found
+that a plain `xcodebuild build` stops emitting diagnostics after an early failure threshold,
+under-reporting the true remaining count — this is why the coordinator's "16" is the *true* full
+count and earlier gates in this plan may have under-counted. For this gate only (not any earlier
+task's gates — do not retroactively change them), capture the complete list by temporarily
+raising Xcode's own continue-past-errors limit, then revert it explicitly:
+
+```bash
+PRIOR_VALUE=$(defaults read com.apple.dt.Xcode IDEBuildingContinueBuildingAfterErrors 2>/dev/null || echo "__unset__")
+defaults write com.apple.dt.Xcode IDEBuildingContinueBuildingAfterErrors -bool YES
+cd ~/Dev/Xcode/GitHub/LukasKorba/_chp/zodl-ios && set -o pipefail; xcodebuild build -scheme zodl-internal -destination 'platform=iOS Simulator,name=iPhone 17 Pro' 2>&1 | tee /tmp/chp-t9b-full-build.log | tail -10; echo "BUILD_EXIT=$?"
+```
+
+Expected: `BUILD_EXIT` is `0` (this is the first gate in the plan expected to be green — Task
+10 is assumed already landed per this section's execution-order note). Then, regardless of the
+build's outcome, revert immediately — do not leave this set for the rest of the session:
+
+```bash
+if [ "$PRIOR_VALUE" = "__unset__" ]; then
+    defaults delete com.apple.dt.Xcode IDEBuildingContinueBuildingAfterErrors
+else
+    defaults write com.apple.dt.Xcode IDEBuildingContinueBuildingAfterErrors -bool "$PRIOR_VALUE"
+fi
+```
+
+Then count on the complete log:
+
+```bash
+grep -c 'error:' /tmp/chp-t9b-full-build.log || true
+```
+
+Expected: **`0`**. Arithmetic: starting truth `16` (8 in Task 10's territory + 6 F3 + 2
+`DelegatedShareInfo` residue, per the coordinator's live count) → post-Task-10 expected `8`
+(the 6+2 this section owns; Task 10's own gate closes its 8) → post-9B expected `0` (this
+section's two workstreams close the remaining 8: workstream 1 closes the 2 residue errors at
+`VotingAPIClientLiveKey.swift:430-431`; workstream 2 closes F3's 6 —
+`:3428` `storeVoteCommitmentBundle`, `:3431` `buildSharePayloads`, `:3451` the `SharePayload`
+shape cascade, `:3465`×2 `recordShareDelegation`'s old signature, `:3471`
+`markVoteSubmitted`'s missing `txHash` — all inside the one function this step replaces
+wholesale). If the count is not `0`, do not treat any nonzero result as "close enough" — report
+the full log tail per this plan's Global Constraint #4 (honest gates, never judged by grep
+alone for pass/fail, only for the count once `BUILD_EXIT` itself is already the true signal).
+
+- [ ] **Step 9B.5: Commit.**
+
+```bash
+cd ~/Dev/Xcode/GitHub/LukasKorba/_chp/zodl-ios && git add secant/Sources/Features/Voting/VotingHelpers.swift secant/Sources/Dependencies/VotingAPIClient/VotingAPIClientInterface.swift secant/Sources/Dependencies/VotingAPIClient/VotingAPIClientLiveKey.swift secant/Sources/Features/CoordFlows/VotingCoordFlow/VotingCoordFlowCoordinator.swift && git commit -m "[MOB-1678] Resolve F3: rewire tryRecoverInflightVote on the existing per-index recovery surface" -m "Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
+```
+
+---
+
 ### Task 10: A3 — hotkey container (`seedPhrase: String` → `storedSecret: Data`)
 
 *Code blocks by: Sonnet (app delegate).*
