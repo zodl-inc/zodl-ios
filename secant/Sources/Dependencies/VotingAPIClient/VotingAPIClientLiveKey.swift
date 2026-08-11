@@ -349,34 +349,18 @@ private func postServerJSON(_ serverURL: String, _ path: String, body: [String: 
 typealias SharePost = @Sendable (_ serverURL: String, _ body: [String: Any]) async throws -> Void
 typealias ShareTargetSelector = @Sendable (_ serverURLs: [String], _ targetCount: Int) -> [String]
 
+/// `roundIdHex` is unused: the crate's wire JSON already carries `vote_round_id` (it was
+/// derived from the same commitment record `recoverWireJson` read); the parameter is kept so
+/// call sites that still pass it (unchanged by this task) do not need editing.
 func sharePostBody(
     for payload: SharePayload,
-    roundIdHex: String,
-    submitAt: UInt64? = nil
+    roundIdHex: String
 ) -> [String: Any] {
-    [
-        "shares_hash": payload.sharesHash.base64EncodedString(),
-        "proposal_id": payload.proposalId,
-        "vote_decision": payload.voteDecision,
-        "enc_share": [
-            "c1": payload.encShare.c1.base64EncodedString(),
-            "c2": payload.encShare.c2.base64EncodedString(),
-            "share_index": payload.encShare.shareIndex
-        ],
-        "share_index": payload.encShare.shareIndex,
-        "tree_position": payload.treePosition,
-        "vote_round_id": roundIdHex,
-        "all_enc_shares": payload.allEncShares.map { share -> [String: Any] in
-            [
-                "c1": share.c1.base64EncodedString(),
-                "c2": share.c2.base64EncodedString(),
-                "share_index": share.shareIndex
-            ]
-        },
-        "share_comms": payload.shareComms.map { $0.base64EncodedString() },
-        "primary_blind": payload.primaryBlind.base64EncodedString(),
-        "submit_at": submitAt ?? payload.submitAt
-    ]
+    let data = Data(payload.wireJson.utf8)
+    guard let body = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+        return [:]
+    }
+    return body
 }
 
 func delegateSharePayloads(
@@ -470,7 +454,7 @@ func resubmitSharePayload(
     let sentSet = Set(sentToURLs)
     let untried = orderServers(configuredServerURLs.filter { !sentSet.contains($0) })
     let alreadySent = orderServers(configuredServerURLs.filter { sentSet.contains($0) })
-    let body = sharePostBody(for: payload, roundIdHex: roundIdHex, submitAt: 0)
+    let body = sharePostBody(for: payload, roundIdHex: roundIdHex)
 
     for server in untried + alreadySent {
         do {
@@ -896,11 +880,11 @@ extension VotingAPIClient: DependencyKey {
                         "rk": registration.rk.base64EncodedString(),
                         "spend_auth_sig": registration.spendAuthSig.base64EncodedString(),
                         "sighash": registration.sighash.base64EncodedString(),
-                        "signed_note_nullifier": registration.signedNoteNullifier.base64EncodedString(),
-                        "cmx_new": registration.cmxNew.base64EncodedString(),
-                        "van_cmx": registration.vanCmx.base64EncodedString(),
-                        "gov_nullifiers": registration.govNullifiers.map { $0.base64EncodedString() },
-                        "proof": registration.proof.base64EncodedString(),
+                        "signed_note_nullifier": registration.signedNoteNullifier,
+                        "cmx_new": registration.cmxNew,
+                        "van_cmx": registration.vanCmx,
+                        "gov_nullifiers": registration.govNullifiers,
+                        "proof": registration.proof,
                         "vote_round_id": registration.voteRoundId.base64EncodedString()
                     ]
                     return try await retryWithBackoff(isRetryable: isBroadcastRetryable) {

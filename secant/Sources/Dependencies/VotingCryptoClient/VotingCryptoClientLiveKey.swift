@@ -411,25 +411,25 @@ extension VotingCryptoClient: DependencyKey {
                     signature: [UInt8](signature),
                     sighash: [UInt8](sighash)
                 )
+                guard
+                    let rk = Data(base64Encoded: sub.randomizedKey),
+                    let spendAuthSig = Data(base64Encoded: sub.spendAuthSig)
+                else {
+                    throw VotingCryptoError.malformedDelegationSubmission(
+                        "rk/spend_auth_sig did not base64-decode"
+                    )
+                }
                 let voteRoundIdBytes = Data(hexString: sub.voteRoundId)
-                let rk: Data = Data(sub.randomizedKey)
-                let spendAuthSig: Data = Data(sub.spendAuthSig)
-                let signedNoteNullifier: Data = Data(sub.nfSigned)
-                let cmxNew: Data = Data(sub.cmxNew)
-                let vanCmx: Data = Data(sub.govComm)
-                let govNullifiers: [Data] = sub.govNullifiers.map { Data($0) }
-                let proof: Data = Data(sub.proof)
-                let sighashOut: Data = Data(sub.sighash)
                 return DelegationRegistration(
                     rk: rk,
                     spendAuthSig: spendAuthSig,
-                    signedNoteNullifier: signedNoteNullifier,
-                    cmxNew: cmxNew,
-                    vanCmx: vanCmx,
-                    govNullifiers: govNullifiers,
-                    proof: proof,
+                    signedNoteNullifier: sub.nfSigned,
+                    cmxNew: sub.cmxNew,
+                    vanCmx: sub.govComm,
+                    govNullifiers: sub.govNullifiers,
+                    proof: sub.proof,
                     voteRoundId: voteRoundIdBytes,
-                    sighash: sighashOut
+                    sighash: sighash
                 )
             },
             storeVanPosition: { roundId, bundleIndex, position in
@@ -449,9 +449,9 @@ extension VotingCryptoClient: DependencyKey {
                     anchorHeight: witness.anchorHeight
                 )
             },
-            markVoteSubmitted: { roundId, bundleIndex, proposalId in
+            markVoteSubmitted: { roundId, bundleIndex, proposalId, txHash in
                 let backend = try await dbActor.backend()
-                try backend.markVoteSubmitted(roundId: roundId, bundleIndex: bundleIndex, proposalId: proposalId)
+                try backend.markVoteSubmitted(roundId: roundId, bundleIndex: bundleIndex, proposalId: proposalId, txHash: txHash)
                 publishState(backend: backend, roundId: roundId)
             },
             resetTreeClient: {
@@ -482,6 +482,38 @@ extension VotingCryptoClient: DependencyKey {
                     return .present(txHash)
                 }
                 return .notFound
+            },
+            confirmVoteSubmission: { roundId, bundleIndex, proposalId, txHash, eventsJson in
+                let backend = try await dbActor.backend()
+                let confirmation = try backend.confirmVoteSubmission(
+                    roundId: roundId,
+                    bundleIndex: bundleIndex,
+                    proposalId: proposalId,
+                    txHash: txHash,
+                    eventsJson: eventsJson
+                )
+                publishState(backend: backend, roundId: roundId)
+                return VoteConfirmationInfo(
+                    txHash: confirmation.txHash,
+                    vanLeafPosition: confirmation.vanLeafPosition,
+                    voteCommitmentTreePosition: confirmation.voteCommitmentTreePosition
+                )
+            },
+            getCommitmentBundleJson: { roundId, bundleIndex, proposalId in
+                let backend = try await dbActor.backend()
+                guard let result = try backend.getCommitmentBundle(roundId: roundId, bundleIndex: bundleIndex, proposalId: proposalId) else {
+                    return nil
+                }
+                return (bundleJson: result.bundleJson, vcTreePosition: result.voteCommitmentTreePosition)
+            },
+            recoverWireJson: { commitmentBundleJson, proposalId, shareIndex, voteCommitmentTreePosition, submitAt in
+                try VotingRustBackend.recoverWireJson(
+                    commitmentBundleJson: commitmentBundleJson,
+                    proposalId: proposalId,
+                    shareIndex: shareIndex,
+                    voteCommitmentTreePosition: voteCommitmentTreePosition,
+                    submitAt: submitAt
+                )
             },
             storeKeystoneBundleSignature: { roundId, info in
                 let backend = try await dbActor.backend()
@@ -529,7 +561,7 @@ extension VotingCryptoClient: DependencyKey {
                     primaryBlind: primaryBlind
                 )
             },
-            recordShareDelegation: { roundId, bundleIndex, proposalId, shareIndex, sentToURLs, nullifier, submitAt in
+            recordShareDelegation: { roundId, bundleIndex, proposalId, shareIndex, sentToURLs, submitAt in
                 let backend = try await dbActor.backend()
                 try backend.recordShareDelegation(
                     roundId: roundId,
@@ -537,7 +569,6 @@ extension VotingCryptoClient: DependencyKey {
                     proposalId: proposalId,
                     shareIndex: shareIndex,
                     sentToURLs: sentToURLs,
-                    nullifier: hexEncodedString(nullifier),
                     submitAt: submitAt
                 )
             },
@@ -607,6 +638,7 @@ enum VotingCryptoError: LocalizedError {
     case invalidSpendAuthSignatureLength(Int)
     case invalidKeystoneMetadata
     case malformedWireShare(UInt32)
+    case malformedDelegationSubmission(String)
 
     var errorDescription: String? {
         switch self {
@@ -622,6 +654,8 @@ enum VotingCryptoError: LocalizedError {
             return "Missing or invalid Keystone signing metadata."
         case .malformedWireShare(let shareIndex):
             return "commitVote returned a non-base64 encrypted share at index \(shareIndex)."
+        case .malformedDelegationSubmission(let detail):
+            return "getDelegationSubmission returned malformed wire data: \(detail)"
         }
     }
 }
@@ -697,32 +731,6 @@ private extension NoteInfo {
             rseed: rseedBytes,
             scope: scope,
             ufvkStr: ufvkStr
-        )
-    }
-}
-
-private extension VoteCommitmentBundle {
-    func toSDK() -> VotingVoteCommitmentBundle {
-        VotingVoteCommitmentBundle(
-            vanNullifier: [UInt8](vanNullifier),
-            voteAuthorityNoteNew: [UInt8](voteAuthorityNoteNew),
-            voteCommitment: [UInt8](voteCommitment),
-            proposalId: proposalId,
-            proof: [UInt8](proof),
-            encShares: encShares.map {
-                VotingWireEncryptedShare(
-                    ciphertext1: [UInt8]($0.c1),
-                    ciphertext2: [UInt8]($0.c2),
-                    shareIndex: $0.shareIndex
-                )
-            },
-            anchorHeight: anchorHeight,
-            voteRoundId: voteRoundId,
-            sharesHash: [UInt8](sharesHash),
-            shareBlinds: shareBlindFactors.map { [UInt8]($0) },
-            shareComms: shareComms.map { [UInt8]($0) },
-            rVpkBytes: [UInt8](rVpkBytes),
-            alphaV: [UInt8](alphaV)
         )
     }
 }

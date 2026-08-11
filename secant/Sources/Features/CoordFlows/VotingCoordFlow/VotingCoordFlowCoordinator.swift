@@ -1891,40 +1891,51 @@ extension VotingCoordFlow {
                             try await Task.sleep(for: .seconds(2))
                         } while Date() < voteDeadline
 
-                        guard let voteConfirmation, voteConfirmation.code == 0,
-                              let leafPair = voteConfirmation.event(ofType: "cast_vote")?.attribute(forKey: "leaf_index")
-                        else {
+                        guard let voteConfirmation, voteConfirmation.code == 0 else {
                             throw VotingFlowError.voteCommitmentTxFailed(
                                 code: voteConfirmation?.code ?? 0,
                                 log: voteConfirmation?.log ?? ""
                             )
                         }
-                        let leafParts = leafPair.split(separator: ",")
-                        guard leafParts.count == 2,
-                              let vanIdx = UInt32(leafParts[0]),
-                              let vcIdx = UInt64(leafParts[1])
-                        else {
-                            throw VotingFlowError.voteCommitmentTxFailed(
-                                code: 0,
-                                log: "malformed cast_vote leaf_index: \(leafPair)"
-                            )
-                        }
 
-                        try await votingCrypto.storeVanPosition(roundId, bundleIndex, vanIdx)
+                        try await votingCrypto.markVoteSubmitted(roundId, bundleIndex, proposalId, txResult.txHash)
+
+                        let eventsPayload: [[String: Any]] = voteConfirmation.events.map { event in
+                            [
+                                "type": event.type,
+                                "attributes": event.attributes.map { attribute in
+                                    ["key": attribute.key, "value": attribute.value]
+                                }
+                            ]
+                        }
+                        let eventsData = try JSONSerialization.data(withJSONObject: eventsPayload)
+                        let eventsJson = String(decoding: eventsData, as: UTF8.self)
+
+                        let confirmation = try await votingCrypto.confirmVoteSubmission(
+                            roundId, bundleIndex, proposalId, txResult.txHash, eventsJson
+                        )
 
                         await send(.voteSubmissionStepUpdated(roundId: roundId, step: .sendingShares))
-                        var payloads = try await votingCrypto.buildSharePayloads(
-                            builtBundle.encShares, builtBundle, choice, numOptions, vcIdx, singleShare
-                        )
-                        let nowSec = Date().timeIntervalSince1970
-                        for i in payloads.indices {
-                            if let deadline = submitAtDeadline, deadline > nowSec {
-                                payloads[i].submitAt = UInt64(nowSec + Double.random(in: 0..<(deadline - nowSec)))
-                            } else {
-                                payloads[i].submitAt = 0
-                            }
+                        guard let stored = try await votingCrypto.getCommitmentBundleJson(roundId, bundleIndex, proposalId) else {
+                            throw VotingFlowError.missingVoteCommitmentBundle
                         }
-                        try await votingCrypto.storeVoteCommitmentBundle(roundId, bundleIndex, proposalId, builtBundle, vcIdx)
+                        let nowSec = Date().timeIntervalSince1970
+                        var payloads: [SharePayload] = []
+                        var submitAtByShareIndex: [UInt32: UInt64] = [:]
+                        for share in builtBundle.encShares {
+                            let submitAt: UInt64
+                            if let deadline = submitAtDeadline, deadline > nowSec {
+                                submitAt = UInt64(nowSec + Double.random(in: 0..<(deadline - nowSec)))
+                            } else {
+                                submitAt = 0
+                            }
+                            submitAtByShareIndex[share.shareIndex] = submitAt
+                            let wireJson = try await votingCrypto.recoverWireJson(
+                                stored.bundleJson, proposalId, share.shareIndex,
+                                confirmation.voteCommitmentTreePosition, submitAt
+                            )
+                            payloads.append(SharePayload(wireJson: wireJson, shareIndex: share.shareIndex))
+                        }
                         let batchDelegationResult = try await Voting.delegateSharesWithFallback(
                             payloads,
                             roundId: roundId,
@@ -1933,27 +1944,15 @@ extension VotingCoordFlow {
                         )
                         shareServerURLs = batchDelegationResult.remainingServerURLs
                         for info in batchDelegationResult.delegatedShares {
-                            guard let payload = payloads.first(where: {
-                                $0.encShare.shareIndex == info.shareIndex && $0.proposalId == info.proposalId
-                            }) else { continue }
-                            let blindIndex = Int(info.shareIndex)
-                            guard blindIndex < builtBundle.shareBlindFactors.count else { continue }
                             do {
-                                let nullifierHex = try votingCrypto.computeShareNullifier(
-                                    [UInt8](builtBundle.voteCommitment),
-                                    info.shareIndex,
-                                    [UInt8](builtBundle.shareBlindFactors[blindIndex])
-                                )
                                 try await votingCrypto.recordShareDelegation(
-                                    roundId, bundleIndex, info.proposalId,
-                                    info.shareIndex, info.acceptedByServers,
-                                    [UInt8](votingDataFromHex(nullifierHex)), payload.submitAt
+                                    roundId, bundleIndex, info.proposalId, info.shareIndex,
+                                    info.acceptedByServers, submitAtByShareIndex[info.shareIndex] ?? 0
                                 )
                             } catch {
                                 LoggerProxy.warn("Batch: failed to record share delegation for share \(info.shareIndex): \(error)")
                             }
                         }
-                        try await votingCrypto.markVoteSubmitted(roundId, bundleIndex, proposalId)
                     }
 
                     successCount += 1
@@ -2145,37 +2144,16 @@ extension VotingCoordFlow {
                 guard let first = shares.first else { continue }
                 let bundleIndex = first.bundleIndex
                 let proposalId = first.proposalId
-                guard
-                    let result = try? await votingCrypto.getVoteCommitmentBundleWithPosition(
-                        roundId,
-                        bundleIndex,
-                        proposalId
-                    ),
-                    let choice = votes[proposalId]
-                else {
+                guard let stored = try? await votingCrypto.getCommitmentBundleJson(roundId, bundleIndex, proposalId) else {
                     continue
                 }
 
-                let numOptions = UInt32(proposals.first { $0.id == proposalId }?.options.count ?? 3)
                 do {
-                    var payloads = try await votingCrypto.buildSharePayloads(
-                        result.bundle.encShares,
-                        result.bundle,
-                        choice,
-                        numOptions,
-                        result.vcTreePosition,
-                        singleShare
-                    )
-                    for index in payloads.indices {
-                        payloads[index].submitAt = 0
-                    }
-
                     for share in shares {
-                        guard let payload = payloads.first(where: {
-                            $0.encShare.shareIndex == share.shareIndex
-                        }) else {
-                            continue
-                        }
+                        let wireJson = try await votingCrypto.recoverWireJson(
+                            stored.bundleJson, proposalId, share.shareIndex, stored.vcTreePosition, 0
+                        )
+                        let payload = SharePayload(wireJson: wireJson, shareIndex: share.shareIndex)
                         let acceptedServers = try await votingAPI.resubmitShare(
                             payload,
                             roundId,

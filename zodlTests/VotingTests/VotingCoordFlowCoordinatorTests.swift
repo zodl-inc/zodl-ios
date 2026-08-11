@@ -933,11 +933,11 @@ import Testing
         DelegationRegistration(
             rk: rk,
             spendAuthSig: spendAuthSig,
-            signedNoteNullifier: Data(repeating: 0x03, count: 32),
-            cmxNew: Data(repeating: 0x04, count: 32),
-            vanCmx: Data(repeating: 0x05, count: 32),
-            govNullifiers: [Data(repeating: 0x06, count: 32)],
-            proof: Data(repeating: 0x07, count: 32),
+            signedNoteNullifier: Data(repeating: 0x03, count: 32).base64EncodedString(),
+            cmxNew: Data(repeating: 0x04, count: 32).base64EncodedString(),
+            vanCmx: Data(repeating: 0x05, count: 32).base64EncodedString(),
+            govNullifiers: [Data(repeating: 0x06, count: 32).base64EncodedString()],
+            proof: Data(repeating: 0x07, count: 32).base64EncodedString(),
             voteRoundId: Data([0xAA, 0xBB]),
             sighash: sighash
         )

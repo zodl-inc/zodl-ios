@@ -184,7 +184,7 @@ struct VotingCryptoClient {
     var storeVanPosition: @Sendable (_ roundId: String, _ bundleIndex: UInt32, _ position: UInt32) async throws -> Void
     var syncVoteTree: @Sendable (_ roundId: String, _ nodeUrl: String) async throws -> UInt32
     var generateVanWitness: @Sendable (_ roundId: String, _ bundleIndex: UInt32, _ anchorHeight: UInt32) async throws -> VanWitness
-    var markVoteSubmitted: @Sendable (_ roundId: String, _ bundleIndex: UInt32, _ proposalId: UInt32) async throws -> Void
+    var markVoteSubmitted: @Sendable (_ roundId: String, _ bundleIndex: UInt32, _ proposalId: UInt32, _ txHash: String) async throws -> Void
     /// Drop the in-memory TreeClient so the next `syncVoteTree` starts fresh.
     /// Recovers from stale state after commitment tree timeout.
     var resetTreeClient: @Sendable () async throws -> Void
@@ -219,6 +219,41 @@ struct VotingCryptoClient {
         _ bundleIndex: UInt32,
         _ proposalId: UInt32
     ) async throws -> VotingTxHashLookup
+    /// Record a confirmed cast-vote transaction in one atomic step.
+    ///
+    /// `eventsJson` is the confirmation-events array the app's existing confirmation polling
+    /// already fetches (`VotingAPIClient.fetchTxConfirmation(_:).events`), serialized as JSON —
+    /// a list of `{"type": …, "attributes": [{"key": …, "value": …}]}` objects. Callers must
+    /// not parse `leaf_index` themselves; that is exactly the duplicated state this entry point
+    /// exists to delete (spec `CHP_DESIGN.md` §3/A2 step 4).
+    var confirmVoteSubmission: @Sendable (
+        _ roundId: String,
+        _ bundleIndex: UInt32,
+        _ proposalId: UInt32,
+        _ txHash: String,
+        _ eventsJson: String
+    ) async throws -> VoteConfirmationInfo
+    /// Read the persisted commitment-recovery bundle for a (round, bundle, proposal) as the
+    /// raw JSON `commitVote` wrote — opaque to this layer; feed it straight into
+    /// `recoverWireJson`. Distinct from `getVoteCommitmentBundle`/
+    /// `getVoteCommitmentBundleWithPosition`, which decode it as the app's own
+    /// `VoteCommitmentBundle` — a decode target that no longer matches what `commitVote`
+    /// persists (see `## CORRECTIONS` item 13 in the T9 plan notes).
+    var getCommitmentBundleJson: @Sendable (
+        _ roundId: String,
+        _ bundleIndex: UInt32,
+        _ proposalId: UInt32
+    ) async throws -> (bundleJson: String, vcTreePosition: UInt64)?
+    /// Rebuild one helper-server share payload as `zcash_voting`'s own wire JSON, with the
+    /// confirmed vote-commitment-tree position and the scheduled submit time late-bound into
+    /// it. POST the returned string verbatim — do not decode, re-shape, or re-encode it.
+    var recoverWireJson: @Sendable (
+        _ commitmentBundleJson: String,
+        _ proposalId: UInt32,
+        _ shareIndex: UInt32,
+        _ voteCommitmentTreePosition: UInt64,
+        _ submitAt: UInt64
+    ) async throws -> String
     /// Persist a Keystone bundle signature so it survives app restarts.
     var storeKeystoneBundleSignature: @Sendable (
         _ roundId: String,
@@ -250,7 +285,12 @@ struct VotingCryptoClient {
     /// Compute the nullifier for a vote share (pure function, no DB needed).
     var computeShareNullifier: @Sendable (_ voteCommitment: [UInt8], _ shareIndex: UInt32, _ primaryBlind: [UInt8]) throws -> String
     /// Record a share delegation after sending to helper servers.
-    var recordShareDelegation: @Sendable (_ roundId: String, _ bundleIndex: UInt32, _ proposalId: UInt32, _ shareIndex: UInt32, _ sentToURLs: [String], _ nullifier: [UInt8], _ submitAt: UInt64) async throws -> Void
+    ///
+    /// The share's nullifier is no longer supplied by the caller: `zcash_voting` derives it
+    /// from the committed vote's recovery state, so a caller cannot record a nullifier that
+    /// disagrees with the share it belongs to. Read it back via `getShareDelegations`/
+    /// `getUnconfirmedDelegations` when polling `VotingAPIClient.fetchShareStatus`.
+    var recordShareDelegation: @Sendable (_ roundId: String, _ bundleIndex: UInt32, _ proposalId: UInt32, _ shareIndex: UInt32, _ sentToURLs: [String], _ submitAt: UInt64) async throws -> Void
     /// Get all share delegations for a round.
     var getShareDelegations: @Sendable (_ roundId: String) async throws -> [VotingShareDelegation]
     /// Get unconfirmed share delegations for a round.
@@ -259,5 +299,13 @@ struct VotingCryptoClient {
     var markShareConfirmed: @Sendable (_ roundId: String, _ bundleIndex: UInt32, _ proposalId: UInt32, _ shareIndex: UInt32) async throws -> Void
     /// Append new server URLs to a share delegation's sent_to_urls.
     var addSentServers: @Sendable (_ roundId: String, _ bundleIndex: UInt32, _ proposalId: UInt32, _ shareIndex: UInt32, _ newURLs: [String]) async throws -> Void
+}
+
+/// Positions a mined cast-vote transaction confirmed. Mirrors
+/// `VotingRustBackend.VotingVoteConfirmation` (SDK-lane Task 3) field for field.
+struct VoteConfirmationInfo: Equatable, Sendable {
+    let txHash: String
+    let vanLeafPosition: UInt32
+    let voteCommitmentTreePosition: UInt64
 }
 #endif
