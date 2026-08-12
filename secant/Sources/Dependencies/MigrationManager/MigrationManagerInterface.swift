@@ -160,13 +160,6 @@ struct MigrationManagerClient: Sendable {
     /// spacing. `nil` accountUUID resolves the selected account.
     var migrationChainClock: @Sendable (_ accountUUID: AccountUUID?) async -> MigrationChainClock = { _ in .unknown }
 
-    /// A12/B6: whether a manual send from `accountUUID` should show the Orchard-spend warning.
-    /// `proposal` is this send's own built proposal when one is available — its
-    /// `spendsLegacyOrchardFunds` is the primary, authoritative answer. `nil` (no proposal built
-    /// yet, or none to offer) falls back to the coarser wallet-wide approximation. See
-    /// `MigrationManualSendRisk` for the exact rule and why the fallback stays conservative.
-    var shouldWarnBeforeManualSend: @Sendable (_ accountUUID: AccountUUID?, _ proposal: Proposal?) async -> Bool = { _, _ in false }
-
     var stateEvents: @Sendable (_ accountUUID: AccountUUID?) -> AnyPublisher<MigrationState, Never> = { _ in Empty().eraseToAnyPublisher() }
     /// R13 Brick 1 — THE published snapshot channel (GROUND_RULES R13): one loader, one immutable
     /// value, every surface. Unlike `stateEvents` (a doorbell carrying only the coarse

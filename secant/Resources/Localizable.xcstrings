@@ -16757,74 +16757,6 @@
         }
       }
     },
-    "send.orchardDisclaimerBody" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "We recommend migrating your funds first to avoid leaking the transaction amount on-chain."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Te recomendamos migrar tus fondos primero para evitar revelar el monto de la transacción en la cadena."
-          }
-        }
-      }
-    },
-    "send.orchardDisclaimerTitle" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "This send requires spending Orchard funds"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Este envío requiere gastar fondos de Orchard"
-          }
-        }
-      }
-    },
-    "send.orchardWarning.body" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "We recommend migrating your funds first to avoid leaking the transaction amount on-chain."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Te recomendamos migrar tus fondos primero para evitar exponer el importe de la transacción en la cadena."
-          }
-        }
-      }
-    },
-    "send.orchardWarning.title" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "This send requires spending Orchard funds"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Este envío requiere gastar fondos de Orchard"
-          }
-        }
-      }
-    },
     "send.partialFailureInfo" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -18220,6 +18152,57 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Fondos insuficientes"
+          }
+        }
+      }
+    },
+    "sheet.orchardSpend.continue" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Continue anyway"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Continuar de todos modos"
+          }
+        }
+      }
+    },
+    "sheet.orchardSpend.msg" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "We recommend migrating your funds first to avoid leaking the transaction amount on-chain."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Te recomendamos migrar tus fondos primero para evitar revelar el monto de la transacción en la cadena."
+          }
+        }
+      }
+    },
+    "sheet.orchardSpend.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This send requires spending Orchard funds"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Este envío requiere gastar fondos de Orchard"
           }
         }
       }

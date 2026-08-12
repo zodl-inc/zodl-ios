@@ -53,23 +53,21 @@ struct SendConfirmation {
         var feeRequired: Zatoshi
         var isAddressExpanded = false
         var isKeystoneCodeFound = false
+        var isOrchardWarningPresented = false
         var isQRCodeEnlarged = false
         var isSending = false
-        /// A12/B6: the Orchard-spend warning (Figma 5139:23856) is up. Set only by `.sendTapped`
-        /// when there is a live migration run AND this send's own proposal spends legacy Orchard
-        /// funds (or, absent a proposal, when the account has unmigrated Orchard left at all) —
-        /// see `MigrationManualSendRisk`.
-        var isOrchardWarningPresented = false
         var isShielding = false
         var isTransparentAddress = false
         var message: String
         var messageToBeShared: String?
+        var orchardWarningShown = false
         var partialFailureTxIds: [String] = []
         var partialFailureStatuses: [String] = []
         var pczt: Pczt?
         var pcztForUI: Pczt?
         var pcztWithProofs: Pczt?
         var pcztWithSigs: Pczt?
+        var pendingCancelFromOrchardWarning = false
         var pendingDescription: String?
         var proposal: Proposal?
         var randomSuccessIconIndex = 0
@@ -146,11 +144,15 @@ struct SendConfirmation {
         case binding(BindingAction<SendConfirmation.State>)
         case cancelTapped
         case closeTapped
+        case confirmationScreenAppeared
         case confirmWithKeystoneTapped
         case enlargeQRCodeTapped
         case getSignatureTapped
         case goBackTappedFromRequestZec
         case onAppear
+        case orchardWarningCancelTapped
+        case orchardWarningContinueTapped
+        case orchardWarningDismissed
         case rejectRequestCanceled
         case rejectRequested
         case rejectTapped
@@ -163,16 +165,6 @@ struct SendConfirmation {
         case sendRequested
         case sendSupportMailFinished
         case sendTapped
-        /// A12: the risk read that `.sendTapped` waits on. `true` presents the warning; `false`
-        /// goes straight to authentication, exactly as `.sendTapped` used to.
-        case orchardRiskResolved(Bool)
-        /// A12: "Send" on the warning sheet — the destructive button. Proceeds to authentication.
-        case orchardWarningSendAnywayTapped
-        /// A12: "Cancel" on the warning sheet — the PRIMARY button. Nothing is sent.
-        case orchardWarningCancelTapped
-        /// A12: authentication + send, split out of `.sendTapped` so the warning can sit in front
-        /// of it without duplicating the path.
-        case sendAuthorizationRequested
         case sendTriggered
         case shareFinished
         case showHideButtonTapped
@@ -215,7 +207,6 @@ struct SendConfirmation {
     @Dependency(\.derivationTool) var derivationTool
     @Dependency(\.keystoneHandler) var keystoneHandler
     @Dependency(\.mainQueue) var mainQueue
-    @Dependency(\.migrationManager) var migrationManager
     @Dependency(\.mnemonic) var mnemonic
     @Dependency(\.sdkSynchronizer) var sdkSynchronizer
     @Dependency(\.walletStorage) var walletStorage
@@ -251,6 +242,17 @@ struct SendConfirmation {
                 }
                 return .none
 
+            case .confirmationScreenAppeared:
+                // Deliberately separate from `.onAppear`: this reducer is also shared by screens
+                // that never attach the warning sheet (e.g. the SwapAndPay flow pushing
+                // `confirmWithKeystone` with a fresh state), which must never trip or burn this
+                // one-shot latch just because `.onAppear` fired.
+                if state.proposal?.spendsLegacyOrchardFunds == true && !state.orchardWarningShown {
+                    state.isOrchardWarningPresented = true
+                    state.orchardWarningShown = true
+                }
+                return .none
+
             case .alert(.presented(let action)):
                 return .send(action)
 
@@ -278,6 +280,25 @@ struct SendConfirmation {
             case .cancelTapped:
                 return .none
 
+            case .orchardWarningCancelTapped:
+                state.isOrchardWarningPresented = false
+                state.pendingCancelFromOrchardWarning = true
+                return .none
+
+            case .orchardWarningContinueTapped:
+                state.isOrchardWarningPresented = false
+                return .none
+
+            case .orchardWarningDismissed:
+                // Pop-back must happen only after the sheet finished dismissing (this action is
+                // sent from the sheet's `onDismiss`), otherwise SwiftUI would pop a screen that
+                // still presents a sheet.
+                if state.pendingCancelFromOrchardWarning {
+                    state.pendingCancelFromOrchardWarning = false
+                    return .send(.cancelTapped)
+                }
+                return .none
+
             case .viewTransactionTapped:
                 return .none
                 
@@ -289,32 +310,6 @@ struct SendConfirmation {
                 return .none
 
             case .sendTapped:
-                // A12: ask BEFORE Face ID. Warning the user after they have authenticated reads as
-                // "too late" — the decision the sheet is asking them to reconsider is whether to
-                // send at all, not whether they are themselves.
-                // B6: the proposal is already built by push time (`State.proposal`) — passing it
-                // lets the manager ask the proposal's own `spendsLegacyOrchardFunds` instead of
-                // inferring risk from wallet-wide Orchard balance.
-                return .run { [accountUUID = state.selectedWalletAccount?.id, proposal = state.proposal] send in
-                    await send(.orchardRiskResolved(migrationManager.shouldWarnBeforeManualSend(accountUUID, proposal)))
-                }
-
-            case .orchardRiskResolved(let shouldWarn):
-                guard shouldWarn else {
-                    return .send(.sendAuthorizationRequested)
-                }
-                state.isOrchardWarningPresented = true
-                return .none
-
-            case .orchardWarningCancelTapped:
-                state.isOrchardWarningPresented = false
-                return .none
-
-            case .orchardWarningSendAnywayTapped:
-                state.isOrchardWarningPresented = false
-                return .send(.sendAuthorizationRequested)
-
-            case .sendAuthorizationRequested:
                 state.isSending = true
                 return .run { send in
                     guard await localAuthentication.authenticate() else {

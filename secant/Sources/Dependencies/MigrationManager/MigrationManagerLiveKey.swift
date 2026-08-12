@@ -159,9 +159,6 @@ extension MigrationManagerClient: DependencyKey {
                 )
             },
             migrationChainClock: { await impl.migrationChainClock(accountUUID: $0) },
-            shouldWarnBeforeManualSend: { accountUUID, proposal in
-                await impl.shouldWarnBeforeManualSend(accountUUID: accountUUID, proposal: proposal)
-            },
             stateEvents: { accountUUID in impl.stateEvents(accountUUID: accountUUID) },
             migrationSnapshotEvents: { accountUUID in impl.migrationSnapshotEvents(accountUUID: accountUUID) },
             currentMigrationSnapshot: { accountUUID in impl.currentMigrationSnapshot(accountUUID: accountUUID) },
@@ -2385,28 +2382,6 @@ final class MigrationManagerImpl: @unchecked Sendable {
             )
         }
         return anyRowClaimedProvable
-    }
-
-    /// A12/B6 — see `MigrationManagerClient.shouldWarnBeforeManualSend`. A dumb assembler: every
-    /// decision (proposal truth vs. the nil-proposal fallback) lives in `MigrationManualSendRisk`,
-    /// this just gathers the three inputs it needs — `proposal?.spendsLegacyOrchardFunds` passes
-    /// straight through as `proposalSpendsOrchard`.
-    ///
-    /// Every read degrades to "no warning": a migration read failing must not block an ordinary
-    /// send, which is a different and much worse failure than missing one advisory sheet. The
-    /// orchard-balance read always runs, proposal or not — the predicate only consults it on the
-    /// nil-proposal path, but it's cheap and keeping it unconditional here avoids this assembler
-    /// branching on which inputs the pure function will actually use.
-    func shouldWarnBeforeManualSend(accountUUID: AccountUUID?, proposal: Proposal?) async -> Bool {
-        guard isIronwoodActivated() else { return false }
-        guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return false }
-        guard let state = await migrationState(accountUUID: resolvedAccountUUID) else { return false }
-
-        return MigrationManualSendRisk.shouldWarn(
-            hasActiveRun: MigrationManualSendRisk.isActiveRun(state),
-            proposalSpendsOrchard: proposal?.spendsLegacyOrchardFunds,
-            hasUnmigratedOrchard: await orchardBalanceToMigrate(accountUUID: resolvedAccountUUID) > Zatoshi.zero
-        )
     }
 
     /// See `MigrationManagerClient.migrationChainClock` — the public face of `chainClock`, with the
