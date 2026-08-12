@@ -1,6 +1,19 @@
 {
     "releases": [
         {
+            "version": "3.9.3",
+            "date": "12-08-2026",
+            "timestamp": 1786526020,
+            "sections": [
+                {
+                    "title": "Fixed:",
+                    "bulletpoints": [
+                        "We fixed the warning shown when a payment needs to spend Orchard funds that haven't been migrated yet — it now appears every time, not only during a migration."
+                    ]
+                }
+            ]
+        },
+        {
             "version": "3.9.2",
             "date": "11-08-2026",
             "timestamp": 1786458854,

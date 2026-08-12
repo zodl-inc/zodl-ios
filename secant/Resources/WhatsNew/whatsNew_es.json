@@ -1,6 +1,19 @@
 {
     "releases": [
         {
+            "version": "3.9.3",
+            "date": "12-08-2026",
+            "timestamp": 1786526020,
+            "sections": [
+                {
+                    "title": "Corregido:",
+                    "bulletpoints": [
+                        "Corregimos la advertencia que aparece cuando un pago debe gastar fondos de Orchard que aún no se han migrado: ahora se muestra siempre, no solo durante una migración."
+                    ]
+                }
+            ]
+        },
+        {
             "version": "3.9.2",
             "date": "11-08-2026",
             "timestamp": 1786458854,
