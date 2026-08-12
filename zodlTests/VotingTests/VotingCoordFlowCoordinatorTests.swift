@@ -948,7 +948,7 @@ import Testing
             vanCmx: Data(repeating: 0x05, count: 32).base64EncodedString(),
             govNullifiers: [Data(repeating: 0x06, count: 32).base64EncodedString()],
             proof: Data(repeating: 0x07, count: 32).base64EncodedString(),
-            voteRoundId: Data([0xAA, 0xBB]),
+            voteRoundId: Data([0xAA, 0xBB]).base64EncodedString(),
             sighash: sighash
         )
     }

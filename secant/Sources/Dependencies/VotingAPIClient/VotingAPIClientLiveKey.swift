@@ -887,7 +887,7 @@ extension VotingAPIClient: DependencyKey {
                         "van_cmx": registration.vanCmx,
                         "gov_nullifiers": registration.govNullifiers,
                         "proof": registration.proof,
-                        "vote_round_id": registration.voteRoundId.base64EncodedString()
+                        "vote_round_id": registration.voteRoundId
                     ]
                     return try await retryWithBackoff(isRetryable: isBroadcastRetryable) {
                         let json = try await postJSON("/shielded-vote/v1/delegate-vote", body: body)

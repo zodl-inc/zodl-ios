@@ -428,7 +428,6 @@ extension VotingCryptoClient: DependencyKey {
                         "rk/spend_auth_sig did not base64-decode"
                     )
                 }
-                let voteRoundIdBytes = Data(hexString: sub.voteRoundId)
                 return DelegationRegistration(
                     rk: rk,
                     spendAuthSig: spendAuthSig,
@@ -437,7 +436,7 @@ extension VotingCryptoClient: DependencyKey {
                     vanCmx: sub.govComm,
                     govNullifiers: sub.govNullifiers,
                     proof: sub.proof,
-                    voteRoundId: voteRoundIdBytes,
+                    voteRoundId: sub.voteRoundId,
                     sighash: sighash
                 )
             },
@@ -678,20 +677,6 @@ private extension VoteChoice {
 extension Data {
     var hexString: String {
         map { String(format: "%02x", $0) }.joined()
-    }
-
-    /// Initialize Data from a hex-encoded string (e.g. "0a1b2c").
-    init(hexString: String) {
-        var data = Data()
-        var hex = hexString
-        while hex.count >= 2 {
-            let byteString = String(hex.prefix(2))
-            hex = String(hex.dropFirst(2))
-            if let byte = UInt8(byteString, radix: 16) {
-                data.append(byte)
-            }
-        }
-        self = data
     }
 }
 

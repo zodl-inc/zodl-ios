@@ -421,7 +421,9 @@ struct DelegationRegistration: Equatable, Sendable {
     let vanCmx: String
     let govNullifiers: [String]
     let proof: String
-    let voteRoundId: Data
+    /// Base64, verbatim from `VotingDelegationSubmission` — never compared as bytes, only
+    /// ever placed on the wire, so it is never decoded.
+    let voteRoundId: String
     let sighash: Data
 
     init(
@@ -432,7 +434,7 @@ struct DelegationRegistration: Equatable, Sendable {
         vanCmx: String,
         govNullifiers: [String],
         proof: String,
-        voteRoundId: Data,
+        voteRoundId: String,
         sighash: Data
     ) {
         self.rk = rk
