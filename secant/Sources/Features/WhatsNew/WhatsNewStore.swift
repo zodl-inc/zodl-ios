@@ -36,12 +36,17 @@ struct WhatsNew {
         case executeQuery
         case executeQueryRequested
         case exitDebug
+        case notifsReportReady(String)
         case onAppear
     }
-    
+
+    static let printNotifsCommand = "print_notifs"
+
     @Dependency(\.appVersion) var appVersion
+    @Dependency(\.date) var date
     @Dependency(\.localAuthentication) var localAuthentication
     @Dependency(\.sdkSynchronizer) var sdkSynchronizer
+    @Dependency(\.userNotifications) var userNotifications
     @Dependency(\.whatsNewProvider) var whatsNewProvider
     
     init() { }
@@ -84,7 +89,26 @@ struct WhatsNew {
                 return .none
 
             case .executeQuery:
+                // `print_notifs` is a special command, not SQL: it reports the pending
+                // Orchard -> Ironwood migration notifications instead of hitting the database.
+                let command = state.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                if command == Self.printNotifsCommand {
+                    return .run { send in
+                        let authorization = await userNotifications.authorizationStatus()
+                        let pending = await userNotifications.pendingMigrationNotifications()
+                        let report = PendingMigrationNotification.debugReport(
+                            pending,
+                            authorization: authorization,
+                            now: date.now()
+                        )
+                        await send(.notifsReportReady(report))
+                    }
+                }
                 state.output = sdkSynchronizer.debugDatabaseSql(state.query)
+                return .none
+
+            case let .notifsReportReady(report):
+                state.output = report
                 return .none
             }
         }
