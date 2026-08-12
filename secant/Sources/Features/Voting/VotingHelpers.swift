@@ -327,9 +327,6 @@ enum Voting {
                 return try await votingAPI.delegateShares(payloads, roundId, proposalId, serverURLs)
             } catch let error as ShareDelegationError where error == .noReachableVoteServers {
                 lastExhaustionError = error
-                // __CHP temp debug — remove before merge
-                // swiftlint:disable:next print_function_usage
-                print("__CHP delegSharesFallback.exhausted attempt=\(attempt)/3 retry=\(attempt < 3) proposalId=\(proposalId) servers=\(serverURLs)")
                 LoggerProxy.warn("delegateShares attempt \(attempt)/3 exhausted vote servers")
                 if attempt < 3 {
                     try await Task.sleep(for: retryDelay)
@@ -341,8 +338,6 @@ enum Voting {
         }
 
         let finalError = lastExhaustionError ?? ShareDelegationError.noReachableVoteServers
-        // swiftlint:disable:next print_function_usage
-        print("__CHP delegateSharesWithFallback proposalId=\(proposalId) all 3 attempts exhausted, throwing finalError=\(finalError)") // __CHP temp debug — remove before merge
         throw finalError
     }
 }

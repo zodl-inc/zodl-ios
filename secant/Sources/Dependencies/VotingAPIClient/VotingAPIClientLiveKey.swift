@@ -217,17 +217,6 @@ private func performVotingRequest(
         request.timeoutInterval = fastRequestTimeout
     }
 
-    let effectiveTimeout: TimeInterval
-    if fast {
-        effectiveTimeout = fastRequestTimeout
-    } else if swapAPIAccess == .protected {
-        effectiveTimeout = request.timeoutInterval
-    } else {
-        effectiveTimeout = httpSession.configuration.timeoutIntervalForRequest
-    }
-    // swiftlint:disable:next print_function_usage
-    print("__CHP performVotingRequest path=\(request.url?.path ?? "?") fast=\(fast) timeout=\(effectiveTimeout) route=\(swapAPIAccess)") // __CHP temp debug — remove before merge
-
     if swapAPIAccess == .protected {
         let (data, response) = try await sdkSynchronizer.httpRequestOverTor(request)
         return (data, response as URLResponse)
@@ -346,26 +335,12 @@ private func postServerJSON(_ serverURL: String, _ path: String, body: [String: 
     request.setValue("application/json", forHTTPHeaderField: "Accept")
     request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-    // swiftlint:disable:next print_function_usage
-    print("__CHP postServerJSON[\(serverURL)] path=\(path) bytes=\(request.httpBody?.count ?? 0)") // __CHP temp debug — remove before merge
-
-    let data: Data
-    let response: URLResponse
-    do {
-        (data, response) = try await performVotingRequest(request, fast: true)
-    } catch {
-        // __CHP temp debug — remove before merge
-        // swiftlint:disable:next print_function_usage
-        print("__CHP postServerJSON[\(serverURL)] xportErr domain=\((error as NSError).domain) code=\((error as NSError).code) msg=\(error.localizedDescription)")
-        throw error
-    }
+    let (data, response) = try await performVotingRequest(request, fast: true)
     guard let http = response as? HTTPURLResponse else {
         throw SvAPIError.invalidResponse("not an HTTP response")
     }
     guard http.statusCode == 200 else {
         let body = String(data: data, encoding: .utf8) ?? ""
-        // swiftlint:disable:next print_function_usage
-        print("__CHP postServerJSON[\(serverURL)] non200 status=\(http.statusCode) body=\(body)") // __CHP temp debug — remove before merge
         throw SvAPIError.httpError(statusCode: http.statusCode, message: body)
     }
     return try SvAPIResponseParser.parseJSONObject(data, response: http, context: "POST \(path)")
@@ -414,9 +389,7 @@ func sharePostBody(
         return [:]
     }
     guard let roundIdData = strictHexData(roundIdHex), roundIdData.count == 32 else {
-        // __CHP temp debug — remove before merge
-        // swiftlint:disable:next print_function_usage
-        print("__CHP sharePostBody BAD roundIdHex len=\(roundIdHex.count)")
+        LoggerProxy.error("sharePostBody: invalid roundIdHex (expected 64 hex chars, got \(roundIdHex.count))")
         return body
     }
     body["vote_round_id"] = roundIdHex
@@ -440,10 +413,6 @@ func delegateSharePayloads(
         var acceptedServers: [String] = []
         var triedServers = Set<String>()
 
-        // __CHP temp debug — remove before merge
-        // swiftlint:disable:next print_function_usage
-        print("__CHP delegateSharePayloads i=\(shareOffset) idx=\(payload.shareIndex) target=\(targetCount) avail=\(availableServers)")
-
         while acceptedServers.count < targetCount {
             let candidates = availableServers.filter { !triedServers.contains($0) }
             guard !candidates.isEmpty else { break }
@@ -465,9 +434,6 @@ func delegateSharePayloads(
                             try await postShare(server, body)
                             return (server, true)
                         } catch {
-                            // __CHP temp debug — remove before merge
-                            // swiftlint:disable:next print_function_usage
-                            print("__CHP delegateSharePayloads.pruned server=\(server) share=\(shareOffset) err=\(error.localizedDescription)")
                             return (server, false)
                         }
                     }
@@ -490,15 +456,9 @@ func delegateSharePayloads(
 
         if acceptedServers.isEmpty {
             LoggerProxy.warn("Share \(shareOffset) failed on all configured vote servers")
-            // __CHP temp debug — remove before merge
-            // swiftlint:disable:next print_function_usage
-            print("__CHP delegateSharePayloads.exhausted share=\(shareOffset) remaining=\(availableServers)")
             lastError = ShareDelegationError.noReachableVoteServers
             break
         }
-
-        // swiftlint:disable:next print_function_usage
-        print("__CHP delegateSharePayloads share=\(shareOffset) accepted-by=\(acceptedServers)") // __CHP temp debug — remove before merge
 
         results.append(DelegatedShareInfo(
             shareIndex: payload.shareIndex,
@@ -1010,8 +970,6 @@ extension VotingAPIClient: DependencyKey {
                                 _ = try await postServerJSON(server, "/shielded-vote/v1/shares", body: body)
                                 await tracker.recordSuccess(for: server)
                             } catch {
-                                // swiftlint:disable:next print_function_usage
-                                print("__CHP delegateShares.postShare[\(server)] caught error=\(error)") // __CHP temp debug — remove before merge
                                 await tracker.recordFailure(for: server)
                                 throw error
                             }
@@ -1062,11 +1020,6 @@ extension VotingAPIClient: DependencyKey {
                             _ = try await postServerJSON(server, "/shielded-vote/v1/shares", body: body)
                             await tracker.recordSuccess(for: server)
                         } catch {
-                            // Not in the original map (item 4 only names the delegateShares
-                            // closure) — added because this is the structural twin used by
-                            // background resubmission and hits the same bug class.
-                            // swiftlint:disable:next print_function_usage
-                            print("__CHP resubmitShare.postShare[\(server)] caught error=\(error)") // __CHP temp debug — remove before merge
                             await tracker.recordFailure(for: server)
                             throw error
                         }
