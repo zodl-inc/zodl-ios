@@ -1846,9 +1846,20 @@ extension VotingCoordFlow {
                             .filter { $0.proposalId == proposalId && $0.submitted }
                             .map(\.bundleIndex)
                     )
+                    // A tally-share delegation failure can land *after* `markVoteSubmitted` runs
+                    // (see Task 8E), leaving `submitted == true` with zero recorded share
+                    // delegations — no other lane ever retries an orphaned share. A bundle only
+                    // counts as done once it is both submitted AND has a recorded delegation for
+                    // this proposal; anything less must fall through to `tryRecoverInflightVote`
+                    // below, which re-confirms the cached tx and re-runs share delegation end to end.
+                    let bundlesWithRecordedShares = Set(
+                        try await votingCrypto.getShareDelegations(roundId)
+                            .filter { $0.proposalId == proposalId }
+                            .map(\.bundleIndex)
+                    )
 
                     for bundleIndex: UInt32 in 0..<bundleCount {
-                        if submittedBundles.contains(bundleIndex) {
+                        if submittedBundles.contains(bundleIndex) && bundlesWithRecordedShares.contains(bundleIndex) {
                             LoggerProxy.debug("Batch: bundle \(bundleIndex + 1)/\(bundleCount) already submitted for proposal \(proposalId)")
                             continue
                         }
