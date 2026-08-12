@@ -154,14 +154,6 @@ struct SendConfirmationView: View {
                 }
                 .padding(.vertical, 1)
                 .alert($store.scope(state: \.alert, action: \.alert))
-                // A12 (Figma 5139:23856): shown BEFORE authentication when this account has a live
-                // migration run with unmigrated Orchard left — see `MigrationManualSendRisk`.
-                .zashiSheet(isPresented: $store.isOrchardWarningPresented) {
-                    SendOrchardWarningSheet(
-                        sendAnywayTapped: { store.send(.orchardWarningSendAnywayTapped) },
-                        cancelTapped: { store.send(.orchardWarningCancelTapped) }
-                    )
-                }
                 
                 Spacer()
 
@@ -196,7 +188,16 @@ struct SendConfirmationView: View {
                     }
                 }
             }
-            .onAppear { store.send(.onAppear) }
+            .orchardSpendWarningSheet(
+                isPresented: $store.isOrchardWarningPresented,
+                onContinue: { store.send(.orchardWarningContinueTapped) },
+                onCancel: { store.send(.orchardWarningCancelTapped) },
+                onDismiss: { store.send(.orchardWarningDismissed) }
+            )
+            .onAppear {
+                store.send(.onAppear)
+                store.send(.confirmationScreenAppeared)
+            }
             .screenTitle(
                 store.selectedWalletAccount?.vendor == .keystone
                 ? String(localizable: .sendReview)
