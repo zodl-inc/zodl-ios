@@ -400,9 +400,11 @@ private func strictHexData(_ hex: String) -> Data? {
 /// `vote_round_id` field at all — only its siblings `DelegationSubmissionWire` and
 /// `VoteCommitmentWire` do. The `/shielded-vote/v1/shares` server nonetheless requires the
 /// field (HTTP 400 `vote_round_id: expected 32 bytes, got 0` otherwise), so this injects it
-/// app-side from `roundIdHex`, base64-encoding the same 32 raw bytes the crate's own
-/// `b64_hex` wire-codec helper produces for the sibling wire types. Candidate for removal
-/// once the crate's `VoteShareWire` carries the field itself.
+/// app-side from `roundIdHex`. Measured server contract: the shares endpoint hex-decodes
+/// `vote_round_id` (unlike the delegate-vote and cast-vote endpoints, which accept base64
+/// for the same field name — asymmetry confirmed live 2026-08-12), so this sends the
+/// validated 64-char hex string verbatim, not base64. Candidate for removal once the
+/// crate's `VoteShareWire` carries the field itself.
 func sharePostBody(
     for payload: SharePayload,
     roundIdHex: String
@@ -417,7 +419,7 @@ func sharePostBody(
         print("__CHP sharePostBody BAD roundIdHex len=\(roundIdHex.count)")
         return body
     }
-    body["vote_round_id"] = roundIdData.base64EncodedString()
+    body["vote_round_id"] = roundIdHex
     return body
 }
 
