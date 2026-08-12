@@ -1650,9 +1650,27 @@ extension VotingCoordFlow {
     /// Keystone users skip the local auth gate (the device itself is the
     /// auth surface).
     func reduceSubmitAllDraftsTapped(_ state: inout State, roundId: String) -> Effect<Action> {
-        guard let session = state.roundCache[roundId] else { return .none }
-        guard canStartSubmission(session) else { return .none }
-        guard activeSession(in: state, roundId: roundId) != nil else { return .none }
+        // __CHP temp debug — remove before merge
+        // swiftlint:disable:next print_function_usage
+        print("__CHP submitAllDraftsTapped entry roundId=\(roundId) keystone=\(state.isKeystoneUser) pending=\(state.pendingBatchSubmission)")
+        guard let session = state.roundCache[roundId] else {
+            // __CHP temp debug — remove before merge
+            // swiftlint:disable:next print_function_usage
+            print("__CHP submitAllDraftsTapped bail roundId=\(roundId) reason=noSessionInRoundCache")
+            return .none
+        }
+        guard canStartSubmission(session) else {
+            // __CHP temp debug — remove before merge
+            // swiftlint:disable:next print_function_usage
+            print("__CHP submitAllDraftsTapped bail roundId=\(roundId) reason=cantStart noDrafts=\(session.draftVotes.isEmpty) nBundles=\(session.bundleCount) status=\(session.batchSubmissionStatus)")
+            return .none
+        }
+        guard activeSession(in: state, roundId: roundId) != nil else {
+            // __CHP temp debug — remove before merge
+            // swiftlint:disable:next print_function_usage
+            print("__CHP submitAllDraftsTapped bail roundId=\(roundId) reason=noActiveSession")
+            return .none
+        }
         // Partial ballots are explicitly allowed: the user has already
         // acknowledged any skipped questions via the ProposalDetail
         // skipped-questions sheet. We submit only what they drafted —
@@ -1662,7 +1680,11 @@ extension VotingCoordFlow {
 
         if !state.isKeystoneUser && !state.pendingBatchSubmission {
             return .run { [localAuthentication] send in
-                guard await localAuthentication.authenticate() else { return }
+                let authOK = await localAuthentication.authenticate()
+                // __CHP temp debug — remove before merge
+                // swiftlint:disable:next print_function_usage
+                print("__CHP submitAllDraftsTapped auth-result roundId=\(roundId) authOK=\(authOK)")
+                guard authOK else { return }
                 await send(.authenticationSucceeded(roundId: roundId))
             }
         }
@@ -1736,6 +1758,14 @@ extension VotingCoordFlow {
             let pirLayout = state.serviceConfig?.pirLayout,
             let accountId = state.selectedWalletAccount?.id
         else {
+            let cfgNil = state.serviceConfig == nil
+            let serversEmpty = state.serviceConfig?.voteServers.isEmpty ?? true
+            let pirEmpty = state.serviceConfig?.pirEndpoints.isEmpty ?? true
+            let layoutNil = state.serviceConfig?.pirLayout == nil
+            let acctNil = state.selectedWalletAccount?.id == nil
+            // __CHP temp debug — remove before merge
+            // swiftlint:disable:next print_function_usage
+            print("__CHP authSucceeded.svcCfgGuard roundId=\(roundId) cfgNil=\(cfgNil) serversEmpty=\(serversEmpty) pirEmpty=\(pirEmpty) layoutNil=\(layoutNil) acctNil=\(acctNil)")
             LoggerProxy.error("serviceConfig/activeSession/selectedAccount unexpectedly nil during vote submission; aborting")
             return .none
         }
@@ -1756,6 +1786,12 @@ extension VotingCoordFlow {
         }
 
         return .run { [backgroundTask, votingAPI, votingCrypto, mnemonic, walletStorage, pirLayout] send in
+            // NOTE: no single `proposalId` exists yet at effect entry (it's per-draft,
+            // set inside `draftLoop` below) — printing the full batch's proposal id list
+            // instead, per the map's intent of identifying which batch/round this is.
+            // __CHP temp debug — remove before merge
+            // swiftlint:disable:next print_function_usage
+            print("__CHP submitBatch.run entry roundId=\(roundId) bundles=\(bundleCount) total=\(totalCount) proposalIds=\(drafts.map { $0.key })")
             let bgTaskId = await backgroundTask.beginTask("Batch vote submission")
             _ = await backgroundTask.beginContinuedProcessing(
                 "co.zodl.voting.*",
@@ -1834,6 +1870,9 @@ extension VotingCoordFlow {
 
                 // Synthetic abstain: no on-chain submission, just mark done.
                 if Voting.isSyntheticAbstain(choice: choice, proposal: proposal) {
+                    // __CHP temp debug — remove before merge
+                    // swiftlint:disable:next print_function_usage
+                    print("__CHP draftLoop.syntheticAbstain roundId=\(roundId) proposalId=\(proposalId) choiceIndex=\(choice.index)")
                     successCount += 1
                     await send(.batchVoteSubmitted(roundId: roundId, proposalId: proposalId, choice: choice))
                     continue
@@ -1857,9 +1896,18 @@ extension VotingCoordFlow {
                             .filter { $0.proposalId == proposalId }
                             .map(\.bundleIndex)
                     )
+                    // __CHP temp debug — remove before merge
+                    // swiftlint:disable:next print_function_usage
+                    print("__CHP draftLoop.bundleSets proposalId=\(proposalId) submitted=\(submittedBundles) hasShares=\(bundlesWithRecordedShares)")
 
                     for bundleIndex: UInt32 in 0..<bundleCount {
-                        if submittedBundles.contains(bundleIndex) && bundlesWithRecordedShares.contains(bundleIndex) {
+                        let alreadySubmitted = submittedBundles.contains(bundleIndex)
+                        let hasRecordedShare = bundlesWithRecordedShares.contains(bundleIndex)
+                        let bundleDecision = alreadySubmitted && hasRecordedShare ? "skip" : "go"
+                        // __CHP temp debug — remove before merge
+                        // swiftlint:disable:next print_function_usage
+                        print("__CHP draftLoop.bundleDecision proposalId=\(proposalId) bundle=\(bundleIndex) submitted=\(alreadySubmitted) hasShare=\(hasRecordedShare) decision=\(bundleDecision)")
+                        if alreadySubmitted && hasRecordedShare {
                             LoggerProxy.debug("Batch: bundle \(bundleIndex + 1)/\(bundleCount) already submitted for proposal \(proposalId)")
                             continue
                         }
@@ -1956,6 +2004,11 @@ extension VotingCoordFlow {
                             )
                             payloads.append(SharePayload(wireJson: wireJson, shareIndex: share.shareIndex))
                         }
+                        // NOTE: placed here (not immediately after the .sendingShares send above)
+                        // because `payloads` isn't fully built until this point.
+                        // __CHP temp debug — remove before merge
+                        // swiftlint:disable:next print_function_usage
+                        print("__CHP normalLane.shares pid=\(proposalId) bundle=\(bundleIndex) payloads=\(payloads.count) single=\(singleShare) opts=\(numOptions) servers=\(shareServerURLs)")
                         let batchDelegationResult = try await Voting.delegateSharesWithFallback(
                             payloads,
                             roundId: roundId,
@@ -1982,6 +2035,9 @@ extension VotingCoordFlow {
                     failCount += 1
                     LoggerProxy.error("Batch vote failed for proposal \(proposalId): \(error)")
                     let shouldStopBatch = error as? ShareDelegationError == .noReachableVoteServers
+                    // __CHP temp debug — remove before merge
+                    // swiftlint:disable:next print_function_usage
+                    print("__CHP draftLoop.catch proposalId=\(proposalId) error=\(error) stopBatch=\(shouldStopBatch) fails=\(failCount) oks=\(successCount)")
                     if shouldStopBatch {
                         shareServerURLs = []
                     }
@@ -2528,6 +2584,10 @@ extension VotingCoordFlow {
     }
 
     func reduceRetryBatchSubmission(_ state: inout State, roundId: String) -> Effect<Action> {
+        // "Try again" on both the authorizationFailed and submissionFailed
+        // votingSheets (ConfirmSubmissionView) sends .retryBatchSubmission, which lands here.
+        // swiftlint:disable:next print_function_usage
+        print("__CHP retryBatchSubmission entry roundId=\(roundId)") // __CHP temp debug — remove before merge
         mutateSession(&state, roundId: roundId) { roundSession in
             roundSession.batchSubmissionStatus = .idle
             roundSession.batchVoteErrors = [:]
@@ -3428,11 +3488,18 @@ extension VotingCoordFlow {
         send: Send<Action>,
         roundIdAction: () -> String
     ) async throws -> Bool {
-        guard case let .present(cachedTxHash)? = try? await votingCrypto.getVoteTxHash(roundId, bundleIndex, proposalId) else {
+        let txHashLookup = try? await votingCrypto.getVoteTxHash(roundId, bundleIndex, proposalId)
+        guard case let .present(cachedTxHash)? = txHashLookup else {
+            // __CHP temp debug — remove before merge
+            // swiftlint:disable:next print_function_usage
+            print("__CHP recoverInflight.bail bundle=\(bundleIndex) proposalId=\(proposalId) reason=noCachedTxHash threw=\(txHashLookup == nil) notFound=\(txHashLookup == .notFound)")
             return false
         }
-        guard let confirmation = try? await votingAPI.fetchTxConfirmation(cachedTxHash),
-              confirmation.code == 0 else {
+        let confirmationResult = try? await votingAPI.fetchTxConfirmation(cachedTxHash)
+        guard let confirmation = confirmationResult, confirmation.code == 0 else {
+            // __CHP temp debug — remove before merge
+            // swiftlint:disable:next print_function_usage
+            print("__CHP recoverInflight.bail bundle=\(bundleIndex) pid=\(proposalId) reason=fetchFail threw=\(confirmationResult == nil) code=\(confirmationResult?.code ?? UInt32.max)")
             return false
         }
 
@@ -3445,6 +3512,9 @@ extension VotingCoordFlow {
             ]
         }
         guard let eventsData = try? JSONSerialization.data(withJSONObject: eventsPayload) else {
+            // __CHP temp debug — remove before merge
+            // swiftlint:disable:next print_function_usage
+            print("__CHP recoverInflight.bail bundle=\(bundleIndex) proposalId=\(proposalId) reason=eventsSerializeFailed count=\(eventsPayload.count)")
             return false
         }
         let eventsJson = String(decoding: eventsData, as: UTF8.self)
@@ -3452,6 +3522,9 @@ extension VotingCoordFlow {
         guard let voteConfirmation = try? await votingCrypto.confirmVoteSubmission(
             roundId, bundleIndex, proposalId, cachedTxHash, eventsJson
         ) else {
+            // __CHP temp debug — remove before merge
+            // swiftlint:disable:next print_function_usage
+            print("__CHP recoverInflight.bail bundle=\(bundleIndex) proposalId=\(proposalId) reason=confirmVoteSubmissionFailed")
             return false
         }
 
@@ -3493,6 +3566,11 @@ extension VotingCoordFlow {
             payloads.append(SharePayload(wireJson: wireJson, shareIndex: shareIndex))
         }
 
+        // NOTE: placed here (not immediately after the .sendingShares send above)
+        // because `payloads` isn't fully built until this point — mirrors the normal lane.
+        // __CHP temp debug — remove before merge
+        // swiftlint:disable:next print_function_usage
+        print("__CHP recoveryLane.sendingShares proposalId=\(proposalId) bundle=\(bundleIndex) payloads=\(payloads.count) single=\(singleShare) opts=\(numOptions) servers=\(shareServerURLs)")
         let recoveryResult = try await Voting.delegateSharesWithFallback(
             payloads,
             roundId: roundId,
