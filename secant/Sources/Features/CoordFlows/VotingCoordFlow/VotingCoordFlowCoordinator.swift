@@ -1926,7 +1926,12 @@ extension VotingCoordFlow {
                         let nowSec = Date().timeIntervalSince1970
                         var payloads: [SharePayload] = []
                         var submitAtByShareIndex: [UInt32: UInt64] = [:]
-                        for share in builtBundle.encShares {
+                        // `zcash_voting::share::recover_payloads` (rc.5 `share.rs:148-160`) slices its
+                        // own encrypted-share list to the first element when the bundle is single-share.
+                        // Mirror that here, position-based (not a computed `0..<N` range), so we only
+                        // ever ask `recoverWireJson` for a share the crate can actually serve.
+                        let sharesToDelegate = singleShare ? Array(builtBundle.encShares.prefix(1)) : builtBundle.encShares
+                        for share in sharesToDelegate {
                             let submitAt: UInt64
                             if let deadline = submitAtDeadline, deadline > nowSec {
                                 submitAt = UInt64(nowSec + Double.random(in: 0..<(deadline - nowSec)))
