@@ -947,6 +947,7 @@ extension VotingCoordFlow {
                                 session: session,
                                 snapshotHeight: snapshotHeight,
                                 walletDbPath: walletDbPath,
+                                networkId: networkId,
                                 notes: notes,
                                 votingCrypto: votingCrypto,
                                 sdkSynchronizer: sdkSynchronizer,
@@ -964,6 +965,7 @@ extension VotingCoordFlow {
                             session: session,
                             snapshotHeight: snapshotHeight,
                             walletDbPath: walletDbPath,
+                            networkId: networkId,
                             notes: notes,
                             votingCrypto: votingCrypto,
                             sdkSynchronizer: sdkSynchronizer,
@@ -3249,6 +3251,7 @@ extension VotingCoordFlow {
         session: VotingSession,
         snapshotHeight: UInt64,
         walletDbPath: String,
+        networkId: UInt32,
         notes: [NoteInfo],
         votingCrypto: VotingCryptoClient,
         sdkSynchronizer: SDKSynchronizerClient,
@@ -3298,7 +3301,8 @@ extension VotingCoordFlow {
                 roundId,
                 bundleIndex,
                 walletDbPath,
-                noteChunks[Int(bundleIndex)]
+                noteChunks[Int(bundleIndex)],
+                networkId
             )
             allWitnesses.append(contentsOf: witnesses)
         }

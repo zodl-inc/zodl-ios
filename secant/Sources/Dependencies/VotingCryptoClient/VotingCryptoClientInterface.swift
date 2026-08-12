@@ -57,7 +57,8 @@ struct VotingCryptoClient {
         _ roundId: String,
         _ bundleIndex: UInt32,
         _ walletDbPath: String,
-        _ notes: [NoteInfo]
+        _ notes: [NoteInfo],
+        _ networkId: UInt32
     ) async throws -> [WitnessData]
     var verifyWitness: @Sendable (_ witness: WitnessData) async throws -> Bool
 

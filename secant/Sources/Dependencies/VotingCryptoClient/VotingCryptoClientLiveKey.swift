@@ -143,7 +143,7 @@ extension VotingCryptoClient: DependencyKey {
                 let backend = try await dbActor.backend()
                 return try backend.getBundleCount(roundId: roundId)
             },
-            generateNoteWitnesses: { roundId, bundleIndex, walletDbPath, notes in
+            generateNoteWitnesses: { roundId, bundleIndex, walletDbPath, notes, networkId in
                 let backend = try await dbActor.backend()
                 let sdkNotes = notes.map { $0.toSDK() }
                 let witnesses = try backend.generateNoteWitnesses(
@@ -151,7 +151,7 @@ extension VotingCryptoClient: DependencyKey {
                     bundleIndex: bundleIndex,
                     walletDbPath: walletDbPath,
                     notes: sdkNotes,
-                    networkId: NetworkType.mainnet.votingRustNetworkId
+                    networkId: networkId
                 )
                 return witnesses.map { witness -> WitnessData in
                     let noteCommitment: Data = Data(witness.noteCommitment)
