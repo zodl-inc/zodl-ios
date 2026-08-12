@@ -374,17 +374,50 @@ private func postServerJSON(_ serverURL: String, _ path: String, body: [String: 
 typealias SharePost = @Sendable (_ serverURL: String, _ body: [String: Any]) async throws -> Void
 typealias ShareTargetSelector = @Sendable (_ serverURLs: [String], _ targetCount: Int) -> [String]
 
-/// `roundIdHex` is unused: the crate's wire JSON already carries `vote_round_id` (it was
-/// derived from the same commitment record `recoverWireJson` read); the parameter is kept so
-/// call sites that still pass it (unchanged by this task) do not need editing.
+/// Strictly decodes a hex string to `Data`: the input must have even length and every
+/// 2-character pair must be a valid hex byte, or this returns `nil`. Unlike `dataFromHex`
+/// above — which silently drops any pair that fails to parse, the exact lenient-decoder
+/// pattern behind campaign finding #3 — any deviation here fails the whole decode instead
+/// of yielding a truncated or garbage result.
+private func strictHexData(_ hex: String) -> Data? {
+    guard hex.count % 2 == 0 else { return nil }
+    var data = Data()
+    var idx = hex.startIndex
+    while idx < hex.endIndex {
+        guard
+            let next = hex.index(idx, offsetBy: 2, limitedBy: hex.endIndex),
+            let byte = UInt8(hex[idx..<next], radix: 16)
+        else {
+            return nil
+        }
+        data.append(byte)
+        idx = next
+    }
+    return data
+}
+
+/// rc.5's `VoteShareWire` (the crate's wire DTO for one share) does not carry a
+/// `vote_round_id` field at all — only its siblings `DelegationSubmissionWire` and
+/// `VoteCommitmentWire` do. The `/shielded-vote/v1/shares` server nonetheless requires the
+/// field (HTTP 400 `vote_round_id: expected 32 bytes, got 0` otherwise), so this injects it
+/// app-side from `roundIdHex`, base64-encoding the same 32 raw bytes the crate's own
+/// `b64_hex` wire-codec helper produces for the sibling wire types. Candidate for removal
+/// once the crate's `VoteShareWire` carries the field itself.
 func sharePostBody(
     for payload: SharePayload,
     roundIdHex: String
 ) -> [String: Any] {
     let data = Data(payload.wireJson.utf8)
-    guard let body = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+    guard var body = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
         return [:]
     }
+    guard let roundIdData = strictHexData(roundIdHex), roundIdData.count == 32 else {
+        // __CHP temp debug — remove before merge
+        // swiftlint:disable:next print_function_usage
+        print("__CHP sharePostBody BAD roundIdHex len=\(roundIdHex.count)")
+        return body
+    }
+    body["vote_round_id"] = roundIdData.base64EncodedString()
     return body
 }
 
