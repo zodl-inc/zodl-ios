@@ -18224,6 +18224,39 @@
         }
       }
     },
+    "sheet.orchardSpend.continue" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Continue anyway"
+          }
+        }
+      }
+    },
+    "sheet.orchardSpend.msg" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "We recommend migrating your funds first to avoid leaking the transaction amount on-chain."
+          }
+        }
+      }
+    },
+    "sheet.orchardSpend.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This send requires spending Orchard funds"
+          }
+        }
+      }
+    },
     "sheet.syncTimeout.desc" : {
       "extractionState" : "manual",
       "localizations" : {
