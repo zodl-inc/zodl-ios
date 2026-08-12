@@ -14,8 +14,9 @@ lines, every gate green: cargo · FFI 4/4 symbols both slices · SDK 873/0 · en
 generic build · UI-freeze proven by diff (0 xcstrings, no view files) · lint 0-in-hunks.
 F1 RESOLVED in code (Task 4B signing passthrough); F3 RESOLVED (Task 9B bounded enumeration);
 F2 stands non-blocking (address renders blank; display-only, verified). **Remaining: gate 7
-testnet E2E round (humans/QA) · Lukas's hand-push of the SDK (7 commits) · product rulings
-Q6/R5/Q3/Q5/CEO-5 (production flag stays off).** zodl `chp-re-enable` tip pushed; SDK local.
+testnet E2E round (humans/QA) · product rulings Q6/R5/Q3/Q5/CEO-5 (production flag stays
+off).** Both branches PUBLISHED: zodl `chp-re-enable` @ `63d6a9ee` (origin) · SDK
+`chp-re-enable` @ `b5262ac5` (zcash/zcash-swift-wallet-sdk, hand-pushed by Lukas 2026-08-11).
 **Branches:** `chp-re-enable` in both zodl-ios and zcash-swift-wallet-sdk.
 **Ticket:** [MOB-1678 — Coinholder polling adoption](https://linear.app/zodl/issue/MOB-1678/coinholder-polling-adoption)
 (the umbrella item; dominik's Android PRs in §6 are the Android half of the same ticket).
