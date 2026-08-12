@@ -416,6 +416,9 @@ struct DelegationRegistration: Equatable, Sendable {
     let spendAuthSig: Data
     /// Base64, verbatim from `VotingDelegationSubmission` — never compared as bytes, only
     /// ever placed on the wire, so it is never decoded.
+    let tx1Effects: String
+    /// Base64, verbatim from `VotingDelegationSubmission` — never compared as bytes, only
+    /// ever placed on the wire, so it is never decoded.
     let signedNoteNullifier: String
     let cmxNew: String
     let vanCmx: String
@@ -429,6 +432,7 @@ struct DelegationRegistration: Equatable, Sendable {
     init(
         rk: Data, // swiftlint:disable:this identifier_name
         spendAuthSig: Data,
+        tx1Effects: String,
         signedNoteNullifier: String,
         cmxNew: String,
         vanCmx: String,
@@ -439,6 +443,7 @@ struct DelegationRegistration: Equatable, Sendable {
     ) {
         self.rk = rk
         self.spendAuthSig = spendAuthSig
+        self.tx1Effects = tx1Effects
         self.signedNoteNullifier = signedNoteNullifier
         self.cmxNew = cmxNew
         self.vanCmx = vanCmx

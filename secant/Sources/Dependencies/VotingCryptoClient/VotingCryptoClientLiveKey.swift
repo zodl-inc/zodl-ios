@@ -431,6 +431,7 @@ extension VotingCryptoClient: DependencyKey {
                 return DelegationRegistration(
                     rk: rk,
                     spendAuthSig: spendAuthSig,
+                    tx1Effects: sub.tx1Effects,
                     signedNoteNullifier: sub.nfSigned,
                     cmxNew: sub.cmxNew,
                     vanCmx: sub.govComm,

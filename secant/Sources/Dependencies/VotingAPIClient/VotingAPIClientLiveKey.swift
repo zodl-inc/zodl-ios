@@ -882,6 +882,7 @@ extension VotingAPIClient: DependencyKey {
                         "rk": registration.rk.base64EncodedString(),
                         "spend_auth_sig": registration.spendAuthSig.base64EncodedString(),
                         "sighash": registration.sighash.base64EncodedString(),
+                        "tx1_effects": registration.tx1Effects,
                         "signed_note_nullifier": registration.signedNoteNullifier,
                         "cmx_new": registration.cmxNew,
                         "van_cmx": registration.vanCmx,

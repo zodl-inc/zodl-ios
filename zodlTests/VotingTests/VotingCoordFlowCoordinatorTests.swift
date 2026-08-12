@@ -943,6 +943,7 @@ import Testing
         DelegationRegistration(
             rk: rk,
             spendAuthSig: spendAuthSig,
+            tx1Effects: Data(repeating: 0x0C, count: 821).base64EncodedString(),
             signedNoteNullifier: Data(repeating: 0x03, count: 32).base64EncodedString(),
             cmxNew: Data(repeating: 0x04, count: 32).base64EncodedString(),
             vanCmx: Data(repeating: 0x05, count: 32).base64EncodedString(),
