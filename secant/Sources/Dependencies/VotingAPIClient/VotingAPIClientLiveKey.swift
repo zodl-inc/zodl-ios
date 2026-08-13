@@ -238,6 +238,31 @@ private func shouldTryNextVoteServer(after error: Error) -> Bool {
     return false
 }
 
+/// Classifies a share-POST failure for the parallel fan-out delegation path
+/// (`delegateSharePayloads` below). This is a *different* path from the one
+/// `shouldTryNextVoteServer` above guards: that classifier only covers the
+/// sequential single-target round-robin used by `getJSON`/`postJSON` (round
+/// fetching, delegate-vote, cast-vote, ...), and it already treats any
+/// httpError as "try the next server" without splitting 4xx from 5xx.
+/// `delegateSharePayloads` didn't consult either classifier — every POST
+/// failure was pruned identically, which is what let a live wire bug (both
+/// vote servers returning deterministic HTTP 400s, measured 2026-08-12)
+/// masquerade as "no reachable server" and burn through 3 whole-set retries.
+///
+/// - A `URLError` means the server was never reached — stays prunable, same
+///   failover behavior as before this fix.
+/// - An `SvAPIError.httpError` means a server DID respond, i.e. it's healthy
+///   and reachable. Within that, 5xx is treated as transient server trouble
+///   (still prunable — another server may well succeed), while anything else
+///   (4xx, and stray non-5xx/non-200 codes) is a deterministic rejection of
+///   this exact request that no amount of retrying or failover can fix, so
+///   it's fatal: it should abort the delegation attempt instead of being
+///   masked as unreachable.
+private func isFatalShareRejection(_ error: Error) -> Bool {
+    guard case SvAPIError.httpError(let statusCode, _) = error else { return false }
+    return statusCode < 500
+}
+
 private func getJSON(_ path: String) async throws -> [String: Any] {
     let serverURLs = try await SvAPIConfigStore.shared.configuredVoteServerURLs()
     var lastError: Error?
@@ -396,6 +421,41 @@ func sharePostBody(
     return body
 }
 
+/// Per-round failure bookkeeping for one `delegateSharePayloads` fan-out
+/// round: which servers failed, and the first deterministic HTTP rejection
+/// (if any — see `isFatalShareRejection`) that should abort the whole
+/// delegation attempt instead of being pruned like the rest.
+private struct ShareRoundFailures {
+    var servers = Set<String>()
+    var fatalRejection: Error?
+}
+
+/// Applies one server's share-POST outcome to a fan-out round's accept/prune
+/// bookkeeping. A deterministic HTTP rejection is captured into
+/// `roundFailures.fatalRejection` instead of being pruned: the caller aborts
+/// the whole delegation attempt once the round finishes collecting results,
+/// rather than continuing to backfill from other servers. (Servers in one
+/// round share a single wire bug in practice, so which one wins when more
+/// than one rejects doesn't change the outcome.)
+private func applyShareAttemptOutcome(
+    _ outcome: Result<Void, Error>,
+    server: String,
+    shareOffset: Int,
+    acceptedServers: inout [String],
+    roundFailures: inout ShareRoundFailures
+) {
+    switch outcome {
+    case .success:
+        acceptedServers.append(server)
+    case .failure(let error):
+        LoggerProxy.warn("Share \(shareOffset) failed on \(server)")
+        roundFailures.servers.insert(server)
+        if isFatalShareRejection(error) {
+            roundFailures.fatalRejection = error
+        }
+    }
+}
+
 func delegateSharePayloads(
     _ payloads: [SharePayload],
     roundIdHex: String,
@@ -422,9 +482,9 @@ func delegateSharePayloads(
             guard !targets.isEmpty else { break }
 
             triedServers.formUnion(targets)
-            var failedServers = Set<String>()
+            var roundFailures = ShareRoundFailures()
 
-            await withTaskGroup(of: (String, Bool).self) { group in
+            await withTaskGroup(of: (String, Result<Void, Error>).self) { group in
                 for server in targets {
                     group.addTask {
                         do {
@@ -432,25 +492,33 @@ func delegateSharePayloads(
                             // recompute per task so the sending closure only captures Sendable values.
                             let body = sharePostBody(for: payload, roundIdHex: roundIdHex)
                             try await postShare(server, body)
-                            return (server, true)
+                            return (server, .success(()))
                         } catch {
-                            return (server, false)
+                            return (server, .failure(error))
                         }
                     }
                 }
 
-                for await (server, ok) in group {
-                    if ok {
-                        acceptedServers.append(server)
-                    } else {
-                        LoggerProxy.warn("Share \(shareOffset) failed on \(server)")
-                        failedServers.insert(server)
-                    }
+                for await (server, outcome) in group {
+                    applyShareAttemptOutcome(
+                        outcome,
+                        server: server,
+                        shareOffset: shareOffset,
+                        acceptedServers: &acceptedServers,
+                        roundFailures: &roundFailures
+                    )
                 }
             }
 
-            if !failedServers.isEmpty {
-                availableServers.removeAll { failedServers.contains($0) }
+            if let fatalRejection = roundFailures.fatalRejection {
+                LoggerProxy.warn(
+                    "Share \(shareOffset) delegation aborted (deterministic rejection): \(fatalRejection.localizedDescription)"
+                )
+                throw fatalRejection
+            }
+
+            if !roundFailures.servers.isEmpty {
+                availableServers.removeAll { roundFailures.servers.contains($0) }
             }
         }
 

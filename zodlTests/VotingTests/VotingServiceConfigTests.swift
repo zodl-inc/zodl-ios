@@ -836,6 +836,103 @@ import Testing
             )
         }
     }
+
+    // MOB-1678: a live incident (2026-08-12) had both vote servers return
+    // deterministic HTTP 400s for a malformed request body. The old code
+    // pruned both and surfaced `noReachableVoteServers` — the generic
+    // "check your internet connection" copy for a bug that had nothing to do
+    // with reachability. These three tests pin the fix's classification.
+
+    @Test func httpRejectionAbortsDelegationInsteadOfPruningAndContinuing() async {
+        let recorder = SharePostRecorder()
+        let payload = makeRecoverySharePayload()
+
+        let error = await #expect(throws: SvAPIError.self) {
+            _ = try await delegateSharePayloads(
+                [payload],
+                roundIdHex: "aabb",
+                proposalId: 1,
+                initialServerURLs: [
+                    "https://rejecting.example.com",
+                    "https://never-tried.example.com"
+                ],
+                postShare: { server, _ in
+                    await recorder.record(server)
+                    if server == "https://rejecting.example.com" {
+                        throw SvAPIError.httpError(statusCode: 400, message: "vote_round_id: expected 32 bytes, got 0")
+                    }
+                },
+                selectTargets: { servers, targetCount in Array(servers.prefix(targetCount)) }
+            )
+        }
+
+        guard case .httpError(let statusCode, let message)? = error else {
+            Issue.record("expected httpError, got \(String(describing: error))")
+            return
+        }
+        #expect(statusCode == 400)
+        #expect(message == "vote_round_id: expected 32 bytes, got 0")
+
+        // The healthy second server is never tried, and the rejecting server is
+        // never retried either — this is an abort, not a prune-and-continue.
+        let recordedServers = await recorder.servers()
+        #expect(recordedServers == ["https://rejecting.example.com"])
+    }
+
+    @Test func serverErrorRejectionKeepsPruneAndFailoverBehavior() async throws {
+        let recorder = SharePostRecorder()
+        let payload = makeRecoverySharePayload()
+
+        let result = try await delegateSharePayloads(
+            [payload],
+            roundIdHex: "aabb",
+            proposalId: 1,
+            initialServerURLs: [
+                "https://degraded.example.com",
+                "https://online.example.com"
+            ],
+            postShare: { server, _ in
+                await recorder.record(server)
+                if server == "https://degraded.example.com" {
+                    throw SvAPIError.httpError(statusCode: 503, message: "upstream unavailable")
+                }
+            },
+            selectTargets: { servers, targetCount in Array(servers.prefix(targetCount)) }
+        )
+
+        // 5xx is transient server trouble, not a deterministic client-side
+        // rejection — failover behavior is unchanged by this fix.
+        #expect(result.delegatedShares.first?.acceptedByServers == ["https://online.example.com"])
+        #expect(result.remainingServerURLs == ["https://online.example.com"])
+    }
+
+    @Test func transportFailureKeepsPruneAndFailoverBehavior() async throws {
+        let recorder = SharePostRecorder()
+        let payload = makeRecoverySharePayload()
+
+        let result = try await delegateSharePayloads(
+            [payload],
+            roundIdHex: "aabb",
+            proposalId: 1,
+            initialServerURLs: [
+                "https://timing-out.example.com",
+                "https://online.example.com"
+            ],
+            postShare: { server, _ in
+                await recorder.record(server)
+                if server == "https://timing-out.example.com" {
+                    throw URLError(.timedOut)
+                }
+            },
+            selectTargets: { servers, targetCount in Array(servers.prefix(targetCount)) }
+        )
+
+        // Transport/connection failures keep today's behavior: the unreachable
+        // server is pruned and the share is backfilled from the remaining pool
+        // within the same delegation attempt.
+        #expect(result.delegatedShares.first?.acceptedByServers == ["https://online.example.com"])
+        #expect(result.remainingServerURLs == ["https://online.example.com"])
+    }
 }
 
 @Suite struct DelegateSharesWithFallbackTests {
@@ -882,6 +979,38 @@ import Testing
                 retryDelay: .zero
             )
         }
+        let attemptCount = await attempts.value()
+        #expect(attemptCount == 1)
+    }
+
+    // MOB-1678: same non-exhaustion rethrow path as the generic test above,
+    // pinned to the concrete case a live wire bug actually threw — a
+    // deterministic HTTP rejection must surface as itself, not get relabeled
+    // `noReachableVoteServers` or absorbed into the 3x reachability retry.
+    @Test func delegateSharesWithFallbackRethrowsHttpRejectionWithoutRetry() async {
+        let attempts = AttemptCounter()
+        var votingAPI = VotingAPIClient()
+        votingAPI.delegateShares = { _, _, _, _ in
+            _ = await attempts.increment()
+            throw SvAPIError.httpError(statusCode: 400, message: "vote_round_id: expected 32 bytes, got 0")
+        }
+
+        let error = await #expect(throws: SvAPIError.self) {
+            _ = try await Voting.delegateSharesWithFallback(
+                [],
+                roundId: "aabb",
+                proposalId: 1,
+                votingAPI: votingAPI,
+                serverURLs: ["https://vote.example.com"],
+                retryDelay: .zero
+            )
+        }
+
+        guard case .httpError(let statusCode, _)? = error else {
+            Issue.record("expected httpError, got \(String(describing: error))")
+            return
+        }
+        #expect(statusCode == 400)
         let attemptCount = await attempts.value()
         #expect(attemptCount == 1)
     }
