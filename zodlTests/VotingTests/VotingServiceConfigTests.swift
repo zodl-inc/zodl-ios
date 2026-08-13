@@ -23,7 +23,7 @@ import Testing
             "vote_server": "v1"
           },
           "rounds": {},
-          "pir_layout": {"pir_depth": 1, "tier0_layers": 1, "tier1_layers": 1}
+          "pir_layout": {"pir_depth": 1, "tier0_layers": 1, "tier1_layers": 1, "poly_len": 4096}
         }
         """
         let config = try JSONDecoder().decode(VotingServiceConfig.self, from: Data(json.utf8))
@@ -33,6 +33,8 @@ import Testing
         #expect(config.pirEndpoints.first?.label == "pir-1")
         #expect(config.supportedVersions.voteServer == "v1")
         #expect(config.supportedVersions.pir == ["v0", "v1"])
+        // v1.3.0 chain field (MOB-1678): parsed for forward-compat, unconsumed on the rc.5 pin.
+        #expect(config.pirLayout.polyLen == 4096)
     }
 
     @Test func decodeAcceptsConfigWithoutProposalsSnapshotOrDeadline() {
@@ -65,6 +67,8 @@ import Testing
         """.utf8))
 
         #expect(config.rounds.isEmpty)
+        // Pre-v1.3.0 / cached / mainnet-until-tomorrow: no poly_len key at all still decodes.
+        #expect(config.pirLayout.polyLen == nil)
         #expect(throws: Never.self) {
             try config.validate()
         }

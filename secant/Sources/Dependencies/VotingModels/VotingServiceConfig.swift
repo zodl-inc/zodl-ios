@@ -20,17 +20,25 @@ struct VotingServiceConfig: Codable, Equatable, Sendable {
         let pirDepth: UInt32
         let tier0Layers: UInt32
         let tier1Layers: UInt32
+        /// YPIR RLWE polynomial degree (2048/4096) introduced by chain v1.3.0. Parsed for
+        /// forward-compatibility and diagnostics; NOT consumed by `zcash_voting` 2.0.0-rc.5 (our
+        /// pin) — becomes load-bearing at the crate bump that carries `PirLayout.poly_len`
+        /// (Vizor reference: chainapsis/vizor-wallet#506). No behavior may key off this value
+        /// until then.
+        let polyLen: UInt32?
 
         enum CodingKeys: String, CodingKey {
             case pirDepth = "pir_depth"
             case tier0Layers = "tier0_layers"
             case tier1Layers = "tier1_layers"
+            case polyLen = "poly_len"
         }
 
-        init(pirDepth: UInt32, tier0Layers: UInt32, tier1Layers: UInt32) {
+        init(pirDepth: UInt32, tier0Layers: UInt32, tier1Layers: UInt32, polyLen: UInt32? = nil) {
             self.pirDepth = pirDepth
             self.tier0Layers = tier0Layers
             self.tier1Layers = tier1Layers
+            self.polyLen = polyLen
         }
     }
 
