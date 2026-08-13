@@ -1983,6 +1983,16 @@ extension VotingCoordFlow {
                             serverURLs: shareServerURLs
                         )
                         shareServerURLs = batchDelegationResult.remainingServerURLs
+                        // A share the servers already accepted must not be allowed to vanish from
+                        // local bookkeeping: record every delegation the loop can reach first (a
+                        // write fault on one share must not cost later shares their record), then
+                        // throw once if any write failed, so this bundle counts as failed instead
+                        // of done. A silent success here would let `reduceBatchSubmissionCompleted`
+                        // write a completion record over shares invisible to `getShareDelegations`
+                        // (8O adversarial finding, CHP.md 2026-08-13) — the server still holds the
+                        // share, so the vote itself stays safe; only local resubmission bookkeeping
+                        // for that specific share is at risk.
+                        var shareRecordFailures: [Error] = []
                         for info in batchDelegationResult.delegatedShares {
                             do {
                                 try await votingCrypto.recordShareDelegation(
@@ -1991,7 +2001,11 @@ extension VotingCoordFlow {
                                 )
                             } catch {
                                 LoggerProxy.warn("Batch: failed to record share delegation for share \(info.shareIndex): \(error)")
+                                shareRecordFailures.append(error)
                             }
+                        }
+                        if let firstFailure = shareRecordFailures.first {
+                            throw firstFailure
                         }
                     }
 
@@ -3560,6 +3574,17 @@ extension VotingCoordFlow {
             serverURLs: shareServerURLs
         )
         shareServerURLs = recoveryResult.remainingServerURLs
+        // A share the servers already accepted must not be allowed to vanish from local
+        // bookkeeping: record every delegation the loop can reach first (a write fault on one
+        // share must not cost later shares their record), then throw once if any write failed,
+        // so this bundle is never reported recovered. A silent `true` return here would let the
+        // caller's `catch` never fire, and `reduceBatchSubmissionCompleted` would write a
+        // completion record over shares invisible to `getShareDelegations` (8O adversarial
+        // finding, CHP.md 2026-08-13) — the server still holds the share, so the vote itself
+        // stays safe; only local resubmission bookkeeping for that specific share is at risk.
+        // `markVoteSubmitted` still runs unconditionally below: the on-chain vote really is
+        // confirmed at this point, and 8F already proved that call idempotent to re-mark on retry.
+        var shareRecordFailures: [Error] = []
         for info in recoveryResult.delegatedShares {
             do {
                 try await votingCrypto.recordShareDelegation(
@@ -3568,9 +3593,13 @@ extension VotingCoordFlow {
                 )
             } catch {
                 LoggerProxy.warn("Batch recovery: failed to record share delegation for share \(info.shareIndex): \(error)")
+                shareRecordFailures.append(error)
             }
         }
         try await votingCrypto.markVoteSubmitted(roundId, bundleIndex, proposalId, cachedTxHash)
+        if let firstFailure = shareRecordFailures.first {
+            throw firstFailure
+        }
         return true
     }
 

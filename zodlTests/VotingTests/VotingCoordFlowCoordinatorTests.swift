@@ -833,6 +833,117 @@ import Testing
         ])
     }
 
+    // Task 8P (CHP.md 2026-08-13, 8O adversarial finding): a share the servers already
+    // accepted must not be allowed to vanish from local bookkeeping just because its
+    // `recordShareDelegation` write faults. Share 0's local write fails here while share
+    // 1's succeeds, proving two things at once: the loop keeps going past the first
+    // failure (share 1 still gets recorded — `events` below pins the order), and the
+    // function throws once at the end instead of returning `true`, so this bundle cannot
+    // be mistaken for fully recovered.
+    @Test func tryRecoverInflightVoteRecordsAllSharesThenThrowsWhenOneShareFailsToRecord() async {
+        let recorder = RecoveryOrderRecorder()
+        var votingCrypto = VotingCryptoClient()
+        votingCrypto.getVoteTxHash = { _, _, _ in .present("cached-tx") }
+        votingCrypto.confirmVoteSubmission = { _, _, _, _, _ in
+            VoteConfirmationInfo(txHash: "cached-tx", vanLeafPosition: 0, voteCommitmentTreePosition: 7)
+        }
+        votingCrypto.getCommitmentBundleJson = { _, _, _ in (bundleJson: "bundle-json", vcTreePosition: 7) }
+        votingCrypto.recoverableShareIndices = { _ in [0, 1] }
+        votingCrypto.recoverWireJson = { _, _, shareIndex, _, _ in "wire-\(shareIndex)" }
+        votingCrypto.recordShareDelegation = { _, _, _, shareIndex, _, _ in
+            await recorder.record("record:\(shareIndex)")
+            // Share 0's *server* delivery already succeeded — it is in `delegatedShares`
+            // below regardless — only the local write fails, simulating a storage fault.
+            if shareIndex == 0 {
+                throw TestError.shareRecordWriteFailed
+            }
+        }
+        votingCrypto.markVoteSubmitted = { _, _, _, _ in await recorder.record("mark") }
+
+        var votingAPI = VotingAPIClient()
+        votingAPI.fetchTxConfirmation = { _ in TxConfirmation(height: 100, code: 0) }
+        votingAPI.delegateShares = { _, _, _, serverURLs in
+            ShareDelegationResult(
+                delegatedShares: [
+                    DelegatedShareInfo(shareIndex: 0, proposalId: 1, acceptedByServers: serverURLs),
+                    DelegatedShareInfo(shareIndex: 1, proposalId: 1, acceptedByServers: serverURLs)
+                ],
+                remainingServerURLs: serverURLs
+            )
+        }
+
+        var shareServerURLs = ["https://a.example.com"]
+        await #expect(throws: TestError.self) {
+            _ = try await VotingCoordFlow.tryRecoverInflightVote(
+                roundId: "aabb",
+                bundleIndex: 0,
+                proposalId: 1,
+                choice: .option(0),
+                submitAtDeadline: nil,
+                shareServerURLs: &shareServerURLs,
+                votingCrypto: votingCrypto,
+                votingAPI: votingAPI,
+                send: Send<VotingCoordFlow.Action>(send: { _ in }),
+                roundIdAction: { "aabb" }
+            )
+        }
+
+        // `markVoteSubmitted` still runs: the on-chain vote really is confirmed here,
+        // only local share bookkeeping is incomplete (8F proved that call idempotent
+        // to re-mark on a later retry).
+        let events = await recorder.events()
+        #expect(events == ["record:0", "record:1", "mark"])
+    }
+
+    // Regression guard for the same code path: when every share records
+    // successfully, behavior is unchanged from before Task 8P — no throw, `true`
+    // returned, `markVoteSubmitted` still runs after both records.
+    @Test func tryRecoverInflightVoteReturnsTrueWhenAllShareRecordsSucceed() async throws {
+        let recorder = RecoveryOrderRecorder()
+        var votingCrypto = VotingCryptoClient()
+        votingCrypto.getVoteTxHash = { _, _, _ in .present("cached-tx") }
+        votingCrypto.confirmVoteSubmission = { _, _, _, _, _ in
+            VoteConfirmationInfo(txHash: "cached-tx", vanLeafPosition: 0, voteCommitmentTreePosition: 7)
+        }
+        votingCrypto.getCommitmentBundleJson = { _, _, _ in (bundleJson: "bundle-json", vcTreePosition: 7) }
+        votingCrypto.recoverableShareIndices = { _ in [0, 1] }
+        votingCrypto.recoverWireJson = { _, _, shareIndex, _, _ in "wire-\(shareIndex)" }
+        votingCrypto.recordShareDelegation = { _, _, _, shareIndex, _, _ in
+            await recorder.record("record:\(shareIndex)")
+        }
+        votingCrypto.markVoteSubmitted = { _, _, _, _ in await recorder.record("mark") }
+
+        var votingAPI = VotingAPIClient()
+        votingAPI.fetchTxConfirmation = { _ in TxConfirmation(height: 100, code: 0) }
+        votingAPI.delegateShares = { _, _, _, serverURLs in
+            ShareDelegationResult(
+                delegatedShares: [
+                    DelegatedShareInfo(shareIndex: 0, proposalId: 1, acceptedByServers: serverURLs),
+                    DelegatedShareInfo(shareIndex: 1, proposalId: 1, acceptedByServers: serverURLs)
+                ],
+                remainingServerURLs: serverURLs
+            )
+        }
+
+        var shareServerURLs = ["https://a.example.com"]
+        let recovered = try await VotingCoordFlow.tryRecoverInflightVote(
+            roundId: "aabb",
+            bundleIndex: 0,
+            proposalId: 1,
+            choice: .option(0),
+            submitAtDeadline: nil,
+            shareServerURLs: &shareServerURLs,
+            votingCrypto: votingCrypto,
+            votingAPI: votingAPI,
+            send: Send<VotingCoordFlow.Action>(send: { _ in }),
+            roundIdAction: { "aabb" }
+        )
+
+        #expect(recovered)
+        let events = await recorder.events()
+        #expect(events == ["record:0", "record:1", "mark"])
+    }
+
     private let roundId = "round-1"
     private let activeRoundId = String(repeating: "aa", count: 32)
 
@@ -1175,6 +1286,7 @@ private final class EventRecorder: @unchecked Sendable {
 private enum TestError: LocalizedError {
     case unexpectedSpendAuthExtraction
     case proofFailed
+    case shareRecordWriteFailed
 
     var errorDescription: String? {
         switch self {
@@ -1182,6 +1294,8 @@ private enum TestError: LocalizedError {
             return "unexpected SpendAuth extraction"
         case .proofFailed:
             return "proof failed"
+        case .shareRecordWriteFailed:
+            return "simulated local share-record write failure"
         }
     }
 }
