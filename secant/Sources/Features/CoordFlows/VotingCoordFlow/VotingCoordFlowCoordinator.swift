@@ -1795,6 +1795,12 @@ extension VotingCoordFlow {
             // --- Delegation (ZKP #1) — run inline if not already done ---
             if !delegationDone {
                 do {
+                    // Fail closed before any FFI call when the dynamic config predates
+                    // `pir_layout.poly_len` (see `missingPolyLenConfigError`). Votes on an
+                    // already-delegated round never reach this branch and stay unaffected.
+                    guard let polyLen = pirLayout.polyLen else {
+                        throw Self.missingPolyLenConfigError
+                    }
                     let senderPhrase = try walletStorage.exportWallet().seedPhrase.value()
                     let senderSeed = try mnemonic.toSeed(senderPhrase)
                     try await Self.runDelegationPipeline(
@@ -1810,6 +1816,7 @@ extension VotingCoordFlow {
                         pirDepth: pirLayout.pirDepth,
                         tier0Layers: pirLayout.tier0Layers,
                         tier1Layers: pirLayout.tier1Layers,
+                        polyLen: polyLen,
                         delegationPrepared: delegationPrepared,
                         seedFingerprint: seedFingerprint,
                         votingCrypto: votingCrypto,
@@ -2069,6 +2076,15 @@ extension VotingCoordFlow {
         else {
             return .none
         }
+        // Fail closed before any FFI call when the dynamic config predates
+        // `pir_layout.poly_len` (see `missingPolyLenConfigError`).
+        guard let polyLen = pirLayout.polyLen else {
+            LoggerProxy.error("Delegation precompute refused: dynamic config lacks pir_layout.poly_len")
+            return .send(.delegationPrecomputeFailed(
+                roundId: roundId,
+                error: Self.missingPolyLenConfigError.localizedDescription
+            ))
+        }
 
         mutateSession(&state, roundId: roundId) { roundSession in
             roundSession.delegationPrecomputeStatus = .inProgress
@@ -2130,7 +2146,8 @@ extension VotingCoordFlow {
                     networkId,
                     pirLayout.pirDepth,
                     pirLayout.tier0Layers,
-                    pirLayout.tier1Layers
+                    pirLayout.tier1Layers,
+                    polyLen
                 )
                 totalCached += result.cachedCount
                 totalFetched += result.fetchedCount
@@ -2841,6 +2858,15 @@ extension VotingCoordFlow {
             LoggerProxy.error("serviceConfig/selectedAccount unexpectedly nil during Keystone delegation proof")
             return .none
         }
+        // Fail closed before any FFI call when the dynamic config predates
+        // `pir_layout.poly_len` (see `missingPolyLenConfigError`).
+        guard let polyLen = pirLayout.polyLen else {
+            LoggerProxy.error("Keystone delegation proof refused: dynamic config lacks pir_layout.poly_len")
+            return .send(.delegationProofFailed(
+                roundId: roundId,
+                error: VotingErrorMapper.userFriendlyMessage(from: Self.missingPolyLenConfigError.localizedDescription)
+            ))
+        }
         let bundleCount = session.bundleCount
         let roundName = activeSession.title
         let storedSignatures = session.keystoneBundleSignatures.sorted { $0.bundleIndex < $1.bundleIndex }
@@ -2917,7 +2943,8 @@ extension VotingCoordFlow {
                         expectedSnapshotHeight,
                         pirLayout.pirDepth,
                         pirLayout.tier0Layers,
-                        pirLayout.tier1Layers
+                        pirLayout.tier1Layers,
+                        polyLen
                     ) {
                         switch event {
                         case .progress(let progress):
@@ -3605,6 +3632,16 @@ extension VotingCoordFlow {
 
     // MARK: - Delegation pipeline (Zashi inline)
 
+    /// 3.0 bump (MOB-1678): `pir_layout.poly_len` is load-bearing — `zcash_voting` 3.0
+    /// validates it locally (`poly_len ∈ {2048, 4096}`) and the PIR connect handshake
+    /// re-checks it against the server. A dynamic config without the field predates the
+    /// 3.0 service, so every delegation entry point fails closed *before any FFI call*
+    /// rather than fabricating a value. Reuses the existing localized
+    /// `coinVote.configError.decodeFailed` copy — no new strings in this wave.
+    static let missingPolyLenConfigError = VotingConfigError.decodeFailed(
+        "pir_layout.poly_len is required for delegation"
+    )
+
     /// Mirrors `Voting.runDelegationPipeline` but sends back to
     /// `VotingCoordFlow.Action`. The legacy version targets `Voting.Action`,
     /// so cross-type dispatching is the only reason we duplicate this here.
@@ -3622,6 +3659,7 @@ extension VotingCoordFlow {
         pirDepth: UInt32,
         tier0Layers: UInt32,
         tier1Layers: UInt32,
+        polyLen: UInt32,
         delegationPrepared: Bool = false,
         seedFingerprint: Data? = nil,
         votingCrypto: VotingCryptoClient,
@@ -3699,9 +3737,20 @@ extension VotingCoordFlow {
                 }
 
                 for try await event in votingCrypto.buildAndProveDelegation(
-                    roundId, bundleIndex, bundleNotes,
-                    senderSeed, hotkeySeed, networkId, accountIndex, roundName,
-                    pirEndpoints, expectedSnapshotHeight, pirDepth, tier0Layers, tier1Layers
+                    roundId,
+                    bundleIndex,
+                    bundleNotes,
+                    senderSeed,
+                    hotkeySeed,
+                    networkId,
+                    accountIndex,
+                    roundName,
+                    pirEndpoints,
+                    expectedSnapshotHeight,
+                    pirDepth,
+                    tier0Layers,
+                    tier1Layers,
+                    polyLen
                 ) {
                     switch event {
                     case .progress(let progress):

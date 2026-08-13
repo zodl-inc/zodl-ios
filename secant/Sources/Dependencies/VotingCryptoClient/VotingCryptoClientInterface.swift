@@ -94,6 +94,9 @@ struct VotingCryptoClient {
     var extractPcztSighash: @Sendable (_ pcztBytes: Data) throws -> Data
     /// Resolve the round PIR endpoint, fetch ZKP #1 IMT proofs, and cache them in the voting DB.
     /// Requires `buildVotingPczt` to have stored delegation data for this bundle first.
+    /// `polyLen` is the dynamic config's `pir_layout.poly_len` (YPIR RLWE polynomial degree,
+    /// 2048 or 4096) — load-bearing since `zcash_voting` 3.0, which validates it locally and
+    /// re-checks it against the PIR server at connect.
     var precomputeDelegationPir: @Sendable (
         _ roundId: String,
         _ bundleIndex: UInt32,
@@ -103,7 +106,8 @@ struct VotingCryptoClient {
         _ networkId: UInt32,
         _ pirDepth: UInt32,
         _ tier0Layers: UInt32,
-        _ tier1Layers: UInt32
+        _ tier1Layers: UInt32,
+        _ polyLen: UInt32
     ) async throws -> DelegationPirPrecomputeResult
     /// Build and prove the real delegation ZKP (#1). Long-running.
     /// Loads data from voting DB and wallet DB, fetches IMT proofs from server,
@@ -130,9 +134,10 @@ struct VotingCryptoClient {
         _ expectedSnapshotHeight: UInt64,
         _ pirDepth: UInt32,
         _ tier0Layers: UInt32,
-        _ tier1Layers: UInt32
+        _ tier1Layers: UInt32,
+        _ polyLen: UInt32
     ) -> AsyncThrowingStream<ProofEvent, Error>
-        = { _, _, _, _, _, _, _, _, _, _, _, _, _ in AsyncThrowingStream { $0.finish() } }
+        = { _, _, _, _, _, _, _, _, _, _, _, _, _, _ in AsyncThrowingStream { $0.finish() } }
     /// Extract Orchard FVK bytes from a UFVK string.
     var extractOrchardFvkFromUfvk: @Sendable (_ ufvkStr: String, _ networkId: UInt32) throws -> Data
     /// Build, sign, and persist the cast-vote commitment for one proposal in a single call.

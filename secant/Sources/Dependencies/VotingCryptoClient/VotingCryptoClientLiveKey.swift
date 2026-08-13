@@ -277,7 +277,8 @@ extension VotingCryptoClient: DependencyKey {
             extractPcztSighash: { pcztBytes in
                 Data(try VotingRustBackend.extractPcztSighash(pczt: [UInt8](pcztBytes)))
             },
-            precomputeDelegationPir: { roundId, bundleIndex, bundleNotes, pirEndpoints, expectedSnapshotHeight, networkId, pirDepth, tier0Layers, tier1Layers in
+            // swiftlint:disable:next line_length
+            precomputeDelegationPir: { roundId, bundleIndex, bundleNotes, pirEndpoints, expectedSnapshotHeight, networkId, pirDepth, tier0Layers, tier1Layers, polyLen in
                 let backend = try await dbActor.backend()
                 let sdkNotes = bundleNotes.map { $0.toSDK() }
                 let result = try await backend.precomputeDelegationPir(
@@ -286,7 +287,12 @@ extension VotingCryptoClient: DependencyKey {
                     notes: sdkNotes,
                     pirEndpoints: pirEndpoints,
                     expectedSnapshotHeight: expectedSnapshotHeight,
-                    pirLayout: VotingPirLayout(pirDepth: pirDepth, tier0Layers: tier0Layers, tier1Layers: tier1Layers)
+                    pirLayout: VotingPirLayout(
+                        pirDepth: pirDepth,
+                        tier0Layers: tier0Layers,
+                        tier1Layers: tier1Layers,
+                        polyLen: polyLen
+                    )
                 )
                 return DelegationPirPrecomputeResult(
                     cachedCount: result.cachedCount,
@@ -294,7 +300,7 @@ extension VotingCryptoClient: DependencyKey {
                 )
             },
             // swiftlint:disable:next line_length
-            buildAndProveDelegation: { roundId, bundleIndex, bundleNotes, senderSeed, hotkeyStoredSecret, networkId, accountIndex, roundName, pirEndpoints, expectedSnapshotHeight, pirDepth, tier0Layers, tier1Layers in
+            buildAndProveDelegation: { roundId, bundleIndex, bundleNotes, senderSeed, hotkeyStoredSecret, networkId, accountIndex, roundName, pirEndpoints, expectedSnapshotHeight, pirDepth, tier0Layers, tier1Layers, polyLen in
                 AsyncThrowingStream<ProofEvent, Error> { continuation in
                     Task.detached {
                         do {
@@ -323,7 +329,12 @@ extension VotingCryptoClient: DependencyKey {
                                 params,
                                 pirEndpoints: pirEndpoints,
                                 expectedSnapshotHeight: expectedSnapshotHeight,
-                                pirLayout: VotingPirLayout(pirDepth: pirDepth, tier0Layers: tier0Layers, tier1Layers: tier1Layers),
+                                pirLayout: VotingPirLayout(
+                                    pirDepth: pirDepth,
+                                    tier0Layers: tier0Layers,
+                                    tier1Layers: tier1Layers,
+                                    polyLen: polyLen
+                                ),
                                 progress: { progress in
                                     continuation.yield(.progress(progress))
                                 }

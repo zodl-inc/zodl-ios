@@ -20,11 +20,12 @@ struct VotingServiceConfig: Codable, Equatable, Sendable {
         let pirDepth: UInt32
         let tier0Layers: UInt32
         let tier1Layers: UInt32
-        /// YPIR RLWE polynomial degree (2048/4096) introduced by chain v1.3.0. Parsed for
-        /// forward-compatibility and diagnostics; NOT consumed by `zcash_voting` 2.0.0-rc.5 (our
-        /// pin) — becomes load-bearing at the crate bump that carries `PirLayout.poly_len`
-        /// (Vizor reference: chainapsis/vizor-wallet#506). No behavior may key off this value
-        /// until then.
+        /// YPIR RLWE polynomial degree (2048/4096) introduced by chain v1.3.0. Load-bearing
+        /// since the `zcash_voting` 3.0 bump (MOB-1678): it feeds the delegation FFI's
+        /// `PirLayout.poly_len` and the round-auth v2 signing payload. Kept decode-optional so
+        /// cached pre-3.0 configs still decode; consumers fail closed when this is nil at
+        /// threading time (crate parity — 3.0's dynamic-config resolution requires the field
+        /// and rejects `poly_len ∉ {2048, 4096}`).
         let polyLen: UInt32?
 
         enum CodingKeys: String, CodingKey {

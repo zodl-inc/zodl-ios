@@ -757,6 +757,7 @@ import Testing
             pirDepth: 1,
             tier0Layers: 1,
             tier1Layers: 1,
+            polyLen: 4096,
             votingCrypto: votingCrypto,
             votingAPI: votingAPI,
             send: Send<VotingCoordFlow.Action>(send: { _ in }),
@@ -815,6 +816,7 @@ import Testing
             pirDepth: 1,
             tier0Layers: 1,
             tier1Layers: 1,
+            polyLen: 4096,
             votingCrypto: votingCrypto,
             votingAPI: votingAPI,
             send: Send<VotingCoordFlow.Action>(send: { _ in }),
@@ -861,7 +863,7 @@ import Testing
             }
             return Self.makeDelegationRegistration()
         }
-        votingCrypto.buildAndProveDelegation = { _, _, _, _, _, _, _, _, _, _, _, _, _ in
+        votingCrypto.buildAndProveDelegation = { _, _, _, _, _, _, _, _, _, _, _, _, _, _ in
             recorder.record("prove")
             return AsyncThrowingStream { continuation in
                 continuation.yield(.progress(1))
@@ -898,6 +900,7 @@ import Testing
             pirDepth: 1,
             tier0Layers: 1,
             tier1Layers: 1,
+            polyLen: 4096,
             votingCrypto: votingCrypto,
             votingAPI: votingAPI,
             send: Send<VotingCoordFlow.Action>(send: { _ in }),
@@ -944,7 +947,7 @@ import Testing
             recorder.record("registration")
             return Self.makeDelegationRegistration()
         }
-        votingCrypto.buildAndProveDelegation = { _, _, _, _, _, _, _, _, _, _, _, _, _ in
+        votingCrypto.buildAndProveDelegation = { _, _, _, _, _, _, _, _, _, _, _, _, _, _ in
             recorder.record("prove")
             return AsyncThrowingStream { continuation in
                 continuation.yield(.progress(1))
@@ -981,6 +984,7 @@ import Testing
             pirDepth: 1,
             tier0Layers: 1,
             tier1Layers: 1,
+            polyLen: 4096,
             votingCrypto: votingCrypto,
             votingAPI: votingAPI,
             send: Send<VotingCoordFlow.Action>(send: { _ in }),
@@ -1020,7 +1024,7 @@ import Testing
             recorder.record("registration")
             return Self.makeDelegationRegistration()
         }
-        votingCrypto.buildAndProveDelegation = { _, _, _, _, _, _, _, _, _, _, _, _, _ in
+        votingCrypto.buildAndProveDelegation = { _, _, _, _, _, _, _, _, _, _, _, _, _, _ in
             recorder.record("prove")
             return AsyncThrowingStream { continuation in
                 continuation.finish()
@@ -1056,6 +1060,7 @@ import Testing
             pirDepth: 1,
             tier0Layers: 1,
             tier1Layers: 1,
+            polyLen: 4096,
             votingCrypto: votingCrypto,
             votingAPI: votingAPI,
             send: Send<VotingCoordFlow.Action>(send: { _ in }),
@@ -1071,6 +1076,93 @@ import Testing
             "fetch:proof-complete-tx",
             "van:0:9"
         ])
+    }
+
+    // 3.0 bump (MOB-1678): the config's PIR layout — poly_len included — must arrive at the
+    // prove FFI byte-for-byte. `zcash_voting` 3.0 validates poly_len locally and the PIR
+    // connect handshake re-checks it against the server, so a dropped or reordered value
+    // turns into a hard connect failure in production.
+    @Test func delegationPipelineThreadsConfigPolyLenIntoProveFFI() async throws {
+        let recorder = EventRecorder()
+        var votingCrypto = VotingCryptoClient()
+        votingCrypto.getDelegationTxHash = { _, _ in .notFound }
+        votingCrypto.buildVotingPczt = { _, _, _, _, _, _, _, _, _, _ in
+            Self.makeVotingPcztResult()
+        }
+        votingCrypto.signDelegationRequest = { _, _, _, _, _, _, _ in
+            (signature: Data(repeating: 0x09, count: 64), sighash: Data(repeating: 0x0A, count: 32))
+        }
+        votingCrypto.getDelegationSubmission = { _, _, _, _ in
+            // Cache probe fails once (no proof persisted yet) so the pipeline must prove.
+            if recorder.recordAndCount("registration") == 1 {
+                throw TestError.delegationProofMissing
+            }
+            return Self.makeDelegationRegistration()
+        }
+        votingCrypto.buildAndProveDelegation = { _, _, _, _, _, _, _, _, _, _, pirDepth, tier0Layers, tier1Layers, polyLen in
+            recorder.record("prove:\(pirDepth)/\(tier0Layers)/\(tier1Layers)/\(polyLen)")
+            return AsyncThrowingStream { continuation in
+                continuation.yield(.progress(1))
+                continuation.finish()
+            }
+        }
+        votingCrypto.storeDelegationTxHash = { _, _, _ in }
+        votingCrypto.storeVanPosition = { _, _, _ in }
+
+        var votingAPI = VotingAPIClient()
+        votingAPI.submitDelegation = { _ in TxResult(txHash: "poly-tx", code: 0) }
+        votingAPI.fetchTxConfirmation = { _ in Self.makeDelegationConfirmation(position: 3) }
+
+        try await VotingCoordFlow.runDelegationPipeline(
+            roundId: "aabb",
+            cachedNotes: [note(value: ballotDivisor, position: 0)],
+            senderSeed: [],
+            hotkeySeed: [],
+            networkId: 1,
+            accountIndex: 0,
+            roundName: "Round",
+            pirEndpoints: ["https://pir.example.com"],
+            expectedSnapshotHeight: 1,
+            pirDepth: 19,
+            tier0Layers: 12,
+            tier1Layers: 7,
+            polyLen: 4096,
+            votingCrypto: votingCrypto,
+            votingAPI: votingAPI,
+            send: Send<VotingCoordFlow.Action>(send: { _ in }),
+            delegationConfirmationTimeout: 0,
+            delegationConfirmationRetryDelay: .zero
+        )
+
+        #expect(recorder.events().contains("prove:19/12/7/4096"))
+    }
+
+    // 3.0 bump (MOB-1678): a dynamic config that predates `pir_layout.poly_len` must refuse
+    // the Keystone delegation flow before ANY voting-crypto call — fabricating a poly_len
+    // would send a doomed or wrong-generation PIR query. The recorder staying empty proves
+    // the refusal fires ahead of even the cached-bundle recovery probes.
+    @MainActor
+    @Test func keystoneAuthorizationRefusesBeforeFFIWhenConfigLacksPolyLen() async {
+        let recorder = EventRecorder()
+        let sig = signature(byte: 2, bundleIndex: 1)
+        let expectedError = VotingErrorMapper.userFriendlyMessage(
+            from: VotingCoordFlow.missingPolyLenConfigError.localizedDescription
+        )
+        let store = Store(
+            initialState: authorizationState(signatures: [sig], completedBundles: [], polyLen: nil)
+        ) {
+            VotingCoordFlow()
+        } withDependencies: {
+            self.configureKeystoneAuthorizationDependencies(&$0, recorder: recorder)
+        }
+
+        store.send(.keystoneAllBundlesSigned(roundId: activeRoundId))
+        await waitForStore {
+            store.state.roundCache[self.activeRoundId]?.batchSubmissionStatus
+                == .authorizationFailed(error: expectedError)
+        }
+
+        #expect(recorder.events().isEmpty)
     }
 
     // Task 8P (CHP.md 2026-08-13, 8O adversarial finding): a share the servers already
@@ -1287,7 +1379,8 @@ import Testing
 
     private func authorizationState(
         signatures: [KeystoneBundleSignature],
-        completedBundles: Set<UInt32>
+        completedBundles: Set<UInt32>,
+        polyLen: UInt32? = 4096
     ) -> VotingCoordFlow.State {
         var session = roundSession(
             roundId: activeRoundId,
@@ -1310,7 +1403,7 @@ import Testing
             pirEndpoints: [.init(url: "https://pir.example.com", label: "pir")],
             supportedVersions: .init(pir: ["v0"], voteProtocol: "v0", tally: "v0", voteServer: "v1"),
             rounds: [:],
-            pirLayout: .init(pirDepth: 1, tier0Layers: 1, tier1Layers: 1)
+            pirLayout: .init(pirDepth: 1, tier0Layers: 1, tier1Layers: 1, polyLen: polyLen)
         )
         state.isKeystoneUser = true
         state.$selectedWalletAccount.withLock { $0 = keystoneWalletAccount() }
@@ -1427,7 +1520,7 @@ import Testing
             }
             return .notFound
         }
-        dependencies.votingCrypto.buildAndProveDelegation = { _, bundleIndex, _, _, _, _, _, _, _, _, _, _, _ in
+        dependencies.votingCrypto.buildAndProveDelegation = { _, bundleIndex, _, _, _, _, _, _, _, _, _, _, _, _ in
             recorder.record("prove:\(bundleIndex)")
             return AsyncThrowingStream { continuation in
                 if bundleIndex == failingProofBundleIndex {
