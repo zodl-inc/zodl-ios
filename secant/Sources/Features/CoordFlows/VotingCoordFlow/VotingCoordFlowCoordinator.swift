@@ -1895,8 +1895,6 @@ extension VotingCoordFlow {
                             bundleIndex: bundleIndex,
                             proposalId: proposalId,
                             choice: choice,
-                            numOptions: numOptions,
-                            singleShare: singleShare,
                             submitAtDeadline: submitAtDeadline,
                             shareServerURLs: &shareServerURLs,
                             votingCrypto: votingCrypto,
@@ -3485,8 +3483,6 @@ extension VotingCoordFlow {
         bundleIndex: UInt32,
         proposalId: UInt32,
         choice: VoteChoice,
-        numOptions: UInt32,
-        singleShare: Bool,
         submitAtDeadline: Double?,
         shareServerURLs: inout [String],
         votingCrypto: VotingCryptoClient,
@@ -3533,18 +3529,15 @@ extension VotingCoordFlow {
 
         await send(.voteSubmissionStepUpdated(roundId: roundIdAction(), step: .sendingShares))
 
-        // Share count is `singleShare ? 1 : numOptions` — the same two values
-        // `zcash_voting::share::recover_payloads` (rc.5 `share.rs:148-188`) slices its own
-        // encrypted-share list by, and the same two values Valar's reference wallet (Vizor)
-        // resolves client-side rather than asking the crate for a share list: its FRB bridge
-        // exposes only the per-index `recovered_vote_share_wire_json` →
-        // `zcash_voting::share::recover_wire_json`, never the plural `recover_payloads`. No new
-        // FFI symbol; this is the sanctioned pattern on the surface already built.
-        let shareCount = singleShare ? 1 : numOptions
+        // Finding #9 (CHP.md, 2026-08-12): the old guess of `singleShare ? 1 : numOptions`
+        // under-delivered live (server accepted 16 built shares on a 2-option proposal; the
+        // guess would have resubmitted 2). `recoverableShareIndices` reads the crate's own
+        // `recover_payloads` slicing instead, so recovery resubmits exactly what it built.
+        let shareIndices = try await votingCrypto.recoverableShareIndices(stored.bundleJson)
         let now = Date().timeIntervalSince1970
         var payloads: [SharePayload] = []
         var submitAtByShareIndex: [UInt32: UInt64] = [:]
-        for shareIndex: UInt32 in 0..<shareCount {
+        for shareIndex in shareIndices {
             let submitAt: UInt64
             if let deadline = submitAtDeadline, deadline > now {
                 submitAt = UInt64(now + Double.random(in: 0..<(deadline - now)))

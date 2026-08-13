@@ -524,6 +524,11 @@ extension VotingCryptoClient: DependencyKey {
                     submitAt: submitAt
                 )
             },
+            recoverableShareIndices: { commitmentBundleJson in
+                try VotingRustBackend.recoverableShareIndices(
+                    commitmentBundleJson: commitmentBundleJson
+                )
+            },
             storeKeystoneBundleSignature: { roundId, info in
                 let backend = try await dbActor.backend()
                 try backend.storeKeystoneSignature(

@@ -267,6 +267,16 @@ struct VotingCryptoClient {
         _ voteCommitmentTreePosition: UInt64,
         _ submitAt: UInt64
     ) async throws -> String
+    /// List the share indices the crate can actually recover from a persisted commitment
+    /// bundle (`zcash_voting::share::recover_payloads`'s own single-share slicing — one
+    /// share when the vote was single-share, every built share otherwise). Crash recovery
+    /// iterates this list instead of guessing `singleShare ? 1 : numOptions`, which
+    /// under-delivered whenever the built share count differed from the option count
+    /// (finding #9: server accepted all 16 built shares on a 2-option proposal; the guess
+    /// would have delivered 2).
+    var recoverableShareIndices: @Sendable (
+        _ commitmentBundleJson: String
+    ) async throws -> [UInt32]
     /// Persist a Keystone bundle signature so it survives app restarts.
     var storeKeystoneBundleSignature: @Sendable (
         _ roundId: String,
