@@ -378,8 +378,9 @@ typealias ShareTargetSelector = @Sendable (_ serverURLs: [String], _ targetCount
 /// 2-character pair must be a valid hex byte, or this returns `nil`. Unlike `dataFromHex`
 /// above — which silently drops any pair that fails to parse, the exact lenient-decoder
 /// pattern behind campaign finding #3 — any deviation here fails the whole decode instead
-/// of yielding a truncated or garbage result.
-private func strictHexData(_ hex: String) -> Data? {
+/// of yielding a truncated or garbage result. Internal (not private) because
+/// `RoundAuthenticator.signingPayloadV2` decodes round ids with the same strictness.
+func strictHexData(_ hex: String) -> Data? {
     guard hex.count % 2 == 0 else { return nil }
     var data = Data()
     var idx = hex.startIndex
@@ -768,11 +769,14 @@ private func authenticateVotingSession(_ session: VotingSession) async throws ->
     }
 
     let roundIdHex = hexString(from: session.voteRoundId)
+    // `rounds` and `pirLayout` intentionally come from the same stored dynamic config:
+    // the v2 attestation signs the round id together with that config's PIR layout.
     let status = RoundAuthenticator.authenticate(
         chainEaPK: session.eaPK,
         roundIdHex: roundIdHex,
         rounds: configuration.serviceConfig.rounds,
-        trustedKeys: configuration.staticConfig.trustedKeys
+        trustedKeys: configuration.staticConfig.trustedKeys,
+        pirLayout: configuration.serviceConfig.pirLayout
     )
     guard status == .authenticated else {
         LoggerProxy.error(
@@ -802,13 +806,20 @@ private func authenticatedVotingSessions(from rounds: [[String: Any]]) async thr
 ///
 /// Round authentication is intentionally per-round: one broken historical
 /// signature must hide only that round, while still allowing other active
-/// or finalized rounds to render.
+/// or finalized rounds to render. Verification is v2 (MOB-1678): each signature
+/// covers the round id and this config's own top-level `pir_layout`, so entries
+/// signed for another round id or another layout generation drop here.
 func serviceConfigRetainingRoundsWithValidSignatures(
     _ config: VotingServiceConfig,
     trustedKeys: [StaticVotingConfig.TrustedKey]
 ) -> VotingServiceConfig {
-    let authenticatedRounds = config.rounds.filter { _, entry in
-        RoundAuthenticator.verifyEntrySignatures(entry: entry, trustedKeys: trustedKeys)
+    let authenticatedRounds = config.rounds.filter { roundIdHex, entry in
+        RoundAuthenticator.verifyEntrySignatures(
+            entry: entry,
+            roundIdHex: roundIdHex,
+            pirLayout: config.pirLayout,
+            trustedKeys: trustedKeys
+        )
     }
     return VotingServiceConfig(
         configVersion: config.configVersion,
