@@ -1,6 +1,19 @@
 {
     "releases": [
         {
+            "version": "3.9.4",
+            "date": "14-08-2026",
+            "timestamp": 1786659332,
+            "sections": [
+                {
+                    "title": "Corregido:",
+                    "bulletpoints": [
+                        "Corregimos un error que, en algunas billeteras, impedía enviar transacciónes."
+                    ]
+                }
+            ]
+        },
+        {
             "version": "3.9.3",
             "date": "12-08-2026",
             "timestamp": 1786526020,
