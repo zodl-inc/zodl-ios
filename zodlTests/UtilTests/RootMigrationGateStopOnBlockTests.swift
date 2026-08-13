@@ -54,7 +54,8 @@
 import ComposableArchitecture
 import Foundation
 import Testing
-@_spi(Testing) @testable @preconcurrency import ZcashLightClientKit
+@_spi(Testing)
+@testable @preconcurrency import ZcashLightClientKit
 @testable import zodl_internal
 
 // Serialized: resets the process-global `@Shared(.inMemory(.migrationStoppedSyncForBroadcast))`
@@ -179,7 +180,7 @@ import Testing
     /// Resets the shared resume flag the production stop sets — process-global, so each test
     /// starts from a known false.
     private func resetSharedResumeFlag() {
-        @Shared(.inMemory(.migrationStoppedSyncForBroadcast)) var migrationStoppedSyncForBroadcast: Bool = false
+        @Shared(.inMemory(.migrationStoppedSyncForBroadcast)) var migrationStoppedSyncForBroadcast = false
         $migrationStoppedSyncForBroadcast.withLock { $0 = false }
     }
 
@@ -221,7 +222,7 @@ import Testing
         let store = makeStore(
             stopCalls: stopCalls,
             syncStatus: SyncStatus.upToDate,
-            mode: MigrationMode.privateScheduled,            advanceStep: { _ in
+            mode: MigrationMode.privateScheduled, advanceStep: { _ in
                 stepReads.withValue { $0 += 1 }
                 return MigrationAdvance(step: .broadcast(MigrationBroadcastInstruction(id: 9)), next: nil)
             },
@@ -241,7 +242,7 @@ import Testing
         // this test for the wrong reason.
         #expect(stepReads.value >= 1, "the stop must be attributed through the probe's own migrationAdvanceStep read, not fired unconditionally")
         #expect(stopCalls.value == 1, "a tick-deliverable candidate's .broadcast step must stop sync")
-        @Shared(.inMemory(.migrationStoppedSyncForBroadcast)) var migrationStoppedSyncForBroadcast: Bool = false
+        @Shared(.inMemory(.migrationStoppedSyncForBroadcast)) var migrationStoppedSyncForBroadcast = false
         #expect(migrationStoppedSyncForBroadcast == true, "the stop must go through stopStartedSyncForMigrationGate, arming the resume half")
 
         await teardown(store)
@@ -258,7 +259,7 @@ import Testing
         let store = makeStore(
             stopCalls: stopCalls,
             syncStatus: SyncStatus.upToDate,
-            mode: MigrationMode.privateScheduled,            advanceStep: { _ in
+            mode: MigrationMode.privateScheduled, advanceStep: { _ in
                 let callNumber = stepReads.withValue { value -> Int in
                     value += 1
                     return value
@@ -297,7 +298,7 @@ import Testing
         let store = makeStore(
             stopCalls: stopCalls,
             syncStatus: SyncStatus.upToDate,
-            mode: MigrationMode.privateScheduled,            advanceStep: { _ in
+            mode: MigrationMode.privateScheduled, advanceStep: { _ in
                 stepReads.withValue { $0 += 1 }
                 return MigrationAdvance(step: .waiting, next: nil)
             },
@@ -324,7 +325,7 @@ import Testing
         let store = makeStore(
             stopCalls: stopCalls,
             syncStatus: SyncStatus.upToDate,
-            mode: MigrationMode.privateScheduled,            advanceStep: { _ in
+            mode: MigrationMode.privateScheduled, advanceStep: { _ in
                 stepReads.withValue { $0 += 1 }
                 return MigrationAdvance(step: .waiting, next: nil)
             },
@@ -369,7 +370,7 @@ import Testing
         let store = makeStore(
             stopCalls: stopCalls,
             syncStatus: SyncStatus.upToDate,
-            mode: MigrationMode.privateScheduled,            advanceStep: { _ in
+            mode: MigrationMode.privateScheduled, advanceStep: { _ in
                 await withCheckedContinuation { continuation in
                     stepContinuation.setValue(continuation)
                 }
@@ -411,7 +412,7 @@ import Testing
         let store = makeStore(
             stopCalls: stopCalls,
             syncStatus: SyncStatus.upToDate,
-            mode: MigrationMode.immediate,            advanceStep: { accountUUID in
+            mode: MigrationMode.immediate, advanceStep: { accountUUID in
                 queriedAccountUUIDs.withValue { $0.append(accountUUID) }
                 return MigrationAdvance(step: .broadcast(MigrationBroadcastInstruction(id: 9)), next: nil)
             },
@@ -442,7 +443,7 @@ import Testing
         let store = makeStore(
             stopCalls: stopCalls,
             syncStatus: SyncStatus.upToDate,
-            mode: MigrationMode.immediate,            advanceStep: { _ in
+            mode: MigrationMode.immediate, advanceStep: { _ in
                 stepReads.withValue { $0 += 1 }
                 return MigrationAdvance(step: .broadcast(MigrationBroadcastInstruction(id: 9)), next: nil)
             }
@@ -516,7 +517,7 @@ import Testing
         let store = makeStore(
             stopCalls: stopCalls,
             syncStatus: SyncStatus.stopped,
-            mode: MigrationMode.privateScheduled,            advanceStep: { _ in
+            mode: MigrationMode.privateScheduled, advanceStep: { _ in
                 stepReads.withValue { $0 += 1 }
                 return MigrationAdvance(step: .broadcast(MigrationBroadcastInstruction(id: 9)), next: nil)
             },
@@ -534,7 +535,7 @@ import Testing
         // mocked `stop()` closure this suite spies on. `stopCalls` staying 0 is therefore the
         // B12 contract, not a probe failure.
         #expect(stopCalls.value == 0, "a stopped engine has nothing to stop — the helper's own guard no-ops before calling stop()")
-        @Shared(.inMemory(.migrationStoppedSyncForBroadcast)) var migrationStoppedSyncForBroadcast: Bool = false
+        @Shared(.inMemory(.migrationStoppedSyncForBroadcast)) var migrationStoppedSyncForBroadcast = false
         #expect(!migrationStoppedSyncForBroadcast, "never arm the resume flag for a sync nobody paused")
 
         await teardown(store)
@@ -552,7 +553,7 @@ import Testing
         let store = makeStore(
             stopCalls: stopCalls,
             syncStatus: SyncStatus.upToDate,
-            mode: MigrationMode.privateScheduled,            advanceStep: { _ in
+            mode: MigrationMode.privateScheduled, advanceStep: { _ in
                 stepReads.withValue { $0 += 1 }
                 return MigrationAdvance(step: .broadcast(MigrationBroadcastInstruction(id: 9)), next: nil)
             },

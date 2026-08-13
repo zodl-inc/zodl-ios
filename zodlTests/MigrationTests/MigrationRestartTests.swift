@@ -57,7 +57,7 @@ import ComposableArchitecture
     /// the write has to land BEFORE `MigrationRestart.State()` reads it, or `TestStore` snapshots a
     /// nil account and reports the arrival as an unasserted state change on the first `send`.
     @MainActor private static func presentedState() -> MigrationRestart.State {
-        @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
+        @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount?
         $selectedWalletAccount.withLock { $0 = Self.account() }
 
         var state = MigrationRestart.State()
@@ -185,7 +185,7 @@ import ComposableArchitecture
     /// and the pool header read (R13's one-derivation rule), so this screen cannot quote a count or
     /// a balance that contradicts them.
     @MainActor @Test func numbersComeFromTheSnapshot() async {
-        @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
+        @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount?
         $selectedWalletAccount.withLock { $0 = Self.account() }
 
         // The Figma's own numbers: 7 of 11 migrated, 3.070 ZEC left.
@@ -225,7 +225,7 @@ import ComposableArchitecture
     /// No selected account ⇒ no engine call is addressable, so the CTA is inert rather than
     /// throwing into the failure path. `isRestartPossible` is what disables Next in the view.
     @MainActor @Test func noAccountMakesTheFlowInert() async {
-        @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
+        @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount?
         $selectedWalletAccount.withLock { $0 = nil }
 
         var state = MigrationRestart.State()

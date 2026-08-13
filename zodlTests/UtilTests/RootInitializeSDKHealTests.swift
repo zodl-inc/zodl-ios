@@ -237,13 +237,10 @@ extension Root.State: @retroactive Equatable {
 
         await store.send(.initialization(.initializeSDK(.existingWallet)))
 
-        await store.receive(
-            { action in
-                guard case .initialization(.staleWalletDatabaseHealed) = action else { return false }
-                return true
-            },
-            timeout: .seconds(5)
-        ) { state in
+        await store.receive({ action in
+            guard case .initialization(.staleWalletDatabaseHealed) = action else { return false }
+            return true
+        }, timeout: .seconds(5)) { state in
             state.isRestoringWallet = true
             state.$walletStatus.withLock { $0 = .restoring }
             state.isStaleWalletHealedAlertPending = true
@@ -266,13 +263,10 @@ extension Root.State: @retroactive Equatable {
         // never naturally sent here. Drive it explicitly to exercise the deferred-presentation wiring.
         await store.send(.destination(.updateDestination(.home)))
 
-        await store.receive(
-            { action in
-                guard case .initialization(.presentStaleWalletHealedAlert) = action else { return false }
-                return true
-            },
-            timeout: .seconds(5)
-        ) { state in
+        await store.receive({ action in
+            guard case .initialization(.presentStaleWalletHealedAlert) = action else { return false }
+            return true
+        }, timeout: .seconds(5)) { state in
             state.isStaleWalletHealedAlertPending = false
             state.alert = AlertState.staleWalletDatabaseHealed()
         }
@@ -299,13 +293,10 @@ extension Root.State: @retroactive Equatable {
 
         await store.send(.initialization(.initializeSDK(.existingWallet)))
 
-        await store.receive(
-            { action in
-                guard case .initialization(.staleWalletDatabaseHealed) = action else { return false }
-                return true
-            },
-            timeout: .seconds(5)
-        ) { state in
+        await store.receive({ action in
+            guard case .initialization(.staleWalletDatabaseHealed) = action else { return false }
+            return true
+        }, timeout: .seconds(5)) { state in
             state.isRestoringWallet = true
             state.$walletStatus.withLock { $0 = .restoring }
             state.isStaleWalletHealedAlertPending = true
@@ -350,13 +341,10 @@ extension Root.State: @retroactive Equatable {
 
         await store.send(.initialization(.initializeSDK(.existingWallet)))
 
-        await store.receive(
-            { action in
-                guard case .initialization(.staleWalletDatabaseHealed) = action else { return false }
-                return true
-            },
-            timeout: .seconds(5)
-        ) { state in
+        await store.receive({ action in
+            guard case .initialization(.staleWalletDatabaseHealed) = action else { return false }
+            return true
+        }, timeout: .seconds(5)) { state in
             state.isRestoringWallet = true
             state.$walletStatus.withLock { $0 = .restoring }
             state.isStaleWalletHealedAlertPending = true
@@ -398,13 +386,10 @@ extension Root.State: @retroactive Equatable {
 
         await store.send(.initialization(.initializeSDK(.existingWallet)))
 
-        await store.receive(
-            { action in
-                guard case .initialization(.initializationSuccessfullyDone) = action else { return false }
-                return true
-            },
-            timeout: .seconds(5)
-        )
+        await store.receive({ action in
+            guard case .initialization(.initializationSuccessfullyDone) = action else { return false }
+            return true
+        }, timeout: .seconds(5))
 
         #expect(!calls.value.contains("wipe"), "no heal must occur when the seed is already relevant")
         #expect(store.state.alert == nil, "no heal alert should be shown")
@@ -429,13 +414,10 @@ extension Root.State: @retroactive Equatable {
 
         await store.send(.initialization(.initializeSDK(.existingWallet)))
 
-        await store.receive(
-            { action in
-                guard case .initialization(.staleWalletDatabaseHealed) = action else { return false }
-                return true
-            },
-            timeout: .seconds(5)
-        ) { state in
+        await store.receive({ action in
+            guard case .initialization(.staleWalletDatabaseHealed) = action else { return false }
+            return true
+        }, timeout: .seconds(5)) { state in
             state.isRestoringWallet = true
             state.$walletStatus.withLock { $0 = .restoring }
             state.isStaleWalletHealedAlertPending = true
@@ -484,13 +466,10 @@ extension Root.State: @retroactive Equatable {
 
         await store.send(.initialization(.initializeSDK(.existingWallet)))
 
-        await store.receive(
-            { action in
-                guard case .initialization(.checkWalletInitialization) = action else { return false }
-                return true
-            },
-            timeout: .seconds(5)
-        )
+        await store.receive({ action in
+            guard case .initialization(.checkWalletInitialization) = action else { return false }
+            return true
+        }, timeout: .seconds(5))
 
         let recordedCalls = calls.value
         let wipeIndex = try #require(recordedCalls.firstIndex(of: "wipe"))
@@ -513,13 +492,10 @@ extension Root.State: @retroactive Equatable {
 
         await store.send(.destination(.updateDestination(.home)))
 
-        await store.receive(
-            { action in
-                guard case .initialization(.presentStaleWalletHealedAlert) = action else { return false }
-                return true
-            },
-            timeout: .seconds(5)
-        ) { state in
+        await store.receive({ action in
+            guard case .initialization(.presentStaleWalletHealedAlert) = action else { return false }
+            return true
+        }, timeout: .seconds(5)) { state in
             state.isStaleWalletHealedAlertPending = false
             state.alert = AlertState.staleWalletDatabaseHealed()
         }
@@ -576,13 +552,10 @@ extension Root.State: @retroactive Equatable {
         // `.presentStaleWalletHealedAlert` re-checks the destination at delivery time and,
         // finding it's no longer `.home`, bails out without presenting the alert or clearing
         // the pending flag.
-        await store.receive(
-            { action in
-                guard case .initialization(.presentStaleWalletHealedAlert) = action else { return false }
-                return true
-            },
-            timeout: .seconds(5)
-        )
+        await store.receive({ action in
+            guard case .initialization(.presentStaleWalletHealedAlert) = action else { return false }
+            return true
+        }, timeout: .seconds(5))
         #expect(store.state.alert == nil, "must not present over a screen other than home")
         #expect(store.state.isStaleWalletHealedAlertPending, "the flag must survive a delivery that lands off-home")
 
@@ -590,13 +563,10 @@ extension Root.State: @retroactive Equatable {
         await store.send(.destination(.updateDestination(.home)))
         await testQueue.advance(by: .seconds(0.5))
 
-        await store.receive(
-            { action in
-                guard case .initialization(.presentStaleWalletHealedAlert) = action else { return false }
-                return true
-            },
-            timeout: .seconds(5)
-        ) { state in
+        await store.receive({ action in
+            guard case .initialization(.presentStaleWalletHealedAlert) = action else { return false }
+            return true
+        }, timeout: .seconds(5)) { state in
             state.isStaleWalletHealedAlertPending = false
             state.alert = AlertState.staleWalletDatabaseHealed()
         }
@@ -631,13 +601,10 @@ extension Root.State: @retroactive Equatable {
 
         await store.send(.onboarding(.newWalletSuccessfulyCreated))
 
-        await store.receive(
-            { action in
-                guard case .initialization(.presentStaleWalletHealedAlert) = action else { return false }
-                return true
-            },
-            timeout: .seconds(5)
-        ) { state in
+        await store.receive({ action in
+            guard case .initialization(.presentStaleWalletHealedAlert) = action else { return false }
+            return true
+        }, timeout: .seconds(5)) { state in
             state.isStaleWalletHealedAlertPending = false
             state.alert = AlertState.staleWalletDatabaseHealed()
         }
@@ -677,13 +644,10 @@ extension Root.State: @retroactive Equatable {
             state.isStaleWalletHealedAlertPending = true
         }
 
-        await store.receive(
-            { action in
-                guard case .initialization(.presentStaleWalletHealedAlert) = action else { return false }
-                return true
-            },
-            timeout: .seconds(5)
-        ) { state in
+        await store.receive({ action in
+            guard case .initialization(.presentStaleWalletHealedAlert) = action else { return false }
+            return true
+        }, timeout: .seconds(5)) { state in
             state.isStaleWalletHealedAlertPending = false
             state.alert = AlertState.staleWalletDatabaseHealed()
         }

@@ -141,13 +141,10 @@ import Testing
         // exhaustivity off, earlier received actions (`.loadedWalletAccounts` included, in the
         // fixed ordering) are still processed while being skipped, so the state read below sees
         // exactly what the fetch's reducer guard saw.
-        await store.receive(
-            { action in
-                guard case .fetchTransactionsForTheSelectedAccount = action else { return false }
-                return true
-            },
-            timeout: .seconds(5)
-        )
+        await store.receive({ action in
+            guard case .fetchTransactionsForTheSelectedAccount = action else { return false }
+            return true
+        }, timeout: .seconds(5))
 
         #expect(
             store.state.selectedWalletAccount != nil,
@@ -156,13 +153,10 @@ import Testing
 
         // And the dispatch must be EFFECTIVE: the fetch effect reaches getAllTransactions with
         // the selected account (the guard's early `.none` return would never get here).
-        await store.receive(
-            { action in
-                guard case .fetchedTransactions = action else { return false }
-                return true
-            },
-            timeout: .seconds(5)
-        )
+        await store.receive({ action in
+            guard case .fetchedTransactions = action else { return false }
+            return true
+        }, timeout: .seconds(5))
 
         #expect(
             fetchedAccountIds.value.first == RootInitializeSDKColdStartFetchTests.seedDerivedAccount.id,

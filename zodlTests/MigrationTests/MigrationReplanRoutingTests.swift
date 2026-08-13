@@ -22,7 +22,8 @@
 
 import Foundation
 import Testing
-@_spi(Testing) import ZcashLightClientKit
+@_spi(Testing)
+import ZcashLightClientKit
 @testable import zodl_internal
 
 @Suite struct MigrationReplanRoutingTests {
@@ -235,5 +236,4 @@ import Testing
         #expect(MigrationEngineAnswer(step: .replan) == .replan)
         #expect(MigrationEngineAnswer(step: .reevaluate) == .reevaluate)
     }
-
 }

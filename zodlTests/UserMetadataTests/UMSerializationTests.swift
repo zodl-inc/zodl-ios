@@ -72,7 +72,7 @@ import ComposableArchitecture
     @Test func v2ToLatestClearsFromAssetWhenProviderIsZec() {
         let v2 = makeV2(provider: SwapConstants.zecAssetIdOnNear, totalFees: 0, lastUsed: [], swapsLastUpdated: 0)
         let swap = UserMetadata.v2ToLatest(v2).accountMetadata.swaps.swapIds.first
-        #expect(swap?.fromAsset == "")
+        #expect(swap?.fromAsset.isEmpty == true)
         #expect(swap?.toAsset == SwapConstants.zecAssetIdOnNear)
     }
 

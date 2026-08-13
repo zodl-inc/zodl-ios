@@ -19,7 +19,7 @@ import ComposableArchitecture
 
     @Test func hexStringToBytesParsesValidEvenLengthHex() {
         #expect(AddKeystoneHWWallet.hexStringToBytes("00ff10") == [0x00, 0xff, 0x10])
-        #expect(AddKeystoneHWWallet.hexStringToBytes("") == [])
+        #expect(AddKeystoneHWWallet.hexStringToBytes("")?.isEmpty == true)
     }
 
     @Test func hexStringToBytesRejectsOddLengthAndInvalidCharacters() {

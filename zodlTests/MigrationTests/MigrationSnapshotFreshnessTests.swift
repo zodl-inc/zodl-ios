@@ -51,7 +51,7 @@ import ComposableArchitecture
     /// Installs `accountUUID` as the sole candidate — selected AND the whole wallet-account list —
     /// mirrors the retired warm-up suite's `installCandidateAccount()`.
     private static func installCandidateAccount() {
-        @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
+        @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount?
         @Shared(.inMemory(.walletAccounts)) var walletAccounts: [WalletAccount] = []
         $selectedWalletAccount.withLock { $0 = Self.account() }
         $walletAccounts.withLock { $0 = [Self.account()] }

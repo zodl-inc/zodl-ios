@@ -23,8 +23,8 @@ import Foundation
     }
 
     @Test func emptyStringRoundTrip() {
-        #expect(Serializer.stringToBytes("") == [])
-        #expect(Serializer.bytesToString([]) == "")
+        #expect(Serializer.stringToBytes("").isEmpty)
+        #expect(Serializer.bytesToString([])?.isEmpty == true)
     }
 
     @Test func bytesToStringReturnsNilForInvalidUTF8() {

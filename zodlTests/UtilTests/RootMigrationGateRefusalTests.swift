@@ -193,13 +193,10 @@ import Testing
 
         // Mutually exclusive with `.initializationFailed` — both are the ONLY two outcomes of the
         // same do/catch, so successfully receiving this one also proves the other was never sent.
-        await store.receive(
-            { action in
-                guard case .initialization(.initializationSuccessfullyDone) = action else { return false }
-                return true
-            },
-            timeout: .seconds(5)
-        )
+        await store.receive({ action in
+            guard case .initialization(.initializationSuccessfullyDone) = action else { return false }
+            return true
+        }, timeout: .seconds(5))
 
         #expect(
             advanceCalls(calls) >= 2,
@@ -219,13 +216,10 @@ import Testing
 
         await store.send(.initialization(.initializeSDK(.existingWallet)))
 
-        await store.receive(
-            { action in
-                guard case .initialization(.initializationFailed) = action else { return false }
-                return true
-            },
-            timeout: .seconds(5)
-        )
+        await store.receive({ action in
+            guard case .initialization(.initializationFailed) = action else { return false }
+            return true
+        }, timeout: .seconds(5))
 
         #expect(advanceCalls(calls) == 1, "a non-gate error must not be treated as a broadcast session — only the pre-start call")
         #expect(store.state.appInitializationState == .failed)
@@ -256,13 +250,10 @@ import Testing
             state.lastMigrationSyncGateBlocked = false
         }
 
-        await store.receive(
-            { action in
-                guard case .initialization(.retryStart) = action else { return false }
-                return true
-            },
-            timeout: .seconds(5)
-        )
+        await store.receive({ action in
+            guard case .initialization(.retryStart) = action else { return false }
+            return true
+        }, timeout: .seconds(5))
 
         // Audit 2026-08-03 (#12): the arming flag is consumed by `.retryStart` PAST its guards,
         // no longer by the gate-resume reducer — clearing before the guards meant a disk-space or
@@ -290,13 +281,10 @@ import Testing
             state.lastMigrationSyncGateBlocked = false
         }
 
-        await store.receive(
-            { action in
-                guard case .initialization(.retryStart) = action else { return false }
-                return true
-            },
-            timeout: .seconds(5)
-        )
+        await store.receive({ action in
+            guard case .initialization(.retryStart) = action else { return false }
+            return true
+        }, timeout: .seconds(5))
 
         #expect(
             store.state.syncDeferredByMigrationGate,
@@ -315,21 +303,15 @@ import Testing
 
         await store.send(.initialization(.retryStart))
 
-        await store.receive(
-            { action in
-                guard case .initialization(.registerForSynchronizersUpdate) = action else { return false }
-                return true
-            },
-            timeout: .seconds(5)
-        )
+        await store.receive({ action in
+            guard case .initialization(.registerForSynchronizersUpdate) = action else { return false }
+            return true
+        }, timeout: .seconds(5))
 
-        await store.receive(
-            { action in
-                guard case .initialization(.synchronizerStartFailed) = action else { return false }
-                return true
-            },
-            timeout: .seconds(5)
-        )
+        await store.receive({ action in
+            guard case .initialization(.synchronizerStartFailed) = action else { return false }
+            return true
+        }, timeout: .seconds(5))
 
         #expect(store.state.didScheduleStartFailureRetry, "the failure must arm its one-shot delayed retry")
 
@@ -351,13 +333,10 @@ import Testing
 
         await store.send(.initialization(.initializeSDK(.existingWallet)))
 
-        await store.receive(
-            { action in
-                guard case .initialization(.initializationSuccessfullyDone) = action else { return false }
-                return true
-            },
-            timeout: .seconds(5)
-        )
+        await store.receive({ action in
+            guard case .initialization(.initializationSuccessfullyDone) = action else { return false }
+            return true
+        }, timeout: .seconds(5))
 
         #expect(store.state.syncDeferredByMigrationGate, "the refusal itself must arm the deferred-start flag")
 
@@ -367,13 +346,10 @@ import Testing
 
         await store.send(.migrationSyncGateChanged(false))
 
-        await store.receive(
-            { action in
-                guard case .initialization(.retryStart) = action else { return false }
-                return true
-            },
-            timeout: .seconds(5)
-        )
+        await store.receive({ action in
+            guard case .initialization(.retryStart) = action else { return false }
+            return true
+        }, timeout: .seconds(5))
 
         // (#12) Cleared by `.retryStart` past its guards, not by the gate-resume reducer.
         #expect(!store.state.syncDeferredByMigrationGate, "retryStart consumed the flag the refusal armed")
@@ -392,13 +368,10 @@ import Testing
         // Mutually exclusive with `.synchronizerStartFailed` — both are the ONLY two outcomes of
         // the same do/catch, so successfully receiving this one also proves the other was never
         // sent.
-        await store.receive(
-            { action in
-                guard case .initialization(.registerForSynchronizersUpdate) = action else { return false }
-                return true
-            },
-            timeout: .seconds(5)
-        )
+        await store.receive({ action in
+            guard case .initialization(.registerForSynchronizersUpdate) = action else { return false }
+            return true
+        }, timeout: .seconds(5))
 
         #expect(
             advanceCalls(calls) >= 2,
@@ -416,13 +389,10 @@ import Testing
 
         await store.send(.initialization(.retryStart))
 
-        await store.receive(
-            { action in
-                guard case .initialization(.synchronizerStartFailed) = action else { return false }
-                return true
-            },
-            timeout: .seconds(5)
-        )
+        await store.receive({ action in
+            guard case .initialization(.synchronizerStartFailed) = action else { return false }
+            return true
+        }, timeout: .seconds(5))
 
         #expect(advanceCalls(calls) == 1, "a non-gate error must not be treated as a broadcast session — only the pre-start call")
 
@@ -456,17 +426,14 @@ import Testing
 
         await store.send(.initialization(.retryStart))
 
-        await store.receive(
-            { action in
-                if case .initialization(.registerForSynchronizersUpdate) = action {
-                    Issue.record("a broadcast-only pass re-registered the streams — the ~10 Hz spin is back")
-                    return true
-                }
-                guard case .refreshAutomaticServer = action else { return false }
+        await store.receive({ action in
+            if case .initialization(.registerForSynchronizersUpdate) = action {
+                Issue.record("a broadcast-only pass re-registered the streams — the ~10 Hz spin is back")
                 return true
-            },
-            timeout: .seconds(5)
-        )
+            }
+            guard case .refreshAutomaticServer = action else { return false }
+            return true
+        }, timeout: .seconds(5))
 
         await drain(store)
     }
@@ -480,13 +447,10 @@ import Testing
 
         await store.send(.initialization(.retryStart))
 
-        await store.receive(
-            { action in
-                guard case .initialization(.registerForSynchronizersUpdate) = action else { return false }
-                return true
-            },
-            timeout: .seconds(5)
-        )
+        await store.receive({ action in
+            guard case .initialization(.registerForSynchronizersUpdate) = action else { return false }
+            return true
+        }, timeout: .seconds(5))
 
         await drain(store)
     }

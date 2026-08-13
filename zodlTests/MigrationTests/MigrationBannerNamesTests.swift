@@ -33,7 +33,7 @@ import Testing
 @testable @preconcurrency import ZcashLightClientKit
 @testable import zodl_internal
 
-@Suite struct MigrationBannerNamesTests {
+@Suite enum MigrationBannerNamesTests {
     private static func progress(completed: Int, total: Int) -> MigrationProgress {
         MigrationProgress(
             completedTransfers: completed,

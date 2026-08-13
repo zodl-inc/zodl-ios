@@ -413,20 +413,17 @@ import Testing
         let testClock = TestClock()
         let store = makeStore(spy: spy, testClock: testClock, lastMigrationSyncGateBlocked: true)
 
-        @Shared(.inMemory(.migrationStoppedSyncForBroadcast)) var migrationStoppedSyncForBroadcast: Bool = false
+        @Shared(.inMemory(.migrationStoppedSyncForBroadcast)) var migrationStoppedSyncForBroadcast = false
         $migrationStoppedSyncForBroadcast.withLock { $0 = true }
 
         await store.send(.migrationSyncGateChanged(false)) { state in
             state.lastMigrationSyncGateBlocked = false
         }
 
-        await store.receive(
-            { action in
-                guard case .initialization(.retryStart) = action else { return false }
-                return true
-            },
-            timeout: .seconds(5)
-        )
+        await store.receive({ action in
+            guard case .initialization(.retryStart) = action else { return false }
+            return true
+        }, timeout: .seconds(5))
 
         #expect(!migrationStoppedSyncForBroadcast, "the resume must clear the flag it consumed")
 
@@ -451,7 +448,7 @@ import Testing
         let testClock = TestClock()
         let store = makeStore(spy: spy, testClock: testClock)
 
-        @Shared(.inMemory(.migrationStoppedSyncForBroadcast)) var migrationStoppedSyncForBroadcast: Bool = false
+        @Shared(.inMemory(.migrationStoppedSyncForBroadcast)) var migrationStoppedSyncForBroadcast = false
         $migrationStoppedSyncForBroadcast.withLock { $0 = false }
 
         await store.send(.initialization(.initializationSuccessfullyDone))
@@ -467,13 +464,10 @@ import Testing
             state.syncDeferredByMigrationGate = false
         }
 
-        await store.receive(
-            { action in
-                guard case .initialization(.retryStart) = action else { return false }
-                return true
-            },
-            timeout: .seconds(5)
-        )
+        await store.receive({ action in
+            guard case .initialization(.retryStart) = action else { return false }
+            return true
+        }, timeout: .seconds(5))
 
         // Parked-debt pin (2026-08-03), same rationale as (a) above: exactly one resume open.
         await waitUntil { spy.nonTickCalls >= 1 }
