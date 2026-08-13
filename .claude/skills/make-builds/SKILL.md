@@ -1,8 +1,8 @@
 ---
 name: make-builds
-description: Create one or more iOS TestFlight builds with Scripts/release.sh and announce each successful build in the #wallet-team Slack channel. Manual only — invoke with /make-builds followed by one "<variant> <ref> <version> <build> [skip-tests]" line per build, optionally followed by "- <changelog>" lines shared by all of the run's Slack messages.
+description: Create one or more iOS TestFlight builds with Scripts/release.sh and announce each successful build in the #wallet-team Slack channel. Manual only — invoke with /make-builds followed by one "<variant> <ref> <version> <build> [skip-tests] [submit-review]" line per build (submit-review is appstore-only), optionally followed by "- <changelog>" lines shared by all of the run's Slack messages.
 disable-model-invocation: true
-argument-hint: <variant> <ref> <version> <build> [skip-tests] — one line per build; optional trailing "- changelog" lines
+argument-hint: <variant> <ref> <version> <build> [skip-tests] [submit-review] — one line per build; optional trailing "- changelog" lines
 ---
 
 # Make builds
@@ -26,22 +26,27 @@ ARGUMENTS: $ARGUMENTS
 Split the arguments into lines and classify each:
 
 - **Build line** — its first whitespace-separated token is a variant. Format:
-  `<variant> <ref> <version> <build> [skip-tests]`
+  `<variant> <ref> <version> <build> [skip-tests] [submit-review]`
   - `variant` — one of `internal`, `testnet`, `appstore`, `internal-testnet`
   - `ref` — branch, tag, or commit to build; must exist on origin, but the
     lane's own preflight verifies that — do not pre-verify it yourself
   - `version` — `X.Y.Z`, digits and dots only
   - `build` — an integer
-  - optional 5th token: the literal `skip-tests`
+  - after `build`: zero or more option tokens, in any order, each at most once:
+    - `skip-tests` — valid on every variant
+    - `submit-review` — valid on `appstore` lines only (after the upload, the
+      lane also submits the build to App Review); on any other variant it is
+      a validation error
 - **Changelog line** — starts with `-`, `*`, or `•`. Optional. The same
   changelog goes into every Slack message of the run.
 - **Blank line** — ignored.
 
 Validate everything before running anything. Any line that is none of the
-above, a build line with missing, extra, or malformed tokens, a 5th token other
-than `skip-tests`, or an input with zero build lines → print one error naming
-each offending line and what was expected instead, and stop without launching
-any build. Never run a partial batch and never guess a missing value: one build
+above, a build line with missing, extra, or malformed tokens, an option token
+other than `skip-tests` / `submit-review`, a duplicated option token,
+`submit-review` on a non-`appstore` line, or an input with zero build lines →
+print one error naming each offending line and what was expected instead, and
+stop without launching any build. Never run a partial batch and never guess a missing value: one build
 costs 30–90 minutes and uploads to TestFlight.
 
 ## Workflow
@@ -72,11 +77,12 @@ For each build line:
    polling — wait for its completion notification). A foreground call is
    killed at 10 minutes; a build takes 30–90+. Log to the session scratchpad:
    ```bash
-   ./Scripts/release.sh --variant <variant> --ref <ref> --version <version> --build <build> [--skip-tests] -y > <scratchpad>/make-builds-<variant>-<version>-<build>.log 2>&1
+   ./Scripts/release.sh --variant <variant> --ref <ref> --version <version> --build <build> [--skip-tests] [--submit-review] -y > <scratchpad>/make-builds-<variant>-<version>-<build>.log 2>&1
    ```
    Always append `-y` — it skips the lane's confirmation prompt, which would
    otherwise hang forever on a non-tty. Add `--skip-tests` only when the build
-   line says `skip-tests`. Add nothing else.
+   line says `skip-tests`, and `--submit-review` only when it says
+   `submit-review`. Add nothing else.
 3. Wait for the process to exit before doing anything further. Do not kill it
    for being slow — after the archive it waits for App Store Connect
    processing, which is long and quiet. Do not start the next build and do not
