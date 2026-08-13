@@ -3675,8 +3675,18 @@ extension VotingCoordFlow {
                 LoggerProxy.debug("Delegation bundle \(bundleIndex + 1)/\(bundleCount) using cached submission")
                 registration = cachedRegistration
             } else {
-                if delegationPrepared {
-                    LoggerProxy.debug("Delegation bundle \(bundleIndex + 1)/\(bundleCount) using precomputed PIR data")
+                // Finding #10 (CHP.md): `zcash_voting` stores `pczt_sighash` write-once per
+                // (round, wallet, bundle) and every `buildVotingPczt` samples fresh randomness,
+                // so re-building over persisted setup can never reproduce the stored sighash —
+                // the crate refuses with "refusing to overwrite pczt_sighash" and the bundle
+                // wedges permanently. A successful `cachedSignature` probe proves the persisted
+                // setup (sighash + alpha, bound to this seed's fingerprint) already exists, so
+                // skip the build and let `buildAndProveDelegation` resume deterministically
+                // from the stored randomness instead.
+                if delegationPrepared || cachedSignature != nil {
+                    LoggerProxy.debug(
+                        "Delegation bundle \(bundleIndex + 1)/\(bundleCount) resuming persisted PCZT setup (precomputed: \(delegationPrepared))"
+                    )
                 } else {
                     let orchardFvk = try seedFingerprint.map { _ in
                         try votingCrypto.extractOrchardFvkFromUfvk(bundleNotes[0].ufvkStr, networkId)

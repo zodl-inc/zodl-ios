@@ -833,6 +833,246 @@ import Testing
         ])
     }
 
+    // Finding #10 (CHP.md 2026-08-13): `zcash_voting` stores `pczt_sighash` write-once per
+    // (round, wallet, bundle) and every build samples fresh randomness, so re-running
+    // `buildVotingPczt` over persisted setup can never match — the crate refuses with
+    // "refusing to overwrite pczt_sighash" and the bundle wedges permanently. When the
+    // `signDelegationRequest` probe succeeds (persisted sighash + alpha exist) but the
+    // submission probe fails (no proof yet — e.g. a prior attempt died mid-prove), the
+    // pipeline must skip the build and resume via `buildAndProveDelegation`, which loads
+    // the stored randomness deterministically.
+    @Test func delegationPipelineResumesPersistedSetupWithoutRebuildingPczt() async throws {
+        let recorder = EventRecorder()
+        var votingCrypto = VotingCryptoClient()
+        votingCrypto.getDelegationTxHash = { _, _ in .notFound }
+        votingCrypto.buildVotingPczt = { _, _, _, _, _, _, _, _, _, _ in
+            recorder.record("pczt")
+            return Self.makeVotingPcztResult()
+        }
+        votingCrypto.signDelegationRequest = { _, _, _, _, _, _, _ in
+            recorder.record("sign")
+            return (signature: Data(repeating: 0x09, count: 64), sighash: Data(repeating: 0x0A, count: 32))
+        }
+        votingCrypto.getDelegationSubmission = { _, _, _, _ in
+            // First call is the cache probe: the persisted setup has no proof yet, so it
+            // fails the way the crate does pre-prove. The post-prove call succeeds.
+            if recorder.recordAndCount("registration") == 1 {
+                throw TestError.delegationProofMissing
+            }
+            return Self.makeDelegationRegistration()
+        }
+        votingCrypto.buildAndProveDelegation = { _, _, _, _, _, _, _, _, _, _, _, _, _ in
+            recorder.record("prove")
+            return AsyncThrowingStream { continuation in
+                continuation.yield(.progress(1))
+                continuation.finish()
+            }
+        }
+        votingCrypto.storeDelegationTxHash = { _, _, txHash in
+            recorder.record("store-tx:\(txHash)")
+        }
+        votingCrypto.storeVanPosition = { _, bundleIndex, position in
+            recorder.record("van:\(bundleIndex):\(position)")
+        }
+
+        var votingAPI = VotingAPIClient()
+        votingAPI.submitDelegation = { _ in
+            recorder.record("submit")
+            return TxResult(txHash: "resumed-tx", code: 0)
+        }
+        votingAPI.fetchTxConfirmation = { txHash in
+            recorder.record("fetch:\(txHash)")
+            return Self.makeDelegationConfirmation(position: 7)
+        }
+
+        try await VotingCoordFlow.runDelegationPipeline(
+            roundId: "aabb",
+            cachedNotes: [note(value: ballotDivisor, position: 0)],
+            senderSeed: [],
+            hotkeySeed: [],
+            networkId: 1,
+            accountIndex: 0,
+            roundName: "Round",
+            pirEndpoints: ["https://pir.example.com"],
+            expectedSnapshotHeight: 1,
+            pirDepth: 1,
+            tier0Layers: 1,
+            tier1Layers: 1,
+            votingCrypto: votingCrypto,
+            votingAPI: votingAPI,
+            send: Send<VotingCoordFlow.Action>(send: { _ in }),
+            delegationConfirmationTimeout: 0,
+            delegationConfirmationRetryDelay: .zero
+        )
+
+        // "pczt" must never appear: the build over persisted setup is exactly what the
+        // crate's write-once guard refuses.
+        #expect(recorder.events() == [
+            "sign",
+            "registration",
+            "prove",
+            "sign",
+            "registration",
+            "submit",
+            "store-tx:resumed-tx",
+            "fetch:resumed-tx",
+            "van:0:7"
+        ])
+    }
+
+    // Regression guard for the opposite side of finding #10's predicate: with no
+    // persisted setup (the `signDelegationRequest` probe fails), the pipeline must
+    // still build the PCZT before proving.
+    @Test func delegationPipelineBuildsPcztWhenNoSetupIsPersisted() async throws {
+        let recorder = EventRecorder()
+        var votingCrypto = VotingCryptoClient()
+        votingCrypto.getDelegationTxHash = { _, _ in .notFound }
+        votingCrypto.buildVotingPczt = { _, _, _, _, _, _, _, _, _, _ in
+            recorder.record("pczt")
+            return Self.makeVotingPcztResult()
+        }
+        votingCrypto.signDelegationRequest = { _, _, _, _, _, _, _ in
+            // First call is the cache probe: nothing is persisted yet, so it fails the
+            // way the crate does when `load_pczt_sighash` finds no row. After the build
+            // has stored the setup, the post-prove call succeeds.
+            if recorder.recordAndCount("sign") == 1 {
+                throw TestError.delegationSetupMissing
+            }
+            return (signature: Data(repeating: 0x09, count: 64), sighash: Data(repeating: 0x0A, count: 32))
+        }
+        votingCrypto.getDelegationSubmission = { _, _, _, _ in
+            recorder.record("registration")
+            return Self.makeDelegationRegistration()
+        }
+        votingCrypto.buildAndProveDelegation = { _, _, _, _, _, _, _, _, _, _, _, _, _ in
+            recorder.record("prove")
+            return AsyncThrowingStream { continuation in
+                continuation.yield(.progress(1))
+                continuation.finish()
+            }
+        }
+        votingCrypto.storeDelegationTxHash = { _, _, txHash in
+            recorder.record("store-tx:\(txHash)")
+        }
+        votingCrypto.storeVanPosition = { _, bundleIndex, position in
+            recorder.record("van:\(bundleIndex):\(position)")
+        }
+
+        var votingAPI = VotingAPIClient()
+        votingAPI.submitDelegation = { _ in
+            recorder.record("submit")
+            return TxResult(txHash: "rebuilt-tx", code: 0)
+        }
+        votingAPI.fetchTxConfirmation = { txHash in
+            recorder.record("fetch:\(txHash)")
+            return Self.makeDelegationConfirmation(position: 5)
+        }
+
+        try await VotingCoordFlow.runDelegationPipeline(
+            roundId: "aabb",
+            cachedNotes: [note(value: ballotDivisor, position: 0)],
+            senderSeed: [],
+            hotkeySeed: [],
+            networkId: 1,
+            accountIndex: 0,
+            roundName: "Round",
+            pirEndpoints: ["https://pir.example.com"],
+            expectedSnapshotHeight: 1,
+            pirDepth: 1,
+            tier0Layers: 1,
+            tier1Layers: 1,
+            votingCrypto: votingCrypto,
+            votingAPI: votingAPI,
+            send: Send<VotingCoordFlow.Action>(send: { _ in }),
+            delegationConfirmationTimeout: 0,
+            delegationConfirmationRetryDelay: .zero
+        )
+
+        #expect(recorder.events() == [
+            "sign",
+            "pczt",
+            "prove",
+            "sign",
+            "registration",
+            "submit",
+            "store-tx:rebuilt-tx",
+            "fetch:rebuilt-tx",
+            "van:0:5"
+        ])
+    }
+
+    // Regression guard for the fully-cached path: when both probes succeed (setup and
+    // proof are persisted), the pipeline short-circuits to the cached registration —
+    // no build, no prove.
+    @Test func delegationPipelineShortCircuitsToCachedSubmissionWithoutBuildOrProve() async throws {
+        let recorder = EventRecorder()
+        var votingCrypto = VotingCryptoClient()
+        votingCrypto.getDelegationTxHash = { _, _ in .notFound }
+        votingCrypto.buildVotingPczt = { _, _, _, _, _, _, _, _, _, _ in
+            recorder.record("pczt")
+            return Self.makeVotingPcztResult()
+        }
+        votingCrypto.signDelegationRequest = { _, _, _, _, _, _, _ in
+            recorder.record("sign")
+            return (signature: Data(repeating: 0x09, count: 64), sighash: Data(repeating: 0x0A, count: 32))
+        }
+        votingCrypto.getDelegationSubmission = { _, _, _, _ in
+            recorder.record("registration")
+            return Self.makeDelegationRegistration()
+        }
+        votingCrypto.buildAndProveDelegation = { _, _, _, _, _, _, _, _, _, _, _, _, _ in
+            recorder.record("prove")
+            return AsyncThrowingStream { continuation in
+                continuation.finish()
+            }
+        }
+        votingCrypto.storeDelegationTxHash = { _, _, txHash in
+            recorder.record("store-tx:\(txHash)")
+        }
+        votingCrypto.storeVanPosition = { _, bundleIndex, position in
+            recorder.record("van:\(bundleIndex):\(position)")
+        }
+
+        var votingAPI = VotingAPIClient()
+        votingAPI.submitDelegation = { _ in
+            recorder.record("submit")
+            return TxResult(txHash: "proof-complete-tx", code: 0)
+        }
+        votingAPI.fetchTxConfirmation = { txHash in
+            recorder.record("fetch:\(txHash)")
+            return Self.makeDelegationConfirmation(position: 9)
+        }
+
+        try await VotingCoordFlow.runDelegationPipeline(
+            roundId: "aabb",
+            cachedNotes: [note(value: ballotDivisor, position: 0)],
+            senderSeed: [],
+            hotkeySeed: [],
+            networkId: 1,
+            accountIndex: 0,
+            roundName: "Round",
+            pirEndpoints: ["https://pir.example.com"],
+            expectedSnapshotHeight: 1,
+            pirDepth: 1,
+            tier0Layers: 1,
+            tier1Layers: 1,
+            votingCrypto: votingCrypto,
+            votingAPI: votingAPI,
+            send: Send<VotingCoordFlow.Action>(send: { _ in }),
+            delegationConfirmationTimeout: 0,
+            delegationConfirmationRetryDelay: .zero
+        )
+
+        #expect(recorder.events() == [
+            "sign",
+            "registration",
+            "submit",
+            "store-tx:proof-complete-tx",
+            "fetch:proof-complete-tx",
+            "van:0:9"
+        ])
+    }
+
     // Task 8P (CHP.md 2026-08-13, 8O adversarial finding): a share the servers already
     // accepted must not be allowed to vanish from local bookkeeping just because its
     // `recordShareDelegation` write faults. Share 0's local write fails here while share
@@ -1276,6 +1516,15 @@ private final class EventRecorder: @unchecked Sendable {
         lock.unlock()
     }
 
+    /// Appends `event` and returns how many times it has now been recorded, letting a
+    /// closure double behave differently on its first call versus later calls.
+    func recordAndCount(_ event: String) -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        recordedEvents.append(event)
+        return recordedEvents.filter { $0 == event }.count
+    }
+
     func events() -> [String] {
         lock.lock()
         defer { lock.unlock() }
@@ -1287,6 +1536,8 @@ private enum TestError: LocalizedError {
     case unexpectedSpendAuthExtraction
     case proofFailed
     case shareRecordWriteFailed
+    case delegationSetupMissing
+    case delegationProofMissing
 
     var errorDescription: String? {
         switch self {
@@ -1296,6 +1547,10 @@ private enum TestError: LocalizedError {
             return "proof failed"
         case .shareRecordWriteFailed:
             return "simulated local share-record write failure"
+        case .delegationSetupMissing:
+            return "simulated missing persisted delegation setup"
+        case .delegationProofMissing:
+            return "simulated missing persisted delegation proof"
         }
     }
 }
