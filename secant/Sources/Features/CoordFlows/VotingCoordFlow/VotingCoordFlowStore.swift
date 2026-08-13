@@ -263,7 +263,11 @@ struct VotingCoordFlow {
         )
         case hotkeyLoaded(roundId: String, address: String)
         case pipelineFailed(roundId: String, message: String)
-        case submittedVotesLoaded(roundId: String, votes: [UInt32: VoteChoice])
+        case submittedVotesLoaded(
+            roundId: String,
+            votes: [UInt32: VoteChoice],
+            undeliveredShareProposalIds: Set<UInt32> = []
+        )
         case draftVoteSet(roundId: String, proposalId: UInt32, choice: VoteChoice)
         case submitTapped(roundId: String)
         case fetchTallyResults(roundId: String)

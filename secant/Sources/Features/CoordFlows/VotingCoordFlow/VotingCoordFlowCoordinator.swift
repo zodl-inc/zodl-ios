@@ -1118,11 +1118,14 @@ extension VotingCoordFlow {
                 state.rootScreen = .error(message)
                 return .none
 
-            case let .submittedVotesLoaded(roundId, votes):
+            case let .submittedVotesLoaded(roundId, votes, undeliveredShareProposalIds):
                 guard !votes.isEmpty else { return .none }
                 let account = state.selectedWalletAccount?.account
                 var session = state.roundCache[roundId] ?? RoundSession(roundId: roundId)
                 session.votes.merge(votes) { current, _ in current }
+                // Finding #8 (CHP.md): fresh authoritative read every hydration —
+                // replace, don't merge, matching `shareDelegations` below.
+                session.undeliveredShareProposalIds = undeliveredShareProposalIds
                 let mergedVotes = session.votes
                 let filteredDrafts = session.draftVotes
                     .filter { mergedVotes[$0.key] == nil }
@@ -1708,7 +1711,23 @@ extension VotingCoordFlow {
             return .none
         }
 
-        let drafts = session.draftVotes.sorted { $0.key < $1.key }
+        // Finding #8 (CHP.md): a proposal whose vote landed on-chain but whose
+        // shares never reached the helper servers has already been moved out
+        // of `draftVotes` by `.submittedVotesLoaded`, so the draft list alone
+        // would never revisit it. Fold `undeliveredShareProposalIds` in as
+        // synthetic "drafts" — the on-chain choice is already known from
+        // `session.votes` — so the batch loop below gets a chance to run
+        // Task 8F's `tryRecoverInflightVote` lane for it again. The two id
+        // sets shouldn't overlap (`.submittedVotesLoaded` always filters
+        // `draftVotes` against the merged `votes`), but `subtracting` keeps
+        // this correct even if that invariant ever slips.
+        let recoveryDrafts = session.undeliveredShareProposalIds
+            .subtracting(session.draftVotes.keys)
+            .sorted()
+            .compactMap { proposalId -> (key: UInt32, value: VoteChoice)? in
+                session.votes[proposalId].map { (key: proposalId, value: $0) }
+            }
+        let drafts = session.draftVotes.sorted { $0.key < $1.key } + recoveryDrafts
         guard !drafts.isEmpty else { return .none }
         let totalCount = drafts.count
         let delegationDone = isDelegationReady(session)
@@ -3182,14 +3201,57 @@ extension VotingCoordFlow {
             let records = try await votingCrypto.getVotes(roundId)
             let bundleCount = (try? await votingCrypto.getBundleCount(roundId)) ?? 0
             let votes = submittedVotesByProposal(records, bundleCount: bundleCount)
-            await send(.submittedVotesLoaded(roundId: roundId, votes: votes))
+            // Finding #8 (CHP.md): mirror Task 8F's `getVotes` × `getShareDelegations`
+            // pairing here, at every round hydration, so a submitted-but-shareless
+            // proposal is visible to the CTA gates before the user ever taps Confirm —
+            // not just to the in-loop recovery check 8F added.
+            let shareDelegations = (try? await votingCrypto.getShareDelegations(roundId)) ?? []
+            let undeliveredShareProposalIds = Self.undeliveredShareProposalIds(
+                records: records,
+                shareDelegations: shareDelegations
+            )
+            await send(.submittedVotesLoaded(
+                roundId: roundId,
+                votes: votes,
+                undeliveredShareProposalIds: undeliveredShareProposalIds
+            ))
         } catch: { error, _ in
             LoggerProxy.warn("Failed to load submitted voting choices: \(error)")
         }
     }
 
+    /// Finding #8 (CHP.md): proposals with at least one `submitted` vote
+    /// bundle that has no matching recorded share delegation. Same pairing
+    /// as Task 8F's in-loop `bundlesWithRecordedShares` check
+    /// (`VotingCoordFlowCoordinator`'s batch `.run` effect), generalized to
+    /// every proposal in the round in one pass instead of one proposal at a
+    /// time, so it can run ahead of the submission loop rather than inside it.
+    static func undeliveredShareProposalIds(
+        records: [VoteRecord],
+        shareDelegations: [VotingShareDelegation]
+    ) -> Set<UInt32> {
+        var submittedBundlesByProposal: [UInt32: Set<UInt32>] = [:]
+        for record in records where record.submitted {
+            submittedBundlesByProposal[record.proposalId, default: []].insert(record.bundleIndex)
+        }
+        var sharedBundlesByProposal: [UInt32: Set<UInt32>] = [:]
+        for delegation in shareDelegations {
+            sharedBundlesByProposal[delegation.proposalId, default: []].insert(delegation.bundleIndex)
+        }
+        return submittedBundlesByProposal.reduce(into: Set<UInt32>()) { result, entry in
+            let (proposalId, submittedBundles) = entry
+            let sharedBundles = sharedBundlesByProposal[proposalId] ?? []
+            if !submittedBundles.isSubset(of: sharedBundles) {
+                result.insert(proposalId)
+            }
+        }
+    }
+
     private func canStartSubmission(_ session: RoundSession) -> Bool {
-        guard !session.draftVotes.isEmpty else { return false }
+        // Finding #8 (CHP.md): `draftVotes` alone misses a proposal that's
+        // already on-chain but whose shares never got delegated — see
+        // `RoundSession.hasPendingSubmissionWork`.
+        guard session.hasPendingSubmissionWork else { return false }
         guard session.bundleCount > 0 else { return false }
         switch session.batchSubmissionStatus {
         case .idle, .authorizationFailed, .submissionFailed:

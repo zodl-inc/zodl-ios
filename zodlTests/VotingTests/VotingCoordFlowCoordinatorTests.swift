@@ -156,6 +156,60 @@ import Testing
         #expect(updated.delegationProofStatus == .generating(progress: 0))
     }
 
+    // Finding #8 (CHP.md): a proposal already confirmed on-chain but missing
+    // its share delegations has already been moved out of `draftVotes` (see
+    // `.submittedVotesLoaded`), so with the old bare `draftVotes.isEmpty`
+    // gate this reducer bailed with `.none` and the round was permanently
+    // stuck — the submit CTA looked present but did nothing.
+    // `undeliveredShareProposalIds` alone must be enough to let the batch
+    // submission `.run` effect start, reusing the on-chain choice already
+    // known from `session.votes`.
+    @Test func authenticationSucceededProcessesUndeliveredShareProposalWithEmptyDrafts() {
+        var session = RoundSession(roundId: activeRoundId)
+        session.bundleCount = 1
+        session.votes = [1: .option(0)]
+        session.undeliveredShareProposalIds = [1]
+        var state = VotingCoordFlow.State()
+        state.roundCache[activeRoundId] = session
+        state.allRounds = [RoundListItem(roundNumber: 1, session: votingSession())]
+
+        _ = VotingCoordFlow().reduceAuthenticationSucceeded(&state, roundId: activeRoundId)
+
+        let updated = tryUnwrap(state.roundCache[activeRoundId])
+        #expect(!state.pendingBatchSubmission)
+        #expect(updated.batchSubmissionStatus == .authorizing)
+        #expect(updated.voteSubmissionStep == .authorizingVote)
+        #expect(updated.delegationProofStatus == .generating(progress: 0))
+    }
+
+    // The literal Finding #8 shape: a vote record landed on-chain
+    // (`submitted == true`) but the helper-server share delegation was never
+    // recorded for it at all — the same pairing Task 8F's in-loop
+    // `bundlesWithRecordedShares` check uses, generalized across the whole
+    // round.
+    @Test func undeliveredShareProposalIdsFlagsSubmittedProposalWithZeroShareDelegations() {
+        let records = [
+            VoteRecord(proposalId: 1, bundleIndex: 0, choice: .option(0), submitted: true)
+        ]
+
+        let result = VotingCoordFlow.undeliveredShareProposalIds(records: records, shareDelegations: [])
+
+        #expect(result == [1])
+    }
+
+    // A bundle that's still mid-flight (never reached `markVoteSubmitted`) is
+    // still a live draft and must not be double-counted as a recovery
+    // target — it's already reachable through `draftVotes`.
+    @Test func undeliveredShareProposalIdsIgnoresProposalsNeverSubmitted() {
+        let records = [
+            VoteRecord(proposalId: 2, bundleIndex: 0, choice: .option(1), submitted: false)
+        ]
+
+        let result = VotingCoordFlow.undeliveredShareProposalIds(records: records, shareDelegations: [])
+
+        #expect(result.isEmpty)
+    }
+
     @Test func delegationFailureDuringBatchAuthorizationShowsAuthorizationFailure() {
         var session = roundSession()
         session.bundleCount = 2
