@@ -1,3 +1,4 @@
+#if VOTING_ENABLED
 //
 //  TallyingView.swift
 //  Zashi
@@ -76,3 +77,4 @@ struct TallyingView: View {
         }
     }
 }
+#endif

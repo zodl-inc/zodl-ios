@@ -32,7 +32,8 @@ struct SettingsView: View {
                                     store.send(.currencyConversionTapped)
                                 }
                             }
-                            
+
+                            #if VOTING_ENABLED
 #if !os(macOS)
                             // macOS hosts voting in the sidebar (Beta: Vote); the Settings entry is iOS-only.
                             ActionRow(
@@ -42,6 +43,7 @@ struct SettingsView: View {
                                 store.send(.coinholderPollingTapped)
                             }
 #endif
+                            #endif
 
                             ActionRow(
                                 icon: Asset.Assets.Icons.settings.image,
@@ -131,6 +133,8 @@ struct SettingsView: View {
                     PrivateDataConsentView(store: store)
                 case let .exportTransactionHistory(store):
                     ExportTransactionHistoryView(store: store)
+                case let .migrationRestart(store):
+                    MigrationRestartView(store: store)
                 case let .recoveryPhrase(store):
                     RecoveryPhraseDisplayView(store: store)
                 case let .resyncEstimateBirthdaysDate(store):
@@ -170,6 +174,7 @@ struct SettingsView: View {
             .zashiSheet(isPresented: $store.isResyncHelpSheetPresented) {
                 resyncHelpSheetContent()
             }
+            #if VOTING_ENABLED
             .zashiFullScreenCover(
                 item: $store.scope(state: \.votingCoordFlow, action: \.votingCoordFlow)
             ) { votingStore in
@@ -180,6 +185,7 @@ struct SettingsView: View {
                     VotingCoordFlowView(store: votingStore)
                 }
             }
+            #endif
         }
     }
     

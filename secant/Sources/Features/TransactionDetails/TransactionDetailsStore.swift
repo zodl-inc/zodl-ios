@@ -65,7 +65,9 @@ struct TransactionDetails {
         var messageToBeShared: String?
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
         var supportData: SupportData?
-        @Shared(.inMemory(.swapAssets)) var swapAssets: IdentifiedArrayOf<SwapAsset> = []
+        // Full catalog (MOB-1472) — resolves any historical/exotic swap asset for
+        // display, including assets no longer in the curated swap offering.
+        @Shared(.inMemory(.swapAssetsCatalog)) var swapAssets: IdentifiedArrayOf<SwapAsset> = []
         var swapAssetFailedWithRetry: Bool? = nil
         var swapDetails: SwapDetails?
         var umSwapId: UMSwapId?
@@ -264,7 +266,7 @@ struct TransactionDetails {
                 state.isSwap = userMetadataProvider.isSwapTransaction(state.transaction.zAddress ?? "")
                 state.umSwapId = userMetadataProvider.swapDetailsForTransaction(state.transaction.zAddress ?? "")
                 state.hasInteractedWithBookmark = false
-                state.areDetailsExpanded = state.transaction.isShieldingTransaction
+                state.areDetailsExpanded = state.transaction.isShieldingTransaction || state.transaction.isMigrationTransaction
                 state.messageStates = []
                 state.alias = nil
                 if !state.isSwap {
@@ -328,7 +330,7 @@ struct TransactionDetails {
                 }
                 return .run { send in
                     do {
-                        let swapAssets = try await swapAndPay.swapAssets()
+                        let swapAssets = try await swapAndPay.swapAssetsCatalog()
                         await send(.swapAssetsLoaded(swapAssets))
                     } catch let error as NetworkError {
                         await send(.swapAssetsFailedWithRetry(error.allowsRetry))
@@ -421,7 +423,7 @@ struct TransactionDetails {
             case .memosLoaded(let memos):
                 state.areMessagesResolved = true
                 state.$transactionMemos.withLock {
-                    $0[state.transaction.id] = memos.compactMap { $0.toString() }
+                    $0[state.transaction.id] = memos.compactMap { $0.toString() }.filter { !$0.isEmpty }
                 }
                 state.messageStates = state.memos.map {
                     $0.count < State.Constants.messageExpandThreshold ? .short : .longCollapsed

@@ -115,8 +115,8 @@ struct TransactionRowView: View {
                     + Text(" \(tokenName)")
                 }
             } else {
-                Text(transaction.isSpending ? "- " : "")
-                + Text(transaction.netValue)
+                Text(transaction.isSpending && !transaction.isMigrationTransaction ? "- " : "")
+                + Text(transaction.displayedAmount)
                 + Text(" \(tokenName)")
             }
         }

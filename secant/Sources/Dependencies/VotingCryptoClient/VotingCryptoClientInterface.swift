@@ -1,3 +1,4 @@
+#if VOTING_ENABLED
 @preconcurrency import Combine
 import ComposableArchitecture
 import Foundation
@@ -261,3 +262,4 @@ struct VotingCryptoClient {
     /// Append new server URLs to a share delegation's sent_to_urls.
     var addSentServers: @Sendable (_ roundId: String, _ bundleIndex: UInt32, _ proposalId: UInt32, _ shareIndex: UInt32, _ newURLs: [String]) async throws -> Void
 }
+#endif

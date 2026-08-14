@@ -105,13 +105,17 @@ struct RestoreInfoView: View {
                 // [B4-4 class] In the Keystone flow, OK triggers the import behind this
                 // screen (engine stop → drain → anchor fetch → import → restart —
                 // seconds). Show the wait (spinner + disabled) instead of a dead button
-                // that ignores clicks; re-entry is blocked by the no-op action.
+                // that ignores clicks; re-entry is blocked by `.disabled(true)`.
                 if store.isProcessing {
                     ZashiButton(
-                        String(localizable: .generalOk).uppercased(),
-                        accessoryView:
-                            ZashiSpinner(iosTint: Asset.Colors.secondary.color, macTint: .buttonAccessory)
-                    ) { }
+                        (store.isKeystoneFlow || store.isResyncFlow)
+                        ? String(localizable: .generalOk).uppercased()
+                        : String(localizable: .restoreInfoGotIt),
+                        accessoryView: ZashiSpinner(macTint: .buttonAccessory)
+                    ) {
+                        store.send(.gotItTapped)
+                    }
+                    .disabled(true)
                     .padding(.vertical, 24)
                 } else {
                     ZashiButton((store.isKeystoneFlow || store.isResyncFlow)

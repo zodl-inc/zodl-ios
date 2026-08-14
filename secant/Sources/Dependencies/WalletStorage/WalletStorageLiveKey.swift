@@ -95,6 +95,12 @@ extension WalletStorageClient: DependencyKey {
             exportTorSetupFlag: {
                 walletStorage.exportTorSetupFlag()
             },
+            importIronwoodAnnouncementFlag: { enabled in
+                try walletStorage.importIronwoodAnnouncementFlag(enabled)
+            },
+            exportIronwoodAnnouncementFlag: {
+                walletStorage.exportIronwoodAnnouncementFlag()
+            },
             importVotingHotkey: { phrase, accountId in
                 try walletStorage.importVotingHotkey(phrase, accountId: accountId)
             },

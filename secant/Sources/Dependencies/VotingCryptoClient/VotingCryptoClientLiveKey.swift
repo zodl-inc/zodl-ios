@@ -1,3 +1,4 @@
+#if VOTING_ENABLED
 @preconcurrency import Combine
 import ComposableArchitecture
 import Foundation
@@ -875,3 +876,4 @@ private extension VotingVoteRecord {
         )
     }
 }
+#endif

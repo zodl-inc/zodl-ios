@@ -41,19 +41,20 @@ struct KeystoneDeviceReadyView: View {
                 ) {
                     store.send(.setBirthdayTapped)
                 }
+                .disabled(store.isImportingAccount)
                 .padding(.bottom, 12)
-                .disabled(store.isImportInFlight)
 
                 // [B4-4] importAccount can wait a long time on a restore-busy data.db — show the
                 // wait (spinner + disabled) instead of a dead button that ignores clicks.
-                if store.isImportInFlight {
+                if store.isImportingAccount {
                     ZashiButton(
                         String(localizable: .keystoneAddHWWalletConnectNew),
-                        accessoryView:
-                            ZashiSpinner(iosTint: Asset.Colors.secondary.color, macTint: .buttonAccessory)
-                    ) { }
-                    .padding(.bottom, 24)
+                        accessoryView: ZashiSpinner(macTint: .buttonAccessory)
+                    ) {
+                        store.send(.unlockTapped(nil))
+                    }
                     .disabled(true)
+                    .padding(.bottom, 24)
                 } else {
                     ZashiButton(
                         String(localizable: .keystoneAddHWWalletConnectNew)

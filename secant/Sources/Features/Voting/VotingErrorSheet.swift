@@ -1,3 +1,4 @@
+#if VOTING_ENABLED
 import SwiftUI
 
 // Shared bottom-sheet content for the voting flow: icon + title + body and one
@@ -345,3 +346,4 @@ extension View {
         )
     }
 }
+#endif

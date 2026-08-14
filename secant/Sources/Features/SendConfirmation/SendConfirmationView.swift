@@ -184,7 +184,16 @@ struct SendConfirmationView: View {
                     }
                 }
             }
-            .onAppear { store.send(.onAppear) }
+            .orchardSpendWarningSheet(
+                isPresented: $store.isOrchardWarningPresented,
+                onContinue: { store.send(.orchardWarningContinueTapped) },
+                onCancel: { store.send(.orchardWarningCancelTapped) },
+                onDismiss: { store.send(.orchardWarningDismissed) }
+            )
+            .onAppear {
+                store.send(.onAppear)
+                store.send(.confirmationScreenAppeared)
+            }
             .screenTitle(
                 store.selectedWalletAccount?.vendor == .keystone
                 ? String(localizable: .sendReview)

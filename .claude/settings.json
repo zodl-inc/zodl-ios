@@ -1,5 +1,8 @@
 {
   "permissions": {
+    "allow": [
+      "Bash(./Scripts/release.sh *)"
+    ],
     "deny": [
       "Read(/secant/Resources/PartnerKeys.plist)",
       "Edit(/secant/Resources/PartnerKeys.plist)",

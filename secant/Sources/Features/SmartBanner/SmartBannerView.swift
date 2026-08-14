@@ -136,7 +136,15 @@ struct SmartBannerView: View {
                     .frame(height: 2)
                     .frame(maxWidth: .infinity)
                 LinearGradient(
-                    stops: [
+                    // Migration is the one banner that is NOT Zashi purple — it renders on the
+                    // neutral gray ramp (Figma 3480:3238), so a migration prompt reads as a
+                    // system-level notice rather than as one more branded promo.
+                    stops: store.priorityContent == .priorityMigration
+                    ? [
+                        Gradient.Stop(color: Design.Utility.Gray._700.color(.light), location: 0.00),
+                        Gradient.Stop(color: Design.Utility.Gray._950.color(.light), location: 1.00)
+                    ]
+                    : [
                         Gradient.Stop(color: Design.Utility.Purple._700.color(.light), location: 0.00),
                         Gradient.Stop(color: Design.Utility.Purple._950.color(.light), location: 1.00)
                     ],

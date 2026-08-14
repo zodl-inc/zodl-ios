@@ -39,7 +39,17 @@ struct ServerSetup {
 
     @ObservableState
     struct State: Equatable {
+        /// N6: a manual Save that would land on an active migration run's BROADCAST provider is
+        /// stashed here while the privacy warning is up, so "Use it anyway" resumes exactly where
+        /// `.setServerTapped` left off.
+        struct PendingManualSwitch: Equatable {
+            let endpoint: LightWalletEndpoint
+            let isCustom: Bool
+        }
+
         @Presents var alert: AlertState<Action>?
+        /// Non-nil exactly while the N6 privacy warning is presented.
+        var pendingManualSwitch: PendingManualSwitch?
         var connectionMode: UserPreferencesStorage.ConnectionMode
         var customServer: String
         var isEvaluatingServers = false
@@ -107,6 +117,10 @@ struct ServerSetup {
         case onDisappear
         case refreshServersTapped
         case serverSelected(String)
+        /// N6: the privacy warning's "Use it anyway" — proceeds with the `pendingManualSwitch`
+        /// stashed by `.setServerTapped`. "Choose another" is a plain `.alert(.dismiss)`, which
+        /// clears the stash; the picker itself is untouched either way.
+        case manualSwitchPrivacyWarningConfirmed
         case setServerTapped
         case switchFailed(ZcashError)
         case switchSucceeded(String)
@@ -115,6 +129,7 @@ struct ServerSetup {
     init() {}
 
     @Dependency(\.mainQueue) var mainQueue
+    @Dependency(\.migrationManager) var migrationManager
     @Dependency(\.sdkSynchronizer) var sdkSynchronizer
     @Dependency(\.zcashSDKEnvironment) var zcashSDKEnvironment
     @Dependency(\.userStoredPreferences) var userStoredPreferences
@@ -173,6 +188,10 @@ struct ServerSetup {
                 return .none
 
             case .alert(.dismiss):
+                // N6: "Choose another" lands on this same generic dismiss — clear the stashed switch
+                // so it can never linger into a later alert cycle. A no-op for every other alert,
+                // which never sets it.
+                state.pendingManualSwitch = nil
                 state.alert = nil
                 return .none
 
@@ -297,17 +316,32 @@ struct ServerSetup {
                         return .none
                     }
 
-                    return .run { send in
-                        do {
-                            try await applyServerSwitch(endpoint, automatic: false, isCustom: isCustom, send: send)
-                        } catch is CancellationError {
-                            return
-                        } catch {
-                            await send(.switchFailed(error.toZcashError()))
-                        }
+                    // N6: a manual choice landing on an active migration run's BROADCAST provider
+                    // is confirmed, not applied silently. Auto-selection is already pinned away
+                    // from those hosts (`AutoServerSelection` + `MigrationServerPinning`); this is
+                    // the manual half of the same law, and it was the last one missing.
+                    //
+                    // Revert the optimistic `isUpdatingServer` flip above so Save/Back stay live
+                    // while the alert is up, and stash the switch for "Use it anyway" to resume.
+                    if Self.shouldWarnBeforeManualSwitch(
+                        endpoint: endpoint,
+                        activeSnapshots: migrationManager.activeNetworkSnapshots()
+                    ) {
+                        state.isUpdatingServer = false
+                        state.pendingManualSwitch = State.PendingManualSwitch(endpoint: endpoint, isCustom: isCustom)
+                        state.alert = AlertState.migrationPrivacyWarning()
+                        return .none
                     }
-                    .cancellable(id: CancelID.setServer, cancelInFlight: true)
+
+                    return manualSwitchEffect(endpoint: endpoint, isCustom: isCustom)
                 }
+
+            case .manualSwitchPrivacyWarningConfirmed:
+                guard let pending = state.pendingManualSwitch else { return .none }
+                state.pendingManualSwitch = nil
+                state.alert = nil
+                state.isUpdatingServer = true
+                return manualSwitchEffect(endpoint: pending.endpoint, isCustom: pending.isCustom)
 
             case .switchFailed(let error):
                 state.isUpdatingServer = false
@@ -369,6 +403,71 @@ struct ServerSetup {
         try await mainQueue.sleep(for: .seconds(Benchmark.saveCompletionDelay))
         await send(.switchSucceeded(endpoint.server()))
     }
+
+    /// N6: the manual switch effect, extracted so `.setServerTapped` and the privacy warning's
+    /// "Use it anyway" run the SAME code path rather than two copies that could drift.
+    private func manualSwitchEffect(endpoint: LightWalletEndpoint, isCustom: Bool) -> Effect<Action> {
+        .run { send in
+            do {
+                try await applyServerSwitch(endpoint, automatic: false, isCustom: isCustom, send: send)
+            } catch is CancellationError {
+                return
+            } catch {
+                await send(.switchFailed(error.toZcashError()))
+            }
+        }
+        .cancellable(id: CancelID.setServer, cancelInFlight: true)
+    }
+
+    /// N6: whether choosing `endpoint` manually should warn about migration privacy.
+    ///
+    /// Warns when the chosen endpoint's classified provider matches some active run's BROADCAST
+    /// provider, OR its host matches that run's broadcast host directly — the second clause catches
+    /// a custom host, which `classify` alone cannot line up by provider identity since every custom
+    /// host is its own family of one.
+    ///
+    /// TWO EXEMPTIONS, both meaning "this choice creates no link that does not already exist":
+    ///
+    /// 1. The endpoint IS that run's own sync endpoint already — re-choosing the server you are
+    ///    already syncing with is the sanctioned same-server mode, not a new link.
+    /// 2. (A20) That run ALREADY syncs and broadcasts through the same provider. The provider sees
+    ///    both sides of the run whichever of its hosts the user picks, so picking a third one
+    ///    changes the linkability by exactly nothing.
+    ///
+    /// Exemption 2 was the A20 question, and it is a real one rather than a nicety: a warning that
+    /// fires when nothing changes is noise, and noise is what teaches people to dismiss the
+    /// warnings that do matter. The dangerous case — sync on one provider, broadcast on another,
+    /// user about to put them together — is untouched by this and still warns.
+    ///
+    /// Provider identity is not enough on its own, hence the parallel host comparisons: every
+    /// CUSTOM host classifies as its own family of one, so two custom hosts that are really the
+    /// same server would never match by provider.
+    ///
+    /// Host comparisons are lowercased, matching `ServerProvider.classify`'s own normalization.
+    /// Pure and static so it can be table-tested without a store.
+    static func shouldWarnBeforeManualSwitch(
+        endpoint: LightWalletEndpoint,
+        activeSnapshots: [MigrationNetworkSnapshot]
+    ) -> Bool {
+        let chosenProvider = ServerProvider.classify(host: endpoint.host)
+        let chosenHost = endpoint.host.lowercased()
+
+        return activeSnapshots.contains { snapshot in
+            let syncHost = snapshot.syncEndpoint.host.lowercased()
+            let broadcastHost = snapshot.broadcastEndpoint.host.lowercased()
+
+            let matchesBroadcastProvider = chosenProvider == snapshot.broadcastProvider
+            let matchesBroadcastHost = chosenHost == broadcastHost
+            guard matchesBroadcastProvider || matchesBroadcastHost else { return false }
+
+            // Exemption 1.
+            guard chosenHost != syncHost else { return false }
+
+            // Exemption 2: this run's two sides are already with one operator.
+            let runIsAlreadySingleProvider = snapshot.syncProvider == snapshot.broadcastProvider || syncHost == broadcastHost
+            return !runIsAlreadySingleProvider
+        }
+    }
 }
 
 private extension ServerSetup.State {
@@ -400,6 +499,23 @@ private extension ServerSetup.State {
 // MARK: Alerts
 
 extension AlertState where Action == ServerSetup.Action {
+    /// N6: shown when a MANUAL server choice would put sync on the same provider a live migration
+    /// run broadcasts through — the link the run's whole network law exists to avoid.
+    static func migrationPrivacyWarning() -> AlertState {
+        AlertState {
+            TextState(String(localizable: .serverSetupAlertMigrationPrivacyTitle))
+        } actions: {
+            ButtonState(role: .destructive, action: .manualSwitchPrivacyWarningConfirmed) {
+                TextState(String(localizable: .serverSetupAlertMigrationPrivacyUseAnyway))
+            }
+            ButtonState(role: .cancel, action: .alert(.dismiss)) {
+                TextState(String(localizable: .serverSetupAlertMigrationPrivacyChooseAnother))
+            }
+        } message: {
+            TextState(String(localizable: .serverSetupAlertMigrationPrivacyMessage))
+        }
+    }
+
     static func endpointSwitchFailed(_ error: ZcashError) -> AlertState {
         AlertState {
             TextState(String(localizable: .serverSetupAlertFailedTitle))

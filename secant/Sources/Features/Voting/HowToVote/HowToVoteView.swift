@@ -1,3 +1,4 @@
+#if VOTING_ENABLED
 //
 //  HowToVoteView.swift
 //  Zashi
@@ -171,3 +172,4 @@ struct HowToVoteView: View {
         String(localizable: .coinVoteHowToVoteSubtitle)
     }
 }
+#endif

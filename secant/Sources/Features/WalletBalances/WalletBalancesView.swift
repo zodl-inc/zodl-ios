@@ -17,6 +17,7 @@ struct WalletBalancesView: View {
     let tokenName: String
     let couldBeHidden: Bool
     let shortened: Bool
+    let balanceTappable: Bool
     /// macOS sidebar: align the amount + currency to the leading edge (and drop the large top
     /// padding) instead of the default centered layout. Default false → iOS unchanged.
     let leadingAligned: Bool
@@ -32,6 +33,7 @@ struct WalletBalancesView: View {
         tokenName: String,
         couldBeHidden: Bool = false,
         shortened: Bool = false,
+        balanceTappable: Bool = false,
         leadingAligned: Bool = false,
         trailingAccessory: AnyView? = nil
     ) {
@@ -39,6 +41,7 @@ struct WalletBalancesView: View {
         self.tokenName = tokenName
         self.couldBeHidden = couldBeHidden
         self.shortened = shortened
+        self.balanceTappable = balanceTappable
         self.leadingAligned = leadingAligned
         self.trailingAccessory = trailingAccessory
     }
@@ -46,7 +49,7 @@ struct WalletBalancesView: View {
     var body: some View {
         WithPerceptionTracking {
             VStack(alignment: leadingAligned ? .leading : .center, spacing: 0) {
-                balanceContent()
+                tappableBalanceContent()
                     .padding(.top, leadingAligned ? 0 : 40)
                     .anchorPreference(
                         key: ExchangeRateFeaturePreferenceKey.self,
@@ -92,6 +95,20 @@ struct WalletBalancesView: View {
         }
     }
     
+    @ViewBuilder private func tappableBalanceContent() -> some View {
+        if balanceTappable {
+            Button {
+                store.send(.balanceTapped)
+            } label: {
+                balanceContent()
+                    .contentShape(Rectangle())
+            }
+            .accessibilityIdentifier(AccessibilityID.Home.totalBalanceButton)
+        } else {
+            balanceContent()
+        }
+    }
+
     @ViewBuilder private func balanceContent() -> some View {
         HStack(spacing: 0) {
 #if !os(macOS)

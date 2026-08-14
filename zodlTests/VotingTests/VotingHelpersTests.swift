@@ -1,3 +1,4 @@
+#if VOTING_ENABLED
 import ComposableArchitecture
 import Foundation
 import Testing
@@ -223,3 +224,4 @@ private final class VotingHelpersMetadataBox: @unchecked Sendable {
     var submittedVotes: [String: [String: UInt32]] = [:]
     var records: [String: PersistedVotingRecord] = [:]
 }
+#endif

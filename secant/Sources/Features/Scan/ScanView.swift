@@ -54,9 +54,9 @@ struct ScanView: View {
                         }
                         
                         WithPerceptionTracking {
-                            if store.progress != nil {
+                            if store.progress != nil || store.isKeystoneSigningInProgress {
                                 WithPerceptionTracking {
-                                    progress(size: proxy.size, progress: store.countedProgress)
+                                    progress(size: proxy.size, progress: store.isKeystoneSigningInProgress ? 100 : store.countedProgress)
                                 }
                             }
                         }
@@ -93,7 +93,19 @@ struct ScanView: View {
                             }
                             .padding(.bottom, 15)
                             
-                            if !store.isCameraEnabled {
+                            if store.isKeystoneSigningInProgress {
+                                signingPill()
+                                // Audit 2026-08-03 (#10): Cancel STAYS during the post-scan leg —
+                                // the pill used to replace it, and with the back button hidden
+                                // (camera up) that left a hung submit with no exit at all. The
+                                // coordinator has always been built for a cancel landing
+                                // mid-proving: the tombstone paths drop the late completion and
+                                // the pop lands back on the signing screen with Reject / Get
+                                // Signature intact.
+                                primaryButton(String(localizable: .generalCancel)) {
+                                    store.send(.cancelTapped)
+                                }
+                            } else if !store.isCameraEnabled {
                                 primaryButton(String(localizable: .scanOpenSettings)) {
 #if os(iOS)
                                     if let url = URL(string: UIApplication.openSettingsURLString) {
@@ -174,7 +186,28 @@ struct ScanView: View {
         }
         .padding(.bottom, 40)
     }
-    
+
+    /// PHASE 7: the disabled "Signing…" pill that replaces the Cancel button while
+    /// `Scan.State.isKeystoneSigningInProgress` is armed — same geometry as `primaryButton` above,
+    /// but non-interactive (no `Button`) and filled dark (`shark900`/`shark200`) to read as disabled.
+    private func signingPill() -> some View {
+        HStack(spacing: 8) {
+            ProgressView()
+                .tint(Asset.Colors.ZDesign.shark200.color)
+            Text(String(localizable: .migrationKeystoneScanSigning))
+                .font(.custom(FontFamily.Inter.semiBold.name, size: 16))
+                .foregroundColor(Asset.Colors.ZDesign.shark200.color)
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity)
+        .background {
+            RoundedRectangle(cornerRadius: Design.Radius._xl)
+                .fill(Asset.Colors.ZDesign.shark900.color)
+        }
+        .padding(.bottom, 40)
+    }
+
     private func torchButton(size: CGSize) -> some View {
         let topLeft = ScanView.rectOfInterest(size, popoverRatio).origin
         let frameSize = ScanView.frameSize(size, popoverRatio)

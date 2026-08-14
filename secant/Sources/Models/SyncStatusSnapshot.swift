@@ -26,7 +26,14 @@ struct SyncStatusSnapshot: Equatable {
             return SyncStatusSnapshot(state, String(localizable: .syncMessageUnprepared))
             
         case .error(let error):
-            return SyncStatusSnapshot(state, String(localizable: .syncMessageError(error.toZcashError().detailedMessage)))
+            let zcashError = error.toZcashError()
+            // A server-validation failure gets a written explanation naming the server and the
+            // consensus branch IDs, used verbatim: it reads as prose, so it takes neither the
+            // "Error: " prefix nor the SDK's raw dump. Every other error keeps the existing format.
+            if let message = zcashError.incompatibleServerMessage {
+                return SyncStatusSnapshot(state, message)
+            }
+            return SyncStatusSnapshot(state, String(localizable: .syncMessageError(zcashError.detailedMessage)))
 
         case .stopped:
             return SyncStatusSnapshot(state, String(localizable: .syncMessageStopped))

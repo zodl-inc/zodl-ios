@@ -16,6 +16,7 @@ struct AddKeystoneHWWallet {
     @ObservableState
     struct State: Equatable {
         var isHelpSheetPresented = false
+        var isImportingAccount = false
         var isInAppBrowserOn = false
         var isKSAccountSelected = false
         var randomSuccessIconIndex = 0
@@ -61,17 +62,12 @@ struct AddKeystoneHWWallet {
             
         }
         
-        // [B4-4] `importAccount` can legitimately block for a long time while a restore is
-        // syncing (the import write waits on the shared data.db behind the scan pass, and the
-        // SDK restarts the sync pass afterwards). Surface the wait instead of a dead button.
-        var isImportInFlight = false
-
         init() { }
     }
 
     enum Action: BindableAction, Equatable {
         case accountImported(AccountUUID)
-        case accountImportFailed
+        case accountImportFailed(String)
         case accountImportSucceeded
         case accountTapped
         case backToHomeTapped
@@ -103,7 +99,6 @@ struct AddKeystoneHWWallet {
                 state.isKSAccountSelected = false
                 state.zcashAccounts = nil
                 state.randomSuccessIconIndex = Int.random(in: 1...2)
-                state.isImportInFlight = false
                 return .none
             
             case .backToHomeTapped:
@@ -127,13 +122,19 @@ struct AddKeystoneHWWallet {
                 return .none
 
             case .unlockTapped(let birthday):
-                // [B4-4] Re-entry guard: repeated clicks while the import is waiting on the
-                // busy data.db must not queue additional imports.
-                guard !state.isImportInFlight else { return .none }
                 guard let account = state.zcashAccounts, let firstAccount = account.accounts.first else {
                     return .none
                 }
-                state.isImportInFlight = true
+                // [B4-4] `importAccount` can legitimately block for a long time while a restore
+                // is syncing (the import write waits on the shared data.db behind the scan pass,
+                // and the SDK restarts the sync pass afterwards) — surface the wait instead of a
+                // dead button. Re-taps while an import is in flight would also start a duplicate
+                // importAccount; the duplicate throws (the account already exists) and pops the
+                // failure sheet over the success screen.
+                guard !state.isImportingAccount else {
+                    return .none
+                }
+                state.isImportingAccount = true
                 return .run { send in
                     do {
                         let uuid = try await sdkSynchronizer.importAccount(
@@ -147,26 +148,37 @@ struct AddKeystoneHWWallet {
                         )
                         if let uuid {
                             await send(.accountImported(uuid))
+                        } else {
+                            // The live SDK never returns nil today, but the interface
+                            // permits it; treat it as a failure so isImportingAccount
+                            // can't be left stuck true.
+                            await send(.accountImportFailed("Keystone account import returned no account UUID"))
                         }
                     } catch {
-                        // TODO: error handling
-                        await send(.accountImportFailed)
+                        // Surface only the SDK error's localizedDescription (a static
+                        // code + message, e.g. "ZRUST0067: …"); the raw Rust error
+                        // string is never included, so no UFVK/seed data can leak.
+                        await send(.accountImportFailed(error.localizedDescription))
                     }
                 }
-                
+
             case .accountImported(let uuid):
                 return .run { send in
-                    let walletAccounts = try await sdkSynchronizer.walletAccounts()
-                    await send(.loadedWalletAccounts(walletAccounts, uuid))
-                    await send(.accountImportSucceeded)
+                    do {
+                        let walletAccounts = try await sdkSynchronizer.walletAccounts()
+                        await send(.loadedWalletAccounts(walletAccounts, uuid))
+                        await send(.accountImportSucceeded)
+                    } catch {
+                        await send(.accountImportFailed(error.localizedDescription))
+                    }
                 }
-                
+
             case .accountImportFailed:
-                state.isImportInFlight = false
+                state.isImportingAccount = false
                 return .none
 
             case .accountImportSucceeded:
-                state.isImportInFlight = false
+                state.isImportingAccount = false
                 return .none
 
             case let .loadedWalletAccounts(walletAccounts, uuid):

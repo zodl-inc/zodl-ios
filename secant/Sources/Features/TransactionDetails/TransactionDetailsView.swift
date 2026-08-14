@@ -66,8 +66,8 @@ struct TransactionDetailsView: View {
                         transactionDetailsList()
                             .padding(.bottom, store.isSwap ? 0 : 20)
                             .screenHorizontalPadding()
-                        
-                        if store.areMessagesResolved && !store.transaction.isShieldingTransaction {
+
+                        if store.areMessagesResolved && !store.transaction.isShieldingTransaction && !store.transaction.isMigrationTransaction {
                             if !store.memos.isEmpty {
                                 messageViews()
                                     .screenHorizontalPadding()
@@ -223,7 +223,7 @@ struct TransactionDetailsView: View {
                     store.send(.noteButtonTapped)
                 }
                 
-                if store.transaction.isSentTransaction && !store.transaction.isShieldingTransaction && !store.isSwap {
+                if store.transaction.isSentTransaction && !store.transaction.isShieldingTransaction && !store.isSwap && !store.transaction.isMigrationTransaction {
                     if store.alias == nil {
                         ZashiButton(String(localizable: .transactionHistorySaveAddress)) {
                             store.send(.saveAddressTapped)
@@ -355,7 +355,7 @@ extension TransactionDetailsView {
                             .padding(.vertical, 2)
                     }
                 } else {
-                    Text(store.transaction.netValue)
+                    Text(store.transaction.displayedAmount)
                     + Text(" \(tokenName)")
                         .foregroundColor(Design.Text.quaternary.color(colorScheme))
                 }
@@ -367,7 +367,7 @@ extension TransactionDetailsView {
         .frame(maxWidth: .infinity)
         .padding(.bottom, 24)
     }
-    
+
     @ViewBuilder func headerViewSwapToZec() -> some View {
         VStack(alignment: .center, spacing: 0) {
             HStack(spacing: 0) {
@@ -473,7 +473,7 @@ extension TransactionDetailsView {
             
             Spacer()
             
-            if store.transaction.isSentTransaction && !store.transaction.isShieldingTransaction {
+            if store.transaction.isSentTransaction && !store.transaction.isShieldingTransaction && !store.transaction.isMigrationTransaction {
                 if store.areDetailsExpanded {
                     ZashiButton(
                         String(localizable: .generalLess),
@@ -512,6 +512,9 @@ extension TransactionDetailsView {
     @ViewBuilder func transactionDetailsList() -> some View {
         WithPerceptionTracking {
             LazyVStack(alignment: .leading, spacing: 0) {
+                let isSentToRowShown = store.transaction.isSentTransaction && !store.transaction.isShieldingTransaction
+                    && !(store.transaction.isMigrationTransaction && store.alias == nil && store.transaction.address.isEmpty)
+
                 transactionDetailsTitle()
 
                 if store.isSwap {
@@ -530,7 +533,7 @@ extension TransactionDetailsView {
                     }
                 }
 
-                if store.transaction.isSentTransaction && !store.transaction.isShieldingTransaction {
+                if isSentToRowShown {
                     detailView(
                         title: store.transaction.isSwapToZec
                         ? String(localizable: .swapToZecDepositTo)
@@ -572,7 +575,7 @@ extension TransactionDetailsView {
                             ? String(localizable: .generalHideBalancesMost)
                             : store.transaction.id.truncateMiddle,
                             icon: Asset.Assets.copy.image,
-                            rowAppereance: (store.transaction.isSentTransaction && !store.transaction.isShieldingTransaction) ? .middle : .top
+                            rowAppereance: isSentToRowShown ? .middle : .top
                         )
                         .onTapGesture {
                             store.send(.transactionIdTapped)

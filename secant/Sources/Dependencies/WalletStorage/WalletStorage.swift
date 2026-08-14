@@ -38,6 +38,11 @@ struct WalletStorage {
         static let zcashStoredTorSetupFlag = "zcashStoredTorSetupFlag"
         static let zcashStoredVotingHotkey = "zcashStoredVotingHotkey"
         static let zcashStoredZodlAnnouncementFlag = "zcashStoredZodlAnnouncementFlag"
+        // This key is deliberately NOT removed in `resetZashi`. The Ironwood announcement is shown once
+        // per device and must survive a wallet reset and an app reinstall; wiping it here would re-show
+        // the screen after every restore. It gets added to the reset method only when we decide to
+        // retire the announcement screen.
+        static let zcashStoredIronwoodAnnouncementFlag = "zcashStoredIronwoodAnnouncementFlag"
 
         /// Versioning of the stored data
         static let zcashKeychainVersion = 1
@@ -710,6 +715,36 @@ struct WalletStorage {
             return nil
         }
         
+        return try? decode(json: reqData, as: Bool.self)
+    }
+
+    func importIronwoodAnnouncementFlag(_ enabled: Bool) throws {
+        guard let data = try? encode(object: enabled) else {
+            throw KeychainError.encoding
+        }
+
+        do {
+            try setData(data, forKey: Constants.zcashStoredIronwoodAnnouncementFlag)
+        } catch KeychainError.duplicate {
+            try updateData(data, forKey: Constants.zcashStoredIronwoodAnnouncementFlag)
+        } catch {
+            throw WalletStorageError.storageError(error)
+        }
+    }
+
+    func exportIronwoodAnnouncementFlag() -> Bool? {
+        let reqData: Data?
+
+        do {
+            reqData = try data(forKey: Constants.zcashStoredIronwoodAnnouncementFlag)
+        } catch {
+            return nil
+        }
+
+        guard let reqData else {
+            return nil
+        }
+
         return try? decode(json: reqData, as: Bool.self)
     }
 

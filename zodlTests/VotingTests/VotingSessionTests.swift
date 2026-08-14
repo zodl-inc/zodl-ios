@@ -1,3 +1,4 @@
+#if VOTING_ENABLED
 import Testing
 import Foundation
 @testable import zodl_internal
@@ -67,3 +68,4 @@ import Foundation
         )
     }
 }
+#endif

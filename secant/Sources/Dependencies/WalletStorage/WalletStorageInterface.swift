@@ -123,6 +123,11 @@ struct WalletStorageClient {
     var importTorSetupFlag: @Sendable (Bool) throws -> Void
     var exportTorSetupFlag: @Sendable () -> Bool? = { nil }
 
+    /// Ironwood announcement flag. `true` once the announcement screen has been shown
+    /// and acknowledged on this device. Absent or `false` means "not yet shown".
+    var importIronwoodAnnouncementFlag: @Sendable (Bool) throws -> Void
+    var exportIronwoodAnnouncementFlag: @Sendable () -> Bool? = { nil }
+
     /// Per-account voting hotkey. Scoped by `AccountUUID` so two accounts on
     /// the same device get distinct hotkeys (and therefore distinct on-chain
     /// voter identities), instead of being linkable via a shared hotkey.

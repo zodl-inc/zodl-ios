@@ -12,6 +12,8 @@ enum FeatureFlag: String, CaseIterable, Codable {
     case onboardingFlow
     case testBackupPhraseFlow
     case showFiatConversion
+    /// [#1755] slipstream: chooses the sync engine at synchronizer construction. ON by default —
+    /// slipstream is the engine Zodl ships and therefore the one migration must be validated on.
     case useSlipstreamSynchronizer
 
     var enabledByDefault: Bool {
@@ -20,16 +22,7 @@ enum FeatureFlag: String, CaseIterable, Codable {
         case .onboardingFlow: return false
         case .testBackupPhraseFlow: return false
         case .showFiatConversion: return false
-        case .useSlipstreamSynchronizer:
-            // Platform-split default: macOS ships slipstream-first (Beta 4 RC1+); iOS stays
-            // on the legacy engine until the team flips it DELIBERATELY. This makes merging
-            // this branch into main behavior-preserving for the shipping iOS app — the
-            // macOS target is additive, and iOS keeps the engine it released with.
-            #if os(macOS)
-            return true
-            #else
-            return true
-            #endif
+        case .useSlipstreamSynchronizer: return true
         }
     }
 }

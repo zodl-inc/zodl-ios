@@ -9,6 +9,7 @@ import ComposableArchitecture
 extension AutoServerSelectionClient: DependencyKey {
     static let liveValue = AutoServerSelectionClient(
         findBestServer: {
+            @Dependency(\.migrationManager) var migrationManager
             @Dependency(\.userStoredPreferences) var userStoredPreferences
             @Dependency(\.zcashSDKEnvironment) var zcashSDKEnvironment
             @Dependency(\.sdkSynchronizer) var sdkSynchronizer
@@ -16,7 +17,22 @@ extension AutoServerSelectionClient: DependencyKey {
             guard userStoredPreferences.automaticServerSelection() == true else { return nil }
 
             let network = zcashSDKEnvironment.network().networkType
-            let endpoints = ZcashSDKEnvironment.endpoints(for: network)
+            let allEndpoints = ZcashSDKEnvironment.endpoints(for: network)
+
+            // N4: while ANY account has an active migration network snapshot, auto-selection stays
+            // within the snapshotted sync-provider family — never propose a switch that would drift
+            // the wallet away from an in-flight run's deliberately-separated broadcast provider. No
+            // active snapshots means no filtering, byte-identical to the pre-migration behaviour.
+            let snapshots = migrationManager.activeNetworkSnapshots()
+            let endpoints = allEndpoints.filter {
+                MigrationServerPinning.isCandidateAllowed(host: $0.host, activeSnapshots: snapshots)
+            }
+            guard !endpoints.isEmpty else {
+                if !snapshots.isEmpty {
+                    LoggerProxy.event("[AutoServerSelection] Skipped: migration pinning left no candidates")
+                }
+                return nil
+            }
 
             let ranked = await sdkSynchronizer.evaluateBestOf(
                 endpoints,
@@ -34,6 +50,7 @@ extension AutoServerSelectionClient: DependencyKey {
             return best
         },
         applySwitch: { candidate in
+            @Dependency(\.migrationManager) var migrationManager
             @Dependency(\.userStoredPreferences) var userStoredPreferences
             @Dependency(\.zcashSDKEnvironment) var zcashSDKEnvironment
             @Dependency(\.sdkSynchronizer) var sdkSynchronizer
@@ -45,6 +62,15 @@ extension AutoServerSelectionClient: DependencyKey {
 
             let current = zcashSDKEnvironment.endpoint()
             guard candidate.host != current.host || candidate.port != current.port else { return false }
+
+            // N4 again, deliberately: the pending-candidate path can apply MINUTES after the
+            // benchmark ran, by which time a snapshot may have appeared or changed. A now-stale
+            // cross-provider candidate has to be dropped here, not applied.
+            let snapshots = migrationManager.activeNetworkSnapshots()
+            guard MigrationServerPinning.isCandidateAllowed(host: candidate.host, activeSnapshots: snapshots) else {
+                LoggerProxy.event("[AutoServerSelection] Switch skipped: candidate no longer allowed by migration pinning")
+                return false
+            }
 
             do {
                 let didSwitch = try await transactionGuard.switchIfIdle {

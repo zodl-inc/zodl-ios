@@ -24,6 +24,9 @@ extension SwapAndPayClient: DependencyKey {
             swapAssets: {
                 try await Near1Click.liveValue.swapAssets()
             },
+            swapAssetsCatalog: {
+                try await Near1Click.liveValue.swapAssetsCatalog()
+            },
             quote: { dry, isSwapToZec, exactInput, slippageTolerance, zecAsset, toAsset, refundTo, destination, amount in
                 try await Near1Click.liveValue.quote(
                     dry,

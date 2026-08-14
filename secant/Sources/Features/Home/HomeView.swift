@@ -27,7 +27,8 @@ struct HomeView: View {
                     ),
                     tokenName: tokenName,
                     couldBeHidden: true,
-                    shortened: true
+                    shortened: true,
+                    balanceTappable: true
                 )
                 .padding(.top, 1)
 
@@ -116,6 +117,9 @@ struct HomeView: View {
             .zashiSheet(isPresented: $store.payRequest, horizontalPadding: 0) {
                 // FIXME: delete this
                 payRequestContent()
+            }
+            .zashiSheet(isPresented: $store.poolBalancesRequest) {
+                poolBalancesContent()
             }
             .zashiNavigationBarItems(
                 leading:

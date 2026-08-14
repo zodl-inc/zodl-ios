@@ -4,11 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-ZODL (formerly Zashi) is an iOS Zcash wallet built with SwiftUI and The Composable Architecture (TCA). It uses the Zcash Swift SDK (`ZcashLightClientKit`) for blockchain operations.
-
-## App name
-
-The app's name is always written **ZODL** — all uppercase. Whenever generated text refers to the app by name — UI strings (`Localizable.xcstrings`), code, comments, documentation, commit messages, PR titles/descriptions, etc. — it MUST be `ZODL`, never `Zodl` (nor `zodl`/`ZODl`). This rule is about the app name as a word; it does NOT change fixed technical identifiers such as the `zodl_internal` module, the `zodl-ios` repository, scheme names, or bundle IDs. The former name "Zashi" is unaffected.
+Zodl (formerly Zashi) is an iOS Zcash wallet built with SwiftUI and The Composable Architecture (TCA). It uses the Zcash Swift SDK (`ZcashLightClientKit`) for blockchain operations.
 
 ## Build & Development
 
@@ -90,7 +86,7 @@ The app ships a complete design system — reusable SwiftUI components (`secant/
 - **Components:** Reuse the existing `UIComponents` (e.g. `ZashiButton`, plus the badges, text fields, toasts, sheets, toggles, toolbars, tooltips, etc. under `UIComponents/`) instead of hand-rolling new controls. Example: `ZashiButton(String(localizable: .generalRequest)) { action() }` — don't build a styled `Button` from scratch.
 - **Colors:** Use the generated palette — `Asset.Colors.<name>.color` (including the `Asset.Colors.ZDesign.*` semantic ramp). Never hardcode `Color(red:green:blue:)` or hex literals.
 - **Assets / icons:** Use bundled assets via `Asset.Assets.<name>.image` (namespaced, e.g. `Asset.Assets.Icons.*`, `Asset.Assets.Brandmarks.*`). Prefer these over SF Symbols (`Image(systemName:)`).
-- **Strings:** Every user-facing string goes into `Localizable.xcstrings` and is referenced with `String(localizable: .someKey)` — the established idiom (~850 call sites; there are no hardcoded display literals in views). Never put display strings directly in code. (Per **App name**, the app is always `ZODL` in those strings.)
+- **Strings:** Every user-facing string goes into `Localizable.xcstrings` and is referenced with `String(localizable: .someKey)` — the established idiom (~850 call sites; there are no hardcoded display literals in views). Never put display strings directly in code.
 - **When the design system can't cover a need** — no suitable component, color, or asset exists — **stop and tell the user** instead of silently creating a one-off. Extend the design system deliberately, with the user's agreement, rather than diverging from it.
 
 > `Asset.*` symbols are SwiftGen-generated into `Sources/Generated/` — do not edit those files; add the asset/color to the `.xcassets` catalogue and let the build regenerate them.

@@ -18,6 +18,7 @@ enum AccessibilityID {
         static let payButton = "home.payButton"
         static let swapButton = "home.swapButton"
         static let moreButton = "home.moreButton"
+        static let totalBalanceButton = "home.totalBalanceButton"
     }
 
     enum MoreSheet {

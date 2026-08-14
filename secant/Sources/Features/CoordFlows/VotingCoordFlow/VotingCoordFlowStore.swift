@@ -1,3 +1,4 @@
+#if VOTING_ENABLED
 //
 //  VotingCoordFlowStore.swift
 //  Zashi
@@ -417,3 +418,4 @@ struct SkippedQuestionsSheetData: Equatable {
     let roundId: String
     let skippedDisplayIndices: [Int]
 }
+#endif

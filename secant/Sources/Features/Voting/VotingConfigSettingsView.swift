@@ -1,3 +1,4 @@
+#if VOTING_ENABLED
 import SwiftUI
 import Combine
 import ComposableArchitecture
@@ -672,3 +673,4 @@ struct VotingConfigSettingsView: View {
         }
     )
 }
+#endif

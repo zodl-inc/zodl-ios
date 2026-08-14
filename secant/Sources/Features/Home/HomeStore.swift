@@ -23,6 +23,7 @@ struct Home {
         var migratingDatabase = true
         var moreRequest = false
         var payRequest = false
+        var poolBalancesRequest = false
         var smartBannerState = SmartBanner.State.initial
         var walletConfig: WalletConfig
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
@@ -75,6 +76,8 @@ struct Home {
         case buyTapped
         case currencyConversionCloseTapped
         case currencyConversionSetupTapped
+        /// The migration smart banner was tapped — Root opens `MigrationCoordFlow`.
+        case migrationTapped
         case foundTransactions
         case keystoneBannerTapped
         case moreTapped
@@ -83,6 +86,7 @@ struct Home {
         case onDisappear
         case payTapped
         case payWithNearTapped
+        case poolBalancesDismissTapped
         case presentKeystoneWeb
         case rateTooltipTapped
         case receiveScreenRequested
@@ -144,14 +148,17 @@ struct Home {
                 state.isRateEducationEnabled = userStoredPreferences.exchangeRate() == nil
                 return .merge(
                     .publisher {
+                        // Filter BEFORE throttling: throttling the raw stream with `latest: true`
+                        // lets an unrelated event in the same window replace `foundTransactions`
+                        // as "latest" and silently drop the refresh trigger.
                         sdkSynchronizer.eventStream()
-                            .throttle(for: .seconds(0.2), scheduler: mainQueue, latest: true)
                             .compactMap {
                                 if case SynchronizerEvent.foundTransactions = $0 {
                                     return Home.Action.foundTransactions
                                 }
                                 return nil
                             }
+                            .throttle(for: .seconds(0.2), scheduler: mainQueue, latest: true)
                     }
                     .cancellable(id: state.CancelEventId, cancelInFlight: true),
                     .send(.smartBanner(.onAppear)),
@@ -292,6 +299,14 @@ struct Home {
                 state.isRateTooltipEnabled = state.walletBalancesState.isExchangeRateStale
                 return .none
 
+            case .walletBalances(.balanceTapped):
+                state.poolBalancesRequest = true
+                return .none
+
+            case .poolBalancesDismissTapped:
+                state.poolBalancesRequest = false
+                return .none
+
             case .alert(.presented(let action)):
                 return .send(action)
 
@@ -308,6 +323,11 @@ struct Home {
             case .binding:
                 return .none
                 
+            case .migrationTapped:
+                // Root consumes this to open `MigrationCoordFlow` (same shape as
+                // `.currencyConversionSetupTapped` below).
+                return .none
+
             case .currencyConversionSetupTapped:
                 return .none
 
@@ -356,6 +376,9 @@ struct Home {
 
             case .smartBanner(.currencyConversionScreenRequested):
                 return .send(.currencyConversionSetupTapped)
+
+            case .smartBanner(.migrationScreenRequested):
+                return .send(.migrationTapped)
 
             case .smartBanner(.torSetupScreenRequested):
                 return .send(.torSetupTapped(false))

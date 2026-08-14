@@ -1,3 +1,4 @@
+#if VOTING_ENABLED
 //
 //  ReviewVotesStore.swift
 //  Zashi
@@ -41,3 +42,4 @@ struct ReviewDrafts {
         EmptyReducer()
     }
 }
+#endif

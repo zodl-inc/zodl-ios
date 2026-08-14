@@ -135,9 +135,41 @@ extension SendCoordFlow {
                 }
                 return .none
 
+            // MOB-1510: pop to `confirmWithKeystone` first so this only ever applies once (`break`)
+            // and drops the stale `.scan`/`.sending` pushed underneath before the append.
+            case .path(.element(id: _, action: .confirmWithKeystone(.keystoneFirmwareUpdateRequired))):
+                for (id, element) in zip(state.path.ids, state.path) {
+                    if case .confirmWithKeystone(let sendConfirmationState) = element {
+                        state.path.pop(to: id)
+                        state.path.append(.keystoneFirmwareUpdate(sendConfirmationState))
+                        break
+                    }
+                }
+                return .none
+
+            // Reset `confirmWithKeystone` here (not in its own reducer) so a fresh scan after a
+            // firmware update isn't silently dropped by the `isKeystoneCodeFound` guard in `foundPCZT`.
+            case .path(.element(id: _, action: .keystoneFirmwareUpdate(.keystoneFirmwareUpdateCloseTapped))):
+                for (id, element) in zip(state.path.ids, state.path) {
+                    if element.is(\.confirmWithKeystone) {
+                        state.path.pop(to: id)
+                        state.path[id: id, case: \.confirmWithKeystone]?.detectedKeystoneFirmware = nil
+                        state.path[id: id, case: \.confirmWithKeystone]?.isKeystoneCodeFound = false
+                        break
+                    }
+                }
+                keystoneHandler.resetQRDecoder()
+                return .none
+
                 // MARK: - Request ZEC Confirmation
                 
-            case .path(.element(id: _, action: .requestZecConfirmation(.goBackTappedFromRequestZec))):
+            // Share this case with the screen's own back button rather than a separate single
+            // `popLast()`, so cancel from the Orchard-spend warning sheet can never diverge from
+            // whatever "go back" already does here — see the identical reasoning in
+            // ScanCoordFlowCoordinator, where diverging bodies actually did strand the user on a
+            // stale scan screen.
+            case .path(.element(id: _, action: .requestZecConfirmation(.goBackTappedFromRequestZec))),
+                    .path(.element(id: _, action: .requestZecConfirmation(.cancelTapped))):
                 state.path.removeAll()
                 return .none
 

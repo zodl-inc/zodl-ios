@@ -27,6 +27,22 @@ Dry run (all checks, no build):
 
     ./Scripts/release.sh --variant ios-appstore --ref release/3.8.0 --version 3.8.0 --build 3 --dry-run
 
+Build, upload, and submit to App Review in one go (`appstore` only):
+
+    ./Scripts/release.sh --variant appstore --ref release/3.8.0 --version 3.8.0 --build 3 --submit-review
+
+Submit a build that is already on App Store Connect (omit `--ref`):
+
+    ./Scripts/release.sh --variant appstore --version 3.8.0 --build 3 --submit-review
+
+Submitting creates (or adopts) the App Store version record, copies promotional
+text from the live version into any localization that doesn't have one yet,
+writes What's New for every enabled localization from
+`secant/Resources/WhatsNew/whatsNew*.json` (the entry matching `--version`),
+attaches the build (replacing a wrong one), and submits with manual release —
+you still press Release in App Store Connect after approval. It refuses to run
+when a version is already in review or approved-but-unreleased.
+
 Bump the marketing version + build (the deliberate version-change step, run in `main`):
 
     ./Scripts/bump.sh --version 3.8.0 --build 1 --target ios
@@ -35,7 +51,7 @@ Bump the marketing version + build (the deliberate version-change step, run in `
 `zodlmac-internal`), `ios` (all iOS app targets), `mac` (all macOS app targets), or `all`. Targets are
 versioned independently — bumping iOS never rewrites the macOS app.
 
-Other flags: `--yes` (skip confirmation), `--skip-tests`, `--help`.
+Other flags: `-y` / `--yes` (skip confirmation), `--skip-tests`, `--submit-review` (`appstore` only), `--help`.
 
 ## What it checks before building
 
@@ -50,6 +66,14 @@ checkout missing its platform's FFI slice — every variant needs this checkout,
 just macOS. macOS variants additionally require the matching certificates (TestFlight:
 Apple Distribution + Mac Installer Distribution; DMG: Developer ID Application). Run with
 `--dry-run` to see it without building.
+
+If the project at the built ref references local Swift packages (e.g. a local
+`../ZcashLightClientKit` checkout), preflight fails when that directory is
+missing and otherwise warns with the package's git state — the build consumes
+that checkout as-is (HEAD plus any uncommitted changes), so it is not
+reproducible from this repo alone. The throwaway build worktree is created
+beside the repo precisely so those relative references resolve to the same
+directories Xcode uses.
 
 ## Notifications
 

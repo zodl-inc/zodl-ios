@@ -1,3 +1,4 @@
+#if VOTING_ENABLED
 //
 //  PollsListView.swift
 //  Zashi
@@ -536,3 +537,4 @@ private struct PollStatusPillStyle {
     let backgroundColor: Color
     let borderColor: Color
 }
+#endif

@@ -55,6 +55,11 @@ private let enUSZatoshiSamples: [ZatoshiStringRepresentationTests.Sample] = [
     ZatoshiStringRepresentationTests.Sample(zatoshi: 99_000, prefix: .none, format: .expanded, most: "0.000", least: "99"),
     ZatoshiStringRepresentationTests.Sample(zatoshi: 100_000, prefix: .none, format: .expanded, most: "0.001", least: ""),
     ZatoshiStringRepresentationTests.Sample(zatoshi: 25_793_456, prefix: .none, format: .expanded, most: "0.257", least: "93456"),
+    // Dust guarantee: pool-balances sheet must show amounts down to a single zatoshi, so
+    // `.expanded` must never drop a digit, even when the least-significant tail is all zeros.
+    ZatoshiStringRepresentationTests.Sample(zatoshi: 1, prefix: .none, format: .expanded, most: "0.000", least: "00001"),
+    ZatoshiStringRepresentationTests.Sample(zatoshi: 14_090_955, prefix: .none, format: .expanded, most: "0.140", least: "90955"),
+    ZatoshiStringRepresentationTests.Sample(zatoshi: 14_000_000, prefix: .none, format: .expanded, most: "0.140", least: ""),
     // Prefix Plus — Abbreviated
     ZatoshiStringRepresentationTests.Sample(zatoshi: 0, prefix: .plus, format: .abbreviated, most: "+0.000", least: ""),
     ZatoshiStringRepresentationTests.Sample(zatoshi: 99_000, prefix: .plus, format: .abbreviated, most: "+0.000...", least: ""),

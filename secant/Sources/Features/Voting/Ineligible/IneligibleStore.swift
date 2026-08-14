@@ -1,3 +1,4 @@
+#if VOTING_ENABLED
 //
 //  IneligibleStore.swift
 //  Zashi
@@ -23,3 +24,4 @@ struct Ineligible {
         EmptyReducer()
     }
 }
+#endif

@@ -142,10 +142,44 @@ extension ScanCoordFlow {
                     }
                 }
                 return .none
-                
+
+            // MOB-1510: pop to `confirmWithKeystone` first so this only ever applies once (`break`)
+            // and drops the stale `.scan`/`.sending` pushed underneath before the append.
+            case .path(.element(id: _, action: .confirmWithKeystone(.keystoneFirmwareUpdateRequired))):
+                for (id, element) in zip(state.path.ids, state.path) {
+                    if case .confirmWithKeystone(let sendConfirmationState) = element {
+                        state.path.pop(to: id)
+                        state.path.append(.keystoneFirmwareUpdate(sendConfirmationState))
+                        break
+                    }
+                }
+                return .none
+
+            // Reset `confirmWithKeystone` here (not in its own reducer) so a fresh scan after a
+            // firmware update isn't silently dropped by the `isKeystoneCodeFound` guard in `foundPCZT`.
+            case .path(.element(id: _, action: .keystoneFirmwareUpdate(.keystoneFirmwareUpdateCloseTapped))):
+                for (id, element) in zip(state.path.ids, state.path) {
+                    if element.is(\.confirmWithKeystone) {
+                        state.path.pop(to: id)
+                        state.path[id: id, case: \.confirmWithKeystone]?.detectedKeystoneFirmware = nil
+                        state.path[id: id, case: \.confirmWithKeystone]?.isKeystoneCodeFound = false
+                        break
+                    }
+                }
+                keystoneHandler.resetQRDecoder()
+                return .none
+
                 // MARK: - Request ZEC Confirmation
                 
-            case .path(.element(id: _, action: .requestZecConfirmation(.goBackTappedFromRequestZec))):
+            // Cancel from the Orchard-spend warning sheet must land exactly where the screen's own
+            // back button does — sharing this case (rather than a separate single `popLast()`) is
+            // what guarantees that when the path is [sendForm, scan, requestZecConfirmation] (the
+            // send form's own Scan button resolving to a full payment request; see
+            // `.scan(.foundRequestZec(.request))` below, which pushes `requestZecConfirmation`
+            // without popping `.scan`), cancel walks back to `sendForm` instead of stranding the
+            // user on the stale scan/camera screen.
+            case .path(.element(id: _, action: .requestZecConfirmation(.goBackTappedFromRequestZec))),
+                    .path(.element(id: _, action: .requestZecConfirmation(.cancelTapped))):
                 for (id, element) in zip(state.path.ids, state.path) {
                     if element.is(\.sendForm) {
                         state.path.pop(to: id)

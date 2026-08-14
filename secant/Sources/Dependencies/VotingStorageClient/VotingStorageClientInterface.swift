@@ -1,3 +1,4 @@
+#if VOTING_ENABLED
 import ComposableArchitecture
 import Foundation
 
@@ -18,3 +19,4 @@ struct VotingStorageClient {
     var loadSession: @Sendable (_ roundId: Data) async -> VotingSession?
     var clearRound: @Sendable (_ roundId: Data) async -> Void
 }
+#endif

@@ -1,3 +1,4 @@
+#if VOTING_ENABLED
 import ComposableArchitecture
 import Foundation
 import Testing
@@ -1119,3 +1120,4 @@ private enum TestError: LocalizedError {
         }
     }
 }
+#endif

@@ -83,28 +83,6 @@ extension SwapAndPayCoordFlow {
             case .path(.element(id: _, action: .scan(.foundPCZT(let pcztWithSigs)))):
                 for (id, element) in zip(state.path.ids, state.path) {
                     if case .confirmWithKeystone(let sendConfirmationState) = element {
-                        let depositAddress = state.swapAndPayState.quote?.depositAddress ?? state.swapAndPayState.address
-                        let crosspay = state.swapAndPayState.isSwapExperienceEnabled
-                        
-                        if let provider = state.swapAndPayState.selectedAsset?.provider {
-                            let totalFees = state.swapAndPayState.totalFees
-                            let totalUSDFees = state.swapAndPayState.totalUSDFees
-                            userMetadataProvider.markTransactionAsSwapFor(
-                                depositAddress,
-                                provider,
-                                totalFees,
-                                totalUSDFees,
-                                state.swapAndPayState.zecAsset?.id ?? "",
-                                state.swapAndPayState.selectedAsset?.id ?? "",
-                                !crosspay,
-                                SwapConstants.pendingDeposit,
-                                state.swapAndPayState.zecToBeSpendInQuoteUSFormat
-                            )
-                            if let account = state.selectedWalletAccount?.account {
-                                try? userMetadataProvider.store(account)
-                            }
-                        }
-
                         state.path.append(.sending(sendConfirmationState))
                         return .send(.path(.element(id: id, action: .confirmWithKeystone(.foundPCZT(pcztWithSigs)))))
                     }
@@ -161,6 +139,59 @@ extension SwapAndPayCoordFlow {
                         break
                     }
                 }
+                return .none
+
+            // MOB-1510: pop to `confirmWithKeystone` first so this only ever applies once (`break`)
+            // and drops the stale `.scan`/`.sending` pushed underneath before the append.
+            case .path(.element(id: _, action: .confirmWithKeystone(.keystoneFirmwareUpdateRequired))):
+                for (id, element) in zip(state.path.ids, state.path) {
+                    if case .confirmWithKeystone(let sendConfirmationState) = element {
+                        state.path.pop(to: id)
+                        state.path.append(.keystoneFirmwareUpdate(sendConfirmationState))
+                        break
+                    }
+                }
+                return .none
+
+            // MOB-1510: deferred until the firmware gate accepts — writing this any earlier (from
+            // `.scan(.foundPCZT)`) would record a swap for a transaction the gate is about to
+            // block, and `UserMetadataProviderInterface` has no unmark/remove API to undo that.
+            case .path(.element(id: _, action: .confirmWithKeystone(.keystoneFirmwareAccepted))):
+                let depositAddress = state.swapAndPayState.quote?.depositAddress ?? state.swapAndPayState.address
+                let crosspay = state.swapAndPayState.isSwapExperienceEnabled
+
+                if let provider = state.swapAndPayState.selectedAsset?.provider {
+                    let totalFees = state.swapAndPayState.totalFees
+                    let totalUSDFees = state.swapAndPayState.totalUSDFees
+                    userMetadataProvider.markTransactionAsSwapFor(
+                        depositAddress,
+                        provider,
+                        totalFees,
+                        totalUSDFees,
+                        state.swapAndPayState.zecAsset?.id ?? "",
+                        state.swapAndPayState.selectedAsset?.id ?? "",
+                        !crosspay,
+                        SwapConstants.pendingDeposit,
+                        state.swapAndPayState.zecToBeSpendInQuoteUSFormat
+                    )
+                    if let account = state.selectedWalletAccount?.account {
+                        try? userMetadataProvider.store(account)
+                    }
+                }
+                return .none
+
+            // Reset `confirmWithKeystone` here (not in its own reducer) so a fresh scan after a
+            // firmware update isn't silently dropped by the `isKeystoneCodeFound` guard in `foundPCZT`.
+            case .path(.element(id: _, action: .keystoneFirmwareUpdate(.keystoneFirmwareUpdateCloseTapped))):
+                for (id, element) in zip(state.path.ids, state.path) {
+                    if element.is(\.confirmWithKeystone) {
+                        state.path.pop(to: id)
+                        state.path[id: id, case: \.confirmWithKeystone]?.detectedKeystoneFirmware = nil
+                        state.path[id: id, case: \.confirmWithKeystone]?.isKeystoneCodeFound = false
+                        break
+                    }
+                }
+                keystoneHandler.resetQRDecoder()
                 return .none
 
                 // MARK: - Scan

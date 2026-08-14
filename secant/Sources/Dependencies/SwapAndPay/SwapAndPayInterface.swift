@@ -26,7 +26,11 @@ struct SwapAndPayClient {
     }
     
     var submitDepositTxId: @Sendable (String, String) async throws -> Void
+    /// Curated offering — only the assets a user can select/swap.
     var swapAssets: @Sendable () async throws -> IdentifiedArrayOf<SwapAsset>
+    /// Full provider catalog — for resolving/rendering historical or exotic assets
+    /// that are no longer offered for swaps (MOB-1472).
+    var swapAssetsCatalog: @Sendable () async throws -> IdentifiedArrayOf<SwapAsset>
     var quote: @Sendable (Bool, Bool, Bool, Int, SwapAsset, SwapAsset, String, String, String) async throws -> SwapQuote
     var status: @Sendable (String, Bool) async throws -> SwapDetails
 }

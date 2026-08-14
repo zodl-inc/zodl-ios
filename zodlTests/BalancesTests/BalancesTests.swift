@@ -24,6 +24,47 @@ import ComposableArchitecture
         #expect(!idle.isPendingInProcess)
     }
 
+    // MARK: - M3 B2 (MOB-1466): the displayed "Pending" figure excludes in-flight migration value
+
+    /// The sheet's Pending row shows the SDK lanes minus the value sitting in stored-but-unmined
+    /// migration transactions — clamped at zero, and hidden entirely when migration is all there is.
+    @Test func displayedPendingExcludesUnminedMigrationValue() {
+        withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let state = state(changePending: Zatoshi(30), pendingTransactions: Zatoshi(40))
+            state.$unminedMigrationPendingValue.withLock { $0 = Zatoshi(50) }
+
+            #expect(state.displayedPendingBalance == Zatoshi(20))
+            #expect(state.isDisplayedPendingInProcess)
+            // The raw predicate keeps its meaning — only the DISPLAYED figure is corrected.
+            #expect(state.isPendingInProcess)
+        }
+    }
+
+    @Test func displayedPendingClampsAtZeroAndHidesTheRow() {
+        withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let state = state(changePending: Zatoshi(30), pendingTransactions: Zatoshi(40))
+            state.$unminedMigrationPendingValue.withLock { $0 = Zatoshi(100) }
+
+            #expect(state.displayedPendingBalance == .zero)
+            #expect(!state.isDisplayedPendingInProcess)
+        }
+    }
+
+    @Test func displayedPendingEqualsRawLanesWithoutMigrationValue() {
+        withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let state = state(changePending: Zatoshi(30), pendingTransactions: Zatoshi(40))
+
+            #expect(state.displayedPendingBalance == Zatoshi(70))
+            #expect(state.isDisplayedPendingInProcess)
+        }
+    }
+
     @Test func shieldabilityFlags() {
         let shieldable = state(transparentBalance: Zatoshi(2_000_000))
         #expect(shieldable.isShieldableBalanceAvailable)
@@ -93,6 +134,36 @@ import ComposableArchitecture
         #expect(store.state.transparentBalance == Zatoshi(5))         // unshielded
         #expect(store.state.shieldedWithPendingBalance == Zatoshi(400)) // 130 + 270 totals
         #expect(store.state.totalBalance == Zatoshi(406))            // 400 + 5 + 1 awaiting
+        #expect(store.state.spendability == .something)
+    }
+
+    // Ironwood is a third shielded pool (NU6.3 / Orchard note-version V3). The reducer must
+    // pick it up through the SDK's pool-agnostic `shielded*` accessors on `AccountBalance`
+    // rather than a hand-summed sapling+orchard pair, or Ironwood funds would be invisible.
+    @MainActor @Test func updateBalanceAggregatesSaplingOrchardIronwoodAndTransparent() async {
+        let store = TestStore(initialState: state(autoShieldingThreshold: Zatoshi(1_000_000))) {
+            Balances()
+        } withDependencies: {
+            $0.zcashSDKEnvironment.shieldingThreshold = { Zatoshi(1_000_000) }
+        }
+        store.exhaustivity = .off
+
+        let balance = AccountBalance(
+            saplingBalance: PoolBalance(spendableValue: Zatoshi(100), changePendingConfirmation: Zatoshi(10), valuePendingSpendability: Zatoshi(20)),
+            orchardBalance: PoolBalance(spendableValue: Zatoshi(200), changePendingConfirmation: Zatoshi(30), valuePendingSpendability: Zatoshi(40)),
+            ironwoodBalance: PoolBalance(spendableValue: Zatoshi(300), changePendingConfirmation: Zatoshi(50), valuePendingSpendability: Zatoshi(60)),
+            unshielded: Zatoshi(5),
+            awaitingResolution: Zatoshi(1)
+        )
+
+        await store.send(.updateBalance(balance))
+
+        #expect(store.state.changePending == Zatoshi(90))              // 10 + 30 + 50
+        #expect(store.state.pendingTransactions == Zatoshi(120))       // 20 + 40 + 60
+        #expect(store.state.shieldedBalance == Zatoshi(600))           // 100 + 200 + 300
+        #expect(store.state.transparentBalance == Zatoshi(5))          // unshielded
+        #expect(store.state.shieldedWithPendingBalance == Zatoshi(810)) // 130 + 270 + 410 totals
+        #expect(store.state.totalBalance == Zatoshi(816))              // 810 + 5 + 1 awaiting
         #expect(store.state.spendability == .something)
     }
 

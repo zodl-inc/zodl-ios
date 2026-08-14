@@ -29,7 +29,7 @@ struct BalancesView: View {
                     .zFont(.semiBold, size: 24, style: Design.Text.primary)
                     .padding(.top, 40)
 
-                if store.spendability == .everything || store.isPendingInProcess {
+                if store.spendability == .everything || store.isDisplayedPendingInProcess {
                     Text(
                         store.spendability == .everything
                         ? String(localizable: .balancesEverythingDone)
@@ -88,18 +88,18 @@ extension BalancesView {
                     .zFont(.medium, size: 14, style: Design.Text.primary)
             }
             
-            if store.isPendingInProcess {
+            if store.isDisplayedPendingInProcess {
                 HStack(spacing: 0) {
                     Text(localizable: .balancesPending)
                         .zFont(size: 14, style: Design.Text.tertiary)
 
                     Spacer()
-                    
+
                     progressViewLooping()
                         .padding(.trailing, 10)
 
                     ZatoshiText(
-                        store.changePending + store.pendingTransactions, .expanded, tokenName
+                        store.displayedPendingBalance, .expanded, tokenName
                     )
                     .zFont(.medium, size: 14, style: Design.Text.tertiary)
                 }

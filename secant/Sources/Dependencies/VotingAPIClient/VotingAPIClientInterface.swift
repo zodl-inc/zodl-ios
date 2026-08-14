@@ -1,3 +1,4 @@
+#if VOTING_ENABLED
 import ComposableArchitecture
 import Foundation
 
@@ -83,3 +84,4 @@ struct VotingAPIClient {
     /// Returns nil if the TX is not yet in a block (404 or network error).
     var fetchTxConfirmation: @Sendable (_ txHash: String) async throws -> TxConfirmation?
 }
+#endif

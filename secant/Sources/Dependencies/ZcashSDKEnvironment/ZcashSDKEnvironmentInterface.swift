@@ -120,6 +120,10 @@ struct ZcashSDKEnvironment {
     }
     var exchangeRateIPRateLimit: @Sendable () -> TimeInterval = { 0 }
     var exchangeRateStaleLimit: @Sendable () -> TimeInterval = { 0 }
+    /// The height at which the Ironwood (NU6.3) network upgrade activates on the current network.
+    /// `BlockHeight.max` is a deliberate fail-closed default: an unknown network is treated as
+    /// "Ironwood never activates" rather than "Ironwood already activated".
+    var ironwoodActivationHeight: @Sendable () -> BlockHeight = { BlockHeight.max }
     var memoCharLimit: @Sendable () -> Int = { 0 }
     var mnemonicWordsMaxCount: @Sendable () -> Int = { 0 }
     var network: @Sendable () -> ZcashNetwork = { ZcashNetworkBuilder.network(for: .testnet) }

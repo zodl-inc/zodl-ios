@@ -22,6 +22,20 @@ extension ZcashSDKEnvironment: DependencyKey {
             },
             exchangeRateIPRateLimit: { 120 },
             exchangeRateStaleLimit: { 15 * 60 },
+            ironwoodActivationHeight: {
+                switch network.networkType {
+                case .mainnet, .testnet:
+                    // The SDK (`ZcashNetwork.ironwoodActivationHeight`, backed by zcash_protocol) is
+                    // the single source of truth for the NU6.3 (Ironwood) activation height on
+                    // mainnet/testnet — the hand-mirrored constants this replaces are gone. The nil
+                    // branch never actually occurs for these two network types, but is still handled
+                    // fail-closed.
+                    return network.ironwoodActivationHeight ?? BlockHeight.max
+                case .regtest:
+                    // Custom/regtest network: read the configured NU6.3 height, or "never activated" if absent.
+                    return network.customActivationHeights?.nu6_3 ?? BlockHeight.max
+                }
+            },
             memoCharLimit: { MemoBytes.capacity },
             mnemonicWordsMaxCount: { ZcashSDKConstants.mnemonicWordsMaxCount },
             network: { network },

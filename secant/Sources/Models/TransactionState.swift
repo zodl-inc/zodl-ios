@@ -49,6 +49,32 @@ struct TransactionState: Equatable, Identifiable {
     var hasTransparentOutputs = false
     var totalSpent: Zatoshi?
     var totalReceived: Zatoshi?
+    /// The value that crossed shielded pools when this is a wallet-internal pool transfer
+    /// (e.g. an Orchard→Ironwood migration); `nil` otherwise. For such a transaction the
+    /// balance delta is just the negated fee, so this is the amount to present to a user.
+    var poolCrossingValue: Zatoshi?
+    /// How the transaction classifies against ZIP 318 (Orchard→Ironwood migration), straight from
+    /// the SDK. A conformance class, not provenance — but a preparation/transfer paying this
+    /// account is this account's own migration traffic. `.notClassified` means the wallet has not
+    /// decided (pre-classification rows, restores mid-rescan) and must never be treated as a
+    /// decision.
+    var zip318Kind = ZcashTransaction.Overview.ZIP318Kind.notClassified
+
+    /// A ZIP 318 migration transaction this wallet classified — either the note-preparation
+    /// self-send (`.preparation`) or the pool-crossing transfer (`.transfer`). Drives the
+    /// dedicated Activity/detail labels, the coins-swap glyph, and the moved-amount
+    /// presentation. `.notClassified` and `.nonconforming` stay on the regular presentation.
+    var isMigrationTransaction: Bool {
+        zip318Kind == .preparation || zip318Kind == .transfer
+    }
+
+    /// A migration transaction the wallet has stored but the chain has not mined — the
+    /// store-at-prove window. Activity presents these as in-flight rows ("Migrating…",
+    /// "Splitting Balance…"); the canonical list build also sums their received value into the
+    /// shared pending figure the balance-breakdown sheet corrects by (M3 B2).
+    var isUnminedMigrationTransaction: Bool {
+        minedHeight == nil && isMigrationTransaction
+    }
 
     var rawID: Data? = nil
     
@@ -70,7 +96,10 @@ struct TransactionState: Equatable, Identifiable {
 
     // UI Colors
     func balanceColor(_ colorScheme: ColorScheme) -> Color {
-        (status == .failed || swapStatus == .failed || swapStatus == .expired || swapStatus == .refunded)
+        if isMigrationTransaction {
+            return Design.Text.primary.color(colorScheme)
+        }
+        return (status == .failed || swapStatus == .failed || swapStatus == .expired || swapStatus == .refunded)
         ? Design.Utility.ErrorRed._600.color(colorScheme)
         : (isSpending || isShieldingTransaction)
         ? Design.Utility.ErrorRed._600.color(colorScheme)
@@ -78,7 +107,12 @@ struct TransactionState: Equatable, Identifiable {
     }
 
     func titleColor(_ colorScheme: ColorScheme) -> Color {
-        (status == .failed || swapStatus == .failed || swapStatus == .expired || swapStatus == .refunded)
+        if isMigrationTransaction {
+            // Design: migration rows keep the primary amount/title color in every state —
+            // including failed, which for regular sends goes error-red.
+            return Design.Text.primary.color(colorScheme)
+        }
+        return (status == .failed || swapStatus == .failed || swapStatus == .expired || swapStatus == .refunded)
         ? Design.Text.error.color(colorScheme)
         : !isSentTransaction
         ? Design.Utility.SuccessGreen._700.color(colorScheme)
@@ -116,6 +150,26 @@ struct TransactionState: Equatable, Identifiable {
     
     func title(_ detailScreen: Bool = false) -> String {
         if type == .zcash {
+            if isMigrationTransaction {
+                switch (zip318Kind, status) {
+                case (.transfer, .failed):
+                    return String(localizable: .transactionMigrationFailed)
+                case (.transfer, .paid):
+                    return String(localizable: .transactionMigrated)
+                case (.transfer, _):
+                    return String(localizable: .transactionMigrating)
+                case (.preparation, .failed):
+                    return detailScreen
+                    ? String(localizable: .transactionBalanceSplitFailed)
+                    : String(localizable: .transactionSplitFailed)
+                case (.preparation, .paid):
+                    return String(localizable: .transactionBalanceSplit)
+                case (.preparation, _):
+                    return String(localizable: .transactionSplittingBalance)
+                default:
+                    break
+                }
+            }
             switch status {
             case .failed:
                 return isShieldingTransaction
@@ -202,8 +256,13 @@ struct TransactionState: Equatable, Identifiable {
     }
 
     var daysAgo: String {
-        guard let timestamp else { return "" }
-        
+        guard let timestamp else {
+            // A stored-but-unmined transaction has no block time yet; while it is still live
+            // ("Migrating...", "Sending...") the honest date is now. An expired one keeps the
+            // empty subtitle — it may have died long before the user looks.
+            return isPending ? String(localizable: .filterToday) : ""
+        }
+
         let transactionDate = Date(timeIntervalSince1970: timestamp)
         
         let calendar = Calendar.current
@@ -269,7 +328,9 @@ struct TransactionState: Equatable, Identifiable {
     }
     
     var transationIcon: Image {
-        if type == .crossPay {
+        if isMigrationTransaction {
+            return Asset.Assets.Icons.coinsSwap.image
+        } else if type == .crossPay {
             return Asset.Assets.Icons.trPaid.image
         } else if isSwapToZec {
             return Asset.Assets.Icons.trIn.image
@@ -288,9 +349,20 @@ struct TransactionState: Equatable, Identifiable {
     }
     
     var netValue: String {
-        isShieldingTransaction
-        ? Zatoshi(totalSpent?.amount ?? 0).atLeastThreeDecimalsZashiFormatted()
-        : zecAmount.atLeastThreeDecimalsZashiFormatted()
+        if isShieldingTransaction {
+            return Zatoshi(totalSpent?.amount ?? 0).atLeastThreeDecimalsZashiFormatted()
+        }
+        return zecAmount.atLeastThreeDecimalsZashiFormatted()
+    }
+
+    /// The amount string the Activity row and the detail header present. A ZIP 318 migration
+    /// transaction moves value inside the wallet, so its balance delta (`netValue`) is just the
+    /// negated fee; what a user recognizes is the moved amount — the pool-crossing value for a
+    /// transfer, or the re-noted value (`totalReceived`) for a preparation, which never crosses
+    /// pools. Always unsigned; the views add no "-" prefix for migration rows.
+    var displayedAmount: String {
+        guard isMigrationTransaction else { return netValue }
+        return (poolCrossingValue ?? totalReceived ?? Zatoshi.zero).atLeastThreeDecimalsZashiFormatted()
     }
 
     var amountWithoutFee: Zatoshi {
@@ -398,6 +470,8 @@ extension TransactionState {
         memoCount = transaction.memoCount
         totalSpent = transaction.totalSpent
         totalReceived = transaction.totalReceived
+        poolCrossingValue = transaction.poolCrossingValue
+        zip318Kind = transaction.zip318Kind
 
         let isPending = isSentTransaction ? minedHeight == nil : transaction.state == .pending
         // Fallback for when the SDK's `expired_unmined` column lags (e.g. an unmined sent tx

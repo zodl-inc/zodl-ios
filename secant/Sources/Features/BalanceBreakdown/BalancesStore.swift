@@ -27,6 +27,7 @@ struct Balances {
         var spendability: Spendability = .everything
         var totalBalance: Zatoshi = .zero
         @Shared(.inMemory(.transactions)) var transactions: IdentifiedArrayOf<TransactionState> = []
+        @Shared(.inMemory(.unminedMigrationPendingValue)) var unminedMigrationPendingValue: Zatoshi = .zero
         var transparentBalance: Zatoshi
 
         var feeStr: String {
@@ -43,6 +44,24 @@ struct Balances {
 
         var isPendingInProcess: Bool {
             changePending.amount + pendingTransactions.amount > 0
+        }
+
+        /// M3 B2 (MOB-1466): the "Pending" row's DISPLAYED figure — the SDK's pending lanes minus
+        /// the value sitting in stored-but-unmined migration transactions, clamped at zero. The
+        /// balances story renders as if the not-yet-mined migration transaction never happened
+        /// (R11's standard); without this the sheet claimed the whole plan as "Pending" minutes
+        /// after commit, days before anything broadcast. Activity, by contrast, now presents those
+        /// rows as labeled in-flight history ("Migrating…", "Splitting Balance…") — the subtrahend
+        /// is published by the same canonical pass that builds that list, so the two never drift.
+        var displayedPendingBalance: Zatoshi {
+            Zatoshi(max(0, changePending.amount + pendingTransactions.amount - unminedMigrationPendingValue.amount))
+        }
+
+        /// Whether the "Pending" row (and the pending header copy) should show — the corrected
+        /// figure's own truth, not the raw lanes': migration-only pending renders as nothing here,
+        /// because the migration surfaces and the labeled Activity rows own that in-flight story.
+        var isDisplayedPendingInProcess: Bool {
+            displayedPendingBalance.amount > 0
         }
         
         var isShieldableBalanceAvailable: Bool {
@@ -172,6 +191,8 @@ struct Balances {
                 return .send(.updateBalance(accountsBalances[account.id]))
 
             case .updateBalance(let accountBalance):
+                // Pool-agnostic accessors: sum sapling + orchard + ironwood (and any future
+                // shielded pool) instead of hand-summing individual pools.
                 state.changePending = accountBalance?.shieldedChangePendingConfirmation ?? .zero
                 state.pendingTransactions = accountBalance?.shieldedValuePendingSpendability ?? .zero
                 state.shieldedBalance = accountBalance?.shieldedSpendableValue ?? .zero

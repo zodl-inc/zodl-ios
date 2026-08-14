@@ -220,6 +220,18 @@ private extension RootView {
                                 )
                                 .transition(.move(edge: .trailing))
                                 .zIndex(1)
+                            } else if path == .migrationCoordFlow {
+                                // `MigrationCoordFlowView` owns its own `NavigationStack` (Entry is
+                                // its root), so it is presented bare — same shape as the other
+                                // CoordFlows above, not wrapped like the single-screen destinations.
+                                MigrationCoordFlowView(
+                                    store:
+                                        store.scope(
+                                            state: \.migrationCoordFlowState,
+                                            action: \.migrationCoordFlow)
+                                )
+                                .transition(.move(edge: .trailing))
+                                .zIndex(1)
                             } else if path == .currencyConversionSetup {
                                 NavigationStack {
                                     CurrencyConversionSetupView(
@@ -295,6 +307,17 @@ private extension RootView {
                         store: store.scope(
                             state: \.onboardingState,
                             action: \.onboarding
+                        )
+                    )
+                    .overlayedWithSplash(store.splashAppeared) {
+                        store.send(.splashRemovalRequested)
+                    }
+
+                case .ironwoodAnnouncement:
+                    IronwoodAnnouncementView(
+                        store: store.scope(
+                            state: \.ironwoodAnnouncementState,
+                            action: \.ironwoodAnnouncement
                         )
                     )
                     .overlayedWithSplash(store.splashAppeared) {

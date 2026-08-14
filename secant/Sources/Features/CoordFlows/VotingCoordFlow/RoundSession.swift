@@ -1,3 +1,4 @@
+#if VOTING_ENABLED
 //
 //  RoundSession.swift
 //  Zashi
@@ -294,3 +295,4 @@ extension RoundSession {
         return nil
     }
 }
+#endif

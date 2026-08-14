@@ -6,6 +6,7 @@
 //
 
 import ComposableArchitecture
+@preconcurrency import MessageUI
 
 extension AddKeystoneHWWalletCoordFlow {
     func coordinatorReduce() -> Reduce<AddKeystoneHWWalletCoordFlow.State, AddKeystoneHWWalletCoordFlow.Action> {
@@ -39,6 +40,27 @@ extension AddKeystoneHWWalletCoordFlow {
 
             case .path(.element(id: _, action: .keystoneDeviceReady(.accountImportSucceeded))):
                 state.path.append(.keystoneConnected(AddKeystoneHWWallet.State.initial))
+                return .none
+
+            case .path(.element(id: _, action: .keystoneDeviceReady(.accountImportFailed(let errMsg)))):
+                for id in state.path.ids {
+                    if case .restoreInfo = state.path[id: id] {
+                        state.path[id: id, case: \.restoreInfo]?.isProcessing = false
+                    }
+                }
+                // A failure arriving after the success screen is on the stack can
+                // only be a stray duplicate attempt — the account is imported, so
+                // don't cover the success screen with the failure sheet.
+                for element in state.path {
+                    if case .keystoneConnected = element {
+                        LoggerProxy.warn("Keystone account import failure suppressed (success screen already on stack): \(errMsg)")
+                        return .none
+                    }
+                }
+                state.errMsg = errMsg
+                // TCA Store is @MainActor; reducer body always runs on main.
+                state.canSendMail = MainActor.assumeIsolated { MFMailComposeViewController.canSendMail() }
+                state.isFailureSheetPresented = true
                 return .none
 
             case .path(.element(id: _, action: .keystoneDeviceReady(.setBirthdayTapped))):
@@ -110,21 +132,8 @@ extension AddKeystoneHWWalletCoordFlow {
                         // (engine stop → drain → anchor fetch → import → restart —
                         // seconds). Reflect it on the visible OK button (spinner +
                         // disabled); without this the wait reads as a broken screen.
-                        if case .restoreInfo(var restoreInfoState) = state.path[id: restoreInfoId] {
-                            restoreInfoState.isProcessing = true
-                            state.path[id: restoreInfoId] = .restoreInfo(restoreInfoState)
-                        }
+                        state.path[id: restoreInfoId, case: \.restoreInfo]?.isProcessing = true
                         return .send(.path(.element(id: id, action: .keystoneDeviceReady(.unlockTapped(state.birthday)))))
-                    }
-                }
-                return .none
-
-            case .path(.element(id: _, action: .keystoneDeviceReady(.accountImportFailed))):
-                // A failed import must re-enable the OK button it is rendered behind.
-                for id in state.path.ids {
-                    if case .restoreInfo(var restoreInfoState) = state.path[id: id] {
-                        restoreInfoState.isProcessing = false
-                        state.path[id: id] = .restoreInfo(restoreInfoState)
                     }
                 }
                 return .none

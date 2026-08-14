@@ -18,6 +18,7 @@ struct Settings {
         case currencyConversionSetup(CurrencyConversionSetup)
         case exportPrivateData(PrivateDataConsent)
         case exportTransactionHistory(ExportTransactionHistory)
+        case migrationRestart(MigrationRestart)
         case recoveryPhrase(RecoveryPhraseDisplay)
         case resetZashi(DeleteWallet)
         case resyncEstimateBirthdaysDate(WalletBirthday)
@@ -43,11 +44,13 @@ struct Settings {
         var isResyncHelpSheetPresented = false
         var isTorOn = false
         var path = StackState<Path.State>()
+        #if VOTING_ENABLED
         /// fullScreenCover for the new voting CoordFlow. Isolating its
         /// NavigationStack via fullScreenCover avoids SwiftUI's
         /// `AnyNavigationPath.Error.comparisonTypeMismatch` that fires when
         /// two NavigationStacks are nested.
         @Presents var votingCoordFlow: VotingCoordFlow.State?
+        #endif
         var resyncBirthday: BlockHeight? = nil
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
         var txidToEnhance = ""
@@ -79,8 +82,10 @@ struct Settings {
         case binding(BindingAction<Settings.State>)
         case checkFundsForAddress(String)
         case closeResyncHelpSheetTapped
+        #if VOTING_ENABLED
         case coinholderPollingTapped
         case votingCoordFlow(PresentationAction<VotingCoordFlow.Action>)
+        #endif
         case currencyConversionTapped
         case enableEnhanceTransactionMode
         case enableRecoverFundsMode
@@ -138,6 +143,7 @@ struct Settings {
                     }
                 }
 
+            #if VOTING_ENABLED
             case .coinholderPollingTapped:
                 // Handled in coordinatorReduce; no-op here so the body's
                 // exhaustive switch over the Action enum still compiles.
@@ -147,6 +153,7 @@ struct Settings {
                 // through .ifLet at the body level + the coordinator's
                 // dismiss handler.
                 return .none
+            #endif
 
             case .currencyConversionTapped:
                 return .none
@@ -194,8 +201,10 @@ struct Settings {
             }
         }
         .forEach(\.path, action: \.path)
+        #if VOTING_ENABLED
         .ifLet(\.$votingCoordFlow, action: \.votingCoordFlow) {
             VotingCoordFlow()
         }
+        #endif
     }
 }

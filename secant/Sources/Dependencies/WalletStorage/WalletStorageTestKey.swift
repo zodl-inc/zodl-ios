@@ -35,6 +35,12 @@ extension WalletStorageClient {
         exportShieldingAcknowledged: { false },
         importTorSetupFlag: { _ in },
         exportTorSetupFlag: { false },
+        // `true` (not `nil`) is deliberate: `.noOp` is used at many test sites, several of which drive
+        // the app's Root reducer through launch and sync and assert it lands on Home. `true` means
+        // "already acknowledged", which keeps the Ironwood announcement gate closed for all of them.
+        // Do not "fix" this to `nil` — that would make the announcement pop up across those tests.
+        importIronwoodAnnouncementFlag: { _ in },
+        exportIronwoodAnnouncementFlag: { true },
         importVotingHotkey: { _, _ in },
         exportVotingHotkey: { _ in .init(seedPhrase: .init(""), version: 0) }
     )

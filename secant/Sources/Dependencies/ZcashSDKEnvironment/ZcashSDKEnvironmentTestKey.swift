@@ -19,6 +19,8 @@ extension ZcashSDKEnvironment: TestDependencyKey {
             endpoint: { defaultEndpoint(for: .testnet) },
             exchangeRateIPRateLimit: { 120 },
             exchangeRateStaleLimit: { 15 * 60 },
+            // Mirrors the testnet Ironwood activation height used by `live(network:)`.
+            ironwoodActivationHeight: { 4_134_000 },
             memoCharLimit: { MemoBytes.capacity },
             mnemonicWordsMaxCount: { ZcashSDKConstants.mnemonicWordsMaxCount },
             network: { ZcashNetworkBuilder.network(for: .testnet) },

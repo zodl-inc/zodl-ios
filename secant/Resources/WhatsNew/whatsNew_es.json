@@ -1,6 +1,108 @@
 {
     "releases": [
         {
+            "version": "3.9.3",
+            "date": "12-08-2026",
+            "timestamp": 1786526020,
+            "sections": [
+                {
+                    "title": "Corregido:",
+                    "bulletpoints": [
+                        "Corregimos la advertencia que aparece cuando un pago debe gastar fondos de Orchard que aún no se han migrado: ahora se muestra siempre, no solo durante una migración."
+                    ]
+                }
+            ]
+        },
+        {
+            "version": "3.9.2",
+            "date": "11-08-2026",
+            "timestamp": 1786458854,
+            "sections": [
+                {
+                    "title": "Corregido:",
+                    "bulletpoints": [
+                        "Corregimos algunos problemas en la visualización de las transacciones en la lista de actividad.",
+                        "Corregimos algunos problemas de UI/UX en el flujo de migración."
+                    ]
+                }
+            ]
+        },
+        {
+            "version": "3.9.1",
+            "date": "09-08-2026",
+            "timestamp": 1786300755,
+            "sections": [
+                {
+                    "title": "Añadido:",
+                    "bulletpoints": [
+                        "Añadimos «Mover a Ironwood», una migración guiada que traslada tus fondos de Orchard al nuevo pool protegido Ironwood.",
+                        "Añadimos dos formas de migrar: una opción privada que divide tu saldo en transferencias más pequeñas distribuidas en el tiempo, o una transferencia única inmediata.",
+                        "Para la migración, añadimos protección Tor, notificaciones paso a paso, compatibilidad con Keystone y un aviso en la pantalla de inicio para seguir tu migración.",
+                        "Nada se envía por sí solo: te avisaremos cuando sea tu turno de abrir Zodl. Abrir la aplicación sin demora en cada paso mantiene tu migración en marcha."
+                    ]
+                }
+            ]
+        },
+        {
+            "version": "3.8.1",
+            "date": "28-07-2026",
+            "timestamp": 1785268466,
+            "sections": [
+                {
+                    "title": "Corregido:",
+                    "bulletpoints": [
+                        "Corregimos varios problemas que afectaban a la visualización del saldo y los detalles de las transacciones. Tus fondos están seguros: esto solo corrige cómo la billetera muestra los valores."
+                    ]
+                }
+            ]
+        },
+        {
+            "version": "3.8.0",
+            "date": "25-07-2026",
+            "timestamp": 1784981874,
+            "sections": [
+                {
+                    "title": "Añadido:",
+                    "bulletpoints": [
+                        "Agregamos compatibilidad con la actualización de red Ironwood (NU6.3) de Zcash, para mantener tu billetera totalmente compatible con los últimos cambios de la red. La función para mover fondos al nuevo pool de Ironwood llegará en una próxima actualización.",
+                        "Toca tu saldo en la pantalla de inicio para ver cómo se distribuye tu ZEC entre los pools de Zcash, incluido el nuevo pool de Ironwood."
+                    ]
+                },
+                {
+                    "title": "Corregido:",
+                    "bulletpoints": [
+                        "Corregimos un problema por el cual algunas billeteras mostraban un saldo incorrecto o no podían proteger fondos. Ahora la app lo detecta y lo repara automáticamente al abrirla."
+                    ]
+                }
+            ]
+        },
+        {
+            "version": "3.7.4",
+            "date": "22-07-2026",
+            "timestamp": 1784719803,
+            "sections": [
+                {
+                    "title": "Corregido:",
+                    "bulletpoints": [
+                        "Corregimos un problema por el cual algunas billeteras mostraban un saldo incorrecto o no podían proteger fondos. Ahora la app lo detecta y lo repara automáticamente al abrirla."
+                    ]
+                }
+            ]
+        },
+        {
+            "version": "3.7.3",
+            "date": "11-07-2026",
+            "timestamp": 1783775476,
+            "sections": [
+                {
+                    "title": "Cambiado:",
+                    "bulletpoints": [
+                        "Refinamos nuestra lista de criptoactivos compatibles con Swap/Pago, centrándonos en los que los usuarios realmente utilizan."
+                    ]
+                }
+            ]
+        },
+        {
             "version": "3.7.2",
             "date": "01-07-2026",
             "timestamp": 1782924729,

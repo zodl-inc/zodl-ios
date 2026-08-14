@@ -18,6 +18,7 @@ struct SwapAndPayCoordFlow {
         case addressBookContact(AddressBook)
         case confirmWithKeystone(SendConfirmation)
         case crossPayConfirmation(SwapAndPay)
+        case keystoneFirmwareUpdate(SendConfirmation)
         case preSendingFailure(SendConfirmation)
         case scan(Scan)
         case sending(SendConfirmation)
@@ -93,6 +94,7 @@ struct SwapAndPayCoordFlow {
     }
 
     @Dependency(\.audioServices) var audioServices
+    @Dependency(\.keystoneHandler) var keystoneHandler
     @Dependency(\.localAuthentication) var localAuthentication
     @Dependency(\.derivationTool) var derivationTool
     @Dependency(\.mainQueue) var mainQueue

@@ -1,3 +1,4 @@
+#if VOTING_ENABLED
 //
 //  ConfirmSubmissionStore.swift
 //  Zashi
@@ -23,3 +24,4 @@ struct ConfirmSubmission {
         EmptyReducer()
     }
 }
+#endif

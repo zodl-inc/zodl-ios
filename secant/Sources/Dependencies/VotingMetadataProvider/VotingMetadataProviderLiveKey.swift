@@ -1,3 +1,4 @@
+#if VOTING_ENABLED
 //
 //  VotingMetadataProviderLiveKey.swift
 //  Zashi
@@ -33,3 +34,4 @@ extension VotingMetadataProviderClient: DependencyKey {
 extension VotingMetadataStorage {
     static let live = VotingMetadataStorage()
 }
+#endif

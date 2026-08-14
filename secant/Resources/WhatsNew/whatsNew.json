@@ -1,6 +1,108 @@
 {
     "releases": [
         {
+            "version": "3.9.3",
+            "date": "12-08-2026",
+            "timestamp": 1786526020,
+            "sections": [
+                {
+                    "title": "Fixed:",
+                    "bulletpoints": [
+                        "We fixed the warning shown when a payment needs to spend Orchard funds that haven't been migrated yet — it now appears every time, not only during a migration."
+                    ]
+                }
+            ]
+        },
+        {
+            "version": "3.9.2",
+            "date": "11-08-2026",
+            "timestamp": 1786458854,
+            "sections": [
+                {
+                    "title": "Fixed:",
+                    "bulletpoints": [
+                        "We fixed a few issues with how transactions are displayed in the activity list.",
+                        "We fixed a few UI/UX issues in the migration flow."
+                    ]
+                }
+            ]
+        },
+        {
+            "version": "3.9.1",
+            "date": "09-08-2026",
+            "timestamp": 1786300755,
+            "sections": [
+                {
+                    "title": "Added:",
+                    "bulletpoints": [
+                        "We added Move to Ironwood, a guided migration that moves your Orchard funds into the new Ironwood shielded pool.",
+                        "We added two ways to migrate: a private option that splits your balance into smaller transfers spread over time, or an immediate single transfer.",
+                        "For migration, we added Tor protection, step-by-step notifications, Keystone support, and a home screen banner for tracking your migration.",
+                        "Nothing sends on its own — we'll notify you when it's your turn to open Zodl. Opening the app promptly at each step keeps your migration on track."
+                    ]
+                }
+            ]
+        },
+        {
+            "version": "3.8.1",
+            "date": "28-07-2026",
+            "timestamp": 1785268466,
+            "sections": [
+                {
+                    "title": "Fixed:",
+                    "bulletpoints": [
+                        "Corrected several issues affecting how balances and transaction details were displayed. Your funds are safe, this only fixes how the wallet shows the values."
+                    ]
+                }
+            ]
+        },
+        {
+            "version": "3.8.0",
+            "date": "25-07-2026",
+            "timestamp": 1784981874,
+            "sections": [
+                {
+                    "title": "Added:",
+                    "bulletpoints": [
+                        "We added support for Zcash's Ironwood network upgrade (NU6.3), keeping your wallet fully compatible with the latest network changes. Support for moving funds to the new Ironwood pool will arrive in a future update.",
+                        "Tap your balance on the home screen to see how your ZEC is split across Zcash pools, including the new Ironwood pool."
+                    ]
+                },
+                {
+                    "title": "Fixed:",
+                    "bulletpoints": [
+                        "We fixed an issue where some wallets showed an incorrect balance or couldn't shield funds. The app now detects and repairs this automatically when you open it."
+                    ]
+                }
+            ]
+        },
+        {
+            "version": "3.7.4",
+            "date": "22-07-2026",
+            "timestamp": 1784719803,
+            "sections": [
+                {
+                    "title": "Fixed:",
+                    "bulletpoints": [
+                        "We fixed an issue where some wallets showed an incorrect balance or couldn't shield funds. The app now detects and repairs this automatically when you open it."
+                    ]
+                }
+            ]
+        },
+        {
+            "version": "3.7.3",
+            "date": "11-07-2026",
+            "timestamp": 1783775476,
+            "sections": [
+                {
+                    "title": "Changed:",
+                    "bulletpoints": [
+                        "We refined our list of supported Swap/Pay assets, focusing on the ones users actually use."
+                    ]
+                }
+            ]
+        },
+        {
             "version": "3.7.2",
             "date": "01-07-2026",
             "timestamp": 1782924729,

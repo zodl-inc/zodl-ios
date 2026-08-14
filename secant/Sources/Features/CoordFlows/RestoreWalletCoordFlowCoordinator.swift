@@ -51,6 +51,11 @@ extension RestoreWalletCoordFlow {
                     // store the wallet to the keychain
                     try walletStorage.importWallet(newRandomPhrase, birthday, .english, false)
 
+                    // Deliberately does NOT pre-acknowledge the Ironwood announcement. Ironwood is
+                    // news about the network, not about this wallet, so a brand-new wallet gets it
+                    // like everyone else once the chain tip is known. Root's safety gate is what
+                    // keeps it from landing mid-onboarding — it requires the user to be idle on
+                    // Home with no flow pushed.
                     return .send(.newWalletSuccessfulyCreated)
                 } catch {
                     state.alert = AlertState.cantCreateNewWallet(error.toZcashError())

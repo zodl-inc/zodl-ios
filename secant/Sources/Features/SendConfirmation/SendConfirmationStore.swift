@@ -44,6 +44,10 @@ struct SendConfirmation {
         var amount: Zatoshi
         var canSendMail = false
         var currencyAmount: RedactableString
+        /// MOB-1510: firmware version detected on the most recent `foundPCZT` scan that failed the
+        /// minimum-firmware gate — `nil` when the scan carried no version stamp at all (firmware
+        /// older than the stamping feature). Drives the copy on `KeystoneFirmwareUpdateView`.
+        var detectedKeystoneFirmware: KeystoneDisplayFirmwareVersion?
         var failedCode: Int?
         var failedDescription: String?
         var isAnchorError = false
@@ -52,18 +56,21 @@ struct SendConfirmation {
         var feeRequired: Zatoshi
         var isAddressExpanded = false
         var isKeystoneCodeFound = false
+        var isOrchardWarningPresented = false
         var isQRCodeEnlarged = false
         var isSending = false
         var isShielding = false
         var isTransparentAddress = false
         var message: String
         var messageToBeShared: String?
+        var orchardWarningShown = false
         var partialFailureTxIds: [String] = []
         var partialFailureStatuses: [String] = []
         var pczt: Pczt?
         var pcztForUI: Pczt?
         var pcztWithProofs: Pczt?
         var pcztWithSigs: Pczt?
+        var pendingCancelFromOrchardWarning = false
         var pendingDescription: String?
         var proposal: Proposal?
         var randomSuccessIconIndex = 0
@@ -140,11 +147,15 @@ struct SendConfirmation {
         case binding(BindingAction<SendConfirmation.State>)
         case cancelTapped
         case closeTapped
+        case confirmationScreenAppeared
         case confirmWithKeystoneTapped
         case enlargeQRCodeTapped
         case getSignatureTapped
         case goBackTappedFromRequestZec
         case onAppear
+        case orchardWarningCancelTapped
+        case orchardWarningContinueTapped
+        case orchardWarningDismissed
         case rejectRequestCanceled
         case rejectRequested
         case rejectTapped
@@ -172,6 +183,14 @@ struct SendConfirmation {
         case backFromPCZTFailureTapped
         case createTransactionFromPCZT
         case foundPCZT(Pczt)
+        // MOB-1510: Keystone minimum-firmware gate — `keystoneFirmwareUpdateRequired` fires from
+        // `foundPCZT` in place of scheduling `createTransactionFromPCZT` when the signed PCZT's
+        // firmware is unstamped or below `KeystoneDisplayFirmwareVersion.minimumSupported`; on an accepted
+        // firmware, `foundPCZT` fires `keystoneFirmwareAccepted` for the coordinators to observe.
+        // `keystoneFirmwareUpdateCloseTapped` is `KeystoneFirmwareUpdateView`'s Close button.
+        case keystoneFirmwareAccepted
+        case keystoneFirmwareUpdateCloseTapped
+        case keystoneFirmwareUpdateRequired
         case pcztResolved(Pczt)
         case pcztSendFailed(ZcashError?)
         case pcztWithProofsResolved(Pczt)
@@ -230,6 +249,17 @@ struct SendConfirmation {
                 }
                 return .none
 
+            case .confirmationScreenAppeared:
+                // Deliberately separate from `.onAppear`: this reducer is also shared by screens
+                // that never attach the warning sheet (e.g. the SwapAndPay flow pushing
+                // `confirmWithKeystone` with a fresh state), which must never trip or burn this
+                // one-shot latch just because `.onAppear` fired.
+                if state.proposal?.spendsLegacyOrchardFunds == true && !state.orchardWarningShown {
+                    state.isOrchardWarningPresented = true
+                    state.orchardWarningShown = true
+                }
+                return .none
+
             case .alert(.presented(let action)):
                 return .send(action)
 
@@ -255,6 +285,25 @@ struct SendConfirmation {
                 return .none
 
             case .cancelTapped:
+                return .none
+
+            case .orchardWarningCancelTapped:
+                state.isOrchardWarningPresented = false
+                state.pendingCancelFromOrchardWarning = true
+                return .none
+
+            case .orchardWarningContinueTapped:
+                state.isOrchardWarningPresented = false
+                return .none
+
+            case .orchardWarningDismissed:
+                // Pop-back must happen only after the sheet finished dismissing (this action is
+                // sent from the sheet's `onDismiss`), otherwise SwiftUI would pop a screen that
+                // still presents a sheet.
+                if state.pendingCancelFromOrchardWarning {
+                    state.pendingCancelFromOrchardWarning = false
+                    return .send(.cancelTapped)
+                }
                 return .none
 
             case .viewTransactionTapped:
@@ -482,12 +531,46 @@ struct SendConfirmation {
                 }
                 if !state.isKeystoneCodeFound {
                     state.isKeystoneCodeFound = true
-                    state.pcztWithSigs = pcztWithSigs
-                    return .run { send in
-                        try? await mainQueue.sleep(for: .seconds(Constants.delay))
-                        await send(.createTransactionFromPCZT)
+
+                    // MOB-1510: firmware >= 2.4.6 stamps its version into every signed PCZT, two
+                    // releases before the minimum this gate enforces — an unstamped PCZT is
+                    // therefore necessarily below minimum, never merely "unknown".
+                    let firmwareStamp = pcztWithSigs.keystoneFirmwareStamp()
+                    let detectedFirmware = firmwareStamp.map { KeystoneDisplayFirmwareVersion.fromStamp($0) }
+                    // Both numberings, because they differ: the device stamps its internal major,
+                    // which is 10 higher than the version shown on its own screen.
+                    let firmwareGateLog = """
+                        Keystone firmware gate: raw stamp \(firmwareStamp?.rawString ?? "absent"), \
+                        reads as \(detectedFirmware?.versionString ?? "unknown"), \
+                        minimum \(KeystoneDisplayFirmwareVersion.minimumSupported.versionString)
+                        """
+                    guard let detectedFirmware, detectedFirmware >= KeystoneDisplayFirmwareVersion.minimumSupported else {
+                        LoggerProxy.warn("\(firmwareGateLog), blocked")
+                        state.detectedKeystoneFirmware = detectedFirmware
+                        return .send(.keystoneFirmwareUpdateRequired)
                     }
+                    LoggerProxy.info("\(firmwareGateLog), allowed")
+
+                    state.pcztWithSigs = pcztWithSigs
+                    return .merge(
+                        .send(.keystoneFirmwareAccepted),
+                        .run { send in
+                            try? await mainQueue.sleep(for: .seconds(Constants.delay))
+                            await send(.createTransactionFromPCZT)
+                        }
+                    )
                 }
+                return .none
+
+            case .keystoneFirmwareAccepted:
+                return .none
+
+            case .keystoneFirmwareUpdateRequired:
+                return .none
+
+            case .keystoneFirmwareUpdateCloseTapped:
+                // Handled by the coordinators: they pop this path element before this reducer would
+                // see the action, same shape as `backFromPCZTFailureTapped`.
                 return .none
 
             case .resolvePCZT:

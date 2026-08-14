@@ -283,7 +283,11 @@ import ComposableArchitecture
             value: Zatoshi(-100_000),
             isExpiredUmined: nil,
             totalSpent: nil,
-            totalReceived: nil
+            totalReceived: nil,
+            spentNoteCount: 1,
+            poolCrossingValue: nil,
+            isTrusted: true,
+            zip318Kind: ZcashTransaction.Overview.ZIP318Kind.notClassified
         )
         return try CreatedTransaction(overview: overview)
     }

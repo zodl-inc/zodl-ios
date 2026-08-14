@@ -1,3 +1,4 @@
+#if VOTING_ENABLED
 //
 //  TallyingStore.swift
 //  Zashi
@@ -23,3 +24,4 @@ struct Tallying {
         EmptyReducer()
     }
 }
+#endif
